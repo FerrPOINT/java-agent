@@ -42,6 +42,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         sb.append("5. Dangerous terminal commands require user approval; respect the result.\n");
         sb.append("6. When delegating, keep sub-tasks focused and small.\n");
         sb.append("7. Prefer skills when a matching skill is available.\n");
+        sb.append("8. If the user asks to open a page or take a screenshot, call browser_navigate and/or browser_vision.\n");
         return sb.toString();
     }
 }

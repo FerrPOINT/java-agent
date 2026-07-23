@@ -6,18 +6,32 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Service;
 
-import java.util.Base64;
+import java.util.function.Supplier;
 import java.util.concurrent.TimeUnit;
 
 @Service
 public class BrowserService {
 
     private final CdpClient cdpClient;
-    private final String cdpUrl;
+    private final Supplier<String> cdpUrlSupplier;
 
     public BrowserService(CdpClient cdpClient, AgentProperties properties) {
+        this(cdpClient, () -> properties.getBrowser().getCdpUrl());
+    }
+
+    @SuppressWarnings("unused")
+    private BrowserService() {
+        this.cdpClient = null;
+        this.cdpUrlSupplier = () -> "http://localhost:9222";
+    }
+
+    public BrowserService(CdpClient cdpClient, Supplier<String> cdpUrlSupplier) {
         this.cdpClient = cdpClient;
-        this.cdpUrl = properties.getBrowser().getCdpUrl();
+        this.cdpUrlSupplier = cdpUrlSupplier;
+    }
+
+    private String cdpUrl() {
+        return cdpUrlSupplier.get();
     }
 
     public String navigate(String url) throws Exception {
@@ -76,7 +90,7 @@ public class BrowserService {
 
     private void ensureConnected() throws Exception {
         if (!cdpClient.isConnected()) {
-            cdpClient.connect(cdpUrl);
+            cdpClient.connect(cdpUrl());
         }
     }
 
