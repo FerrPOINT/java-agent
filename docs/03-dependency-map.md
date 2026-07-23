@@ -1,5 +1,7 @@
 # 03 — Python → Java Dependency Map
 
+Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7.
+
 Agent pins a large dependency tree. This document maps every *core* dependency to a Java alternative. Optional/provider-specific deps are listed but marked out-of-scope.
 
 ## 1. Core Dependencies

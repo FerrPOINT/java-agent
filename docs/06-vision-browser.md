@@ -1,5 +1,7 @@
 # 06 — Vision & Browser: In Scope
 
+Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7.
+
 ## 1. Decision
 
 Vision and browser are in scope for the Java port. Both use the same `ModelClient` with OpenAI-compatible endpoints, so they do not require separate heavy SDKs.

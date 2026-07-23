@@ -1,5 +1,7 @@
 # 05 — Migration Notes & Tricky Parts
 
+Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7.
+
 This document captures non-obvious translation issues when moving Hermes Agent from Python to Java.
 
 ## 1. Dynamic Tool Discovery

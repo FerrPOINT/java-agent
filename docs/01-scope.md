@@ -1,5 +1,7 @@
 # 01 — Scope: What to Port, What to Skip
 
+Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7.
+
 Hermes Agent is a large Python project (~693 MB source, ~0.7 MLOC). A Java prototype must focus on the **narrow waist** described in `AGENTS.md`: the runtime that drives one conversation with tool calling. Everything else is either edge capability or platform glue.
 
 ## 1. Core — MUST port to Java
