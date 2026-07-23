@@ -48,7 +48,7 @@ The `prototype/` directory holds clones of the relevant Hermes repositories for 
 | HTTP client | `java.net.http.HttpClient` + OkHttp fallback | replaces `httpx` / `requests` |
 | WebSocket | `java.net.http.WebSocket` | CDP, replaces `websockets` |
 | Persistence | PostgreSQL (JDBC) + Flyway | dev DB is existing Postgres container |
-| LLM provider | **Ollama** local endpoint (`http://localhost:11434`) | default; OpenAI-compatible endpoints via LangChain4j |
+| LLM provider | **OpenAI-compatible** (default local Ollama `http://localhost:11434/v1`) | any provider via `langchain4j-open-ai` |
 | MCP | `io.modelcontextprotocol.sdk:mcp:2.0.0` | official Anthropic Java SDK |
 | CLI | Picocli 4.7.7 + JLine 4.3.1 | REPL |
 

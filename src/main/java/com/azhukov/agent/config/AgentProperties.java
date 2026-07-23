@@ -21,11 +21,10 @@ public class AgentProperties {
     public CoreProperties getCore() { return core; }
 
     public static class ModelProperties {
-        private String provider = "ollama";
-        private String baseUrl = "http://localhost:11434";
+        private String provider = "openai-compatible";
+        private String baseUrl = "http://localhost:11434/v1";
         private String apiKey = "";
         private String modelName = "qwen2.5:3b";
-        private String chatFormat = "chat";
         private int timeoutSeconds = 60;
         private int maxRetries = 3;
 
@@ -37,8 +36,6 @@ public class AgentProperties {
         public void setApiKey(String apiKey) { this.apiKey = apiKey; }
         public String getModelName() { return modelName; }
         public void setModelName(String modelName) { this.modelName = modelName; }
-        public String getChatFormat() { return chatFormat; }
-        public void setChatFormat(String chatFormat) { this.chatFormat = chatFormat; }
         public int getTimeoutSeconds() { return timeoutSeconds; }
         public void setTimeoutSeconds(int timeoutSeconds) { this.timeoutSeconds = timeoutSeconds; }
         public int getMaxRetries() { return maxRetries; }
@@ -46,10 +43,13 @@ public class AgentProperties {
     }
 
     public static class VisionProperties {
-        private String baseUrl = "http://localhost:11434";
+        private String provider = "";
+        private String baseUrl = "";
         private String apiKey = "";
         private String modelName = "";
 
+        public String getProvider() { return provider; }
+        public void setProvider(String provider) { this.provider = provider; }
         public String getBaseUrl() { return baseUrl; }
         public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
         public String getApiKey() { return apiKey; }

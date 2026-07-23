@@ -1,6 +1,6 @@
 # 01 — Scope: What to Port, What to Skip
 
-Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + Ollama.
+Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + OpenAI-compatible LLM endpoint.
 
 Hermes Agent is a large Python project (~693 MB source, ~0.7 MLOC). A Java prototype must focus on the **narrow waist** described in `AGENTS.md`: the runtime that drives one conversation with tool calling. Everything else is either edge capability or platform glue.
 
@@ -64,7 +64,7 @@ The gateway is how Hermes talks to Telegram, Discord, Slack, etc. For a Java pro
 | Memory/Skills | `skills_list`, `skill_view`, `skill_manage`, `memory` | — |
 | Kanban | `kanban_*` | optional — depends on PostgreSQL schema |
 | Messaging | `send_message` | gateway already covers |
-| Vision | `vision_analyze` | **port** — via local Ollama vision or OpenAI-compatible multimodal endpoint |
+| Vision | `vision_analyze` | **port** — via OpenAI-compatible multimodal endpoint (local Ollama by default) |
 | Browser | `browser_*` (core subset) | **port** — local Chromium via CDP, lightweight |
 | Image generation | `image_generate` | **skip** — FAL-specific, add later |
 | Computer-use | `computer_use_tool.py` | **skip** — native OS automation |

@@ -1,6 +1,6 @@
 # 06 — Vision & Browser: In Scope
 
-Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + Ollama.
+Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + OpenAI-compatible LLM endpoint.
 
 ## 1. Decision
 
@@ -11,7 +11,7 @@ Vision and browser are in scope for the Java port. Both use the same `ModelClien
 ### 2.1 Functionality
 
 - `vision_analyze` — analyze an image from URL or local path with a user prompt.
-- Default model: local Ollama vision model configured by `agent.vision.model-name`.
+- Default model: OpenAI-compatible vision model configured by `agent.vision.model-name`; local Ollama is the dev default.
 - Image is base64-encoded and passed in the `content` array alongside text.
 
 ### 2.2 OpenAI-compatible format

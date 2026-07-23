@@ -1,6 +1,6 @@
 # 05 — Migration Notes & Tricky Parts
 
-Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + Ollama.
+Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + OpenAI-compatible LLM endpoint.
 
 This document captures non-obvious translation issues when moving Hermes Agent from Python to Java.
 
@@ -195,8 +195,8 @@ This single happy path validates: model client, tool registry, tool executor, me
 
 - `tools/vision_tools.py` downloads image, encodes base64, sends to auxiliary vision router.
 - In Java: `VisionAnalyzeTool` uses the same `ModelClient` with `ImageContent`.
-- Default model: local Ollama model configured by `agent.model.model-name` (default `qwen2.5:3b`).
-- Fallback chain: Ollama → OpenAI-compatible endpoint → custom endpoint.
+- Default model: OpenAI-compatible model configured by `agent.model.model-name`; local Ollama is the dev default.
+- Fallback chain: configured OpenAI-compatible endpoint → local Ollama → custom endpoint.
 - Security: cap download size, check URL policy, redact credentials.
 
 ### 22.2 Browser
@@ -218,12 +218,21 @@ This single happy path validates: model client, tool registry, tool executor, me
 | Screenshot decode | `javax.imageio.ImageIO` |
 | Base64 | `java.util.Base64` |
 
-### 22.4 Browser Config
+### 22.4 Model Config
+
+- `agent.model.provider` — `openai-compatible` (or `ollama`, `openai`, etc.)
+- `agent.model.base-url`
+- `agent.model.api-key`
+- `agent.model.model-name`
+- `agent.model.timeout-seconds`
+- `agent.model.max-retries`
+
+### 22.5 Browser Config
 
 - `agent.browser.cdp-url`
 - `agent.browser.default-timeout-ms`
 
-### 22.5 Browser Security
+### 22.6 Browser Security
 
 - Run Chromium in headless + sandbox.
 - Avoid `--no-sandbox` unless inside container without user namespaces.

@@ -1,6 +1,6 @@
 # 04 — Proposed Java Module Structure
 
-Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + Ollama.
+Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + OpenAI-compatible LLM endpoint.
 
 This is a draft Gradle multi-module layout for the Java port. Each module maps to a slice of agent functionality.
 

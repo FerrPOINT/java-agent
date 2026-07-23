@@ -8,7 +8,7 @@ Agent pins a large dependency tree. This document maps every *core* dependency t
 
 | Python library | Agent usage | Java replacement | Notes |
 |----------------|--------------|--------------------|-------|
-| `openai==2.24.0` | Chat completions, embeddings, Responses API | **LangChain4j** `open-ai` / `ollama` modules | First provider is local Ollama; OpenAI-compatible kept as fallback |
+| `openai==2.24.0` | Chat completions, embeddings, Responses API | **LangChain4j** `open-ai` module | Works with any OpenAI-compatible endpoint |
 | `httpx[socks]==0.28.1` / `requests==2.33.0` | HTTP clients | **Java 11 `java.net.http.HttpClient`** + `OkHttp` for SOCKS/proxy | Virtual threads make HttpClient ergonomic |
 | `pydantic==2.13.4` | Validation, serialization, JSON schemas | **Jackson** + **Jakarta Bean Validation** (`hibernate-validator`) | No exact Pydantic clone in Java |
 | `jinja2==3.1.6` | System/skill prompt templates | **Pebble** (`io.pebbletemplates:pebble`) | Jinja-like syntax |
@@ -144,7 +144,7 @@ springBoot {
 
 ## 5. Decision Notes
 
-- **LangChain4j vs Spring AI:** LangChain4j is more mature and provider-agnostic. First provider is **Ollama** via `langchain4j-ollama` (local endpoint `http://localhost:11434`). OpenAI-compatible kept for future external endpoints.
+- **LangChain4j vs Spring AI:** LangChain4j is more mature and provider-agnostic. Default provider is **OpenAI-compatible** via `langchain4j-open-ai`; local Ollama is just the dev default (`http://localhost:11434/v1`).
 - **WebFlux vs Virtual Threads:** Chose **Spring MVC + virtual threads** (`spring.threads.virtual.enabled=true`). Agent is I/O-bound but tools are mostly blocking (JDBC, CDP, shell); reactive types would infect the whole stack. WebFlux only if SSE/streaming needed later.
 - **Validation:** Bean Validation + Jackson. Tool schemas generated via Jackson or manually.
 - **HTTP client:** Start with `java.net.http.HttpClient`. Switch to OkHttp if proxy/SOCKS needs exceed JDK support.

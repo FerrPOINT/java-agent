@@ -28,19 +28,20 @@ spring:
 agent:
   name: ${AGENT_NAME:Джава агент}
   model:
-    provider: ollama
-    base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
-    api-key: ${OLLAMA_API_KEY:}
-    model-name: ${OLLAMA_MODEL:qwen2.5:3b}
-    timeout-seconds: 60
-    max-retries: 3
+    provider: ${AGENT_MODEL_PROVIDER:openai-compatible}
+    base-url: ${AGENT_MODEL_BASE_URL:http://localhost:11434/v1}
+    api-key: ${AGENT_MODEL_API_KEY:}
+    model-name: ${AGENT_MODEL_NAME:qwen2.5:3b}
+    timeout-seconds: ${AGENT_MODEL_TIMEOUT_SECONDS:60}
+    max-retries: ${AGENT_MODEL_MAX_RETRIES:3}
   vision:
-    base-url: ${AGENT_VISION_BASE_URL:http://localhost:11434}
+    provider: ${AGENT_VISION_PROVIDER:}
+    base-url: ${AGENT_VISION_BASE_URL:}
     api-key: ${AGENT_VISION_API_KEY:}
-    model-name: ${OLLAMA_VISION_MODEL:}
+    model-name: ${AGENT_VISION_MODEL_NAME:}
   browser:
     cdp-url: ${AGENT_BROWSER_CDP_URL:http://localhost:9222}
-    default-timeout-ms: 30000
+    default-timeout-ms: ${AGENT_BROWSER_DEFAULT_TIMEOUT_MS:30000}
   core:
     default-system-prompt: |
       You are ${agent.name}. Use available tools when needed.

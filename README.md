@@ -15,7 +15,7 @@ Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-пор
 | LangChain4j | 1.18.0 |
 | MCP Java SDK | 2.0.0 |
 | Flyway | 12.4.0 (Spring Boot BOM) |
-| PostgreSQL JDBC | Spring Boot BOM |
+| PostgreSQL JDBC | 42.7.11 (Spring Boot BOM) |
 | Hibernate ORM | 7.4.1.Final (Spring Boot BOM) |
 | Jackson | 3.1.4 (Spring Boot BOM) |
 | Resilience4j | 2.4.0 |
@@ -46,25 +46,32 @@ agent:
   name: ${AGENT_NAME:Джава агент}
 ```
 
-## LLM-провайдер по умолчанию
+## LLM-провайдер
 
-Локальный **Ollama** (`http://localhost:11434`), модель по умолчанию `qwen2.5:3b`.
+Агент работает с любым **OpenAI-compatible endpoint** через `langchain4j-open-ai`.
+По умолчанию endpoint указывает на локальный Ollama (`http://localhost:11434/v1`), но это просто удобный default для разработки.
 
 ```yaml
 agent:
   model:
-    provider: ollama
-    base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
-    model-name: ${OLLAMA_MODEL:qwen2.5:3b}
+    provider: openai-compatible
+    base-url: ${AGENT_MODEL_BASE_URL:http://localhost:11434/v1}
+    api-key: ${AGENT_MODEL_API_KEY:}
+    model-name: ${AGENT_MODEL_NAME:qwen2.5:3b}
 ```
 
-OpenAI-compatible endpoints поддерживаются через `langchain4j-open-ai`.
+Пример подключения внешнего OpenAI-compatible провайдера:
+
+```bash
+export AGENT_MODEL_BASE_URL=https://api.moonshot.ai/v1
+export AGENT_MODEL_API_KEY=sk-...
+export AGENT_MODEL_NAME=kimi-k2.7-code
+```
 
 ## Быстрый старт
 
 ```bash
-export DB_PASSWORD=***
-./gradlew bootRun
+export DB_PASSWORD=*** bootRun
 ```
 
 По умолчанию приложение стартует на http://localhost:8080.
@@ -96,18 +103,21 @@ export DB_PASSWORD=***
 | Переменная | Назначение |
 |------------|------------|
 | `AGENT_NAME` | Имя агента |
-| `OLLAMA_BASE_URL` | URL Ollama |
-| `OLLAMA_MODEL` | Модель Ollama |
-| `OLLAMA_API_KEY` | API-ключ Ollama (если нужен) |
+| `AGENT_MODEL_PROVIDER` | Провайдер модели (default `openai-compatible`) |
+| `AGENT_MODEL_BASE_URL` | URL OpenAI-compatible endpoint |
+| `AGENT_MODEL_API_KEY` | API-ключ |
+| `AGENT_MODEL_NAME` | Название модели |
+| `AGENT_MODEL_TIMEOUT_SECONDS` | Таймаут |
+| `AGENT_MODEL_MAX_RETRIES` | Повторы |
+| `AGENT_VISION_*` | Аналогичные настройки для vision |
 | `DB_HOST` | Хост PostgreSQL (default `localhost`) |
 | `DB_PORT` | Порт PostgreSQL (default `5432`) |
 | `DB_NAME` | Имя базы (default `java_agent`) |
 | `DB_USER` | Пользователь PostgreSQL (default `project_workflow`) |
 | `DB_PASSWORD` | Пароль PostgreSQL |
-| `AGENT_VISION_BASE_URL` | URL vision-провайдера |
-| `AGENT_VISION_API_KEY` | Ключ vision-провайдера |
-| `AGENT_VISION_MODEL_NAME` | Модель vision-провайдера |
 | `AGENT_BROWSER_CDP_URL` | URL Chrome DevTools Protocol |
+| `AGENT_BROWSER_DEFAULT_TIMEOUT_MS` | Таймаут браузера |
+| `SERVER_PORT` | Порт приложения |
 
 ## Документация
 
