@@ -25,6 +25,9 @@ spring:
     virtual:
       enabled: true
 
+server:
+  port: ${AGENT_SERVER_PORT:8090}
+
 agent:
   name: ${AGENT_NAME:Джава агент}
 
@@ -133,9 +136,6 @@ agent:
     parallel-tool-call-guidance: ${AGENT_CORE_PARALLEL_TOOL_CALL_GUIDANCE:true}
     auto-title-session: ${AGENT_CORE_AUTO_TITLE_SESSION:true}
     default-system-prompt: ${AGENT_CORE_DEFAULT_SYSTEM_PROMPT:You are ${agent.name}. Use available tools when needed. Be concise. Return plain text unless JSON is requested.}
-
-server:
-  port: ${SERVER_PORT:8080}
 
 management:
   endpoints:
