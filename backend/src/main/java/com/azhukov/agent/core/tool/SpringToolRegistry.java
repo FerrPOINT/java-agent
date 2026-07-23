@@ -9,6 +9,7 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
+import com.azhukov.agent.tools.ToolParam;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
@@ -57,23 +58,25 @@ public class SpringToolRegistry implements ToolRegistry {
         Map<String, Object> properties = new LinkedHashMap<>();
         List<String> required = new ArrayList<>();
 
-        // Find execute method args record type
-        try {
-            Method executeMethod = handlerClass.getMethod("execute", String.class, Message.class, Session.class);
-            // record type is nested in handler class
-            for (Class<?> nested : handlerClass.getDeclaredClasses()) {
-                if (nested.isRecord()) {
-                    for (java.lang.reflect.RecordComponent rc : nested.getRecordComponents()) {
-                        Map<String, Object> field = new LinkedHashMap<>();
-                        field.put("type", mapType(rc.getType()));
-                        field.put("description", "");
-                        properties.put(rc.getName(), field);
-                        required.add(rc.getName());
-                    }
-                    break;
+        // Find the args class: look for a nested record or a nested POJO class named ...Args
+        Class<?> argsClass = null;
+        for (Class<?> nested : handlerClass.getDeclaredClasses()) {
+            if (nested.isRecord() || nested.getSimpleName().endsWith("Args")) {
+                argsClass = nested;
+                break;
+            }
+        }
+
+        if (argsClass != null) {
+            if (argsClass.isRecord()) {
+                for (java.lang.reflect.RecordComponent rc : argsClass.getRecordComponents()) {
+                    addProperty(properties, required, rc.getName(), rc.getType(), rc.getAccessor().getAnnotation(ToolParam.class));
+                }
+            } else {
+                for (java.lang.reflect.Field field : argsClass.getDeclaredFields()) {
+                    addProperty(properties, required, field.getName(), field.getType(), field.getAnnotation(ToolParam.class));
                 }
             }
-        } catch (NoSuchMethodException ignored) {
         }
 
         Map<String, Object> parameters = new LinkedHashMap<>();
@@ -81,6 +84,17 @@ public class SpringToolRegistry implements ToolRegistry {
         parameters.put("properties", properties);
         parameters.put("required", required);
         return new ToolDefinition(name, description, parameters);
+    }
+
+    private void addProperty(Map<String, Object> properties, List<String> required,
+                             String name, Class<?> type, ToolParam param) {
+        Map<String, Object> field = new LinkedHashMap<>();
+        field.put("type", param != null && !param.type().isBlank() ? param.type() : mapType(type));
+        field.put("description", param != null ? param.description() : "");
+        properties.put(name, field);
+        if (param == null || param.required()) {
+            required.add(name);
+        }
     }
 
     private String mapType(Class<?> type) {

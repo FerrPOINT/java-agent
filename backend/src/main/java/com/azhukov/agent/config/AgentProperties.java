@@ -221,7 +221,7 @@ public class AgentProperties {
         private boolean enabled = true;
         private int maxSkillsInPrompt = 20;
         private int maxCharsPerSkill = 4000;
-        private final List<String> defaultToolsets = new ArrayList<>(List.of("hermes-cli", "web", "file", "browser", "cli", "coding"));
+        private final List<String> defaultToolsets = new ArrayList<>(List.of("web", "file", "browser", "terminal", "coding", "memory", "skills", "core", "delegate"));
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }

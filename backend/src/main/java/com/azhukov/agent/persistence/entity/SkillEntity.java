@@ -24,6 +24,7 @@ public class SkillEntity {
     private String category;
 
     private Instant updatedAt;
+    private Instant createdAt;
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
@@ -35,4 +36,6 @@ public class SkillEntity {
     public void setCategory(String category) { this.category = category; }
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+    public Instant getCreatedAt() { return createdAt; }
+    public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
 }

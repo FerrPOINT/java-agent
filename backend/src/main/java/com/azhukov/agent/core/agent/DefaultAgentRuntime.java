@@ -18,14 +18,12 @@ import com.azhukov.agent.core.tool.ToolRegistry;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.Set;
 
 @Component
 public class DefaultAgentRuntime implements AgentRuntime {
-
-    private static final Logger log = LoggerFactory.getLogger(DefaultAgentRuntime.class);
 
     private final ModelClient modelClient;
     private final ToolRegistry toolRegistry;
@@ -61,13 +59,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
         turnMessages.add(promptBuilder.buildSystemMessage(session));
         turnMessages.add(Message.user(userInput));
 
-        List<ToolDefinition> tools = toolRegistry.getDefinitions();
+        List<ToolDefinition> tools = toolRegistry.getDefinitions(new HashSet<>(properties.getSkills().getDefaultToolsets()));
         int maxTurns = properties.getCore().getMaxTurns();
         int turnIndex = 1;
 
         for (int i = 0; i < maxTurns; i++) {
             List<Message> context = contextEngine.prepareContext(session, turnMessages);
-            log.debug("Turn {} model input: {}", i, context);
             ChatResponse response = modelClient.complete(context, tools);
 
             if (!response.hasToolCalls()) {

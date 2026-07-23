@@ -29,4 +29,24 @@ public class DatabaseSkillManager implements SkillManager {
             .map(SkillEntity::getContent)
             .orElse(null);
     }
+
+    @Override
+    public void saveSkill(String name, String content) {
+        SkillEntity e = skillRepository.findByName(name).orElse(new SkillEntity());
+        e.setName(name);
+        e.setContent(content);
+        e.setUpdatedAt(Instant.now());
+        if (e.getCreatedAt() == null) {
+            e.setCreatedAt(Instant.now());
+        }
+        skillRepository.save(e);
+    }
+
+    @Override
+    public boolean deleteSkill(String name) {
+        return skillRepository.findByName(name).map(e -> {
+            skillRepository.delete(e);
+            return true;
+        }).orElse(false);
+    }
 }

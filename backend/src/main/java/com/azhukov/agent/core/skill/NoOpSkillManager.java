@@ -13,4 +13,13 @@ public class NoOpSkillManager implements SkillManager {
     public String getSkill(String name) {
         return null;
     }
+
+    @Override
+    public void saveSkill(String name, String content) {
+    }
+
+    @Override
+    public boolean deleteSkill(String name) {
+        return false;
+    }
 }
