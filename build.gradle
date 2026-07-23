@@ -2,7 +2,7 @@ plugins {
     id 'java'
     id 'groovy'
     id 'org.springframework.boot' version '4.1.0'
-    id 'io.spring.dependency-management' version '1.1.8'
+    id 'io.spring.dependency-management' version '1.1.7'
 }
 
 group = 'com.ferrpoint'
@@ -66,7 +66,7 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.apache.groovy:groovy-test:5.0.7'
     testImplementation 'io.projectreactor:reactor-test'
-    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:junit-jupiter:1.21.4'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
