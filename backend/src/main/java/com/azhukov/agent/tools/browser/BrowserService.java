@@ -36,6 +36,7 @@ public class BrowserService {
 
     public String click(String selector) throws Exception {
         ensureConnected();
+        String expression = "document.querySelector('" + selector.replace("'", "\\'") + "')?.click()";
         JsonNode document = cdpClient.send("DOM.getDocument", null).get(10, TimeUnit.SECONDS);
         int rootNodeId = document.path("root").path("nodeId").asInt();
 
@@ -48,11 +49,7 @@ public class BrowserService {
         if (nodeId == null || nodeId.asInt() == 0) {
             return "Element not found: " + selector;
         }
-        ObjectNode clickParams = mapper.createObjectNode();
-        clickParams.put("nodeId", nodeId.asInt());
-        cdpClient.send("DOM.click", clickParams).get(10, TimeUnit.SECONDS);
-        waitForLoad();
-        return "Clicked element: " + selector;
+        return evaluate(expression);
     }
 
     public String screenshot() throws Exception {

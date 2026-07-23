@@ -154,10 +154,10 @@ spring:
 
 agent:
   model:
-    provider: noop
-    base-url: http://localhost:11434/v1
-    api-key: ${OLLAMA_API_KEY:}
-    model-name: qwen2.5:3b
+    provider: ${AGENT_MODEL_PROVIDER:openai-compatible}
+    base-url: ${AGENT_MODEL_BASE_URL:http://localhost:11434/v1}
+    api-key: ${AGENT_MODEL_API_KEY:}
+    model-name: ${AGENT_MODEL_NAME:kimi-k2.6}
     timeout-seconds: 60
     max-retries: 3
     max-tokens: 4096
