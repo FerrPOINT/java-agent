@@ -1,6 +1,6 @@
 # 02 — Core Architecture for Java Port
 
-This document describes the essential data flow and module responsibilities for a Java reimplementation of Hermes Agent. It mirrors the Python design but replaces Python-specific patterns with JVM idioms.
+This document describes the essential data flow and module responsibilities for a Java reimplementation of agent. It mirrors the Python design but replaces Python-specific patterns with JVM idioms.
 
 ## 1. Runtime Data Flow (One Turn)
 
@@ -206,7 +206,7 @@ Agent uses `config.yaml` + `.env` for secrets. In Java:
 - **E2E:** real model call with `read_file` and `terminal` against a temp directory.
 - Use Testcontainers if PostgreSQL path is needed later.
 
-## 8. Files to Study in `prototype/hermes-agent/`
+## 8. Files to Study in `prototype/agent-agent/`
 
 - `run_agent.py` — high-level agent class.
 - `agent/conversation_loop.py` — turn logic.

@@ -8,15 +8,15 @@ This is a draft Gradle multi-module layout for the Java port. Each module maps t
 
 ```
 java-agent/
-├── build.gradle
-├── settings.gradle
-├── agent-core/
-├── agent-gateway/
-├── agent-cli/
+├── backend/           # current Spring Boot application
+├── docs/              # architecture and planning docs
+├── agent-core/        # future pure-Java runtime module
+├── agent-gateway/     # future gateway module
+├── agent-cli/         # future CLI module
 └── agent-spring-boot-starter/
 ```
 
-(Currently the project is a single-module Spring Boot app. Split into modules once `agent-core` is stable.)
+Currently the application lives under `backend/` as a single-module Spring Boot app. Split into modules once `agent-core` is stable.
 
 ## 2. Module: `agent-core`
 

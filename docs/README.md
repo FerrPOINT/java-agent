@@ -6,24 +6,24 @@ This directory (`/opt/dev/java-agent/`) contains a **Java-focused prototype** in
 
 Goal: extract the **minimal core** of an agent runtime that can be reimplemented in Java, document which parts are essential, which are platform/integration-specific, and map each Python dependency to a Java alternative.
 
-The `prototype/` directory holds clones of the relevant Hermes repositories for reference. The `docs/` directory is the single source of truth for the Java porting plan.
+The `prototype/` directory holds clones of the relevant agent repositories for reference. The `docs/` directory is the single source of truth for the Java porting plan.
 
 ## 2. Repository Layout
 
 ```
 /opt/dev/java-agent/
 ├── prototype/              # cloned reference repositories
-│   ├── hermes-agent/                   # core runtime (693 MB)
-│   ├── Hermes-Function-Calling/        # function-calling dataset/format
-│   ├── hermes-example-plugins/         # plugin examples
-│   ├── hermes-paperclip-adapter/       # adapter patterns
-│   ├── hermes-telegram-business/       # Telegram business gateway
+│   ├── agent-agent/                   # core runtime (693 MB)
+│   ├── agent-Function-Calling/        # function-calling dataset/format
+│   ├── agent-example-plugins/         # plugin examples
+│   ├── agent-paperclip-adapter/       # adapter patterns
+│   ├── agent-telegram-business/       # Telegram business gateway
 │   ├── agent-governance-toolkit/       # governance/sandbox primitives
 │   ├── OpenShell/                      # sandboxing runtime
 │   ├── OpenShell-Community/            # community sandbox configs
 │   ├── nousflash-agents/               # agent experiments
 │   ├── wterm/                          # terminal UI component
-│   └── hermes-agent-ci-infra/          # CI/deployment infra
+│   └── agent-agent-ci-infra/          # CI/deployment infra
 └── docs/                   # this documentation
     ├── README.md                         # this file
     ├── 01-scope.md                       # what we port, what we skip

@@ -2,11 +2,11 @@
 
 Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + OpenAI-compatible LLM endpoint.
 
-This document captures non-obvious translation issues when moving Hermes Agent from Python to Java.
+This document captures non-obvious translation issues when moving agent from Python to Java.
 
 ## 1. Dynamic Tool Discovery
 
-**Python:** Hermes uses `tools/registry.py` to AST-scan `tools/*.py`, then `importlib.import_module()` at runtime. Each module self-registers with `registry.register()`.
+**Python:** agent uses `tools/registry.py` to AST-scan `tools/*.py`, then `importlib.import_module()` at runtime. Each module self-registers with `registry.register()`.
 
 **Java challenge:** Java is statically typed; modules are classes, not files. Options:
 1. **Annotation + classpath scanning** at runtime (ClassGraph or Spring `ClassPathScanningCandidateComponentProvider`).
@@ -17,7 +17,7 @@ This document captures non-obvious translation issues when moving Hermes Agent f
 
 ## 2. Concurrency: Virtual Threads vs Reactive
 
-**Python:** Hermes has `_tool_loop`, `_worker_thread_local`, and `asyncio.run()` bridges because many tools are sync (file, terminal) but the agent loop is async.
+**Python:** agent has `_tool_loop`, `_worker_thread_local`, and `asyncio.run()` bridges because many tools are sync (file, terminal) but the agent loop is async.
 
 **Java:** Virtual threads (`Thread.startVirtualThread(...)` or `Executors.newVirtualThreadPerTaskExecutor()`) remove most of the async/sync friction. We choose **Spring MVC + virtual threads** (`spring.threads.virtual.enabled=true`) instead of WebFlux because:
 - Agent tools are mostly blocking I/O.
@@ -29,7 +29,7 @@ Use `CompletableFuture` only where you need composition or timeouts. Avoid `Comp
 
 ## 3. OpenAI-Compatible Tool Schema
 
-Hermes builds JSON schemas for tools and sends them in the OpenAI `tools` field. Java must produce identical schemas.
+agent builds JSON schemas for tools and sends them in the OpenAI `tools` field. Java must produce identical schemas.
 
 **Options:**
 - Jackson POJOs + `jsonschema-generator` (Victools).
@@ -40,7 +40,7 @@ Hermes builds JSON schemas for tools and sends them in the OpenAI `tools` field.
 
 ## 4. Prompt Caching & System Prompt Stability
 
-**Hermes rule:** system prompt must not change mid-conversation unless compression occurs. Toolset changes invalidate the cache.
+**agent rule:** system prompt must not change mid-conversation unless compression occurs. Toolset changes invalidate the cache.
 
 **Java implication:** Store the resolved `systemMessage` in `Session`. Recompute only when:
 - New skills are added explicitly.
@@ -49,7 +49,7 @@ Hermes builds JSON schemas for tools and sends them in the OpenAI `tools` field.
 
 ## 5. Message Role Alternation
 
-OpenAI format forbids consecutive messages with the same role. Hermes sanitizes by merging adjacent same-role messages or injecting empty assistant/tool messages.
+OpenAI format forbids consecutive messages with the same role. agent sanitizes by merging adjacent same-role messages or injecting empty assistant/tool messages.
 
 **Java implementation:** `MessageSanitizer` should validate and fix before every API call.
 
@@ -74,15 +74,15 @@ If true PTY is needed later, use JNA/JNR to call `forkpty` or embed a small nati
 
 ## 8. File Path Security
 
-Hermes has `path_security.py` and `file_safety.py` to prevent escaping working directory and reading secrets.
+agent has `path_security.py` and `file_safety.py` to prevent escaping working directory and reading secrets.
 
 **Java:** Implement `PathSecurity` with `Path.normalize()` and `Path.toRealPath()` checks. Maintain allow-list/deny-list (e.g., `.env`, `*.pem`).
 
 ## 9. Patch Tool
 
-Hermes `patch` tool uses a custom parser that applies find-and-replace edits. It is not a unified-diff engine.
+agent `patch` tool uses a custom parser that applies find-and-replace edits. It is not a unified-diff engine.
 
-**Java:** Port the parser carefully. Test with Python test cases from `prototype/hermes-agent/tools/file_operations.py` and related tests. This is a frequent failure point.
+**Java:** Port the parser carefully. Test with Python test cases from `prototype/agent-agent/tools/file_operations.py` and related tests. This is a frequent failure point.
 
 ## 10. Context Compression
 
@@ -97,7 +97,7 @@ Do not port all compression heuristics in the first iteration.
 
 ## 11. Memory Provider Interface
 
-Hermes supports multiple memory backends (Honcho, Supermemory, mem0, SQLite) via `agent/memory_provider.py`.
+agent supports multiple memory backends (Honcho, Supermemory, mem0, SQLite) via `agent/memory_provider.py`.
 
 **Java:** Define `MemoryProvider` interface with methods:
 ```java
@@ -108,13 +108,13 @@ Implement `PostgresMemoryProvider` first; add REST-backed providers later.
 
 ## 12. Skills
 
-Hermes skills are Markdown files + optional scripts/templates. The agent calls `skill_view` to load instructions.
+agent skills are Markdown files + optional scripts/templates. The agent calls `skill_view` to load instructions.
 
 **Java:** Store skills as classpath resources or files under `~/.java-agent/skills/`. Load `SKILL.md` as a string. If a skill references a script, execute it as a tool if the runtime supports it.
 
 ## 13. MCP Integration
 
-Hermes `tools/mcp_tool.py` starts MCP servers (stdio or SSE) and exposes their tools.
+agent `tools/mcp_tool.py` starts MCP servers (stdio or SSE) and exposes their tools.
 
 **Java:** Use `io.modelcontextprotocol.sdk:mcp`. The SDK supports stdio and SSE transports. Wrap each MCP tool as a `ToolDefinition` in the registry.
 
@@ -122,25 +122,25 @@ Hermes `tools/mcp_tool.py` starts MCP servers (stdio or SSE) and exposes their t
 
 ## 14. ACP (Agent Client Protocol)
 
-ACP is an emerging protocol for editors/IDEs to drive agents. Hermes has `acp_adapter/`.
+ACP is an emerging protocol for editors/IDEs to drive agents. agent has `acp_adapter/`.
 
 **Java:** No official stable Java SDK yet. Study `acp_adapter/server.py` and implement the JSON-RPC-like surface manually, or wait for JetBrains/Zed SDK.
 
 ## 15. Configuration Compatibility
 
-Hermes uses `~/.hermes/config.yaml` and `.env` for secrets. Java Spring Boot uses `application.yml` and env vars.
+agent uses `~/.agent/config.yaml` and `.env` for secrets. Java Spring Boot uses `application.yml` and env vars.
 
 **Recommendation:** Write a loader that reads `~/.java-agent/config.yaml` and maps it to `AgentProperties`. Keep secrets in env vars only. Do not write secrets to YAML.
 
 ## 16. Logging
 
-Hermes uses Python logging + `concurrent-log-handler` on Windows.
+agent uses Python logging + `concurrent-log-handler` on Windows.
 
 **Java:** Use SLF4J + Logback. Use `Mapped Diagnostic Context` (MDC) for `sessionId` and `taskId`. Keep logs structured (JSON optionally).
 
 ## 17. Testing Isolation
 
-Hermes tests rely on monkeypatching module-level globals (e.g., `_db`, `_srv`). In Java this is harder.
+agent tests rely on monkeypatching module-level globals (e.g., `_db`, `_srv`). In Java this is harder.
 
 **Strategy:**
 - Use constructor injection everywhere.
@@ -149,13 +149,13 @@ Hermes tests rely on monkeypatching module-level globals (e.g., `_db`, `_srv`). 
 
 ## 18. Gateway Session Management
 
-Hermes gateway maps each platform conversation to an `AgentRuntime` session. Sessions expire after inactivity.
+agent gateway maps each platform conversation to an `AgentRuntime` session. Sessions expire after inactivity.
 
 **Java:** Use a `ConcurrentHashMap<String, Session>` with scheduled cleanup. Be careful with thread-safety: one `AgentRuntime` per session; do not share mutable state.
 
 ## 19. Native Code & Sandboxing
 
-Hermes has `native/fts5_cjk/` (SQLite FTS5 extension) and OpenShell integration.
+agent has `native/fts5_cjk/` (SQLite FTS5 extension) and OpenShell integration.
 
 **Java:**
 - FTS5 extension is SQLite-specific. For search, use H2 full-text or Lucene later.
@@ -165,7 +165,7 @@ Hermes has `native/fts5_cjk/` (SQLite FTS5 extension) and OpenShell integration.
 
 When implementing each module, read these Python files first:
 
-| Module | Key files in `prototype/hermes-agent/` |
+| Module | Key files in `prototype/agent-agent/` |
 |--------|----------------------------------------|
 | Runtime | `run_agent.py`, `agent/conversation_loop.py`, `agent/tool_executor.py` |
 | Tools | `tools/registry.py`, `model_tools.py`, `toolsets.py`, `tools/file_operations.py`, `tools/terminal_tool.py`, `tools/vision_tools.py`, `tools/browser_tool.py` |

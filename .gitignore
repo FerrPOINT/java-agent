@@ -37,3 +37,7 @@ application-local.yaml
 # OS / Java
 hs_err_pid*
 replay_pid*
+
+# Backend build artifacts
+/backend/build/
+/backend/.gradle/

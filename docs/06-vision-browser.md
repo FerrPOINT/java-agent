@@ -59,7 +59,7 @@ agent-core/src/main/java/com/azhukov/agent/core/tools/
 
 ### 3.1 Functionality
 
-Browser in Hermes has multiple modes. For the Java prototype we keep **local Chromium via CDP** — no cloud API keys and it runs on headless servers.
+Browser in agent has multiple modes. For the Java prototype we keep **local Chromium via CDP** — no cloud API keys and it runs on headless servers.
 
 - `browser_navigate` — open URL.
 - `browser_snapshot` — accessibility tree / DOM snapshot.
@@ -162,7 +162,7 @@ Image generation (FAL) stays **out of scope** — it needs FAL SDK / REST and se
 - `ModelClient` must support multipart content (text + image_url) for vision.
 - `ToolExecutor` can run the CDP client in a virtual thread.
 - Need `BrowserPool` to manage Chromium process lifecycle and cleanup.
-- `vision_analyze` must support provider fallback like Hermes' auxiliary client.
+- `vision_analyze` must support provider fallback like agent' auxiliary client.
 
 ## 7. Security
 

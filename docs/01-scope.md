@@ -2,7 +2,7 @@
 
 Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + OpenAI-compatible LLM endpoint.
 
-Hermes Agent is a large Python project (~693 MB source, ~0.7 MLOC). A Java prototype must focus on the **narrow waist** described in `AGENTS.md`: the runtime that drives one conversation with tool calling. Everything else is either edge capability or platform glue.
+agent is a large Python project (~693 MB source, ~0.7 MLOC). A Java prototype must focus on the **narrow waist** described in `AGENTS.md`: the runtime that drives one conversation with tool calling. Everything else is either edge capability or platform glue.
 
 ## 1. Core — MUST port to Java
 
@@ -25,13 +25,13 @@ These modules form the irreducible agent loop. They are model/provider-agnostic 
 | `agent/iteration_budget.py` | `IterationBudget` | prevents infinite tool loops |
 | `agent/message_sanitization.py` | `MessageSanitizer` | role alternation, cache safety |
 | `agent/display.py` | `AgentLogger` / spinner | optional, keep minimal |
-| `hermes_logging.py` | `StructuredLogger` | replaces Python logging |
-| `hermes_state.py` | `AgentState` | cross-turn mutable state |
-| `hermes_constants.py` | `AgentConstants` | version, limits |
+| `agent_logging.py` | `StructuredLogger` | replaces Python logging |
+| `agent_state.py` | `AgentState` | cross-turn mutable state |
+| `agent_constants.py` | `AgentConstants` | version, limits |
 
 ## 2. Gateway — port the skeleton, defer channels
 
-The gateway is how Hermes talks to Telegram, Discord, Slack, etc. For a Java prototype we need:
+The gateway is how agent talks to Telegram, Discord, Slack, etc. For a Java prototype we need:
 
 | Python module | Java equivalent | Priority |
 |---------------|-----------------|----------|
@@ -48,10 +48,10 @@ The gateway is how Hermes talks to Telegram, Discord, Slack, etc. For a Java pro
 
 | Python module | Java equivalent | Priority |
 |---------------|-----------------|----------|
-| `cli.py` / `hermes_cli/main.py` | `AgentRepl` or `AgentCli` | medium — a simple command loop is enough |
-| `hermes_cli/subcommands/` | picocli commands | low |
-| `hermes_cli/setup.py` | setup wizard | low |
-| `hermes_cli/web_server.py` | Spring Boot `WebController` | medium |
+| `cli.py` / `agent_cli/main.py` | `AgentRepl` or `AgentCli` | medium — a simple command loop is enough |
+| `agent_cli/subcommands/` | picocli commands | low |
+| `agent_cli/setup.py` | setup wizard | low |
+| `agent_cli/web_server.py` | Spring Boot `WebController` | medium |
 
 **Defer:** full TUI, desktop app, dashboard, billing, profiles UI.
 
@@ -99,13 +99,13 @@ Keep the interface but not the full sandbox runtime:
 - `agent-governance-toolkit/` — extract permission model, approval flow, audit log schema.
 - `tirith_security.py` / `approval.py` — port the approval gate.
 
-## 7. Hermes-Function-Calling
+## 7. agent-Function-Calling
 
-`Hermes-Function-Calling/` is a dataset and JSON schema standard, not runtime code. Include it as reference for how tool schemas and tool-call envelopes must look. Java code should generate equivalent JSON schemas (use Jackson + JSON Schema generator or manual).
+`agent-Function-Calling/` is a dataset and JSON schema standard, not runtime code. Include it as reference for how tool schemas and tool-call envelopes must look. Java code should generate equivalent JSON schemas (use Jackson + JSON Schema generator or manual).
 
 ## 8. Paperclip Adapter
 
-`hermes-paperclip-adapter/` contains adapter patterns. Study for how external tools/APIs are wrapped; use as a template for Java plugin adapters.
+`agent-paperclip-adapter/` contains adapter patterns. Study for how external tools/APIs are wrapped; use as a template for Java plugin adapters.
 
 ## 9. NousFlash Agents
 

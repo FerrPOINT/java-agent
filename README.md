@@ -1,6 +1,6 @@
 # Java Agent
 
-Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-порт ядра NousResearch Hermes Agent.
+Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-порт ядра NousResearch agent.
 
 ## Стек
 
@@ -71,6 +71,7 @@ export AGENT_MODEL_NAME=kimi-k2.7-code
 ## Быстрый старт
 
 ```bash
+cd backend
 export DB_PASSWORD=*** bootRun
 ```
 
@@ -81,22 +82,25 @@ export DB_PASSWORD=*** bootRun
 ## Сборка
 
 ```bash
+cd backend
 ./gradlew build
 ```
 
 ## Тесты
 
 ```bash
+cd backend
 ./gradlew test
 ```
 
 ## Структура
 
-- `src/main/java/` — Java-код ядра
-- `src/main/groovy/` — Groovy-скрипты / DSL
-- `src/main/resources/` — конфигурация и миграции Flyway
+- `backend/` — Spring Boot приложение (Gradle + Java + Groovy)
+- `backend/src/main/java/` — Java-код ядра
+- `backend/src/main/groovy/` — Groovy-скрипты / DSL
+- `backend/src/main/resources/` — конфигурация и миграции Flyway
 - `docs/` — архитектура и планирование
-- `prototype/` — клоны репозиториев Hermes (не в git)
+- `prototype/` — клоны репозиториев agent (не в git)
 
 ## Переменные окружения
 
