@@ -96,3 +96,16 @@ tasks.withType(JavaCompile).configureEach {
 springBoot {
     buildInfo()
 }
+
+// Allow JLine native terminal access without warning on Java 25
+tasks.named('bootRun') {
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+}
+tasks.named('bootJar') {
+    manifest {
+        attributes 'Start-Class': 'com.azhukov.agent.JavaAgentApplication'
+    }
+}
+
+// For plain java -jar runs, add this option via environment or wrapper script.
+// Example: JAVA_TOOL_OPTIONS='--enable-native-access=ALL-UNNAMED' java -jar ...
