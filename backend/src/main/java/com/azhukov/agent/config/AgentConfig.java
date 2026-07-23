@@ -16,6 +16,8 @@ import com.azhukov.agent.core.skill.DatabaseSkillManager;
 import com.azhukov.agent.core.skill.NoOpSkillManager;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.persistence.repository.MemoryRepository;
+import com.azhukov.agent.persistence.repository.SkillRepository;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -72,8 +74,8 @@ public class AgentConfig {
     @Bean
     @ConditionalOnProperty(name = "agent.memory.enabled", havingValue = "true", matchIfMissing = true)
     @ConditionalOnMissingBean(MemoryProvider.class)
-    public MemoryProvider memoryProvider(DatabaseMemoryProvider databaseMemoryProvider) {
-        return databaseMemoryProvider;
+    public MemoryProvider memoryProvider(MemoryRepository memoryRepository) {
+        return new DatabaseMemoryProvider(memoryRepository);
     }
 
     @Bean
@@ -86,8 +88,8 @@ public class AgentConfig {
     @Bean
     @ConditionalOnProperty(name = "agent.skills.enabled", havingValue = "true", matchIfMissing = true)
     @ConditionalOnMissingBean(SkillManager.class)
-    public SkillManager skillManager(DatabaseSkillManager databaseSkillManager) {
-        return databaseSkillManager;
+    public SkillManager skillManager(SkillRepository skillRepository) {
+        return new DatabaseSkillManager(skillRepository);
     }
 
     @Bean

@@ -2,12 +2,10 @@ package com.azhukov.agent.core.memory;
 
 import com.azhukov.agent.persistence.entity.MemoryEntity;
 import com.azhukov.agent.persistence.repository.MemoryRepository;
-import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.List;
 
-@Component
 public class DatabaseMemoryProvider implements MemoryProvider {
 
     private final MemoryRepository memoryRepository;

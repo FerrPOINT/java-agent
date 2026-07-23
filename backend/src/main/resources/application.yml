@@ -205,6 +205,10 @@ spring:
     enabled: false
 
 agent:
+  memory:
+    enabled: false
+  skills:
+    enabled: false
   model:
     provider: noop
 
