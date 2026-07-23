@@ -1,1 +1,0 @@
-rootProject.name = "hermes-java-agent"

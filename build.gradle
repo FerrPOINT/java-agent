@@ -1,0 +1,84 @@
+plugins {
+    id 'java'
+    id 'groovy'
+    id 'org.springframework.boot' version '4.1.0'
+    id 'io.spring.dependency-management' version '1.1.8'
+}
+
+group = 'com.ferrpoint'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { url 'https://repo.spring.io/milestone' }
+}
+
+dependencies {
+    // Spring Boot
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // Groovy 5 (override Spring Boot 4.1 default 5.0.6 for latest patch)
+    implementation 'org.apache.groovy:groovy:5.0.7'
+    implementation 'org.apache.groovy:groovy-json:5.0.7'
+
+    // LLM (latest stable, not in Spring Boot BOM)
+    implementation 'dev.langchain4j:langchain4j:1.18.0'
+    implementation 'dev.langchain4j:langchain4j-open-ai:1.18.0'
+
+    // MCP (GA 2.0, not in Spring Boot BOM)
+    implementation 'io.modelcontextprotocol.sdk:mcp:2.0.0'
+
+    // DB / migrations — versions managed by Spring Boot 4.1 BOM
+    implementation 'org.flywaydb:flyway-core'
+    runtimeOnly 'org.xerial:sqlite-jdbc'
+    implementation 'org.hibernate.orm:hibernate-community-dialects'
+
+    // Templating (Pebble 4.x supports Spring Boot 3+, Java 17+)
+    implementation 'io.pebbletemplates:pebble:4.1.2'
+
+    // Retry
+    implementation 'io.github.resilience4j:resilience4j-retry:2.4.0'
+
+    // CLI
+    implementation 'info.picocli:picocli:4.7.7'
+    implementation 'org.jline:jline:4.3.1'
+
+    // Logging
+    implementation 'org.slf4j:slf4j-api:2.0.17'
+
+    // Test
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.apache.groovy:groovy-test:5.0.7'
+    testImplementation 'io.projectreactor:reactor-test'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25
+}
+
+springBoot {
+    buildInfo()
+}
