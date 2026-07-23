@@ -70,7 +70,7 @@ public class SpringToolRegistry implements ToolRegistry {
         if (argsClass != null) {
             if (argsClass.isRecord()) {
                 for (java.lang.reflect.RecordComponent rc : argsClass.getRecordComponents()) {
-                    addProperty(properties, required, rc.getName(), rc.getType(), rc.getAccessor().getAnnotation(ToolParam.class));
+                    addProperty(properties, required, rc.getName(), rc.getType(), rc.getAnnotation(ToolParam.class));
                 }
             } else {
                 for (java.lang.reflect.Field field : argsClass.getDeclaredFields()) {

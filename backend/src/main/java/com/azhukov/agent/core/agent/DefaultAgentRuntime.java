@@ -15,6 +15,8 @@ import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -24,6 +26,8 @@ import java.util.Set;
 
 @Component
 public class DefaultAgentRuntime implements AgentRuntime {
+
+    private static final Logger log = LoggerFactory.getLogger(DefaultAgentRuntime.class);
 
     private final ModelClient modelClient;
     private final ToolRegistry toolRegistry;
@@ -64,11 +68,16 @@ public class DefaultAgentRuntime implements AgentRuntime {
         int turnIndex = 1;
 
         for (int i = 0; i < maxTurns; i++) {
+            long turnStart = System.currentTimeMillis();
             List<Message> context = contextEngine.prepareContext(session, turnMessages);
             ChatResponse response = modelClient.complete(context, tools);
+            log.debug("Turn {} model returned in {} ms: toolCalls={}, content length={}",
+                i, System.currentTimeMillis() - turnStart, response.toolCalls() != null ? response.toolCalls().size() : 0,
+                response.content() != null ? response.content().length() : 0);
 
             if (!response.hasToolCalls()) {
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
+                log.debug("Turn {} completed without tool calls", i);
                 return new TurnResult(turnMessages, true, null);
             }
 
@@ -76,7 +85,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
             List<Message> toolResults = new ArrayList<>();
             for (ToolCall call : response.toolCalls()) {
+                long toolStart = System.currentTimeMillis();
                 ToolResult result = toolRegistry.execute(call.name(), call.id(), call.arguments(), null, session);
+                log.debug("Tool {} executed in {} ms: success={}, content length={}, error={}",
+                    call.name(), System.currentTimeMillis() - toolStart, result.success(),
+                    result.content() != null ? result.content().length() : 0, result.error());
                 toolResults.add(Message.toolResult(call.id(), formatResult(result), turnIndex));
             }
             turnMessages.addAll(toolResults);
