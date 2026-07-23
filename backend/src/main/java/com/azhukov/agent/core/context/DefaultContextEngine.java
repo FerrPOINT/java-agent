@@ -41,15 +41,23 @@ public class DefaultContextEngine implements ContextEngine {
         StringBuilder systemExtra = new StringBuilder();
         appendSkills(systemExtra);
         appendMemoryRecall(session, systemExtra);
+
+        // Compose system message first if present
+        if (!messages.isEmpty() && messages.get(0).role() == Role.SYSTEM) {
+            Message base = messages.get(0);
+            String systemText = base.content();
+            if (!systemExtra.isEmpty()) {
+                systemText = systemText + "\n\n" + systemExtra;
+            }
+            context.add(Message.system(systemText));
+        }
+
+        // Then add recent history (excluding the current turn messages to avoid duplication)
         appendRecentHistory(session, context);
 
-        if (!systemExtra.isEmpty() && !messages.isEmpty() && messages.get(0).role() == Role.SYSTEM) {
-            Message base = messages.get(0);
-            context.add(0, Message.system(base.content() + "\n\n" + systemExtra));
-            context.addAll(messages.subList(1, messages.size()));
-        } else {
-            context.addAll(messages);
-        }
+        // Add remaining incoming messages after system
+        int start = (!messages.isEmpty() && messages.get(0).role() == Role.SYSTEM) ? 1 : 0;
+        context.addAll(messages.subList(start, messages.size()));
 
         return context;
     }

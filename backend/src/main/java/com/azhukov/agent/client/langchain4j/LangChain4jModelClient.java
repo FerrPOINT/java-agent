@@ -59,6 +59,7 @@ public class LangChain4jModelClient implements ModelClient {
             .toolSpecifications(specs)
             .build();
 
+        log.debug("Sending {} messages to model {}", chatMessages.size(), request);
         dev.langchain4j.model.chat.response.ChatResponse response = chatModel.chat(request);
         AiMessage aiMessage = response.aiMessage();
 
