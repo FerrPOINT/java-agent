@@ -98,6 +98,8 @@ public class AgentRuntimeService {
                 e.setToolCallArguments(m.toolCalls().get(0).arguments());
             }
             e.setCreatedAt(now);
+            Integer turnIndex = m.turnIndex();
+            e.setTurnIndex(turnIndex != null ? turnIndex : 0);
             messageRepository.save(e);
         }
     }

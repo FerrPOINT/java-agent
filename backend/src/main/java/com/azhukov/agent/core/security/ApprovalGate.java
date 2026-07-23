@@ -23,6 +23,6 @@ public class ApprovalGate {
     }
 
     public Message requestApproval(ToolCall call) {
-        return Message.assistant("Requesting approval for tool call: " + call.name() + "(" + call.arguments() + ")");
+        return Message.assistant("Requesting approval for tool call: " + call.name() + "(" + call.arguments() + ")", 0);
     }
 }

@@ -52,27 +52,26 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
         List<ToolDefinition> tools = toolRegistry.getDefinitions();
         int maxTurns = properties.getCore().getMaxTurns();
+        int turnIndex = 1;
 
         for (int i = 0; i < maxTurns; i++) {
             List<Message> context = contextEngine.prepareContext(session, turnMessages);
             ChatResponse response = modelClient.complete(context, tools);
 
             if (!response.hasToolCalls()) {
-                turnMessages.add(Message.assistant(response.content()));
+                turnMessages.add(Message.assistant(response.content(), turnIndex));
                 return new TurnResult(turnMessages, true, null);
             }
 
-            turnMessages.add(Message.assistantToolCalls(response.toolCalls()));
+            turnMessages.add(Message.assistantToolCalls(response.toolCalls(), turnIndex));
 
             List<Message> toolResults = new ArrayList<>();
             for (ToolCall call : response.toolCalls()) {
                 ToolResult result = toolRegistry.execute(call.name(), call.id(), call.arguments(), null, session);
-                toolResults.add(Message.toolResult(call.id(), formatResult(result)));
+                toolResults.add(Message.toolResult(call.id(), formatResult(result), turnIndex));
             }
             turnMessages.addAll(toolResults);
-
-            // Loop back to model with tool results to get final answer.
-            // For models that return final text on the same call, this will be one extra iteration.
+            turnIndex++;
         }
 
         return TurnResult.error("Reached max turns without completion");
