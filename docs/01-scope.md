@@ -1,6 +1,6 @@
 # 01 — Scope: What to Port, What to Skip
 
-Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7.
+Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + Ollama.
 
 Hermes Agent is a large Python project (~693 MB source, ~0.7 MLOC). A Java prototype must focus on the **narrow waist** described in `AGENTS.md`: the runtime that drives one conversation with tool calling. Everything else is either edge capability or platform glue.
 
@@ -19,7 +19,7 @@ These modules form the irreducible agent loop. They are model/provider-agnostic 
 | `agent/context_engine.py` | `ContextEngine` interface | pluggable context management |
 | `agent/context_compressor.py` | `ContextCompressor` | default compaction implementation |
 | `agent/memory_manager.py` | `MemoryManager` | durable user/session memory |
-| `agent/memory_provider.py` | `MemoryProvider` interface | Honcho / supermemory / SQLite adapters |
+| `agent/memory_provider.py` | `MemoryProvider` interface | PostgreSQL adapter first; REST-backed providers later |
 | `agent/skill_*.py` | `SkillManager` | skill discovery, loading, execution |
 | `tools/skills_tool.py` | `SkillToolRegistry` | agent-facing skill tools |
 | `agent/iteration_budget.py` | `IterationBudget` | prevents infinite tool loops |
@@ -62,9 +62,9 @@ The gateway is how Hermes talks to Telegram, Discord, Slack, etc. For a Java pro
 | Essential file/terminal | `read_file`, `write_file`, `patch`, `search_files`, `terminal`, `process` | — |
 | Web | `web_search`, `web_extract` | — |
 | Memory/Skills | `skills_list`, `skill_view`, `skill_manage`, `memory` | — |
-| Kanban | `kanban_*` | optional — depends on SQLite schema |
+| Kanban | `kanban_*` | optional — depends on PostgreSQL schema |
 | Messaging | `send_message` | gateway already covers |
-| Vision | `vision_analyze` | **port** — via OpenAI-compatible multimodal endpoint (Kimi K2.7-code) |
+| Vision | `vision_analyze` | **port** — via local Ollama vision or OpenAI-compatible multimodal endpoint |
 | Browser | `browser_*` (core subset) | **port** — local Chromium via CDP, lightweight |
 | Image generation | `image_generate` | **skip** — FAL-specific, add later |
 | Computer-use | `computer_use_tool.py` | **skip** — native OS automation |

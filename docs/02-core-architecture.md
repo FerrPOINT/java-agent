@@ -133,7 +133,7 @@ Python uses runtime module import + AST prefilter. Java can use:
 ### 2.7 `MemoryManager`
 
 - Persists user facts and session context across turns.
-- Default SQLite/H2 provider.
+- Default PostgreSQL provider; H2 for tests.
 - Optional Honcho/Supermemory provider via interface.
 - Redacts sensitive text before egress.
 
@@ -195,7 +195,7 @@ Agent uses `config.yaml` + `.env` for secrets. In Java:
 
 ## 6. Persistence
 
-- Session DB: SQLite via JDBC or H2 for tests.
+- Session DB: PostgreSQL via JDBC; H2 for tests.
 - Schema should mirror Agent tables: `sessions`, `messages`, `tool_calls`, `memory`, `skills`.
 - Use Flyway or Liquibase for migrations.
 

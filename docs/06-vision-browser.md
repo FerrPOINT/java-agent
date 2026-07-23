@@ -1,6 +1,6 @@
 # 06 — Vision & Browser: In Scope
 
-Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7.
+Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + Ollama.
 
 ## 1. Decision
 
@@ -11,14 +11,14 @@ Vision and browser are in scope for the Java port. Both use the same `ModelClien
 ### 2.1 Functionality
 
 - `vision_analyze` — analyze an image from URL or local path with a user prompt.
-- Default model: `kimi-k2.7-code` (multimodal) or any OpenAI-compatible vision model.
+- Default model: local Ollama vision model configured by `agent.vision.model-name`.
 - Image is base64-encoded and passed in the `content` array alongside text.
 
 ### 2.2 OpenAI-compatible format
 
 ```json
 {
-  "model": "kimi-k2.7-code",
+  "model": "qwen2.5-vl:7b",
   "messages": [
     {
       "role": "user",
@@ -34,7 +34,7 @@ Vision and browser are in scope for the Java port. Both use the same `ModelClien
 ### 2.3 Java classes
 
 ```
-agent-core/src/main/java/com/ferrpoint/agent/core/tools/
+agent-core/src/main/java/com/azhukov/agent/core/tools/
 ├── VisionAnalyzeTool.java
 ├── VisionImageUrlTool.java
 └── support/
@@ -43,7 +43,7 @@ agent-core/src/main/java/com/ferrpoint/agent/core/tools/
 
 ### 2.4 Configuration
 
-- `agent.vision.model-name` — default model (`kimi-k2.7-code`).
+- `agent.vision.model-name` — default model (Ollama vision model).
 - `agent.vision.max-download-bytes` — file size limit (default 50 MB).
 - `agent.vision.download-timeout-seconds` — download timeout.
 - Secrets via env: `AGENT_VISION_API_KEY`, or reuse the main model provider.
@@ -52,7 +52,7 @@ agent-core/src/main/java/com/ferrpoint/agent/core/tools/
 
 - Image download with size limit and timeout.
 - Base64 encoding.
-- Provider fallback chain (Kimi → OpenRouter → Anthropic → custom endpoint).
+- Provider fallback chain: Ollama → OpenAI-compatible endpoint → custom endpoint.
 - URL credential redaction.
 
 ## 3. Browser
@@ -94,7 +94,7 @@ Browser in Hermes has multiple modes. For the Java prototype we keep **local Chr
 
 | Task | Library |
 |------|---------|
-| CDP WebSocket client | `java.net.http.WebSocket` or Tyrus |
+| CDP WebSocket client | `java.net.http.WebSocket` |
 | JSON-RPC over CDP | manual (CDP is simple JSON-RPC) |
 | Chromium management | `ProcessBuilder` with `google-chrome --remote-debugging-port=9222` or Selenium chrome-driver helper |
 | Accessibility tree | CDP `Accessibility.getFullAXTree` |
@@ -108,7 +108,7 @@ Microsoft Playwright for Java is an option but pulls ~200 MB of native binaries 
 ### 3.5 Java classes
 
 ```
-agent-core/src/main/java/com/ferrpoint/agent/core/tools/browser/
+agent-core/src/main/java/com/azhukov/agent/core/tools/browser/
 ├── BrowserTool.java (annotation alias)
 ├── BrowserPool.java
 ├── CdpClient.java
@@ -130,11 +130,8 @@ agent-core/src/main/java/com/ferrpoint/agent/core/tools/browser/
 
 ### 3.6 Configuration
 
-- `agent.browser.executable` — path to `google-chrome` / `chromium`.
-- `agent.browser.headless` — `true` by default.
-- `agent.browser.args` — additional args (`--no-sandbox`, etc.).
 - `agent.browser.cdp-url` — external CDP endpoint if Chromium is managed outside the agent.
-- `agent.browser.timeout-seconds` — operation timeout.
+- `agent.browser.default-timeout-ms` — operation timeout.
 
 ## 4. Image Generation
 
@@ -147,7 +144,7 @@ Image generation (FAL) stays **out of scope** — it needs FAL SDK / REST and se
 - `read_file`, `write_file`, `patch`, `search_files`
 - `terminal`, `process`
 - `web_search`, `web_extract`
-- `vision_analyze` (Kimi / OpenAI-compatible)
+- `vision_analyze` (Ollama / OpenAI-compatible)
 - `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_scroll`, `browser_back`, `browser_press`, `browser_console`, `browser_get_images`, `browser_vision`
 - `skills_list`, `skill_view`, `skill_manage`
 - `memory`

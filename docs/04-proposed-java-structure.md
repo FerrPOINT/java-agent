@@ -1,6 +1,6 @@
 # 04 — Proposed Java Module Structure
 
-Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7.
+Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + Ollama.
 
 This is a draft Gradle multi-module layout for the Java port. Each module maps to a slice of agent functionality.
 
@@ -20,7 +20,7 @@ java-agent/
 
 ## 2. Module: `agent-core`
 
-The runtime. Depends only on JVM + small libraries (Jackson, Pebble, SQLite, Resilience4j).
+The runtime. Depends only on JVM + small libraries (Jackson, Pebble, PostgreSQL, Resilience4j).
 
 ```
 agent-core/
@@ -94,7 +94,7 @@ agent-core/
     ├── memory/
     │   ├── MemoryManager.java
     │   ├── MemoryProvider.java
-    │   └── SqliteMemoryProvider.java
+    │   └── PostgresMemoryProvider.java
     ├── skill/
     │   ├── SkillManager.java
     │   ├── Skill.java
@@ -180,4 +180,4 @@ agent-spring-boot-starter/
 - Keep `agent-core` free of Spring annotations so it can be used in non-Spring contexts.
 - Use `module-info.java` optionally; not required for prototype.
 - Browser tools live under `tools/browser/` and use a lightweight CDP client, not Playwright, to avoid heavy native deps in the prototype.
-- Vision uses the same `ModelClient` with image_url base64 payloads, defaulting to Kimi K2.7-code or any configured OpenAI-compatible vision model.
+- Vision uses the same `ModelClient` with image_url base64 payloads, defaulting to the configured Ollama vision model or any OpenAI-compatible vision endpoint.

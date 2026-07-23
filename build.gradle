@@ -27,9 +27,6 @@ repositories {
 dependencies {
     // Spring Boot
     implementation 'org.springframework.boot:spring-boot-starter-web'
-    // WebFlux — optional, may be removed if virtual threads cover all needs
-    implementation 'org.springframework.boot:spring-boot-starter-webflux'
-    implementation 'org.springframework.boot:spring-boot-starter-websocket'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
@@ -41,14 +38,15 @@ dependencies {
     // LLM (latest stable, not in Spring Boot BOM)
     implementation 'dev.langchain4j:langchain4j:1.18.0'
     implementation 'dev.langchain4j:langchain4j-open-ai:1.18.0'
+    implementation 'dev.langchain4j:langchain4j-ollama:1.18.0'
 
     // MCP (GA 2.0, not in Spring Boot BOM)
     implementation 'io.modelcontextprotocol.sdk:mcp:2.0.0'
 
     // DB / migrations — versions managed by Spring Boot 4.1 BOM
     implementation 'org.flywaydb:flyway-core'
-    runtimeOnly 'org.xerial:sqlite-jdbc'
-    implementation 'org.hibernate.orm:hibernate-community-dialects'
+    runtimeOnly 'org.postgresql:postgresql'
+    implementation 'org.flywaydb:flyway-database-postgresql'
 
     // Templating (Pebble 4.x supports Spring Boot 3+, Java 17+)
     implementation 'io.pebbletemplates:pebble:4.1.2'
@@ -66,8 +64,9 @@ dependencies {
     // Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.apache.groovy:groovy-test:5.0.7'
-    testImplementation 'io.projectreactor:reactor-test'
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
     testImplementation 'org.testcontainers:junit-jupiter:1.21.4'
+    testImplementation 'org.testcontainers:postgresql:1.21.4'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

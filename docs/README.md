@@ -47,8 +47,8 @@ The `prototype/` directory holds clones of the relevant Hermes repositories for 
 | Templating | **Pebble 4.1.2** | Jinja-like |
 | HTTP client | `java.net.http.HttpClient` + OkHttp fallback | replaces `httpx` / `requests` |
 | WebSocket | `java.net.http.WebSocket` | CDP, replaces `websockets` |
-| Persistence | SQLite (JDBC) + Flyway | reference implementation uses SQLite/PostgreSQL |
-| Async | virtual threads / `CompletableFuture` | replaces `asyncio` |
+| Persistence | PostgreSQL (JDBC) + Flyway | dev DB is existing Postgres container |
+| LLM provider | **Ollama** local endpoint (`http://localhost:11434`) | default; OpenAI-compatible endpoints via LangChain4j |
 | MCP | `io.modelcontextprotocol.sdk:mcp:2.0.0` | official Anthropic Java SDK |
 | CLI | Picocli 4.7.7 + JLine 4.3.1 | REPL |
 

@@ -3,15 +3,17 @@ spring:
     name: java-agent
 
   datasource:
-    url: jdbc:sqlite:${user.home}/.java-agent/db/agent.db
-    driver-class-name: org.sqlite.JDBC
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:java_agent}
+    username: ${DB_USER:project_workflow}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
 
   jpa:
     hibernate:
       ddl-auto: none
     properties:
       hibernate:
-        dialect: org.hibernate.community.dialect.SQLiteDialect
+        dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
     show-sql: false
 
@@ -26,16 +28,16 @@ spring:
 agent:
   name: ${AGENT_NAME:Джава агент}
   model:
-    provider: openai
-    base-url: https://api.openai.com/v1
-    api-key: ${AGENT_MODEL_API_KEY:}
-    model-name: gpt-4o-mini
+    provider: ollama
+    base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+    api-key: ${OLLAMA_API_KEY:}
+    model-name: ${OLLAMA_MODEL:qwen2.5:3b}
     timeout-seconds: 60
     max-retries: 3
   vision:
-    base-url: ${AGENT_VISION_BASE_URL:https://api.openai.com/v1}
+    base-url: ${AGENT_VISION_BASE_URL:http://localhost:11434}
     api-key: ${AGENT_VISION_API_KEY:}
-    model-name: gpt-4o
+    model-name: ${OLLAMA_VISION_MODEL:}
   browser:
     cdp-url: ${AGENT_BROWSER_CDP_URL:http://localhost:9222}
     default-timeout-ms: 30000
@@ -45,7 +47,7 @@ agent:
       Be concise. Return plain text unless JSON is requested.
 
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
 
 management:
   endpoints:

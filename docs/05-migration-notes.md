@@ -1,6 +1,6 @@
 # 05 — Migration Notes & Tricky Parts
 
-Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7.
+Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + Ollama.
 
 This document captures non-obvious translation issues when moving Hermes Agent from Python to Java.
 
@@ -104,7 +104,7 @@ Hermes supports multiple memory backends (Honcho, Supermemory, mem0, SQLite) via
 List<String> getFacts(String userId, String sessionId, String query);
 void addFact(String userId, String sessionId, String fact);
 ```
-Implement `SqliteMemoryProvider` first; add REST-backed providers later.
+Implement `PostgresMemoryProvider` first; add REST-backed providers later.
 
 ## 12. Skills
 
@@ -195,8 +195,8 @@ This single happy path validates: model client, tool registry, tool executor, me
 
 - `tools/vision_tools.py` downloads image, encodes base64, sends to auxiliary vision router.
 - In Java: `VisionAnalyzeTool` uses the same `ModelClient` with `ImageContent`.
-- Default model: `kimi-k2.7-code` via OpenAI-compatible endpoint at `api.moonshot.ai`.
-- Fallback chain: main provider (if vision-capable) → Kimi → OpenRouter → Anthropic → custom endpoint.
+- Default model: local Ollama model configured by `agent.model.model-name` (default `qwen2.5:3b`).
+- Fallback chain: Ollama → OpenAI-compatible endpoint → custom endpoint.
 - Security: cap download size, check URL policy, redact credentials.
 
 ### 22.2 Browser
@@ -220,11 +220,8 @@ This single happy path validates: model client, tool registry, tool executor, me
 
 ### 22.4 Browser Config
 
-- `agent.browser.executable`
-- `agent.browser.headless=true`
-- `agent.browser.args=--no-sandbox,--disable-gpu`
-- `agent.browser.cdp-url` (external)
-- `agent.browser.timeout-seconds`
+- `agent.browser.cdp-url`
+- `agent.browser.default-timeout-ms`
 
 ### 22.5 Browser Security
 
