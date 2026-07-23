@@ -247,7 +247,224 @@ CREATE TABLE skills (
 );
 ```
 
-## 9. Spring Boot Module Layout (Current → Future)
+## 9. Layered Architecture: Controller → Service → Repository
+
+All server-side code follows a strict three-layer model. No layer bypasses the layer below it.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Presentation Layer                                          │
+│  - Controllers / CLI / Gateway adapters                      │
+│  - DTO in, DTO out                                           │
+│  - No business logic, only routing and HTTP/CLI mapping       │
+└───────────────────────────────┬─────────────────────────────┘
+                                │ calls
+┌───────────────────────────────▼─────────────────────────────┐
+│  Service Layer                                               │
+│  - AgentRuntimeService, ToolService, SessionService         │
+│  - Business logic, transactions, orchestration             │
+│  - Uses repositories and core runtime                      │
+└───────────────────────────────┬─────────────────────────────┘
+                                │ calls
+┌───────────────────────────────▼─────────────────────────────┐
+│  Repository / Infrastructure Layer                           │
+│  - JPA Repositories, JDBC templates, Flyway                │
+│  - File system, WebSocket CDP client, process manager        │
+│  - External clients (Ollama, web search, MCP)              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 9.1 Rules
+
+| Rule | Description |
+|------|-------------|
+| Controller calls only Service | Never repository or core runtime directly. |
+| Service is transaction boundary | Use `@Transactional` at service methods. |
+| Service calls Repository and domain objects | Domain (`AgentRuntime`, `ToolExecutor`) is injected into service. |
+| Repository returns entities / raw data | No business logic in repositories. |
+| DTOs live in `api.dto.*` | Never expose internal `Message`/`ToolCall` models directly. |
+| No layer skips | Controller → Service → Repository. Exception: health checks may call actuator directly. |
+
+### 9.2 Controller Layer
+
+```
+backend/src/main/java/com/azhukov/agent/api/
+├── AgentController.java              # POST /api/v1/agent/chat
+├── SessionController.java              # GET/POST /api/v1/sessions
+├── ToolController.java                 # GET /api/v1/tools
+├── SkillController.java                # GET /api/v1/skills
+├── BrowserController.java              # POST /api/v1/browser/{action}
+├── OpenAiCompatibleController.java     # POST /v1/chat/completions
+└── dto/
+    ├── ChatRequest.java
+    ├── ChatResponse.java
+    ├── SessionDto.java
+    └── ToolCallResultDto.java
+```
+
+Controllers only:
+- Validate input (`@Valid`).
+- Convert DTO → service command.
+- Call service method.
+- Convert result → response DTO.
+- Handle exceptions via `@ControllerAdvice`.
+
+### 9.3 Service Layer
+
+```
+backend/src/main/java/com/azhukov/agent/service/
+├── AgentRuntimeService.java            # orchestrates a turn
+├── SessionService.java                 # session CRUD + cleanup
+├── ToolService.java                    # list tools, execute single tool call
+├── MemoryService.java                  # memory facts CRUD
+├── SkillService.java                   # skill CRUD + load
+├── BrowserService.java                 # browser lifecycle + actions
+├── ModelClientService.java             # wraps ModelClient + fallback
+└── command/
+    ├── RunTurnCommand.java
+    ├── ExecuteToolCommand.java
+    └── CreateSessionCommand.java
+```
+
+Service methods are the transaction boundary and the only place where multiple repositories/runtime objects are composed.
+
+Example:
+
+```java
+@Service
+@RequiredArgsConstructor
+public class AgentRuntimeService {
+
+    private final AgentRuntime agentRuntime;
+    private final SessionService sessionService;
+    private final ToolService toolService;
+    private final MemoryService memoryService;
+
+    @Transactional
+    public TurnResultDto runTurn(RunTurnCommand command) {
+        Session session = sessionService.getOrCreate(command.sessionId());
+        TurnResult result = agentRuntime.runTurn(session, command.userInput());
+        sessionService.saveMessages(session, result.messages());
+        return TurnResultDto.from(result);
+    }
+}
+```
+
+### 9.4 Repository Layer
+
+```
+backend/src/main/java/com/azhukov/agent/repository/
+├── SessionRepository.java            # JpaRepository<SessionEntity, UUID>
+├── MessageRepository.java            # JpaRepository<MessageEntity, Long>
+├── MemoryRepository.java               # JpaRepository<MemoryEntity, Long>
+├── TodoRepository.java                 # JpaRepository<TodoEntity, Long>
+├── SkillRepository.java                # JpaRepository<SkillEntity, Long>
+├── entity/
+│   ├── SessionEntity.java
+│   ├── MessageEntity.java
+│   ├── MemoryEntity.java
+│   ├── TodoEntity.java
+│   └── SkillEntity.java
+└── jdbi/                               # optional complex SQL
+    └── SessionSearchDao.java
+```
+
+Repositories:
+- Extend `JpaRepository` or use `JdbcClient` for complex queries.
+- Map entities to/from domain models in service layer (not in repository).
+- No `@Transactional` on repositories (handled by service).
+
+### 9.5 Domain / Core Layer (independent of Spring)
+
+```
+backend/src/main/java/com/azhukov/agent/core/
+├── agent/
+│   └── AgentRuntime.java
+├── client/
+│   └── ModelClient.java
+├── tool/
+│   ├── ToolRegistry.java
+│   └── ToolExecutor.java
+├── prompt/
+│   └── PromptBuilder.java
+├── context/
+│   └── ContextEngine.java
+├── memory/
+│   └── MemoryProvider.java
+└── skill/
+    └── SkillManager.java
+```
+
+Domain layer:
+- Has no Spring annotations.
+- Receives primitives and domain models only.
+- Can be unit-tested without Spring context.
+
+### 9.6 CLI / REPL Layer
+
+```
+backend/src/main/java/com/azhukov/agent/cli/
+├── AgentCli.java                       # Picocli entry point
+├── Repl.java                           # JLine interactive loop
+├── commands/
+│   ├── ChatCommand.java
+│   ├── ToolsCommand.java
+│   ├── SkillCommand.java
+│   └── BrowserCommand.java
+└── cli/CliSessionService.java          # thin wrapper around SessionService
+```
+
+CLI commands call services, not repositories directly.
+
+### 9.7 Package Dependencies
+
+Allowed dependencies:
+
+```
+api ──▶ service ──▶ repository ──▶ entity
+service ──▶ core
+cli ──▶ service
+gateway ──▶ service
+```
+
+Forbidden:
+
+```
+api ──▶ repository
+api ──▶ core
+repository ──▶ service
+core ──▶ service / repository / api
+```
+
+### 9.8 Example: Read File Turn
+
+```
+POST /api/v1/agent/chat
+  ChatRequest{sessionId, message}
+    │
+    ▼
+AgentController.runTurn(ChatRequest)
+    │
+    ▼
+AgentRuntimeService.runTurn(RunTurnCommand)
+    │
+    ├── SessionService.getOrCreate(sessionId)
+    │       └── SessionRepository.findById(...)  (Repository)
+    │
+    ├── AgentRuntime.runTurn(session, message)     (Core)
+    │       ├── PromptBuilder.build(...)           (Core)
+    │       ├── ModelClient.complete(...)          (Core)
+    │       └── ToolExecutor.execute(...)          (Core)
+    │             └── ReadFileTool.execute(...)    (Core)
+    │
+    └── SessionService.saveMessages(session, messages)
+            └── MessageRepository.saveAll(...)     (Repository)
+    │
+    ▼
+  ChatResponse{content, toolCalls}
+```
+
+## 10. Spring Boot Module Layout (Current → Future)
 
 ### Current (single module under `backend/`)
 
@@ -257,6 +474,13 @@ java-agent/
 │   ├── build.gradle
 │   ├── settings.gradle
 │   └── src/main/java/com/azhukov/agent/
+│       ├── api/           # controllers + DTOs
+│       ├── service/       # service layer
+│       ├── repository/    # repository + entities
+│       ├── core/          # domain layer
+│       ├── cli/           # Picocli / JLine
+│       ├── config/        # AgentProperties, beans
+│       └── JavaAgentApplication.java
 ├── docs/
 └── prototype/
 ```
@@ -265,9 +489,10 @@ java-agent/
 
 ```
 java-agent/
-├── agent-core/          // pure Java, no Spring
-├── agent-cli/           // picocli + JLine REPL
-├── agent-gateway/       // HTTP / WebSocket adapters
+├── backend/               # Spring Boot app (api + service + repository)
+├── agent-core/            # pure Java domain
+├── agent-cli/             # Picocli + JLine
+├── agent-gateway/         # HTTP / WebSocket adapters
 └── agent-spring-boot-starter/
 ```
 
