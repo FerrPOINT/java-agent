@@ -28,6 +28,13 @@ These modules form the irreducible agent loop. They are model/provider-agnostic 
 | `agent_logging.py` | `StructuredLogger` | replaces Python logging |
 | `agent_state.py` | `AgentState` | cross-turn mutable state |
 | `agent_constants.py` | `AgentConstants` | version, limits |
+| `agent/context_references.py` | `ContextReferenceService` | load referenced files/URLs/skills into context |
+| `agent/file_safety.py` | `FileSafety` + `PathSecurity` | path guards, device blocking, cross-profile checks |
+| `agent/url_safety.py` | `UrlSafety` | allow-list / block-list / private IP guards |
+| `agent/redact.py` | `Redactor` | strip secrets before memory or output |
+| `agent/approval.py` | `ApprovalGate` | per-tool approval flow |
+| `agent/tool_guardrails.py` | `ToolGuardrails` | dangerous pattern enforcement |
+| `agent/auxiliary_client.py` | `AuxiliaryModelService` | side-LLM tasks (vision, web_extract, compression) |
 
 ## 2. Gateway — port the skeleton, defer channels
 
@@ -125,13 +132,15 @@ Keep the interface but not the full sandbox runtime:
 | Telegram adapter | maybe | default skip |
 | Web API server | ✅ | ❌ |
 | CLI REPL | ✅ | ❌ |
-| Browser / computer-use | ✅ browser | ❌ computer-use |
+| Browser / computer-use | ✅ browser (local Chromium CDP) | ❌ computer-use |
 | Image generation (FAL) | ❌ | ✅ |
 | Voice / TTS | ❌ | ✅ |
 | Vision | ✅ | ❌ |
 | Desktop / TUI / dashboard | ❌ | ✅ |
 | All other messaging platforms | ❌ | ✅ |
 | SaaS OAuth integrations | ❌ | ✅ |
+| Full MCP lifecycle (stdio/HTTP/SSE + sampling) | ✅ | ❌ |
+| Multi-provider registry + fallbacks | ✅ | ❌ |
 
 ## 12. Recommendation
 

@@ -25,8 +25,12 @@ Agent pins a large dependency tree. This document maps every *core* dependency t
 | `websockets==15.0.1` | WebSocket clients/servers | `java.net.http.WebSocket` | For CDP browser client |
 | `fastapi>=0.104.0` + `uvicorn` | API server, gateway webhooks | **Spring Boot 4.1.0** Web MVC + virtual threads | Replaces both |
 | `Pillow==12.2.0` | Image processing | **Thumbnailator** or JavaFX | Optional; vision mostly base64 passthrough |
-| Browser automation | agent-browser / Playwright | CDP WebSocket client + Selenium chrome-driver launcher | Avoid 200 MB Playwright deps |
-| `pathspec==1.1.1` | Gitignore-style matching | `PathMatcher` + small util | Small utility |
+| Browser automation | agent-browser / Playwright | CDP WebSocket client (`Java-WebSocket` or Jetty WS) + Chromium launcher | Avoid 200 MB Playwright deps |
+| `jsoup` equivalent | HTML parsing / extraction | `org.jsoup:jsoup` | Web extract readability fallback |
+| `commons-lang3` / `commons-io` | String/file utilities | `org.apache.commons:commons-lang3`, `commons-io:commons-io` | Already standard; document explicitly |
+| `flexmark` | Markdown | `com.vladsch.flexmark:flexmark-all` | Skill and message rendering |
+| `cron-utils` | Cron expression parsing | `com.cronutils:cron-utils` | Cron tool / gateway job parsing |
+| `commons-imaging` | Image metadata | `org.apache.commons:commons-imaging` | Vision metadata, optional |
 | `faster-whisper==1.2.1` + `sounddevice` | Voice transcription | **Whisper.cpp Java bindings** / **Vosk** | Skip for prototype |
 | `numpy` | Audio arrays | Java Sound API / TarsosDSP | Skip for prototype |
 | `python-telegram-bot` | Telegram gateway | TelegramBots Java library | Defer; keep interface |

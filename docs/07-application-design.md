@@ -169,13 +169,30 @@ BrowserPool (Spring singleton)
 
 ## 7. Configuration (`AgentProperties`)
 
+Full configuration tree aligned with Hermes defaults where applicable.
+
 ```yaml
 agent:
   name: ${AGENT_NAME:Джава агент}
-  max-turns: 25
+  max-turns: 90
   max-iterations: 100
+  api-max-retries: 3
+  verify-on-stop: true
   reasoning:
     enabled: false
+    mode: auto                    # auto | forced | disabled
+  tool-use-enforcement: auto      # auto | strict | never
+  intent-ack-continuation: auto
+  task-completion-guidance: true
+  parallel-tool-call-guidance: true
+  response:
+    max-tokens: 4096
+    temperature: 0.7
+    top-p: 1.0
+  system-prompt:
+    stable: ${user.home}/.java-agent/SOUL.md
+    context: ${user.home}/.java-agent/AGENTS.md
+    project: ${user.home}/.java-agent/.java-agent.md
   model:
     provider: openai-compatible
     base-url: ${AGENT_MODEL_BASE_URL:http://localhost:11434/v1}
@@ -183,30 +200,99 @@ agent:
     model-name: ${AGENT_MODEL_NAME:qwen2.5:3b}
     timeout-seconds: 60
     max-retries: 2
+    context-length: 131072
   vision:
+    provider: openai-compatible
+    base-url: ${AGENT_VISION_BASE_URL:}
+    api-key: ${AGENT_VISION_API_KEY:}
     model-name: ${AGENT_VISION_MODEL_NAME:}
     max-download-bytes: 52428800
     download-timeout-seconds: 30
+  auxiliary:
+    provider: openai-compatible
+    base-url: ${AGENT_AUX_BASE_URL:}
+    api-key: ${AGENT_AUX_API_KEY:}
+    model-name: ${AGENT_AUX_MODEL_NAME:}
+    timeout-seconds: 60
   browser:
+    engine: local-chromium        # local-chromium | browserbase | browser-use | camofox
+    binary-path: ${AGENT_BROWSER_BINARY_PATH:}
     cdp-url: ${AGENT_BROWSER_CDP_URL:}
     default-timeout-ms: 30000
+    navigation-timeout-ms: 60000
+    page-load-timeout-ms: 30000
+    inactivity-timeout-ms: 120000
+    headed: false
+    restrict-evaluate: true
+    allow-list: []                # URL patterns allowed for navigation
+    block-list: []                # URL patterns blocked
+  terminal:
+    backend: local                # local | docker | ssh | singularity
+    timeout-seconds: 180
+    dangerous-approval: true
+    workdir: ${AGENT_TERMINAL_WORKDIR:}
+    pty: false
+    allowed-shells: [bash, sh, zsh]
+  file:
+    read-max-chars: 100000
+    blocked-patterns: []
+    cross-profile-guard: true
+  web:
+    search-backend: searxng       # searxng | ddgs | firecrawl | exa | tavily
+    extract-backend: parallel     # parallel | firecrawl | tavily | readability
+    extract-char-limit: 50000
+    cache-enabled: true
   memory:
     enabled: true
+    char-limit: 2000
+    user-char-limit: 8000
+    provider: postgres
   skills:
+    enabled: true
     path: ${AGENT_SKILLS_PATH:${user.home}/.java-agent/skills}
+  session-search:
+    enabled: true
+    default-limit: 3
+  context:
+    compression:
+      enabled: true
+      threshold-messages: 40
+      threshold-tokens: 60000
+      keep-first: 4
+      keep-last: 12
   security:
     approval-required: false
+    dangerous-patterns: []        # additional regexes
+    redaction-enabled: true
+  delegation:
+    enabled: true
+    provider: openai-compatible
+    model-name: ${AGENT_DELEGATION_MODEL_NAME:}
+    max-iterations: 5
+  mcp:
+    discovery-timeout-seconds: 60
+    tool-call-timeout-seconds: 300
+    auto-reload-on-config-change: true
+    servers: []                   # static server list in config
 ```
+
+**Environment variables summary:** `AGENT_NAME`, `AGENT_MODEL_BASE_URL`, `AGENT_MODEL_API_KEY`, `AGENT_MODEL_NAME`, `DB_PASSWORD` (used by Spring datasource), `AGENT_SKILLS_PATH`.
 
 ## 8. Persistence Schema
 
-Tables managed by Flyway:
+Tables managed by Flyway. PostgreSQL replaces SQLite; full-text search uses `pg_trgm` and `tsvector` instead of FTS5.
+
+### Core tables
 
 ```sql
 CREATE TABLE sessions (
     id UUID PRIMARY KEY,
-    user_id TEXT,
+    user_id TEXT NOT NULL,
+    profile TEXT NOT NULL DEFAULT 'default',
     name TEXT,
+    model_name TEXT,
+    provider TEXT,
+    extra JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -214,10 +300,29 @@ CREATE TABLE sessions (
 CREATE TABLE messages (
     id BIGSERIAL PRIMARY KEY,
     session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    role TEXT NOT NULL,
+    ordinal INT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('system','user','assistant','tool')),
     content TEXT,
+    reasoning_content TEXT,
     tool_calls JSONB,
     tool_call_id TEXT,
+    tool_name TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_messages_session ON messages(session_id, ordinal);
+
+CREATE TABLE model_usage (
+    id BIGSERIAL PRIMARY KEY,
+    message_id BIGINT REFERENCES messages(id) ON DELETE CASCADE,
+    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INT,
+    output_tokens INT,
+    cached_tokens INT,
+    cost_usd NUMERIC(12,8),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -225,26 +330,71 @@ CREATE TABLE memory (
     id BIGSERIAL PRIMARY KEY,
     user_id TEXT NOT NULL,
     fact TEXT NOT NULL,
+    category TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE INDEX idx_memory_user ON memory(user_id);
+
+CREATE TABLE memory_fts (
+    memory_id BIGINT PRIMARY KEY REFERENCES memory(id) ON DELETE CASCADE,
+    search_vector tsvector
+);
+CREATE INDEX idx_memory_fts_vector ON memory_fts USING GIN(search_vector);
+
 CREATE TABLE todos (
     id BIGSERIAL PRIMARY KEY,
-    session_id UUID,
+    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','cancelled')),
+    ordinal INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX idx_todos_session ON todos(session_id, ordinal);
 
 CREATE TABLE skills (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
+    category TEXT,
+    description TEXT,
     content TEXT NOT NULL,
-    metadata JSONB,
+    metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE skill_files (
+    id BIGSERIAL PRIMARY KEY,
+    skill_id BIGINT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(skill_id, file_path)
+);
+
+CREATE TABLE async_delegations (
+    id UUID PRIMARY KEY,
+    session_id UUID REFERENCES sessions(id) ON DELETE SET NULL,
+    goal TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','succeeded','failed','cancelled')),
+    result TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE session_search_meta (
+    id BIGSERIAL PRIMARY KEY,
+    session_id UUID NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+    title TEXT,
+    summary TEXT,
+    search_vector tsvector
+);
+CREATE INDEX idx_session_search_vector ON session_search_meta USING GIN(search_vector);
 ```
 
 ## 9. Layered Architecture: Controller → Service → Repository
@@ -464,7 +614,311 @@ AgentRuntimeService.runTurn(RunTurnCommand)
   ChatResponse{content, toolCalls}
 ```
 
-## 10. Spring Boot Module Layout (Current → Future)
+## 10. Provider Registry
+
+Model providers are pluggable. The first implementation supports one provider; later the registry allows multiple.
+
+### Bundled providers
+
+| Provider | Class | Notes |
+|---|---|---|
+| `openai-compatible` | `OpenAiCompatibleProvider` | generic, default, used for Ollama, Kimi, Moonshot, OpenRouter |
+| `ollama` | `OllamaProvider` | optional direct `langchain4j-ollama` |
+
+### Registry model
+
+```java
+public interface ModelProvider {
+    boolean supports(String providerName);
+    ChatResponse complete(CompletionRequest request);
+    boolean isHealthy();
+}
+
+public record ModelRoute(
+    String provider,
+    String modelName,
+    String apiKey,
+    String baseUrl,
+    Duration timeout,
+    int maxRetries
+) {}
+```
+
+- `ProviderRegistry` holds all providers.
+- `ModelRouteResolver` maps `model` string to `ModelRoute` using config.
+- `FallbackModelClient` retries on transient failures across fallbacks.
+
+## 11. Tool Registry
+
+The tool system mirrors Hermes' `tools/registry.py`: dynamic discovery, schemas, handlers, toolsets, availability checks.
+
+### Tool definition
+
+```java
+@AgentTool(
+    name = "read_file",
+    description = "Read a file with pagination and line numbers.",
+    toolset = "file"
+)
+public class ReadFileTool {
+    public ToolResult execute(ReadFileArgs args, ToolContext ctx) { ... }
+}
+
+public record ReadFileArgs(
+    @ToolParam(description = "absolute or relative path") String path,
+    @ToolParam int offset,
+    @ToolParam int limit
+) {}
+```
+
+### Registry API
+
+```java
+public interface ToolRegistry {
+    List<ToolDefinition> getDefinitions(Set<String> toolsetNames);
+    List<ToolDefinition> getDefinitions();
+    ToolResult execute(String toolName, String toolCallId, JsonNode args, ToolContext ctx);
+    List<String> getToolsets();
+    boolean isAvailable(String toolName);
+}
+```
+
+- `ToolRegistry` scans Spring beans annotated with `@AgentTool` on startup.
+- `ToolsetResolver` resolves composite names (`cli`, `web`, `file`, `browser`, `coding`).
+- Tool availability (`check_fn` in Python) maps to `ToolAvailabilityChecker` bean per tool.
+- Schema generation uses Jackson + custom `@ToolParam` annotations.
+
+### Toolsets (aligned with Hermes)
+
+| Toolset | Description |
+|---|---|
+| `core` | minimal tools available everywhere |
+| `web` | `web_search`, `web_extract` |
+| `file` | `read_file`, `write_file`, `patch`, `search_files` |
+| `browser` | all CDP browser tools |
+| `vision` | `vision_analyze` |
+| `terminal` | `terminal`, `process` |
+| `memory` | `memory`, `todo`, `session_search` |
+| `skills` | `skills_list`, `skill_view`, `skill_manage` |
+| `cli` | union of core + web + file + browser + terminal + memory + skills + `session_search` |
+
+### Progressive disclosure
+
+When MCP servers or plugins add many tools, the registry may replace non-core tools with meta tools:
+
+- `tool_search(query)` — find a tool
+- `tool_describe(name)` — read schema
+- `tool_call(name, args)` — invoke tool
+
+This reduces the tool list sent to the model.
+
+## 12. Conversation Loop / AgentRuntime
+
+```java
+public class AgentRuntime {
+    public TurnResult runTurn(Session session, String userInput) {
+        // 1. append user message
+        // 2. build context (messages + memory + skills + system prompt)
+        // 3. while iterations < maxIterations:
+        //    a. call ModelClient
+        //    b. if no tool calls -> return assistant message
+        //    c. for each tool call -> execute via ToolExecutor
+        //    d. append results
+        //    e. if context too big -> ContextCompressor.compress()
+        // 4. persist all messages
+    }
+}
+```
+
+- `IterationBudget` tracks model API calls and tool calls.
+- `ToolCallPlanner` decides parallel vs sequential execution.
+- `ContextCompressor` truncates middle messages keeping system + first + last.
+- `PromptBuilder` assembles system prompt from templates, skills, memory, coding context.
+- `ToolResultObserver` emits post-tool hooks (e.g. memory extraction).
+
+## 13. Security & Safety
+
+| Layer | Component | Responsibility |
+|---|---|---|
+| Path | `PathSecurity` | normalize, realpath, block device files, check cwd |
+| File | `FileSafety` | block sensitive paths, cross-profile guard, max read chars |
+| Terminal | `DangerousCommandGuard` | pattern-based dangerous command approval |
+| Execute code | `ExecuteCodeGuard` | scan Python/groovy code before sandbox run |
+| Network | `UrlSafety` | allow-list/block-list, private IP checks |
+| Output | `Redactor` | remove secrets before storing memory or returning |
+| Browser | `BrowserSecurity` | block navigation to forbidden URLs, redact cookies |
+| General | `ApprovalGate` | configurable per-tool approval flow |
+
+Approval flow:
+
+1. Tool called.
+2. `ApprovalGate` checks `security.approval-required` and tool class annotation.
+3. If approval needed, tool result returns `PENDING_APPROVAL` state.
+4. CLI/web shows request; user confirms/rejects.
+5. On confirm tool re-runs with `force=true`.
+
+## 14. Gateway / HTTP API Surface
+
+REST controllers in `api/`. First version implements:
+
+| Method | Path | Handler |
+|---|---|---|
+| GET | `/api/v1/health` | `HealthController` |
+| GET | `/v1/models` | `OpenAiCompatibleController` |
+| POST | `/v1/chat/completions` | `OpenAiCompatibleController` (streaming and non-streaming) |
+| GET | `/api/v1/sessions` | `SessionController` |
+| POST | `/api/v1/sessions` | `SessionController` |
+| GET | `/api/v1/sessions/{id}` | `SessionController` |
+| DELETE | `/api/v1/sessions/{id}` | `SessionController` |
+| GET | `/api/v1/sessions/{id}/messages` | `SessionController` |
+| POST | `/api/v1/agent/chat` | `AgentController` |
+| GET | `/api/v1/tools` | `ToolController` |
+| GET | `/api/v1/skills` | `SkillController` |
+| GET | `/api/v1/skills/{name}` | `SkillController` |
+
+Future additions: `/v1/responses`, `/v1/runs`, `/api/jobs`, `/api/cron/fire`, webhook ingress.
+
+## 15. CLI / REPL
+
+Picocli subcommands:
+
+```
+java -jar backend.jar                # start web server
+java -jar backend.jar repl           # interactive REPL
+java -jar backend.jar tools          # list tools
+java -jar backend.jar skill view X   # view skill
+java -jar backend.jar skill list     # list skills
+java -jar backend.jar config get X   # read config key
+java -jar backend.jar config set X Y # write config key
+```
+
+REPL commands (inside session):
+
+| Command | Action |
+|---|---|
+| `/new` | new session |
+| `/resume <id>` | resume session |
+| `/tools` | show enabled tools |
+| `/verbose` | toggle verbose mode |
+| `/compress` | trigger context compression |
+| `/memory` | show memory for user |
+| `/todo` | show todos |
+| `/browser connect` | start Chromium CDP |
+
+## 16. Observability
+
+- SLF4J + Logback with MDC `sessionId`, `taskId`.
+- Spring Boot Actuator health endpoint.
+- Virtual thread monitoring via `management.observations.annotations.enabled`.
+- Per-call metrics: `agent.turn.duration`, `agent.tool.calls`, `agent.model.tokens.*`.
+- Distributed tracing later: Micrometer + Brave.
+
+## 17. Testing Strategy
+
+| Level | Scope | Examples |
+|---|---|---|
+| Unit | Core classes | `MessageTest`, `ToolRegistryTest`, `PromptBuilderTest`, `PathSecurityTest` |
+| Integration | DB + services | `SessionServiceIT`, `AgentRuntimeIT` with Testcontainers PostgreSQL |
+| Component | Mocked LLM | `ReadFileTurnIT` with stubbed `ModelClient` |
+| E2E | Real Ollama | `ReplE2E` using Ollama `qwen2.5:3b` |
+
+- Testcontainers PostgreSQL 16.
+- `@DataJpaTest` + `@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)`.
+- Virtual threads should be enabled in tests too (`spring.threads.virtual.enabled=true`).
+
+## 18. Dependencies to add
+
+```groovy
+// WebSocket CDP client
+implementation 'org.java-websocket:Java-WebSocket:1.6.0'
+// or
+implementation 'org.eclipse.jetty.websocket:jetty-websocket-jetty-client:12.0.19'
+
+// HTML parsing
+implementation 'org.jsoup:jsoup:1.19.1'
+
+// Commons utilities
+implementation 'org.apache.commons:commons-lang3:3.17.0'
+implementation 'commons-io:commons-io:2.19.0'
+
+// Markdown
+implementation 'com.vladsch.flexmark:flexmark-all:0.64.8'
+
+// Cron utilities (optional, for cron job parsing)
+implementation 'com.cronutils:cron-utils:9.2.1'
+
+// Image metadata / manipulation (optional)
+implementation 'org.apache.commons:commons-imaging:1.0-alpha3'
+```
+
+`Java-WebSocket` is lighter; use it unless we need Jetty integration. Add only when implementing browser CDP.
+
+## 19. Implementation Roadmap
+
+### Phase 0 — Foundation (1–2 days)
+
+1. Update `application.yml` with full config tree.
+2. Expand `AgentProperties` with nested records.
+3. Add dependencies: Java-WebSocket, jsoup, commons-lang3/commons-io.
+4. Create `V2__agent_schema.sql` with all tables.
+
+### Phase 1 — Runtime core (2–3 days)
+
+1. Message model + `MessageMapper`.
+2. `ModelClient` interface + `OpenAiCompatibleClient` via LangChain4j.
+3. `ToolRegistry` + `@AgentTool` scanning + `ToolDefinition`.
+4. `ToolExecutor` + `ToolResult`.
+5. `AgentRuntime.runTurn()` happy path.
+
+### Phase 2 — Basic tools (2–3 days)
+
+1. `read_file`, `write_file`, `patch`, `search_files`.
+2. `terminal`, `process`.
+3. `web_search`, `web_extract`.
+4. `memory`, `todo`, `session_search`.
+
+### Phase 3 — API + CLI (2 days)
+
+1. `SessionController`, `AgentController`, `OpenAiCompatibleController`.
+2. `AgentCli` + `Repl` + subcommands.
+3. E2E test: REPL → read_file.
+
+### Phase 4 — Browser + Vision (3 days)
+
+1. `ChromiumLauncher` + `CdpClient` WebSocket.
+2. Browser tools.
+3. `vision_analyze` via `ModelClient`.
+
+### Phase 5 — Skills + MCP (3 days)
+
+1. `SkillService`, `SkillManager`, skill tools.
+2. `McpClientManager` + MCP tool discovery.
+3. Progressive disclosure `tool_search`.
+
+### Phase 6 — Polish
+
+1. Security layer (`PathSecurity`, `ApprovalGate`, `Redactor`).
+2. Observability metrics.
+3. Performance optimization.
+4. Documentation sync.
+
+## 20. Definition of Ready
+
+Project is ready for development when:
+
+1. `backend/build.gradle` has all dependencies.
+2. `application.yml` covers every config section from section 7.
+3. `AgentProperties` mirrors the YAML tree.
+4. `V2__agent_schema.sql` matches section 8.
+5. Package layout matches sections 9 and 10.
+6. CI runs `./gradlew clean build` green.
+7. Testcontainers PostgreSQL test passes.
+
+## 21. Immediate Next Step
+
+Implement **Phase 0** + the first part of **Phase 1**: `AgentProperties`, message model, `ModelClient`, `ToolRegistry`, `ReadFileTool`, and a single-turn `AgentRuntime`.
+
+## 22. Spring Boot Module Layout (Current → Future)
 
 ### Current (single module under `backend/`)
 
@@ -496,36 +950,16 @@ java-agent/
 └── agent-spring-boot-starter/
 ```
 
-## 10. CLI Entry Points
+## 23. CLI Entry Points
 
-- `java -jar agent.jar` — starts web server.
-- `java -jar agent.jar repl` — starts interactive REPL.
-- `java -jar agent.jar tools` — lists registered tools.
-- `java -jar agent.jar skill view <name>` — views a skill.
+- `java -jar backend.jar` — starts web server.
+- `java -jar backend.jar repl` — starts interactive REPL.
+- `java -jar backend.jar tools` — lists registered tools.
+- `java -jar backend.jar skill view <name>` — views a skill.
 
 Implemented with Picocli subcommands.
 
-## 11. Security
-
-- `PathSecurity`: normalize, realpath, check working directory.
-- `ApprovalGate`: configurable per-tool approval.
-- `Redactor`: remove secrets before memory egress.
-- Browser: sandboxed Chromium, allow-list navigation.
-
-## 12. Observability
-
-- SLF4J + Logback with MDC for `sessionId`.
-- Spring Boot Actuator health endpoint.
-- Optional Micrometer metrics later.
-
-## 13. Testing Strategy
-
-- Unit: registry, prompt builder, message sanitizer, budget.
-- Integration: one turn with mocked `ModelClient`.
-- E2E: real Ollama + `read_file` in temp directory.
-- Testcontainers for PostgreSQL integration tests.
-
-## 14. Success Criteria
+## 24. Success Criteria
 
 1. Start REPL.
 2. User asks: "Read /tmp/hello.txt".
@@ -533,3 +967,4 @@ Implemented with Picocli subcommands.
 4. Tool returns content.
 5. Agent answers with file content.
 6. Output contains only actionable text.
+
