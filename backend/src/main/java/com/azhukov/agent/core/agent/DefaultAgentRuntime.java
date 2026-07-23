@@ -19,7 +19,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 
 @Component
 public class DefaultAgentRuntime implements AgentRuntime {
@@ -63,20 +62,17 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 return new TurnResult(turnMessages, true, null);
             }
 
-            Message assistantMessage = Message.assistant("");
-            // Tool calls are stored conceptually; for simplicity append the calls to context as assistant message
-            turnMessages.add(assistantMessage);
+            turnMessages.add(Message.assistantToolCalls(response.toolCalls()));
 
+            List<Message> toolResults = new ArrayList<>();
             for (ToolCall call : response.toolCalls()) {
-                ToolResult result = toolRegistry.execute(call.name(), call.id(), call.arguments(), assistantMessage, session);
-                turnMessages.add(Message.toolResult(call.id(), formatResult(result)));
+                ToolResult result = toolRegistry.execute(call.name(), call.id(), call.arguments(), null, session);
+                toolResults.add(Message.toolResult(call.id(), formatResult(result)));
             }
+            turnMessages.addAll(toolResults);
 
-            // After first tool execution return the result as a completed turn for the happy path.
-            // Real implementation would loop back to the model.
-            Message finalMessage = Message.assistant(formatToolResults(response.toolCalls(), turnMessages));
-            turnMessages.add(finalMessage);
-            return new TurnResult(turnMessages, true, null);
+            // Loop back to model with tool results to get final answer.
+            // For models that return final text on the same call, this will be one extra iteration.
         }
 
         return TurnResult.error("Reached max turns without completion");
@@ -87,17 +83,5 @@ public class DefaultAgentRuntime implements AgentRuntime {
             return result.content();
         }
         return "Error: " + result.error();
-    }
-
-    private String formatToolResults(List<ToolCall> calls, List<Message> messages) {
-        // Simple formatter: collect last N tool results
-        StringBuilder sb = new StringBuilder();
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            Message m = messages.get(i);
-            if (m.role() == Role.TOOL) {
-                sb.insert(0, m.content() + "\n");
-            }
-        }
-        return "Tool results:\n" + sb.toString().trim();
     }
 }

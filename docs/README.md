@@ -31,10 +31,17 @@ The `prototype/` directory holds clones of the relevant agent repositories for r
     ├── 03-dependency-map.md              # Python → Java library mapping
     ├── 04-proposed-java-structure.md     # draft module layout
     ├── 05-migration-notes.md             # tricky parts and design decisions
-    └── 06-vision-browser.md              # vision + browser porting details
+    ├── 06-vision-browser.md              # vision + browser porting details
+    └── 07-application-design.md          # Java application design (current)
 ```
 
-## 3. Quick Decisions
+## 3. Implementation Status
+
+- **Phase 0**: config, Flyway schema, build ✅
+- **Phase 1 skeleton**: domain model, contracts, tool registry, NoOp model, happy path HTTP endpoint ✅
+- **Phase 1.5**: real `LangChain4jModelClient`, JPA persistence, tool skeletons, CLI REPL, gateway `/v1/chat/completions`, approvals gate ✅
+
+## 4. Quick Decisions
 
 | Decision | Value | Rationale |
 |----------|-------|-----------|
@@ -52,27 +59,30 @@ The `prototype/` directory holds clones of the relevant agent repositories for r
 | MCP | `io.modelcontextprotocol.sdk:mcp:2.0.0` | official Anthropic Java SDK |
 | CLI | Picocli 4.7.7 + JLine 4.3.1 | REPL |
 
-## 4. Agent Name
+## 5. Agent Name
 
-The agent name is configurable via `AGENT_NAME` (defaults to `Джава агент`).
+The agent name is configurable via `agent.name` (defaults to `Джава агент`).
 
-```yaml
-agent:
-  name: ${AGENT_NAME:Джава агент}
-```
-
-## 5. Build & Run
+## 6. Build & Run
 
 ```bash
+cd backend
 ./gradlew build
-./gradlew bootRun
+./gradlew bootRun --args='--spring.profiles.active=dev --spring.datasource.password=project_workflow'
 ```
 
 Health endpoints:
 - `GET http://localhost:8080/api/v1/health`
 - `GET http://localhost:8080/actuator/health`
 
-## 6. Next Steps
+Chat endpoint:
+```bash
+curl -s -X POST -H 'Content-Type: application/json' \
+  -d '{"message":"Read README"}' \
+  http://localhost:8080/api/v1/agent/chat
+```
+
+## 7. Next Steps
 
 1. Read `01-scope.md` to confirm boundaries.
 2. Read `02-core-architecture.md` for the runtime data flow.

@@ -170,3 +170,9 @@ springBoot {
 - **HTTP client:** Start with `java.net.http.HttpClient`. Switch to OkHttp if proxy/SOCKS needs exceed JDK support.
 - **Persistence:** PostgreSQL via JDBC + Flyway. Local dev uses the existing `project-workflow-db-1` container on port 5432 with database `java_agent`.
 - **Agent name:** Configurable via `agent.name`; defaults to `Джава агент`.
+
+## 6. Implementation Status
+
+- **Phase 0**: config, Flyway schema, build ✅
+- **Phase 1 skeleton**: domain model, contracts, tool registry, NoOp model, happy path HTTP endpoint ✅
+- **Phase 1.5**: real `LangChain4jModelClient`, JPA persistence, tool skeletons (`file`, `web`, `terminal`, `execute_code`, `browser`, `vision`, `memory`, `todo`, `skill`, `mcp`), CLI REPL, gateway `/v1/chat/completions`, approvals gate ✅

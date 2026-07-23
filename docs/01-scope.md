@@ -143,7 +143,13 @@ Keep the interface but not the full sandbox runtime:
 | Full MCP lifecycle (stdio/HTTP/SSE + sampling) | ✅ | ❌ |
 | Multi-provider registry + fallbacks | ✅ | ❌ |
 
-## 12. Recommendation
+## 12. Implementation Status
+
+- **Phase 0**: config, Flyway schema, build ✅
+- **Phase 1 skeleton**: domain model, contracts, tool registry, NoOp model, happy path HTTP endpoint ✅
+- **Phase 1.5**: real `LangChain4jModelClient`, JPA persistence, tool skeletons (`file`, `web`, `terminal`, `execute_code`, `browser`, `vision`, `memory`, `todo`, `skill`, `mcp`), CLI REPL, gateway `/v1/chat/completions`, approvals gate ✅
+
+## 13. Recommendation
 
 Build core → CLI → gateway in this order:
 
@@ -153,6 +159,6 @@ Build core → CLI → gateway in this order:
 
 Do **not** add a channel until `agent-core` can run a conversation with `read_file` and `terminal` end-to-end.
 
-## 13. Agent Name
+## 14. Agent Name
 
 The agent name is configurable via `agent.name`; default is `Джава агент`.

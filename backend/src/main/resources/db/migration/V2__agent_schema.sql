@@ -1,4 +1,4 @@
--- Phase 0 persistence schema for the Java agent runtime
+-- Phase 1.5 persistence schema for the Java agent runtime
 
 -- Sessions table
 CREATE TABLE IF NOT EXISTS sessions (
@@ -19,10 +19,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
 CREATE TABLE IF NOT EXISTS messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    turn_index INTEGER NOT NULL DEFAULT 0,
     role TEXT NOT NULL,
     content TEXT,
-    tool_calls JSONB,
     tool_call_id TEXT,
+    tool_call_name TEXT,
+    tool_call_arguments TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

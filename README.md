@@ -39,41 +39,27 @@ spring:
 
 ## Имя агента
 
-Настраивается через `AGENT_NAME` (default — `Джава агент`):
+Настраивается через `agent.name` (default — `Джава агент`):
 
 ```yaml
 agent:
   name: ${AGENT_NAME:Джава агент}
 ```
 
-## LLM-провайдер
-
-Агент работает с любым **OpenAI-compatible endpoint** через `langchain4j-open-ai`.
-По умолчанию endpoint указывает на локальный Ollama (`http://localhost:11434/v1`), но это просто удобный default для разработки.
-
-```yaml
-agent:
-  model:
-    provider: openai-compatible
-    base-url: ${AGENT_MODEL_BASE_URL:http://localhost:11434/v1}
-    api-key: ${AGENT_MODEL_API_KEY:}
-    model-name: ${AGENT_MODEL_NAME:qwen2.5:3b}
-```
-
-Пример подключения внешнего OpenAI-compatible провайдера:
-
-```bash
-export AGENT_MODEL_BASE_URL=https://api.moonshot.ai/v1
-export AGENT_MODEL_API_KEY=sk-...
-export AGENT_MODEL_NAME=kimi-k2.7-code
-```
-
 ## Быстрый старт
 
 ```bash
 cd backend
-export DB_PASSWORD=***
-./gradlew bootRun --args='--spring.profiles.active=dev'
+./gradlew build
+./gradlew bootRun --args='--spring.profiles.active=dev --spring.datasource.password=project_workflow'
+```
+
+Проверка:
+```bash
+curl -s http://localhost:8080/actuator/health
+curl -s -X POST -H 'Content-Type: application/json' \
+  -d '{"message":"Read README"}' \
+  http://localhost:8080/api/v1/agent/chat
 ```
 
 По умолчанию приложение стартует на http://localhost:8080.

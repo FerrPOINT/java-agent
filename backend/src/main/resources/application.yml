@@ -132,7 +132,7 @@ agent:
     task-completion-guidance: ${AGENT_CORE_TASK_COMPLETION_GUIDANCE:true}
     parallel-tool-call-guidance: ${AGENT_CORE_PARALLEL_TOOL_CALL_GUIDANCE:true}
     auto-title-session: ${AGENT_CORE_AUTO_TITLE_SESSION:true}
-    reasoning-config: ${AGENT_CORE_REASONING_CONFIG:medium}
+    default-system-prompt: ${AGENT_CORE_DEFAULT_SYSTEM_PROMPT:You are ${agent.name}. Use available tools when needed. Be concise. Return plain text unless JSON is requested.}
 
 server:
   port: ${SERVER_PORT:8080}
@@ -154,7 +154,7 @@ spring:
 
 agent:
   model:
-    provider: openai-compatible
+    provider: noop
     base-url: http://localhost:11434/v1
     api-key: ${OLLAMA_API_KEY:}
     model-name: qwen2.5:3b
@@ -166,6 +166,16 @@ agent:
 logging:
   level:
     com.azhukov.agent: DEBUG
+
+---
+spring:
+  config:
+    activate:
+      on-profile: cli
+
+agent:
+  cli:
+    enabled: true
 
 ---
 spring:
