@@ -24,7 +24,7 @@ The runtime. Depends only on JVM + small libraries (Jackson, Pebble, PostgreSQL,
 
 ```
 agent-core/
-└── src/main/java/com/ferrpoint/agent/core/
+└── src/main/java/com/azhukov/agent/core/
     ├── agent/
     │   ├── AgentRuntime.java
     │   ├── TurnResult.java
@@ -117,7 +117,7 @@ Messaging gateway skeleton. Depends on `agent-core` and Spring Boot websocket.
 
 ```
 agent-gateway/
-└── src/main/java/com/ferrpoint/agent/gateway/
+└── src/main/java/com/azhukov/agent/gateway/
     ├── GatewayRuntime.java
     ├── GatewayConfig.java
     ├── ConversationSession.java
@@ -135,7 +135,7 @@ Command-line REPL and web server. Depends on `agent-core` and `agent-gateway`.
 
 ```
 agent-cli/
-└── src/main/java/com/ferrpoint/agent/cli/
+└── src/main/java/com/azhukov/agent/cli/
     ├── AgentCliApplication.java
     ├── Repl.java
     ├── CliCommands.java
@@ -150,7 +150,7 @@ Auto-configuration for Spring Boot consumers. Provides `AgentRuntime` bean, tool
 
 ```
 agent-spring-boot-starter/
-└── src/main/java/com/ferrpoint/agent/spring/
+└── src/main/java/com/azhukov/agent/spring/
     ├── AgentAutoConfiguration.java
     ├── AgentProperties.java
     └── AgentRuntimeBean.java

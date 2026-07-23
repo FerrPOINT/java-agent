@@ -101,9 +101,13 @@ Browser in agent has multiple modes. For the Java prototype we keep **local Chro
 | Screenshot | CDP `Page.captureScreenshot` |
 | DOM snapshot | CDP `DOMSnapshot.captureSnapshot` |
 
-### 3.4 Alternative: Playwright
+### 3.4 Playwright / agent-browser (out of scope)
 
-Microsoft Playwright for Java is an option but pulls ~200 MB of native binaries and Node. For the prototype start with a pure CDP client to keep dependencies small. Playwright can be added as an optional backend later.
+The upstream Python agent uses `agent-browser` (Node wrapper) or Playwright. These are **not** in the Java prototype scope because:
+- Playwright Java adds ~200 MB of native binaries.
+- The goal is a lightweight local Chromium CDP client.
+
+Playwright may be added as an optional backend after core CDP is stable.
 
 ### 3.5 Java classes
 

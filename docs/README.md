@@ -13,7 +13,7 @@ The `prototype/` directory holds clones of the relevant agent repositories for r
 ```
 /opt/dev/java-agent/
 ├── prototype/              # cloned reference repositories
-│   ├── agent-agent/                   # core runtime (693 MB)
+│   ├── hermes-agent/                   # core runtime (693 MB)
 │   ├── agent-Function-Calling/        # function-calling dataset/format
 │   ├── agent-example-plugins/         # plugin examples
 │   ├── agent-paperclip-adapter/       # adapter patterns
@@ -23,7 +23,7 @@ The `prototype/` directory holds clones of the relevant agent repositories for r
 │   ├── OpenShell-Community/            # community sandbox configs
 │   ├── nousflash-agents/               # agent experiments
 │   ├── wterm/                          # terminal UI component
-│   └── agent-agent-ci-infra/          # CI/deployment infra
+│   └── hermes-agent-ci-infra/          # CI/deployment infra
 └── docs/                   # this documentation
     ├── README.md                         # this file
     ├── 01-scope.md                       # what we port, what we skip

@@ -91,7 +91,7 @@ These are edge capabilities or vendor-specific SaaS integrations. They bloat the
 - `agent/pet/` — PET protocol, niche
 - `agent/transports/` — transport specifics
 - `infographic/` — GitHub issue artifacts
-- `native/fts5_cjk/` — SQLite extension, can be replaced by H2/Lucene if needed
+- `native/fts5_cjk/` — SQLite extension, not needed; PostgreSQL full-text search is used instead
 - `cron/scripts/`, `datagen-config-examples/`
 - Provider-specific extras: Anthropic, Exa, Firecrawl, FAL, Daytona, Hindsight, etc.
 - All messaging SDKs except Telegram (optional)

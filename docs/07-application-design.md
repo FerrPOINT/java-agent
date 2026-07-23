@@ -169,7 +169,7 @@ BrowserPool (Spring singleton)
 
 ## 7. Configuration (`AgentProperties`)
 
-Full configuration tree aligned with Hermes defaults where applicable.
+Full configuration tree aligned with the upstream Python agent defaults where applicable.
 
 ```yaml
 agent:
@@ -650,7 +650,7 @@ public record ModelRoute(
 
 ## 11. Tool Registry
 
-The tool system mirrors Hermes' `tools/registry.py`: dynamic discovery, schemas, handlers, toolsets, availability checks.
+The tool system mirrors the upstream Python agent's `tools/registry.py`: dynamic discovery, schemas, handlers, toolsets, availability checks.
 
 ### Tool definition
 
@@ -688,7 +688,7 @@ public interface ToolRegistry {
 - Tool availability (`check_fn` in Python) maps to `ToolAvailabilityChecker` bean per tool.
 - Schema generation uses Jackson + custom `@ToolParam` annotations.
 
-### Toolsets (aligned with Hermes)
+### Toolsets (aligned with upstream Python agent)
 
 | Toolset | Description |
 |---|---|

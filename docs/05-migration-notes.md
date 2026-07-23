@@ -82,7 +82,7 @@ agent has `path_security.py` and `file_safety.py` to prevent escaping working di
 
 agent `patch` tool uses a custom parser that applies find-and-replace edits. It is not a unified-diff engine.
 
-**Java:** Port the parser carefully. Test with Python test cases from `prototype/agent-agent/tools/file_operations.py` and related tests. This is a frequent failure point.
+**Java:** Port the parser carefully. Test with Python test cases from `prototype/hermes-agent/tools/file_tools.py` and related tests. This is a frequent failure point.
 
 ## 10. Context Compression
 
@@ -97,7 +97,7 @@ Do not port all compression heuristics in the first iteration.
 
 ## 11. Memory Provider Interface
 
-agent supports multiple memory backends (Honcho, Supermemory, mem0, SQLite) via `agent/memory_provider.py`.
+agent uses PostgreSQL for memory; `MemoryProvider` interface allows future REST-backed providers.
 
 **Java:** Define `MemoryProvider` interface with methods:
 ```java
@@ -155,27 +155,27 @@ agent gateway maps each platform conversation to an `AgentRuntime` session. Sess
 
 ## 19. Native Code & Sandboxing
 
-agent has `native/fts5_cjk/` (SQLite FTS5 extension) and OpenShell integration.
+The `native/fts5_cjk/` SQLite FTS5 extension is out of scope; PostgreSQL full-text search is used instead.
 
 **Java:**
-- FTS5 extension is SQLite-specific. For search, use H2 full-text or Lucene later.
+- PostgreSQL full-text search (`pg_trgm`/`tsvector`) replaces SQLite FTS5.
 - Sandboxing: start with `ProcessBuilder` security and file-system allow-lists. True seccomp/OpenShell integration is advanced; defer.
 
 ## 20. Notable Files to Deep-Dive
 
 When implementing each module, read these Python files first:
 
-| Module | Key files in `prototype/agent-agent/` |
+| Module | Key files in `prototype/hermes-agent/` |
 |--------|----------------------------------------|
 | Runtime | `run_agent.py`, `agent/conversation_loop.py`, `agent/tool_executor.py` |
-| Tools | `tools/registry.py`, `model_tools.py`, `toolsets.py`, `tools/file_operations.py`, `tools/terminal_tool.py`, `tools/vision_tools.py`, `tools/browser_tool.py` |
+| Tools | `tools/registry.py`, `model_tools.py`, `toolsets.py`, `tools/file_tools.py`, `tools/terminal_tool.py`, `tools/vision_tools.py`, `tools/browser_tool.py` |
 | Prompts | `agent/prompt_builder.py` |
 | Context | `agent/context_engine.py`, `agent/context_compressor.py` |
 | Memory | `agent/memory_manager.py`, `agent/memory_provider.py` |
 | Skills | `agent/skill_*.py`, `tools/skills_tool.py` |
-| Security | `tools/path_security.py`, `tools/file_safety.py`, `tools/approval.py` |
+| Security | `agent/file_safety.py`, `agent/path_security.py`, `agent/approval.py` |
 | Gateway | `gateway/run.py`, `gateway/session.py`, `gateway/delivery.py` |
-| MCP | `tools/mcp_tool.py`, `mcp_serve.py` |
+| MCP | `tools/mcp_tool.py`, `agent/transports/hermes_tools_mcp_server.py` |
 | ACP | `acp_adapter/server.py`, `acp_adapter/tools.py` |
 
 ## 21. Success Criteria for Prototype
@@ -212,9 +212,9 @@ This single happy path validates: model client, tool registry, tool executor, me
 
 | Need | Java library |
 |------|--------------|
-| CDP WebSocket | `java.net.http.WebSocket` or Tyrus |
+| CDP WebSocket | `java.net.http.WebSocket` or Java-WebSocket or Jetty WebSocket client |
 | JSON-RPC over CDP | manual (small) |
-| Chromium launch | `ProcessBuilder` with `google-chrome --remote-debugging-port=9222` or `org.seleniumhq.selenium:chrome-driver` helper |
+| Chromium launch | `ProcessBuilder` with `google-chrome --remote-debugging-port=9222` or Chromium launcher via `ProcessBuilder` |
 | Screenshot decode | `javax.imageio.ImageIO` |
 | Base64 | `java.util.Base64` |
 

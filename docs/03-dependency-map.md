@@ -17,7 +17,7 @@ Agent pins a large dependency tree. This document maps every *core* dependency t
 | `rich==14.3.3` | Colored terminal output | **Jansi** + **SLF4J/Logback** colorizers | Keep minimal |
 | `tenacity==9.1.4` | Retry decorators | **Resilience4j** (`resilience4j-retry`) | Lightweight |
 | `croniter==6.0.0` | Cron scheduling | **Quartz Scheduler** or Spring `@Scheduled` cron | Quartz for cron expressions |
-| `packaging==26.0` | Version parsing | **Maven Artifact** or **JSemVer** | Only if needed |
+| `packaging==26.0` | Version parsing | **JSemVer** | Only if needed |
 | `Markdown==3.10.2` | Markdown rendering | **CommonMark** or **Flexmark** | For CLI output |
 | `PyJWT[crypto]==2.13.0` | JWT for gateway/auth | **JJWT** or **Nimbus JOSE** | Standard |
 | `cryptography==46.0.7` | Crypto ops | **BouncyCastle** (`bcprov-jdk18on`) | Only if needed beyond JJWT |
