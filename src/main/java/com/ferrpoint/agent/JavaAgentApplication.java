@@ -1,12 +1,12 @@
-package com.ferrpoint.hermes;
+package com.ferrpoint.agent;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class HermesJavaAgentApplication {
+public class JavaAgentApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(HermesJavaAgentApplication.class, args);
+        SpringApplication.run(JavaAgentApplication.class, args);
     }
 }

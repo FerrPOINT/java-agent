@@ -25,7 +25,7 @@ These modules form the irreducible agent loop. They are model/provider-agnostic 
 | `agent/display.py` | `AgentLogger` / spinner | optional, keep minimal |
 | `hermes_logging.py` | `StructuredLogger` | replaces Python logging |
 | `hermes_state.py` | `AgentState` | cross-turn mutable state |
-| `hermes_constants.py` | `HermesConstants` | version, limits |
+| `hermes_constants.py` | `AgentConstants` | version, limits |
 
 ## 2. Gateway — port the skeleton, defer channels
 
@@ -46,8 +46,8 @@ The gateway is how Hermes talks to Telegram, Discord, Slack, etc. For a Java pro
 
 | Python module | Java equivalent | Priority |
 |---------------|-----------------|----------|
-| `cli.py` / `hermes_cli/main.py` | `HermesRepl` or `HermesCli` | medium — a simple command loop is enough |
-| `hermes_cli/subcommands/` | JCommander / picocli commands | low |
+| `cli.py` / `hermes_cli/main.py` | `AgentRepl` or `AgentCli` | medium — a simple command loop is enough |
+| `hermes_cli/subcommands/` | picocli commands | low |
 | `hermes_cli/setup.py` | setup wizard | low |
 | `hermes_cli/web_server.py` | Spring Boot `WebController` | medium |
 
@@ -58,7 +58,7 @@ The gateway is how Hermes talks to Telegram, Discord, Slack, etc. For a Java pro
 | Tool category | Tools to port | Tools to skip |
 |---------------|---------------|---------------|
 | Essential file/terminal | `read_file`, `write_file`, `patch`, `search_files`, `terminal`, `process` | — |
-| Web | `web_search`, `web_extract` | browser automation (heavy) |
+| Web | `web_search`, `web_extract` | — |
 | Memory/Skills | `skills_list`, `skill_view`, `skill_manage`, `memory` | — |
 | Kanban | `kanban_*` | optional — depends on SQLite schema |
 | Messaging | `send_message` | gateway already covers |
@@ -87,6 +87,7 @@ These are edge capabilities or vendor-specific SaaS integrations. They bloat the
 - Provider-specific extras: Anthropic, Exa, Firecrawl, FAL, Daytona, Hindsight, etc.
 - All messaging SDKs except Telegram (optional)
 - All OAuth/SaaS clients (Google, Microsoft Graph, Feishu, DingTalk, etc.)
+- Optional MCPs / skills
 
 ## 6. Sandbox / Governance
 
@@ -122,20 +123,24 @@ Keep the interface but not the full sandbox runtime:
 | Telegram adapter | maybe | default skip |
 | Web API server | ✅ | ❌ |
 | CLI REPL | ✅ | ❌ |
-| Browser / computer-use | ❌ | ✅ |
+| Browser / computer-use | ✅ browser | ❌ computer-use |
 | Image generation (FAL) | ❌ | ✅ |
-| Voice / TTS / vision | ❌ | ✅ (vision теперь берём) |
+| Voice / TTS | ❌ | ✅ |
+| Vision | ✅ | ❌ |
 | Desktop / TUI / dashboard | ❌ | ✅ |
 | All other messaging platforms | ❌ | ✅ |
 | SaaS OAuth integrations | ❌ | ✅ |
-| Optional MCPs / skills | ❌ | ✅ |
 
 ## 12. Recommendation
 
-Build three Maven modules in this order:
+Build core → CLI → gateway in this order:
 
-1. `hermes-core` — agent runtime, tool registry, memory, skills.
-2. `hermes-gateway` — platform adapter interface + Telegram skeleton.
-3. `hermes-cli` — REPL + Web server.
+1. `agent-core` — agent runtime, tool registry, memory, skills.
+2. `agent-cli` — REPL + Web server.
+3. `agent-gateway` — platform adapter interface + Telegram skeleton.
 
-Do **not** add a channel until `hermes-core` can run a conversation with `read_file` and `terminal` end-to-end.
+Do **not** add a channel until `agent-core` can run a conversation with `read_file` and `terminal` end-to-end.
+
+## 13. Agent Name
+
+The agent name is configurable via `agent.name`; default is `Джава агент`.

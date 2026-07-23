@@ -1,4 +1,4 @@
-package com.ferrpoint.hermes;
+package com.ferrpoint.agent;
 
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;

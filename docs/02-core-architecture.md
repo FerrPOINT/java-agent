@@ -6,9 +6,9 @@ This document describes the essential data flow and module responsibilities for 
 
 ```
 ┌─────────────────┐     user text      ┌──────────────────┐
-│   CLI / Web /   │ ────────────────▶ │   AgentRuntime     │
-│   Gateway       │                   │  (conversation     │
-└─────────────────┘                   │   loop + executor) │
+│   CLI / Web /   │ ────────────────▶ │   AgentRuntime   │
+│   Gateway       │                   │  (conversation   │
+└─────────────────┘                   │  loop + executor)│
                                       └────────┬─────────┘
                                                │
                     ┌──────────────────────────┼──────────────────────────┐
@@ -88,7 +88,7 @@ public class AgentRuntime {
 - Returns `ChatResponse` with content and/or `ToolCall` list.
 - Must be provider-agnostic: OpenAI, Ollama, Anthropic (via adapter), OpenRouter, etc.
 
-Hermes uses the OpenAI SDK with custom adapters (`anthropic_adapter.py`, `bedrock_adapter.py`, `gemini_native_adapter.py`, ...). In Java we can start with a single `OpenAiCompatibleClient` and add provider adapters later.
+Agent uses the OpenAI SDK with custom adapters (`anthropic_adapter.py`, `bedrock_adapter.py`, `gemini_native_adapter.py`, ...). In Java we can start with a single `OpenAiCompatibleClient` and add provider adapters later.
 
 ```java
 public interface ModelClient {
@@ -98,7 +98,7 @@ public interface ModelClient {
 
 ### 2.3 `ToolRegistry`
 
-- Scans classpath for tools annotated with `@HermesTool`.
+- Scans classpath for tools annotated with `@AgentTool`.
 - Each tool declares: name, description, JSON schema, toolset, availability check.
 - `ToolExecutor` looks up tool by name and dispatches with parsed JSON args.
 
@@ -117,12 +117,12 @@ Python uses runtime module import + AST prefilter. Java can use:
 ### 2.5 `PromptBuilder`
 
 - Constructs system prompt from:
-  - Base Hermes system prompt template.
+  - Base Agent system prompt template.
   - Active skills summary.
   - Memory context (truncated to ~6k chars).
   - Tool descriptions.
 - Uses Pebble templating.
-- Must be **byte-stable** for the lifetime of a conversation (Hermes rule: prompt caching is sacred).
+- Must be **byte-stable** for the lifetime of a conversation (Agent rule: prompt caching is sacred).
 
 ### 2.6 `ContextEngine`
 
@@ -139,7 +139,7 @@ Python uses runtime module import + AST prefilter. Java can use:
 
 ### 2.8 `SkillManager`
 
-- Loads skills from filesystem (`~/.hermes/skills/` or classpath).
+- Loads skills from filesystem (`~/.java-agent/skills/` or classpath).
 - A skill is a directory with `SKILL.md` + optional `references/`, `templates/`, `scripts/`.
 - Provides agent-facing tools: `skills_list`, `skill_view`, `skill_manage`.
 - In Java: store skills as resources or files; execute scripts via `ToolExecutor` if needed.
@@ -182,21 +182,21 @@ public record ToolResult(String toolCallId, String content, boolean isError) {}
 
 ## 4. Threading Model
 
-- Use **Java 21 virtual threads** for I/O-bound work (model calls, web search, terminal I/O).
+- Use **Java 25 virtual threads** for I/O-bound work (model calls, web search, terminal I/O).
 - Use `StructuredTaskScope` for parallel tool calls if the model sends multiple tool calls.
 - Keep one `AgentRuntime` per conversation session; it is not thread-safe across sessions.
 
 ## 5. Configuration
 
-Hermes uses `config.yaml` + `.env` for secrets. In Java:
+Agent uses `config.yaml` + `.env` for secrets. In Java:
 - `application.yml` (Spring Boot style) for behavior settings.
 - Environment variables for secrets (`OPENAI_API_KEY`, etc.).
-- Optional: `~/.hermes/config.yaml` loader for compatibility.
+- Optional: `~/.java-agent/config.yaml` loader for compatibility.
 
 ## 6. Persistence
 
 - Session DB: SQLite via JDBC or H2 for tests.
-- Schema should mirror Hermes tables: `sessions`, `messages`, `tool_calls`, `memory`, `skills`.
+- Schema should mirror Agent tables: `sessions`, `messages`, `tool_calls`, `memory`, `skills`.
 - Use Flyway or Liquibase for migrations.
 
 ## 7. Testing Strategy

@@ -1,8 +1,10 @@
-package com.ferrpoint.hermes.api;
+package com.ferrpoint.agent.api;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import com.ferrpoint.agent.config.AgentProperties;
 
 import java.util.Map;
 
@@ -10,11 +12,17 @@ import java.util.Map;
 @RequestMapping("/api/v1")
 public class HealthController {
 
+    private final AgentProperties properties;
+
+    public HealthController(AgentProperties properties) {
+        this.properties = properties;
+    }
+
     @GetMapping("/health")
     public Map<String, String> health() {
         return Map.of(
             "status", "up",
-            "service", "hermes-java-agent"
+            "name", properties.getName()
         );
     }
 }

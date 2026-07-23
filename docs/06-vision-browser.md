@@ -1,18 +1,18 @@
-# 06 — Vision & Browser: Re-adding to Scope
+# 06 — Vision & Browser: In Scope
 
 ## 1. Decision
 
-Vision и browser возвращаются в порт. Оба используют Kimi / Moonshot / OpenAI-compatible endpoints через существующий `ModelClient`, поэтому не требуют отдельных тяжёлых SDK.
+Vision and browser are in scope for the Java port. Both use the same `ModelClient` with OpenAI-compatible endpoints, so they do not require separate heavy SDKs.
 
 ## 2. Vision
 
-### 2.1 Функционал
+### 2.1 Functionality
 
-- `vision_analyze` — анализ изображения по URL или локальному пути с пользовательским prompt.
-- Поддержка модели `kimi-k2.7-code` (multimodal) или любой OpenAI-compatible vision-модели.
-- Изображение кодируется в base64 и передаётся в массиве `content` вместе с текстом.
+- `vision_analyze` — analyze an image from URL or local path with a user prompt.
+- Default model: `kimi-k2.7-code` (multimodal) or any OpenAI-compatible vision model.
+- Image is base64-encoded and passed in the `content` array alongside text.
 
-### 2.2 OpenAI-compatible формат
+### 2.2 OpenAI-compatible format
 
 ```json
 {
@@ -29,48 +29,48 @@ Vision и browser возвращаются в порт. Оба использу�
 }
 ```
 
-### 2.3 Java-классы
+### 2.3 Java classes
 
 ```
-hermes-core/src/main/java/com/nous/hermes/core/tools/
+agent-core/src/main/java/com/ferrpoint/agent/core/tools/
 ├── VisionAnalyzeTool.java
 ├── VisionImageUrlTool.java
 └── support/
     └── ImageEncoder.java
 ```
 
-### 2.4 Конфигурация
+### 2.4 Configuration
 
-- `hermes.vision.model` — модель по умолчанию (`kimi-k2.7-code`).
-- `hermes.vision.max-size` — лимит на размер файла (например, 50 MB).
-- `hermes.vision.download-timeout` — timeout для скачивания URL.
-- Секреты: `KIMI_API_KEY` / `MOONSHOT_API_KEY` / `OPENAI_API_KEY` через env.
+- `agent.vision.model-name` — default model (`kimi-k2.7-code`).
+- `agent.vision.max-download-bytes` — file size limit (default 50 MB).
+- `agent.vision.download-timeout-seconds` — download timeout.
+- Secrets via env: `AGENT_VISION_API_KEY`, or reuse the main model provider.
 
-### 2.5 Что нужно от `tools/vision_tools.py`
+### 2.5 What to port from `tools/vision_tools.py`
 
-- `_download_image()` — скачивание с лимитом и timeout.
-- base64-кодирование.
-- fallback-цепочку провайдеров (Kimi → OpenRouter → Anthropic → custom endpoint).
-- redactor для URL с credentials.
+- Image download with size limit and timeout.
+- Base64 encoding.
+- Provider fallback chain (Kimi → OpenRouter → Anthropic → custom endpoint).
+- URL credential redaction.
 
 ## 3. Browser
 
-### 3.1 Функционал
+### 3.1 Functionality
 
-Браузер в Hermes имеет два режима. Для Java-прототипа оставляем **local Chromium через CDP** — он не требует облачных API-ключей и работает на headless-сервере.
+Browser in Hermes has multiple modes. For the Java prototype we keep **local Chromium via CDP** — no cloud API keys and it runs on headless servers.
 
-- `browser_navigate` — открыть URL.
-- `browser_snapshot` — получить accessibility tree / DOM snapshot.
-- `browser_click`, `browser_type`, `browser_scroll`, `browser_back`, `browser_press` — действия.
-- `browser_console` — читать консоль.
-- `browser_vision` — скриншот + анализ через `vision_analyze`.
-- `browser_cdp` — низкоуровневый CDP passthrough (ограниченный).
+- `browser_navigate` — open URL.
+- `browser_snapshot` — accessibility tree / DOM snapshot.
+- `browser_click`, `browser_type`, `browser_scroll`, `browser_back`, `browser_press` — actions.
+- `browser_console` — read console.
+- `browser_vision` — screenshot + analysis via `vision_analyze`.
+- `browser_cdp` — low-level CDP passthrough (restricted).
 
-### 3.2 Архитектура
+### 3.2 Architecture
 
 ```
 ┌─────────────────┐
-│  BrowserPool    │  ← управляет Chromium процессами
+│  BrowserPool    │  ← manages Chromium processes
 └────────┬────────┘
          │
     ┌────┴────┐
@@ -88,25 +88,25 @@ hermes-core/src/main/java/com/nous/hermes/core/tools/
 └─────────────┘
 ```
 
-### 3.3 Java-библиотеки
+### 3.3 Java libraries
 
-| Задача | Библиотека |
-|--------|------------|
-| CDP WebSocket client | `java.net.http.WebSocket` или Tyrus |
-| JSON-RPC поверх CDP | ручная реализация (CDP — простой JSON-RPC) |
-| Chromium management | `ChromeLauncher` (org.seleniumhq.selenium:chrome-driver) или ручной `ProcessBuilder` |
+| Task | Library |
+|------|---------|
+| CDP WebSocket client | `java.net.http.WebSocket` or Tyrus |
+| JSON-RPC over CDP | manual (CDP is simple JSON-RPC) |
+| Chromium management | `ProcessBuilder` with `google-chrome --remote-debugging-port=9222` or Selenium chrome-driver helper |
 | Accessibility tree | CDP `Accessibility.getFullAXTree` |
 | Screenshot | CDP `Page.captureScreenshot` |
 | DOM snapshot | CDP `DOMSnapshot.captureSnapshot` |
 
-### 3.4 Альтернатива: Playwright
+### 3.4 Alternative: Playwright
 
-Microsoft Playwright for Java тоже вариант, но он тянет ~200 MB нативных бинарей и Node. Для прототипа лучше начать с чистого CDP-клиента, чтобы не раздувать зависимости. Playwright можно добавить как опциональный backend позже.
+Microsoft Playwright for Java is an option but pulls ~200 MB of native binaries and Node. For the prototype start with a pure CDP client to keep dependencies small. Playwright can be added as an optional backend later.
 
-### 3.5 Java-классы
+### 3.5 Java classes
 
 ```
-hermes-core/src/main/java/com/nous/hermes/core/tools/browser/
+agent-core/src/main/java/com/ferrpoint/agent/core/tools/browser/
 ├── BrowserTool.java (annotation alias)
 ├── BrowserPool.java
 ├── CdpClient.java
@@ -126,21 +126,21 @@ hermes-core/src/main/java/com/nous/hermes/core/tools/browser/
     └── BrowserVisionTool.java
 ```
 
-### 3.6 Конфигурация
+### 3.6 Configuration
 
-- `hermes.browser.local.executable` — путь к `google-chrome` / `chromium`.
-- `hermes.browser.local.headless` — `true` по умолчанию.
-- `hermes.browser.local.args` — дополнительные args (`--no-sandbox` и т.д.).
-- `hermes.browser.cdp-url` — внешний CDP endpoint, если Chromium запущен вне агента.
-- `hermes.browser.timeout` — timeout на операции.
+- `agent.browser.executable` — path to `google-chrome` / `chromium`.
+- `agent.browser.headless` — `true` by default.
+- `agent.browser.args` — additional args (`--no-sandbox`, etc.).
+- `agent.browser.cdp-url` — external CDP endpoint if Chromium is managed outside the agent.
+- `agent.browser.timeout-seconds` — operation timeout.
 
 ## 4. Image Generation
 
-Генерация изображений (FAL) остаётся **out of scope** — она требует FAL SDK / REST и отдельного биллинга. `image_generate` можно добавить позже как опциональный инструмент через MCP или REST wrapper.
+Image generation (FAL) stays **out of scope** — it needs FAL SDK / REST and separate billing. `image_generate` can be added later as an optional tool via MCP or a REST wrapper.
 
-## 5. Обновлённый список инструментов
+## 5. Updated Tool List
 
-### Берём
+### In scope
 
 - `read_file`, `write_file`, `patch`, `search_files`
 - `terminal`, `process`
@@ -151,21 +151,21 @@ hermes-core/src/main/java/com/nous/hermes/core/tools/browser/
 - `memory`
 - MCP client tools
 
-### Пока не берём
+### Not in scope
 
 - `image_generate` (FAL)
-- `browser_cdp` (расширенный) — можно добавить позже
-- voice/TTS
+- `browser_cdp` extended — can be added later
+- voice / TTS
 - computer-use / desktop UI
 
-## 6. Влияние на архитектуру
+## 6. Architecture Impact
 
-- `ModelClient` должен поддерживать multipart content (text + image_url) для vision.
-- `ToolExecutor` может запускать CDP-клиент в виртуальном потоке.
-- Нужен `BrowserPool` для управления жизнью Chromium процессов и cleanup.
-- `vision_analyze` должен уметь fallback между провайдерами, как auxiliary client в Hermes.
+- `ModelClient` must support multipart content (text + image_url) for vision.
+- `ToolExecutor` can run the CDP client in a virtual thread.
+- Need `BrowserPool` to manage Chromium process lifecycle and cleanup.
+- `vision_analyze` must support provider fallback like Hermes' auxiliary client.
 
-## 7. Безопасность
+## 7. Security
 
-- Vision: ограничить размер скачиваемых изображений, проверить URL (`website_policy`), не передавать credentials в base64-метаданных.
-- Browser: запускать Chromium в sandbox, headless, без `--no-sandbox` если возможно; ограничить navigation по allow-list; redactor для CDP URL.
+- Vision: limit downloaded image size, validate URL via `website_policy`, do not pass credentials in base64 metadata.
+- Browser: run Chromium in sandbox, headless, avoid `--no-sandbox` unless required; restrict navigation via allow-list; redact CDP URL credentials.

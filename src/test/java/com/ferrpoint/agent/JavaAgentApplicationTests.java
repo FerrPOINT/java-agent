@@ -1,10 +1,10 @@
-package com.ferrpoint.hermes;
+package com.ferrpoint.agent;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
-class HermesJavaAgentApplicationTests {
+class JavaAgentApplicationTests {
 
     @Test
     void contextLoads() {

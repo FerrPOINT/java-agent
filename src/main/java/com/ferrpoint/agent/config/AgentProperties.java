@@ -1,19 +1,26 @@
-package com.ferrpoint.hermes.config;
+package com.ferrpoint.agent.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
 
-@ConfigurationProperties(prefix = "hermes")
-public class HermesProperties {
+@ConfigurationProperties(prefix = "agent")
+public class AgentProperties {
+    private String name = "Джава агент";
     private ModelProperties model = new ModelProperties();
     private VisionProperties vision = new VisionProperties();
     private BrowserProperties browser = new BrowserProperties();
     private MemoryProperties memory = new MemoryProperties();
     private SkillsProperties skills = new SkillsProperties();
 
+    private CoreProperties core = new CoreProperties();
+
     // getters / setters
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+    public CoreProperties getCore() { return core; }
+    public void setCore(CoreProperties core) { this.core = core; }
     public ModelProperties getModel() { return model; }
     public void setModel(ModelProperties model) { this.model = model; }
     public VisionProperties getVision() { return vision; }
@@ -111,10 +118,17 @@ class MemoryProperties {
 
 class SkillsProperties {
     private boolean enabled = true;
-    private String directory = "~/.hermes/skills";
+    private String directory = "~/.java-agent/skills";
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
     public String getDirectory() { return directory; }
     public void setDirectory(String directory) { this.directory = directory; }
+}
+
+class CoreProperties {
+    private String defaultSystemPrompt = "You are Джава агент. Use available tools when needed. Be concise.";
+
+    public String getDefaultSystemPrompt() { return defaultSystemPrompt; }
+    public void setDefaultSystemPrompt(String defaultSystemPrompt) { this.defaultSystemPrompt = defaultSystemPrompt; }
 }

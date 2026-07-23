@@ -1,9 +1,9 @@
 spring:
   application:
-    name: hermes-java-agent
+    name: java-agent
 
   datasource:
-    url: jdbc:sqlite:${user.home}/.hermes/java-agent/db/hermes.db
+    url: jdbc:sqlite:${user.home}/.java-agent/db/agent.db
     driver-class-name: org.sqlite.JDBC
 
   jpa:
@@ -19,24 +19,29 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
-hermes:
+  threads:
+    virtual:
+      enabled: true
+
+agent:
+  name: ${AGENT_NAME:Джава агент}
   model:
     provider: openai
     base-url: https://api.openai.com/v1
-    api-key: ${HERMES_MODEL_API_KEY:}
+    api-key: ${AGENT_MODEL_API_KEY:}
     model-name: gpt-4o-mini
     timeout-seconds: 60
     max-retries: 3
   vision:
-    base-url: ${HERMES_VISION_BASE_URL:https://api.openai.com/v1}
-    api-key: ${HERMES_VISION_API_KEY:}
+    base-url: ${AGENT_VISION_BASE_URL:https://api.openai.com/v1}
+    api-key: ${AGENT_VISION_API_KEY:}
     model-name: gpt-4o
   browser:
-    cdp-url: ${HERMES_BROWSER_CDP_URL:http://localhost:9222}
+    cdp-url: ${AGENT_BROWSER_CDP_URL:http://localhost:9222}
     default-timeout-ms: 30000
-  agent:
+  core:
     default-system-prompt: |
-      You are Hermes Java Agent. Use available tools when needed.
+      You are ${agent.name}. Use available tools when needed.
       Be concise. Return plain text unless JSON is requested.
 
 server:
@@ -53,4 +58,4 @@ management:
 
 logging:
   level:
-    com.ferrpoint.hermes: INFO
+    com.ferrpoint.agent: INFO

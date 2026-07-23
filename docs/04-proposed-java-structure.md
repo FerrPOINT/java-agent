@@ -1,27 +1,28 @@
 # 04 — Proposed Java Module Structure
 
-This is a draft Maven multi-module layout for the Java port. Each module maps to a slice of Hermes functionality.
+This is a draft Gradle multi-module layout for the Java port. Each module maps to a slice of agent functionality.
 
-## 1. Root POM
+## 1. Root Project
 
 ```
-hermes-java/
-├── pom.xml
-├── hermes-core/
-├── hermes-gateway/
-├── hermes-cli/
-├── hermes-spring-boot-starter/
-└── hermes-test/
+java-agent/
+├── build.gradle
+├── settings.gradle
+├── agent-core/
+├── agent-gateway/
+├── agent-cli/
+└── agent-spring-boot-starter/
 ```
 
-## 2. Module: `hermes-core`
+(Currently the project is a single-module Spring Boot app. Split into modules once `agent-core` is stable.)
+
+## 2. Module: `agent-core`
 
 The runtime. Depends only on JVM + small libraries (Jackson, Pebble, SQLite, Resilience4j).
 
 ```
-hermes-core/
-├── pom.xml
-└── src/main/java/com/nous/hermes/core/
+agent-core/
+└── src/main/java/com/ferrpoint/agent/core/
     ├── agent/
     │   ├── AgentRuntime.java
     │   ├── TurnResult.java
@@ -45,7 +46,7 @@ hermes-core/
     │   ├── OllamaClient.java
     │   └── ProviderAdapter.java
     ├── tool/
-    │   ├── HermesTool.java (annotation)
+    │   ├── AgentTool.java (annotation)
     │   ├── ToolRegistry.java
     │   ├── ToolExecutor.java
     │   ├── ToolScanner.java
@@ -97,8 +98,8 @@ hermes-core/
     │   ├── Skill.java
     │   └── SkillLoader.java
     ├── config/
-    │   ├── HermesConfig.java
-    │   └── HermesConfigLoader.java
+    │   ├── AgentConfig.java
+    │   └── AgentConfigLoader.java
     ├── security/
     │   ├── PathSecurity.java
     │   ├── Redactor.java
@@ -108,14 +109,13 @@ hermes-core/
         └── Json.java
 ```
 
-## 3. Module: `hermes-gateway`
+## 3. Module: `agent-gateway`
 
-Messaging gateway skeleton. Depends on `hermes-core` and Spring Boot websocket.
+Messaging gateway skeleton. Depends on `agent-core` and Spring Boot websocket.
 
 ```
-hermes-gateway/
-├── pom.xml
-└── src/main/java/com/nous/hermes/gateway/
+agent-gateway/
+└── src/main/java/com/ferrpoint/agent/gateway/
     ├── GatewayRuntime.java
     ├── GatewayConfig.java
     ├── ConversationSession.java
@@ -127,15 +127,14 @@ hermes-gateway/
             └── TelegramPlatformAdapter.java   # optional/deferred
 ```
 
-## 4. Module: `hermes-cli`
+## 4. Module: `agent-cli`
 
-Command-line REPL and web server. Depends on `hermes-core` and `hermes-gateway`.
+Command-line REPL and web server. Depends on `agent-core` and `agent-gateway`.
 
 ```
-hermes-cli/
-├── pom.xml
-└── src/main/java/com/nous/hermes/cli/
-    ├── HermesCliApplication.java
+agent-cli/
+└── src/main/java/com/ferrpoint/agent/cli/
+    ├── AgentCliApplication.java
     ├── Repl.java
     ├── CliCommands.java
     └── web/
@@ -143,54 +142,40 @@ hermes-cli/
         └── OpenAiCompatibleController.java
 ```
 
-## 5. Module: `hermes-spring-boot-starter`
+## 5. Module: `agent-spring-boot-starter`
 
-Auto-configuration for Spring Boot consumers. Provides `HermesRuntime` bean, tool auto-discovery, YAML config properties.
-
-```
-hermes-spring-boot-starter/
-├── pom.xml
-└── src/main/java/com/nous/hermes/spring/
-    ├── HermesAutoConfiguration.java
-    ├── HermesProperties.java
-    └── HermesRuntimeBean.java
-```
-
-## 6. Module: `hermes-test`
-
-Shared test utilities: fake model client, in-memory tool registry, temp directory fixtures.
+Auto-configuration for Spring Boot consumers. Provides `AgentRuntime` bean, tool auto-discovery, YAML config properties.
 
 ```
-hermes-test/
-├── pom.xml
-└── src/test/java/com/nous/hermes/test/
-    ├── FakeModelClient.java
-    ├── FakeMemoryProvider.java
-    └── TestFixtures.java
+agent-spring-boot-starter/
+└── src/main/java/com/ferrpoint/agent/spring/
+    ├── AgentAutoConfiguration.java
+    ├── AgentProperties.java
+    └── AgentRuntimeBean.java
 ```
 
-## 7. Deliverable Priority
+## 6. Deliverable Priority
 
 | Phase | Module | Goal |
 |-------|--------|------|
-| 1 | `hermes-core` + tests | Run one tool turn with mocked model |
-| 2 | `hermes-cli` | REPL that can chat and call `read_file` |
-| 3 | `hermes-gateway` skeleton | Adapter interface, no real channels |
-| 4 | `hermes-spring-boot-starter` | Spring Boot auto-config |
+| 1 | `agent-core` + tests | Run one tool turn with mocked model |
+| 2 | `agent-cli` | REPL that can chat and call `read_file` |
+| 3 | `agent-gateway` skeleton | Adapter interface, no real channels |
+| 4 | `agent-spring-boot-starter` | Spring Boot auto-config |
 | 5 | Web API server | OpenAI-compatible `/v1/chat/completions` |
 
-## 8. Package Naming Convention
+## 7. Package Naming Convention
 
-- Base: `com.nous.hermes.*`
-- Public API: `com.nous.hermes.core.api.*`
-- SPI (plugin): `com.nous.hermes.spi.*`
-- Internal: `com.nous.hermes.internal.*`
+- Base: `com.ferrpoint.agent.*`
+- Public API: `com.ferrpoint.agent.core.api.*`
+- SPI (plugin): `com.ferrpoint.agent.spi.*`
+- Internal: `com.ferrpoint.agent.internal.*`
 
-## 9. Notes
+## 8. Notes
 
-- Avoid cyclic module dependencies. `hermes-core` must not depend on `hermes-gateway` or `hermes-cli`.
-- Tool implementations live in `hermes-core` for builtin tools; external tools use the SPI.
-- Keep `hermes-core` free of Spring annotations so it can be used in non-Spring contexts.
+- Avoid cyclic module dependencies. `agent-core` must not depend on `agent-gateway` or `agent-cli`.
+- Tool implementations live in `agent-core` for builtin tools; external tools use the SPI.
+- Keep `agent-core` free of Spring annotations so it can be used in non-Spring contexts.
 - Use `module-info.java` optionally; not required for prototype.
 - Browser tools live under `tools/browser/` and use a lightweight CDP client, not Playwright, to avoid heavy native deps in the prototype.
 - Vision uses the same `ModelClient` with image_url base64 payloads, defaulting to Kimi K2.7-code or any configured OpenAI-compatible vision model.

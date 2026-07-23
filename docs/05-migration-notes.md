@@ -1,6 +1,6 @@
 # 05 — Migration Notes & Tricky Parts
 
-This document captures non-obvious translation issues when moving Hermes from Python to Java.
+This document captures non-obvious translation issues when moving Hermes Agent from Python to Java.
 
 ## 1. Dynamic Tool Discovery
 
@@ -8,16 +8,22 @@ This document captures non-obvious translation issues when moving Hermes from Py
 
 **Java challenge:** Java is statically typed; modules are classes, not files. Options:
 1. **Annotation + classpath scanning** at runtime (ClassGraph or Spring `ClassPathScanningCandidateComponentProvider`).
-2. **Annotation processor** at compile time to generate a `META-INF/services/com.nous.hermes.core.tool.Tool` registry file.
+2. **Annotation processor** at compile time to generate a `META-INF/services/com.ferrpoint.agent.core.tool.Tool` registry file.
 3. **Explicit configuration** in `application.yml` for the prototype.
 
 **Recommendation:** Start with explicit configuration for predictability, then add annotation scanning.
 
-## 2. Async Bridging
+## 2. Concurrency: Virtual Threads vs Reactive
 
 **Python:** Hermes has `_tool_loop`, `_worker_thread_local`, and `asyncio.run()` bridges because many tools are sync (file, terminal) but the agent loop is async.
 
-**Java:** Virtual threads (`Thread.startVirtualThread(...)` or `Executors.newVirtualThreadPerTaskExecutor()`) remove most of the async/sync friction. Use `CompletableFuture` only where you need composition or timeouts. Avoid `CompletableFuture` explosion; keep code linear.
+**Java:** Virtual threads (`Thread.startVirtualThread(...)` or `Executors.newVirtualThreadPerTaskExecutor()`) remove most of the async/sync friction. We choose **Spring MVC + virtual threads** (`spring.threads.virtual.enabled=true`) instead of WebFlux because:
+- Agent tools are mostly blocking I/O.
+- Imperative code is easier to debug and test.
+- LangChain4j, JDBC, CDP clients are blocking by default.
+- Reactor's backpressure is unnecessary for request/response LLM calls.
+
+Use `CompletableFuture` only where you need composition or timeouts. Avoid `CompletableFuture` explosion; keep code linear.
 
 ## 3. OpenAI-Compatible Tool Schema
 
@@ -102,7 +108,7 @@ Implement `SqliteMemoryProvider` first; add REST-backed providers later.
 
 Hermes skills are Markdown files + optional scripts/templates. The agent calls `skill_view` to load instructions.
 
-**Java:** Store skills as classpath resources or files under `~/.hermes/skills/`. Load `SKILL.md` as a string. If a skill references a script, execute it as a tool if the runtime supports it.
+**Java:** Store skills as classpath resources or files under `~/.java-agent/skills/`. Load `SKILL.md` as a string. If a skill references a script, execute it as a tool if the runtime supports it.
 
 ## 13. MCP Integration
 
@@ -122,7 +128,7 @@ ACP is an emerging protocol for editors/IDEs to drive agents. Hermes has `acp_ad
 
 Hermes uses `~/.hermes/config.yaml` and `.env` for secrets. Java Spring Boot uses `application.yml` and env vars.
 
-**Recommendation:** Write a loader that reads `~/.hermes/config.yaml` and maps it to `HermesProperties`. Keep secrets in env vars only. Do not write secrets to YAML.
+**Recommendation:** Write a loader that reads `~/.java-agent/config.yaml` and maps it to `AgentProperties`. Keep secrets in env vars only. Do not write secrets to YAML.
 
 ## 16. Logging
 
@@ -212,11 +218,11 @@ This single happy path validates: model client, tool registry, tool executor, me
 
 ### 22.4 Browser Config
 
-- `hermes.browser.local.executable`
-- `hermes.browser.local.headless=true`
-- `hermes.browser.local.args=--no-sandbox,--disable-gpu`
-- `hermes.browser.cdp-url` (external)
-- `hermes.browser.timeout`
+- `agent.browser.executable`
+- `agent.browser.headless=true`
+- `agent.browser.args=--no-sandbox,--disable-gpu`
+- `agent.browser.cdp-url` (external)
+- `agent.browser.timeout-seconds`
 
 ### 22.5 Browser Security
 
@@ -225,3 +231,10 @@ This single happy path validates: model client, tool registry, tool executor, me
 - Restrict navigation via allow-list.
 - Redact CDP URL credentials.
 - Clean up processes in `BrowserPool.close()` and JVM shutdown hook.
+
+## 23. Agent Name
+
+The agent name is configurable via `agent.name`; default is `Джава агент`. It appears in:
+- The default system prompt (`agent.core.default-system-prompt`).
+- The `/api/v1/health` response.
+- Any user-facing message header.
