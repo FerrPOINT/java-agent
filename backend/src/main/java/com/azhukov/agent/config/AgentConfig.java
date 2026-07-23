@@ -13,6 +13,8 @@ import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.skill.DatabaseSkillManager;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.core.tool.ToolRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -54,13 +56,15 @@ public class AgentConfig {
     }
 
     @Bean
-    public PromptBuilder promptBuilder(AgentProperties properties) {
-        return new DefaultPromptBuilder(properties);
+    public PromptBuilder promptBuilder(AgentProperties properties, ToolRegistry toolRegistry) {
+        return new DefaultPromptBuilder(properties, toolRegistry);
     }
 
     @Bean
-    public ContextEngine contextEngine() {
-        return new DefaultContextEngine();
+    public ContextEngine contextEngine(MemoryProvider memoryProvider,
+                                       SkillManager skillManager,
+                                       MessageRepository messageRepository) {
+        return new DefaultContextEngine(memoryProvider, skillManager, messageRepository);
     }
 
     @Bean

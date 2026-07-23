@@ -3,24 +3,45 @@ package com.azhukov.agent.core.prompt;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.tool.ToolRegistry;
 import org.springframework.stereotype.Component;
 
 @Component
 public class DefaultPromptBuilder implements PromptBuilder {
 
     private final AgentProperties properties;
+    private final ToolRegistry toolRegistry;
 
-    public DefaultPromptBuilder(AgentProperties properties) {
+    public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry) {
         this.properties = properties;
+        this.toolRegistry = toolRegistry;
     }
 
     @Override
     public Message buildSystemMessage(Session session) {
         String text = properties.getCore().getDefaultSystemPrompt();
         if (text == null || text.isBlank()) {
-            text = "You are " + properties.getName() + ". Use available tools when needed. Be concise.";
+            text = buildDefaultPrompt();
         }
         text = text.replace("${agent.name}", properties.getName());
         return Message.system(text);
+    }
+
+    private String buildDefaultPrompt() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("You are ").append(properties.getName()).append(".\n\n");
+        sb.append("Available toolsets:\n");
+        for (String toolset : toolRegistry.getToolsets()) {
+            sb.append("- ").append(toolset).append("\n");
+        }
+        sb.append("\nRules:\n");
+        sb.append("1. Use tools when they help answer the user.\n");
+        sb.append("2. Be concise and actionable.\n");
+        sb.append("3. Do not invent facts; use web_search/browser when unsure.\n");
+        sb.append("4. For file edits use write_file/patch; for searches use search_files.\n");
+        sb.append("5. Dangerous terminal commands require user approval; respect the result.\n");
+        sb.append("6. When delegating, keep sub-tasks focused and small.\n");
+        sb.append("7. Prefer skills when a matching skill is available.\n");
+        return sb.toString();
     }
 }

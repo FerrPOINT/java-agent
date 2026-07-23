@@ -1,0 +1,33 @@
+package com.azhukov.agent.tools.browser;
+
+import com.azhukov.agent.tools.AgentTool;
+import com.azhukov.agent.tools.ToolHandler;
+import com.azhukov.agent.tools.ToolParam;
+import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.model.ToolResult;
+import org.springframework.stereotype.Component;
+
+@AgentTool(
+    name = "browser_back",
+    description = "Navigate browser back in history.",
+    toolset = "browser"
+)
+@Component
+public class BrowserBackTool implements ToolHandler {
+
+    private final BrowserService browserService;
+
+    public BrowserBackTool(BrowserService browserService) {
+        this.browserService = browserService;
+    }
+
+    @Override
+    public ToolResult execute(String arguments, Message lastAssistant, Session session) {
+        try {
+            return ToolResult.ok(browserService.evaluate("history.back()"));
+        } catch (Exception e) {
+            return ToolResult.fail("Browser back failed: " + e.getMessage());
+        }
+    }
+}

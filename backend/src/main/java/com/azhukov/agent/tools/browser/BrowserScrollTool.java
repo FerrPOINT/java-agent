@@ -1,0 +1,42 @@
+package com.azhukov.agent.tools.browser;
+
+import com.azhukov.agent.tools.AgentTool;
+import com.azhukov.agent.tools.ToolHandler;
+import com.azhukov.agent.tools.ToolParam;
+import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.model.ToolResult;
+import org.springframework.stereotype.Component;
+
+@AgentTool(
+    name = "browser_scroll",
+    description = "Scroll the browser page vertically or horizontally.",
+    toolset = "browser"
+)
+@Component
+public class BrowserScrollTool implements ToolHandler {
+
+    private final BrowserService browserService;
+
+    public BrowserScrollTool(BrowserService browserService) {
+        this.browserService = browserService;
+    }
+
+    @Override
+    public ToolResult execute(String arguments, Message lastAssistant, Session session) {
+        ScrollArgs args = ToolHandler.parseJson(arguments, ScrollArgs.class);
+        try {
+            int x = args.x() != null ? args.x() : 0;
+            int y = args.y() != null ? args.y() : 0;
+            String script = "window.scrollBy(" + x + ", " + y + "); return { x: window.scrollX, y: window.scrollY };";
+            return ToolResult.ok(browserService.evaluate(script));
+        } catch (Exception e) {
+            return ToolResult.fail("Browser scroll failed: " + e.getMessage());
+        }
+    }
+
+    public record ScrollArgs(
+        @ToolParam(description = "horizontal delta", required = false) Integer x,
+        @ToolParam(description = "vertical delta", required = false) Integer y
+    ) {}
+}

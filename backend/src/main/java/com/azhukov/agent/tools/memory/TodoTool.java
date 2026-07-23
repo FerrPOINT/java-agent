@@ -1,6 +1,5 @@
 package com.azhukov.agent.tools.memory;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -50,16 +49,12 @@ public class TodoTool implements ToolHandler {
     }
 
     public static class TodoArgs {
-        @JsonProperty("action")
         @ToolParam(description = "create or list")
         private String action;
-        @JsonProperty("title")
         @ToolParam(description = "todo title", required = false)
         private String title;
-        @JsonProperty("priority")
         @ToolParam(description = "low/medium/high", required = false)
         private String priority;
-        @JsonProperty("limit")
         @ToolParam(description = "max items to list", required = false)
         private Integer limit;
 

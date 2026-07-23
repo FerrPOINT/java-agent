@@ -1,13 +1,15 @@
 package com.azhukov.agent.tools.mcp;
 
-import com.azhukov.agent.tools.AgentTool;
-import com.azhukov.agent.tools.ToolHandler;
-import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.tools.AgentTool;
+import com.azhukov.agent.tools.ToolHandler;
+import com.azhukov.agent.tools.ToolParam;
 import org.springframework.stereotype.Component;
+
+import java.util.stream.Collectors;
 
 @AgentTool(
     name = "mcp_tool",
@@ -26,7 +28,15 @@ public class McpTool implements ToolHandler {
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         McpArgs args = ToolHandler.parseJson(arguments, McpArgs.class);
-        return ToolResult.ok("MCP tool invocation not yet implemented. Server: " + args.serverName() + ", Tool: " + args.toolName());
+        try {
+            var result = mcpLifecycleManager.executeTool(args.serverName(), args.toolName(), args.arguments());
+            String text = result.content().stream()
+                .map(Object::toString)
+                .collect(Collectors.joining("\n"));
+            return ToolResult.ok(text);
+        } catch (Exception e) {
+            return ToolResult.fail("MCP tool failed: " + e.getMessage());
+        }
     }
 
     public record McpArgs(

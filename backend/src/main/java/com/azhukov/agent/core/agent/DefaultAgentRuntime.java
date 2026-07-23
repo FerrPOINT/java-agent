@@ -45,6 +45,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
     }
 
     @Override
+    public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {
+        List<Message> context = contextEngine.prepareContext(
+            Session.create("openai-user", "openai-compatible", ""), messages);
+        return modelClient.complete(context, tools);
+    }
+
+    @Override
     public TurnResult runTurn(Session session, String userInput) {
         List<Message> turnMessages = new ArrayList<>();
         turnMessages.add(promptBuilder.buildSystemMessage(session));

@@ -1,8 +1,10 @@
 package com.azhukov.agent.client.mcp;
 
 import com.azhukov.agent.config.AgentProperties;
-import io.modelcontextprotocol.client.McpSyncClient;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
 import io.modelcontextprotocol.spec.McpSchema;
 import jakarta.annotation.PreDestroy;
@@ -51,6 +53,19 @@ public class McpLifecycleManager {
         } catch (Exception e) {
             log.warn("Failed to list tools from {}: {}", serverName, e.getMessage());
             return List.of();
+        }
+    }
+
+    public McpSchema.CallToolResult executeTool(String serverName, String toolName, String argumentsJson) {
+        var client = clients.get(serverName);
+        if (client == null) {
+            throw new IllegalStateException("MCP server not connected: " + serverName);
+        }
+        try {
+            Map<String, Object> args = new ObjectMapper().readValue(argumentsJson, new TypeReference<>() {});
+            return client.callTool(new McpSchema.CallToolRequest(toolName, args));
+        } catch (Exception e) {
+            throw new RuntimeException("MCP tool call failed: " + e.getMessage(), e);
         }
     }
 

@@ -1,7 +1,6 @@
 package com.azhukov.agent.tools.terminal;
 
 import com.azhukov.agent.config.AgentProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -82,13 +81,10 @@ public class TerminalTool implements ToolHandler {
     }
 
     public static class TerminalArgs {
-        @JsonProperty("command")
         @ToolParam(description = "shell command to execute")
         private String command;
-        @JsonProperty("timeout")
         @ToolParam(description = "timeout in seconds", required = false)
         private int timeout;
-        @JsonProperty("background")
         @ToolParam(description = "run as background process and return session_id", required = false)
         private boolean background;
 

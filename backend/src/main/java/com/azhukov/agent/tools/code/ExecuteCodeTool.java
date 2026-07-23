@@ -1,6 +1,5 @@
 package com.azhukov.agent.tools.code;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -63,10 +62,8 @@ public class ExecuteCodeTool implements ToolHandler {
     }
 
     public static class ExecuteCodeArgs {
-        @JsonProperty("code")
         @ToolParam(description = "Python code to execute")
         private String code;
-        @JsonProperty("timeout")
         @ToolParam(description = "timeout in seconds", required = false)
         private String timeout;
 

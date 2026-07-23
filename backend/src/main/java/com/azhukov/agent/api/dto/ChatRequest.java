@@ -5,5 +5,6 @@ import java.util.UUID;
 
 public record ChatRequest(
     UUID sessionId,
-    @NotBlank String message
+    @NotBlank String message,
+    Integer delegationDepth
 ) {}

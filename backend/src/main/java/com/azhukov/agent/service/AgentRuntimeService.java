@@ -34,6 +34,24 @@ public class AgentRuntimeService {
     }
 
     @Transactional
+    public ChatResponseDto runDelegate(ChatRequest request) {
+        int depth = request.delegationDepth() != null ? request.delegationDepth() : 0;
+        Session session = createSession("user-1", "openai-compatible", "")
+            .withMetadata("delegation_depth", String.valueOf(depth));
+
+        saveUserMessage(session.id(), request.message());
+        TurnResult result = agentRuntime.runTurn(session, request.message());
+        persistMessages(session.id(), result.messages());
+
+        return new ChatResponseDto(
+            session.id(),
+            result.finalText(),
+            null,
+            result.completed()
+        );
+    }
+
+    @Transactional
     public ChatResponseDto runTurn(ChatRequest request) {
         boolean isNew = request.sessionId() == null;
         Session session = isNew
@@ -62,13 +80,13 @@ public class AgentRuntimeService {
         e.setUpdatedAt(Instant.now());
         SessionEntity saved = sessionRepository.save(e);
         return new Session(saved.getId(), saved.getUserId(), saved.getTitle(),
-            saved.getModelProvider(), saved.getModelName(), null);
+            saved.getModelProvider(), saved.getModelName(), null, java.util.Map.of());
     }
 
     private Session loadSession(UUID id) {
         SessionEntity e = sessionRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
-        return new Session(e.getId(), e.getUserId(), e.getTitle(), e.getModelProvider(), e.getModelName(), null);
+        return new Session(e.getId(), e.getUserId(), e.getTitle(), e.getModelProvider(), e.getModelName(), null, java.util.Map.of());
     }
 
     private void saveUserMessage(UUID sessionId, String content) {
