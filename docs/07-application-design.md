@@ -173,278 +173,260 @@ BrowserPool (Spring singleton)
 
 ## 7. Configuration (`AgentProperties`)
 
-Full configuration tree aligned with the upstream Python agent defaults where applicable.
+Current configuration tree implemented in `application.yml` and mirrored by `AgentProperties.java`. Future phases may add more fields; the structure below is the Phase 0 baseline.
 
 ```yaml
 agent:
   name: ${AGENT_NAME:Джава агент}
-  max-turns: 90
-  max-iterations: 100
-  api-max-retries: 3
-  verify-on-stop: true
-  reasoning:
-    enabled: false
-    mode: auto                    # auto | forced | disabled
-  tool-use-enforcement: auto      # auto | strict | never
-  intent-ack-continuation: auto
-  task-completion-guidance: true
-  parallel-tool-call-guidance: true
-  response:
-    max-tokens: 4096
-    temperature: 0.7
-    top-p: 1.0
-  system-prompt:
-    stable: ${user.home}/.java-agent/SOUL.md
-    context: ${user.home}/.java-agent/AGENTS.md
-    project: ${user.home}/.java-agent/.java-agent.md
+
   model:
-    provider: openai-compatible
+    provider: ${AGENT_MODEL_PROVIDER:openai-compatible}
     base-url: ${AGENT_MODEL_BASE_URL:http://localhost:11434/v1}
     api-key: ${AGENT_MODEL_API_KEY:}
     model-name: ${AGENT_MODEL_NAME:qwen2.5:3b}
-    timeout-seconds: 60
-    max-retries: 2
-    context-length: 131072
+    timeout-seconds: ${AGENT_MODEL_TIMEOUT_SECONDS:60}
+    max-retries: ${AGENT_MODEL_MAX_RETRIES:3}
+    max-tokens: ${AGENT_MODEL_MAX_TOKENS:4096}
+    temperature: ${AGENT_MODEL_TEMPERATURE:0.7}
+
+  auxiliary:
+    enabled: ${AGENT_AUXILIARY_ENABLED:false}
+    provider: ${AGENT_AUXILIARY_PROVIDER:openai-compatible}
+    base-url: ${AGENT_AUXILIARY_BASE_URL:}
+    api-key: ${AGENT_AUXILIARY_API_KEY:}
+    model-name: ${AGENT_AUXILIARY_MODEL_NAME:}
+    timeout-seconds: ${AGENT_AUXILIARY_TIMEOUT_SECONDS:60}
+    max-retries: ${AGENT_AUXILIARY_MAX_RETRIES:3}
+
   vision:
-    provider: openai-compatible
+    provider: ${AGENT_VISION_PROVIDER:}
     base-url: ${AGENT_VISION_BASE_URL:}
     api-key: ${AGENT_VISION_API_KEY:}
     model-name: ${AGENT_VISION_MODEL_NAME:}
-    max-download-bytes: 52428800
-    download-timeout-seconds: 30
-  auxiliary:
-    provider: openai-compatible
-    base-url: ${AGENT_AUX_BASE_URL:}
-    api-key: ${AGENT_AUX_API_KEY:}
-    model-name: ${AGENT_AUX_MODEL_NAME:}
-    timeout-seconds: 60
+    timeout-seconds: ${AGENT_VISION_TIMEOUT_SECONDS:60}
+    max-retries: ${AGENT_VISION_MAX_RETRIES:3}
+    use-auxiliary-first: ${AGENT_VISION_USE_AUXILIARY_FIRST:true}
+
   browser:
-    engine: local-chromium        # local-chromium | browserbase | browser-use | camofox
-    binary-path: ${AGENT_BROWSER_BINARY_PATH:}
-    cdp-url: ${AGENT_BROWSER_CDP_URL:}
-    default-timeout-ms: 30000
-    navigation-timeout-ms: 60000
-    page-load-timeout-ms: 30000
-    inactivity-timeout-ms: 120000
-    headed: false
-    restrict-evaluate: true
-    allow-list: []                # URL patterns allowed for navigation
-    block-list: []                # URL patterns blocked
-  terminal:
-    backend: local                # local | docker | ssh | singularity
-    timeout-seconds: 180
-    dangerous-approval: true
-    workdir: ${AGENT_TERMINAL_WORKDIR:}
-    pty: false
-    allowed-shells: [bash, sh, zsh]
-  file:
-    read-max-chars: 100000
-    blocked-patterns: []
-    cross-profile-guard: true
+    cdp-url: ${AGENT_BROWSER_CDP_URL:http://localhost:9222}
+    default-timeout-ms: ${AGENT_BROWSER_DEFAULT_TIMEOUT_MS:30000}
+    page-load-timeout-ms: ${AGENT_BROWSER_PAGE_LOAD_TIMEOUT_MS:30000}
+    max-tabs: ${AGENT_BROWSER_MAX_TABS:5}
+    headless: ${AGENT_BROWSER_HEADLESS:true}
+    executable-path: ${AGENT_BROWSER_EXECUTABLE_PATH:}
+
   web:
-    search-backend: searxng       # searxng | ddgs | firecrawl | exa | tavily
-    extract-backend: parallel     # parallel | firecrawl | tavily | readability
-    extract-char-limit: 50000
-    cache-enabled: true
+    search-results: ${AGENT_WEB_SEARCH_RESULTS:5}
+    extract-timeout-seconds: ${AGENT_WEB_EXTRACT_TIMEOUT_SECONDS:30}
+    extract-max-chars: ${AGENT_WEB_EXTRACT_MAX_CHARS:100000}
+    search-provider: ${AGENT_WEB_SEARCH_PROVIDER:ddg}
+
+  terminal:
+    default-timeout-seconds: ${AGENT_TERMINAL_DEFAULT_TIMEOUT_SECONDS:30}
+    max-timeout-seconds: ${AGENT_TERMINAL_MAX_TIMEOUT_SECONDS:300}
+    docker-enabled: ${AGENT_TERMINAL_DOCKER_ENABLED:false}
+
+  file:
+    read-max-chars: ${AGENT_FILE_READ_MAX_CHARS:100000}
+    write-max-chars: ${AGENT_FILE_WRITE_MAX_CHARS:100000}
+
   memory:
-    enabled: true
-    char-limit: 2000
-    user-char-limit: 8000
-    provider: postgres
+    max-facts-per-user: ${AGENT_MEMORY_MAX_FACTS_PER_USER:1000}
+    max-facts-per-query: ${AGENT_MEMORY_MAX_FACTS_PER_QUERY:10}
+    similarity-threshold: ${AGENT_MEMORY_SIMILARITY_THRESHOLD:0.75}
+
   skills:
-    enabled: true
-    path: ${AGENT_SKILLS_PATH:${user.home}/.java-agent/skills}
+    enabled: ${AGENT_SKILLS_ENABLED:true}
+    max-skills-in-prompt: ${AGENT_SKILLS_MAX_SKILLS_IN_PROMPT:20}
+    max-chars-per-skill: ${AGENT_SKILLS_MAX_CHARS_PER_SKILL:4000}
+    default-toolsets:
+      - hermes-cli
+      - web
+      - file
+      - browser
+      - cli
+      - coding
+
   session-search:
-    enabled: true
-    default-limit: 3
+    max-results: ${AGENT_SESSION_SEARCH_MAX_RESULTS:10}
+    snippet-chars: ${AGENT_SESSION_SEARCH_SNIPPET_CHARS:200}
+
+  tool-output:
+    max-chars: ${AGENT_TOOL_OUTPUT_MAX_CHARS:16000}
+    truncate-warning-chars: ${AGENT_TOOL_OUTPUT_TRUNCATE_WARNING_CHARS:12000}
+    include-timestamps: ${AGENT_TOOL_OUTPUT_INCLUDE_TIMESTAMPS:true}
+
   context:
-    compression:
-      enabled: true
-      threshold-messages: 40
-      threshold-tokens: 60000
-      keep-first: 4
-      keep-last: 12
-  security:
-    approval-required: false
-    dangerous-patterns: []        # additional regexes
-    redaction-enabled: true
+    max-tokens: ${AGENT_CONTEXT_MAX_TOKENS:16000}
+    target-tokens: ${AGENT_CONTEXT_TARGET_TOKENS:12000}
+    summary-chunk-tokens: ${AGENT_CONTEXT_SUMMARY_CHUNK_TOKENS:2000}
+    max-context-messages: ${AGENT_CONTEXT_MAX_CONTEXT_MESSAGES:50}
+
   delegation:
-    enabled: true
-    provider: openai-compatible
-    model-name: ${AGENT_DELEGATION_MODEL_NAME:}
-    max-iterations: 5
+    enabled: ${AGENT_DELEGATION_ENABLED:true}
+    max-depth: ${AGENT_DELEGATION_MAX_DEPTH:3}
+    default-timeout-seconds: ${AGENT_DELEGATION_DEFAULT_TIMEOUT_SECONDS:300}
+
   mcp:
-    discovery-timeout-seconds: 60
-    tool-call-timeout-seconds: 300
-    auto-reload-on-config-change: true
-    servers: []                   # static server list in config
+    enabled: ${AGENT_MCP_ENABLED:false}
+    servers: []
+
+  security:
+    approvals-enabled: ${AGENT_SECURITY_APPROVALS_ENABLED:true}
+    file-safety-enabled: ${AGENT_SECURITY_FILE_SAFETY_ENABLED:true}
+    url-safety-enabled: ${AGENT_SECURITY_URL_SAFETY_ENABLED:true}
+    redact-enabled: ${AGENT_SECURITY_REDACT_ENABLED:true}
+
+  core:
+    max-turns: ${AGENT_CORE_MAX_TURNS:90}
+    tool-use-enforcement: ${AGENT_CORE_TOOL_USE_ENFORCEMENT:auto}
+    task-completion-guidance: ${AGENT_CORE_TASK_COMPLETION_GUIDANCE:true}
+    parallel-tool-call-guidance: ${AGENT_CORE_PARALLEL_TOOL_CALL_GUIDANCE:true}
+    auto-title-session: ${AGENT_CORE_AUTO_TITLE_SESSION:true}
+    reasoning-config: ${AGENT_CORE_REASONING_CONFIG:medium}
 ```
 
-**Environment variables summary:** `AGENT_NAME`, `AGENT_MODEL_BASE_URL`, `AGENT_MODEL_API_KEY`, `AGENT_MODEL_NAME`, `DB_PASSWORD` (used by Spring datasource), `AGENT_SKILLS_PATH`.
+**Environment variables summary:** `AGENT_NAME`, `AGENT_MODEL_BASE_URL`, `AGENT_MODEL_API_KEY`, `AGENT_MODEL_NAME`, `OLLAMA_API_KEY`, `OPENAI_API_KEY`, `DB_PASSWORD` (used by Spring datasource).
 
+### Additional upstream Hermes settings not yet in config
 
+These may be added in later phases:
 
-### Additional config sections not in the YAML tree above
-
-| Section | Key Hermes defaults | Java mapping |
+| Hermes setting | Planned Java mapping | Status |
 |---|---|---|
-| `terminal` | `backend: local`, `timeout: 180`, `persistent_shell: true`, `cwd: .` | `TerminalProperties` |
-| `web` | `backend: ""`, `extract_char_limit: 15000` | `WebProperties` |
-| `browser` | `engine: auto`, `cdp_url: ""`, `inactivity_timeout: 120`, `command_timeout: 30`, `allow_private_urls: false` | `BrowserProperties` |
-| `memory` | `memory_enabled: true`, `user_profile_enabled: true`, `memory_char_limit: 2200`, `user_char_limit: 1375` | `MemoryProperties` |
-| `delegation` | `max_concurrent_children: 3`, `max_spawn_depth: 1`, `orchestrator_enabled: true` | `DelegationProperties` |
-| `mcp` | `auto_reload_on_config_change: true` | `McpProperties` |
-| `mcp_servers` | map of `{name: {command, args, env, url, headers, timeout}}` | `Map<String, McpServerProperties>` |
-| `security` | `allow_private_urls: false`, `redact_secrets: true` | `SecurityProperties` |
-| `approvals` | `mode: smart`, `timeout: 300` | `ApprovalProperties` |
-| `tool_loop_guardrails` | `warn_after.exact_failure: 2`, `hard_stop_enabled: false` | `ToolLoopGuardrailsProperties` |
-| `context` | `engine: compressor` | `ContextProperties` |
-| `checkpoints` | `enabled: false` | out of scope |
-| `tts/stt/voice` | — | out of scope |
-| `slack/discord/telegram` | — | out of scope |
-| `lsp` | — | out of scope |
-| `desktop/dashboard` | — | out of scope |
-| `goals/moa/honcho` | — | out of scope |
-| `x_search` | — | out of scope |
-| `secrets` | — | out of scope |
+| `reasoning.enabled/mode` | `CoreProperties.reasoningConfig` partial | basic string only |
+| `system-prompt.*` paths | `CoreProperties` or `PromptBuilder` | not configured |
+| `memory.user_char_limit`, `memory_char_limit` | `MemoryProperties` char limits | not implemented |
+| `tool_loop_guardrails` | `ToolLoopGuardrailsProperties` | not implemented |
+| `context.compression.*` | `ContextProperties` compression sub-tree | not implemented |
+| `browser.allow-list/block-list`, `inactivity-timeout-ms` | `BrowserProperties` | not implemented |
+| `terminal.blocked-commands`, `require-approval-commands` | `TerminalProperties` lists | fields exist, no logic yet |
 
 ## 8. Persistence Schema
 
-Tables managed by Flyway. PostgreSQL replaces SQLite; full-text search uses `pg_trgm` and `tsvector` instead of FTS5.
+Tables managed by Flyway in `db/migration/V2__agent_schema.sql`. PostgreSQL replaces SQLite; full-text search will use `pg_trgm` and `tsvector` in a later migration.
 
 ### Core tables
 
 ```sql
-CREATE TABLE sessions (
-    id UUID PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id TEXT NOT NULL,
-    profile TEXT NOT NULL DEFAULT 'default',
-    name TEXT,
-    model_name TEXT,
-    provider TEXT,
-    extra JSONB NOT NULL DEFAULT '{}',
+    title TEXT,
+    model_provider TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    system_prompt TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE messages (
-    id BIGSERIAL PRIMARY KEY,
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    ordinal INT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('system','user','assistant','tool')),
+    role TEXT NOT NULL,
     content TEXT,
-    reasoning_content TEXT,
     tool_calls JSONB,
     tool_call_id TEXT,
-    tool_name TEXT,
-    metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_messages_session ON messages(session_id, ordinal);
+CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 
-CREATE TABLE session_model_usage (
-    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    model TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    api_call_count INT NOT NULL DEFAULT 0,
-    input_tokens INT NOT NULL DEFAULT 0,
-    output_tokens INT NOT NULL DEFAULT 0,
-    cache_read_tokens INT NOT NULL DEFAULT 0,
-    cache_write_tokens INT NOT NULL DEFAULT 0,
-    reasoning_tokens INT NOT NULL DEFAULT 0,
-    estimated_cost_usd NUMERIC(12,8) NOT NULL DEFAULT 0,
-    actual_cost_usd NUMERIC(12,8),
-    first_seen TIMESTAMPTZ,
-    last_seen TIMESTAMPTZ,
-    PRIMARY KEY (session_id, model, provider)
-);
-
-CREATE TABLE memory (
-    id BIGSERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS memory (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id TEXT NOT NULL,
-    fact TEXT NOT NULL,
     category TEXT,
-    metadata JSONB NOT NULL DEFAULT '{}',
+    fact TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_memory_user ON memory(user_id);
+CREATE INDEX IF NOT EXISTS idx_memory_user_id ON memory(user_id);
 
-CREATE TABLE memory_fts (
-    memory_id BIGINT PRIMARY KEY REFERENCES memory(id) ON DELETE CASCADE,
-    search_vector tsvector
-);
-CREATE INDEX idx_memory_fts_vector ON memory_fts USING GIN(search_vector);
-
-CREATE TABLE todos (
-    id BIGSERIAL PRIMARY KEY,
-    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS todos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
     content TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','cancelled')),
-    ordinal INT NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_todos_session ON todos(session_id, ordinal);
+CREATE INDEX IF NOT EXISTS idx_todos_session_id ON todos(session_id);
+CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
 
-CREATE TABLE skills (
-    id BIGSERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS skills (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL UNIQUE,
     category TEXT,
     description TEXT,
     content TEXT NOT NULL,
-    metadata JSONB NOT NULL DEFAULT '{}',
+    version TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE skill_files (
-    id BIGSERIAL PRIMARY KEY,
-    skill_id BIGINT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
-    file_path TEXT NOT NULL,
-    content TEXT NOT NULL,
+CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
+
+CREATE TABLE IF NOT EXISTS context_references (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    metadata JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_references_session_id ON context_references(session_id);
+
+CREATE TABLE IF NOT EXISTS compression_locks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    locked_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_compression_locks_session_id ON compression_locks(session_id);
+
+CREATE TABLE IF NOT EXISTS approvals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    tool_name TEXT NOT NULL,
+    request JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(skill_id, file_path)
+    resolved_at TIMESTAMPTZ
 );
 
-CREATE TABLE async_delegations (
-    id UUID PRIMARY KEY,
-    session_id UUID REFERENCES sessions(id) ON DELETE SET NULL,
-    goal TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','succeeded','failed','cancelled')),
-    result TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE INDEX IF NOT EXISTS idx_approvals_session_id ON approvals(session_id);
+CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
+
+CREATE TABLE IF NOT EXISTS gateway_routing (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    route_path TEXT NOT NULL,
+    target_url TEXT NOT NULL,
+    method TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE compression_locks (
-    session_id UUID PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-    holder TEXT NOT NULL,
-    acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at TIMESTAMPTZ NOT NULL
-);
-CREATE INDEX idx_compression_locks_expires ON compression_locks(expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gateway_routing_path_method ON gateway_routing(route_path, method);
 
-CREATE TABLE gateway_routing (
-    scope TEXT NOT NULL DEFAULT '',
-    session_key TEXT NOT NULL,
-    entry_json JSONB NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (scope, session_key)
+CREATE TABLE IF NOT EXISTS session_model_usage (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE session_search_meta (
-    id BIGSERIAL PRIMARY KEY,
-    session_id UUID NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
-    title TEXT,
-    summary TEXT,
-    search_vector tsvector
-);
-CREATE INDEX idx_session_search_vector ON session_search_meta USING GIN(search_vector);
+CREATE INDEX IF NOT EXISTS idx_session_model_usage_session_id ON session_model_usage(session_id);
 ```
 
 ## 9. Layered Architecture: Controller → Service → Repository
