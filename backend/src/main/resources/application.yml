@@ -36,7 +36,7 @@ agent:
     base-url: ${AGENT_MODEL_BASE_URL:http://localhost:11434/v1}
     api-key: ${AGENT_MODEL_API_KEY:}
     model-name: ${AGENT_MODEL_NAME:qwen2.5:3b}
-    timeout-seconds: ${AGENT_MODEL_TIMEOUT_SECONDS:60}
+    timeout-seconds: ${AGENT_MODEL_TIMEOUT_SECONDS:600}
     max-retries: ${AGENT_MODEL_MAX_RETRIES:3}
     max-tokens: ${AGENT_MODEL_MAX_TOKENS:4096}
     temperature: ${AGENT_MODEL_TEMPERATURE:0.7}
@@ -47,7 +47,7 @@ agent:
     base-url: ${AGENT_AUXILIARY_BASE_URL:}
     api-key: ${AGENT_AUXILIARY_API_KEY:}
     model-name: ${AGENT_AUXILIARY_MODEL_NAME:}
-    timeout-seconds: ${AGENT_AUXILIARY_TIMEOUT_SECONDS:60}
+    timeout-seconds: ${AGENT_AUXILIARY_TIMEOUT_SECONDS:600}
     max-retries: ${AGENT_AUXILIARY_MAX_RETRIES:3}
 
   vision:
@@ -55,27 +55,27 @@ agent:
     base-url: ${AGENT_VISION_BASE_URL:}
     api-key: ${AGENT_VISION_API_KEY:}
     model-name: ${AGENT_VISION_MODEL_NAME:}
-    timeout-seconds: ${AGENT_VISION_TIMEOUT_SECONDS:60}
+    timeout-seconds: ${AGENT_VISION_TIMEOUT_SECONDS:600}
     max-retries: ${AGENT_VISION_MAX_RETRIES:3}
     use-auxiliary-first: ${AGENT_VISION_USE_AUXILIARY_FIRST:true}
 
   browser:
     cdp-url: ${AGENT_BROWSER_CDP_URL:http://localhost:9222}
-    default-timeout-ms: ${AGENT_BROWSER_DEFAULT_TIMEOUT_MS:30000}
-    page-load-timeout-ms: ${AGENT_BROWSER_PAGE_LOAD_TIMEOUT_MS:30000}
+    default-timeout-ms: ${AGENT_BROWSER_DEFAULT_TIMEOUT_MS:120000}
+    page-load-timeout-ms: ${AGENT_BROWSER_PAGE_LOAD_TIMEOUT_MS:120000}
     max-tabs: ${AGENT_BROWSER_MAX_TABS:5}
     headless: ${AGENT_BROWSER_HEADLESS:true}
     executable-path: ${AGENT_BROWSER_EXECUTABLE_PATH:}
 
   web:
     search-results: ${AGENT_WEB_SEARCH_RESULTS:5}
-    extract-timeout-seconds: ${AGENT_WEB_EXTRACT_TIMEOUT_SECONDS:30}
+    extract-timeout-seconds: ${AGENT_WEB_EXTRACT_TIMEOUT_SECONDS:120}
     extract-max-chars: ${AGENT_WEB_EXTRACT_MAX_CHARS:100000}
     search-provider: ${AGENT_WEB_SEARCH_PROVIDER:ddg}
 
   terminal:
-    default-timeout-seconds: ${AGENT_TERMINAL_DEFAULT_TIMEOUT_SECONDS:30}
-    max-timeout-seconds: ${AGENT_TERMINAL_MAX_TIMEOUT_SECONDS:300}
+    default-timeout-seconds: ${AGENT_TERMINAL_DEFAULT_TIMEOUT_SECONDS:300}
+    max-timeout-seconds: ${AGENT_TERMINAL_MAX_TIMEOUT_SECONDS:1800}
     docker-enabled: ${AGENT_TERMINAL_DOCKER_ENABLED:false}
 
   file:
@@ -92,12 +92,15 @@ agent:
     max-skills-in-prompt: ${AGENT_SKILLS_MAX_SKILLS_IN_PROMPT:20}
     max-chars-per-skill: ${AGENT_SKILLS_MAX_CHARS_PER_SKILL:4000}
     default-toolsets:
-      - hermes-cli
       - web
       - file
       - browser
-      - cli
+      - terminal
       - coding
+      - memory
+      - skills
+      - core
+      - delegate
 
   session-search:
     max-results: ${AGENT_SESSION_SEARCH_MAX_RESULTS:10}
@@ -117,7 +120,7 @@ agent:
   delegation:
     enabled: ${AGENT_DELEGATION_ENABLED:true}
     max-depth: ${AGENT_DELEGATION_MAX_DEPTH:3}
-    default-timeout-seconds: ${AGENT_DELEGATION_DEFAULT_TIMEOUT_SECONDS:300}
+    default-timeout-seconds: ${AGENT_DELEGATION_DEFAULT_TIMEOUT_SECONDS:1800}
 
   mcp:
     enabled: ${AGENT_MCP_ENABLED:false}
@@ -158,7 +161,7 @@ agent:
     base-url: ${OLLAMA_BASE_URL:https://ollama.com/v1}
     api-key: ${OLLAMA_API_KEY:}
     model-name: ${AGENT_MODEL_NAME:kimi-k2.6}
-    timeout-seconds: 120
+    timeout-seconds: 600
     max-retries: 2
     max-tokens: 4096
     temperature: 0.7

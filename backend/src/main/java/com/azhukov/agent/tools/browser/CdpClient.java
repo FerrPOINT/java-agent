@@ -53,9 +53,9 @@ public class CdpClient {
         }
         this.webSocketUrl = arr.get(0).get("webSocketDebuggerUrl").asText();
         connectWebSocket();
-        send("Page.enable", null).get(5, TimeUnit.SECONDS);
-        send("Runtime.enable", null).get(5, TimeUnit.SECONDS);
-        send("DOM.enable", null).get(5, TimeUnit.SECONDS);
+        send("Page.enable", null).get(60, TimeUnit.SECONDS);
+        send("Runtime.enable", null).get(60, TimeUnit.SECONDS);
+        send("DOM.enable", null).get(60, TimeUnit.SECONDS);
         connected = true;
     }
 
@@ -81,7 +81,7 @@ public class CdpClient {
             }
         };
         webSocketClient.connect();
-        connected.get(10, TimeUnit.SECONDS);
+        connected.get(120, TimeUnit.SECONDS);
     }
 
     public CompletableFuture<JsonNode> send(String method, ObjectNode params) {

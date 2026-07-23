@@ -24,7 +24,7 @@ public class BrowserService {
         ensureConnected();
         ObjectNode params = new ObjectMapper().createObjectNode();
         params.put("url", url);
-        JsonNode result = cdpClient.send("Page.navigate", params).get(30, TimeUnit.SECONDS);
+        JsonNode result = cdpClient.send("Page.navigate", params).get(120, TimeUnit.SECONDS);
         JsonNode frameId = result.get("frameId");
         JsonNode error = result.get("errorText");
         if (error != null && !error.isNull()) {
@@ -37,14 +37,14 @@ public class BrowserService {
     public String click(String selector) throws Exception {
         ensureConnected();
         String expression = "document.querySelector('" + selector.replace("'", "\\'") + "')?.click()";
-        JsonNode document = cdpClient.send("DOM.getDocument", null).get(10, TimeUnit.SECONDS);
+        JsonNode document = cdpClient.send("DOM.getDocument", null).get(60, TimeUnit.SECONDS);
         int rootNodeId = document.path("root").path("nodeId").asInt();
 
         ObjectMapper mapper = new ObjectMapper();
         ObjectNode params = mapper.createObjectNode();
         params.put("nodeId", rootNodeId);
         params.put("selector", selector);
-        JsonNode result = cdpClient.send("DOM.querySelector", params).get(10, TimeUnit.SECONDS);
+        JsonNode result = cdpClient.send("DOM.querySelector", params).get(60, TimeUnit.SECONDS);
         JsonNode nodeId = result.get("nodeId");
         if (nodeId == null || nodeId.asInt() == 0) {
             return "Element not found: " + selector;
@@ -56,7 +56,7 @@ public class BrowserService {
         ensureConnected();
         ObjectNode params = new ObjectMapper().createObjectNode();
         params.put("format", "png");
-        JsonNode result = cdpClient.send("Page.captureScreenshot", params).get(30, TimeUnit.SECONDS);
+        JsonNode result = cdpClient.send("Page.captureScreenshot", params).get(120, TimeUnit.SECONDS);
         JsonNode data = result.get("data");
         if (data == null) {
             return "Screenshot failed: no data";
@@ -69,7 +69,7 @@ public class BrowserService {
         ObjectNode params = new ObjectMapper().createObjectNode();
         params.put("expression", expression);
         params.put("returnByValue", true);
-        JsonNode result = cdpClient.send("Runtime.evaluate", params).get(10, TimeUnit.SECONDS);
+        JsonNode result = cdpClient.send("Runtime.evaluate", params).get(60, TimeUnit.SECONDS);
         JsonNode value = result.path("result").path("value");
         return value.isMissingNode() ? result.toString() : value.asText();
     }
@@ -81,6 +81,6 @@ public class BrowserService {
     }
 
     private void waitForLoad() throws Exception {
-        Thread.sleep(500);
+        Thread.sleep(2000);
     }
 }

@@ -36,7 +36,7 @@ public class DelegateTaskTool implements ToolHandler {
 
     public DelegateTaskTool() {
         this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
+            .connectTimeout(Duration.ofSeconds(120))
             .build();
     }
 

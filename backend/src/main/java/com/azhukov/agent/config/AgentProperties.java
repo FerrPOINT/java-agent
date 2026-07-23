@@ -131,8 +131,8 @@ public class AgentProperties {
 
     public static class BrowserProperties {
         private String cdpUrl = "http://localhost:9222";
-        private int defaultTimeoutMs = 30000;
-        private int pageLoadTimeoutMs = 30000;
+        private int defaultTimeoutMs = 120000;
+        private int pageLoadTimeoutMs = 120000;
         private int maxTabs = 5;
         private boolean headless = true;
         private String executablePath = "";
