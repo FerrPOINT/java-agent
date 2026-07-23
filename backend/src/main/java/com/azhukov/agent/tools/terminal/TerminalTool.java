@@ -28,9 +28,11 @@ public class TerminalTool implements ToolHandler {
     );
 
     private final ProcessTool processTool;
+    private final AgentProperties properties;
 
-    public TerminalTool(ProcessTool processTool) {
+    public TerminalTool(ProcessTool processTool, AgentProperties properties) {
         this.processTool = processTool;
+        this.properties = properties;
     }
 
     @Override
@@ -45,7 +47,8 @@ public class TerminalTool implements ToolHandler {
                 return ToolResult.fail("Blocked dangerous command pattern: " + pattern);
             }
         }
-        int timeout = args.timeout() > 0 ? args.timeout() : 300;
+        int timeout = args.timeout() > 0 ? args.timeout() : properties.getTerminal().getDefaultTimeoutSeconds();
+        timeout = Math.min(timeout, properties.getTerminal().getMaxTimeoutSeconds());
 
         if (args.background()) {
             try {

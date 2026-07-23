@@ -172,8 +172,10 @@ public class AgentProperties {
     }
 
     public static class TerminalProperties {
-        private int defaultTimeoutSeconds = 30;
-        private int maxTimeoutSeconds = 300;
+        @jakarta.validation.constraints.Positive
+        private int defaultTimeoutSeconds = 300;
+        @jakarta.validation.constraints.Positive
+        private int maxTimeoutSeconds = 1800;
         private boolean dockerEnabled = false;
         private final List<String> blockedCommands = new ArrayList<>();
         private final List<String> requireApprovalCommands = new ArrayList<>();

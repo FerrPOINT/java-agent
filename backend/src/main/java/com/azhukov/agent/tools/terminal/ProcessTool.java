@@ -246,7 +246,20 @@ public class ProcessTool implements ToolHandler {
 
         void destroy() {
             process.descendants().forEach(ProcessHandle::destroyForcibly);
-            process.destroyForcibly();
+            process.destroy();
+            try {
+                if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                    process.destroyForcibly();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                process.destroyForcibly();
+            }
+            try {
+                readerThread.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 }
