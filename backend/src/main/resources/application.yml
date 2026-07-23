@@ -155,11 +155,11 @@ spring:
 agent:
   model:
     provider: ${AGENT_MODEL_PROVIDER:openai-compatible}
-    base-url: ${AGENT_MODEL_BASE_URL:http://localhost:11434/v1}
-    api-key: ${AGENT_MODEL_API_KEY:}
+    base-url: ${OLLAMA_BASE_URL:https://ollama.com/v1}
+    api-key: ${OLLA...}
     model-name: ${AGENT_MODEL_NAME:kimi-k2.6}
-    timeout-seconds: 60
-    max-retries: 3
+    timeout-seconds: 120
+    max-retries: 2
     max-tokens: 4096
     temperature: 0.7
 
