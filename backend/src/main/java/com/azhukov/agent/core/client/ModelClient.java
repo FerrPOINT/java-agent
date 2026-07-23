@@ -8,4 +8,8 @@ import java.util.List;
 public interface ModelClient {
 
     ChatResponse complete(List<Message> messages, List<ToolDefinition> tools);
+
+    default String analyzeImage(String base64Image, String prompt) {
+        return "Vision analysis is not supported by this model client.";
+    }
 }

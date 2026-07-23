@@ -10,19 +10,30 @@ import org.springframework.stereotype.Component;
 
 @AgentTool(
     name = "browser_click",
-    description = "Click an element on the current browser page.",
+    description = "Click an element in the browser by CSS selector.",
     toolset = "browser"
 )
 @Component
 public class BrowserClickTool implements ToolHandler {
 
+    private final BrowserService browserService;
+
+    public BrowserClickTool(BrowserService browserService) {
+        this.browserService = browserService;
+    }
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         ClickArgs args = ToolHandler.parseJson(arguments, ClickArgs.class);
-        return ToolResult.ok("Browser click not yet implemented. Ref: " + args.ref());
+        try {
+            String result = browserService.click(args.selector());
+            return ToolResult.ok(result);
+        } catch (Exception e) {
+            return ToolResult.fail("Browser click failed: " + e.getMessage());
+        }
     }
 
     public record ClickArgs(
-        @ToolParam(description = "element reference id") String ref
+        @ToolParam(description = "CSS selector of the element to click") String selector
     ) {}
 }

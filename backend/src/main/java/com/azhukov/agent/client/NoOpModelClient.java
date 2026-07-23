@@ -19,4 +19,9 @@ public class NoOpModelClient implements ModelClient {
         String last = messages.isEmpty() ? "" : messages.get(messages.size() - 1).content();
         return ChatResponse.text("NoOp response: " + last);
     }
+
+    @Override
+    public String analyzeImage(String base64Image, String prompt) {
+        return "NoOp vision: image length=" + (base64Image != null ? base64Image.length() : 0) + ", prompt=" + prompt;
+    }
 }

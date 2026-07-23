@@ -16,14 +16,25 @@ import org.springframework.stereotype.Component;
 @Component
 public class BrowserNavigateTool implements ToolHandler {
 
+    private final BrowserService browserService;
+
+    public BrowserNavigateTool(BrowserService browserService) {
+        this.browserService = browserService;
+    }
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         NavigateArgs args = ToolHandler.parseJson(arguments, NavigateArgs.class);
-        return ToolResult.ok("Browser navigate not yet implemented. URL: " + args.url());
+        try {
+            String result = browserService.navigate(args.url());
+            return ToolResult.ok(result);
+        } catch (Exception e) {
+            return ToolResult.fail("Browser navigate failed: " + e.getMessage());
+        }
     }
 
     public record NavigateArgs(
         @ToolParam(description = "URL to navigate to") String url,
-        @ToolParam(description = "wait for load timeout in seconds") int waitSeconds
+        @ToolParam(description = "wait for load timeout in seconds", required = false) int waitSeconds
     ) {}
 }

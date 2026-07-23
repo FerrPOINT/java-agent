@@ -8,7 +8,9 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.ImageContent;
 import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
@@ -68,6 +70,19 @@ public class LangChain4jModelClient implements ModelClient {
         }
 
         return com.azhukov.agent.core.model.ChatResponse.text(aiMessage.text());
+    }
+
+    @Override
+    public String analyzeImage(String base64Image, String prompt) {
+        UserMessage message = UserMessage.from(
+            TextContent.from(prompt),
+            ImageContent.from(base64Image, "image/png")
+        );
+        ChatRequest request = ChatRequest.builder()
+            .messages(List.of(message))
+            .build();
+        dev.langchain4j.model.chat.response.ChatResponse response = chatModel.chat(request);
+        return response.aiMessage().text();
     }
 
     private ChatMessage toLangChainMessage(Message message) {

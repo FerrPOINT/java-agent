@@ -10,20 +10,30 @@ import org.springframework.stereotype.Component;
 
 @AgentTool(
     name = "browser_cdp",
-    description = "Send a raw Chrome DevTools Protocol command to the connected browser.",
+    description = "Send a raw Chrome DevTools Protocol command and return the result.",
     toolset = "browser"
 )
 @Component
 public class BrowserCdpTool implements ToolHandler {
 
+    private final BrowserService browserService;
+
+    public BrowserCdpTool(BrowserService browserService) {
+        this.browserService = browserService;
+    }
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         CdpArgs args = ToolHandler.parseJson(arguments, CdpArgs.class);
-        return ToolResult.ok("Browser CDP not yet implemented. Method: " + args.method());
+        try {
+            String result = browserService.evaluate(args.expression());
+            return ToolResult.ok(result);
+        } catch (Exception e) {
+            return ToolResult.fail("Browser CDP evaluate failed: " + e.getMessage());
+        }
     }
 
     public record CdpArgs(
-        @ToolParam(description = "CDP method name") String method,
-        @ToolParam(description = "CDP params JSON object") String params
+        @ToolParam(description = "JavaScript expression to evaluate in the browser") String expression
     ) {}
 }

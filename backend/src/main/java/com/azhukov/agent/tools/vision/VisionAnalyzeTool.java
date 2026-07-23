@@ -3,10 +3,19 @@ package com.azhukov.agent.tools.vision;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import org.springframework.stereotype.Component;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Base64;
 
 @AgentTool(
     name = "vision_analyze",
@@ -16,10 +25,43 @@ import org.springframework.stereotype.Component;
 @Component
 public class VisionAnalyzeTool implements ToolHandler {
 
+    private final ModelClient modelClient;
+
+    public VisionAnalyzeTool(ModelClient modelClient) {
+        this.modelClient = modelClient;
+    }
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         VisionArgs args = ToolHandler.parseJson(arguments, VisionArgs.class);
-        return ToolResult.ok("Vision analyze not yet implemented. Image: " + args.image());
+        if (args.image() == null || args.image().isBlank()) {
+            return ToolResult.fail("Image path or URL is required");
+        }
+        try {
+            String base64 = loadImageBase64(args.image());
+            String result = modelClient.analyzeImage(base64, args.prompt() != null ? args.prompt() : "Describe this image");
+            return ToolResult.ok(result);
+        } catch (Exception e) {
+            return ToolResult.fail("Vision analyze failed: " + e.getMessage());
+        }
+    }
+
+    private String loadImageBase64(String source) throws Exception {
+        byte[] bytes;
+        if (source.startsWith("http://") || source.startsWith("https://")) {
+            try (InputStream in = URI.create(source).toURL().openStream();
+                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                in.transferTo(out);
+                bytes = out.toByteArray();
+            }
+        } else {
+            Path path = Paths.get(source);
+            if (!Files.exists(path)) {
+                throw new IllegalArgumentException("File not found: " + source);
+            }
+            bytes = Files.readAllBytes(path);
+        }
+        return Base64.getEncoder().encodeToString(bytes);
     }
 
     public record VisionArgs(
