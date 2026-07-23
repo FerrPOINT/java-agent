@@ -1,5 +1,7 @@
 package com.azhukov.agent.tools.terminal;
 
+import com.azhukov.agent.config.AgentProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -16,8 +18,8 @@ import java.util.concurrent.TimeUnit;
 
 @AgentTool(
     name = "terminal",
-    description = "Run a shell command locally and return stdout/stderr. Blocked commands: rm -rf /, mkfs, dd if=/dev/zero, :(){ :|:& };:.",
-    toolset = "cli"
+    description = "Run a shell command locally and return stdout/stderr. For long-lived processes use background=true to get a session_id, then manage it with the process tool. Blocked commands: rm -rf /, mkfs, dd if=/dev/zero, :(){ :|:& };:.",
+    toolset = "terminal"
 )
 @Component
 public class TerminalTool implements ToolHandler {
@@ -25,6 +27,12 @@ public class TerminalTool implements ToolHandler {
     private static final List<String> BLOCKED_PATTERNS = List.of(
         "rm -rf /", "rm -rf /*", "mkfs", "dd if=/dev/zero", ":(){ :|:\u0026 };:"
     );
+
+    private final ProcessTool processTool;
+
+    public TerminalTool(ProcessTool processTool) {
+        this.processTool = processTool;
+    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -39,6 +47,19 @@ public class TerminalTool implements ToolHandler {
             }
         }
         int timeout = args.timeout() > 0 ? args.timeout() : 30;
+
+        if (args.background()) {
+            try {
+                ProcessTool.ManagedProcess mp = processTool.spawn(command, timeout);
+                return ToolResult.ok(String.format(
+                    "Background process started\nsession_id: %s\npid: %s",
+                    mp.id, mp.pid
+                ));
+            } catch (Exception e) {
+                return ToolResult.fail("Failed to start background process: " + e.getMessage());
+            }
+        }
+
         return runCommand(command, timeout);
     }
 
@@ -60,8 +81,19 @@ public class TerminalTool implements ToolHandler {
         }
     }
 
-    public record TerminalArgs(
-        @ToolParam(description = "shell command to execute") String command,
-        @ToolParam(description = "timeout in seconds", required = false) int timeout
-    ) {}
+    public static class TerminalArgs {
+        @JsonProperty("command")
+        @ToolParam(description = "shell command to execute")
+        private String command;
+        @JsonProperty("timeout")
+        @ToolParam(description = "timeout in seconds", required = false)
+        private int timeout;
+        @JsonProperty("background")
+        @ToolParam(description = "run as background process and return session_id", required = false)
+        private boolean background;
+
+        public String command() { return command; }
+        public int timeout() { return timeout; }
+        public boolean background() { return background; }
+    }
 }

@@ -1,5 +1,6 @@
 package com.azhukov.agent.tools.memory;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -14,9 +15,9 @@ import java.time.Instant;
 import java.util.UUID;
 
 @AgentTool(
-    name = "todo_tool",
+    name = "todo",
     description = "Create, update, or list todos for the current session.",
-    toolset = "core"
+    toolset = "todo"
 )
 @Component
 public class TodoTool implements ToolHandler {
@@ -48,9 +49,23 @@ public class TodoTool implements ToolHandler {
             .orElse("No todos."));
     }
 
-    public record TodoArgs(
-        @ToolParam(description = "create or list") String action,
-        @ToolParam(description = "todo title") String title,
-        @ToolParam(description = "low/medium/high") String priority
-    ) {}
+    public static class TodoArgs {
+        @JsonProperty("action")
+        @ToolParam(description = "create or list")
+        private String action;
+        @JsonProperty("title")
+        @ToolParam(description = "todo title", required = false)
+        private String title;
+        @JsonProperty("priority")
+        @ToolParam(description = "low/medium/high", required = false)
+        private String priority;
+        @JsonProperty("limit")
+        @ToolParam(description = "max items to list", required = false)
+        private Integer limit;
+
+        public String action() { return action; }
+        public String title() { return title; }
+        public String priority() { return priority; }
+        public Integer limit() { return limit; }
+    }
 }

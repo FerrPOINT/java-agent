@@ -156,7 +156,7 @@ agent:
   model:
     provider: ${AGENT_MODEL_PROVIDER:openai-compatible}
     base-url: ${OLLAMA_BASE_URL:https://ollama.com/v1}
-    api-key: ${OLLA...}
+    api-key: ${OLLAMA_API_KEY:}
     model-name: ${AGENT_MODEL_NAME:kimi-k2.6}
     timeout-seconds: 120
     max-retries: 2

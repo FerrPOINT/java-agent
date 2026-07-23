@@ -10,9 +10,9 @@ import com.azhukov.agent.core.model.ToolResult;
 import org.springframework.stereotype.Component;
 
 @AgentTool(
-    name = "memory_tool",
+    name = "memory",
     description = "Store or recall a memory fact for the user.",
-    toolset = "core"
+    toolset = "memory"
 )
 @Component
 public class MemoryTool implements ToolHandler {

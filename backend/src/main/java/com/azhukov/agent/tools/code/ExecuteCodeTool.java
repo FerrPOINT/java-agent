@@ -1,5 +1,6 @@
 package com.azhukov.agent.tools.code;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -29,7 +30,13 @@ public class ExecuteCodeTool implements ToolHandler {
         if (args.code() == null || args.code().isBlank()) {
             return ToolResult.fail("Code is required");
         }
-        int timeout = args.timeout() > 0 ? args.timeout() : 30;
+        int timeout = 30;
+        if (args.timeout() != null && !args.timeout().isBlank()) {
+            try {
+                timeout = Integer.parseInt(args.timeout().replaceAll("[^0-9]", ""));
+            } catch (NumberFormatException ignored) {
+            }
+        }
         return runPython(args.code(), timeout);
     }
 
@@ -55,8 +62,15 @@ public class ExecuteCodeTool implements ToolHandler {
         }
     }
 
-    public record ExecuteCodeArgs(
-        @ToolParam(description = "Python code to execute") String code,
-        @ToolParam(description = "timeout in seconds", required = false) int timeout
-    ) {}
+    public static class ExecuteCodeArgs {
+        @JsonProperty("code")
+        @ToolParam(description = "Python code to execute")
+        private String code;
+        @JsonProperty("timeout")
+        @ToolParam(description = "timeout in seconds", required = false)
+        private String timeout;
+
+        public String code() { return code; }
+        public String timeout() { return timeout; }
+    }
 }
