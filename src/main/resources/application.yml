@@ -1,0 +1,70 @@
+spring:
+  application:
+    name: hermes-java-agent
+
+  datasource:
+    url: jdbc:sqlite:${user.home}/.hermes/java-agent/db/hermes.db
+    driver-class-name: org.sqlite.JDBC
+
+  jpa:
+    database-platform: org.hibernate.community.dialect.SQLiteDialect
+    hibernate:
+      ddl-auto: validate
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+  health:
+    db:
+      enabled: true
+
+logging:
+  level:
+    com.ferrpoint.hermes: INFO
+  pattern:
+    level: "%5p [requestId=%X{requestId:-}] %c{0}"
+
+hermes:
+  model:
+    provider: openai
+    model-name: gpt-4o-mini
+    temperature: 0.7
+    max-tokens: 4096
+    timeout-seconds: 60
+
+  vision:
+    provider: kimi
+    base-url: https://api.moonshot.ai/v1
+    model-name: kimi-k2.7-code
+    max-download-bytes: 52428800
+    download-timeout-seconds: 30
+
+  browser:
+    executable: google-chrome
+    headless: true
+    args:
+      - --no-sandbox
+      - --disable-gpu
+      - --disable-dev-shm-usage
+    timeout-seconds: 30
+
+  memory:
+    enabled: true
+    provider: sqlite
+    max-context-chars: 6000
+
+  skills:
+    enabled: true
+    directory: ~/.hermes/skills
