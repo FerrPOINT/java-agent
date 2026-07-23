@@ -58,6 +58,22 @@ dependencies {
     implementation 'info.picocli:picocli:4.7.7'
     implementation 'org.jline:jline:4.3.1'
 
+    // WebSocket client for CDP
+    implementation 'org.java-websocket:Java-WebSocket:1.6.0'
+
+    // HTML / markdown parsing
+    implementation 'org.jsoup:jsoup:1.18.3'
+    implementation 'com.vladsch.flexmark:flexmark:0.64.8'
+    implementation 'com.vladsch.flexmark:flexmark-html2md-converter:0.64.8'
+
+    // Commons utilities
+    implementation 'org.apache.commons:commons-lang3:3.17.0'
+    implementation 'commons-io:commons-io:2.18.0'
+    implementation 'com.cronutils:cron-utils:9.2.1'
+
+    // Image metadata (vision safety / thumbnailing)
+    implementation 'org.apache.commons:commons-imaging:1.0.0-alpha5'
+
     // Logging
     implementation 'org.slf4j:slf4j-api:2.0.17'
 

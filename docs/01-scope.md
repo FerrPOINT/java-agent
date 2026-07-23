@@ -132,9 +132,10 @@ Keep the interface but not the full sandbox runtime:
 | Telegram adapter | maybe | default skip |
 | Web API server | ✅ | ❌ |
 | CLI REPL | ✅ | ❌ |
-| Browser / computer-use | ✅ browser (local Chromium CDP) | ❌ computer-use |
-| Image generation (FAL) | ❌ | ✅ |
-| Voice / TTS | ❌ | ✅ |
+|| Browser / computer-use | ✅ browser (local Chromium CDP) | ❌ computer-use |
+|| Terminal Docker backend | ✅ local `ProcessBuilder` + optional Docker | ❌ SSH/Modal/cloud shells |
+|| Image generation (FAL) | ❌ | ✅ |
+|| Voice / TTS | ❌ | ✅ |
 | Vision | ✅ | ❌ |
 | Desktop / TUI / dashboard | ❌ | ✅ |
 | All other messaging platforms | ❌ | ✅ |

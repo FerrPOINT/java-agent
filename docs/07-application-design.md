@@ -1047,17 +1047,41 @@ Implemented with Picocli subcommands.
 
 
 
-## 26. Open Questions / Decisions Required
+## 26. Decisions Log
 
-| # | Question | Impact | Default if no answer |
+| # | Question | Decision | Rationale |
 |---|---|---|---|
-| 1 | Should `execute_code` run in isolated temp dir (strict) or project CWD (project)? | Code tool design, security | Start with `project` mode matching Python default |
-| 2 | Should `delegate_task` support orchestrator nesting (`max_spawn_depth > 1`) in MVP? | Subagent complexity | No — depth = 1 only |
-| 3 | Should MCP servers be auto-discovered from config on startup or loaded lazily on first tool call? | Startup time, failure surface | Auto-discover at `AgentRuntime` init |
-| 4 | Should system prompt include full skills index or use progressive disclosure? | Prompt size, cache hit rate | Full index for local skills up to a char cap |
-| 5 | Should memory/todo be per-session (DB) or per-user (file/DB)? | Schema, multi-user gateway | Per-user memory; per-session todos |
-| 6 | Should vision fallback use a separate auxiliary model or the main model if multimodal? | Auxiliary service complexity | Main model first, separate auxiliary only if configured |
-| 7 | Which CDP WebSocket client — Java-WebSocket or Jetty? | Browser module dependency | Java-WebSocket for lighter footprint |
-| 8 | Should terminal backend support Docker/Modal/SSH in MVP? | Terminal service scope | Local `ProcessBuilder` only |
-| 9 | Should approvals gate be synchronous (block turn) or asynchronous (return pending)? | Gateway/CLI UX | Synchronous for CLI; async pending for HTTP API |
-| 10 | Should sessions auto-title with auxiliary model or rule-based extraction? | Session UX, extra LLM cost | Rule-based first 120 chars of first user message |
+| 1 | `execute_code` temp dir vs project CWD | Project CWD | Matches Python Hermes default |
+| 2 | `delegate_task` max depth | Configurable `max-depth` (default 3) | User wants nested delegation; guardrails prevent runaway |
+| 3 | MCP discovery | Auto-discover at `AgentRuntime` init | Faster first tool call, explicit failures at startup |
+| 4 | Skills in system prompt | Full local index with char cap | Simpler; progressive disclosure can be added later |
+| 5 | Memory vs todos scope | Memory per-user, todos per-session | Matches Hermes design |
+| 6 | Vision fallback | Auxiliary model first, main model fallback | Matches `tools/vision_tools.py` `_analyze_image` |
+| 7 | CDP WebSocket client | Java-WebSocket | Lighter footprint |
+| 8 | Terminal backend | Local `ProcessBuilder` + optional Docker | Docker added to scope per user request |
+| 9 | Approvals gate | Synchronous for CLI, async pending for HTTP | Different UX per transport |
+| 10 | Auto-title sessions | Auxiliary model, like Hermes | `agent/conversation_loop.py` uses auxiliary model |
+
+## 27. Dev / Prod Profiles
+
+`application.yml` contains three documents:
+
+1. **Default** — environment-variable driven; empty secrets.
+2. **Dev (`spring.profiles.active=dev`)** — Ollama `http://localhost:11434/v1` with `OLLAMA_API_KEY`, model `qwen2.5:3b`, DEBUG logging.
+3. **Prod (`spring.profiles.active=prod`)** — expects `OPENAI_API_KEY`, configurable model default `gpt-4o-mini`, INFO logging.
+
+Run dev server:
+
+```bash
+./gradlew bootRun --args='--spring.profiles.active=dev'
+```
+
+## 28. Phase 0 Status
+
+Completed:
+- `AgentProperties.java` expanded with all config sections.
+- `application.yml` with environment-variable bindings and dev/prod profiles.
+- `build.gradle` with CDP, HTML/markdown, commons, cron, imaging dependencies.
+- `V2__agent_schema.sql` with sessions, messages, memory, todos, skills, context_references, compression_locks, approvals, gateway_routing, session_model_usage.
+
+Next: Phase 1 — implement `AgentRuntime`, `ToolRegistry`, `ModelClient`, `ReadFileTool`, and REPL happy path.
