@@ -9,9 +9,11 @@ import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.context.DefaultContextEngine;
 import com.azhukov.agent.core.memory.DatabaseMemoryProvider;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.memory.NoOpMemoryProvider;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.skill.DatabaseSkillManager;
+import com.azhukov.agent.core.skill.NoOpSkillManager;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.core.tool.ToolRegistry;
@@ -68,14 +70,30 @@ public class AgentConfig {
     }
 
     @Bean
-    @Primary
+    @ConditionalOnProperty(name = "agent.memory.enabled", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnMissingBean(MemoryProvider.class)
     public MemoryProvider memoryProvider(DatabaseMemoryProvider databaseMemoryProvider) {
         return databaseMemoryProvider;
     }
 
     @Bean
-    @Primary
+    @ConditionalOnProperty(name = "agent.memory.enabled", havingValue = "false")
+    @ConditionalOnMissingBean(MemoryProvider.class)
+    public MemoryProvider noOpMemoryProvider() {
+        return new NoOpMemoryProvider();
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "agent.skills.enabled", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnMissingBean(SkillManager.class)
     public SkillManager skillManager(DatabaseSkillManager databaseSkillManager) {
         return databaseSkillManager;
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "agent.skills.enabled", havingValue = "false")
+    @ConditionalOnMissingBean(SkillManager.class)
+    public SkillManager noOpSkillManager() {
+        return new NoOpSkillManager();
     }
 }
