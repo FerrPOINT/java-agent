@@ -54,7 +54,7 @@ public class AgentProperties {
         private String baseUrl = "";
         private String apiKey = "";
         private String modelName = "";
-        private int timeoutSeconds = 60;
+        private int timeoutSeconds = 600;
         private int maxRetries = 3;
         private int maxTokens = 4096;
         private double temperature = 0.7;
@@ -85,7 +85,7 @@ public class AgentProperties {
         private String baseUrl = "";
         private String apiKey = "";
         private String modelName = "";
-        private int timeoutSeconds = 60;
+        private int timeoutSeconds = 600;
         private int maxRetries = 3;
 
         public boolean isEnabled() { return enabled; }
@@ -109,7 +109,7 @@ public class AgentProperties {
         private String baseUrl = "";
         private String apiKey = "";
         private String modelName = "";
-        private int timeoutSeconds = 60;
+        private int timeoutSeconds = 600;
         private int maxRetries = 3;
         private boolean useAuxiliaryFirst = true;
 
@@ -153,7 +153,7 @@ public class AgentProperties {
 
     public static class WebProperties {
         private int searchResults = 5;
-        private int extractTimeoutSeconds = 30;
+        private int extractTimeoutSeconds = 120;
         private int extractMaxChars = 100000;
         private String searchProvider = "ddg";
         private final List<String> allowedDomains = new ArrayList<>();

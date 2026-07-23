@@ -45,7 +45,7 @@ public class TerminalTool implements ToolHandler {
                 return ToolResult.fail("Blocked dangerous command pattern: " + pattern);
             }
         }
-        int timeout = args.timeout() > 0 ? args.timeout() : 30;
+        int timeout = args.timeout() > 0 ? args.timeout() : 300;
 
         if (args.background()) {
             try {

@@ -63,7 +63,7 @@ public class DelegateTaskTool implements ToolHandler {
     }
 
     private String runSubAgent(String goal, Session parentSession, int depth, int timeoutSeconds) throws Exception {
-        int timeout = timeoutSeconds > 0 ? timeoutSeconds : 120;
+        int timeout = timeoutSeconds > 0 ? timeoutSeconds : 1800;
         String baseUrl = System.getProperty("agent.server.base-url", "http://localhost:8090");
         String body = MAPPER.writeValueAsString(new ChatRequest(goal, parentSession.userId(), depth));
 

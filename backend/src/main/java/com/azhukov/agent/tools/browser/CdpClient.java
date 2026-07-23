@@ -35,7 +35,7 @@ public class CdpClient {
     public CdpClient(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
+            .connectTimeout(Duration.ofSeconds(60))
             .build();
     }
 
@@ -43,7 +43,7 @@ public class CdpClient {
         if (connected) return;
         String listUrl = cdpBaseUrl.endsWith("/") ? cdpBaseUrl + "json/list" : cdpBaseUrl + "/json/list";
         HttpRequest request = HttpRequest.newBuilder(URI.create(listUrl))
-            .timeout(Duration.ofSeconds(10))
+            .timeout(Duration.ofSeconds(120))
             .GET()
             .build();
         String response = httpClient.send(request, HttpResponse.BodyHandlers.ofString()).body();

@@ -69,7 +69,7 @@ public class WebSearchTool implements ToolHandler {
         String url = DUCKDUCKGO_HTML + "?q=" + URLEncoder.encode(query, StandardCharsets.UTF_8);
         Document doc = Jsoup.connect(url)
             .userAgent("Mozilla/5.0 (compatible; JavaAgent/1.0)")
-            .timeout(30000)
+            .timeout(120000)
             .get();
 
         List<Map<String, String>> out = new ArrayList<>();

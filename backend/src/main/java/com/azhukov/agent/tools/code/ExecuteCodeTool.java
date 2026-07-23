@@ -29,7 +29,7 @@ public class ExecuteCodeTool implements ToolHandler {
         if (args.code() == null || args.code().isBlank()) {
             return ToolResult.fail("Code is required");
         }
-        int timeout = 30;
+        int timeout = 300;
         if (args.timeout() != null && !args.timeout().isBlank()) {
             try {
                 timeout = Integer.parseInt(args.timeout().replaceAll("[^0-9]", ""));

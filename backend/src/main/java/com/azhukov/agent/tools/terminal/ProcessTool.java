@@ -98,7 +98,7 @@ public class ProcessTool implements ToolHandler {
         if (p == null) {
             return ToolResult.fail("Process not found: " + sessionId);
         }
-        int waitSeconds = timeout > 0 ? timeout : 300;
+        int waitSeconds = timeout > 0 ? timeout : 1800;
         try {
             boolean finished = p.process.waitFor(waitSeconds, TimeUnit.SECONDS);
             if (!finished) {
