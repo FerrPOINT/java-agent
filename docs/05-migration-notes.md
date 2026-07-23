@@ -1,248 +1,126 @@
 # 05 — Migration Notes & Tricky Parts
 
-Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + OpenAI-compatible LLM endpoint.
+Current stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + OpenAI-compatible LLM endpoint.
 
-This document captures non-obvious translation issues when moving agent from Python to Java.
+This document captures non-obvious translation issues and current design decisions.
 
 ## 1. Dynamic Tool Discovery
 
-**Python:** agent uses `tools/registry.py` to AST-scan `tools/*.py`, then `importlib.import_module()` at runtime. Each module self-registers with `registry.register()`.
+**Python:** Hermes uses `tools/registry.py` to AST-scan `tools/*.py`, then `importlib.import_module()` at runtime.
 
-**Java challenge:** Java is statically typed; modules are classes, not files. Options:
-1. **Annotation + classpath scanning** at runtime (ClassGraph or Spring `ClassPathScanningCandidateComponentProvider`).
-2. **Annotation processor** at compile time to generate a `META-INF/services/com.azhukov.agent.core.tool.Tool` registry file.
-3. **Explicit configuration** in `application.yml` for the prototype.
-
-**Recommendation:** Start with explicit configuration for predictability, then add annotation scanning.
+**Java:** Tool classes annotated with `@AgentTool` are discovered via Spring classpath scanning at startup (`SpringToolRegistry`). Each tool is a Spring bean; its `@AgentTool` annotation provides name/description, and its `execute(...)` method accepts a JSON string that is deserialized into the tool's args POJO/record.
 
 ## 2. Concurrency: Virtual Threads vs Reactive
 
-**Python:** agent has `_tool_loop`, `_worker_thread_local`, and `asyncio.run()` bridges because many tools are sync (file, terminal) but the agent loop is async.
+**Python:** Hermes has `_tool_loop`, `_worker_thread_local`, and `asyncio.run()` bridges because many tools are sync but the loop is async.
 
-**Java:** Virtual threads (`Thread.startVirtualThread(...)` or `Executors.newVirtualThreadPerTaskExecutor()`) remove most of the async/sync friction. We choose **Spring MVC + virtual threads** (`spring.threads.virtual.enabled=true`) instead of WebFlux because:
-- Agent tools are mostly blocking I/O.
+**Java:** We use **Spring MVC + virtual threads** (`spring.threads.virtual.enabled=true`) instead of WebFlux because:
+- Agent tools are mostly blocking I/O (JDBC, CDP, shell).
 - Imperative code is easier to debug and test.
 - LangChain4j, JDBC, CDP clients are blocking by default.
-- Reactor's backpressure is unnecessary for request/response LLM calls.
+- Reactor backpressure is unnecessary for request/response LLM calls.
 
-Use `CompletableFuture` only where you need composition or timeouts. Avoid `CompletableFuture` explosion; keep code linear.
+Use `CompletableFuture` only where composition or timeouts are needed.
 
 ## 3. OpenAI-Compatible Tool Schema
 
-agent builds JSON schemas for tools and sends them in the OpenAI `tools` field. Java must produce identical schemas.
+Hermes builds JSON schemas for tools and sends them in the OpenAI `tools` field.
 
-**Options:**
-- Jackson POJOs + `jsonschema-generator` (Victools).
-- Manual schema builder.
-- LangChain4j `ToolSpecification` builder.
+**Java implementation:** `SpringToolRegistry.buildDefinition()` introspects `@AgentTool`, `@ToolParam`, and record/POJO fields to produce `ToolDefinition`. Required fields are derived from args class fields.
 
-**Tricky detail:** OpenAI requires `type`, `properties`, `required`, and nested object handling. Some providers (Ollama, Gemini) are stricter. Test against the real target provider.
+**Tricky detail:** `@ToolParam` must target `ElementType.RECORD_COMPONENT` to be readable on Java records via `RecordComponent.getAnnotation()`.
 
-## 4. Prompt Caching & System Prompt Stability
+## 4. Tool Args Deserialization
 
-**agent rule:** system prompt must not change mid-conversation unless compression occurs. Toolset changes invalidate the cache.
+Tool args are POJOs/records. `ToolHandler.parseJson()` uses a single `ObjectMapper` with:
+- `FAIL_ON_UNKNOWN_PROPERTIES = false`
+- `ACCEPT_SINGLE_VALUE_AS_ARRAY = true`
+- field visibility `ANY` (so private record fields are populated without getters).
 
-**Java implication:** Store the resolved `systemMessage` in `Session`. Recompute only when:
-- New skills are added explicitly.
-- Context compression fires.
-- Toolset configuration changes (rare; should require new session).
+Without field-visibility `ANY`, Jackson cannot deserialize records whose accessor methods are named `command()` instead of `getCommand()`.
 
-## 5. Message Role Alternation
+## 5. System Prompt First
 
-OpenAI format forbids consecutive messages with the same role. agent sanitizes by merging adjacent same-role messages or injecting empty assistant/tool messages.
+`DefaultContextEngine.prepareContext()` always places the system message first, then extras (skills/memory/recall), then history, then the current turn. This matches Hermes behavior and prevents the model from ignoring its own name/instructions.
 
-**Java implementation:** `MessageSanitizer` should validate and fix before every API call.
+## 6. Message Role Alternation
 
-## 6. Tool Result Attachments
-
-OpenAI format expects:
-- Assistant message with `tool_calls`.
-- One or more `tool` role messages with `tool_call_id`.
-
-**Java implementation:** `ToolResultMessage` must carry `toolCallId`. The runtime appends results before the next model call.
+OpenAI format forbids consecutive messages with the same role. `DefaultAgentRuntime` currently appends `assistant(toolCalls)` followed by `tool` result messages, which satisfies alternation for the tool loop.
 
 ## 7. Terminal Tool
 
 **Python:** Uses `ptyprocess` / `pywinpty` for pseudo-terminal semantics.
 
-**Java:** `ProcessBuilder` gives a plain process, not a PTY. For prototype, implement:
+**Java:** `ProcessBuilder` gives a plain process. We implement:
 - `terminal` → runs command with `ProcessBuilder`, streams stdout/stderr.
-- `read_terminal` → reads buffered output.
-- `close_terminal` → destroys process.
+- `process` → waits for an existing process.
 
-If true PTY is needed later, use JNA/JNR to call `forkpty` or embed a small native helper.
+True PTY support is deferred.
 
 ## 8. File Path Security
 
-agent has `path_security.py` and `file_safety.py` to prevent escaping working directory and reading secrets.
-
-**Java:** Implement `PathSecurity` with `Path.normalize()` and `Path.toRealPath()` checks. Maintain allow-list/deny-list (e.g., `.env`, `*.pem`).
+`FileSafety` uses `Path.normalize()` and `Path.toRealPath()` checks plus a deny-list (`.env`, `*.pem`, `.ssh/`).
 
 ## 9. Patch Tool
 
-agent `patch` tool uses a custom parser that applies find-and-replace edits. It is not a unified-diff engine.
-
-**Java:** Port the parser carefully. Test with Python test cases from `prototype/hermes-agent/tools/file_tools.py` and related tests. This is a frequent failure point.
+Deferred for Phase 4. The current prototype supports `read_file` and `write_file`; `patch` requires careful find-and-replace semantics matching Hermes.
 
 ## 10. Context Compression
 
-`context_compressor.py` is large (~228 KB). It summarizes older messages and rewrites the conversation.
-
-**Java strategy:**
-- Implement a simple summarizer first: when token count > threshold, ask the model to summarize the oldest half.
-- Keep full messages for the recent window.
-- Add sliding-window fallback.
-
-Do not port all compression heuristics in the first iteration.
+Deferred. Current implementation uses a sliding window of the last N messages plus token budget. Summarization via auxiliary model will be added later.
 
 ## 11. Memory Provider Interface
 
-agent uses PostgreSQL for memory; `MemoryProvider` interface allows future REST-backed providers.
-
-**Java:** Define `MemoryProvider` interface with methods:
 ```java
-List<String> getFacts(String userId, String sessionId, String query);
-void addFact(String userId, String sessionId, String fact);
+List<String> recall(String userId, String query, int limit);
+void store(String userId, String category, String fact);
 ```
-Implement `PostgresMemoryProvider` first; add REST-backed providers later.
+
+`DatabaseMemoryProvider` uses PostgreSQL FTS; `NoOpMemoryProvider` is used when `agent.memory.enabled=false`.
 
 ## 12. Skills
 
-agent skills are Markdown files + optional scripts/templates. The agent calls `skill_view` to load instructions.
-
-**Java:** Store skills as classpath resources or files under `~/.java-agent/skills/`. Load `SKILL.md` as a string. If a skill references a script, execute it as a tool if the runtime supports it.
+Skills are stored as rows in `skills` table. `DatabaseSkillManager` loads/saves Markdown content. `NoOpSkillManager` is used when `agent.skills.enabled=false`.
 
 ## 13. MCP Integration
 
-agent `tools/mcp_tool.py` starts MCP servers (stdio or SSE) and exposes their tools.
+Uses `io.modelcontextprotocol.sdk:mcp:2.0.0`. MCP servers are configured under `agent.mcp.servers` and their tools are registered dynamically at runtime.
 
-**Java:** Use `io.modelcontextprotocol.sdk:mcp`. The SDK supports stdio and SSE transports. Wrap each MCP tool as a `ToolDefinition` in the registry.
+## 14. Browser / Vision
 
-**Challenge:** MCP servers are separate processes. Java must manage process lifecycle and restart on crash.
+- Browser: own Chromium launcher + CDP WebSocket client (`java.net.http.WebSocket`), no Playwright.
+- Vision: base64 screenshots sent to a vision-capable OpenAI-compatible model or auxiliary model if `agent.vision.use-auxiliary-first=true`.
 
-## 14. ACP (Agent Client Protocol)
+## 15. Timeout Strategy
 
-ACP is an emerging protocol for editors/IDEs to drive agents. agent has `acp_adapter/`.
+All timeouts increased by an order of magnitude to avoid stalls under real LLM/CDP/browser load:
+- model/auxiliary/vision HTTP: 600 s
+- `TerminalTool`: 300 s
+- `ProcessTool` wait: 1800 s
+- `ExecuteCodeTool`: 300 s
+- `DelegateTaskTool` sub-agent: 1800 s
+- web search/extract: 120 s
+- CDP connect/request/operations: 60–120 s
 
-**Java:** No official stable Java SDK yet. Study `acp_adapter/server.py` and implement the JSON-RPC-like surface manually, or wait for JetBrains/Zed SDK.
+## 16. Dev Launch
 
-## 15. Configuration Compatibility
+Gradle `bootRun` consumes too much memory for real LLM calls and is killed with SIGKILL 137. Use `java -jar` for dev server:
 
-agent uses `~/.agent/config.yaml` and `.env` for secrets. Java Spring Boot uses `application.yml` and env vars.
+```bash
+java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
+  --spring.profiles.active=dev \
+  --spring.datasource.password=project_workflow \
+  --server.port=8090
+```
 
-**Recommendation:** Write a loader that reads `~/.java-agent/config.yaml` and maps it to `AgentProperties`. Keep secrets in env vars only. Do not write secrets to YAML.
+## 17. NoOp / Offline Profile
 
-## 16. Logging
+Profile `noop` uses H2 in-memory DB and `NoOpModelClient` so the application starts without PostgreSQL or an API key. Useful for tests and offline development.
 
-agent uses Python logging + `concurrent-log-handler` on Windows.
+## 18. Approval Gate
 
-**Java:** Use SLF4J + Logback. Use `Mapped Diagnostic Context` (MDC) for `sessionId` and `taskId`. Keep logs structured (JSON optionally).
+`ApprovalGate` is in-memory with auto-approve in dev. Persistent approvals and UI are deferred.
 
-## 17. Testing Isolation
+## 19. Agent Name
 
-agent tests rely on monkeypatching module-level globals (e.g., `_db`, `_srv`). In Java this is harder.
-
-**Strategy:**
-- Use constructor injection everywhere.
-- Provide `FakeModelClient`, `FakeMemoryProvider`, `InMemoryToolRegistry` for tests.
-- Avoid static mutable state.
-
-## 18. Gateway Session Management
-
-agent gateway maps each platform conversation to an `AgentRuntime` session. Sessions expire after inactivity.
-
-**Java:** Use a `ConcurrentHashMap<String, Session>` with scheduled cleanup. Be careful with thread-safety: one `AgentRuntime` per session; do not share mutable state.
-
-## 19. Native Code & Sandboxing
-
-The `native/fts5_cjk/` SQLite FTS5 extension is out of scope; PostgreSQL full-text search is used instead.
-
-**Java:**
-- PostgreSQL full-text search (`pg_trgm`/`tsvector`) replaces SQLite FTS5.
-- Sandboxing: start with `ProcessBuilder` security and file-system allow-lists. True seccomp/OpenShell integration is advanced; defer.
-
-## 20. Notable Files to Deep-Dive
-
-When implementing each module, read these Python files first:
-
-| Module | Key files in `prototype/hermes-agent/` |
-|--------|----------------------------------------|
-| Runtime | `run_agent.py`, `agent/conversation_loop.py`, `agent/tool_executor.py` |
-| Tools | `tools/registry.py`, `model_tools.py`, `toolsets.py`, `tools/file_tools.py`, `tools/terminal_tool.py`, `tools/vision_tools.py`, `tools/browser_tool.py` |
-| Prompts | `agent/prompt_builder.py` |
-| Context | `agent/context_engine.py`, `agent/context_compressor.py` |
-| Memory | `agent/memory_manager.py`, `agent/memory_provider.py` |
-| Skills | `agent/skill_*.py`, `tools/skills_tool.py` |
-| Security | `agent/file_safety.py`, `agent/path_security.py`, `agent/approval.py` |
-| Gateway | `gateway/run.py`, `gateway/session.py`, `gateway/delivery.py` |
-| MCP | `tools/mcp_tool.py`, `agent/transports/hermes_tools_mcp_server.py` |
-| ACP | `acp_adapter/server.py`, `acp_adapter/tools.py` |
-
-## 21. Success Criteria for Prototype
-
-1. Start a REPL.
-2. User asks: "Read the contents of /tmp/hello.txt".
-3. Agent sends a tool call to `read_file` with correct path.
-4. Tool executes and returns content.
-5. Agent returns a final answer based on file content.
-6. No boilerplate, no internal codes, immediate actionable output.
-
-This single happy path validates: model client, tool registry, tool executor, message serialization, prompt builder, and runtime loop.
-
-## 22. Vision & Browser Migration Notes
-
-### 22.1 Vision
-
-- `tools/vision_tools.py` downloads image, encodes base64, sends to auxiliary vision router.
-- In Java: `VisionAnalyzeTool` uses the same `ModelClient` with `ImageContent`.
-- Default model: OpenAI-compatible model configured by `agent.model.model-name`; local Ollama is the dev default.
-- Fallback chain: configured OpenAI-compatible endpoint → local Ollama → custom endpoint.
-- Security: cap download size, check URL policy, redact credentials.
-
-### 22.2 Browser
-
-- `tools/browser_tool.py` uses `agent-browser` Node wrapper + cloud providers. For Java prototype use direct CDP.
-- `tools/browser_cdp_tool.py` and `tools/browser_supervisor.py` handle persistent CDP websocket, dialogs, frames.
-- In Java: `CdpClient` opens WebSocket to `http://localhost:9222`, sends JSON-RPC CDP commands.
-- `BrowserPool` launches/destroys Chromium processes per `taskId`.
-- `BrowserSnapshot` calls `Accessibility.getFullAXTree` or `DOMSnapshot.captureSnapshot` and renders text refs like `@e1`.
-- `BrowserVisionTool` captures screenshot via `Page.captureScreenshot`, then calls `VisionAnalyzeTool`.
-
-### 22.3 Browser Dependencies
-
-| Need | Java library |
-|------|--------------|
-| CDP WebSocket | `java.net.http.WebSocket` or Java-WebSocket or Jetty WebSocket client |
-| JSON-RPC over CDP | manual (small) |
-| Chromium launch | `ProcessBuilder` with `google-chrome --remote-debugging-port=9222` or Chromium launcher via `ProcessBuilder` |
-| Screenshot decode | `javax.imageio.ImageIO` |
-| Base64 | `java.util.Base64` |
-
-### 22.4 Model Config
-
-- `agent.model.provider` — `openai-compatible` (or `ollama`, `openai`, etc.)
-- `agent.model.base-url`
-- `agent.model.api-key`
-- `agent.model.model-name`
-- `agent.model.timeout-seconds`
-- `agent.model.max-retries`
-
-### 22.5 Browser Config
-
-- `agent.browser.cdp-url`
-- `agent.browser.default-timeout-ms`
-
-### 22.6 Browser Security
-
-- Run Chromium in headless + sandbox.
-- Avoid `--no-sandbox` unless inside container without user namespaces.
-- Restrict navigation via allow-list.
-- Redact CDP URL credentials.
-- Clean up processes in `BrowserPool.close()` and JVM shutdown hook.
-
-## 23. Agent Name
-
-The agent name is configurable via `agent.name`; default is `Джава агент`. It appears in:
-- The default system prompt (`agent.core.default-system-prompt`).
-- The `/api/v1/health` response.
-- Any user-facing message header.
+Configurable via `agent.name`; defaults to `Джава агент`.
