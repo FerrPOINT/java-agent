@@ -11,20 +11,35 @@ import org.springframework.stereotype.Component;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @AgentTool(
     name = "terminal",
-    description = "Run a shell command locally and return stdout/stderr.",
+    description = "Run a shell command locally and return stdout/stderr. Blocked commands: rm -rf /, mkfs, dd if=/dev/zero, :(){ :|:& };:.",
     toolset = "cli"
 )
 @Component
 public class TerminalTool implements ToolHandler {
 
+    private static final List<String> BLOCKED_PATTERNS = List.of(
+        "rm -rf /", "rm -rf /*", "mkfs", "dd if=/dev/zero", ":(){ :|:\u0026 };:"
+    );
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         TerminalArgs args = ToolHandler.parseJson(arguments, TerminalArgs.class);
-        return runCommand(args.command(), args.timeout());
+        if (args.command() == null || args.command().isBlank()) {
+            return ToolResult.fail("Command is required");
+        }
+        String command = args.command();
+        for (String pattern : BLOCKED_PATTERNS) {
+            if (command.contains(pattern)) {
+                return ToolResult.fail("Blocked dangerous command pattern: " + pattern);
+            }
+        }
+        int timeout = args.timeout() > 0 ? args.timeout() : 30;
+        return runCommand(command, timeout);
     }
 
     private ToolResult runCommand(String command, int timeoutSeconds) {
@@ -47,6 +62,6 @@ public class TerminalTool implements ToolHandler {
 
     public record TerminalArgs(
         @ToolParam(description = "shell command to execute") String command,
-        @ToolParam(description = "timeout in seconds") int timeout
+        @ToolParam(description = "timeout in seconds", required = false) int timeout
     ) {}
 }
