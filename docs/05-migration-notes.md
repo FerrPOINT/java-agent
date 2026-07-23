@@ -8,7 +8,7 @@ This document captures non-obvious translation issues when moving Hermes Agent f
 
 **Java challenge:** Java is statically typed; modules are classes, not files. Options:
 1. **Annotation + classpath scanning** at runtime (ClassGraph or Spring `ClassPathScanningCandidateComponentProvider`).
-2. **Annotation processor** at compile time to generate a `META-INF/services/com.ferrpoint.agent.core.tool.Tool` registry file.
+2. **Annotation processor** at compile time to generate a `META-INF/services/com.azhukov.agent.core.tool.Tool` registry file.
 3. **Explicit configuration** in `application.yml` for the prototype.
 
 **Recommendation:** Start with explicit configuration for predictability, then add annotation scanning.

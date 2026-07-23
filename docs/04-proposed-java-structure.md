@@ -166,10 +166,10 @@ agent-spring-boot-starter/
 
 ## 7. Package Naming Convention
 
-- Base: `com.ferrpoint.agent.*`
-- Public API: `com.ferrpoint.agent.core.api.*`
-- SPI (plugin): `com.ferrpoint.agent.spi.*`
-- Internal: `com.ferrpoint.agent.internal.*`
+- Base: `com.azhukov.agent.*`
+- Public API: `com.azhukov.agent.core.api.*`
+- SPI (plugin): `com.azhukov.agent.spi.*`
+- Internal: `com.azhukov.agent.internal.*`
 
 ## 8. Notes
 

@@ -58,4 +58,4 @@ management:
 
 logging:
   level:
-    com.ferrpoint.agent: INFO
+    com.azhukov.agent: INFO

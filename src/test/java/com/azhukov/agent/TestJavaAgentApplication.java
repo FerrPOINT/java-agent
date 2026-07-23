@@ -1,4 +1,4 @@
-package com.ferrpoint.agent;
+package com.azhukov.agent;
 
 import org.springframework.boot.SpringApplication;
 

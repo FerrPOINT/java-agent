@@ -1,4 +1,4 @@
-package com.ferrpoint.agent.config;
+package com.azhukov.agent.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;

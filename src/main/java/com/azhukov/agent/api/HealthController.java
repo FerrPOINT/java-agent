@@ -1,10 +1,10 @@
-package com.ferrpoint.agent.api;
+package com.azhukov.agent.api;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.ferrpoint.agent.config.AgentProperties;
+import com.azhukov.agent.config.AgentProperties;
 
 import java.util.Map;
 
