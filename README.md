@@ -72,32 +72,51 @@ export AGENT_MODEL_NAME=kimi-k2.7-code
 
 ```bash
 cd backend
-export DB_PASSWORD=*** bootRun
+export DB_PASSWORD=***
+./gradlew bootRun --args='--spring.profiles.active=dev'
 ```
 
 По умолчанию приложение стартует на http://localhost:8080.
 
 Для локальной разработки используется существующий Postgres-контейнер `project-workflow-db-1` на `localhost:5432`, база `java_agent`.
 
-## Сборка
+Для запуска с профилем `dev` (Ollama `http://localhost:11434/v1`, модель `qwen2.5:3b`):
 
 ```bash
 cd backend
-./gradlew build
+export OLLAMA_API_KEY=***
+export DB_PASSWORD=***
+./gradlew bootRun --args='--spring.profiles.active=dev'
 ```
 
-## Тесты
+Для production-профиля:
 
 ```bash
 cd backend
-./gradlew test
+export OPENAI_API_KEY=sk-...
+export AGENT_MODEL_NAME=gpt-4o-mini
+export DB_PASSWORD=***
+./gradlew bootRun --args='--spring.profiles.active=prod'
 ```
 
 ## Структура
 
-- `backend/` — Spring Boot приложение (Gradle + Java + Groovy)
-- `backend/src/main/java/` — Java-код ядра
-- `backend/src/main/groovy/` — Groovy-скрипты / DSL
+```
+backend/
+├── build.gradle
+├── settings.gradle
+└── src/main/java/com/azhukov/agent/
+    ├── JavaAgentApplication.java
+    ├── api/                # REST controllers
+    ├── cli/                # Picocli / JLine REPL
+    ├── client/             # LLM clients
+    ├── config/             # AgentProperties, beans
+    ├── core/               # domain layer (AgentRuntime, ToolRegistry, prompts, context, memory)
+    ├── repository/         # JPA entities + repositories
+    ├── service/            # application services
+    └── tools/              # @AgentTool implementations
+```
+
 - `backend/src/main/resources/` — конфигурация и миграции Flyway
 - `docs/` — архитектура и планирование
 - `prototype/` — клоны репозиториев agent (не в git)

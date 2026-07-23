@@ -337,6 +337,7 @@ public class AgentProperties {
         private boolean parallelToolCallGuidance = true;
         private boolean autoTitleSession = true;
         private String reasoningConfig = "medium";
+        private String defaultSystemPrompt = "You are ${agent.name}. Use available tools when needed. Be concise. Return plain text unless JSON is requested.";
 
         public int getMaxTurns() { return maxTurns; }
         public void setMaxTurns(int maxTurns) { this.maxTurns = maxTurns; }
@@ -350,5 +351,7 @@ public class AgentProperties {
         public void setAutoTitleSession(boolean autoTitleSession) { this.autoTitleSession = autoTitleSession; }
         public String getReasoningConfig() { return reasoningConfig; }
         public void setReasoningConfig(String reasoningConfig) { this.reasoningConfig = reasoningConfig; }
+        public String getDefaultSystemPrompt() { return defaultSystemPrompt; }
+        public void setDefaultSystemPrompt(String defaultSystemPrompt) { this.defaultSystemPrompt = defaultSystemPrompt; }
     }
 }

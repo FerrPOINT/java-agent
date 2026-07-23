@@ -88,6 +88,5 @@ Health endpoints:
 
 ## Readiness status
 
-Last audit: all upstream Hermes tool schemas and config sections reviewed. Known out-of-scope areas documented in `01-scope.md`. Remaining open questions are tracked in `07-application-design.md` section 20.
-
+Last audit: all upstream Hermes tool schemas and config sections reviewed. Known out-of-scope areas documented in `01-scope.md`. Decisions and Phase 0 status are tracked in `07-application-design.md` sections 26–28.
 
