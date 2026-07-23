@@ -131,6 +131,9 @@ public record ChatResponse(String content, List<ToolCall> toolCalls) {}
 | `web_search` | `WebSearchTool` | SearXNG / DDGS |
 | `web_extract` | `WebExtractTool` | readability / jsoup |
 | `vision_analyze` | `VisionAnalyzeTool` | base64 + `ModelClient` |
+| `execute_code` | `ExecuteCodeTool` | Python sandbox (strict/project mode) |
+| `clarify` | `ClarifyTool` | ask user for choice |
+| `delegate_task` | `DelegateTaskTool` | subagent spawn (background) |
 | `memory` | `MemoryTool` | store/retrieve facts |
 | `skills_list` | `SkillsListTool` | list loaded skills |
 | `skill_view` | `SkillViewTool` | read SKILL.md |
@@ -152,6 +155,7 @@ public record ChatResponse(String content, List<ToolCall> toolCalls) {}
 | `browser_console` | `BrowserConsoleTool` |
 | `browser_get_images` | `BrowserGetImagesTool` |
 | `browser_vision` | `BrowserVisionTool` |
+| `browser_cdp` | `BrowserCdpTool` | raw CDP escape hatch |
 
 ### Browser Architecture
 
@@ -278,6 +282,32 @@ agent:
 
 **Environment variables summary:** `AGENT_NAME`, `AGENT_MODEL_BASE_URL`, `AGENT_MODEL_API_KEY`, `AGENT_MODEL_NAME`, `DB_PASSWORD` (used by Spring datasource), `AGENT_SKILLS_PATH`.
 
+
+
+### Additional config sections not in the YAML tree above
+
+| Section | Key Hermes defaults | Java mapping |
+|---|---|---|
+| `terminal` | `backend: local`, `timeout: 180`, `persistent_shell: true`, `cwd: .` | `TerminalProperties` |
+| `web` | `backend: ""`, `extract_char_limit: 15000` | `WebProperties` |
+| `browser` | `engine: auto`, `cdp_url: ""`, `inactivity_timeout: 120`, `command_timeout: 30`, `allow_private_urls: false` | `BrowserProperties` |
+| `memory` | `memory_enabled: true`, `user_profile_enabled: true`, `memory_char_limit: 2200`, `user_char_limit: 1375` | `MemoryProperties` |
+| `delegation` | `max_concurrent_children: 3`, `max_spawn_depth: 1`, `orchestrator_enabled: true` | `DelegationProperties` |
+| `mcp` | `auto_reload_on_config_change: true` | `McpProperties` |
+| `mcp_servers` | map of `{name: {command, args, env, url, headers, timeout}}` | `Map<String, McpServerProperties>` |
+| `security` | `allow_private_urls: false`, `redact_secrets: true` | `SecurityProperties` |
+| `approvals` | `mode: smart`, `timeout: 300` | `ApprovalProperties` |
+| `tool_loop_guardrails` | `warn_after.exact_failure: 2`, `hard_stop_enabled: false` | `ToolLoopGuardrailsProperties` |
+| `context` | `engine: compressor` | `ContextProperties` |
+| `checkpoints` | `enabled: false` | out of scope |
+| `tts/stt/voice` | — | out of scope |
+| `slack/discord/telegram` | — | out of scope |
+| `lsp` | — | out of scope |
+| `desktop/dashboard` | — | out of scope |
+| `goals/moa/honcho` | — | out of scope |
+| `x_search` | — | out of scope |
+| `secrets` | — | out of scope |
+
 ## 8. Persistence Schema
 
 Tables managed by Flyway. PostgreSQL replaces SQLite; full-text search uses `pg_trgm` and `tsvector` instead of FTS5.
@@ -313,17 +343,21 @@ CREATE TABLE messages (
 
 CREATE INDEX idx_messages_session ON messages(session_id, ordinal);
 
-CREATE TABLE model_usage (
-    id BIGSERIAL PRIMARY KEY,
-    message_id BIGINT REFERENCES messages(id) ON DELETE CASCADE,
-    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
-    provider TEXT NOT NULL,
+CREATE TABLE session_model_usage (
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     model TEXT NOT NULL,
-    input_tokens INT,
-    output_tokens INT,
-    cached_tokens INT,
-    cost_usd NUMERIC(12,8),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    provider TEXT NOT NULL,
+    api_call_count INT NOT NULL DEFAULT 0,
+    input_tokens INT NOT NULL DEFAULT 0,
+    output_tokens INT NOT NULL DEFAULT 0,
+    cache_read_tokens INT NOT NULL DEFAULT 0,
+    cache_write_tokens INT NOT NULL DEFAULT 0,
+    reasoning_tokens INT NOT NULL DEFAULT 0,
+    estimated_cost_usd NUMERIC(12,8) NOT NULL DEFAULT 0,
+    actual_cost_usd NUMERIC(12,8),
+    first_seen TIMESTAMPTZ,
+    last_seen TIMESTAMPTZ,
+    PRIMARY KEY (session_id, model, provider)
 );
 
 CREATE TABLE memory (
@@ -385,6 +419,22 @@ CREATE TABLE async_delegations (
     result TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE compression_locks (
+    session_id UUID PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    holder TEXT NOT NULL,
+    acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX idx_compression_locks_expires ON compression_locks(expires_at);
+
+CREATE TABLE gateway_routing (
+    scope TEXT NOT NULL DEFAULT '',
+    session_key TEXT NOT NULL,
+    entry_json JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (scope, session_key)
 );
 
 CREATE TABLE session_search_meta (
@@ -700,7 +750,12 @@ public interface ToolRegistry {
 | `terminal` | `terminal`, `process` |
 | `memory` | `memory`, `todo`, `session_search` |
 | `skills` | `skills_list`, `skill_view`, `skill_manage` |
-| `cli` | union of core + web + file + browser + terminal + memory + skills + `session_search` |
+| `code-execution` | `execute_code` |
+| `agent-control` | `clarify`, `delegate_task` |
+| `cli` | union of core + web + file + browser + terminal + memory + skills + code-execution + agent-control + `session_search` |
+
+Toolset aliases mirror the Python upstream: `hermes-cli` → `cli`, `web`, `file`, `browser`, `cli`.
+
 
 ### Progressive disclosure
 
@@ -763,7 +818,9 @@ REST controllers in `api/`. First version implements:
 
 | Method | Path | Handler |
 |---|---|---|
-| GET | `/api/v1/health` | `HealthController` |
+| GET | `/health` | `HealthController` |
+| GET | `/health/detailed` | `HealthController` |
+| GET | `/v1/health` | `HealthController` |
 | GET | `/v1/models` | `OpenAiCompatibleController` |
 | POST | `/v1/chat/completions` | `OpenAiCompatibleController` (streaming and non-streaming) |
 | GET | `/api/v1/sessions` | `SessionController` |
@@ -776,7 +833,8 @@ REST controllers in `api/`. First version implements:
 | GET | `/api/v1/skills` | `SkillController` |
 | GET | `/api/v1/skills/{name}` | `SkillController` |
 
-Future additions: `/v1/responses`, `/v1/runs`, `/api/jobs`, `/api/cron/fire`, webhook ingress.
+Scope note: MVP implements only OpenAI-compatible `chat_completions` and session management. Hermes also exposes `/v1/responses`, `/v1/runs`, `/api/jobs`, `/api/cron/fire`, and platform webhook ingress — these are explicitly **out of scope** for the first Java version.
+
 
 ## 15. CLI / REPL
 
@@ -902,7 +960,26 @@ implementation 'org.apache.commons:commons-imaging:1.0-alpha3'
 3. Performance optimization.
 4. Documentation sync.
 
-## 20. Definition of Ready
+## 20. Explicitly Out of Scope
+
+These upstream Hermes features are intentionally deferred to keep the first Java version deliverable:
+
+| Feature | Reason |
+|---|---|
+| `video_analyze` | Requires video-capable multimodal model; can be added later |
+| Voice / TTS / STT | Heavy native deps, separate infra |
+| Computer-use / CUA | OS-level desktop automation, security surface |
+| Messenger integrations (Telegram, Discord, Slack, etc.) | Gateway/platform adapters out of scope |
+| `codex_responses` / `anthropic_messages` / `bedrock_converse` API modes | Only `chat_completions` in MVP |
+| Billing / cost tracking | No SaaS model yet |
+| LSP integration | IDE protocol complexity |
+| Checkpoints / rewind | SQLite-level snapshots; deferred |
+| MOA / multi-agent orchestration | Single-agent loop first |
+| Secrets managers (Bitwarden, 1Password) | External vault integrations |
+| Desktop/TUI/Electron UI | Web + CLI only |
+
+
+## 21. Definition of Ready
 
 Project is ready for development when:
 
@@ -914,11 +991,11 @@ Project is ready for development when:
 6. CI runs `./gradlew clean build` green.
 7. Testcontainers PostgreSQL test passes.
 
-## 21. Immediate Next Step
+## 22. Immediate Next Step
 
 Implement **Phase 0** + the first part of **Phase 1**: `AgentProperties`, message model, `ModelClient`, `ToolRegistry`, `ReadFileTool`, and a single-turn `AgentRuntime`.
 
-## 22. Spring Boot Module Layout (Current → Future)
+## 23. Spring Boot Module Layout (Current → Future)
 
 ### Current (single module under `backend/`)
 
@@ -950,7 +1027,7 @@ java-agent/
 └── agent-spring-boot-starter/
 ```
 
-## 23. CLI Entry Points
+## 24. CLI Entry Points
 
 - `java -jar backend.jar` — starts web server.
 - `java -jar backend.jar repl` — starts interactive REPL.
@@ -959,7 +1036,7 @@ java-agent/
 
 Implemented with Picocli subcommands.
 
-## 24. Success Criteria
+## 25. Success Criteria
 
 1. Start REPL.
 2. User asks: "Read /tmp/hello.txt".
@@ -968,3 +1045,19 @@ Implemented with Picocli subcommands.
 5. Agent answers with file content.
 6. Output contains only actionable text.
 
+
+
+## 26. Open Questions / Decisions Required
+
+| # | Question | Impact | Default if no answer |
+|---|---|---|---|
+| 1 | Should `execute_code` run in isolated temp dir (strict) or project CWD (project)? | Code tool design, security | Start with `project` mode matching Python default |
+| 2 | Should `delegate_task` support orchestrator nesting (`max_spawn_depth > 1`) in MVP? | Subagent complexity | No — depth = 1 only |
+| 3 | Should MCP servers be auto-discovered from config on startup or loaded lazily on first tool call? | Startup time, failure surface | Auto-discover at `AgentRuntime` init |
+| 4 | Should system prompt include full skills index or use progressive disclosure? | Prompt size, cache hit rate | Full index for local skills up to a char cap |
+| 5 | Should memory/todo be per-session (DB) or per-user (file/DB)? | Schema, multi-user gateway | Per-user memory; per-session todos |
+| 6 | Should vision fallback use a separate auxiliary model or the main model if multimodal? | Auxiliary service complexity | Main model first, separate auxiliary only if configured |
+| 7 | Which CDP WebSocket client — Java-WebSocket or Jetty? | Browser module dependency | Java-WebSocket for lighter footprint |
+| 8 | Should terminal backend support Docker/Modal/SSH in MVP? | Terminal service scope | Local `ProcessBuilder` only |
+| 9 | Should approvals gate be synchronous (block turn) or asynchronous (return pending)? | Gateway/CLI UX | Synchronous for CLI; async pending for HTTP API |
+| 10 | Should sessions auto-title with auxiliary model or rule-based extraction? | Session UX, extra LLM cost | Rule-based first 120 chars of first user message |

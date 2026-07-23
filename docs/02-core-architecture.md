@@ -217,3 +217,11 @@ Agent uses `config.yaml` + `.env` for secrets. In Java:
 - `tools/registry.py` — tool discovery.
 - `model_tools.py` — public API over registry.
 - `toolsets.py` — toolset composition.
+
+
+### Tool groups exposed to the runtime
+
+Core toolset covers: `read_file`, `write_file`, `patch`, `search_files`, `terminal`, `web_search`, `web_extract`, `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_scroll`, `browser_back`, `browser_press`, `browser_get_images`, `browser_vision`, `browser_console`, `browser_cdp`, `execute_code`, `memory`, `todo`, `session_search`, `skills_list`, `skill_view`, `skill_manage`, `clarify`, `delegate_task`, and dynamic MCP-prefixed tools (`mcp__{server}__{name}`).
+
+Out of scope: `video_analyze`, `computer_use`, voice/TTS, messenger integrations.
+
