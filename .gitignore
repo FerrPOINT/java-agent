@@ -1,0 +1,39 @@
+# Hermes upstream repositories — excluded from git
+/prototype/
+
+# Java build artifacts
+/target/
+*/target/
+build/
+.gradle/
+*.class
+*.jar
+*.war
+*.ear
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Secrets
+.env
+*.key
+*.pem
+secrets.yaml
+application-local.yml
+application-local.yaml
+
+# OS / Java
+hs_err_pid*
+replay_pid*
