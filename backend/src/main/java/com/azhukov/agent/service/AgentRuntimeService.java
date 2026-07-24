@@ -24,13 +24,16 @@ public class AgentRuntimeService {
     private final AgentRuntime agentRuntime;
     private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
+    private final SessionTitleService sessionTitleService;
 
     public AgentRuntimeService(AgentRuntime agentRuntime,
                                SessionRepository sessionRepository,
-                               MessageRepository messageRepository) {
+                               MessageRepository messageRepository,
+                               SessionTitleService sessionTitleService) {
         this.agentRuntime = agentRuntime;
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
+        this.sessionTitleService = sessionTitleService;
     }
 
     @Transactional
@@ -59,6 +62,7 @@ public class AgentRuntimeService {
 
         TurnResult result = agentRuntime.runTurn(session, request.message());
         persistMessages(session.id(), result.messages());
+        sessionTitleService.maybeUpdateTitle(session.id(), result.messages(), isNew);
 
         return new ChatResponseDto(
             session.id(),
