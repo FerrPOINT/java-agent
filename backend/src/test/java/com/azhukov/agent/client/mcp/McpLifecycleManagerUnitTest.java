@@ -24,8 +24,8 @@ class McpLifecycleManagerUnitTest {
             .description("Greets a person")
             .build();
 
-        ToolDefinition definition = McpLifecycleManager.convertToolDefinition(tool);
-        assertThat(definition.name()).isEqualTo("greet");
+        ToolDefinition definition = McpLifecycleManager.convertToolDefinition("test__greet", tool);
+        assertThat(definition.name()).isEqualTo("test__greet");
         assertThat(definition.description()).isEqualTo("Greets a person");
     }
 }

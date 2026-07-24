@@ -18,6 +18,8 @@ import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
+import io.github.resilience4j.retry.annotation.Retry;
+import io.github.resilience4j.timelimiter.annotation.TimeLimiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -25,6 +27,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 public class LangChain4jModelClient implements ModelClient {
@@ -32,8 +35,10 @@ public class LangChain4jModelClient implements ModelClient {
     private static final Logger log = LoggerFactory.getLogger(LangChain4jModelClient.class);
 
     private final ChatModel chatModel;
+    private final AgentProperties properties;
 
     public LangChain4jModelClient(AgentProperties properties) {
+        this.properties = properties;
         this.chatModel = dev.langchain4j.model.openai.OpenAiChatModel.builder()
             .baseUrl(properties.getModel().getBaseUrl())
             .apiKey(properties.getModel().getApiKey())
@@ -45,6 +50,8 @@ public class LangChain4jModelClient implements ModelClient {
     }
 
     @Override
+    @Retry(name = "model")
+    @TimeLimiter(name = "model")
     public com.azhukov.agent.core.model.ChatResponse complete(List<Message> messages, List<ToolDefinition> tools) {
         List<ChatMessage> chatMessages = messages.stream()
             .map(this::toLangChainMessage)
@@ -71,6 +78,13 @@ public class LangChain4jModelClient implements ModelClient {
         }
 
         return com.azhukov.agent.core.model.ChatResponse.text(aiMessage.text());
+    }
+
+    @Override
+    @Retry(name = "model")
+    @TimeLimiter(name = "model")
+    public CompletableFuture<String> analyzeImageAsync(String base64Image, String prompt) {
+        return CompletableFuture.supplyAsync(() -> analyzeImage(base64Image, prompt));
     }
 
     @Override

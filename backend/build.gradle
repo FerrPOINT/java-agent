@@ -51,8 +51,10 @@ dependencies {
     // Templating (Pebble 4.x supports Spring Boot 3+, Java 17+)
     implementation 'io.pebbletemplates:pebble:4.1.2'
 
-    // Retry
     implementation 'io.github.resilience4j:resilience4j-retry:2.4.0'
+    implementation 'io.github.resilience4j:resilience4j-circuitbreaker:2.4.0'
+    implementation 'io.github.resilience4j:resilience4j-timelimiter:2.4.0'
+    implementation 'io.github.resilience4j:resilience4j-spring6:2.4.0'
 
     // CLI
     implementation 'info.picocli:picocli:4.7.7'

@@ -150,6 +150,7 @@ agent:
     task-completion-guidance: ${AGENT_CORE_TASK_COMPLETION_GUIDANCE:true}
     parallel-tool-call-guidance: ${AGENT_CORE_PARALLEL_TOOL_CALL_GUIDANCE:true}
     auto-title-session: ${AGENT_CORE_AUTO_TITLE_SESSION:true}
+    reasoning-config: ${AGENT_CORE_REASONING_CONFIG:medium}
     default-system-prompt: ${AGENT_CORE_DEFAULT_SYSTEM_PROMPT:You are ${agent.name}. Use available tools when needed. Be concise. Return plain text unless JSON is requested.}
 
 management:
@@ -160,6 +161,25 @@ management:
   endpoint:
     health:
       show-details: when_authorized
+
+resilience4j:
+  retry:
+    configs:
+      default:
+        maxAttempts: 3
+        waitDuration: 1s
+        exponentialBackoffMultiplier: 2
+    instances:
+      model:
+        baseConfig: default
+  timelimiter:
+    configs:
+      default:
+        timeoutDuration: 120s
+        cancelRunningFuture: true
+    instances:
+      model:
+        baseConfig: default
 
 ---
 spring:
