@@ -1,0 +1,21 @@
+[Unit]
+Description=Java Agent backend
+After=network.target
+
+[Service]
+Type=simple
+User=agent
+Group=agent
+WorkingDirectory=/opt/java-agent
+Environment="SPRING_PROFILES_ACTIVE=prod"
+Environment="DB_HOST=localhost"
+Environment="DB_PORT=5432"
+Environment="DB_NAME=java_agent"
+Environment="DB_USER=project_workflow"
+EnvironmentFile=-/etc/java-agent/env
+ExecStart=/usr/bin/java --enable-native-access=ALL-UNNAMED -jar /opt/java-agent/java-agent-backend.jar
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
