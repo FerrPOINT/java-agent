@@ -4,59 +4,89 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.persistence.entity.MessageEntity;
+import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
-import org.springframework.data.domain.PageRequest;
+import org.springframework.stereotype.Component;
 
-import static com.azhukov.agent.tools.ToolHandler.parseJson;
-
-import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
-@AgentTool(name = "session_search", description = "Search the current session's message history by keyword/phrase and return matching excerpts.", toolset = "memory")
+@AgentTool(
+    name = "session_search",
+    description = "Search past conversation sessions by title or message content. Returns session IDs, titles, last updated timestamps and a short snippet.",
+    toolset = "memory"
+)
+@Component
 public class SessionSearchTool implements ToolHandler {
 
-    private static final DateTimeFormatter FMT = DateTimeFormatter.ISO_INSTANT;
-
+    private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
 
-    public SessionSearchTool(MessageRepository messageRepository) {
+    public SessionSearchTool(SessionRepository sessionRepository, MessageRepository messageRepository) {
+        this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
     }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        SessionSearchArgs args = parseJson(arguments, SessionSearchArgs.class);
-        String query = args.query() != null ? args.query().toLowerCase() : "";
-        int limit = Math.min(args.limit() != null ? args.limit() : 10, 50);
+        SearchArgs args = ToolHandler.parseJson(arguments, SearchArgs.class);
+        if (args.query() == null || args.query().isBlank()) {
+            return ToolResult.fail("Query is required");
+        }
+        int limit = args.limit() != null && args.limit() > 0 ? Math.min(args.limit(), 20) : 5;
+        String q = args.query().toLowerCase();
 
-        List<MessageEntity> history = messageRepository.findBySessionIdOrderByCreatedAtAsc(session.id());
-        StringBuilder sb = new StringBuilder();
-        int count = 0;
-        for (MessageEntity e : history) {
-            String content = e.getContent() != null ? e.getContent() : "";
-            if (content.toLowerCase().contains(query)) {
-                sb.append("[").append(e.getRole()).append(" ").append(FMT.format(e.getCreatedAt())).append("] ")
-                  .append(content.length() > 300 ? content.substring(0, 300) + "..." : content)
-                  .append("\n\n");
-                if (++count >= limit) break;
+        Set<UUID> matchedIds = new java.util.HashSet<>();
+        List<SessionMatch> matches = new ArrayList<>();
+
+        for (SessionEntity s : sessionRepository.findAll()) {
+            if (s.getTitle() != null && s.getTitle().toLowerCase().contains(q)) {
+                matchedIds.add(s.getId());
+                matches.add(new SessionMatch(s.getId(), s.getTitle(), s.getUpdatedAt(), "title match"));
             }
         }
-        if (count == 0) {
-            return ToolResult.ok("No matching messages found.");
+
+        for (MessageEntity m : messageRepository.findAll()) {
+            String content = m.getContent();
+            if (content != null && content.toLowerCase().contains(q) && matchedIds.add(m.getSessionId())) {
+                SessionEntity s = sessionRepository.findById(m.getSessionId()).orElse(null);
+                String title = s != null ? s.getTitle() : null;
+                java.time.Instant updated = s != null ? s.getUpdatedAt() : m.getCreatedAt();
+                String snippet = content.length() > 120 ? content.substring(0, 120) + "..." : content;
+                matches.add(new SessionMatch(m.getSessionId(), title, updated, "snippet: " + snippet.replace("\n", " ")));
+            }
         }
-        return ToolResult.ok("Found " + count + " message(s):\n\n" + sb);
+
+        matches.sort(Comparator.comparing(SessionMatch::updated).reversed());
+        List<SessionMatch> result = matches.stream().limit(limit).toList();
+
+        if (result.isEmpty()) {
+            return ToolResult.ok("No sessions found for: " + args.query());
+        }
+
+        String text = result.stream()
+            .map(m -> String.format("- %s | %s | updated=%s | %s",
+                m.id(),
+                m.title() != null ? m.title() : "(no title)",
+                m.updated(),
+                m.matchReason()))
+            .collect(Collectors.joining("\n"));
+
+        return ToolResult.ok(text);
     }
 
-    static class SessionSearchArgs {
-        @ToolParam(description = "Keyword or phrase to search for", required = true)
-        private String query;
-        @ToolParam(description = "Maximum results to return", required = false, type = "integer")
-        private Integer limit;
+    public record SearchArgs(
+        @ToolParam(description = "search query") String query,
+        @ToolParam(description = "max results (default 5, max 20)") Integer limit
+    ) {}
 
-        public String query() { return query; }
-        public Integer limit() { return limit; }
-    }
+    private record SessionMatch(UUID id, String title, java.time.Instant updated, String matchReason) {}
 }
