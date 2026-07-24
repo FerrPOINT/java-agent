@@ -45,8 +45,8 @@ The `prototype/` directory holds clones of the relevant Hermes repositories for 
     ├── 06-vision-browser.md              # vision + browser porting details
     ├── 07-mcp-client-status.md           # MCP client state and config
     ├── 08-browser-vision.md              # browser/vision endpoints
-    └── 09-builtin-tools.md                 # matrix of implemented tools
-```
+    ├── 09-builtin-tools.md               # matrix of implemented tools
+    └── 10-production-readiness.md        # docker, systemd, logging, health
 
 ## 3. Implementation Status
 
@@ -115,8 +115,8 @@ curl -s -X POST -H 'Content-Type: application/json' \
 6. Read `06-vision-browser.md` for vision and browser porting details.
 7. Read `07-mcp-client-status.md` for MCP configuration.
 8. Read `08-browser-vision.md` for HTTP examples.
-9. Read `09-builtin-tools.md` for the implemented tool matrix.
-10. Start implementation from the core module.
+9. Read `09-builtin-tools.md` for the implemented tool matrix and security defaults.
+10. Read `10-production-readiness.md` for Docker/systemd/health.
 
 ## Source
 
