@@ -36,10 +36,15 @@ services:
       AGENT_MODEL_PROVIDER: ${AGENT_MODEL_PROVIDER:-openai-compatible}
       AGENT_MODEL_BASE_URL: ${AGENT_MODEL_BASE_URL:-https://ollama.com/v1}
       AGENT_MODEL_NAME: ${AGENT_MODEL_NAME:-kimi-k2.6}
+      AGENT_CHROMIUM_AUTO_START: "true"
+      AGENT_CHROMIUM_AUTO_INSTALL: "true"
+      AGENT_BROWSER_CDP_URL: "http://localhost:9222"
     ports:
       - "8080:8080"
     volumes:
+      - agent_chromium:/home/agent/.azhukov-agent
       - ${AGENT_WORK_DIR:-./work}:/workspace
 
 volumes:
   java_agent_pg:
+  agent_chromium:

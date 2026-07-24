@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.context;
 
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
@@ -18,20 +19,23 @@ import java.util.List;
 public class DefaultContextEngine implements ContextEngine {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultContextEngine.class);
-    private static final int MAX_HISTORY = 20;
     private static final int RECALL_LIMIT = 5;
     private static final int SKILL_LIMIT = 3;
+    private static final int CHARS_PER_TOKEN_ESTIMATE = 4;
 
     private final MemoryProvider memoryProvider;
     private final SkillManager skillManager;
     private final MessageRepository messageRepository;
+    private final AgentProperties.ContextProperties contextProps;
 
     public DefaultContextEngine(MemoryProvider memoryProvider,
                                 SkillManager skillManager,
-                                MessageRepository messageRepository) {
+                                MessageRepository messageRepository,
+                                AgentProperties properties) {
         this.memoryProvider = memoryProvider;
         this.skillManager = skillManager;
         this.messageRepository = messageRepository;
+        this.contextProps = properties.getContext();
     }
 
     @Override
@@ -59,7 +63,48 @@ public class DefaultContextEngine implements ContextEngine {
         int start = (!messages.isEmpty() && messages.get(0).role() == Role.SYSTEM) ? 1 : 0;
         context.addAll(messages.subList(start, messages.size()));
 
-        return context;
+        return trimToFit(context);
+    }
+
+    private List<Message> trimToFit(List<Message> context) {
+        int maxMessages = contextProps.getMaxContextMessages();
+        if (maxMessages <= 0) {
+            maxMessages = 50;
+        }
+        int maxChars = contextProps.getMaxTokens() * CHARS_PER_TOKEN_ESTIMATE;
+        int targetChars = contextProps.getTargetTokens() * CHARS_PER_TOKEN_ESTIMATE;
+
+        // Always keep system message (index 0) and last user message
+        if (context.size() <= maxMessages && estimateChars(context) <= maxChars) {
+            return context;
+        }
+
+        List<Message> trimmed = new ArrayList<>(context);
+        while (trimmed.size() > maxMessages || estimateChars(trimmed) > targetChars) {
+            if (trimmed.size() <= 2) break; // keep system + latest
+            // Remove oldest non-system message
+            boolean removed = false;
+            for (int i = 1; i < trimmed.size() - 1; i++) {
+                trimmed.remove(i);
+                removed = true;
+                break;
+            }
+            if (!removed) break;
+        }
+        if (estimateChars(trimmed) > maxChars) {
+            trimmed = new ArrayList<>(trimmed.subList(Math.max(0, trimmed.size() - 2), trimmed.size()));
+            log.warn("Context exceeded hard token limit; truncated to last 2 messages");
+        }
+        return trimmed;
+    }
+
+    private int estimateChars(List<Message> messages) {
+        int total = 0;
+        for (Message m : messages) {
+            total += m.content() != null ? m.content().length() : 0;
+            total += 20; // overhead per message
+        }
+        return total;
     }
 
     private void appendSkills(StringBuilder sb) {
@@ -107,7 +152,7 @@ public class DefaultContextEngine implements ContextEngine {
     private void appendRecentHistory(Session session, List<Message> context) {
         try {
             List<MessageEntity> history = messageRepository.findBySessionIdOrderByCreatedAtAsc(session.id());
-            int start = Math.max(0, history.size() - MAX_HISTORY);
+            int start = Math.max(0, history.size() - contextProps.getMaxContextMessages());
             for (MessageEntity e : history.subList(start, history.size())) {
                 String role = e.getRole();
                 String content = e.getContent() != null ? e.getContent() : "";

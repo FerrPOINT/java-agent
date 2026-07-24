@@ -68,8 +68,9 @@ public class AgentConfig {
     @Bean
     public ContextEngine contextEngine(MemoryProvider memoryProvider,
                                        SkillManager skillManager,
-                                       MessageRepository messageRepository) {
-        return new DefaultContextEngine(memoryProvider, skillManager, messageRepository);
+                                       MessageRepository messageRepository,
+                                       AgentProperties properties) {
+        return new DefaultContextEngine(memoryProvider, skillManager, messageRepository, properties);
     }
 
     @Bean
