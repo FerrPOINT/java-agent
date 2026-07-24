@@ -1,8 +1,6 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.ChatRequest;
-import com.azhukov.agent.api.dto.ChatResponseDto;
-import com.azhukov.agent.service.AgentRuntimeService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,9 +9,12 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -27,7 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
     "spring.flyway.enabled=false",
     "agent.model.provider=noop"
 })
-class AgentControllerIntegrationTest {
+class AgentControllerStreamingTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -35,29 +36,22 @@ class AgentControllerIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @Autowired
-    private AgentRuntimeService agentRuntimeService;
-
     @Test
-    void chatReturnsNoOpResponse() throws Exception {
+    void streamChatReturnsSseEvents() throws Exception {
         ChatRequest request = new ChatRequest(null, "hello", null, null);
 
-        mockMvc.perform(post("/api/v1/agent/chat")
+        MvcResult result = mockMvc.perform(post("/api/v1/agent/chat/stream")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.content").value("NoOp response: hello"))
-            .andExpect(jsonPath("$.sessionId").isNotEmpty());
-    }
+            .andExpect(request().asyncStarted())
+            .andReturn();
 
-    @Test
-    void chatWithEmptyMessageReturnsValidationError() throws Exception {
-        ChatRequest request = new ChatRequest(null, "", null, null);
+        mockMvc.perform(asyncDispatch(result))
+            .andExpect(status().isOk());
 
-        mockMvc.perform(post("/api/v1/agent/chat")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request)))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.type").value("VALIDATION_ERROR"));
+        String content = result.getResponse().getContentAsString();
+        assertThat(content).contains("event:token");
+        assertThat(content).contains("event:done");
     }
 }

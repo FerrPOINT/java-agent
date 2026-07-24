@@ -6,5 +6,6 @@ import java.util.UUID;
 public record ChatRequest(
     UUID sessionId,
     @NotBlank String message,
-    Integer delegationDepth
+    Integer delegationDepth,
+    Long timeoutMs
 ) {}

@@ -2,6 +2,7 @@ package com.azhukov.agent.client.langchain4j;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.ToolCall;
@@ -14,8 +15,10 @@ import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import io.github.resilience4j.retry.annotation.Retry;
@@ -35,6 +38,7 @@ public class LangChain4jModelClient implements ModelClient {
     private static final Logger log = LoggerFactory.getLogger(LangChain4jModelClient.class);
 
     private final ChatModel chatModel;
+    private final StreamingChatModel streamingChatModel;
     private final AgentProperties properties;
 
     public LangChain4jModelClient(AgentProperties properties) {
@@ -45,6 +49,13 @@ public class LangChain4jModelClient implements ModelClient {
             .modelName(properties.getModel().getModelName())
             .timeout(Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
             .maxRetries(properties.getModel().getMaxRetries())
+            .temperature(properties.getModel().getTemperature())
+            .build();
+        this.streamingChatModel = dev.langchain4j.model.openai.OpenAiStreamingChatModel.builder()
+            .baseUrl(properties.getModel().getBaseUrl())
+            .apiKey(properties.getModel().getApiKey())
+            .modelName(properties.getModel().getModelName())
+            .timeout(Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
             .temperature(properties.getModel().getTemperature())
             .build();
     }
@@ -78,6 +89,50 @@ public class LangChain4jModelClient implements ModelClient {
         }
 
         return com.azhukov.agent.core.model.ChatResponse.text(aiMessage.text());
+    }
+
+    @Override
+    public void stream(List<Message> messages, List<ToolDefinition> tools, StreamingResponseHandler handler) {
+        List<ChatMessage> chatMessages = messages.stream()
+            .map(this::toLangChainMessage)
+            .collect(Collectors.toList());
+
+        List<ToolSpecification> specs = tools != null
+            ? tools.stream().map(this::toToolSpecification).collect(Collectors.toList())
+            : List.of();
+
+        ChatRequest request = ChatRequest.builder()
+            .messages(chatMessages)
+            .toolSpecifications(specs)
+            .build();
+
+        streamingChatModel.doChat(request, new StreamingChatResponseHandler() {
+            private final StringBuilder content = new StringBuilder();
+
+            @Override
+            public void onPartialResponse(String partialResponse) {
+                content.append(partialResponse);
+                handler.onToken(partialResponse);
+            }
+
+            @Override
+            public void onCompleteResponse(dev.langchain4j.model.chat.response.ChatResponse completeResponse) {
+                if (completeResponse.aiMessage().hasToolExecutionRequests()) {
+                    List<ToolCall> calls = completeResponse.aiMessage().toolExecutionRequests().stream()
+                        .map(r -> new ToolCall(r.id(), r.name(), r.arguments()))
+                        .collect(Collectors.toList());
+                    handler.onToolCalls(calls);
+                } else if (content.isEmpty() && completeResponse.aiMessage().text() != null) {
+                    handler.onToken(completeResponse.aiMessage().text());
+                }
+                handler.onComplete();
+            }
+
+            @Override
+            public void onError(Throwable error) {
+                handler.onError(error);
+            }
+        });
     }
 
     @Override
