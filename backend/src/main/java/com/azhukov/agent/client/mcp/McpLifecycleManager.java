@@ -12,6 +12,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
+import io.modelcontextprotocol.client.transport.ServerParameters;
+import io.modelcontextprotocol.client.transport.StdioClientTransport;
+import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -69,27 +72,33 @@ public class McpLifecycleManager {
         }
         try {
             McpSyncClient client;
-            if ("sse".equalsIgnoreCase(server.getTransport()) || !server.getBaseUrl().isBlank()) {
+            if ("stdio".equalsIgnoreCase(server.getTransport())) {
+                ServerParameters params = ServerParameters.builder(server.getCommand())
+                    .args(server.getArgs())
+                    .build();
+                StdioClientTransport transport = new StdioClientTransport(params, new JacksonMcpJsonMapper(objectMapper));
+                client = McpClient.sync(transport).build();
+            } else if ("sse".equalsIgnoreCase(server.getTransport()) || !server.getBaseUrl().isBlank()) {
                 var transport = HttpClientSseClientTransport.builder(server.getBaseUrl()).build();
                 client = McpClient.sync(transport).build();
             } else {
-                log.warn("stdio transport not implemented for server {}", server.getName());
+                log.warn("MCP server {} has no transport configured", server.getName());
                 return;
             }
             client.initialize();
             var tools = client.listTools().tools();
             clients.put(server.getName(), new McpServerState(server, client, tools));
             registerTools(server.getName(), tools);
-            log.info("Connected to MCP server {} at {} with {} tools", server.getName(), server.getBaseUrl(), tools.size());
+            log.info("Connected to MCP server {} ({}) with {} tools", server.getName(), server.getTransport(), tools.size());
         } catch (Exception e) {
-            log.warn("Failed to connect to MCP server {} at {}: {}", server.getName(), server.getBaseUrl(), e.getMessage());
+            log.warn("Failed to connect to MCP server {}: {}", server.getName(), e.getMessage());
         }
     }
 
     private void registerTools(String serverName, List<McpSchema.Tool> tools) {
         for (McpSchema.Tool tool : tools) {
             String fullName = serverName + "__" + tool.name();
-            ToolDefinition definition = convertToolDefinition(tool);
+            ToolDefinition definition = convertToolDefinition(fullName, tool);
             toolRegistry().registerDynamic(fullName, definition, new McpToolHandler(serverName, tool.name()));
         }
     }
@@ -111,7 +120,7 @@ public class McpLifecycleManager {
         for (var entry : clients.entrySet()) {
             String serverName = entry.getKey();
             for (McpSchema.Tool tool : entry.getValue().tools()) {
-                result.add(new DiscoveredTool(serverName, tool.name(), convertToolDefinition(tool)));
+                result.add(new DiscoveredTool(serverName, tool.name(), convertToolDefinition(serverName + "__" + tool.name(), tool)));
             }
         }
         return result;
@@ -141,7 +150,7 @@ public class McpLifecycleManager {
         clients.clear();
     }
 
-    static ToolDefinition convertToolDefinition(McpSchema.Tool tool) {
+    static ToolDefinition convertToolDefinition(String fullName, McpSchema.Tool tool) {
         Map<String, Object> schema = tool.inputSchema() != null ? tool.inputSchema() : Map.of();
         Map<String, Object> properties = new LinkedHashMap<>();
         List<String> required = new ArrayList<>();
@@ -168,7 +177,7 @@ public class McpLifecycleManager {
         parameters.put("type", "object");
         parameters.put("properties", properties);
         parameters.put("required", required);
-        return new ToolDefinition(tool.name(), tool.description(), parameters);
+        return new ToolDefinition(fullName, tool.description(), parameters);
     }
 
     private record McpServerState(AgentProperties.McpProperties.ServerProperties properties,
