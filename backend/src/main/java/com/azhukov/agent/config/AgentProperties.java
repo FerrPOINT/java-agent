@@ -296,17 +296,23 @@ public class AgentProperties {
 
         public static class ServerProperties {
             private String name = "";
+            private String transport = "stdio";
             private String command = "";
             private final List<String> args = new ArrayList<>();
             private final Map<String, String> env = new HashMap<>();
+            private String baseUrl = "";
             private int timeoutSeconds = 30;
 
             public String getName() { return name; }
             public void setName(String name) { this.name = name; }
+            public String getTransport() { return transport; }
+            public void setTransport(String transport) { this.transport = transport; }
             public String getCommand() { return command; }
             public void setCommand(String command) { this.command = command; }
             public List<String> getArgs() { return args; }
             public Map<String, String> getEnv() { return env; }
+            public String getBaseUrl() { return baseUrl; }
+            public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
             public int getTimeoutSeconds() { return timeoutSeconds; }
             public void setTimeoutSeconds(int timeoutSeconds) { this.timeoutSeconds = timeoutSeconds; }
         }

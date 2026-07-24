@@ -121,7 +121,7 @@ public class SpringToolRegistry implements ToolRegistry {
             return getDefinitions();
         }
         return entries.values().stream()
-            .filter(e -> toolsets.contains(e.annotation().toolset()))
+            .filter(e -> e.annotation() == null || toolsets.contains(e.annotation().toolset()))
             .map(ToolEntry::definition)
             .toList();
     }
@@ -139,10 +139,17 @@ public class SpringToolRegistry implements ToolRegistry {
     public Set<String> getToolsets() {
         Set<String> result = new HashSet<>();
         for (ToolEntry e : entries.values()) {
-            result.add(e.annotation().toolset());
+            if (e.annotation() != null) {
+                result.add(e.annotation().toolset());
+            }
         }
         return result;
     }
 
     private record ToolEntry(AgentTool annotation, ToolHandler handler, ToolDefinition definition) {}
+
+    @Override
+    public void registerDynamic(String toolName, ToolDefinition definition, ToolHandler handler) {
+        entries.put(toolName, new ToolEntry(null, handler, definition));
+    }
 }
