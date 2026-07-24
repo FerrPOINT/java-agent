@@ -11,6 +11,7 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -53,8 +54,10 @@ class AgentRuntimeUnitTest {
             "done"
         );
 
+        ToolExecutionService toolExecutionService = new ToolExecutionService(registry, properties);
+
         DefaultAgentRuntime runtime = new DefaultAgentRuntime(
-            model, registry, promptBuilder, contextEngine, memoryProvider, skillManager, properties
+            model, registry, toolExecutionService, promptBuilder, contextEngine, memoryProvider, skillManager, properties
         );
 
         var result = runtime.runTurn(session, "hi");

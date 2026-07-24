@@ -247,12 +247,16 @@ public class AgentProperties {
     public static class ToolOutputProperties {
         private int maxChars = 16000;
         private int truncateWarningChars = 12000;
+        private int timeoutSeconds = 300;
         private boolean includeTimestamps = true;
 
         public int getMaxChars() { return maxChars; }
         public void setMaxChars(int maxChars) { this.maxChars = maxChars; }
         public int getTruncateWarningChars() { return truncateWarningChars; }
         public void setTruncateWarningChars(int truncateWarningChars) { this.truncateWarningChars = truncateWarningChars; }
+        public int getTimeoutSeconds() { return timeoutSeconds; }
+        public void setTimeoutSeconds(int timeoutSeconds) { this.timeoutSeconds = timeoutSeconds; }
+        public int getTimeoutSecondsOrDefault(int fallback) { return timeoutSeconds > 0 ? timeoutSeconds : fallback; }
         public boolean isIncludeTimestamps() { return includeTimestamps; }
         public void setIncludeTimestamps(boolean includeTimestamps) { this.includeTimestamps = includeTimestamps; }
     }

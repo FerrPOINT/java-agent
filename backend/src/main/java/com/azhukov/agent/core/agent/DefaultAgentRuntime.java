@@ -14,6 +14,7 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +32,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
     private final ModelClient modelClient;
     private final ToolRegistry toolRegistry;
+    private final ToolExecutionService toolExecutionService;
     private final PromptBuilder promptBuilder;
     private final ContextEngine contextEngine;
     private final MemoryProvider memoryProvider;
@@ -38,11 +40,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final AgentProperties properties;
 
     public DefaultAgentRuntime(ModelClient modelClient, ToolRegistry toolRegistry,
+                               ToolExecutionService toolExecutionService,
                                PromptBuilder promptBuilder, ContextEngine contextEngine,
                                MemoryProvider memoryProvider, SkillManager skillManager,
                                AgentProperties properties) {
         this.modelClient = modelClient;
         this.toolRegistry = toolRegistry;
+        this.toolExecutionService = toolExecutionService;
         this.promptBuilder = promptBuilder;
         this.contextEngine = contextEngine;
         this.memoryProvider = memoryProvider;
@@ -83,15 +87,17 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
             turnMessages.add(Message.assistantToolCalls(response.toolCalls(), turnIndex));
 
-            List<Message> toolResults = new ArrayList<>();
-            for (ToolCall call : response.toolCalls()) {
-                long toolStart = System.currentTimeMillis();
-                ToolResult result = toolRegistry.execute(call.name(), call.id(), call.arguments(), null, session);
-                log.debug("Tool {} executed in {} ms: success={}, content length={}, error={}",
-                    call.name(), System.currentTimeMillis() - toolStart, result.success(),
-                    result.content() != null ? result.content().length() : 0, result.error());
-                toolResults.add(Message.toolResult(call.id(), formatResult(result), turnIndex));
-            }
+            int currentTurnIndex = turnIndex;
+            List<Message> toolResults = response.toolCalls().stream()
+                .map(call -> {
+                    long toolStart = System.currentTimeMillis();
+                    ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session);
+                    log.debug("Tool {} executed in {} ms: success={}, content length={}, error={}",
+                        call.name(), System.currentTimeMillis() - toolStart, result.success(),
+                        result.content() != null ? result.content().length() : 0, result.error());
+                    return Message.toolResult(call.id(), formatResult(result), currentTurnIndex);
+                })
+                .toList();
             turnMessages.addAll(toolResults);
             turnIndex++;
         }

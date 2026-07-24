@@ -50,12 +50,13 @@ public class AgentConfig {
     @Bean
     public AgentRuntime agentRuntime(ModelClient modelClient,
                                      com.azhukov.agent.core.tool.ToolRegistry toolRegistry,
+                                     com.azhukov.agent.core.tool.ToolExecutionService toolExecutionService,
                                      PromptBuilder promptBuilder,
                                      ContextEngine contextEngine,
                                      MemoryProvider memoryProvider,
                                      SkillManager skillManager,
                                      AgentProperties properties) {
-        return new DefaultAgentRuntime(modelClient, toolRegistry, promptBuilder, contextEngine,
+        return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
             memoryProvider, skillManager, properties);
     }
 
