@@ -329,6 +329,10 @@ public class AgentProperties {
         private boolean redactEnabled = true;
         private final List<String> alwaysRequireApprovalTools = new ArrayList<>();
         private final List<String> sensitiveEnvVarPatterns = new ArrayList<>();
+        private final List<String> allowedPaths = new ArrayList<>();
+        private final List<String> blockedCommands = new ArrayList<>();
+        private final List<String> blockedUrlHosts = new ArrayList<>();
+        private final List<String> secretPatterns = new ArrayList<>();
 
         public boolean isApprovalsEnabled() { return approvalsEnabled; }
         public void setApprovalsEnabled(boolean approvalsEnabled) { this.approvalsEnabled = approvalsEnabled; }
@@ -340,6 +344,14 @@ public class AgentProperties {
         public void setRedactEnabled(boolean redactEnabled) { this.redactEnabled = redactEnabled; }
         public List<String> getAlwaysRequireApprovalTools() { return alwaysRequireApprovalTools; }
         public List<String> getSensitiveEnvVarPatterns() { return sensitiveEnvVarPatterns; }
+        public List<String> getAllowedPaths() { return allowedPaths; }
+        public void setAllowedPaths(List<String> allowedPaths) { this.allowedPaths.clear(); this.allowedPaths.addAll(allowedPaths); }
+        public List<String> getBlockedCommands() { return blockedCommands; }
+        public void setBlockedCommands(List<String> blockedCommands) { this.blockedCommands.clear(); this.blockedCommands.addAll(blockedCommands); }
+        public List<String> getBlockedUrlHosts() { return blockedUrlHosts; }
+        public void setBlockedUrlHosts(List<String> blockedUrlHosts) { this.blockedUrlHosts.clear(); this.blockedUrlHosts.addAll(blockedUrlHosts); }
+        public List<String> getSecretPatterns() { return secretPatterns; }
+        public void setSecretPatterns(List<String> secretPatterns) { this.secretPatterns.clear(); this.secretPatterns.addAll(secretPatterns); }
     }
 
     public static class CoreProperties {

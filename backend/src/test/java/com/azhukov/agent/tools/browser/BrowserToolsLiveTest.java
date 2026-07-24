@@ -1,5 +1,6 @@
 package com.azhukov.agent.tools.browser;
 
+import com.azhukov.agent.tools.security.SafetyGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -13,7 +14,8 @@ class BrowserToolsLiveTest {
     void navigateAndScreenshot() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         CdpClient cdp = new CdpClient(mapper);
-        BrowserService service = new BrowserService(cdp, () -> "http://localhost:9222");
+        SafetyGuard guard = new SafetyGuard(new com.azhukov.agent.config.AgentProperties());
+        BrowserService service = new BrowserService(cdp, () -> "http://localhost:9222", guard);
         String result = service.navigate("http://example.com");
         assertTrue(result.contains("Navigated to"), result);
         String screenshot = service.screenshot();

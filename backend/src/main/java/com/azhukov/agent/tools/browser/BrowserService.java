@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.browser;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.tools.security.SafetyGuard;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -15,16 +16,19 @@ public class BrowserService {
 
     private final CdpClient cdpClient;
     private final Supplier<String> cdpUrlSupplier;
+    private final SafetyGuard safetyGuard;
 
     @Autowired
-    public BrowserService(CdpClient cdpClient, AgentProperties properties) {
+    public BrowserService(CdpClient cdpClient, AgentProperties properties, SafetyGuard safetyGuard) {
         this.cdpClient = cdpClient;
         this.cdpUrlSupplier = () -> properties.getBrowser().getCdpUrl();
+        this.safetyGuard = safetyGuard;
     }
 
-    BrowserService(CdpClient cdpClient, Supplier<String> cdpUrlSupplier) {
+    BrowserService(CdpClient cdpClient, Supplier<String> cdpUrlSupplier, SafetyGuard safetyGuard) {
         this.cdpClient = cdpClient;
         this.cdpUrlSupplier = cdpUrlSupplier;
+        this.safetyGuard = safetyGuard;
     }
 
     private String cdpUrl() {
@@ -32,6 +36,9 @@ public class BrowserService {
     }
 
     public String navigate(String url) throws Exception {
+        if (!safetyGuard.isUrlAllowed(url)) {
+            return "URL blocked by safety policy: " + url;
+        }
         ensureConnected();
         ObjectNode params = new ObjectMapper().createObjectNode();
         params.put("url", url);

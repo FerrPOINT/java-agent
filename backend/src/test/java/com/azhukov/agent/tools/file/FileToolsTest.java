@@ -1,5 +1,6 @@
 package com.azhukov.agent.tools.file;
 
+import com.azhukov.agent.config.AgentProperties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -10,8 +11,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class FileToolsTest {
 
-    private final WriteFileTool writeTool = new WriteFileTool();
-    private final ReadFileTool readTool = new ReadFileTool();
+    private final AgentProperties properties = new AgentProperties();
+    private final WriteFileTool writeTool = new WriteFileTool(properties);
+    private final ReadFileTool readTool = new ReadFileTool(properties);
 
     @Test
     void writeAndReadRoundTrip(@TempDir Path temp) throws Exception {

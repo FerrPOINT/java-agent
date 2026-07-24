@@ -7,13 +7,13 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.azhukov.agent.tools.security.SafetyGuard;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -27,10 +27,12 @@ public class WebExtractTool implements ToolHandler {
 
     private final int timeoutSeconds;
     private final int maxChars;
+    private final SafetyGuard safetyGuard;
 
-    public WebExtractTool(AgentProperties agentProperties) {
+    public WebExtractTool(AgentProperties agentProperties, SafetyGuard safetyGuard) {
         this.timeoutSeconds = agentProperties.getWeb().getExtractTimeoutSeconds();
         this.maxChars = agentProperties.getWeb().getExtractMaxChars();
+        this.safetyGuard = safetyGuard;
     }
 
     @Override
@@ -43,9 +45,14 @@ public class WebExtractTool implements ToolHandler {
         List<String> urls = Arrays.asList(args.urls().split("\\s*,\\s*"));
         StringBuilder sb = new StringBuilder();
         for (String url : urls) {
-            sb.append("--- URL: ").append(url).append(" ---\n");
+            String trimmed = url.trim();
+            sb.append("--- URL: ").append(trimmed).append(" ---\n");
+            if (!safetyGuard.isUrlAllowed(trimmed)) {
+                sb.append("URL blocked by safety policy\n\n");
+                continue;
+            }
             try {
-                sb.append(extract(url.trim())).append("\n\n");
+                sb.append(extract(trimmed)).append("\n\n");
             } catch (IOException e) {
                 sb.append("Failed to extract: ").append(e.getMessage()).append("\n\n");
             }
@@ -55,7 +62,7 @@ public class WebExtractTool implements ToolHandler {
         if (text.length() > maxChars) {
             text = text.substring(0, maxChars) + "\n[truncated]";
         }
-        return ToolResult.ok(text);
+        return ToolResult.ok(safetyGuard.redact(text));
     }
 
     private String extract(String url) throws IOException {

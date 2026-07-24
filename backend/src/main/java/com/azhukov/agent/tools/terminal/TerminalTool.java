@@ -17,13 +17,13 @@ import java.util.concurrent.TimeUnit;
 
 @AgentTool(
     name = "terminal",
-    description = "Run a shell command locally and return stdout/stderr. For long-lived processes use background=true to get a session_id, then manage it with the process tool. Blocked commands: rm -rf /, mkfs, dd if=/dev/zero, :(){ :|:& };:.",
+    description = "Run a shell command locally and return stdout/stderr. For long-lived processes use background=true to get a session_id, then manage it with the process tool. Blocked command patterns are configurable; default blocks rm -rf /, mkfs, dd if=/dev/zero, fork bombs.",
     toolset = "terminal"
 )
 @Component
 public class TerminalTool implements ToolHandler {
 
-    private static final List<String> BLOCKED_PATTERNS = List.of(
+    private static final List<String> DEFAULT_BLOCKED_PATTERNS = List.of(
         "rm -rf /", "rm -rf /*", "mkfs", "dd if=/dev/zero", ":(){ :|:\u0026 };:"
     );
 
@@ -42,11 +42,17 @@ public class TerminalTool implements ToolHandler {
             return ToolResult.fail("Command is required");
         }
         String command = args.command();
-        for (String pattern : BLOCKED_PATTERNS) {
+
+        List<String> blockedPatterns = properties.getSecurity().getBlockedCommands();
+        if (blockedPatterns == null || blockedPatterns.isEmpty()) {
+            blockedPatterns = DEFAULT_BLOCKED_PATTERNS;
+        }
+        for (String pattern : blockedPatterns) {
             if (command.contains(pattern)) {
                 return ToolResult.fail("Blocked dangerous command pattern: " + pattern);
             }
         }
+
         int timeout = args.timeout() > 0 ? args.timeout() : properties.getTerminal().getDefaultTimeoutSeconds();
         timeout = Math.min(timeout, properties.getTerminal().getMaxTimeoutSeconds());
 
@@ -77,10 +83,29 @@ public class TerminalTool implements ToolHandler {
             }
             String output = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))
                 .lines().collect(java.util.stream.Collectors.joining("\n"));
-            return ToolResult.ok(output);
+            return ToolResult.ok(redact(output));
         } catch (Exception e) {
             return ToolResult.fail("Failed to execute command: " + e.getMessage());
         }
+    }
+
+    private String redact(String output) {
+        if (!properties.getSecurity().isRedactEnabled()) {
+            return output;
+        }
+        List<String> patterns = properties.getSecurity().getSecretPatterns();
+        if (patterns == null || patterns.isEmpty()) {
+            return output;
+        }
+        String result = output;
+        for (String regex : patterns) {
+            try {
+                result = result.replaceAll(regex, "[REDACTED]");
+            } catch (Exception e) {
+                // ignore invalid regex
+            }
+        }
+        return result;
     }
 
     public static class TerminalArgs {

@@ -7,6 +7,7 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.azhukov.agent.tools.security.SafetyGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -35,10 +36,12 @@ public class WebSearchTool implements ToolHandler {
 
     private final int configuredLimit;
     private final ObjectMapper objectMapper;
+    private final SafetyGuard safetyGuard;
 
-    public WebSearchTool(AgentProperties agentProperties, ObjectMapper objectMapper) {
+    public WebSearchTool(AgentProperties agentProperties, ObjectMapper objectMapper, SafetyGuard safetyGuard) {
         this.configuredLimit = agentProperties.getWeb().getSearchResults();
         this.objectMapper = objectMapper;
+        this.safetyGuard = safetyGuard;
     }
 
     @Override
@@ -67,6 +70,9 @@ public class WebSearchTool implements ToolHandler {
 
     private List<Map<String, String>> search(String query, int limit) throws IOException {
         String url = DUCKDUCKGO_HTML + "?q=" + URLEncoder.encode(query, StandardCharsets.UTF_8);
+        if (!safetyGuard.isUrlAllowed(url)) {
+            throw new IOException("URL is not allowed by safety policy: " + url);
+        }
         Document doc = Jsoup.connect(url)
             .userAgent("Mozilla/5.0 (compatible; JavaAgent/1.0)")
             .timeout(120000)
