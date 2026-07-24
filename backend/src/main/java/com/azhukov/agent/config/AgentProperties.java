@@ -30,6 +30,7 @@ public class AgentProperties {
     private final McpProperties mcp = new McpProperties();
     private final SecurityProperties security = new SecurityProperties();
     private final CoreProperties core = new CoreProperties();
+    private final BudgetProperties budget = new BudgetProperties();
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -50,6 +51,7 @@ public class AgentProperties {
     public McpProperties getMcp() { return mcp; }
     public SecurityProperties getSecurity() { return security; }
     public CoreProperties getCore() { return core; }
+    public BudgetProperties getBudget() { return budget; }
 
     public static class ModelProperties {
         private String provider = "openai-compatible";
@@ -394,6 +396,10 @@ public class AgentProperties {
         private boolean autoTitleSession = true;
         private String reasoningConfig = "medium";
         private String defaultSystemPrompt = "You are ${agent.name}. Use available tools when needed. Be concise. Return plain text unless JSON is requested.";
+        private int httpClientTimeoutSeconds = 30;
+        private int maxReferenceFileBytes = 100_000;
+        private String workingDirectory = System.getProperty("user.dir");
+        private String httpUserAgent = "AzhukovAgent/1.0";
 
         public int getMaxTurns() { return maxTurns; }
         public void setMaxTurns(int maxTurns) { this.maxTurns = maxTurns; }
@@ -409,5 +415,33 @@ public class AgentProperties {
         public void setReasoningConfig(String reasoningConfig) { this.reasoningConfig = reasoningConfig; }
         public String getDefaultSystemPrompt() { return defaultSystemPrompt; }
         public void setDefaultSystemPrompt(String defaultSystemPrompt) { this.defaultSystemPrompt = defaultSystemPrompt; }
+        public int getHttpClientTimeoutSeconds() { return httpClientTimeoutSeconds; }
+        public void setHttpClientTimeoutSeconds(int httpClientTimeoutSeconds) { this.httpClientTimeoutSeconds = httpClientTimeoutSeconds; }
+        public int getMaxReferenceFileBytes() { return maxReferenceFileBytes; }
+        public void setMaxReferenceFileBytes(int maxReferenceFileBytes) { this.maxReferenceFileBytes = maxReferenceFileBytes; }
+        public String getWorkingDirectory() { return workingDirectory; }
+        public void setWorkingDirectory(String workingDirectory) { this.workingDirectory = workingDirectory; }
+        public String getHttpUserAgent() { return httpUserAgent; }
+        public void setHttpUserAgent(String httpUserAgent) { this.httpUserAgent = httpUserAgent; }
+        public int getMaxTotalChars() { return 64000; }
+    }
+
+    public static class BudgetProperties {
+        private int maxModelCallsPerTurn = 5;
+        private int maxToolExecutionsPerTurn = 20;
+        private int maxTokensPerTurn = 200000;
+        private int maxToolDurationMsPerTurn = 600000;
+        private boolean enabled = true;
+
+        public int getMaxModelCallsPerTurn() { return maxModelCallsPerTurn; }
+        public void setMaxModelCallsPerTurn(int maxModelCallsPerTurn) { this.maxModelCallsPerTurn = maxModelCallsPerTurn; }
+        public int getMaxToolExecutionsPerTurn() { return maxToolExecutionsPerTurn; }
+        public void setMaxToolExecutionsPerTurn(int maxToolExecutionsPerTurn) { this.maxToolExecutionsPerTurn = maxToolExecutionsPerTurn; }
+        public int getMaxTokensPerTurn() { return maxTokensPerTurn; }
+        public void setMaxTokensPerTurn(int maxTokensPerTurn) { this.maxTokensPerTurn = maxTokensPerTurn; }
+        public int getMaxToolDurationMsPerTurn() { return maxToolDurationMsPerTurn; }
+        public void setMaxToolDurationMsPerTurn(int maxToolDurationMsPerTurn) { this.maxToolDurationMsPerTurn = maxToolDurationMsPerTurn; }
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
     }
 }

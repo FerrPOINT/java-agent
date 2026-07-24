@@ -26,15 +26,18 @@ public class DefaultContextEngine implements ContextEngine {
     private final MemoryProvider memoryProvider;
     private final SkillManager skillManager;
     private final MessageRepository messageRepository;
+    private final ContextCompressor contextCompressor;
     private final AgentProperties.ContextProperties contextProps;
 
     public DefaultContextEngine(MemoryProvider memoryProvider,
                                 SkillManager skillManager,
                                 MessageRepository messageRepository,
+                                ContextCompressor contextCompressor,
                                 AgentProperties properties) {
         this.memoryProvider = memoryProvider;
         this.skillManager = skillManager;
         this.messageRepository = messageRepository;
+        this.contextCompressor = contextCompressor;
         this.contextProps = properties.getContext();
     }
 
@@ -63,7 +66,11 @@ public class DefaultContextEngine implements ContextEngine {
         int start = (!messages.isEmpty() && messages.get(0).role() == Role.SYSTEM) ? 1 : 0;
         context.addAll(messages.subList(start, messages.size()));
 
-        return trimToFit(context);
+        List<Message> trimmed = trimToFit(context);
+        if (estimateChars(trimmed) > contextProps.getMaxTokens() * CHARS_PER_TOKEN_ESTIMATE) {
+            trimmed = contextCompressor.compress(trimmed, contextProps.getTargetTokens() * CHARS_PER_TOKEN_ESTIMATE);
+        }
+        return trimmed;
     }
 
     private List<Message> trimToFit(List<Message> context) {

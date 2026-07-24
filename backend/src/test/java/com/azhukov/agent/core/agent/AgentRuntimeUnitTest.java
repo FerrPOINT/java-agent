@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.agent;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.budget.DefaultIterationBudget;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.context.DefaultContextEngine;
 import com.azhukov.agent.core.memory.MemoryProvider;
@@ -10,12 +11,14 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
+import com.azhukov.agent.core.sanitizer.DefaultMessageSanitizer;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -57,11 +60,19 @@ class AgentRuntimeUnitTest {
         ToolExecutionService toolExecutionService = new ToolExecutionService(registry, properties);
 
         DefaultAgentRuntime runtime = new DefaultAgentRuntime(
-            model, registry, toolExecutionService, promptBuilder, contextEngine, memoryProvider, skillManager, properties
+            model, registry, toolExecutionService, promptBuilder, contextEngine, memoryProvider, skillManager,
+            new DefaultIterationBudget(properties), new DefaultMessageSanitizer(), mockContextReferenceService(), properties
         );
 
         var result = runtime.runTurn(session, "hi");
         assertThat(result.messages()).hasSizeGreaterThan(2);
         assertThat(result.completed()).isTrue();
+    }
+
+    private static com.azhukov.agent.core.context.ContextReferenceService mockContextReferenceService() {
+        var svc = mock(com.azhukov.agent.core.context.ContextReferenceService.class);
+        when(svc.resolve(any())).thenReturn(List.of());
+        when(svc.loadContent(any())).thenReturn(Optional.empty());
+        return svc;
     }
 }

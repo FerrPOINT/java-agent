@@ -7,6 +7,7 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.security.Redactor;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -29,15 +30,18 @@ public class TerminalTool implements ToolHandler {
 
     private final ProcessTool processTool;
     private final AgentProperties properties;
+    private final Redactor redactor;
 
-    public TerminalTool(ProcessTool processTool, AgentProperties properties) {
+    public TerminalTool(ProcessTool processTool, AgentProperties properties, Redactor redactor) {
         this.processTool = processTool;
         this.properties = properties;
+        this.redactor = redactor;
     }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         TerminalArgs args = ToolHandler.parseJson(arguments, TerminalArgs.class);
+        // TerminalArgs is package-private inner record defined below
         if (args.command() == null || args.command().isBlank()) {
             return ToolResult.fail("Command is required");
         }
@@ -90,34 +94,13 @@ public class TerminalTool implements ToolHandler {
     }
 
     private String redact(String output) {
-        if (!properties.getSecurity().isRedactEnabled()) {
-            return output;
-        }
-        List<String> patterns = properties.getSecurity().getSecretPatterns();
-        if (patterns == null || patterns.isEmpty()) {
-            return output;
-        }
-        String result = output;
-        for (String regex : patterns) {
-            try {
-                result = result.replaceAll(regex, "[REDACTED]");
-            } catch (Exception e) {
-                // ignore invalid regex
-            }
-        }
-        return result;
+        return redactor.redact(output);
     }
 
-    public static class TerminalArgs {
-        @ToolParam(description = "shell command to execute")
-        private String command;
-        @ToolParam(description = "timeout in seconds", required = false)
-        private int timeout;
-        @ToolParam(description = "run as background process and return session_id", required = false)
-        private boolean background;
-
-        public String command() { return command; }
-        public int timeout() { return timeout; }
-        public boolean background() { return background; }
+    record TerminalArgs(String command, int timeout, boolean background) {
+        TerminalArgs {
+            if (command == null) command = "";
+            if (timeout < 0) timeout = 0;
+        }
     }
 }

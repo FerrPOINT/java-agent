@@ -11,7 +11,7 @@ class TerminalToolTest {
 
     TerminalToolTest() {
         AgentProperties properties = new AgentProperties();
-        this.tool = new TerminalTool(new ProcessTool(), properties);
+        this.tool = new TerminalTool(new ProcessTool(), properties, new com.azhukov.agent.core.security.DefaultRedactor(properties));
     }
 
     @Test

@@ -10,7 +10,11 @@ import java.util.List;
 
 public interface AgentRuntime {
 
-    TurnResult runTurn(Session session, String userInput);
+    default TurnResult runTurn(Session session, String userInput) {
+        return runTurn(session, userInput, List.of());
+    }
+
+    TurnResult runTurn(Session session, String userInput, List<String> references);
 
     ChatResponse run(List<Message> messages, List<ToolDefinition> tools);
 }

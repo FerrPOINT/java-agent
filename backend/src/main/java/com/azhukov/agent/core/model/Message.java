@@ -27,11 +27,19 @@ public record Message(
         return new Message(Role.ASSISTANT, content, null, null, null, turnIndex);
     }
 
+    public static Message assistantWithToolCalls(String content, List<ToolCall> toolCalls, int turnIndex) {
+        return new Message(Role.ASSISTANT, content, null, List.copyOf(toolCalls), null, turnIndex);
+    }
+
     public static Message assistantToolCalls(List<ToolCall> toolCalls, int turnIndex) {
         return new Message(Role.ASSISTANT, null, null, List.copyOf(toolCalls), null, turnIndex);
     }
 
     public static Message toolResult(String toolCallId, String content, int turnIndex) {
         return new Message(Role.TOOL, content, null, null, toolCallId, turnIndex);
+    }
+
+    public static Message withContent(Message message, String content) {
+        return new Message(message.role(), content, message.toolCall(), message.toolCalls(), message.toolCallId(), message.turnIndex());
     }
 }

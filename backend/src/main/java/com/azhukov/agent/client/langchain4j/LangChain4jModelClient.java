@@ -40,9 +40,11 @@ public class LangChain4jModelClient implements ModelClient {
     private final ChatModel chatModel;
     private final StreamingChatModel streamingChatModel;
     private final AgentProperties properties;
+    private final java.util.function.Consumer<Usage> usageConsumer;
 
-    public LangChain4jModelClient(AgentProperties properties) {
+    public LangChain4jModelClient(AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer) {
         this.properties = properties;
+        this.usageConsumer = usageConsumer;
         this.chatModel = dev.langchain4j.model.openai.OpenAiChatModel.builder()
             .baseUrl(properties.getModel().getBaseUrl())
             .apiKey(properties.getModel().getApiKey())
@@ -80,6 +82,7 @@ public class LangChain4jModelClient implements ModelClient {
         log.debug("Sending {} messages to model {}", chatMessages.size(), request);
         dev.langchain4j.model.chat.response.ChatResponse response = chatModel.chat(request);
         AiMessage aiMessage = response.aiMessage();
+        persistUsage(response);
 
         if (aiMessage.hasToolExecutionRequests()) {
             List<ToolCall> calls = aiMessage.toolExecutionRequests().stream()
@@ -152,6 +155,7 @@ public class LangChain4jModelClient implements ModelClient {
             .messages(List.of(message))
             .build();
         dev.langchain4j.model.chat.response.ChatResponse response = chatModel.chat(request);
+        persistUsage(response);
         return response.aiMessage().text();
     }
 
@@ -208,5 +212,20 @@ public class LangChain4jModelClient implements ModelClient {
             return desc != null ? desc.toString() : "";
         }
         return "";
+    }
+
+    private void persistUsage(dev.langchain4j.model.chat.response.ChatResponse response) {
+        try {
+            if (response.tokenUsage() == null || usageConsumer == null) return;
+            int prompt = response.tokenUsage().inputTokenCount();
+            int completion = response.tokenUsage().outputTokenCount();
+            usageConsumer.accept(new Usage(properties.getModel().getProvider(), properties.getModel().getModelName(), prompt, completion));
+        } catch (Exception e) {
+            log.debug("Could not persist model usage: {}", e.getMessage());
+        }
+    }
+
+    public record Usage(String provider, String model, int promptTokens, int completionTokens) {
+        public int totalTokens() { return promptTokens + completionTokens; }
     }
 }

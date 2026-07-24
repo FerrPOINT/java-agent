@@ -7,7 +7,8 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
-import com.azhukov.agent.tools.security.SafetyGuard;
+import com.azhukov.agent.core.security.UrlSafety;
+import com.azhukov.agent.core.security.Redactor;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -27,12 +28,14 @@ public class WebExtractTool implements ToolHandler {
 
     private final int timeoutSeconds;
     private final int maxChars;
-    private final SafetyGuard safetyGuard;
+    private final UrlSafety urlSafety;
+    private final Redactor redactor;
 
-    public WebExtractTool(AgentProperties agentProperties, SafetyGuard safetyGuard) {
+    public WebExtractTool(AgentProperties agentProperties, UrlSafety urlSafety, Redactor redactor) {
         this.timeoutSeconds = agentProperties.getWeb().getExtractTimeoutSeconds();
         this.maxChars = agentProperties.getWeb().getExtractMaxChars();
-        this.safetyGuard = safetyGuard;
+        this.urlSafety = urlSafety;
+        this.redactor = redactor;
     }
 
     @Override
@@ -47,7 +50,7 @@ public class WebExtractTool implements ToolHandler {
         for (String url : urls) {
             String trimmed = url.trim();
             sb.append("--- URL: ").append(trimmed).append(" ---\n");
-            if (!safetyGuard.isUrlAllowed(trimmed)) {
+            if (!urlSafety.isUrlAllowed(trimmed)) {
                 sb.append("URL blocked by safety policy\n\n");
                 continue;
             }
@@ -62,7 +65,7 @@ public class WebExtractTool implements ToolHandler {
         if (text.length() > maxChars) {
             text = text.substring(0, maxChars) + "\n[truncated]";
         }
-        return ToolResult.ok(safetyGuard.redact(text));
+        return ToolResult.ok(redactor.redact(text));
     }
 
     private String extract(String url) throws IOException {

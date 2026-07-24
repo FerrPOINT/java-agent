@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.browser;
 
-import com.azhukov.agent.tools.security.SafetyGuard;
+import com.azhukov.agent.core.security.UrlSafety;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -15,19 +16,19 @@ public class BrowserService {
 
     private final CdpClient cdpClient;
     private final Supplier<String> cdpUrlSupplier;
-    private final SafetyGuard safetyGuard;
+    private final UrlSafety urlSafety;
 
     @Autowired
-    public BrowserService(CdpClient cdpClient, ChromiumAutoStart chromiumAutoStart, SafetyGuard safetyGuard) {
+    public BrowserService(CdpClient cdpClient, ChromiumAutoStart chromiumAutoStart, UrlSafety urlSafety) {
         this.cdpClient = cdpClient;
-        this.safetyGuard = safetyGuard;
+        this.urlSafety = urlSafety;
         this.cdpUrlSupplier = chromiumAutoStart::getCdpUrl;
     }
 
-    BrowserService(CdpClient cdpClient, Supplier<String> cdpUrlSupplier, SafetyGuard safetyGuard) {
+    BrowserService(CdpClient cdpClient, Supplier<String> cdpUrlSupplier, UrlSafety urlSafety) {
         this.cdpClient = cdpClient;
         this.cdpUrlSupplier = cdpUrlSupplier;
-        this.safetyGuard = safetyGuard;
+        this.urlSafety = urlSafety;
     }
 
     private String cdpUrl() {
@@ -35,7 +36,7 @@ public class BrowserService {
     }
 
     public String navigate(String url) throws Exception {
-        if (!safetyGuard.isUrlAllowed(url)) {
+        if (!urlSafety.isUrlAllowed(url)) {
             return "URL blocked by safety policy: " + url;
         }
         ensureConnected();

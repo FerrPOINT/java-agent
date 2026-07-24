@@ -2,6 +2,8 @@ package com.azhukov.agent.core.prompt;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.state.AgentConstants;
+import com.azhukov.agent.core.state.DefaultAgentConstants;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import org.springframework.stereotype.Component;
@@ -11,10 +13,17 @@ public class DefaultPromptBuilder implements PromptBuilder {
 
     private final AgentProperties properties;
     private final ToolRegistry toolRegistry;
+    private final AgentConstants constants;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry) {
+        this(properties, toolRegistry, new DefaultAgentConstants());
+    }
+
+    public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants) {
         this.properties = properties;
         this.toolRegistry = toolRegistry;
+        this.constants = constants;
     }
 
     @Override
@@ -23,7 +32,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         if (text == null || text.isBlank()) {
             text = buildDefaultPrompt();
         }
-        text = text.replace("${agent.name}", properties.getName());
+        text = text.replace("${agent.name}", constants.resolve("agent.name"));
         return Message.system(text);
     }
 
