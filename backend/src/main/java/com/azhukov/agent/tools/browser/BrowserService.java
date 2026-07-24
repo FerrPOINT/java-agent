@@ -4,6 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.function.Supplier;
@@ -15,17 +16,13 @@ public class BrowserService {
     private final CdpClient cdpClient;
     private final Supplier<String> cdpUrlSupplier;
 
+    @Autowired
     public BrowserService(CdpClient cdpClient, AgentProperties properties) {
-        this(cdpClient, () -> properties.getBrowser().getCdpUrl());
+        this.cdpClient = cdpClient;
+        this.cdpUrlSupplier = () -> properties.getBrowser().getCdpUrl();
     }
 
-    @SuppressWarnings("unused")
-    private BrowserService() {
-        this.cdpClient = null;
-        this.cdpUrlSupplier = () -> "http://localhost:9222";
-    }
-
-    public BrowserService(CdpClient cdpClient, Supplier<String> cdpUrlSupplier) {
+    BrowserService(CdpClient cdpClient, Supplier<String> cdpUrlSupplier) {
         this.cdpClient = cdpClient;
         this.cdpUrlSupplier = cdpUrlSupplier;
     }

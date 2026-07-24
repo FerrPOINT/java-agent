@@ -39,7 +39,6 @@ public class AgentRuntimeService {
         Session session = createSession("user-1", "openai-compatible", "")
             .withMetadata("delegation_depth", String.valueOf(depth));
 
-        saveUserMessage(session.id(), request.message());
         TurnResult result = agentRuntime.runTurn(session, request.message());
         persistMessages(session.id(), result.messages());
 
@@ -58,7 +57,6 @@ public class AgentRuntimeService {
             ? createSession("user-1", "openai-compatible", "")
             : loadSession(request.sessionId());
 
-        saveUserMessage(session.id(), request.message());
         TurnResult result = agentRuntime.runTurn(session, request.message());
         persistMessages(session.id(), result.messages());
 
@@ -87,16 +85,6 @@ public class AgentRuntimeService {
         SessionEntity e = sessionRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
         return new Session(e.getId(), e.getUserId(), e.getTitle(), e.getModelProvider(), e.getModelName(), null, java.util.Map.of());
-    }
-
-    private void saveUserMessage(UUID sessionId, String content) {
-        MessageEntity e = new MessageEntity();
-        e.setSessionId(sessionId);
-        e.setRole(Role.USER.name().toLowerCase());
-        e.setContent(content);
-        e.setTurnIndex(0);
-        e.setCreatedAt(Instant.now());
-        messageRepository.save(e);
     }
 
     private void persistMessages(UUID sessionId, List<Message> messages) {
