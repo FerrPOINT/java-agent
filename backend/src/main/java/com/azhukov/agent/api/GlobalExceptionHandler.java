@@ -29,7 +29,7 @@ public class GlobalExceptionHandler {
             errors.put(error.getField(), error.getDefaultMessage());
         }
         return ResponseEntity.badRequest().body(Map.of(
-            "type", "validation",
+            "type", "VALIDATION_ERROR",
             "errors", errors
         ));
     }
