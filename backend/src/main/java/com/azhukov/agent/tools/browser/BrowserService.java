@@ -1,6 +1,5 @@
 package com.azhukov.agent.tools.browser;
 
-import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.tools.security.SafetyGuard;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,10 +18,10 @@ public class BrowserService {
     private final SafetyGuard safetyGuard;
 
     @Autowired
-    public BrowserService(CdpClient cdpClient, AgentProperties properties, SafetyGuard safetyGuard) {
+    public BrowserService(CdpClient cdpClient, ChromiumAutoStart chromiumAutoStart, SafetyGuard safetyGuard) {
         this.cdpClient = cdpClient;
-        this.cdpUrlSupplier = () -> properties.getBrowser().getCdpUrl();
         this.safetyGuard = safetyGuard;
+        this.cdpUrlSupplier = chromiumAutoStart::getCdpUrl;
     }
 
     BrowserService(CdpClient cdpClient, Supplier<String> cdpUrlSupplier, SafetyGuard safetyGuard) {

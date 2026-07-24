@@ -17,6 +17,7 @@ public class AgentProperties {
     private final AuxiliaryProperties auxiliary = new AuxiliaryProperties();
     private final VisionProperties vision = new VisionProperties();
     private final BrowserProperties browser = new BrowserProperties();
+    private final ChromiumProperties chromium = new ChromiumProperties();
     private final WebProperties web = new WebProperties();
     private final TerminalProperties terminal = new TerminalProperties();
     private final FileProperties file = new FileProperties();
@@ -36,6 +37,7 @@ public class AgentProperties {
     public AuxiliaryProperties getAuxiliary() { return auxiliary; }
     public VisionProperties getVision() { return vision; }
     public BrowserProperties getBrowser() { return browser; }
+    public ChromiumProperties getChromium() { return chromium; }
     public WebProperties getWeb() { return web; }
     public TerminalProperties getTerminal() { return terminal; }
     public FileProperties getFile() { return file; }
@@ -149,6 +151,36 @@ public class AgentProperties {
         public void setHeadless(boolean headless) { this.headless = headless; }
         public String getExecutablePath() { return executablePath; }
         public void setExecutablePath(String executablePath) { this.executablePath = executablePath; }
+    }
+
+    public static class ChromiumProperties {
+        private boolean autoStart = true;
+        private boolean autoInstall = true;
+        private String downloadUrl = "https://storage.googleapis.com/chromium-browser-snapshots";
+        private String revision = "";
+        private int launchTimeoutSeconds = 120;
+        private boolean headless = true;
+        private String executablePath = "";
+        private String userDataDir = "";
+        private final List<String> extraArgs = new ArrayList<>();
+
+        public boolean isAutoStart() { return autoStart; }
+        public void setAutoStart(boolean autoStart) { this.autoStart = autoStart; }
+        public boolean isAutoInstall() { return autoInstall; }
+        public void setAutoInstall(boolean autoInstall) { this.autoInstall = autoInstall; }
+        public String getDownloadUrl() { return downloadUrl; }
+        public void setDownloadUrl(String downloadUrl) { this.downloadUrl = downloadUrl; }
+        public String getRevision() { return revision; }
+        public void setRevision(String revision) { this.revision = revision; }
+        public int getLaunchTimeoutSeconds() { return launchTimeoutSeconds; }
+        public void setLaunchTimeoutSeconds(int launchTimeoutSeconds) { this.launchTimeoutSeconds = launchTimeoutSeconds; }
+        public boolean isHeadless() { return headless; }
+        public void setHeadless(boolean headless) { this.headless = headless; }
+        public String getExecutablePath() { return executablePath; }
+        public void setExecutablePath(String executablePath) { this.executablePath = executablePath; }
+        public String getUserDataDir() { return userDataDir; }
+        public void setUserDataDir(String userDataDir) { this.userDataDir = userDataDir; }
+        public List<String> getExtraArgs() { return extraArgs; }
     }
 
     public static class WebProperties {

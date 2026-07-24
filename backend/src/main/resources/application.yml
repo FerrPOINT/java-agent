@@ -32,7 +32,9 @@ spring:
 
 server:
   port: ${AGENT_SERVER_PORT:8090}
+  shutdown: immediate
   servlet:
+    context-path: /
     session:
       cookie:
         http-only: true
@@ -78,6 +80,17 @@ agent:
     max-tabs: ${AGENT_BROWSER_MAX_TABS:5}
     headless: ${AGENT_BROWSER_HEADLESS:true}
     executable-path: ${AGENT_BROWSER_EXECUTABLE_PATH:}
+
+  chromium:
+    auto-start: ${AGENT_CHROMIUM_AUTO_START:false}
+    auto-install: ${AGENT_CHROMIUM_AUTO_INSTALL:true}
+    download-url: ${AGENT_CHROMIUM_DOWNLOAD_URL:https://storage.googleapis.com/chromium-browser-snapshots}
+    revision: ${AGENT_CHROMIUM_REVISION:}
+    launch-timeout-seconds: ${AGENT_CHROMIUM_LAUNCH_TIMEOUT_SECONDS:120}
+    headless: ${AGENT_CHROMIUM_HEADLESS:true}
+    executable-path: ${AGENT_CHROMIUM_EXECUTABLE_PATH:}
+    user-data-dir: ${AGENT_CHROMIUM_USER_DATA_DIR:}
+    extra-args: ${AGENT_CHROMIUM_EXTRA_ARGS:}
 
   web:
     search-results: ${AGENT_WEB_SEARCH_RESULTS:5}
@@ -198,6 +211,8 @@ agent:
     max-retries: 2
     max-tokens: 4096
     temperature: 0.7
+  chromium:
+    auto-start: ${AGENT_CHROMIUM_AUTO_START:true}
 
 logging:
   level:
@@ -230,6 +245,9 @@ agent:
     enabled: false
   skills:
     enabled: false
+  chromium:
+    auto-start: false
+    auto-install: false
   model:
     provider: noop
 
