@@ -29,7 +29,7 @@ public class DatabaseHealthIndicator implements HealthIndicator {
             return Health.down().withDetail("reason", "connection not valid").build();
         } catch (Exception e) {
             log.warn("Database health check failed", e);
-            return Health.down().withException(e).build();
+            return Health.down().withDetail("error", e.getMessage() != null ? e.getMessage() : e.getClass().getName()).build();
         }
     }
 }

@@ -79,22 +79,43 @@ java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
   --server.port=8090
 ```
 
-### Проверка
+### Streaming
 
 ```bash
-curl -s http://localhost:8090/actuator/health
-curl -s -X POST -H 'Content-Type: application/json' \
-  -d '{"message":"echo OK"}' \
-  http://localhost:8090/api/v1/agent/chat
+curl -N -X POST http://localhost:8090/api/v1/agent/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Привет"}'
 ```
+
+### OpenAI-compatible
+
+```bash
+curl -s -X POST http://localhost:8090/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"kimi-k2.6","messages":[{"role":"user","content":"hi"}]}' | jq .
+```
+
+## Production
+
+```bash
+docker compose up --build
+```
+
+- Dockerfile: `eclipse-temurin:25-jre-noble` + Chromium runtime deps.
+- `server.shutdown: immediate` — workaround для graceful shutdown бага Spring Boot 4.1.0.
+- Health readiness включает только `db`, чтобы LLM/CDP-сбои не помечали под неготовой.
+
+Подробности — `backend/docs/13-production-hardening.md`.
 
 ## Сборка и тесты
 
 ```bash
 cd backend
-./gradlew test          # unit + integration (web tests skipped без ENABLE_NETWORK_TESTS)
+./gradlew test          # unit + integration
 ./gradlew bootJar       # собрать jar
 ```
+
+> ⚠️ Gradle `bootRun` падает с OOM/SIGKILL при реальных LLM-вызовах. Используйте `java -jar`.
 
 ## Структура
 
@@ -144,3 +165,8 @@ backend/
 - `docs/04-proposed-java-structure.md` — модульная структура
 - `docs/05-migration-notes.md` — нетривиальные моменты
 - `docs/06-vision-browser.md` — vision и browser
+- `backend/docs/09-builtin-tools.md` — встроенные инструменты
+- `backend/docs/10-production-readiness.md` — production readiness
+- `backend/docs/11-chromium.md` — Chromium auto-install
+- `backend/docs/12-streaming.md` — SSE streaming
+- `backend/docs/13-production-hardening.md` — context compression и production packaging

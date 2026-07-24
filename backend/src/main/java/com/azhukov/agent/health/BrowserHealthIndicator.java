@@ -26,7 +26,9 @@ public class BrowserHealthIndicator implements HealthIndicator {
             }
             return Health.down().withDetail("cdpUrl", cdpUrl).withDetail("reason", "not connected").build();
         } catch (Exception e) {
-            return Health.down().withDetail("cdpUrl", cdpUrl).withDetail("error", e.getMessage()).build();
+            return Health.down().withDetail("cdpUrl", cdpUrl != null ? cdpUrl : "unknown")
+                .withDetail("error", e.getMessage() != null ? e.getMessage() : e.getClass().getName())
+                .build();
         }
     }
 }

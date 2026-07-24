@@ -31,8 +31,8 @@ public class ModelHealthIndicator implements HealthIndicator {
                 .build();
         } catch (Exception e) {
             return Health.down()
-                .withDetail("model", modelName)
-                .withDetail("error", e.getMessage())
+                .withDetail("model", modelName != null ? modelName : "unknown")
+                .withDetail("error", e.getMessage() != null ? e.getMessage() : e.getClass().getName())
                 .build();
         }
     }

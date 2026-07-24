@@ -17,7 +17,7 @@ public class ChromiumHealthIndicator implements HealthIndicator {
     @Override
     public Health health() {
         if (chromiumAutoStart.isRunning()) {
-            return Health.up().withDetail("cdpUrl", chromiumAutoStart.getCdpUrl()).build();
+            return Health.up().withDetail("cdpUrl", chromiumAutoStart.getCdpUrl() != null ? chromiumAutoStart.getCdpUrl() : "running").build();
         }
         return Health.down().withDetail("reason", "Chromium auto-start is not running").build();
     }
