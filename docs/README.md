@@ -42,7 +42,10 @@ The `prototype/` directory holds clones of the relevant Hermes repositories for 
     ├── 03-dependency-map.md              # Python → Java library mapping
     ├── 04-proposed-java-structure.md     # module layout
     ├── 05-migration-notes.md             # tricky parts and design decisions
-    └── 06-vision-browser.md              # vision + browser porting details
+    ├── 06-vision-browser.md              # vision + browser porting details
+    ├── 07-mcp-client-status.md           # MCP client state and config
+    ├── 08-browser-vision.md              # browser/vision endpoints
+    └── 09-builtin-tools.md                 # matrix of implemented tools
 ```
 
 ## 3. Implementation Status
@@ -108,9 +111,12 @@ curl -s -X POST -H 'Content-Type: application/json' \
 1. Read `01-scope.md` to confirm boundaries.
 2. Read `02-core-architecture.md` for the runtime data flow.
 3. Read `03-dependency-map.md` for the Java stack choices.
-4. Read `04-proposed-java-structure.md` for the module skeleton.
-5. Read `06-vision-browser.md` for vision and browser porting details.
-6. Start implementation from the core module.
+5. Read `04-proposed-java-structure.md` for the module skeleton.
+6. Read `06-vision-browser.md` for vision and browser porting details.
+7. Read `07-mcp-client-status.md` for MCP configuration.
+8. Read `08-browser-vision.md` for HTTP examples.
+9. Read `09-builtin-tools.md` for the implemented tool matrix.
+10. Start implementation from the core module.
 
 ## Source
 
