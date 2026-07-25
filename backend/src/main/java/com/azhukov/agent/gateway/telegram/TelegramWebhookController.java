@@ -1,5 +1,6 @@
 package com.azhukov.agent.gateway.telegram;
 
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.gateway.GatewayRoutingService;
 import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.gateway.model.MessageType;
@@ -22,9 +23,11 @@ import java.util.Optional;
 public class TelegramWebhookController {
 
     private final GatewayRoutingService routingService;
+    private final AgentProperties properties;
 
-    public TelegramWebhookController(GatewayRoutingService routingService) {
+    public TelegramWebhookController(GatewayRoutingService routingService, AgentProperties properties) {
         this.routingService = routingService;
+        this.properties = properties;
     }
 
     @PostMapping
@@ -37,6 +40,10 @@ public class TelegramWebhookController {
         long chatId = chat == null ? 0L : ((Number) chat.get("id")).longValue();
         long userId = from == null ? 0L : ((Number) from.get("id")).longValue();
         String username = from == null ? null : (String) from.get("username");
+
+        if (!isAllowed(userId, username)) {
+            return "FORBIDDEN";
+        }
 
         SessionSource source = new SessionSource(
             Platform.TELEGRAM,
@@ -55,5 +62,12 @@ public class TelegramWebhookController {
             Instant.now()
         ));
         return "OK";
+    }
+
+    boolean isAllowed(long userId, String username) {
+        var telegram = properties.getGateway().getTelegram();
+        if (telegram.isAllowByDefault()) return true;
+        if (userId > 0 && telegram.getAllowedUserIds().contains(String.valueOf(userId))) return true;
+        return username != null && !username.isBlank() && telegram.getAllowedUsernames().contains(username);
     }
 }

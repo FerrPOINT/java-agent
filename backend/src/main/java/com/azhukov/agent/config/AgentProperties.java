@@ -28,6 +28,7 @@ public class AgentProperties {
     private final ContextProperties context = new ContextProperties();
     private final DelegationProperties delegation = new DelegationProperties();
     private final McpProperties mcp = new McpProperties();
+    private final GatewayProperties gateway = new GatewayProperties();
     private final SecurityProperties security = new SecurityProperties();
     private final CoreProperties core = new CoreProperties();
     private final BudgetProperties budget = new BudgetProperties();
@@ -49,6 +50,7 @@ public class AgentProperties {
     public ContextProperties getContext() { return context; }
     public DelegationProperties getDelegation() { return delegation; }
     public McpProperties getMcp() { return mcp; }
+    public GatewayProperties getGateway() { return gateway; }
     public SecurityProperties getSecurity() { return security; }
     public CoreProperties getCore() { return core; }
     public BudgetProperties getBudget() { return budget; }
@@ -386,6 +388,29 @@ public class AgentProperties {
         public void setBlockedUrlHosts(List<String> blockedUrlHosts) { this.blockedUrlHosts.clear(); this.blockedUrlHosts.addAll(blockedUrlHosts); }
         public List<String> getSecretPatterns() { return secretPatterns; }
         public void setSecretPatterns(List<String> secretPatterns) { this.secretPatterns.clear(); this.secretPatterns.addAll(secretPatterns); }
+    }
+
+    public static class GatewayProperties {
+        private final TelegramProperties telegram = new TelegramProperties();
+
+        public TelegramProperties getTelegram() { return telegram; }
+    }
+
+    public static class TelegramProperties {
+        private String botToken = "";
+        private String webhookUrl = "";
+        private final List<String> allowedUserIds = new ArrayList<>();
+        private final List<String> allowedUsernames = new ArrayList<>();
+        private boolean allowByDefault = false;
+
+        public String getBotToken() { return botToken; }
+        public void setBotToken(String botToken) { this.botToken = botToken; }
+        public String getWebhookUrl() { return webhookUrl; }
+        public void setWebhookUrl(String webhookUrl) { this.webhookUrl = webhookUrl; }
+        public List<String> getAllowedUserIds() { return allowedUserIds; }
+        public List<String> getAllowedUsernames() { return allowedUsernames; }
+        public boolean isAllowByDefault() { return allowByDefault; }
+        public void setAllowByDefault(boolean allowByDefault) { this.allowByDefault = allowByDefault; }
     }
 
     public static class CoreProperties {
