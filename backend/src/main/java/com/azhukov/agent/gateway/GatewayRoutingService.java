@@ -45,6 +45,10 @@ public class GatewayRoutingService {
         return adapter.send(target, text);
     }
 
+    public void dispatchInbound(MessageEvent event) {
+        messageHandler.accept(event);
+    }
+
     public Optional<BasePlatformAdapter> adapterFor(Platform platform) {
         return Optional.ofNullable(adapters.get(platform));
     }

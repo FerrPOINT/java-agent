@@ -152,6 +152,15 @@ agent:
     enabled: ${AGENT_MCP_ENABLED:false}
     servers: []
 
+  gateway:
+    telegram:
+      webhook:
+        enabled: ${AGENT_GATEWAY_TELEGRAM_WEBHOOK_ENABLED:false}
+      long-polling:
+        enabled: ${AGENT_GATEWAY_TELEGRAM_LONG_POLLING_ENABLED:false}
+      bot-token: ${TELEGRAM_BOT_TOKEN:}
+      webhook-url: ${AGENT_GATEWAY_TELEGRAM_WEBHOOK_URL:}
+
   security:
     approvals-enabled: ${AGENT_SECURITY_APPROVALS_ENABLED:true}
     file-safety-enabled: ${AGENT_SECURITY_FILE_SAFETY_ENABLED:true}
@@ -207,6 +216,11 @@ spring:
       on-profile: dev
 
 agent:
+  gateway:
+    telegram:
+      webhook:
+        enabled: ${AGENT_GATEWAY_TELEGRAM_WEBHOOK_ENABLED:true}
+
   model:
     provider: ${AGENT_MODEL_PROVIDER:openai-compatible}
     base-url: ${OLLAMA_BASE_URL:https://ollama.com/v1}
