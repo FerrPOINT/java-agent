@@ -15,7 +15,9 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.core.prompt.PromptBuilder;
-import com.azhukov.agent.core.sanitizer.MessageSanitizer;
+import com.azhukov.agent.security.MessageSanitizer;
+import com.azhukov.agent.security.ToolCallGuardrail;
+import com.azhukov.agent.security.UserInputSanitizer;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
@@ -67,6 +69,10 @@ class AgentRuntimeFullScenariosTest {
     private MessageSanitizer messageSanitizer;
     @Mock
     private ContextReferenceService contextReferenceService;
+    @Mock
+    private UserInputSanitizer inputSanitizer;
+    @Mock
+    private ToolCallGuardrail guardrail;
 
     private AgentProperties properties;
     private Session session;
@@ -95,7 +101,9 @@ class AgentRuntimeFullScenariosTest {
             iterationBudget,
             messageSanitizer,
             contextReferenceService,
-            properties
+            properties,
+            inputSanitizer,
+            guardrail
         );
     }
 
@@ -111,7 +119,9 @@ class AgentRuntimeFullScenariosTest {
             iterationBudget,
             messageSanitizer,
             contextReferenceService,
-            properties
+            properties,
+            inputSanitizer,
+            guardrail
         );
     }
 

@@ -18,11 +18,18 @@ import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.NoOpMemoryProvider;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
-import com.azhukov.agent.core.sanitizer.DefaultMessageSanitizer;
+import com.azhukov.agent.security.CommandApprovalManager;
+import com.azhukov.agent.security.DefaultToolCallGuardrail;
+import com.azhukov.agent.security.FileSafetyValidator;
+import com.azhukov.agent.security.MessageSanitizer;
+import com.azhukov.agent.security.SecretRedactor;
+import com.azhukov.agent.security.SsrfSafeHttpClient;
+import com.azhukov.agent.security.ToolCallGuardrail;
+import com.azhukov.agent.security.UrlSafetyHandler;
+import com.azhukov.agent.security.UserInputSanitizer;
 import com.azhukov.agent.gateway.BasePlatformAdapter;
 import com.azhukov.agent.gateway.GatewayRoutingService;
 import com.azhukov.agent.gateway.InboundMessageProcessor;
-import com.azhukov.agent.core.sanitizer.MessageSanitizer;
 import com.azhukov.agent.core.state.AgentConstants;
 import com.azhukov.agent.core.state.AgentState;
 import com.azhukov.agent.core.state.DefaultAgentConstants;
@@ -102,9 +109,12 @@ public class AgentConfig {
                                      IterationBudget iterationBudget,
                                      MessageSanitizer messageSanitizer,
                                      ContextReferenceService contextReferenceService,
-                                     AgentProperties properties) {
+                                     AgentProperties properties,
+                                     UserInputSanitizer inputSanitizer,
+                                     ToolCallGuardrail guardrail) {
         return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
-            memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties);
+            memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
+            inputSanitizer, guardrail);
     }
 
     @Bean
@@ -113,8 +123,50 @@ public class AgentConfig {
     }
 
     @Bean
-    public MessageSanitizer messageSanitizer() {
-        return new DefaultMessageSanitizer();
+    public MessageSanitizer messageSanitizer(SecretRedactor redactor) {
+        return new MessageSanitizer(redactor);
+    }
+
+    @Bean
+    public UserInputSanitizer userInputSanitizer() {
+        return new UserInputSanitizer();
+    }
+
+    @Bean
+    public SecretRedactor secretRedactor(AgentProperties properties) {
+        return new SecretRedactor(properties);
+    }
+
+    @Bean
+    public FileSafetyValidator fileSafetyValidator(AgentProperties properties) {
+        return new FileSafetyValidator(properties);
+    }
+
+    @Bean
+    public UrlSafetyHandler urlSafetyHandler(AgentProperties properties) {
+        return new UrlSafetyHandler(properties);
+    }
+
+    @Bean
+    public SsrfSafeHttpClient ssrfSafeHttpClient(UrlSafetyHandler urlSafetyHandler, SecretRedactor redactor, AgentProperties properties) {
+        return new SsrfSafeHttpClient(urlSafetyHandler, redactor, properties);
+    }
+
+    @Bean
+    public CommandApprovalManager commandApprovalManager(AgentProperties properties) {
+        return new CommandApprovalManager(properties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ToolCallGuardrail.class)
+    public ToolCallGuardrail toolCallGuardrail(AgentProperties properties) {
+        return new DefaultToolCallGuardrail(properties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(com.azhukov.agent.core.security.ToolGuardrails.class)
+    public com.azhukov.agent.core.security.ToolGuardrails legacyToolGuardrails(AgentProperties properties) {
+        return new com.azhukov.agent.core.security.DefaultToolGuardrails(properties);
     }
 
     @Bean

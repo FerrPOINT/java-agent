@@ -15,7 +15,9 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.core.prompt.PromptBuilder;
-import com.azhukov.agent.core.sanitizer.MessageSanitizer;
+import com.azhukov.agent.security.MessageSanitizer;
+import com.azhukov.agent.security.ToolCallGuardrail;
+import com.azhukov.agent.security.UserInputSanitizer;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
@@ -44,6 +46,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final MessageSanitizer messageSanitizer;
     private final ContextReferenceService contextReferenceService;
     private final AgentProperties properties;
+    private final UserInputSanitizer inputSanitizer;
+    private final ToolCallGuardrail guardrail;
 
     public DefaultAgentRuntime(ModelClient modelClient, ToolRegistry toolRegistry,
                                ToolExecutionService toolExecutionService,
@@ -52,7 +56,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
                                IterationBudget iterationBudget,
                                MessageSanitizer messageSanitizer,
                                ContextReferenceService contextReferenceService,
-                               AgentProperties properties) {
+                               AgentProperties properties,
+                               UserInputSanitizer inputSanitizer,
+                               ToolCallGuardrail guardrail) {
         this.modelClient = modelClient;
         this.toolRegistry = toolRegistry;
         this.toolExecutionService = toolExecutionService;
@@ -64,6 +70,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
         this.messageSanitizer = messageSanitizer;
         this.contextReferenceService = contextReferenceService;
         this.properties = properties;
+        this.inputSanitizer = inputSanitizer;
+        this.guardrail = guardrail;
     }
 
     @Override
@@ -76,19 +84,21 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
     @Override
     public TurnResult runTurn(Session session, String userInput, List<String> references) {
+        guardrail.reset();
         TurnSnapshot budget = iterationBudget.startTurn(session.id());
+        String safeInput = inputSanitizer.sanitize(userInput);
         List<Message> turnMessages = new ArrayList<>();
         turnMessages.add(promptBuilder.buildSystemMessage(session));
         if (references != null && !references.isEmpty()) {
             StringBuilder sb = new StringBuilder();
-            sb.append(userInput).append("\n\n").append("--- References ---");
+            sb.append(safeInput).append("\n\n").append("--- References ---");
             for (var ref : contextReferenceService.resolve(references)) {
                 contextReferenceService.loadContent(ref).ifPresent(content ->
                     sb.append("\n\n").append("[").append(ref.displayName()).append("]\n").append(content));
             }
             turnMessages.add(Message.user(sb.toString()));
         } else {
-            turnMessages.add(Message.user(userInput));
+            turnMessages.add(Message.user(safeInput));
         }
 
         List<ToolDefinition> tools = toolRegistry.getDefinitions(new HashSet<>(properties.getSkills().getDefaultToolsets()));
@@ -96,6 +106,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
         int turnIndex = 1;
 
         for (int i = 0; i < maxTurns; i++) {
+            if (guardrail.isHalted()) {
+                turnMessages.add(Message.assistant("Turn halted by guardrails.", turnIndex));
+                return new TurnResult(turnMessages, true, null);
+            }
             if (iterationBudget.isExhausted(budget)) {
                 log.warn("Iteration budget exhausted for session {} after {} model calls, {} tool executions",
                     session.id(), budget.modelCalls(), budget.toolExecutions());

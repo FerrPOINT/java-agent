@@ -11,7 +11,9 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
-import com.azhukov.agent.core.sanitizer.DefaultMessageSanitizer;
+import com.azhukov.agent.security.DefaultToolCallGuardrail;
+import com.azhukov.agent.security.SecretRedactor;
+import com.azhukov.agent.security.UserInputSanitizer;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
@@ -58,11 +60,14 @@ class AgentRuntimeUnitTest {
             "done"
         );
 
-        ToolExecutionService toolExecutionService = new ToolExecutionService(registry, properties);
+        ToolExecutionService toolExecutionService = new ToolExecutionService(registry, properties,
+            new DefaultToolCallGuardrail(properties), new SecretRedactor(properties));
 
         DefaultAgentRuntime runtime = new DefaultAgentRuntime(
             model, registry, toolExecutionService, promptBuilder, contextEngine, memoryProvider, skillManager,
-            new DefaultIterationBudget(properties), new DefaultMessageSanitizer(), mockContextReferenceService(), properties
+            new DefaultIterationBudget(properties),
+            new com.azhukov.agent.security.MessageSanitizer(new SecretRedactor(properties)),
+            mockContextReferenceService(), properties, new UserInputSanitizer(), new DefaultToolCallGuardrail(properties)
         );
 
         var result = runtime.runTurn(session, "hi");

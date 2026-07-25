@@ -4,6 +4,8 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.security.DefaultToolCallGuardrail;
+import com.azhukov.agent.security.SecretRedactor;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -17,6 +19,22 @@ import static org.mockito.Mockito.when;
 class ToolExecutionServiceFullTest {
 
     private AgentProperties properties = new AgentProperties();
+
+    private com.azhukov.agent.security.ToolCallGuardrail guardrail() {
+        return new DefaultToolCallGuardrail(properties);
+    }
+
+    private SecretRedactor redactor() {
+        return new SecretRedactor(properties);
+    }
+
+    private ToolExecutionService buildService(ToolRegistry registry) {
+        return buildService(registry, properties);
+    }
+
+    private ToolExecutionService buildService(ToolRegistry registry, AgentProperties props) {
+        return new ToolExecutionService(registry, props, guardrail(), redactor());
+    }
 
     private ToolRegistry buildRegistry(ToolResult result) {
         ToolRegistry registry = mock(ToolRegistry.class);
@@ -39,7 +57,7 @@ class ToolExecutionServiceFullTest {
     @Test
     void returnsSuccessfulToolResult() {
         ToolRegistry registry = buildRegistry(ToolResult.ok("hello"));
-        ToolExecutionService service = new ToolExecutionService(registry, properties);
+        ToolExecutionService service = buildService(registry);
 
         ToolResult result = service.execute("ok", "c1", "{}", Message.user("hi"), Session.create("u", "p", "m"));
 
@@ -51,7 +69,7 @@ class ToolExecutionServiceFullTest {
     void truncatesLongOutput() {
         properties.getToolOutput().setMaxChars(5);
         ToolRegistry registry = buildRegistry(ToolResult.ok("1234567890"));
-        ToolExecutionService service = new ToolExecutionService(registry, properties);
+        ToolExecutionService service = buildService(registry);
 
         ToolResult result = service.execute("ok", "c1", "{}", null, null);
 
@@ -61,7 +79,7 @@ class ToolExecutionServiceFullTest {
     @Test
     void retriesRuntimeExceptionAndFails() {
         ToolRegistry registry = buildRegistry(null);
-        ToolExecutionService service = new ToolExecutionService(registry, properties);
+        ToolExecutionService service = buildService(registry);
 
         ToolResult result = service.execute("throw", "c1", "{}", null, null);
 
@@ -72,7 +90,7 @@ class ToolExecutionServiceFullTest {
     @Test
     void doesNotRetryIllegalArgumentException() {
         ToolRegistry registry = buildRegistry(null);
-        ToolExecutionService service = new ToolExecutionService(registry, properties);
+        ToolExecutionService service = buildService(registry);
 
         ToolResult result = service.execute("arg-error", "c1", "{}", null, null);
 
@@ -87,7 +105,7 @@ class ToolExecutionServiceFullTest {
         props.getToolOutput().setMaxChars(1000);
         AtomicInteger calls = new AtomicInteger();
         ToolRegistry registry = buildSlowRegistry(5000, calls);
-        ToolExecutionService service = new ToolExecutionService(registry, props);
+        ToolExecutionService service = buildService(registry, props);
 
         ToolResult result = service.execute("slow", "c1", "{}", null, null);
 
@@ -106,7 +124,7 @@ class ToolExecutionServiceFullTest {
             }
             return ToolResult.ok("finally");
         });
-        ToolExecutionService service = new ToolExecutionService(registry, properties);
+        ToolExecutionService service = buildService(registry);
 
         ToolResult result = service.execute("flaky", "c1", "{}", null, null);
 

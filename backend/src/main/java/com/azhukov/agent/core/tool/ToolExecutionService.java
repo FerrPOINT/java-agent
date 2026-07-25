@@ -4,6 +4,8 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.security.SecretRedactor;
+import com.azhukov.agent.security.ToolCallGuardrail;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
 import org.slf4j.Logger;
@@ -30,10 +32,14 @@ public class ToolExecutionService {
     private final AgentProperties properties;
     private final ExecutorService executor;
     private final Retry retry;
+    private final ToolCallGuardrail guardrail;
+    private final SecretRedactor redactor;
 
-    public ToolExecutionService(ToolRegistry toolRegistry, AgentProperties properties) {
+    public ToolExecutionService(ToolRegistry toolRegistry, AgentProperties properties, ToolCallGuardrail guardrail, SecretRedactor redactor) {
         this.toolRegistry = toolRegistry;
         this.properties = properties;
+        this.guardrail = guardrail;
+        this.redactor = redactor;
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         RetryConfig config = RetryConfig.custom()
             .maxAttempts(3)
@@ -45,6 +51,12 @@ public class ToolExecutionService {
     }
 
     public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session) {
+        var before = guardrail.beforeCall(toolName, arguments);
+        if (before.isBlockOrHalt()) {
+            log.warn("Guardrail {} tool {}: {}", before.action(), toolName, before.message());
+            return ToolResult.fail(before.message());
+        }
+
         long start = System.currentTimeMillis();
         Callable<ToolResult> callable = () -> toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session);
         Supplier<ToolResult> decorated = Retry.decorateSupplier(retry, () -> {
@@ -67,17 +79,28 @@ public class ToolExecutionService {
         });
 
         ToolResult result;
+        boolean failed;
         try {
             result = decorated.get();
+            failed = !result.success();
         } catch (Exception e) {
             log.warn("Tool {} execution failed after retries: {}", toolName, e.getMessage());
             result = ToolResult.fail("Tool execution failed: " + toolName + " - " + e.getMessage());
+            failed = true;
         }
         long duration = System.currentTimeMillis() - start;
         log.debug("Tool {} executed in {} ms (success={}, length={})",
             toolName, duration, result.success(), result.content() != null ? result.content().length() : 0);
 
-        return truncateIfNeeded(result, toolName);
+        var after = guardrail.afterCall(toolName, arguments, result, failed);
+        if (after.isBlockOrHalt()) {
+            log.warn("Guardrail {} after tool {}: {}", after.action(), toolName, after.message());
+            result = ToolResult.fail((result.error() != null ? result.error() + "\n" : "") + "Guardrail: " + after.message());
+        }
+
+        String safeContent = result.success() ? redactor.redact(result.content()) : redactor.redact(result.error());
+        ToolResult safeResult = result.success() ? ToolResult.ok(safeContent) : ToolResult.fail(safeContent);
+        return truncateIfNeeded(safeResult, toolName);
     }
 
     private ToolResult truncateIfNeeded(ToolResult result, String toolName) {
