@@ -1,0 +1,56 @@
+# syntax=docker/dockerfile:1
+# Slim production image for java-agent WITHOUT bundled Chromium.
+# Chromium is installed at runtime from configured mirror / cache volume.
+
+FROM eclipse-temurin:25-jdk-noble AS builder
+
+WORKDIR /workspace
+COPY backend/gradle/ gradle/
+COPY backend/gradlew backend/build.gradle backend/settings.gradle backend/gradle.properties ./
+COPY backend/src src
+RUN ./gradlew bootJar --no-daemon -x test
+
+FROM eclipse-temurin:25-jre-noble
+
+# Minimal Chromium runtime dependencies for --headless=new.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libasound2t64 \
+        libatk-bridge2.0-0 \
+        libatk1.0-0 \
+        libcairo2 \
+        libcups2 \
+        libdbus-1-3 \
+        libdrm2 \
+        libexpat1 \
+        libgbm1 \
+        libglib2.0-0 \
+        libnspr4 \
+        libnss3 \
+        libpango-1.0-0 \
+        libx11-6 \
+        libxcb1 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxext6 \
+        libxfixes3 \
+        libxkbcommon0 \
+        libxrandr2 \
+        libxshmfence1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r agent && useradd -r -g agent -m agent
+
+WORKDIR /app
+COPY --from=builder /workspace/build/libs/*.jar app.jar
+RUN chown -R agent:agent /app
+
+USER agent
+ENV AGENT_SERVER_PORT=8080
+ENV SPRING_PROFILES_ACTIVE=prod
+ENV AGENT_CHROMIUM_AUTO_INSTALL=true
+ENV HOME=/home/agent
+EXPOSE 8080
+
+ENTRYPOINT ["java", "--enable-native-access=ALL-UNNAMED", "-jar", "/app/app.jar"]
