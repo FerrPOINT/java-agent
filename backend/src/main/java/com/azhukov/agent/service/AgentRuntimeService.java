@@ -2,6 +2,7 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
@@ -70,6 +71,21 @@ public class AgentRuntimeService {
             null,
             result.completed()
         );
+    }
+
+    @Transactional(readOnly = true)
+    public List<SessionSummaryDto> listSessions() {
+        return sessionRepository.findAllByUserId("user-1").stream()
+            .map(e -> new SessionSummaryDto(
+                e.getId(),
+                e.getUserId(),
+                e.getTitle(),
+                e.getModelProvider(),
+                e.getModelName(),
+                e.getCreatedAt(),
+                e.getUpdatedAt()
+            ))
+            .toList();
     }
 
     private Session createSession(String userId, String provider, String modelName) {

@@ -22,6 +22,14 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    @ExceptionHandler(AgentException.class)
+    public ResponseEntity<Map<String, Object>> handleAgentException(AgentException ex) {
+        return ResponseEntity.status(ex.getStatus()).body(Map.of(
+            "type", "agent",
+            "error", ex.getMessage()
+        ));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
         Map<String, String> errors = new HashMap<>();

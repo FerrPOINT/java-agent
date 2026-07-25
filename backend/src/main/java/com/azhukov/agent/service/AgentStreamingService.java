@@ -41,8 +41,10 @@ public class AgentStreamingService {
     }
 
     public SseEmitter streamTurn(ChatRequest request) {
-        SseEmitter emitter = new SseEmitter(request.timeoutMs() != null ? request.timeoutMs() : 600_000L);
+        return streamTurn(request, new SseEmitter(request.timeoutMs() != null ? request.timeoutMs() : 600_000L));
+    }
 
+    SseEmitter streamTurn(ChatRequest request, SseEmitter emitter) {
         CompletableFuture.runAsync(() -> {
             try {
                 List<Message> messages = List.of(

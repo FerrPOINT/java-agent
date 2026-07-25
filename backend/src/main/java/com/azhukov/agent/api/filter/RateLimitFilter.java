@@ -25,12 +25,19 @@ public class RateLimitFilter implements Filter {
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
     private final int capacity = 60;
     private final Duration period = Duration.ofMinutes(1);
+    private final boolean skipHealthChecks = true;
 
     @Override
     public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
             throws IOException, ServletException {
         HttpServletRequest req = (HttpServletRequest) request;
         HttpServletResponse res = (HttpServletResponse) response;
+
+        if (skipHealthChecks && isHealthOrReadyPath(req.getRequestURI())) {
+            chain.doFilter(request, response);
+            return;
+        }
+
         String key = req.getRemoteAddr();
         Bucket bucket = buckets.computeIfAbsent(key, k -> Bucket.builder()
             .addLimit(Bandwidth.classic(capacity, Refill.intervally(capacity, period)))
@@ -41,5 +48,12 @@ public class RateLimitFilter implements Filter {
             res.setStatus(429);
             res.getWriter().write("Rate limit exceeded");
         }
+    }
+
+    private static boolean isHealthOrReadyPath(String uri) {
+        if (uri == null) {
+            return false;
+        }
+        return uri.equals("/actuator/health") || uri.equals("/health") || uri.equals("/ready") || uri.equals("/alive");
     }
 }
