@@ -31,16 +31,18 @@ public class AgentCliRunner implements CommandLineRunner {
             .terminal(terminal)
             .appName("java-agent")
             .build();
+        runLoop(reader, Session.create("cli-user", "openai-compatible", ""), System.out::println);
+    }
 
-        Session session = Session.create("cli-user", "openai-compatible", "");
-        System.out.println("Agent CLI. Type 'exit' to quit.");
+    void runLoop(LineReader reader, Session session, java.util.function.Consumer<String> output) {
+        output.accept("Agent CLI. Type 'exit' to quit.");
         while (true) {
             String line = reader.readLine("> ");
             if (line == null || "exit".equalsIgnoreCase(line.trim())) {
                 break;
             }
             TurnResult result = agentRuntime.runTurn(session, line);
-            System.out.println(result.finalText());
+            output.accept(result.finalText());
         }
     }
 }
