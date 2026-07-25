@@ -15,6 +15,7 @@ import com.azhukov.agent.security.DefaultToolCallGuardrail;
 import com.azhukov.agent.security.SecretRedactor;
 import com.azhukov.agent.security.UserInputSanitizer;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import org.junit.jupiter.api.Test;
@@ -67,7 +68,8 @@ class AgentRuntimeUnitTest {
             model, registry, toolExecutionService, promptBuilder, contextEngine, memoryProvider, skillManager,
             new DefaultIterationBudget(properties),
             new com.azhukov.agent.security.MessageSanitizer(new SecretRedactor(properties)),
-            mockContextReferenceService(), properties, new UserInputSanitizer(), new DefaultToolCallGuardrail(properties)
+            mockContextReferenceService(), properties, new UserInputSanitizer(),
+            new DefaultToolCallGuardrail(properties), new TurnStateManager()
         );
 
         var result = runtime.runTurn(session, "hi");

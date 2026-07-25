@@ -6,6 +6,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.security.SecretRedactor;
 import com.azhukov.agent.security.ToolCallGuardrail;
+import com.azhukov.agent.core.state.TurnState;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
 import org.slf4j.Logger;
@@ -50,8 +51,8 @@ public class ToolExecutionService {
         this.retry = Retry.of("tool", config);
     }
 
-    public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session) {
-        var before = guardrail.beforeCall(toolName, arguments);
+    public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session, TurnState turnState) {
+        var before = turnState == null ? guardrail.beforeCall(toolName, arguments) : guardrail.beforeCall(toolName, arguments, turnState);
         if (before.isBlockOrHalt()) {
             log.warn("Guardrail {} tool {}: {}", before.action(), toolName, before.message());
             return ToolResult.fail(before.message());
@@ -89,10 +90,14 @@ public class ToolExecutionService {
             failed = true;
         }
         long duration = System.currentTimeMillis() - start;
-        log.debug("Tool {} executed in {} ms (success={}, length={})",
-            toolName, duration, result.success(), result.content() != null ? result.content().length() : 0);
 
-        var after = guardrail.afterCall(toolName, arguments, result, failed);
+        if (turnState != null) {
+            turnState.recordExecution(new com.azhukov.agent.core.model.ToolCall(toolCallId, toolName, arguments), result, duration);
+        }
+
+        var after = turnState == null
+            ? guardrail.afterCall(toolName, arguments, result, failed)
+            : guardrail.afterCall(toolName, arguments, result, failed, turnState);
         if (after.isBlockOrHalt()) {
             log.warn("Guardrail {} after tool {}: {}", after.action(), toolName, after.message());
             result = ToolResult.fail((result.error() != null ? result.error() + "\n" : "") + "Guardrail: " + after.message());
@@ -101,6 +106,10 @@ public class ToolExecutionService {
         String safeContent = result.success() ? redactor.redact(result.content()) : redactor.redact(result.error());
         ToolResult safeResult = result.success() ? ToolResult.ok(safeContent) : ToolResult.fail(safeContent);
         return truncateIfNeeded(safeResult, toolName);
+    }
+
+    public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session) {
+        return execute(toolName, toolCallId, arguments, lastAssistant, session, null);
     }
 
     private ToolResult truncateIfNeeded(ToolResult result, String toolName) {

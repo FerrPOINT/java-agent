@@ -1,7 +1,9 @@
 package com.azhukov.agent.security;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.state.TurnState;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayDeque;
@@ -38,6 +40,11 @@ public class DefaultToolCallGuardrail implements ToolCallGuardrail {
 
     @Override
     public GuardrailDecision afterCall(String toolName, String args, ToolResult result, boolean failed) {
+        return afterCall(toolName, args, result, failed, null);
+    }
+
+    @Override
+    public GuardrailDecision afterCall(String toolName, String args, ToolResult result, boolean failed, TurnState state) {
         history.addLast(new ToolCallRecord(toolName, args, failed, result != null ? result.content() : null));
         if (history.size() > 20) {
             history.removeFirst();

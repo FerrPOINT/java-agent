@@ -18,6 +18,7 @@ import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.NoOpMemoryProvider;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
+import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.security.CommandApprovalManager;
 import com.azhukov.agent.security.DefaultToolCallGuardrail;
 import com.azhukov.agent.security.FileSafetyValidator;
@@ -111,10 +112,11 @@ public class AgentConfig {
                                      ContextReferenceService contextReferenceService,
                                      AgentProperties properties,
                                      UserInputSanitizer inputSanitizer,
-                                     ToolCallGuardrail guardrail) {
+                                     ToolCallGuardrail guardrail,
+                                     TurnStateManager turnStateManager) {
         return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
             memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
-            inputSanitizer, guardrail);
+            inputSanitizer, guardrail, turnStateManager);
     }
 
     @Bean
@@ -155,6 +157,12 @@ public class AgentConfig {
     @Bean
     public CommandApprovalManager commandApprovalManager(AgentProperties properties) {
         return new CommandApprovalManager(properties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(TurnStateManager.class)
+    public TurnStateManager turnStateManager() {
+        return new TurnStateManager();
     }
 
     @Bean

@@ -15,6 +15,8 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.core.prompt.PromptBuilder;
+import com.azhukov.agent.core.state.TurnState;
+import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.security.MessageSanitizer;
 import com.azhukov.agent.security.ToolCallGuardrail;
 import com.azhukov.agent.security.UserInputSanitizer;
@@ -29,6 +31,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 @Component
 public class DefaultAgentRuntime implements AgentRuntime {
@@ -48,6 +51,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final AgentProperties properties;
     private final UserInputSanitizer inputSanitizer;
     private final ToolCallGuardrail guardrail;
+    private final TurnStateManager turnStateManager;
 
     public DefaultAgentRuntime(ModelClient modelClient, ToolRegistry toolRegistry,
                                ToolExecutionService toolExecutionService,
@@ -58,7 +62,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                                ContextReferenceService contextReferenceService,
                                AgentProperties properties,
                                UserInputSanitizer inputSanitizer,
-                               ToolCallGuardrail guardrail) {
+                               ToolCallGuardrail guardrail,
+                               TurnStateManager turnStateManager) {
         this.modelClient = modelClient;
         this.toolRegistry = toolRegistry;
         this.toolExecutionService = toolExecutionService;
@@ -72,6 +77,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         this.properties = properties;
         this.inputSanitizer = inputSanitizer;
         this.guardrail = guardrail;
+        this.turnStateManager = turnStateManager;
     }
 
     @Override
@@ -84,9 +90,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
     @Override
     public TurnResult runTurn(Session session, String userInput, List<String> references) {
+        UUID sessionIdUuid = session.id();
+        String sessionId = sessionIdUuid.toString();
         guardrail.reset();
-        TurnSnapshot budget = iterationBudget.startTurn(session.id());
+        turnStateManager.clear(sessionIdUuid);
+        TurnSnapshot budget = iterationBudget.startTurn(sessionIdUuid);
         String safeInput = inputSanitizer.sanitize(userInput);
+        TurnState turnState = turnStateManager.getOrStart(sessionIdUuid, 1);
         List<Message> turnMessages = new ArrayList<>();
         turnMessages.add(promptBuilder.buildSystemMessage(session));
         if (references != null && !references.isEmpty()) {
@@ -126,6 +136,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 int estimatedInput = estimateTokens(context);
                 int estimatedOutput = estimateResponseTokens(response);
                 budget = iterationBudget.recordModelCall(budget, estimatedInput, estimatedOutput);
+                turnState.recordModelCall();
                 log.debug("Turn {} model returned in {} ms: toolCalls={}, content length={}",
                     i, duration, response.toolCalls() != null ? response.toolCalls().size() : 0,
                     response.content() != null ? response.content().length() : 0);
@@ -146,7 +157,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             List<Message> toolResults = new ArrayList<>();
             for (ToolCall call : response.toolCalls()) {
                 long toolStart = System.currentTimeMillis();
-                ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session);
+                ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState);
                 long duration = System.currentTimeMillis() - toolStart;
                 budget = iterationBudget.recordToolExecution(budget, call.name(), duration);
                 log.debug("Tool {} executed in {} ms: success={}, content length={}, error={}",

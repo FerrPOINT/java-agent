@@ -19,6 +19,7 @@ import com.azhukov.agent.security.MessageSanitizer;
 import com.azhukov.agent.security.ToolCallGuardrail;
 import com.azhukov.agent.security.UserInputSanitizer;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -77,6 +78,7 @@ class AgentRuntimeFullScenariosTest {
     private AgentProperties properties;
     private Session session;
     private DefaultAgentRuntime runtime;
+    private TurnStateManager turnStateManager;
 
     @BeforeEach
     void setUp() {
@@ -89,6 +91,7 @@ class AgentRuntimeFullScenariosTest {
         properties.getBudget().setEnabled(true);
 
         session = Session.create("test-user", "openai-compatible", "gpt-4");
+        turnStateManager = new TurnStateManager();
 
         runtime = new DefaultAgentRuntime(
             null,
@@ -103,7 +106,8 @@ class AgentRuntimeFullScenariosTest {
             contextReferenceService,
             properties,
             inputSanitizer,
-            guardrail
+            guardrail,
+            turnStateManager
         );
     }
 
@@ -121,7 +125,8 @@ class AgentRuntimeFullScenariosTest {
             contextReferenceService,
             properties,
             inputSanitizer,
-            guardrail
+            guardrail,
+            turnStateManager
         );
     }
 
@@ -194,7 +199,7 @@ class AgentRuntimeFullScenariosTest {
         when(iterationBudget.recordModelCall(eq(afterTool), anyInt(), anyInt())).thenReturn(afterFinalCall);
 
         ToolCall toolCall = new ToolCall("call-1", "read_file", "{\"path\":\"/tmp/file.txt\"}");
-        when(toolExecutionService.execute("read_file", "call-1", "{\"path\":\"/tmp/file.txt\"}", null, session))
+        when(toolExecutionService.execute(eq("read_file"), eq("call-1"), eq("{\"path\":\"/tmp/file.txt\"}"), eq(null), eq(session), any(com.azhukov.agent.core.state.TurnState.class)))
             .thenReturn(ToolResult.ok("file content"));
 
         useModelClient(new MockModelClient(List.of(toolCall), "done"));
@@ -206,7 +211,7 @@ class AgentRuntimeFullScenariosTest {
         assertThat(result.finalText()).isEqualTo("done");
         assertThat(result.messages()).hasSize(5); // system, user, assistant tool-calls, tool result, assistant final
 
-        verify(toolExecutionService).execute("read_file", "call-1", "{\"path\":\"/tmp/file.txt\"}", null, session);
+        verify(toolExecutionService).execute(eq("read_file"), eq("call-1"), eq("{\"path\":\"/tmp/file.txt\"}"), eq(null), eq(session), any(com.azhukov.agent.core.state.TurnState.class));
     }
 
     @Test
@@ -227,8 +232,8 @@ class AgentRuntimeFullScenariosTest {
 
         ToolCall call1 = new ToolCall("c1", "first", "{}");
         ToolCall call2 = new ToolCall("c2", "second", "{}");
-        when(toolExecutionService.execute("first", "c1", "{}", null, session)).thenReturn(ToolResult.ok("one"));
-        when(toolExecutionService.execute("second", "c2", "{}", null, session)).thenReturn(ToolResult.ok("two"));
+        when(toolExecutionService.execute(eq("first"), eq("c1"), eq("{}"), eq(null), eq(session), any(com.azhukov.agent.core.state.TurnState.class))).thenReturn(ToolResult.ok("one"));
+        when(toolExecutionService.execute(eq("second"), eq("c2"), eq("{}"), eq(null), eq(session), any(com.azhukov.agent.core.state.TurnState.class))).thenReturn(ToolResult.ok("two"));
 
         useModelClient(new MockModelClient(
             List.of(ChatResponse.toolCalls(List.of(call1, call2)), ChatResponse.text("finished"))
@@ -242,8 +247,8 @@ class AgentRuntimeFullScenariosTest {
         assertThat(result.messages().get(3).role()).isEqualTo(Role.TOOL);
         assertThat(result.messages().get(4).role()).isEqualTo(Role.TOOL);
 
-        verify(toolExecutionService).execute("first", "c1", "{}", null, session);
-        verify(toolExecutionService).execute("second", "c2", "{}", null, session);
+        verify(toolExecutionService).execute(eq("first"), eq("c1"), eq("{}"), eq(null), eq(session), any(com.azhukov.agent.core.state.TurnState.class));
+        verify(toolExecutionService).execute(eq("second"), eq("c2"), eq("{}"), eq(null), eq(session), any(com.azhukov.agent.core.state.TurnState.class));
     }
 
     @Test
@@ -261,7 +266,7 @@ class AgentRuntimeFullScenariosTest {
         when(iterationBudget.recordModelCall(eq(afterTool), anyInt(), anyInt())).thenReturn(afterModelCall(afterTool));
 
         ToolCall toolCall = new ToolCall("c1", "tool", "{}");
-        when(toolExecutionService.execute("tool", "c1", "{}", null, session)).thenReturn(ToolResult.ok("x"));
+        when(toolExecutionService.execute(eq("tool"), eq("c1"), eq("{}"), eq(null), eq(session), any(com.azhukov.agent.core.state.TurnState.class))).thenReturn(ToolResult.ok("x"));
 
         // First model response: tool call. Second model response: another tool call.
         // With maxTurns=2 the loop ends and returns the max-turns error.
@@ -297,7 +302,7 @@ class AgentRuntimeFullScenariosTest {
         useModelClient(new MockModelClient(
             List.of(ChatResponse.toolCalls(List.of(toolCall)))
         ));
-        when(toolExecutionService.execute("tool", "c1", "{}", null, session)).thenReturn(ToolResult.ok("ok"));
+        when(toolExecutionService.execute(eq("tool"), eq("c1"), eq("{}"), eq(null), eq(session), any(com.azhukov.agent.core.state.TurnState.class))).thenReturn(ToolResult.ok("ok"));
 
         TurnResult result = runtime.runTurn(session, "budget test");
 
