@@ -379,6 +379,7 @@ public class AgentProperties {
         public boolean isRedactEnabled() { return redactEnabled; }
         public void setRedactEnabled(boolean redactEnabled) { this.redactEnabled = redactEnabled; }
         public List<String> getAlwaysRequireApprovalTools() { return alwaysRequireApprovalTools; }
+        public void setAlwaysRequireApprovalTools(List<String> tools) { this.alwaysRequireApprovalTools.clear(); this.alwaysRequireApprovalTools.addAll(tools); }
         public List<String> getSensitiveEnvVarPatterns() { return sensitiveEnvVarPatterns; }
         public List<String> getAllowedPaths() { return allowedPaths; }
         public void setAllowedPaths(List<String> allowedPaths) { this.allowedPaths.clear(); this.allowedPaths.addAll(allowedPaths); }
