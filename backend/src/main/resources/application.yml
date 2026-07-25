@@ -160,6 +160,7 @@ agent:
         enabled: ${AGENT_GATEWAY_TELEGRAM_LONG_POLLING_ENABLED:false}
       bot-token: ${TELEGRAM_BOT_TOKEN:}
       webhook-url: ${AGENT_GATEWAY_TELEGRAM_WEBHOOK_URL:}
+      timeout-seconds: ${AGENT_GATEWAY_TELEGRAM_TIMEOUT_SECONDS:30}
       allowed-user-ids: ${AGENT_GATEWAY_TELEGRAM_ALLOWED_USER_IDS:}
       allowed-usernames: ${AGENT_GATEWAY_TELEGRAM_ALLOWED_USERNAMES:}
       allow-by-default: ${AGENT_GATEWAY_TELEGRAM_ALLOW_BY_DEFAULT:false}

@@ -399,6 +399,7 @@ public class AgentProperties {
     public static class TelegramProperties {
         private String botToken = "";
         private String webhookUrl = "";
+        private int timeoutSeconds = 30;
         private final List<String> allowedUserIds = new ArrayList<>();
         private final List<String> allowedUsernames = new ArrayList<>();
         private boolean allowByDefault = false;
@@ -407,6 +408,8 @@ public class AgentProperties {
         public void setBotToken(String botToken) { this.botToken = botToken; }
         public String getWebhookUrl() { return webhookUrl; }
         public void setWebhookUrl(String webhookUrl) { this.webhookUrl = webhookUrl; }
+        public int getTimeoutSeconds() { return timeoutSeconds; }
+        public void setTimeoutSeconds(int timeoutSeconds) { this.timeoutSeconds = timeoutSeconds; }
         public List<String> getAllowedUserIds() { return allowedUserIds; }
         public List<String> getAllowedUsernames() { return allowedUsernames; }
         public boolean isAllowByDefault() { return allowByDefault; }

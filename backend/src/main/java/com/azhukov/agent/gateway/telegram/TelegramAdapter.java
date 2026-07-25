@@ -18,11 +18,13 @@ import java.util.function.Consumer;
 public class TelegramAdapter implements BasePlatformAdapter {
 
     private final AgentProperties properties;
+    private final TelegramBotApiClient botApiClient;
     private Consumer<MessageEvent> messageHandler;
     private volatile boolean connected;
 
-    public TelegramAdapter(AgentProperties properties) {
+    public TelegramAdapter(AgentProperties properties, TelegramBotApiClient botApiClient) {
         this.properties = properties;
+        this.botApiClient = botApiClient;
     }
 
     @Override
@@ -47,8 +49,16 @@ public class TelegramAdapter implements BasePlatformAdapter {
         if (!connected) {
             return CompletableFuture.completedFuture(new SendResult(false, null, "Not connected"));
         }
-        // TODO actual Telegram HTTP call (Phase F6)
-        return CompletableFuture.completedFuture(new SendResult(true, "stub", null));
+        long chatId = extractChatId(target);
+        if (chatId == 0L) {
+            return CompletableFuture.completedFuture(new SendResult(false, null, "No chat_id in target"));
+        }
+        return CompletableFuture.supplyAsync(() -> {
+            var messageId = botApiClient.sendMessage(chatId, text);
+            return messageId
+                .map(id -> new SendResult(true, id, null))
+                .orElseGet(() -> new SendResult(false, null, "Telegram sendMessage failed"));
+        });
     }
 
     @Override
@@ -63,7 +73,24 @@ public class TelegramAdapter implements BasePlatformAdapter {
 
     @Override
     public CompletableFuture<SendResult> sendTyping(SessionSource target) {
-        return CompletableFuture.completedFuture(new SendResult(true, null, null));
+        long chatId = extractChatId(target);
+        if (chatId == 0L) {
+            return CompletableFuture.completedFuture(new SendResult(false, null, "No chat_id in target"));
+        }
+        return CompletableFuture.supplyAsync(() ->
+            botApiClient.sendChatAction(chatId, "typing")
+                ? new SendResult(true, null, null)
+                : new SendResult(false, null, "sendChatAction failed")
+        );
+    }
+
+    private long extractChatId(SessionSource target) {
+        if (target == null || target.chatId() == null) return 0L;
+        try {
+            return Long.parseLong(target.chatId());
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
     }
 
     @Override

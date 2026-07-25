@@ -1,9 +1,8 @@
 package com.azhukov.agent.gateway.telegram;
 
-import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.gateway.model.MessageEvent;
+import com.azhukov.agent.gateway.model.SessionSource;
 import org.junit.jupiter.api.Test;
-
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -12,7 +11,7 @@ class TelegramWebhookControllerAuthTest {
 
     @Test
     void allowsByUserId() {
-        var props = new AgentProperties();
+        var props = new com.azhukov.agent.config.AgentProperties();
         props.getGateway().getTelegram().getAllowedUserIds().add("754334329");
         var controller = new TelegramWebhookController(null, props);
 
@@ -22,7 +21,7 @@ class TelegramWebhookControllerAuthTest {
 
     @Test
     void allowsByUsername() {
-        var props = new AgentProperties();
+        var props = new com.azhukov.agent.config.AgentProperties();
         props.getGateway().getTelegram().getAllowedUsernames().add("azhukov");
         var controller = new TelegramWebhookController(null, props);
 
@@ -32,7 +31,7 @@ class TelegramWebhookControllerAuthTest {
 
     @Test
     void allowByDefaultOverridesEmptyLists() {
-        var props = new AgentProperties();
+        var props = new com.azhukov.agent.config.AgentProperties();
         props.getGateway().getTelegram().setAllowByDefault(true);
         var controller = new TelegramWebhookController(null, props);
 
