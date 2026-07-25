@@ -10,4 +10,6 @@ import java.util.UUID;
 @Repository
 public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     SessionEntity findByUserId(String userId);
+
+    List<SessionEntity> findAllByUserId(String userId);
 }

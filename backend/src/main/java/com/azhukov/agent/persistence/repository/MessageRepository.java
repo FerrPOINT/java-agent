@@ -11,4 +11,8 @@ import java.util.UUID;
 public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
 
     List<MessageEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId);
+
+    List<MessageEntity> findBySessionIdAndTurnIndexOrderByCreatedAtAsc(UUID sessionId, Integer turnIndex);
+
+    long countBySessionId(UUID sessionId);
 }

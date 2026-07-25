@@ -23,6 +23,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -33,7 +34,7 @@ class AgentRuntimeUnitTest {
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getDefinitions(any())).thenReturn(List.of());
         when(registry.getToolsets()).thenReturn(Set.of("core"));
-        when(registry.execute("read_file", "call-1", "{\"path\":\"/tmp/x.txt\",\"offset\":1,\"limit\":10}", null, null))
+        when(registry.execute(eq("read_file"), eq("call-1"), eq("{\"path\":\"/tmp/x.txt\",\"offset\":1,\"limit\":10}"), any(), any()))
             .thenReturn(com.azhukov.agent.core.model.ToolResult.ok("hello"));
 
         PromptBuilder promptBuilder = new DefaultPromptBuilder(new AgentProperties(), registry);

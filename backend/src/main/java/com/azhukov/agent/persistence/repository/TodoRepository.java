@@ -10,5 +10,9 @@ import java.util.UUID;
 @Repository
 public interface TodoRepository extends JpaRepository<TodoEntity, UUID> {
 
-    List<TodoEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId);
+    List<TodoEntity> findByUserId(String userId);
+
+    List<TodoEntity> findByUserIdAndStatus(String userId, String status);
+
+    void deleteByUserIdAndStatus(String userId, String status);
 }

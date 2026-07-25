@@ -44,6 +44,12 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             source.platform(), source.userId(), source.chatId(),
             event.text() != null ? event.text().substring(0, Math.min(event.text().length(), 80)) : "");
 
+        if (!isAuthorized(source)) {
+            log.warn("Skipping unauthorized inbound message from platform={} userId={} chatId={}",
+                source.platform(), source.userId(), source.chatId());
+            return;
+        }
+
         Session session = resolveSession(source);
         var turnResult = agentRuntime.runTurn(session, event.text(), List.of());
         String response = turnResult.finalText();
@@ -61,6 +67,10 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                     log.debug("Response sent back to {} userId={}", source.platform(), source.userId());
                 }
             });
+    }
+
+    private boolean isAuthorized(SessionSource source) {
+        return source.platform() == Platform.TELEGRAM;
     }
 
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)

@@ -15,4 +15,6 @@ public interface MemoryRepository extends JpaRepository<MemoryEntity, UUID> {
 
     @Query(value = "SELECT * FROM memory WHERE user_id = ?1 AND to_tsvector('russian', fact || ' ' || COALESCE(category,'')) @@ plainto_tsquery('russian', ?2) ORDER BY created_at DESC LIMIT ?3", nativeQuery = true)
     List<MemoryEntity> searchByUserId(String userId, String query, int limit);
+
+    List<MemoryEntity> findByUserIdAndFactLikeIgnoreCase(String userId, String fact);
 }

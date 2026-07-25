@@ -41,7 +41,7 @@ public class TodoTool implements ToolHandler {
             todoRepository.save(e);
             return ToolResult.ok("Created todo: " + args.title());
         }
-        var todos = todoRepository.findBySessionIdOrderByCreatedAtAsc(session.id());
+        var todos = todoRepository.findByUserId(session.userId());
         return ToolResult.ok(todos.stream()
             .map(t -> "- [" + t.getStatus() + "] " + t.getTitle() + " (" + t.getPriority() + ")")
             .reduce((a, b) -> a + "\n" + b)

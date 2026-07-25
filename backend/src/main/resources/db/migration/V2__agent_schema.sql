@@ -2,7 +2,7 @@
 
 -- Sessions table
 CREATE TABLE IF NOT EXISTS sessions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id TEXT NOT NULL,
     title TEXT,
     model_provider TEXT NOT NULL,
@@ -17,7 +17,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
 
 -- Messages table
 CREATE TABLE IF NOT EXISTS messages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     turn_index INTEGER NOT NULL DEFAULT 0,
     role TEXT NOT NULL,
@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 
 -- Memory / facts table (per user)
 CREATE TABLE IF NOT EXISTS memory (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id TEXT NOT NULL,
     category TEXT,
     fact TEXT NOT NULL,
@@ -45,7 +45,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_user_id ON memory(user_id);
 
 -- Todos table (per session)
 CREATE TABLE IF NOT EXISTS todos (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     user_id TEXT NOT NULL,
     content TEXT NOT NULL,
@@ -59,7 +59,7 @@ CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
 
 -- Skills / toolsets registry (loaded from filesystem)
 CREATE TABLE IF NOT EXISTS skills (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     category TEXT,
     description TEXT,
@@ -73,7 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
 
 -- Context references (links, files, images attached to session)
 CREATE TABLE IF NOT EXISTS context_references (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     type TEXT NOT NULL,
     reference TEXT NOT NULL,
@@ -85,7 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_context_references_session_id ON context_referenc
 
 -- Compression locks for long context summary
 CREATE TABLE IF NOT EXISTS compression_locks (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     locked_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -94,7 +94,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_compression_locks_session_id ON compressio
 
 -- Approvals / guardrails queue
 CREATE TABLE IF NOT EXISTS approvals (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     tool_name TEXT NOT NULL,
     request JSONB NOT NULL,
@@ -108,7 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
 
 -- Gateway routing metadata
 CREATE TABLE IF NOT EXISTS gateway_routing (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     route_path TEXT NOT NULL,
     target_url TEXT NOT NULL,
     method TEXT NOT NULL,
@@ -119,7 +119,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_gateway_routing_path_method ON gateway_rou
 
 -- Model usage per session
 CREATE TABLE IF NOT EXISTS session_model_usage (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     provider TEXT NOT NULL,
     model TEXT NOT NULL,

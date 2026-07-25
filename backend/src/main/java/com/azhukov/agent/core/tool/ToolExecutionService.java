@@ -66,7 +66,13 @@ public class ToolExecutionService {
             }
         });
 
-        ToolResult result = decorated.get();
+        ToolResult result;
+        try {
+            result = decorated.get();
+        } catch (Exception e) {
+            log.warn("Tool {} execution failed after retries: {}", toolName, e.getMessage());
+            result = ToolResult.fail("Tool execution failed: " + toolName + " - " + e.getMessage());
+        }
         long duration = System.currentTimeMillis() - start;
         log.debug("Tool {} executed in {} ms (success={}, length={})",
             toolName, duration, result.success(), result.content() != null ? result.content().length() : 0);
