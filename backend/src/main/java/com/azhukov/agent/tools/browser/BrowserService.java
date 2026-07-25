@@ -35,21 +35,29 @@ public class BrowserService {
         return cdpUrlSupplier.get();
     }
 
-    public String navigate(String url) throws Exception {
+    public String navigate(String url) {
         if (!urlSafety.isUrlAllowed(url)) {
             return "URL blocked by safety policy: " + url;
         }
-        ensureConnected();
+        try {
+            ensureConnected();
+        } catch (Exception e) {
+            return "Navigation error: " + e.getMessage();
+        }
         ObjectNode params = new ObjectMapper().createObjectNode();
         params.put("url", url);
-        JsonNode result = cdpClient.send("Page.navigate", params).get(120, TimeUnit.SECONDS);
-        JsonNode frameId = result.get("frameId");
-        JsonNode error = result.get("errorText");
-        if (error != null && !error.isNull()) {
-            return "Navigation error: " + error.asText();
+        try {
+            JsonNode result = cdpClient.send("Page.navigate", params).get(120, TimeUnit.SECONDS);
+            JsonNode frameId = result.get("frameId");
+            JsonNode error = result.get("errorText");
+            if (error != null && !error.isNull()) {
+                return "Navigation error: " + error.asText();
+            }
+            waitForLoad();
+            return "Navigated to " + url + " (frameId=" + (frameId != null ? frameId.asText() : "?") + ")";
+        } catch (Exception e) {
+            return "Navigation error: " + e.getMessage();
         }
-        waitForLoad();
-        return "Navigated to " + url + " (frameId=" + (frameId != null ? frameId.asText() : "?") + ")";
     }
 
     public String click(String selector) throws Exception {

@@ -9,6 +9,7 @@ import com.azhukov.agent.core.model.ToolResult;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -45,7 +46,7 @@ public class ExecuteCodeTool implements ToolHandler {
             Files.writeString(tempFile, code, StandardCharsets.UTF_8);
             tempFile.toFile().deleteOnExit();
 
-            ProcessBuilder pb = new ProcessBuilder("python3", tempFile.toAbsolutePath().toString());
+            var pb = createProcessBuilder(tempFile.toAbsolutePath().toString());
             pb.redirectErrorStream(true);
             Process process = pb.start();
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
@@ -59,6 +60,27 @@ public class ExecuteCodeTool implements ToolHandler {
         } catch (Exception e) {
             return ToolResult.fail("Failed to execute code: " + e.getMessage());
         }
+    }
+
+    interface ProcessBuilderLike {
+        ProcessBuilderLike redirectErrorStream(boolean redirectErrorStream);
+        Process start() throws IOException;
+    }
+
+    ProcessBuilderLike createProcessBuilder(String scriptPath) {
+        ProcessBuilder pb = new ProcessBuilder("python3", scriptPath);
+        return new ProcessBuilderLike() {
+            @Override
+            public ProcessBuilderLike redirectErrorStream(boolean redirectErrorStream) {
+                pb.redirectErrorStream(redirectErrorStream);
+                return this;
+            }
+
+            @Override
+            public Process start() throws IOException {
+                return pb.start();
+            }
+        };
     }
 
     public static class ExecuteCodeArgs {

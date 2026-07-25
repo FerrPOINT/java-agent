@@ -34,8 +34,20 @@ public class DelegateTaskTool implements ToolHandler {
 
     private final HttpClient httpClient;
 
+    protected DelegateTaskTool(HttpClient httpClient) {
+        this.httpClient = httpClient;
+    }
+
     public DelegateTaskTool() {
-        this.httpClient = HttpClient.newBuilder()
+        this(createDefaultHttpClient());
+    }
+
+    protected HttpClient createHttpClient() {
+        return createDefaultHttpClient();
+    }
+
+    private static HttpClient createDefaultHttpClient() {
+        return HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(120))
             .build();
     }
