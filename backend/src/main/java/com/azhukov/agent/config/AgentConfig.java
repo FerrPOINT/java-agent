@@ -48,6 +48,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import io.github.resilience4j.retry.RetryRegistry;
+import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
@@ -197,5 +199,17 @@ public class AgentConfig {
     public GatewayRoutingService gatewayRoutingService(java.util.List<BasePlatformAdapter> adapters,
             java.util.function.Consumer<com.azhukov.agent.gateway.model.MessageEvent> gatewayMessageHandler) {
         return new GatewayRoutingService(adapters, gatewayMessageHandler);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public RetryRegistry retryRegistry() {
+        return RetryRegistry.ofDefaults();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TimeLimiterRegistry timeLimiterRegistry() {
+        return TimeLimiterRegistry.ofDefaults();
     }
 }

@@ -2,12 +2,10 @@
 FROM eclipse-temurin:25-jdk-noble AS builder
 
 WORKDIR /workspace
-COPY gradle/ gradle/
-COPY gradlew build.gradle settings.gradle ./
-COPY backend/build.gradle backend/settings.gradle ./backend/
-
-COPY backend/src backend/src
-RUN ./gradlew :backend:bootJar --no-daemon -x test
+COPY backend/gradle/ gradle/
+COPY backend/gradlew backend/build.gradle backend/settings.gradle backend/gradle.properties ./
+COPY backend/src src
+RUN ./gradlew bootJar --no-daemon -x test
 
 FROM eclipse-temurin:25-jre-noble
 
@@ -48,7 +46,7 @@ RUN apt-get update \
 
 RUN groupadd -r agent && useradd -r -g agent -m agent
 WORKDIR /app
-COPY --from=builder /workspace/backend/build/libs/*.jar app.jar
+COPY --from=builder /workspace/build/libs/*.jar app.jar
 RUN chown -R agent:agent /app
 
 # Cache dir for Chromium auto-install
