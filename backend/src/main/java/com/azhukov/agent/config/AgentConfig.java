@@ -21,6 +21,7 @@ import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.sanitizer.DefaultMessageSanitizer;
 import com.azhukov.agent.gateway.BasePlatformAdapter;
 import com.azhukov.agent.gateway.GatewayRoutingService;
+import com.azhukov.agent.gateway.InboundMessageProcessor;
 import com.azhukov.agent.core.sanitizer.MessageSanitizer;
 import com.azhukov.agent.core.state.AgentConstants;
 import com.azhukov.agent.core.state.AgentState;
@@ -38,8 +39,9 @@ import com.azhukov.agent.core.skill.DatabaseSkillManager;
 import com.azhukov.agent.core.skill.NoOpSkillManager;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.repository.CompressionLockRepository;
-import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.MemoryRepository;
+import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.persistence.repository.SkillRepository;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -188,10 +190,13 @@ public class AgentConfig {
         return new DefaultAgentConstants();
     }
 
-    @Bean
-    @ConditionalOnMissingBean(name = "gatewayMessageHandler")
-    public java.util.function.Consumer<com.azhukov.agent.gateway.model.MessageEvent> gatewayMessageHandler() {
-        return event -> { };
+    @Bean(name = "gatewayMessageHandler")
+    public java.util.function.Consumer<com.azhukov.agent.gateway.model.MessageEvent> gatewayMessageHandler(
+            SessionRepository sessionRepository,
+            AgentRuntime agentRuntime,
+            org.springframework.beans.factory.ObjectProvider<GatewayRoutingService> routingServiceProvider,
+            AgentProperties properties) {
+        return new InboundMessageProcessor(sessionRepository, agentRuntime, routingServiceProvider, properties);
     }
 
     @Bean

@@ -6,14 +6,18 @@ import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.gateway.model.MessageType;
 import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.SessionSource;
-import jakarta.annotation.PostConstruct;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -30,17 +34,20 @@ public class TelegramLongPollingService {
     private static final Logger log = LoggerFactory.getLogger(TelegramLongPollingService.class);
     private final AgentProperties properties;
     private final GatewayRoutingService routingService;
-    private final RestClient restClient;
+    private final HttpClient httpClient;
+    private final ObjectMapper objectMapper;
     private final ExecutorService executor;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong lastUpdateId = new AtomicLong(0);
 
-    public TelegramLongPollingService(AgentProperties properties, GatewayRoutingService routingService) {
+    public TelegramLongPollingService(AgentProperties properties, GatewayRoutingService routingService, ObjectMapper objectMapper) {
         this.properties = properties;
         this.routingService = routingService;
-        this.restClient = TelegramRestClientFactory.create(
-            Duration.ofSeconds(properties.getGateway().getTelegram().getTimeoutSeconds())
-        );
+        this.objectMapper = objectMapper;
+        int timeout = properties.getGateway().getTelegram().getTimeoutSeconds();
+        this.httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .build();
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "telegram-long-polling");
             t.setDaemon(true);
@@ -48,7 +55,7 @@ public class TelegramLongPollingService {
         });
     }
 
-    @PostConstruct
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
     public void start() {
         String token = properties.getGateway().getTelegram().getBotToken();
         if (token == null || token.isBlank()) {
@@ -80,7 +87,7 @@ public class TelegramLongPollingService {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
-                log.warn("Telegram long polling error: {}", e.getMessage());
+                log.warn("Telegram long polling error", e);
                 try {
                     Thread.sleep(5000);
                 } catch (InterruptedException ie) {
@@ -96,24 +103,27 @@ public class TelegramLongPollingService {
         String token = properties.getGateway().getTelegram().getBotToken();
         long offset = lastUpdateId.get() + 1;
         int timeout = properties.getGateway().getTelegram().getTimeoutSeconds();
-        String url = "https://api.telegram.org/bot{token}/getUpdates?offset={offset}&limit=100&timeout={timeout}";
-        log.debug("Polling Telegram getUpdates offset={} timeout={} url={}", offset, timeout,
-            url.replace("{token}", "bot" + token.substring(0, Math.min(token.length(), 6)) + "..."));
+        String url = String.format("https://api.telegram.org/bot%s/getUpdates?offset=%d&limit=100&timeout=%d",
+            token, offset, timeout);
+        String maskedUrl = url.replace("/bot" + token, "/bot<token>");
+        log.debug("Polling Telegram getUpdates offset={} timeout={} url={}", offset, timeout, maskedUrl);
         try {
-            var response = restClient.get()
-                .uri(url, token, offset, timeout)
-                .retrieve()
-                .toEntity(Map.class);
-            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-                log.warn("getUpdates non-2xx: {}", response.getStatusCode());
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofSeconds(timeout + 15L))
+                .GET()
+                .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                log.warn("getUpdates non-200: {} body={}", response.statusCode(), response.body());
                 return List.of();
             }
-            Boolean ok = (Boolean) response.getBody().get("ok");
+            Map<String, Object> body = objectMapper.readValue(response.body(), new TypeReference<>() {});
+            Boolean ok = (Boolean) body.get("ok");
             if (!Boolean.TRUE.equals(ok)) {
-                log.warn("getUpdates ok=false: {}", response.getBody());
+                log.warn("getUpdates ok=false: {}", body);
                 return List.of();
             }
-            Object result = response.getBody().get("result");
+            Object result = body.get("result");
             if (result instanceof List list) {
                 if (!list.isEmpty()) {
                     log.info("Received {} Telegram update(s): {}", list.size(), list);
@@ -121,8 +131,10 @@ public class TelegramLongPollingService {
                 return (List<Map<String, Object>>) list;
             }
             return List.of();
+        } catch (InterruptedException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("getUpdates failed: {}", e.getMessage());
+            log.warn("getUpdates failed", e);
             try {
                 Thread.sleep(5000);
             } catch (InterruptedException ie) {

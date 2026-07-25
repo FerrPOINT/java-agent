@@ -26,12 +26,8 @@ class TelegramLongPollingServiceTest {
         MessageEvent[] captured = new MessageEvent[1];
         GatewayRoutingService routing = new GatewayRoutingService(List.of(), evt -> captured[0] = evt);
 
-        var service = new TelegramLongPollingService(props, routing);
-        Field restClientField = TelegramLongPollingService.class.getDeclaredField("restClient");
-        restClientField.setAccessible(true);
+        var service = new TelegramLongPollingService(props, routing, new com.fasterxml.jackson.databind.ObjectMapper());
 
-        // Stub RestClient via Mockito-like manual stub is heavy; use real local mock not possible.
-        // Instead, test processUpdate through reflection.
         Map<String, Object> update = Map.of(
             "update_id", 42,
             "message", Map.of(
