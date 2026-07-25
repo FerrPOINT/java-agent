@@ -50,13 +50,16 @@ public class TelegramLongPollingService {
 
     @PostConstruct
     public void start() {
-        if (properties.getGateway().getTelegram().getBotToken().isBlank()) {
+        String token = properties.getGateway().getTelegram().getBotToken();
+        if (token == null || token.isBlank()) {
             log.warn("Telegram long polling not started: bot token is empty");
             return;
         }
         running.set(true);
         executor.submit(this::pollLoop);
-        log.info("Telegram long polling started");
+        log.info("Telegram long polling started with token prefix={} and timeout={}s",
+            token.substring(0, Math.min(token.length(), 8)),
+            properties.getGateway().getTelegram().getTimeoutSeconds());
     }
 
     @PreDestroy
@@ -90,20 +93,31 @@ public class TelegramLongPollingService {
 
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> fetchUpdates() throws InterruptedException {
+        String token = properties.getGateway().getTelegram().getBotToken();
+        long offset = lastUpdateId.get() + 1;
+        int timeout = properties.getGateway().getTelegram().getTimeoutSeconds();
+        String url = "https://api.telegram.org/bot{token}/getUpdates?offset={offset}&limit=100&timeout={timeout}";
+        log.debug("Polling Telegram getUpdates offset={} timeout={} url={}", offset, timeout,
+            url.replace("{token}", "bot" + token.substring(0, Math.min(token.length(), 6)) + "..."));
         try {
             var response = restClient.get()
-                .uri("https://api.telegram.org/bot{token}/getUpdates?offset={offset}&limit=100",
-                    properties.getGateway().getTelegram().getBotToken(),
-                    lastUpdateId.get() + 1)
+                .uri(url, token, offset, timeout)
                 .retrieve()
                 .toEntity(Map.class);
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                log.warn("getUpdates non-2xx: {}", response.getStatusCode());
                 return List.of();
             }
             Boolean ok = (Boolean) response.getBody().get("ok");
-            if (!Boolean.TRUE.equals(ok)) return List.of();
+            if (!Boolean.TRUE.equals(ok)) {
+                log.warn("getUpdates ok=false: {}", response.getBody());
+                return List.of();
+            }
             Object result = response.getBody().get("result");
             if (result instanceof List list) {
+                if (!list.isEmpty()) {
+                    log.info("Received {} Telegram update(s): {}", list.size(), list);
+                }
                 return (List<Map<String, Object>>) list;
             }
             return List.of();

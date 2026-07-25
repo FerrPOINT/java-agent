@@ -10,7 +10,8 @@ public class TelegramRestClientFactory {
     public static RestClient create(Duration timeout) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout((int) timeout.toMillis());
-        factory.setReadTimeout((int) timeout.toMillis());
+        // Read timeout must exceed long-polling timeout so empty responses don't get cut off.
+        factory.setReadTimeout((int) (timeout.toMillis() + 10_000));
         return RestClient.builder()
             .requestFactory(factory)
             .build();

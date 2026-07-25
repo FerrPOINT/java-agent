@@ -9,7 +9,7 @@ This document maps every *core* Hermes Python dependency to a Java alternative. 
 | Python library | Agent usage | Java replacement | Notes |
 |----------------|--------------|--------------------|-------|
 | `openai` | Chat completions, embeddings | **LangChain4j** `open-ai` module | Works with any OpenAI-compatible endpoint |
-| `httpx` / `requests` | HTTP clients | **Java 11 `java.net.http.HttpClient`** | Virtual threads make HttpClient ergonomic |
+| `httpx` / `requests` | HTTP clients | **Java 11 `java.net.http.HttpClient`** + RestClient | Virtual threads make HttpClient ergonomic |
 | `pydantic` | Validation, JSON schemas | **Jackson** + **Jakarta Bean Validation** | No exact Pydantic clone in Java |
 | `jinja2` | System/skill prompt templates | **Pebble** (`io.pebbletemplates:pebble`) | Jinja-like syntax |
 | `pyyaml` | Config files | **SnakeYAML** (via Spring Boot) | Standard |
@@ -21,13 +21,14 @@ This document maps every *core* Hermes Python dependency to a Java alternative. 
 | `PyJWT` | JWT for gateway/auth | **JJWT** or **Nimbus JOSE** | Optional |
 | `cryptography` | Crypto ops | **BouncyCastle** | Optional |
 | `psutil` | Process/system info | JDK `ProcessHandle` + OSHI | Use ProcessHandle first |
-| `websockets` | WebSocket clients | `java.net.http.WebSocket` | CDP browser client |
+| `websockets` | WebSocket clients | `org.java-websocket:Java-WebSocket` | CDP browser client |
 | `fastapi` + `uvicorn` | API server | **Spring Boot 4.1.0** Web MVC + virtual threads | Replaces both |
 | `Pillow` | Image processing | Base64 passthrough; optional Thumbnailator | Vision mostly base64 |
 | Browser automation | Playwright | Chromium launcher + CDP WebSocket client | Avoid 200 MB Playwright deps |
-| `BeautifulSoup` / `html2text` | HTML parsing | `org.jsoup:jsoup` | Web extract fallback |
+| `BeautifulSoup` / `html2text` | HTML parsing | `org.jsoup:jsoup` + Flexmark | Web extract fallback |
 | `commons-lang3` / `commons-io` | String/file utilities | Apache Commons Lang3 / IO | Standard |
 | `cron-utils` | Cron expression parsing | `com.cronutils:cron-utils` | Cron tool / gateway job parsing |
+| `limits` / `slowapi` | Rate limiting | **Bucket4j** (`com.bucket4j:bucket4j-core`) | HTTP filter |
 
 ## 2. Provider / Optional Integrations (Out of Scope)
 
@@ -65,14 +66,8 @@ This document maps every *core* Hermes Python dependency to a Java alternative. 
 - **LangChain4j vs Spring AI:** LangChain4j is more mature and provider-agnostic. Default provider is **OpenAI-compatible** via `langchain4j-open-ai`; dev default endpoint is Ollama-compatible.
 - **WebFlux vs Virtual Threads:** Chose **Spring MVC + virtual threads** (`spring.threads.virtual.enabled=true`). Agent tools are mostly blocking (JDBC, CDP, shell); reactive types would infect the whole stack.
 - **Validation:** Bean Validation + Jackson. Tool schemas generated via introspection of `@ToolParam` annotations.
-- **HTTP client:** `java.net.http.HttpClient`. Switch to OkHttp if proxy/SOCKS needs exceed JDK support.
+- **HTTP client:** `java.net.http.HttpClient` and `RestClient`. Switch to OkHttp if proxy/SOCKS needs exceed JDK support.
 - **Persistence:** PostgreSQL via JDBC + Flyway for dev/prod; H2 in-memory for `noop` profile and tests.
 - **Agent name:** Configurable via `agent.name`; defaults to `Джава агент`.
-
-## 5. Implementation Status
-
-- **Phase 0**: config, Flyway schema, build ✅
-- **Phase 1 skeleton**: domain model, contracts, tool registry, NoOp model, happy path HTTP endpoint ✅
-- **Phase 1.5**: real `LangChain4jModelClient`, JPA persistence, tool skeletons, CLI REPL, gateway `/v1/chat/completions`, approvals gate ✅
-- **Phase 2**: browser/vision tools, MCP client, skill/memory tools, delegation ✅
-- **Phase 3 (current)**: tests, NoOp profiles, docs, production readiness, CLI hardening
+- **Gateway:** Telegram gateway uses Spring `RestClient` and `@ConditionalOnProperty`. Other platforms deferred.
+- **Rate limiting:** Bucket4j filter on HTTP endpoints; separate resilience4j retry/time-limiter for model calls.
