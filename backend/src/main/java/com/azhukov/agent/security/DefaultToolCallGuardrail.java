@@ -20,11 +20,16 @@ public class DefaultToolCallGuardrail implements ToolCallGuardrail {
     private final Deque<String> recentToolNames = new ArrayDeque<>();
     private final Deque<String> recentErrorMessages = new ArrayDeque<>();
 
+    @org.springframework.beans.factory.annotation.Autowired
     public DefaultToolCallGuardrail(AgentProperties properties) {
-        this.config = new GuardrailConfig();
+        this(new GuardrailConfig());
         if (properties != null && properties.getBudget() != null) {
             // Optional: bind additional guardrail thresholds from properties if added later.
         }
+    }
+
+    public DefaultToolCallGuardrail(GuardrailConfig config) {
+        this.config = config;
     }
 
     @Override

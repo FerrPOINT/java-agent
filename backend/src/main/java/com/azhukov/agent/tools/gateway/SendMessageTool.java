@@ -39,9 +39,9 @@ public class SendMessageTool implements ToolHandler {
             String text = String.valueOf(args.get("text"));
             SessionSource target = new SessionSource(platform, chatId, null, null, null);
             SendResult result = gateway.send(platform, target, text).get();
-            return new ToolResult(result.success(), result.messageId(), result.error());
+            return result.success() ? ToolResult.ok(result.messageId()) : ToolResult.fail(result.error() != null ? result.error() : "send failed");
         } catch (Exception e) {
-            return new ToolResult(false, null, e.getMessage());
+            return ToolResult.fail(e.getMessage());
         }
     }
 }

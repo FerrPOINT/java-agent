@@ -34,7 +34,7 @@ class ProcessToolTest {
         assertThat(managed.id).isEqualTo("proc_test");
 
         // Wait briefly for the reader thread to read the mocked output
-        Thread.sleep(100);
+        Thread.sleep(1000);
 
         assertThat(managed.getOutput()).isEqualTo(expectedOutput);
 

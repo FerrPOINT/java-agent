@@ -68,7 +68,7 @@ public class WebExtractTool implements ToolHandler {
         return ToolResult.ok(redactor.redact(text));
     }
 
-    private String extract(String url) throws IOException {
+    protected String extract(String url) throws IOException {
         Document doc = Jsoup.connect(url)
             .userAgent("Mozilla/5.0 (compatible; JavaAgent/1.0)")
             .timeout(timeoutSeconds * 1000)

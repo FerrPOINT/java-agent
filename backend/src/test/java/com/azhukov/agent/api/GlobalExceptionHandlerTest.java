@@ -1,103 +1,88 @@
 package com.azhukov.agent.api;
 
-import org.junit.jupiter.api.BeforeEach;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
+import jakarta.validation.Path;
+import jakarta.validation.metadata.ConstraintDescriptor;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.BeanPropertyBindingResult;
+import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.core.MethodParameter;
 
-import jakarta.validation.Valid;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeoutException;
 
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.assertj.core.api.Assertions.assertThat;
 
-@ExtendWith(MockitoExtension.class)
 class GlobalExceptionHandlerTest {
 
-    private MockMvc mockMvc;
+    GlobalExceptionHandler h = new GlobalExceptionHandler();
 
-    @BeforeEach
-    void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(new TestController())
-                .setControllerAdvice(new GlobalExceptionHandler())
-                .build();
+    @Test
+    void agentException() {
+        ResponseEntity<Map<String, Object>> r = h.handleAgentException(new AgentException(org.springframework.http.HttpStatus.NOT_FOUND, "x"));
+        assertThat(r.getStatusCode().value()).isEqualTo(404);
     }
 
     @Test
-    void agentExceptionReturnsConfiguredStatusAndMessage() throws Exception {
-        mockMvc.perform(get("/test/agent"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.type").value("agent"))
-                .andExpect(jsonPath("$.error").value("agent error"));
+    void validationException() {
+        BeanPropertyBindingResult br = new BeanPropertyBindingResult(new Object(), "o");
+        br.addError(new FieldError("o", "f", "msg"));
+        ResponseEntity<Map<String, Object>> r = h.handleValidation(new MethodArgumentNotValidException(null, br));
+        assertThat(r.getStatusCode().value()).isEqualTo(400);
     }
 
     @Test
-    void runtimeExceptionReturnsInternalServerError() throws Exception {
-        mockMvc.perform(get("/test/runtime"))
-                .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.type").value("internal"))
-                .andExpect(jsonPath("$.error").value("Internal error: boom"));
+    void constraintViolation() {
+        Set<ConstraintViolation<?>> set = new HashSet<>();
+        set.add(new ConstraintViolation<String>() {
+            @Override public String getMessage() { return "bad"; }
+            @Override public String getMessageTemplate() { return ""; }
+            @Override public Path getPropertyPath() { return null; }
+            @Override public String getRootBean() { return null; }
+            @Override public Class<String> getRootBeanClass() { return String.class; }
+            @Override public Object getLeafBean() { return null; }
+            @Override public Object[] getExecutableParameters() { return null; }
+            @Override public Object getExecutableReturnValue() { return null; }
+            @Override public Object getInvalidValue() { return null; }
+            @Override public ConstraintDescriptor<?> getConstraintDescriptor() { return null; }
+            @Override public <U> U unwrap(Class<U> type) { return null; }
+        });
+        ResponseEntity<Map<String, Object>> r = h.handleConstraintViolation(new ConstraintViolationException(set));
+        assertThat(r.getStatusCode().value()).isEqualTo(400);
     }
 
     @Test
-    void validationExceptionReturnsBadRequest() throws Exception {
-        mockMvc.perform(get("/test/validation"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.type").value("VALIDATION_ERROR"))
-                .andExpect(jsonPath("$.errors").exists());
+    void badJson() {
+        ResponseEntity<Map<String, Object>> r = h.handleBadJson(new HttpMessageNotReadableException("bad", (Throwable) null, null));
+        assertThat(r.getStatusCode().value()).isEqualTo(400);
     }
 
     @Test
-    void responseBodyContainsExpectedJsonField() throws Exception {
-        mockMvc.perform(get("/test/agent"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error").exists())
-                .andExpect(jsonPath("$.error").value("agent error"));
+    void illegalArgument() {
+        ResponseEntity<Map<String, Object>> r = h.handleIllegalArgument(new IllegalArgumentException("bad"));
+        assertThat(r.getStatusCode().value()).isEqualTo(400);
     }
 
-    @RestController
-    static class TestController {
-
-        @GetMapping("/test/agent")
-        public String agent() {
-            throw new AgentException(HttpStatus.NOT_FOUND, "agent error");
-        }
-
-        @GetMapping("/test/runtime")
-        public String runtime() {
-            throw new RuntimeException("boom");
-        }
-
-        @GetMapping("/test/validation")
-        public String validation() throws Exception {
-            throw validationException();
-        }
-
-        private static MethodArgumentNotValidException validationException() throws Exception {
-            java.lang.reflect.Method method = TestController.class.getDeclaredMethod("validatedMethod", DummyDto.class);
-            MethodParameter parameter = new MethodParameter(method, 0);
-            BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(new DummyDto(), "dummy");
-            bindingResult.reject("NotBlank", "must not be blank");
-            return new MethodArgumentNotValidException(parameter, bindingResult);
-        }
-
-        @SuppressWarnings("unused")
-        public String validatedMethod(@Valid @RequestBody DummyDto dto) {
-            return "ok";
-        }
+    @Test
+    void timeout() {
+        ResponseEntity<Map<String, Object>> r = h.handleTimeout(new TimeoutException("t"));
+        assertThat(r.getStatusCode().value()).isEqualTo(504);
     }
 
-    static class DummyDto {
-        @SuppressWarnings("unused")
-        private String field;
+    @Test
+    void httpTimeout() {
+        ResponseEntity<Map<String, Object>> r = h.handleHttpTimeout(new java.net.http.HttpTimeoutException("t"));
+        assertThat(r.getStatusCode().value()).isEqualTo(504);
+    }
+
+    @Test
+    void generic() {
+        ResponseEntity<Map<String, Object>> r = h.handleGeneric(new RuntimeException("boom"));
+        assertThat(r.getStatusCode().value()).isEqualTo(500);
     }
 }

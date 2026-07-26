@@ -6,6 +6,8 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Component;
 
@@ -164,7 +166,7 @@ public class ProcessTool implements ToolHandler {
 
     public record ProcessArgs(
         @ToolParam(description = "list, poll, log, wait, kill, write, submit, close") String action,
-        @ToolParam(description = "process session_id for non-list actions") String sessionId,
+        @ToolParam(description = "process session_id for non-list actions") @JsonAlias("session_id") String sessionId,
         @ToolParam(description = "timeout in seconds for wait", required = false) int timeout,
         @ToolParam(description = "offset for log pagination", required = false) int offset,
         @ToolParam(description = "max lines for log pagination", required = false) int limit,

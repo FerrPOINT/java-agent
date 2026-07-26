@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 @AgentTool(
     name = "patch",
     description = "Targeted find-and-replace edits in files. Use this instead of sed/awk in terminal. Uses fuzzy matching (9 strategies) so minor whitespace/indentation differences won't break it. Also supports V4A multi-file patch format.",
@@ -31,22 +33,23 @@ public class PatchTool implements ToolHandler {
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         PatchArgs args = ToolHandler.parseJson(arguments, PatchArgs.class);
-        if (args.path() == null || args.path().isBlank()) {
+        boolean hasPath = args.path() != null && !args.path().isBlank();
+        if (!hasPath && !"patch".equals(args.mode())) {
             return ToolResult.fail("path is required");
         }
-        if (isBlocked(args.path())) {
+        if (hasPath && isBlocked(args.path())) {
             return ToolResult.fail("Patching this path is not allowed: " + args.path());
-        }
-        Path path = Path.of(args.path()).toAbsolutePath().normalize();
-        if (!Files.exists(path)) {
-            return ToolResult.fail("File not found: " + args.path());
         }
 
         String mode = args.mode() == null ? "replace" : args.mode().toLowerCase();
+        Path path = hasPath ? Path.of(args.path()).toAbsolutePath().normalize() : null;
         try {
             if ("replace".equals(mode)) {
                 if (args.oldString() == null || args.newString() == null) {
                     return ToolResult.fail("old_string and new_string are required for replace mode");
+                }
+                if (path == null || !Files.exists(path)) {
+                    return ToolResult.fail("File not found: " + args.path());
                 }
                 return replace(path, args.oldString(), args.newString(), args.replaceAll());
             }
@@ -115,7 +118,7 @@ public class PatchTool implements ToolHandler {
                         continue;
                     }
                     String content = Files.readString(path, StandardCharsets.UTF_8);
-                    String[] diff = parseDiff(extractContent(patchText, m.end()));
+                    String[] diff = parseDiff(extractDiff(patchText, m.end()));
                     String updated = applyDiff(content, diff[0], diff[1]);
                     Files.writeString(path, updated, StandardCharsets.UTF_8);
                     modified.add("updated " + pathStr);
@@ -132,13 +135,8 @@ public class PatchTool implements ToolHandler {
     }
 
     private String extractContent(String patchText, int startOffset) {
-        int nextHeader = V4A_HEADER.matcher(patchText).find(startOffset) ? 0 : -1;
-        // Simplification: take until next *** or end
-        int nextStart = patchText.indexOf("\n*** ", startOffset);
-        if (nextStart == -1) nextStart = patchText.indexOf("\n***End", startOffset);
-        if (nextStart == -1) nextStart = patchText.length();
+        int nextStart = findSectionEnd(patchText, startOffset);
         String section = patchText.substring(startOffset, nextStart);
-        // Remove leading context/@@ lines and +/- markers for Add
         String[] lines = section.split("\n");
         StringBuilder sb = new StringBuilder();
         for (String line : lines) {
@@ -149,6 +147,25 @@ public class PatchTool implements ToolHandler {
             else if (!line.startsWith("-")) sb.append(line).append("\n");
         }
         return sb.toString().trim();
+    }
+
+    private String extractDiff(String patchText, int startOffset) {
+        int nextStart = findSectionEnd(patchText, startOffset);
+        String section = patchText.substring(startOffset, nextStart);
+        StringBuilder sb = new StringBuilder();
+        for (String line : section.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("@@") || trimmed.startsWith("***")) continue;
+            sb.append(line).append("\n");
+        }
+        return sb.toString().trim();
+    }
+
+    private int findSectionEnd(String patchText, int startOffset) {
+        int nextStart = patchText.indexOf("\n*** ", startOffset);
+        if (nextStart == -1) nextStart = patchText.indexOf("\n***End", startOffset);
+        if (nextStart == -1) nextStart = patchText.length();
+        return nextStart;
     }
 
     private String[] parseDiff(String section) {
@@ -180,9 +197,9 @@ public class PatchTool implements ToolHandler {
     public record PatchArgs(
         @ToolParam(description = "replace or patch") String mode,
         @ToolParam(description = "file path") String path,
-        @ToolParam(description = "old string to find (replace mode)", required = false) String oldString,
-        @ToolParam(description = "new string to substitute (replace mode)", required = false) String newString,
-        @ToolParam(description = "replace all occurrences", required = false) boolean replaceAll,
+        @ToolParam(description = "old string to find (replace mode)", required = false) @JsonProperty("old_string") String oldString,
+        @ToolParam(description = "new string to substitute (replace mode)", required = false) @JsonProperty("new_string") String newString,
+        @ToolParam(description = "replace all occurrences", required = false) @JsonProperty("replace_all") boolean replaceAll,
         @ToolParam(description = "V4A patch content (patch mode)", required = false) String patch
     ) {}
 }

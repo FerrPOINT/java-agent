@@ -186,22 +186,17 @@ class WebExtractToolTest {
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
         when(redactor.redact(anyString())).thenAnswer(i -> i.getArgument(0));
 
-        Connection connection = mock(Connection.class);
-        when(connection.userAgent(anyString())).thenReturn(connection);
-        when(connection.timeout(eq(10000))).thenReturn(connection);
-        when(connection.get()).thenThrow(new IOException("connection reset"));
+        WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor) {
+            @Override protected String extract(String url) throws IOException {
+                throw new IOException("connection reset");
+            }
+        };
+        var result = tool.execute("{\"urls\":\"https://down.example\"}", null, null);
 
-        try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
-            jsoup.when(() -> Jsoup.connect("https://down.example")).thenReturn(connection);
-
-            WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor);
-            var result = tool.execute("{\"urls\":\"https://down.example\"}", null, null);
-
-            assertThat(result.success()).isTrue();
-            assertThat(result.content())
-                .contains("--- URL: https://down.example ---")
-                .contains("Failed to extract: connection reset");
-        }
+        assertThat(result.success()).isTrue();
+        assertThat(result.content())
+            .contains("--- URL: https://down.example ---")
+            .contains("Failed to extract: connection reset");
     }
 
     @Test
