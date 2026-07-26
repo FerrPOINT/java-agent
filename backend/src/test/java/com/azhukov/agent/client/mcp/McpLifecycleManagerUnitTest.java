@@ -1,13 +1,19 @@
 package com.azhukov.agent.client.mcp;
 
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.core.tool.ToolRegistry;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationContext;
 
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
 
 class McpLifecycleManagerUnitTest {
 
@@ -27,5 +33,57 @@ class McpLifecycleManagerUnitTest {
         ToolDefinition definition = McpLifecycleManager.convertToolDefinition("test__greet", tool);
         assertThat(definition.name()).isEqualTo("test__greet");
         assertThat(definition.description()).isEqualTo("Greets a person");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> props = (Map<String, Object>) definition.parameters().get("properties");
+        assertThat(props).containsKey("name");
+        @SuppressWarnings("unchecked")
+        List<String> req = (List<String>) definition.parameters().get("required");
+        assertThat(req).contains("name");
+    }
+
+    @Test
+    void executeToolFailsWhenServerNotConnected() {
+        AgentProperties props = new AgentProperties();
+        ObjectMapper mapper = new ObjectMapper();
+        ToolRegistry registry = mock(ToolRegistry.class);
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        when(ctx.getBean(ToolRegistry.class)).thenReturn(registry);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, mapper, ctx);
+
+        assertThatThrownBy(() -> mgr.executeTool("missing", "tool", "{}"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("not connected");
+    }
+
+    @Test
+    void readResourceFailsWhenServerNotConnected() {
+        AgentProperties props = new AgentProperties();
+        ObjectMapper mapper = new ObjectMapper();
+        ToolRegistry registry = mock(ToolRegistry.class);
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        when(ctx.getBean(ToolRegistry.class)).thenReturn(registry);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, mapper, ctx);
+
+        assertThatThrownBy(() -> mgr.readResource("missing", "file://x"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("not connected");
+    }
+
+    @Test
+    void listDiscoveredToolsIsEmptyWhenNoClients() {
+        AgentProperties props = new AgentProperties();
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx);
+        assertThat(mgr.listDiscoveredTools()).isEmpty();
+    }
+
+    @Test
+    void listServersIsEmptyWhenMcpDisabled() {
+        AgentProperties props = new AgentProperties();
+        props.getMcp().setEnabled(false);
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx);
+        mgr.connectConfiguredServers();
+        assertThat(mgr.listServers()).isEmpty();
     }
 }

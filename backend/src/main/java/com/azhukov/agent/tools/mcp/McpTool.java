@@ -31,7 +31,7 @@ public class McpTool implements ToolHandler {
         try {
             var result = mcpLifecycleManager.executeTool(args.serverName(), args.toolName(), args.arguments());
             String text = result.content().stream()
-                .map(Object::toString)
+                .map(c -> c instanceof io.modelcontextprotocol.spec.McpSchema.TextContent tc ? tc.text() : c.toString())
                 .collect(Collectors.joining("\n"));
             return ToolResult.ok(text);
         } catch (Exception e) {
@@ -40,8 +40,8 @@ public class McpTool implements ToolHandler {
     }
 
     public record McpArgs(
-        @ToolParam(description = "MCP server name") String serverName,
-        @ToolParam(description = "tool name") String toolName,
-        @ToolParam(description = "tool arguments JSON") String arguments
+        @ToolParam(description = "MCP server name") @com.fasterxml.jackson.annotation.JsonProperty("server_name") String serverName,
+        @ToolParam(description = "tool name") @com.fasterxml.jackson.annotation.JsonProperty("tool_name") String toolName,
+        @ToolParam(description = "tool arguments JSON") @com.fasterxml.jackson.annotation.JsonProperty("arguments") String arguments
     ) {}
 }

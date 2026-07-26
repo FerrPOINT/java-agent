@@ -126,6 +126,21 @@ public class McpLifecycleManager {
         return result;
     }
 
+    public String readResource(String serverName, String uri) {
+        var state = clients.get(serverName);
+        if (state == null) {
+            throw new IllegalStateException("MCP server not connected: " + serverName);
+        }
+        try {
+            var result = state.client().readResource(new McpSchema.ReadResourceRequest(uri));
+            return result.contents().stream()
+                .map(Object::toString)
+                .collect(Collectors.joining("\n"));
+        } catch (Exception e) {
+            throw new RuntimeException("MCP read resource failed: " + e.getMessage(), e);
+        }
+    }
+
     public McpSchema.CallToolResult executeTool(String serverName, String toolName, String argumentsJson) {
         var state = clients.get(serverName);
         if (state == null) {
