@@ -40,6 +40,10 @@ public class TelegramLongPollingService {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong lastUpdateId = new AtomicLong(0);
 
+    public boolean isRunning() {
+        return running.get();
+    }
+
     public TelegramLongPollingService(AgentProperties properties, GatewayRoutingService routingService, ObjectMapper objectMapper) {
         this.properties = properties;
         this.routingService = routingService;

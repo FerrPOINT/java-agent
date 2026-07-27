@@ -1,19 +1,16 @@
 package com.azhukov.agent.gateway.telegram;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.azhukov.agent.gateway.GatewayRoutingService;
 import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.gateway.model.Platform;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.client.RestClient;
 
-import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TelegramLongPollingServiceTest {
 
@@ -22,7 +19,6 @@ class TelegramLongPollingServiceTest {
         var props = new com.azhukov.agent.config.AgentProperties();
         props.getGateway().getTelegram().setBotToken("dummy");
 
-        CountDownLatch latch = new CountDownLatch(1);
         MessageEvent[] captured = new MessageEvent[1];
         GatewayRoutingService routing = new GatewayRoutingService(List.of(), evt -> captured[0] = evt);
 
@@ -45,5 +41,23 @@ class TelegramLongPollingServiceTest {
         assertEquals(Platform.TELEGRAM, captured[0].source().platform());
         assertEquals("754334329", captured[0].source().chatId());
         assertEquals("hello", captured[0].text());
+    }
+
+    @Test
+    void startDoesNothingWhenTokenMissing() {
+        var props = new com.azhukov.agent.config.AgentProperties();
+        GatewayRoutingService routing = new GatewayRoutingService(List.of(), evt -> {});
+        var service = new TelegramLongPollingService(props, routing, new ObjectMapper());
+        service.start();
+        assertThat(service.isRunning()).isFalse();
+    }
+
+    @Test
+    void stopWhenNotRunningDoesNotThrow() {
+        var props = new com.azhukov.agent.config.AgentProperties();
+        GatewayRoutingService routing = new GatewayRoutingService(List.of(), evt -> {});
+        var service = new TelegramLongPollingService(props, routing, new ObjectMapper());
+        service.stop();
+        assertThat(service.isRunning()).isFalse();
     }
 }
