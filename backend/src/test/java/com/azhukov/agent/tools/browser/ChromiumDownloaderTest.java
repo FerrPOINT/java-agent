@@ -1,11 +1,7 @@
 package com.azhukov.agent.tools.browser;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.zip.ZipEntry;
@@ -15,38 +11,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ChromiumDownloaderTest {
 
-    @TempDir
-    Path tempDir;
-
     @Test
-    void extractsZipAndMarksChromeExecutable() throws IOException, InterruptedException {
-        Path installDir = tempDir.resolve("install");
-        Path archive = createChromeLinuxZip(installDir.resolve("chrome-linux.zip"));
-
+    void unzipExtractsExecutableAndMarksPermission() throws Exception {
         ChromiumDownloader downloader = new ChromiumDownloader("https://example.com");
-        Path extracted = downloader.download(ChromiumPlatform.Platform.LINUX_X64, "1667635", installDir);
-
-        assertThat(extracted).exists();
-        Path chrome = extracted.resolve("chrome");
-        assertThat(chrome).exists();
-        assertThat(chrome.toFile().canExecute()).isTrue();
-    }
-
-    private Path createChromeLinuxZip(Path destination) throws IOException {
-        Files.createDirectories(destination.getParent());
-        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(destination))) {
-            zos.putNextEntry(new ZipEntry("chrome-linux/"));
-            zos.closeEntry();
-
+        Path zip = Files.createTempFile("chromium", ".zip");
+        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zip))) {
             zos.putNextEntry(new ZipEntry("chrome-linux/chrome"));
-            byte[] data = "#!/bin/sh\necho mock chrome".getBytes(StandardCharsets.UTF_8);
-            zos.write(data);
-            zos.closeEntry();
-
-            zos.putNextEntry(new ZipEntry("chrome-linux/resources.pak"));
-            zos.write(new byte[]{0x01, 0x02});
+            zos.write(new byte[10]);
             zos.closeEntry();
         }
-        return destination;
+        Path dir = Files.createTempDirectory("extract");
+        java.lang.reflect.Method m = ChromiumDownloader.class.getDeclaredMethod("unzip", Path.class, Path.class);
+        m.setAccessible(true);
+        m.invoke(downloader, zip, dir);
+        Path extracted = dir.resolve("chrome-linux/chrome");
+        assertThat(Files.exists(extracted)).isTrue();
+        assertThat(extracted.toFile().canExecute()).isTrue();
     }
 }

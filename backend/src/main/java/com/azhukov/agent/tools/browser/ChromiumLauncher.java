@@ -127,11 +127,15 @@ public class ChromiumLauncher {
     }
 
     public boolean waitForCdp(int timeoutSeconds) throws InterruptedException {
+        return waitForCdp("127.0.0.1", 9222, timeoutSeconds);
+    }
+
+    boolean waitForCdp(String host, int port, int timeoutSeconds) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;
         while (System.currentTimeMillis() < deadline) {
             try (java.net.Socket socket = new java.net.Socket()) {
-                socket.connect(new java.net.InetSocketAddress("127.0.0.1", 9222), 500);
-                log.info("CDP endpoint is ready on port 9222");
+                socket.connect(new java.net.InetSocketAddress(host, port), 500);
+                log.info("CDP endpoint is ready on {}:{}", host, port);
                 return true;
             } catch (Exception e) {
                 Thread.sleep(500);

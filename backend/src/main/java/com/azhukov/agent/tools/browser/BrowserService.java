@@ -107,6 +107,6 @@ public class BrowserService {
     }
 
     private void waitForLoad() throws Exception {
-        Thread.sleep(2000);
+        cdpClient.waitForEvent("Page.loadEventFired", 30).get(30, TimeUnit.SECONDS);
     }
 }

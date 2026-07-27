@@ -19,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 @Service
 public class CdpClient {
@@ -27,6 +28,7 @@ public class CdpClient {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final Map<Integer, CompletableFuture<JsonNode>> pending = new ConcurrentHashMap<>();
+    private final Map<String, Consumer<JsonNode>> eventListeners = new ConcurrentHashMap<>();
     private final AtomicInteger messageId = new AtomicInteger(1);
     private WebSocketClient webSocketClient;
     private String webSocketUrl;
@@ -84,6 +86,18 @@ public class CdpClient {
         connected.get(120, TimeUnit.SECONDS);
     }
 
+    public synchronized void disconnect() {
+        connected = false;
+        if (webSocketClient != null) {
+            try {
+                webSocketClient.close();
+            } catch (Exception e) {
+                log.debug("Error closing CDP websocket: {}", e.getMessage());
+            }
+            webSocketClient = null;
+        }
+    }
+
     public CompletableFuture<JsonNode> send(String method, ObjectNode params) {
         int id = messageId.getAndIncrement();
         ObjectNode msg = objectMapper.createObjectNode();
@@ -111,10 +125,26 @@ public class CdpClient {
                         future.complete(node.get("result"));
                     }
                 }
+            } else if (node.has("method")) {
+                String method = node.get("method").asText();
+                Consumer<JsonNode> listener = eventListeners.get(method);
+                if (listener != null) {
+                    listener.accept(node.path("params"));
+                }
             }
         } catch (Exception e) {
             log.error("Failed to handle CDP message", e);
         }
+    }
+
+    public void onEvent(String method, Consumer<JsonNode> listener) {
+        eventListeners.put(method, listener);
+    }
+
+    public CompletableFuture<JsonNode> waitForEvent(String method, long timeoutSeconds) {
+        CompletableFuture<JsonNode> future = new CompletableFuture<>();
+        onEvent(method, future::complete);
+        return future.orTimeout(timeoutSeconds, TimeUnit.SECONDS);
     }
 
     public boolean isConnected() {

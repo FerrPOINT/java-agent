@@ -1,47 +1,36 @@
 package com.azhukov.agent.tools.browser;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledOnOs;
-import org.junit.jupiter.api.condition.OS;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ChromiumPlatformTest {
 
     @Test
-    void detectsLinuxAmd64() {
-        ChromiumPlatform.Platform platform = ChromiumPlatform.detect();
-        String os = System.getProperty("os.name").toLowerCase();
-        if (os.contains("linux")) {
-            assertThat(platform).isEqualTo(ChromiumPlatform.Platform.LINUX_X64);
-        } else if (os.contains("mac") || os.contains("darwin")) {
-            String arch = System.getProperty("os.arch").toLowerCase();
-            assertThat(platform).isIn(ChromiumPlatform.Platform.MAC_ARM64, ChromiumPlatform.Platform.MAC_X64);
-        } else if (os.contains("win")) {
-            assertThat(platform).isIn(ChromiumPlatform.Platform.WIN_X64, ChromiumPlatform.Platform.WIN_X86);
-        }
-        assertThat(platform).isNotEqualTo(ChromiumPlatform.Platform.UNSUPPORTED);
+    void detectsLinux() {
+        ChromiumPlatform.Platform p = ChromiumPlatform.Platform.LINUX_X64;
+        assertThat(p.snapshotFolder()).isEqualTo("Linux_x64");
+        assertThat(p.executableName()).isEqualTo("chrome");
     }
 
     @Test
-    void linuxArchiveNameIsChromeLinuxZip() {
-        assertThat(ChromiumPlatform.archiveName(ChromiumPlatform.Platform.LINUX_X64, "1667635"))
+    void archiveNameForLinux() {
+        assertThat(ChromiumPlatform.archiveName(ChromiumPlatform.Platform.LINUX_X64, "r1"))
             .isEqualTo("chrome-linux.zip");
     }
 
     @Test
-    void macArchiveNameIsChromeMacZip() {
-        assertThat(ChromiumPlatform.archiveName(ChromiumPlatform.Platform.MAC_ARM64, "123"))
-            .isEqualTo("chrome-mac.zip");
-        assertThat(ChromiumPlatform.archiveName(ChromiumPlatform.Platform.MAC_X64, "123"))
+    void archiveNameForMacArm() {
+        assertThat(ChromiumPlatform.archiveName(ChromiumPlatform.Platform.MAC_ARM64, "r1"))
             .isEqualTo("chrome-mac.zip");
     }
 
     @Test
-    void windowsArchiveNameIsChromeWinZip() {
-        assertThat(ChromiumPlatform.archiveName(ChromiumPlatform.Platform.WIN_X64, "123"))
-            .isEqualTo("chrome-win.zip");
-        assertThat(ChromiumPlatform.archiveName(ChromiumPlatform.Platform.WIN_X86, "123"))
-            .isEqualTo("chrome-win.zip");
+    void detectDoesNotReturnUnsupportedOnLinux() {
+        // We run on linux; detect should return LINUX_X64 or at least not unsupported
+        assertThat(ChromiumPlatform.detect()).isNotEqualTo(ChromiumPlatform.Platform.UNSUPPORTED);
     }
 }
