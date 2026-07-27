@@ -3,16 +3,14 @@ package com.azhukov.agent.client.langchain4j;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
+import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.ImageContent;
 import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.TextContent;
-import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
@@ -21,18 +19,18 @@ import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
-import io.github.resilience4j.retry.annotation.Retry;
-import io.github.resilience4j.timelimiter.annotation.TimeLimiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
+/**
+ * LangChain4j-backed OpenAI-compatible model client.
+ * Supports text completion, tool calls, streaming, and vision.
+ */
 public class LangChain4jModelClient implements ModelClient {
 
     private static final Logger log = LoggerFactory.getLogger(LangChain4jModelClient.class);
@@ -49,7 +47,7 @@ public class LangChain4jModelClient implements ModelClient {
             .baseUrl(properties.getModel().getBaseUrl())
             .apiKey(properties.getModel().getApiKey())
             .modelName(properties.getModel().getModelName())
-            .timeout(Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
+            .timeout(java.time.Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
             .maxRetries(properties.getModel().getMaxRetries())
             .temperature(properties.getModel().getTemperature())
             .build();
@@ -57,22 +55,28 @@ public class LangChain4jModelClient implements ModelClient {
             .baseUrl(properties.getModel().getBaseUrl())
             .apiKey(properties.getModel().getApiKey())
             .modelName(properties.getModel().getModelName())
-            .timeout(Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
+            .timeout(java.time.Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
             .temperature(properties.getModel().getTemperature())
             .build();
     }
 
+    public LangChain4jModelClient(ChatModel chatModel, StreamingChatModel streamingChatModel,
+                                   AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer) {
+        this.chatModel = chatModel;
+        this.streamingChatModel = streamingChatModel;
+        this.properties = properties;
+        this.usageConsumer = usageConsumer;
+    }
+
     @Override
-    @Retry(name = "model")
-    @TimeLimiter(name = "model")
-    public com.azhukov.agent.core.model.ChatResponse complete(List<Message> messages, List<ToolDefinition> tools) {
+    public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools) {
         List<ChatMessage> chatMessages = messages.stream()
             .map(this::toLangChainMessage)
             .collect(Collectors.toList());
 
-        List<ToolSpecification> specs = tools.stream()
-            .map(this::toToolSpecification)
-            .collect(Collectors.toList());
+        List<ToolSpecification> specs = tools != null
+            ? tools.stream().map(this::toToolSpecification).collect(Collectors.toList())
+            : List.of();
 
         ChatRequest request = ChatRequest.builder()
             .messages(chatMessages)
@@ -88,10 +92,10 @@ public class LangChain4jModelClient implements ModelClient {
             List<ToolCall> calls = aiMessage.toolExecutionRequests().stream()
                 .map(r -> new ToolCall(r.id(), r.name(), r.arguments()))
                 .collect(Collectors.toList());
-            return com.azhukov.agent.core.model.ChatResponse.toolCalls(calls);
+            return ChatResponse.toolCalls(calls);
         }
 
-        return com.azhukov.agent.core.model.ChatResponse.text(aiMessage.text());
+        return ChatResponse.text(aiMessage.text());
     }
 
     @Override
@@ -139,8 +143,6 @@ public class LangChain4jModelClient implements ModelClient {
     }
 
     @Override
-    @Retry(name = "model")
-    @TimeLimiter(name = "model")
     public CompletableFuture<String> analyzeImageAsync(String base64Image, String prompt) {
         return CompletableFuture.supplyAsync(() -> analyzeImage(base64Image, prompt));
     }
@@ -148,8 +150,8 @@ public class LangChain4jModelClient implements ModelClient {
     @Override
     public String analyzeImage(String base64Image, String prompt) {
         UserMessage message = UserMessage.from(
-            TextContent.from(prompt),
-            ImageContent.from(base64Image, "image/png")
+            dev.langchain4j.data.message.TextContent.from(prompt),
+            dev.langchain4j.data.message.ImageContent.from(base64Image, "image/png")
         );
         ChatRequest request = ChatRequest.builder()
             .messages(List.of(message))
@@ -176,7 +178,7 @@ public class LangChain4jModelClient implements ModelClient {
                 }
                 yield AiMessage.from(message.content());
             }
-            case TOOL -> ToolExecutionResultMessage.from(message.toolCallId(), null, message.content());
+            case TOOL -> dev.langchain4j.data.message.ToolExecutionResultMessage.from(message.toolCallId(), null, message.content());
         };
     }
 
@@ -192,7 +194,9 @@ public class LangChain4jModelClient implements ModelClient {
         if (schema == null) {
             return JsonObjectSchema.builder().build();
         }
+        @SuppressWarnings("unchecked")
         Map<String, Object> props = (Map<String, Object>) schema.get("properties");
+        @SuppressWarnings("unchecked")
         List<String> required = (List<String>) schema.get("required");
         JsonObjectSchema.Builder builder = JsonObjectSchema.builder();
         if (props != null) {
