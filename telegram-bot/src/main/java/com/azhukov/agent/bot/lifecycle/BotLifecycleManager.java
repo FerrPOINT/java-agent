@@ -60,7 +60,19 @@ public class BotLifecycleManager {
             command("yolo", "Toggle approval gate"),
             command("verbose", "Toggle verbose mode"),
             command("fast", "Toggle fast mode"),
-            command("reasoning", "Set reasoning level")
+            command("reasoning", "Set reasoning level"),
+            command("footer", "Toggle runtime footer"),
+            command("resume", "Resume a previous session"),
+            command("version", "Show agent version"),
+            command("whoami", "Show your user info"),
+            command("commands", "List all commands"),
+            command("compress", "Compress session context"),
+            command("undo", "Undo last N turns"),
+            command("retry", "Retry last message"),
+            command("approve", "Approve pending command"),
+            command("deny", "Deny pending command"),
+            command("agents", "List active agents"),
+            command("insights", "Show usage insights")
         );
 
         boolean ok = telegramClient.setMyCommands(commands);

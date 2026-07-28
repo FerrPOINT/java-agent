@@ -11,5 +11,7 @@ public interface BotMessageRepository extends JpaRepository<BotMessageEntity, UU
 
     List<BotMessageEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId);
 
+    List<BotMessageEntity> findBySessionIdOrderByCreatedAtDesc(UUID sessionId);
+
     long countBySessionId(UUID sessionId);
 }

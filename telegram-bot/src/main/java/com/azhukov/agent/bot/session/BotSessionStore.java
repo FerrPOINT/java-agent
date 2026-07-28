@@ -90,6 +90,33 @@ public class BotSessionStore {
     }
 
     @Transactional
+    public boolean toggleFooter(UUID id) {
+        BotSessionEntity session = repository.findById(id).orElse(null);
+        if (session == null) return false;
+        session.setFooterEnabled(!session.isFooterEnabled());
+        session.setUpdatedAt(Instant.now());
+        repository.save(session);
+        return session.isFooterEnabled();
+    }
+
+    @Transactional
+    public BotSessionEntity resumeSession(UUID sessionId, String userId) {
+        // Deactivate current active session
+        BotSessionEntity current = repository.findByUserIdAndActiveTrue(userId).orElse(null);
+        if (current != null) {
+            current.setActive(false);
+            current.setUpdatedAt(Instant.now());
+            repository.save(current);
+        }
+        // Activate requested session
+        BotSessionEntity target = repository.findById(sessionId).orElse(null);
+        if (target == null) return null;
+        target.setActive(true);
+        target.setUpdatedAt(Instant.now());
+        return repository.save(target);
+    }
+
+    @Transactional
     public void setReasoningLevel(UUID id, String level) {
         repository.findById(id).ifPresent(session -> {
             session.setReasoningLevel(level);

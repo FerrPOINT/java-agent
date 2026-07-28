@@ -82,7 +82,15 @@ public class TelegramClient {
         if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
         if (replyToMessageId != null) params.put("reply_to_message_id", replyToMessageId);
         if (replyMarkup != null && !replyMarkup.isBlank()) params.put("reply_markup", replyMarkup);
-        return callApi("sendMessage", params).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        Optional<TelegramResponse> response = callApi("sendMessage", params);
+        if (response.isEmpty() && replyToMessageId != null) {
+            // Thread fallback: retry without reply_to_message_id if "Message thread not found"
+            log.debug("sendMessage failed with reply_to_message_id={}, retrying without", replyToMessageId);
+            Map<String, Object> retryParams = new LinkedHashMap<>(params);
+            retryParams.remove("reply_to_message_id");
+            response = callApi("sendMessage", retryParams);
+        }
+        return response.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
     }
 
     public boolean editMessageText(long chatId, long messageId, String text, String parseMode) {
@@ -108,6 +116,16 @@ public class TelegramClient {
 
     public boolean sendTyping(long chatId) {
         return sendChatAction(chatId, "typing");
+    }
+
+    // ─── Message reactions ─────────────────────────────────────────
+
+    public boolean setMessageReaction(long chatId, long messageId, String emoji) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("chat_id", chatId);
+        params.put("message_id", messageId);
+        params.put("reaction", List.of(Map.of("type", "emoji", "emoji", emoji)));
+        return callApi("setMessageReaction", params).isPresent();
     }
 
     // ─── Media ────────────────────────────────────────────────────

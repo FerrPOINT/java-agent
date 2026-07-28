@@ -1,6 +1,7 @@
 package com.azhukov.agent.bot.core;
 
 import com.azhukov.agent.bot.auth.AuthorizationService;
+import com.azhukov.agent.bot.auth.SlashAccessPolicy;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.commands.CommandRegistry;
@@ -38,6 +39,12 @@ class BotMessageProcessorTest {
     private BotProperties properties;
     private StreamEditor streamEditor;
     private InboundMediaHandler inboundMediaHandler;
+    private com.azhukov.agent.bot.footer.RuntimeFooter runtimeFooter;
+    private com.azhukov.agent.bot.reaction.ReactionManager reactionManager;
+    private com.azhukov.agent.bot.batch.TextBatchDebouncer textBatchDebouncer;
+    private com.azhukov.agent.bot.batch.PhotoBatchDebouncer photoBatchDebouncer;
+    private com.azhukov.agent.bot.group.GroupMessageFilter groupMessageFilter;
+    private SlashAccessPolicy slashAccessPolicy;
     private BotMessageProcessor processor;
 
     @BeforeEach
@@ -55,10 +62,30 @@ class BotMessageProcessorTest {
         properties.setBusyMode("queue");
         streamEditor = mock(StreamEditor.class);
         inboundMediaHandler = mock(InboundMediaHandler.class);
+        runtimeFooter = mock(com.azhukov.agent.bot.footer.RuntimeFooter.class);
+        reactionManager = mock(com.azhukov.agent.bot.reaction.ReactionManager.class);
+        textBatchDebouncer = mock(com.azhukov.agent.bot.batch.TextBatchDebouncer.class);
+        photoBatchDebouncer = mock(com.azhukov.agent.bot.batch.PhotoBatchDebouncer.class);
+        groupMessageFilter = mock(com.azhukov.agent.bot.group.GroupMessageFilter.class);
+        slashAccessPolicy = mock(SlashAccessPolicy.class);
+
+        // Default: slash access policy allows all
+        when(slashAccessPolicy.canRun(anyLong(), anyString())).thenReturn(true);
+
+        // Default: group filter allows all
+        when(groupMessageFilter.shouldProcess(any(UpdateEvent.class))).thenReturn(true);
+        // Default: text batch debouncer doesn't buffer (returns false = process immediately)
+        when(textBatchDebouncer.offer(any(UpdateEvent.class))).thenReturn(false);
+        // Default: photo batch debouncer doesn't buffer
+        when(photoBatchDebouncer.offer(any(UpdateEvent.class))).thenReturn(false);
+        // Default: footer returns empty
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("");
 
         processor = new BotMessageProcessor(telegramClient, authorizationService, sessionStore,
             busyHandler, typingManager, backendClient, commandRegistry,
-            callbackQueryHandler, properties, streamEditor, inboundMediaHandler);
+            callbackQueryHandler, properties, streamEditor, inboundMediaHandler,
+            runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
+            groupMessageFilter, slashAccessPolicy);
 
         // Default: authorized
         when(authorizationService.isAuthorized(any(UpdateEvent.class))).thenReturn(true);

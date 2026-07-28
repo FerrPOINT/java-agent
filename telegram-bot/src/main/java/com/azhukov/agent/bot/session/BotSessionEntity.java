@@ -25,6 +25,7 @@ public class BotSessionEntity {
     private boolean yoloMode;
     private boolean verboseMode;
     private boolean fastMode;
+    private boolean footerEnabled;
     private String reasoningLevel = "medium";
     private boolean active = true;
     private Instant createdAt;
@@ -48,6 +49,8 @@ public class BotSessionEntity {
     public void setVerboseMode(boolean verboseMode) { this.verboseMode = verboseMode; }
     public boolean isFastMode() { return fastMode; }
     public void setFastMode(boolean fastMode) { this.fastMode = fastMode; }
+    public boolean isFooterEnabled() { return footerEnabled; }
+    public void setFooterEnabled(boolean footerEnabled) { this.footerEnabled = footerEnabled; }
     public String getReasoningLevel() { return reasoningLevel; }
     public void setReasoningLevel(String reasoningLevel) { this.reasoningLevel = reasoningLevel; }
     public boolean isActive() { return active; }

@@ -1,8 +1,10 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.api.dto.ActiveAgentDto;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.ContextInfoDto;
+import com.azhukov.agent.api.dto.InsightsDto;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.core.agent.AgentRuntime;
@@ -18,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -134,6 +137,45 @@ public class AgentRuntimeService {
                 e.getUpdatedAt()
             ))
             .toList();
+    }
+
+    @Transactional
+    public void compressSession(UUID sessionId, String focus) {
+        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        if (messages.size() <= 4) return;
+        List<MessageEntity> toDelete = messages.subList(0, messages.size() - 4);
+        messageRepository.deleteAll(toDelete);
+    }
+
+    @Transactional
+    public int undoTurns(UUID sessionId, int turns) {
+        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        if (messages.isEmpty()) return 0;
+        List<Integer> turnIndices = messages.stream()
+            .map(MessageEntity::getTurnIndex)
+            .distinct()
+            .sorted(Comparator.reverseOrder())
+            .toList();
+        int turnsToDelete = Math.min(turns, turnIndices.size());
+        if (turnsToDelete == 0) return 0;
+        int cutoffTurnIndex = turnIndices.get(turnsToDelete - 1);
+        List<MessageEntity> toDelete = messages.stream()
+            .filter(m -> m.getTurnIndex() != null && m.getTurnIndex() >= cutoffTurnIndex)
+            .toList();
+        messageRepository.deleteAll(toDelete);
+        return toDelete.size();
+    }
+
+    @Transactional(readOnly = true)
+    public List<ActiveAgentDto> listActiveAgents() {
+        return List.of();
+    }
+
+    @Transactional(readOnly = true)
+    public InsightsDto getInsights() {
+        long msgCount = messageRepository.count();
+        int totalTokens = 0;
+        return new InsightsDto(totalTokens, (int) msgCount, java.util.Map.of());
     }
 
     private Session createSession(String userId, String provider, String modelName) {

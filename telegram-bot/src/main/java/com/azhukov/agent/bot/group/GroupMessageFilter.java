@@ -1,0 +1,136 @@
+package com.azhukov.agent.bot.group;
+
+import com.azhukov.agent.bot.config.BotProperties;
+import com.azhukov.agent.bot.polling.UpdateEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+/**
+ * Filters messages in group chats based on @mention requirements and guest mode.
+ * <p>
+ * Config-driven via {@code bot.group.require-mention} and {@code bot.group.guest-mode}.
+ */
+@Component
+public class GroupMessageFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(GroupMessageFilter.class);
+
+    private final BotProperties properties;
+    private String botUsername = "";
+
+    public GroupMessageFilter(BotProperties properties) {
+        this.properties = properties;
+    }
+
+    /**
+     * Set the bot's username (without @) for mention matching.
+     */
+    public void setBotUsername(String botUsername) {
+        this.botUsername = botUsername != null ? botUsername : "";
+    }
+
+    /**
+     * Determine whether an event should be processed.
+     * <p>
+     * In group chats (chatId < 0), checks if @botname is mentioned in the text
+     * when {@code require-mention} is enabled.
+     * <p>
+     * Guest mode: if {@code guest-mode} is true and @botname is present, allows
+     * processing even if the chat is not in the allowlist.
+     *
+     * @param event the incoming update event
+     * @return true if the event should be processed, false if it should be skipped
+     */
+    public boolean shouldProcess(UpdateEvent event) {
+        long chatId = event.chatId();
+
+        // Private chats (DMs): always process
+        if (chatId > 0) {
+            return true;
+        }
+
+        // Group chats (negative chat IDs)
+        BotProperties.Group group = properties.getGroup();
+
+        // Check free-response chats — these don't require mention
+        if (isFreeResponseChat(chatId)) {
+            return true;
+        }
+
+        // Check ignored threads
+        if (event.messageId() > 0 && isIgnoredThread(event.messageId())) {
+            return false;
+        }
+
+        if (!group.isRequireMention()) {
+            return true;
+        }
+
+        // Check for @botname mention in text
+        boolean mentioned = isBotMentioned(event.text()) || isBotMentioned(event.caption());
+
+        if (mentioned) {
+            return true;
+        }
+
+        // Guest mode: allow if @botname present (already checked above) — but only
+        // matters for unauthorized chats. If guest mode is on and mentioned, allow.
+        if (group.isGuestMode() && mentioned) {
+            return true;
+        }
+
+        if (group.isObserveUnmentioned()) {
+            // Observe but don't respond — the caller can save to context without triggering a response
+            log.debug("Observing unmentioned message in group chat {}", chatId);
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if the bot is mentioned in the given text.
+     * Matches @botname (case-insensitive).
+     * When {@code exclusive-bot-mentions} is true, only @botname triggers (not any mention).
+     */
+    boolean isBotMentioned(String text) {
+        if (text == null || text.isBlank() || botUsername.isBlank()) {
+            return false;
+        }
+        String lowerText = text.toLowerCase();
+        String lowerBot = botUsername.toLowerCase();
+        return lowerText.contains("@" + lowerBot);
+    }
+
+    /**
+     * Check if a chat is in the free-response chats list (no mention required).
+     */
+    boolean isFreeResponseChat(long chatId) {
+        List<String> freeChats = properties.getGroup().getFreeResponseChats();
+        if (freeChats == null || freeChats.isEmpty()) {
+            return false;
+        }
+        String chatIdStr = String.valueOf(chatId);
+        return freeChats.contains(chatIdStr);
+    }
+
+    /**
+     * Check if a thread/message_id is in the ignored threads list.
+     */
+    boolean isIgnoredThread(long threadId) {
+        List<Long> ignored = properties.getGroup().getIgnoredThreads();
+        if (ignored == null || ignored.isEmpty()) {
+            return false;
+        }
+        return ignored.contains(threadId);
+    }
+
+    /**
+     * Whether unmentioned messages should be observed (saved to context) but not responded to.
+     */
+    public boolean shouldObserveUnmentioned() {
+        return properties.getGroup().isObserveUnmentioned();
+    }
+}

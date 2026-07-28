@@ -22,11 +22,23 @@ public record UpdateEvent(
     String replyToText,
     boolean isCommand,
     String commandName,
-    String commandArgs
+    String commandArgs,
+    long messageId,
+    String mediaGroupId
 ) {
 
     public enum Type {
         TEXT, COMMAND, CALLBACK_QUERY, PHOTO, DOCUMENT, VOICE, STICKER, ANIMATION, UNKNOWN
+    }
+
+    /** Compact constructor — defaults messageId=0, mediaGroupId=null for backward compatibility. */
+    public UpdateEvent(long updateId, Type type, long chatId, long userId,
+                       String username, String text, String caption, String fileId, String fileType,
+                       String callbackQueryId, String callbackData, String replyToText,
+                       boolean isCommand, String commandName, String commandArgs) {
+        this(updateId, type, chatId, userId, username, text, caption, fileId, fileType,
+            callbackQueryId, callbackData, replyToText, isCommand, commandName, commandArgs,
+            0L, null);
     }
 
     @SuppressWarnings("unchecked")
@@ -100,6 +112,14 @@ public record UpdateEvent(
             }
         }
 
+        // Message ID
+        long msgId = message.get("message_id") != null
+            ? ((Number) message.get("message_id")).longValue() : 0L;
+
+        // Media group ID
+        String mediaGroupId = Optional.ofNullable(message.get("media_group_id"))
+            .map(Object::toString).orElse(null);
+
         // Check for media
         Type type = Type.UNKNOWN;
         String fileId = null;
@@ -139,6 +159,7 @@ public record UpdateEvent(
 
         return new UpdateEvent(updateId, type, chatId, userId,
             username != null ? username : "", text, caption, fileId, fileType,
-            null, null, replyToText, isCommand, commandName, commandArgs);
+            null, null, replyToText, isCommand, commandName, commandArgs,
+            msgId, mediaGroupId);
     }
 }

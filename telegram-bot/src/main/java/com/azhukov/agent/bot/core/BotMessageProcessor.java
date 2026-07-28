@@ -1,15 +1,21 @@
 package com.azhukov.agent.bot.core;
 
 import com.azhukov.agent.bot.auth.AuthorizationService;
+import com.azhukov.agent.bot.auth.SlashAccessPolicy;
+import com.azhukov.agent.bot.batch.PhotoBatchDebouncer;
+import com.azhukov.agent.bot.batch.TextBatchDebouncer;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.commands.CommandRegistry;
 import com.azhukov.agent.bot.config.BotProperties;
+import com.azhukov.agent.bot.footer.RuntimeFooter;
 import com.azhukov.agent.bot.formatting.MarkdownConverter;
 import com.azhukov.agent.bot.formatting.MessageSplitter;
+import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
 import com.azhukov.agent.bot.polling.UpdateEvent;
+import com.azhukov.agent.bot.reaction.ReactionManager;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
 import com.azhukov.agent.bot.session.BusySessionHandler;
@@ -54,6 +60,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
     private final BotProperties properties;
     private final StreamEditor streamEditor;
     private final InboundMediaHandler inboundMediaHandler;
+    private final RuntimeFooter runtimeFooter;
+    private final ReactionManager reactionManager;
+    private final TextBatchDebouncer textBatchDebouncer;
+    private final PhotoBatchDebouncer photoBatchDebouncer;
+    private final GroupMessageFilter groupMessageFilter;
+    private final SlashAccessPolicy slashAccessPolicy;
 
     public BotMessageProcessor(TelegramClient telegramClient,
                                AuthorizationService authorizationService,
@@ -65,7 +77,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                                CallbackQueryHandler callbackQueryHandler,
                                BotProperties properties,
                                StreamEditor streamEditor,
-                               InboundMediaHandler inboundMediaHandler) {
+                               InboundMediaHandler inboundMediaHandler,
+                               RuntimeFooter runtimeFooter,
+                               ReactionManager reactionManager,
+                               TextBatchDebouncer textBatchDebouncer,
+                               PhotoBatchDebouncer photoBatchDebouncer,
+                               GroupMessageFilter groupMessageFilter,
+                               SlashAccessPolicy slashAccessPolicy) {
         this.telegramClient = telegramClient;
         this.authorizationService = authorizationService;
         this.sessionStore = sessionStore;
@@ -77,6 +95,31 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
         this.properties = properties;
         this.streamEditor = streamEditor;
         this.inboundMediaHandler = inboundMediaHandler;
+        this.runtimeFooter = runtimeFooter;
+        this.reactionManager = reactionManager;
+        this.textBatchDebouncer = textBatchDebouncer;
+        this.photoBatchDebouncer = photoBatchDebouncer;
+        this.groupMessageFilter = groupMessageFilter;
+        this.slashAccessPolicy = slashAccessPolicy;
+
+        // B1.3: Wire text batch debouncer to dispatch merged events back through processor
+        this.textBatchDebouncer.onDispatch(this::dispatchTextBatch);
+        // B1.4: Wire photo batch debouncer to dispatch merged events
+        this.photoBatchDebouncer.onDispatch(this::dispatchPhotoBatch);
+    }
+
+    /**
+     * B1.3: Called by TextBatchDebouncer when a batch is ready to dispatch.
+     */
+    private void dispatchTextBatch(UpdateEvent mergedEvent) {
+        handleTextOrMedia(mergedEvent);
+    }
+
+    /**
+     * B1.4: Called by PhotoBatchDebouncer when a photo group is ready to dispatch.
+     */
+    private void dispatchPhotoBatch(UpdateEvent mergedEvent) {
+        handleTextOrMedia(mergedEvent);
     }
 
     @Override
@@ -87,13 +130,44 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             switch (event.type()) {
                 case CALLBACK_QUERY -> handleCallbackQuery(event);
                 case COMMAND -> handleCommand(event);
-                case TEXT, PHOTO, DOCUMENT, VOICE, STICKER, ANIMATION -> handleTextOrMedia(event);
+                case TEXT -> {
+                    // B1.3: Text batch/debounce
+                    if (properties.getTextBatch() != null && offerTextBatch(event)) {
+                        return; // Buffered, will be dispatched later
+                    }
+                    handleTextOrMedia(event);
+                }
+                case PHOTO -> {
+                    // B1.4/B1.5: Photo batch/album — if mediaGroupId present, batch
+                    if (event.mediaGroupId() != null && !event.mediaGroupId().isBlank()
+                        && offerPhotoBatch(event)) {
+                        return; // Buffered, will be dispatched later
+                    }
+                    handleTextOrMedia(event);
+                }
+                case DOCUMENT, VOICE, STICKER, ANIMATION -> handleTextOrMedia(event);
                 case UNKNOWN -> log.debug("Ignoring UNKNOWN update: {}", event.updateId());
             }
         } catch (Exception e) {
             log.error("Error processing update {}: {}", event.updateId(), e.getMessage(), e);
             sendError(event.chatId(), "An error occurred while processing your message.");
         }
+    }
+
+    /**
+     * B1.3: Offer text event to debouncer. Returns true if buffered.
+     */
+    private boolean offerTextBatch(UpdateEvent event) {
+        // Only batch pure TEXT events (not commands, which are handled separately)
+        if (event.isCommand()) return false;
+        return textBatchDebouncer.offer(event);
+    }
+
+    /**
+     * B1.4/B1.5: Offer photo event to batch debouncer. Returns true if buffered.
+     */
+    private boolean offerPhotoBatch(UpdateEvent event) {
+        return photoBatchDebouncer.offer(event);
     }
 
     // ─── Callback Query ────────────────────────────────────────────
@@ -116,6 +190,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             return;
         }
 
+        if (!slashAccessPolicy.canRun(event.userId(), commandName)) {
+            telegramClient.sendMessage(event.chatId(),
+                "⛔ You don't have access to /" + commandName);
+            return;
+        }
+
         try {
             BotSessionEntity session = resolveSession(event);
             String response = handler.handle(event, session);
@@ -132,6 +212,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
     private void handleTextOrMedia(UpdateEvent event) {
         long chatId = event.chatId();
+
+        // B1.8/B1.9: Group mention requirement + guest mode
+        if (!groupMessageFilter.shouldProcess(event)) {
+            log.debug("Skipping message in group chat {} — bot not mentioned", chatId);
+            return;
+        }
 
         // Authorization check
         if (!authorizationService.isAuthorized(event)) {
@@ -165,6 +251,9 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             }
         }
 
+        // B1.2: Reaction — processing start
+        reactionManager.onProcessingStart(chatId, event.messageId());
+
         // Process the turn
         busyHandler.markBusy(chatId);
         typingManager.startTyping(chatId);
@@ -175,10 +264,24 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             // Use streaming: accumulate tokens via StreamEditor, check for interrupts
             String backendResponse = streamChat(chatId, messageText, sessionId);
 
-            sendFormatted(chatId, backendResponse);
+            // B1.1: Append runtime footer if enabled
+            String footer = runtimeFooter.format(
+                session.getModelOverride() != null ? session.getModelOverride() : properties.getDefaultModel(),
+                0, 0, properties.getWorkingDirectory()
+            );
+            if (!footer.isEmpty()) {
+                backendResponse = backendResponse + footer;
+            }
+
+            sendFormatted(chatId, backendResponse, event.messageId());
+
+            // B1.2: Reaction — processing complete (success)
+            reactionManager.onProcessingComplete(chatId, event.messageId(), true);
         } catch (Exception e) {
             log.error("Backend call failed for chat {}: {}", chatId, e.getMessage(), e);
             sendError(chatId, "Error contacting the agent backend: " + e.getMessage());
+            // B1.2: Reaction — processing complete (failure)
+            reactionManager.onProcessingComplete(chatId, event.messageId(), false);
         } finally {
             typingManager.stopTyping(chatId);
             busyHandler.markFree(chatId);
@@ -325,6 +428,17 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
     }
 
     private void sendFormatted(long chatId, String text) {
+        sendFormatted(chatId, text, 0L);
+    }
+
+    /**
+     * Send formatted text, optionally with reply_to_message_id for thread reply mode (B1.6).
+     *
+     * @param chatId         target chat ID
+     * @param text           text to send
+     * @param userMessageId  the user's message ID for reply_to (0 = no reply)
+     */
+    private void sendFormatted(long chatId, String text, long userMessageId) {
         if (text == null || text.isBlank()) {
             return;
         }
@@ -350,10 +464,22 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             formatted = MarkdownConverter.convert(textWithoutMedia);
         }
 
+        // B1.6: Thread reply mode — off/all/first
+        String replyMode = properties.getReplyToMode();
+        Long replyToMessageId = null; // null = no reply_to by default
+
         List<String> chunks = MessageSplitter.split(formatted);
-        for (String chunk : chunks) {
+        for (int i = 0; i < chunks.size(); i++) {
+            String chunk = chunks.get(i);
             if (!chunk.isBlank()) {
-                telegramClient.sendMessage(chatId, chunk, parseMode, null, null);
+                if ("all".equalsIgnoreCase(replyMode) && userMessageId > 0) {
+                    replyToMessageId = userMessageId;
+                } else if ("first".equalsIgnoreCase(replyMode) && i == 0 && userMessageId > 0) {
+                    replyToMessageId = userMessageId;
+                } else {
+                    replyToMessageId = null;
+                }
+                telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null);
             }
         }
     }

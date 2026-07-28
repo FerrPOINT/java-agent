@@ -22,10 +22,15 @@ public class BotProperties {
     private int rateLimitPerSecond = 25;
     private String workingDirectory = System.getProperty("user.dir");
     private String defaultModel = "";
+    private String replyToMode = "first"; // off | all | first
 
     private final Polling polling = new Polling();
     private final Webhook webhook = new Webhook();
     private final Auth auth = new Auth();
+    private final Footer footer = new Footer();
+    private final Reactions reactions = new Reactions();
+    private final TextBatch textBatch = new TextBatch();
+    private final Group group = new Group();
 
     public String getToken() { return token; }
     public void setToken(String token) { this.token = token; }
@@ -53,9 +58,15 @@ public class BotProperties {
     public void setWorkingDirectory(String workingDirectory) { this.workingDirectory = workingDirectory; }
     public String getDefaultModel() { return defaultModel; }
     public void setDefaultModel(String defaultModel) { this.defaultModel = defaultModel; }
+    public String getReplyToMode() { return replyToMode; }
+    public void setReplyToMode(String replyToMode) { this.replyToMode = replyToMode; }
     public Polling getPolling() { return polling; }
     public Webhook getWebhook() { return webhook; }
     public Auth getAuth() { return auth; }
+    public Footer getFooter() { return footer; }
+    public Reactions getReactions() { return reactions; }
+    public TextBatch getTextBatch() { return textBatch; }
+    public Group getGroup() { return group; }
 
     public static class Polling {
         private int timeoutSeconds = 30;
@@ -97,11 +108,66 @@ public class BotProperties {
         private final List<String> allowedUsernames = new ArrayList<>();
         private final List<String> allowedChatIds = new ArrayList<>();
         private boolean allowByDefault = false;
+        private final List<String> adminUserIds = new ArrayList<>();
+        private final List<String> userAllowedCommands = new ArrayList<>();
 
         public List<String> getAllowedUserIds() { return allowedUserIds; }
         public List<String> getAllowedUsernames() { return allowedUsernames; }
         public List<String> getAllowedChatIds() { return allowedChatIds; }
         public boolean isAllowByDefault() { return allowByDefault; }
         public void setAllowByDefault(boolean allowByDefault) { this.allowByDefault = allowByDefault; }
+        public List<String> getAdminUserIds() { return adminUserIds; }
+        public List<String> getUserAllowedCommands() { return userAllowedCommands; }
+    }
+
+    public static class Footer {
+        private boolean enabled = false;
+        private final List<String> fields = new ArrayList<>(List.of("model", "context_pct", "cwd"));
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public List<String> getFields() { return fields; }
+    }
+
+    public static class Reactions {
+        private boolean enabled = false;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+    }
+
+    public static class TextBatch {
+        private int delayMs = 500;
+        private int splitDelayMs = 1200;
+        private int fastDelayMs = 180;
+
+        public int getDelayMs() { return delayMs; }
+        public void setDelayMs(int delayMs) { this.delayMs = delayMs; }
+        public int getSplitDelayMs() { return splitDelayMs; }
+        public void setSplitDelayMs(int splitDelayMs) { this.splitDelayMs = splitDelayMs; }
+        public int getFastDelayMs() { return fastDelayMs; }
+        public void setFastDelayMs(int fastDelayMs) { this.fastDelayMs = fastDelayMs; }
+    }
+
+    public static class Group {
+        private boolean requireMention = false;
+        private boolean guestMode = false;
+        private boolean observeUnmentioned = false;
+        private boolean exclusiveBotMentions = false;
+        private final List<String> freeResponseChats = new ArrayList<>();
+        private final List<String> allowedTopics = new ArrayList<>();
+        private final List<Long> ignoredThreads = new ArrayList<>();
+
+        public boolean isRequireMention() { return requireMention; }
+        public void setRequireMention(boolean requireMention) { this.requireMention = requireMention; }
+        public boolean isGuestMode() { return guestMode; }
+        public void setGuestMode(boolean guestMode) { this.guestMode = guestMode; }
+        public boolean isObserveUnmentioned() { return observeUnmentioned; }
+        public void setObserveUnmentioned(boolean observeUnmentioned) { this.observeUnmentioned = observeUnmentioned; }
+        public boolean isExclusiveBotMentions() { return exclusiveBotMentions; }
+        public void setExclusiveBotMentions(boolean exclusiveBotMentions) { this.exclusiveBotMentions = exclusiveBotMentions; }
+        public List<String> getFreeResponseChats() { return freeResponseChats; }
+        public List<String> getAllowedTopics() { return allowedTopics; }
+        public List<Long> getIgnoredThreads() { return ignoredThreads; }
     }
 }

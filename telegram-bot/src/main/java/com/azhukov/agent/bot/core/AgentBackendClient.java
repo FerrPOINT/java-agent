@@ -333,6 +333,105 @@ public class AgentBackendClient {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Compress, undo, approve, deny, agents, insights
+    // ------------------------------------------------------------------
+
+    public String compressSession(String sessionId, String focus) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        if (focus != null && !focus.isBlank()) {
+            body.put("focus", focus);
+        }
+        try {
+            restClient.post()
+            .uri("/api/v1/agent/session/{sessionId}/compress", sessionId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(body)
+            .retrieve()
+            .toBodilessEntity();
+        return "Context compressed.";
+        } catch (Exception e) {
+            log.error("compressSession failed for sessionId={}: {}", sessionId, e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    public String undoTurns(String sessionId, int turns) {
+        try {
+            Integer deleted = restClient.post()
+            .uri(uriBuilder -> uriBuilder.path("/api/v1/agent/session/{sessionId}/undo")
+                .queryParam("turns", turns)
+                .build(sessionId))
+            .retrieve()
+            .body(Integer.class);
+        return "Undid " + (deleted != null ? deleted : 0) + " messages.";
+        } catch (Exception e) {
+            log.error("undoTurns failed for sessionId={}: {}", sessionId, e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    public String approve(boolean all, String scope) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("all", all);
+        if (scope != null) body.put("scope", scope);
+        try {
+            return restClient.post()
+            .uri("/api/v1/agent/approve")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(body)
+            .retrieve()
+            .body(String.class);
+        } catch (Exception e) {
+            log.error("approve failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    public String deny(boolean all) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("all", all);
+        try {
+            return restClient.post()
+            .uri("/api/v1/agent/deny")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(body)
+            .retrieve()
+            .body(String.class);
+        } catch (Exception e) {
+            log.error("deny failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    public JsonNode listActiveAgents() {
+        try {
+            String json = restClient.get()
+            .uri("/api/v1/agent/agents")
+            .retrieve()
+            .body(String.class);
+        if (json == null || json.isBlank()) return objectMapper.createArrayNode();
+        return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("listActiveAgents failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    public JsonNode getInsights() {
+        try {
+            String json = restClient.get()
+            .uri("/api/v1/agent/insights")
+            .retrieve()
+            .body(String.class);
+        if (json == null || json.isBlank()) return objectMapper.createObjectNode();
+        return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("getInsights failed: {}", e.getMessage());
+            return objectMapper.createObjectNode();
+        }
+    }
+
     /**
      * Expose the base URL (for diagnostics/logging).
      *
