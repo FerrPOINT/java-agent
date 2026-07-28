@@ -13,6 +13,6 @@ public class TelegramClientConfig {
     public TelegramClient telegramClient(RestClient telegramRestClient,
                                           ObjectMapper objectMapper,
                                           BotProperties properties) {
-        return new TelegramClient(telegramRestClient, objectMapper, properties.getToken(), properties.getRateLimitPerSecond());
+        return new TelegramClient(telegramRestClient, objectMapper, properties.getToken(), properties.getRateLimitPerSecond(), properties.isLinkPreview());
     }
 }

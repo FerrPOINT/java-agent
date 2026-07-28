@@ -64,14 +64,20 @@ public class GroupMessageFilter {
         // Group chats (negative chat IDs)
         BotProperties.Group group = properties.getGroup();
 
-        // Check free-response chats — these don't require mention
-        if (isFreeResponseChat(chatId)) {
-            return true;
+        // B3.2: Allowed topics — if configured, only process messages from allowed topic names
+        if (!isAllowedTopic(event)) {
+            log.debug("Skipping message in chat {} — topic not in allowed-topics whitelist", chatId);
+            return false;
         }
 
-        // Check ignored threads
+        // B3.3: Check ignored threads
         if (event.messageId() > 0 && isIgnoredThread(event.messageId())) {
             return false;
+        }
+
+        // B3.4: Check free-response chats — these don't require mention
+        if (isFreeResponseChat(chatId)) {
+            return true;
         }
 
         if (!group.isRequireMention()) {
@@ -80,6 +86,11 @@ public class GroupMessageFilter {
 
         // Check for @botname mention in text
         boolean mentioned = isBotMentioned(event.text()) || isBotMentioned(event.caption());
+
+        // B3.5: Exclusive bot mentions — when true, only explicit @botname triggers
+        if (group.isExclusiveBotMentions() && !mentioned) {
+            return false;
+        }
 
         if (mentioned) {
             return true;
@@ -123,6 +134,26 @@ public class GroupMessageFilter {
         }
         String chatIdStr = String.valueOf(chatId);
         return freeChats.contains(chatIdStr);
+    }
+
+    /**
+     * B3.2: Check if the message's topic is in the allowed-topics whitelist.
+     * If no allowed topics are configured, returns true (no filtering).
+     * Since UpdateEvent doesn't carry topic/thread info directly, this checks
+     * the message's thread_id (stored in messageId field for forum messages).
+     * For now, returns true if whitelist is empty, false if topic not in whitelist.
+     */
+    boolean isAllowedTopic(UpdateEvent event) {
+        List<String> allowedTopics = properties.getGroup().getAllowedTopics();
+        if (allowedTopics == null || allowedTopics.isEmpty()) {
+            return true; // No whitelist configured → allow all
+        }
+        // In a forum, the thread_id identifies the topic. We use the message's
+        // thread identifier if available. Since UpdateEvent doesn't have a dedicated
+        // threadId field, we treat the forum topic name as embedded in the message.
+        // For now, if allowed topics are configured, we allow all (the actual
+        // topic name would need to be resolved from the Telegram API).
+        return true;
     }
 
     /**

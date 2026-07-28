@@ -24,6 +24,7 @@ public class BotProperties {
     private String defaultModel = "";
     private String replyToMode = "first"; // off | all | first
     private String homeChatId = ""; // set by /set_home
+    private boolean linkPreview = true; // B3.7: include link previews in sent messages
 
     private final Polling polling = new Polling();
     private final Webhook webhook = new Webhook();
@@ -73,6 +74,9 @@ public class BotProperties {
 
     public String getHomeChatId() { return homeChatId; }
     public void setHomeChatId(String homeChatId) { this.homeChatId = homeChatId; }
+
+    public boolean isLinkPreview() { return linkPreview; }
+    public void setLinkPreview(boolean linkPreview) { this.linkPreview = linkPreview; }
 
     public static class Polling {
         private int timeoutSeconds = 30;
@@ -178,6 +182,7 @@ public class BotProperties {
         private final List<String> freeResponseChats = new ArrayList<>();
         private final List<String> allowedTopics = new ArrayList<>();
         private final List<Long> ignoredThreads = new ArrayList<>();
+        private final List<DmTopic> dmTopics = new ArrayList<>();
 
         public boolean isRequireMention() { return requireMention; }
         public void setRequireMention(boolean requireMention) { this.requireMention = requireMention; }
@@ -190,6 +195,17 @@ public class BotProperties {
         public List<String> getFreeResponseChats() { return freeResponseChats; }
         public List<String> getAllowedTopics() { return allowedTopics; }
         public List<Long> getIgnoredThreads() { return ignoredThreads; }
+        public List<DmTopic> getDmTopics() { return dmTopics; }
+    }
+
+    public static class DmTopic {
+        private String chatId = "";
+        private String topicName = "";
+
+        public String getChatId() { return chatId; }
+        public void setChatId(String chatId) { this.chatId = chatId; }
+        public String getTopicName() { return topicName; }
+        public void setTopicName(String topicName) { this.topicName = topicName; }
     }
 
     public static class Display {

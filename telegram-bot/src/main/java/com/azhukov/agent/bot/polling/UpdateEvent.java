@@ -28,7 +28,7 @@ public record UpdateEvent(
 ) {
 
     public enum Type {
-        TEXT, COMMAND, CALLBACK_QUERY, PHOTO, DOCUMENT, VOICE, STICKER, ANIMATION, UNKNOWN
+        TEXT, COMMAND, CALLBACK_QUERY, PHOTO, DOCUMENT, VOICE, STICKER, ANIMATION, LOCATION, UNKNOWN
     }
 
     /** Compact constructor — defaults messageId=0, mediaGroupId=null for backward compatibility. */
@@ -155,6 +155,18 @@ public record UpdateEvent(
             fileType = "animation";
             Map<String, Object> anim = (Map<String, Object>) message.get("animation");
             fileId = anim != null ? (String) anim.get("file_id") : null;
+        } else if (message.containsKey("location")) {
+            // B3.6: Location message — parse lat/lon and format as text for LLM
+            type = Type.LOCATION;
+            fileType = "location";
+            Map<String, Object> location = (Map<String, Object>) message.get("location");
+            if (location != null) {
+                double lat = location.get("latitude") != null
+                    ? ((Number) location.get("latitude")).doubleValue() : 0.0;
+                double lon = location.get("longitude") != null
+                    ? ((Number) location.get("longitude")).doubleValue() : 0.0;
+                text = "Location: " + lat + ", " + lon;
+            }
         }
 
         return new UpdateEvent(updateId, type, chatId, userId,

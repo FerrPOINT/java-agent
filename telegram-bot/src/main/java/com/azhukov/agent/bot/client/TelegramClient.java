@@ -33,12 +33,18 @@ public class TelegramClient {
     private final Semaphore rateLimiter;
     private final int rateLimitPerSecond;
     private final ScheduledExecutorService rateLimitScheduler;
+    private boolean linkPreviewEnabled = true; // B3.7: default to enabling link previews
 
     public TelegramClient(RestClient restClient, ObjectMapper objectMapper, String botToken, int rateLimitPerSecond) {
+        this(restClient, objectMapper, botToken, rateLimitPerSecond, true);
+    }
+
+    public TelegramClient(RestClient restClient, ObjectMapper objectMapper, String botToken, int rateLimitPerSecond, boolean linkPreviewEnabled) {
         this.restClient = restClient;
         this.objectMapper = objectMapper;
         this.botToken = botToken != null ? botToken : "";
         this.rateLimitPerSecond = rateLimitPerSecond;
+        this.linkPreviewEnabled = linkPreviewEnabled;
         this.rateLimiter = rateLimitPerSecond > 0
                 ? new Semaphore(rateLimitPerSecond, true)
                 : null;
@@ -82,6 +88,10 @@ public class TelegramClient {
         if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
         if (replyToMessageId != null) params.put("reply_to_message_id", replyToMessageId);
         if (replyMarkup != null && !replyMarkup.isBlank()) params.put("reply_markup", replyMarkup);
+        // B3.7: Link preview options — disable preview if configured
+        if (!linkPreviewEnabled) {
+            params.put("disable_web_page_preview", true);
+        }
         Optional<TelegramResponse> response = callApi("sendMessage", params);
         if (response.isEmpty() && replyToMessageId != null) {
             // Thread fallback: retry without reply_to_message_id if "Message thread not found"
@@ -259,7 +269,7 @@ public class TelegramClient {
 
     // ─── Internal ─────────────────────────────────────────────────
 
-    Optional<TelegramResponse> callApi(String method, Map<String, Object> params) {
+    public Optional<TelegramResponse> callApi(String method, Map<String, Object> params) {
         if (botToken.isBlank()) {
             log.warn("Bot token is empty; cannot call {}", method);
             return Optional.empty();

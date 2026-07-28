@@ -83,7 +83,18 @@ public class BotLifecycleManager {
             command("branch", "Fork current session"),
             command("background", "Run prompt in background"),
             command("topic", "Manage DM topic sessions"),
-            command("set_home", "Set current chat as home channel")
+            command("set_home", "Set current chat as home channel"),
+            // Phase 3: 10 new commands (A3.1-A3.10)
+            command("voice", "Voice mode (not supported)"),
+            command("rollback", "Filesystem rollback (not available)"),
+            command("credits", "Credit balance (not available)"),
+            command("update", "Show update instructions"),
+            command("debug", "Show debug information"),
+            command("codex_runtime", "Codex runtime (not supported)"),
+            command("personality", "Personality system (not available)"),
+            command("kanban", "Kanban integration (not available)"),
+            command("goal", "Goal management (not available)"),
+            command("subgoal", "Subgoal management (not available)")
         );
 
         boolean ok = telegramClient.setMyCommands(commands);

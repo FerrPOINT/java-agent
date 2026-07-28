@@ -44,6 +44,7 @@ bot:
   working-directory: ${BOT_WORKING_DIRECTORY:${user.dir}}
   default-model: ${BOT_DEFAULT_MODEL:}
   reply-to-mode: ${BOT_REPLY_TO_MODE:first}
+  link-preview: ${BOT_LINK_PREVIEW:true}
 
   footer:
     enabled: ${BOT_FOOTER_ENABLED:false}
@@ -68,6 +69,7 @@ bot:
     free-response-chats: []
     allowed-topics: []
     ignored-threads: []
+    dm-topics: []
 
   polling:
     timeout-seconds: 30
