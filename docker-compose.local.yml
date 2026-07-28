@@ -1,4 +1,5 @@
-# Production docker-compose — standard ports
+# Local development docker-compose — all java-agent services on unique ports with prefix 18090+
+# Usage: docker compose -f docker-compose.local.yml up -d --build
 services:
   db:
     image: postgres:16-alpine
@@ -7,9 +8,9 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-project_workflow}
       POSTGRES_DB: java_agent
     volumes:
-      - java_agent_pg:/var/lib/postgresql/data
+      - java_agent_local_pg:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "18091:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U project_workflow -d java_agent"]
       interval: 5s
@@ -30,20 +31,22 @@ services:
       DB_NAME: java_agent
       DB_USER: project_workflow
       DB_PASSWORD: ${DB_PASSWORD:-project_workflow}
-      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
-      AGENT_SERVER_PORT: 8080
+      AGENT_SERVER_PORT: 18090
       AGENT_MODEL_PROVIDER: ${AGENT_MODEL_PROVIDER:-openai-compatible}
       AGENT_MODEL_BASE_URL: ${AGENT_MODEL_BASE_URL:-https://ollama.com/v1}
+      AGENT_MODEL_API_KEY: ${AGENT_MODEL_API_KEY:-}
       AGENT_MODEL_NAME: ${AGENT_MODEL_NAME:-kimi-k2.6}
       AGENT_CHROMIUM_AUTO_START: "true"
       AGENT_CHROMIUM_AUTO_INSTALL: "true"
       AGENT_BROWSER_CDP_URL: "http://localhost:9222"
+      AGENT_GATEWAY_TELEGRAM_LONG_POLLING_ENABLED: "false"
+      AGENT_GATEWAY_TELEGRAM_WEBHOOK_ENABLED: "false"
     ports:
-      - "8080:8080"
+      - "18090:18090"
     volumes:
-      - agent_chromium:/home/agent/.azhukov-agent
+      - agent_local_chromium:/home/agent/.azhukov-agent
       - ${AGENT_WORK_DIR:-./work}:/workspace
 
 volumes:
-  java_agent_pg:
-  agent_chromium:
+  java_agent_local_pg:
+  agent_local_chromium:
