@@ -51,7 +51,7 @@ public class BotLifecycleManager {
             command("stop", "Stop current turn"),
             command("help", "Show available commands"),
             command("model", "Switch model"),
-            command("memory", "Manage memory"),
+            command("memory", "Manage memory: list, pending, approve, reject, approval, add, remove"),
             command("skills", "List loaded skills"),
             command("context", "Show session context"),
             command("usage", "Show token usage"),

@@ -17,4 +17,10 @@ public interface MemoryRepository extends JpaRepository<MemoryEntity, UUID> {
     List<MemoryEntity> searchByUserId(String userId, String query, int limit);
 
     List<MemoryEntity> findByUserIdAndFactLikeIgnoreCase(String userId, String fact);
+
+    List<MemoryEntity> findByUserIdAndTargetOrderByCreatedAtDesc(String userId, String target);
+
+    List<MemoryEntity> findByUserIdAndTargetAndFactContaining(String userId, String target, String fact);
+
+    void deleteByUserIdAndTargetAndFactContaining(String userId, String target, String fact);
 }

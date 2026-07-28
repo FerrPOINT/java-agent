@@ -7,5 +7,11 @@ public record ChatResponseDto(
     UUID sessionId,
     String content,
     List<String> toolCalls,
-    boolean completed
-) {}
+    boolean completed,
+    boolean memoryUpdated
+) {
+    // Backward-compatible constructor (memoryUpdated defaults to false)
+    public ChatResponseDto(UUID sessionId, String content, List<String> toolCalls, boolean completed) {
+        this(sessionId, content, toolCalls, completed, false);
+    }
+}

@@ -1,6 +1,8 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.ActiveAgentDto;
+import com.azhukov.agent.api.dto.ApproveMemoryRequest;
+import com.azhukov.agent.api.dto.ApprovalRequest;
 import com.azhukov.agent.api.dto.ApproveRequest;
 import com.azhukov.agent.api.dto.BackgroundRequest;
 import com.azhukov.agent.api.dto.ChatRequest;
@@ -9,6 +11,9 @@ import com.azhukov.agent.api.dto.CompressRequest;
 import com.azhukov.agent.api.dto.ContextInfoDto;
 import com.azhukov.agent.api.dto.DenyRequest;
 import com.azhukov.agent.api.dto.InsightsDto;
+import com.azhukov.agent.api.dto.MemoryDto;
+import com.azhukov.agent.api.dto.PendingMemoryDto;
+import com.azhukov.agent.api.dto.RejectMemoryRequest;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.core.memory.MemoryProvider;
@@ -17,6 +22,7 @@ import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -91,6 +97,38 @@ public class AgentController {
     @GetMapping("/agent/memory")
     public List<String> memory() {
         return memoryProvider.recall("default", "", 100);
+    }
+
+    // ── Memory management endpoints (Stage 6.1-6.6) ──
+
+    @GetMapping("/agent/memory/pending/{userId}")
+    public List<PendingMemoryDto> listPendingMemory(@PathVariable String userId) {
+        return agentRuntimeService.listPendingMemory(userId);
+    }
+
+    @PostMapping("/agent/memory/approve")
+    public boolean approveMemory(@RequestBody ApproveMemoryRequest request) {
+        return agentRuntimeService.approvePendingMemory(request);
+    }
+
+    @PostMapping("/agent/memory/reject")
+    public boolean rejectMemory(@RequestBody RejectMemoryRequest request) {
+        return agentRuntimeService.rejectPendingMemory(request);
+    }
+
+    @PostMapping("/agent/memory/approval")
+    public void setApproval(@RequestBody ApprovalRequest request) {
+        agentRuntimeService.setMemoryApproval(request.enabled());
+    }
+
+    @GetMapping("/agent/memory/all/{userId}")
+    public List<MemoryDto> listAllMemory(@PathVariable String userId) {
+        return agentRuntimeService.listAllMemory(userId);
+    }
+
+    @DeleteMapping("/agent/memory/{userId}/{entryId}")
+    public void deleteMemory(@PathVariable String userId, @PathVariable UUID entryId) {
+        agentRuntimeService.deleteMemory(userId, entryId);
     }
 
     @GetMapping("/agent/skills")

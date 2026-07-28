@@ -23,6 +23,8 @@ public class MemoryEntity {
 
     private String fact;
 
+    private String target = "memory";
+
     private Instant createdAt;
 
     public UUID getId() { return id; }
@@ -35,4 +37,6 @@ public class MemoryEntity {
     public void setFact(String fact) { this.fact = fact; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+    public String getTarget() { return target; }
+    public void setTarget(String target) { this.target = target; }
 }

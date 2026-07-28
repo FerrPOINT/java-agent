@@ -3,6 +3,8 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.core.agent.AgentRuntime;
+import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.memory.WriteApprovalGate;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
@@ -10,6 +12,7 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
+import com.azhukov.agent.persistence.repository.MemoryRepository;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,6 +51,9 @@ class AgentRuntimeServiceTest {
     private SessionRepository sessionRepository;
     private MessageRepository messageRepository;
     private SessionTitleService sessionTitleService;
+    private MemoryProvider memoryProvider;
+    private MemoryRepository memoryRepository;
+    private WriteApprovalGate writeApprovalGate;
     private AgentRuntimeService agentRuntimeService;
 
     @BeforeEach
@@ -56,12 +62,18 @@ class AgentRuntimeServiceTest {
         sessionRepository = mock(SessionRepository.class);
         messageRepository = mock(MessageRepository.class);
         sessionTitleService = mock(SessionTitleService.class);
+        memoryProvider = mock(MemoryProvider.class);
+        memoryRepository = mock(MemoryRepository.class);
+        writeApprovalGate = mock(WriteApprovalGate.class);
 
         agentRuntimeService = new AgentRuntimeService(
             agentRuntime,
             sessionRepository,
             messageRepository,
-            sessionTitleService
+            sessionTitleService,
+            memoryProvider,
+            memoryRepository,
+            writeApprovalGate
         );
     }
 

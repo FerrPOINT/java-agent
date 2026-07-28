@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.memory;
 
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.memory.WriteApprovalGate;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
@@ -53,34 +54,116 @@ class MemoryToolsUnitTest {
     @Mock
     private SkillManager skillManager;
 
-    // 1. MemoryTool stores and searches memory
+    // ── MemoryTool tests (8 tests) ──
+
+    // 1. MemoryTool adds fact to memory store
     @Test
-    void memoryToolStoresFact() {
+    void memoryToolAddsFactToMemory() {
         MemoryTool tool = new MemoryTool(memoryProvider);
-        String args = "{\"action\":\"store\",\"category\":\"preferences\",\"content\":\"User prefers dark mode\",\"limit\":5}";
+        String args = "{\"action\":\"add\",\"target\":\"memory\",\"content\":\"User prefers dark mode\"}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).isEqualTo("Stored memory.");
-        verify(memoryProvider).store(USER_ID, "preferences", "User prefers dark mode");
+        assertThat(result.content()).contains("Added to memory store");
+        verify(memoryProvider).store(USER_ID, "memory", "auto", "User prefers dark mode");
     }
 
+    // 2. MemoryTool adds fact to user store
     @Test
-    void memoryToolRecallsFacts() {
+    void memoryToolAddsFactToUser() {
         MemoryTool tool = new MemoryTool(memoryProvider);
-        when(memoryProvider.recall(USER_ID, "dark mode", 3)).thenReturn(List.of("User prefers dark mode", "UI theme is dark"));
-        String args = "{\"action\":\"recall\",\"category\":\"preferences\",\"content\":\"dark mode\",\"limit\":3}";
+        String args = "{\"action\":\"add\",\"target\":\"user\",\"content\":\"Name is Alice\"}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).isEqualTo("User prefers dark mode\nUI theme is dark");
-        verify(memoryProvider).recall(USER_ID, "dark mode", 3);
-        verify(memoryProvider, never()).store(any(), any(), any());
+        verify(memoryProvider).store(USER_ID, "user", "auto", "Name is Alice");
     }
 
-    // 2. TodoTool creates/updates/lists todos
+    // 3. MemoryTool replaces fact
+    @Test
+    void memoryToolReplacesFact() {
+        MemoryTool tool = new MemoryTool(memoryProvider);
+        when(memoryProvider.replace(USER_ID, "memory", "dark mode", "User prefers light mode")).thenReturn(null);
+        String args = "{\"action\":\"replace\",\"target\":\"memory\",\"old_text\":\"dark mode\",\"content\":\"User prefers light mode\"}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        verify(memoryProvider).replace(USER_ID, "memory", "dark mode", "User prefers light mode");
+    }
+
+    // 4. MemoryTool removes fact
+    @Test
+    void memoryToolRemovesFact() {
+        MemoryTool tool = new MemoryTool(memoryProvider);
+        when(memoryProvider.remove(USER_ID, "memory", "dark mode")).thenReturn(null);
+        String args = "{\"action\":\"remove\",\"target\":\"memory\",\"old_text\":\"dark mode\"}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        verify(memoryProvider).remove(USER_ID, "memory", "dark mode");
+    }
+
+    // 5. MemoryTool reads facts
+    @Test
+    void memoryToolReadsFacts() {
+        MemoryTool tool = new MemoryTool(memoryProvider);
+        when(memoryProvider.read(USER_ID, "memory")).thenReturn("§ MEMORY\n[auto] Fact 1\n[auto] Fact 2");
+        String args = "{\"action\":\"read\",\"target\":\"memory\"}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("Fact 1");
+        verify(memoryProvider).read(USER_ID, "memory");
+    }
+
+    // 6. MemoryTool stages write when approval gate enabled
+    @Test
+    void memoryToolStagesWriteWhenGateEnabled() {
+        WriteApprovalGate gate = mock(WriteApprovalGate.class);
+        when(gate.isEnabled()).thenReturn(true);
+        when(gate.stageWrite(any(), any(), any(), any(), any(), any(), any())).thenReturn(UUID.fromString("22222222-2222-2222-2222-222222222222"));
+        MemoryTool tool = new MemoryTool(memoryProvider, gate);
+        String args = "{\"action\":\"add\",\"target\":\"memory\",\"content\":\"test fact\"}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("Staged for approval");
+        verify(gate).stageWrite(eq(USER_ID), eq("add"), eq("memory"), eq("test fact"), any(), any(), any());
+        verify(memoryProvider, never()).store(any(), any(), any(), any());
+    }
+
+    // 7. MemoryTool rejects unknown action
+    @Test
+    void memoryToolRejectsUnknownAction() {
+        MemoryTool tool = new MemoryTool(memoryProvider);
+        String args = "{\"action\":\"delete\",\"target\":\"memory\"}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Unknown action");
+    }
+
+    // 8. MemoryTool defaults target to memory
+    @Test
+    void memoryToolDefaultsTargetToMemory() {
+        MemoryTool tool = new MemoryTool(memoryProvider);
+        String args = "{\"action\":\"add\",\"content\":\"test fact\"}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        verify(memoryProvider).store(USER_ID, "memory", "auto", "test fact");
+    }
+
+    // ── TodoTool tests ──
+
     @Test
     void todoToolCreatesTodo() {
         TodoTool tool = new TodoTool(todoRepository);
@@ -133,7 +216,8 @@ class MemoryToolsUnitTest {
         assertThat(result.content()).isEqualTo("No todos.");
     }
 
-    // 3. SessionSearchTool searches messages
+    // ── SessionSearchTool tests ──
+
     @Test
     void sessionSearchToolFindsBySessionTitle() {
         SessionSearchTool tool = new SessionSearchTool(sessionRepository, messageRepository);
@@ -200,7 +284,8 @@ class MemoryToolsUnitTest {
         assertThat(result.error()).isEqualTo("Query is required");
     }
 
-    // 4. SkillViewTool returns skill content
+    // ── SkillViewTool tests ──
+
     @Test
     void skillViewToolReturnsSkillContent() {
         SkillViewTool tool = new SkillViewTool(skillManager);
@@ -225,7 +310,8 @@ class MemoryToolsUnitTest {
         assertThat(result.error()).isEqualTo("Skill not found: missing");
     }
 
-    // 5. SkillsListTool lists skills
+    // ── SkillsListTool tests ──
+
     @Test
     void skillsListToolReturnsNames() {
         SkillsListTool tool = new SkillsListTool(skillManager);
@@ -248,7 +334,8 @@ class MemoryToolsUnitTest {
         assertThat(result.content()).isEmpty();
     }
 
-    // 6. SkillManageTool creates/updates/deletes skill
+    // ── SkillManageTool tests ──
+
     @Test
     void skillManageToolCreatesSkill() {
         SkillManageTool tool = new SkillManageTool(skillManager);

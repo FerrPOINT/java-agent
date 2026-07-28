@@ -9,6 +9,7 @@ import com.azhukov.agent.core.context.ContextCompressor;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.context.ContextReferenceService;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.memory.BackgroundReviewService;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.security.*;
@@ -86,7 +87,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void agentRuntime_bean() {
-        assertThat(config.agentRuntime(mock(ModelClient.class), mock(ToolRegistry.class), mock(ToolExecutionService.class), mock(PromptBuilder.class), mock(ContextEngine.class), mock(MemoryProvider.class), mock(SkillManager.class), mock(IterationBudget.class), mock(MessageSanitizer.class), mock(ContextReferenceService.class), properties, mock(UserInputSanitizer.class), mock(ToolCallGuardrail.class), mock(TurnStateManager.class))).isNotNull();
+        assertThat(config.agentRuntime(mock(ModelClient.class), mock(ToolRegistry.class), mock(ToolExecutionService.class), mock(PromptBuilder.class), mock(ContextEngine.class), mock(MemoryProvider.class), mock(SkillManager.class), mock(IterationBudget.class), mock(MessageSanitizer.class), mock(ContextReferenceService.class), properties, mock(UserInputSanitizer.class), mock(ToolCallGuardrail.class), mock(TurnStateManager.class), mock(BackgroundReviewService.class))).isNotNull();
     }
 
     @Test

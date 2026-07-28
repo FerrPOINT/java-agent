@@ -15,7 +15,12 @@ import com.azhukov.agent.core.context.DefaultContextEngine;
 import com.azhukov.agent.core.context.DefaultContextReferenceService;
 import com.azhukov.agent.core.memory.DatabaseMemoryProvider;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.memory.MemoryStore;
+import com.azhukov.agent.core.memory.MemoryThreatScanner;
 import com.azhukov.agent.core.memory.NoOpMemoryProvider;
+import com.azhukov.agent.core.memory.WriteApprovalGate;
+import com.azhukov.agent.core.memory.BackgroundReviewService;
+import com.azhukov.agent.persistence.repository.PendingMemoryRepository;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.state.TurnStateManager;
@@ -53,6 +58,7 @@ import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.persistence.repository.SkillRepository;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.tools.memory.MemoryTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -114,10 +120,11 @@ public class AgentConfig {
                                      AgentProperties properties,
                                      UserInputSanitizer inputSanitizer,
                                      ToolCallGuardrail guardrail,
-                                     TurnStateManager turnStateManager) {
+                                     TurnStateManager turnStateManager,
+                                     BackgroundReviewService backgroundReviewService) {
         return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
             memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
-            inputSanitizer, guardrail, turnStateManager);
+            inputSanitizer, guardrail, turnStateManager, backgroundReviewService);
     }
 
     @Bean
@@ -199,6 +206,33 @@ public class AgentConfig {
     @ConditionalOnMissingBean(MemoryProvider.class)
     public MemoryProvider noOpMemoryProvider() {
         return new NoOpMemoryProvider();
+    }
+
+    @Bean
+    public MemoryThreatScanner memoryThreatScanner() {
+        return new MemoryThreatScanner();
+    }
+
+    @Bean
+    public MemoryStore memoryStore(MemoryThreatScanner threatScanner) {
+        return new MemoryStore(threatScanner);
+    }
+
+    @Bean
+    public WriteApprovalGate writeApprovalGate(PendingMemoryRepository pendingMemoryRepository,
+                                                MemoryProvider memoryProvider,
+                                                AgentProperties properties) {
+        return new WriteApprovalGate(pendingMemoryRepository, memoryProvider, properties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(BackgroundReviewService.class)
+    public BackgroundReviewService backgroundReviewService(ModelClient modelClient,
+                                                            MemoryProvider memoryProvider,
+                                                            WriteApprovalGate writeApprovalGate,
+                                                            MemoryTool memoryTool,
+                                                            AgentProperties properties) {
+        return new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
     }
 
     @Bean

@@ -14,6 +14,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 @Component
 public class DefaultContextEngine implements ContextEngine {
@@ -28,6 +30,7 @@ public class DefaultContextEngine implements ContextEngine {
     private final MessageRepository messageRepository;
     private final ContextCompressor contextCompressor;
     private final AgentProperties.ContextProperties contextProps;
+    private final java.util.Map<UUID, Map<String, String>> snapshotCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public DefaultContextEngine(MemoryProvider memoryProvider,
                                 SkillManager skillManager,
@@ -133,13 +136,36 @@ public class DefaultContextEngine implements ContextEngine {
 
     private void appendMemoryRecall(Session session, StringBuilder sb) {
         try {
-            String lastUser = findLastUserMessage(session);
-            if (lastUser == null || lastUser.isBlank()) return;
-            List<String> facts = memoryProvider.recall(session.userId(), lastUser, RECALL_LIMIT);
-            if (facts.isEmpty()) return;
-            sb.append("Relevant memory:\n");
-            for (String fact : facts) {
-                sb.append("- ").append(fact).append("\n");
+            // Use frozen snapshot — cached per session, stable for session lifetime
+            Map<String, String> snapshot = snapshotCache.computeIfAbsent(session.id(), id -> {
+                try {
+                    return memoryProvider.getSnapshot(session.userId());
+                } catch (Exception e) {
+                    log.debug("Memory snapshot failed: {}", e.getMessage());
+                    return java.util.Map.of("memory", "", "user", "");
+                }
+            });
+            String memoryBlock = snapshot.get("memory");
+            String userBlock = snapshot.get("user");
+            boolean added = false;
+            if (memoryBlock != null && !memoryBlock.isBlank()) {
+                sb.append(memoryBlock).append("\n\n");
+                added = true;
+            }
+            if (userBlock != null && !userBlock.isBlank()) {
+                sb.append(userBlock).append("\n\n");
+                added = true;
+            }
+            if (!added) {
+                // Fallback to live recall if snapshot empty
+                String lastUser = findLastUserMessage(session);
+                if (lastUser == null || lastUser.isBlank()) return;
+                List<String> facts = memoryProvider.recall(session.userId(), lastUser, RECALL_LIMIT);
+                if (facts.isEmpty()) return;
+                sb.append("Relevant memory:\n");
+                for (String fact : facts) {
+                    sb.append("- ").append(fact).append("\n");
+                }
             }
         } catch (Exception e) {
             log.debug("Memory recall failed: {}", e.getMessage());

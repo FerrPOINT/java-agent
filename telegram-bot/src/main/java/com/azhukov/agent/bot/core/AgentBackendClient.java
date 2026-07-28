@@ -74,12 +74,24 @@ public class AgentBackendClient {
 
             JsonNode node = objectMapper.readTree(responseJson);
             JsonNode responseField = node.get("response");
+            String responseText;
             if (responseField == null || responseField.isNull()) {
-                log.warn("Backend chat response missing 'response' field: {}", responseJson);
+                // Try "content" field (the actual ChatResponseDto field name)
+                responseField = node.get("content");
+            }
+            if (responseField == null || responseField.isNull()) {
+                log.warn("Backend chat response missing 'response' or 'content' field: {}", responseJson);
                 return "Error: missing 'response' field in backend reply";
             }
+            responseText = responseField.asText();
 
-            return responseField.asText();
+            // Check for memoryUpdated flag (Stage 7.3)
+            JsonNode memoryUpdatedNode = node.get("memoryUpdated");
+            if (memoryUpdatedNode != null && memoryUpdatedNode.asBoolean(false)) {
+                responseText = responseText + "\n\n💾 Self-improvement review: Memory updated";
+            }
+
+            return responseText;
         } catch (Exception e) {
             log.error("Backend chat failed for sessionId={}: {}", sessionId, e.getMessage());
             return "Error: " + e.getMessage();
@@ -526,6 +538,107 @@ public class AgentBackendClient {
         } catch (Exception e) {
             log.error("runBackground failed: {}", e.getMessage());
             return "Error: " + e.getMessage();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Memory management (Stage 7.2)
+    // ------------------------------------------------------------------
+
+    public JsonNode listPendingMemory(String userId) {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/memory/pending/{userId}", userId)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return objectMapper.createArrayNode();
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("listPendingMemory failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    public boolean approvePendingMemory(String userId, String id) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("userId", userId);
+        body.put("id", id);
+        try {
+            Boolean result = restClient.post()
+                .uri("/api/v1/agent/memory/approve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(Boolean.class);
+            return Boolean.TRUE.equals(result);
+        } catch (Exception e) {
+            log.error("approvePendingMemory failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean rejectPendingMemory(String userId, String id) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("userId", userId);
+        body.put("id", id);
+        try {
+            Boolean result = restClient.post()
+                .uri("/api/v1/agent/memory/reject")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(Boolean.class);
+            return Boolean.TRUE.equals(result);
+        } catch (Exception e) {
+            log.error("rejectPendingMemory failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    public void setMemoryApproval(boolean enabled) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("enabled", enabled);
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/memory/approval")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+        } catch (Exception e) {
+            log.error("setMemoryApproval failed: {}", e.getMessage());
+        }
+    }
+
+    public boolean isMemoryApprovalEnabled() {
+        // Query current state — no dedicated endpoint, default false
+        return false;
+    }
+
+    public JsonNode listAllMemory(String userId) {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/memory/all/{userId}", userId)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return objectMapper.createArrayNode();
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("listAllMemory failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    public boolean deleteMemory(String userId, String entryId) {
+        try {
+            restClient.delete()
+                .uri("/api/v1/agent/memory/{userId}/{entryId}", userId, entryId)
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("deleteMemory failed: {}", e.getMessage());
+            return false;
         }
     }
 

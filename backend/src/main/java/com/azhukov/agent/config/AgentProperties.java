@@ -246,6 +246,8 @@ public class AgentProperties {
         private int maxFactsPerUser = 1000;
         private int maxFactsPerQuery = 10;
         private double similarityThreshold = 0.75;
+        private boolean writeApproval = false;
+        private final BackgroundReviewProperties backgroundReview = new BackgroundReviewProperties();
 
         public int getMaxFactsPerUser() { return maxFactsPerUser; }
         public void setMaxFactsPerUser(int maxFactsPerUser) { this.maxFactsPerUser = maxFactsPerUser; }
@@ -253,6 +255,19 @@ public class AgentProperties {
         public void setMaxFactsPerQuery(int maxFactsPerQuery) { this.maxFactsPerQuery = maxFactsPerQuery; }
         public double getSimilarityThreshold() { return similarityThreshold; }
         public void setSimilarityThreshold(double similarityThreshold) { this.similarityThreshold = similarityThreshold; }
+        public boolean isWriteApproval() { return writeApproval; }
+        public void setWriteApproval(boolean writeApproval) { this.writeApproval = writeApproval; }
+        public BackgroundReviewProperties getBackgroundReview() { return backgroundReview; }
+    }
+
+    public static class BackgroundReviewProperties {
+        private boolean enabled = true;
+        private int delayMs = 2000;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getDelayMs() { return delayMs; }
+        public void setDelayMs(int delayMs) { this.delayMs = delayMs; }
     }
 
     public static class SkillsProperties {

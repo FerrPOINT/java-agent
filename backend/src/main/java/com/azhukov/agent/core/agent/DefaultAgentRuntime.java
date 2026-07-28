@@ -7,6 +7,7 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.context.ContextReferenceService;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.memory.BackgroundReviewService;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
@@ -52,6 +53,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final UserInputSanitizer inputSanitizer;
     private final ToolCallGuardrail guardrail;
     private final TurnStateManager turnStateManager;
+    private final BackgroundReviewService backgroundReviewService;
 
     public DefaultAgentRuntime(ModelClient modelClient, ToolRegistry toolRegistry,
                                ToolExecutionService toolExecutionService,
@@ -63,7 +65,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                                AgentProperties properties,
                                UserInputSanitizer inputSanitizer,
                                ToolCallGuardrail guardrail,
-                               TurnStateManager turnStateManager) {
+                               TurnStateManager turnStateManager,
+                               BackgroundReviewService backgroundReviewService) {
         this.modelClient = modelClient;
         this.toolRegistry = toolRegistry;
         this.toolExecutionService = toolExecutionService;
@@ -78,6 +81,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         this.inputSanitizer = inputSanitizer;
         this.guardrail = guardrail;
         this.turnStateManager = turnStateManager;
+        this.backgroundReviewService = backgroundReviewService;
     }
 
     @Override
@@ -148,6 +152,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             if (!response.hasToolCalls()) {
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
                 log.debug("Turn {} completed without tool calls", i);
+                triggerBackgroundReview(session, turnMessages);
                 return new TurnResult(turnMessages, true, null);
             }
 
@@ -170,6 +175,17 @@ public class DefaultAgentRuntime implements AgentRuntime {
         }
 
         return TurnResult.error("Reached max turns without completion");
+    }
+
+    private void triggerBackgroundReview(Session session, List<Message> turnMessages) {
+        try {
+            if (backgroundReviewService != null) {
+                backgroundReviewService.clearFlag(session.id());
+                backgroundReviewService.reviewTurn(session.id(), turnMessages);
+            }
+        } catch (Exception e) {
+            log.debug("Background review trigger failed: {}", e.getMessage());
+        }
     }
 
     private String formatResult(ToolResult result) {

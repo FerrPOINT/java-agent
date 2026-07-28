@@ -1,19 +1,27 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.ActiveAgentDto;
+import com.azhukov.agent.api.dto.ApproveMemoryRequest;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.ContextInfoDto;
 import com.azhukov.agent.api.dto.InsightsDto;
+import com.azhukov.agent.api.dto.MemoryDto;
+import com.azhukov.agent.api.dto.PendingMemoryDto;
+import com.azhukov.agent.api.dto.RejectMemoryRequest;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.core.agent.AgentRuntime;
+import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.memory.WriteApprovalGate;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.TurnResult;
+import com.azhukov.agent.persistence.entity.MemoryEntity;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
+import com.azhukov.agent.persistence.repository.MemoryRepository;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.springframework.stereotype.Service;
@@ -32,15 +40,24 @@ public class AgentRuntimeService {
     private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
     private final SessionTitleService sessionTitleService;
+    private final MemoryProvider memoryProvider;
+    private final MemoryRepository memoryRepository;
+    private final WriteApprovalGate writeApprovalGate;
 
     public AgentRuntimeService(AgentRuntime agentRuntime,
                                SessionRepository sessionRepository,
                                MessageRepository messageRepository,
-                               SessionTitleService sessionTitleService) {
+                               SessionTitleService sessionTitleService,
+                               MemoryProvider memoryProvider,
+                               MemoryRepository memoryRepository,
+                               WriteApprovalGate writeApprovalGate) {
         this.agentRuntime = agentRuntime;
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.sessionTitleService = sessionTitleService;
+        this.memoryProvider = memoryProvider;
+        this.memoryRepository = memoryRepository;
+        this.writeApprovalGate = writeApprovalGate;
     }
 
     @Transactional
@@ -237,6 +254,49 @@ public class AgentRuntimeService {
         TurnResult result = agentRuntime.runTurn(session, prompt);
         persistMessages(session.id(), result.messages());
         return session.id().toString();
+    }
+
+    // ── Memory management methods (Stage 6.8) ──
+
+    @Transactional(readOnly = true)
+    public List<PendingMemoryDto> listPendingMemory(String userId) {
+        return writeApprovalGate.listPending(userId).stream()
+            .map(e -> new PendingMemoryDto(e.getId(), e.getUserId(), e.getAction(), e.getTarget(),
+                e.getContent(), e.getOldText(), e.getSummary(), e.getOrigin(), e.getStatus(),
+                e.getCreatedAt(), e.getResolvedAt()))
+            .toList();
+    }
+
+    @Transactional
+    public boolean approvePendingMemory(ApproveMemoryRequest request) {
+        return writeApprovalGate.approve(request.userId(), request.id());
+    }
+
+    @Transactional
+    public boolean rejectPendingMemory(RejectMemoryRequest request) {
+        return writeApprovalGate.reject(request.userId(), request.id());
+    }
+
+    @Transactional
+    public void setMemoryApproval(boolean enabled) {
+        writeApprovalGate.setApproval(enabled);
+    }
+
+    @Transactional(readOnly = true)
+    public List<MemoryDto> listAllMemory(String userId) {
+        return memoryRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
+            .map(e -> new MemoryDto(e.getId(), e.getUserId(), e.getCategory(), e.getFact(),
+                e.getTarget(), e.getCreatedAt()))
+            .toList();
+    }
+
+    @Transactional
+    public void deleteMemory(String userId, UUID entryId) {
+        memoryRepository.findById(entryId).ifPresent(e -> {
+            if (e.getUserId().equals(userId)) {
+                memoryRepository.delete(e);
+            }
+        });
     }
 
     private Session createSession(String userId, String provider, String modelName) {

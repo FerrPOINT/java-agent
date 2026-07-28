@@ -69,7 +69,7 @@ class AgentRuntimeUnitTest {
             new DefaultIterationBudget(properties),
             new com.azhukov.agent.security.MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
-            new DefaultToolCallGuardrail(properties), new TurnStateManager()
+            new DefaultToolCallGuardrail(properties), new TurnStateManager(), null
         );
 
         var result = runtime.runTurn(session, "hi");
