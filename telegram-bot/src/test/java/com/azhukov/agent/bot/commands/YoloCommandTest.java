@@ -4,16 +4,25 @@ import com.azhukov.agent.bot.commands.impl.YoloCommand;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.UpdateEvent.Type;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import com.azhukov.agent.bot.session.BotSessionStore;
 import org.junit.jupiter.api.Test;
 
+import java.util.UUID;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class YoloCommandTest {
 
     @Test
     void toggleOffToOn_returnsEnabled() {
-        var cmd = new YoloCommand();
+        BotSessionStore store = mock(BotSessionStore.class);
+        when(store.toggleYolo(any(UUID.class))).thenReturn(true);
+        var cmd = new YoloCommand(store);
         BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
         session.setYoloMode(false);
         UpdateEvent event = makeEvent();
         String result = cmd.handle(event, session);
@@ -22,8 +31,11 @@ class YoloCommandTest {
 
     @Test
     void toggleOnToOff_returnsDisabled() {
-        var cmd = new YoloCommand();
+        BotSessionStore store = mock(BotSessionStore.class);
+        when(store.toggleYolo(any(UUID.class))).thenReturn(false);
+        var cmd = new YoloCommand(store);
         BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
         session.setYoloMode(true);
         UpdateEvent event = makeEvent();
         String result = cmd.handle(event, session);
@@ -32,7 +44,7 @@ class YoloCommandTest {
 
     @Test
     void nullSession_returnsNoActiveSession() {
-        var cmd = new YoloCommand();
+        var cmd = new YoloCommand(mock(BotSessionStore.class));
         UpdateEvent event = makeEvent();
         String result = cmd.handle(event, null);
         assertThat(result).contains("No active session");
@@ -40,7 +52,7 @@ class YoloCommandTest {
 
     @Test
     void nameAndDescription_correct() {
-        var cmd = new YoloCommand();
+        var cmd = new YoloCommand(mock(BotSessionStore.class));
         assertThat(cmd.name()).isEqualTo("yolo");
         assertThat(cmd.description()).isNotBlank();
     }

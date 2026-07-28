@@ -2,7 +2,9 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.api.dto.ContextInfoDto;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
+import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
@@ -18,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class AgentRuntimeService {
@@ -76,6 +79,51 @@ public class AgentRuntimeService {
     @Transactional(readOnly = true)
     public List<SessionSummaryDto> listSessions() {
         return sessionRepository.findAllByUserId("user-1").stream()
+            .map(e -> new SessionSummaryDto(
+                e.getId(),
+                e.getUserId(),
+                e.getTitle(),
+                e.getModelProvider(),
+                e.getModelName(),
+                e.getCreatedAt(),
+                e.getUpdatedAt()
+            ))
+            .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public ContextInfoDto getContext(UUID sessionId) {
+        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        int messageCount = messages.size();
+        int tokenEstimate = messages.stream()
+            .mapToInt(m -> m.getContent() != null ? m.getContent().length() : 0)
+            .sum() / 4;
+        List<String> toolsUsed = messages.stream()
+            .map(MessageEntity::getToolCallName)
+            .filter(name -> name != null && !name.isBlank())
+            .distinct()
+            .collect(Collectors.toList());
+        return new ContextInfoDto(sessionId, messageCount, tokenEstimate, toolsUsed);
+    }
+
+    @Transactional
+    public void resetSession(UUID sessionId) {
+        messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
+    }
+
+    @Transactional(readOnly = true)
+    public UsageDto getUsage(UUID sessionId) {
+        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        int messageCount = messages.size();
+        int tokenEstimate = messages.stream()
+            .mapToInt(m -> m.getContent() != null ? m.getContent().length() : 0)
+            .sum() / 4;
+        return new UsageDto(sessionId, messageCount, tokenEstimate);
+    }
+
+    @Transactional(readOnly = true)
+    public List<SessionSummaryDto> listSessionsByUserId(String userId) {
+        return sessionRepository.findAllByUserId(userId).stream()
             .map(e -> new SessionSummaryDto(
                 e.getId(),
                 e.getUserId(),

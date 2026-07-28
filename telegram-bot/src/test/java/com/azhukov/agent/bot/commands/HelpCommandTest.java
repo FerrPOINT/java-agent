@@ -4,9 +4,11 @@ import com.azhukov.agent.bot.commands.impl.HelpCommand;
 import com.azhukov.agent.bot.commands.impl.NewSessionCommand;
 import com.azhukov.agent.bot.commands.impl.StatusCommand;
 import com.azhukov.agent.bot.commands.impl.YoloCommand;
+import com.azhukov.agent.bot.config.BotProperties;
+import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.UpdateEvent.Type;
-import com.azhukov.agent.bot.session.BotSessionEntity;
+import com.azhukov.agent.bot.session.BotSessionStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
@@ -24,9 +26,9 @@ class HelpCommandTest {
 
         CommandRegistry registry = new CommandRegistry(java.util.List.of(
             helpCommand,
-            new NewSessionCommand(),
-            new StatusCommand(),
-            new YoloCommand()
+            new NewSessionCommand(mock(BotSessionStore.class), mock(AgentBackendClient.class)),
+            new StatusCommand(new BotProperties(), mock(AgentBackendClient.class)),
+            new YoloCommand(mock(BotSessionStore.class))
         ));
         when(provider.getIfAvailable()).thenReturn(registry);
 

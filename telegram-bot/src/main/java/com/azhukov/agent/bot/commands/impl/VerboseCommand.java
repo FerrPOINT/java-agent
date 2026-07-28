@@ -3,10 +3,17 @@ package com.azhukov.agent.bot.commands.impl;
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import com.azhukov.agent.bot.session.BotSessionStore;
 import org.springframework.stereotype.Component;
 
 @Component
 public class VerboseCommand implements CommandHandler {
+
+    private final BotSessionStore store;
+
+    public VerboseCommand(BotSessionStore store) {
+        this.store = store;
+    }
 
     @Override
     public String name() {
@@ -20,10 +27,10 @@ public class VerboseCommand implements CommandHandler {
 
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
-        if (session == null) {
+        if (session == null || session.getId() == null) {
             return "No active session.";
         }
-        boolean newState = !session.isVerboseMode();
+        boolean newState = store.toggleVerbose(session.getId());
         return "Verbose mode " + (newState ? "enabled" : "disabled") + ".";
     }
 }

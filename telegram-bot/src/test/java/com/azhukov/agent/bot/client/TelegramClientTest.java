@@ -30,7 +30,7 @@ class TelegramClientTest {
         RestClient restClient = RestClient.builder()
             .requestInterceptor(interceptor)
             .build();
-        client = new TelegramClient(restClient, new ObjectMapper(), "test-token");
+        client = new TelegramClient(restClient, new ObjectMapper(), "test-token", 25);
     }
 
     @Test
@@ -95,7 +95,7 @@ class TelegramClientTest {
 
     @Test
     void emptyToken_returnsEmpty() {
-        client = new TelegramClient(RestClient.create(), new ObjectMapper(), "");
+        client = new TelegramClient(RestClient.create(), new ObjectMapper(), "", 25);
         Optional<Long> result = client.sendMessage(123, "test");
         assertThat(result).isEmpty();
     }

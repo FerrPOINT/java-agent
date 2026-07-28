@@ -1,19 +1,31 @@
 package com.azhukov.agent.bot.commands;
 
 import com.azhukov.agent.bot.commands.impl.ModelCommand;
+import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.UpdateEvent.Type;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import com.azhukov.agent.bot.session.BotSessionStore;
 import org.junit.jupiter.api.Test;
 
+import java.util.UUID;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ModelCommandTest {
 
     @Test
     void noArgs_showsCurrentModel() {
-        var cmd = new ModelCommand();
+        BotSessionStore store = mock(BotSessionStore.class);
+        BotProperties properties = new BotProperties();
+        var cmd = new ModelCommand(store, properties);
         BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
         session.setModelOverride("gpt-4o");
         UpdateEvent event = makeEvent("");
         String result = cmd.handle(event, session);
@@ -22,8 +34,11 @@ class ModelCommandTest {
 
     @Test
     void noArgsNoOverride_showsDefault() {
-        var cmd = new ModelCommand();
+        BotSessionStore store = mock(BotSessionStore.class);
+        BotProperties properties = new BotProperties();
+        var cmd = new ModelCommand(store, properties);
         BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
         UpdateEvent event = makeEvent("");
         String result = cmd.handle(event, session);
         assertThat(result).contains("default");
@@ -31,15 +46,20 @@ class ModelCommandTest {
 
     @Test
     void withArgs_setsModel() {
-        var cmd = new ModelCommand();
+        BotSessionStore store = mock(BotSessionStore.class);
+        doNothing().when(store).setModelOverride(any(UUID.class), eq("claude-3-opus"));
+        BotProperties properties = new BotProperties();
+        var cmd = new ModelCommand(store, properties);
+        BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
         UpdateEvent event = makeEvent("claude-3-opus");
-        String result = cmd.handle(event, new BotSessionEntity());
+        String result = cmd.handle(event, session);
         assertThat(result).contains("claude-3-opus");
     }
 
     @Test
     void nameAndDescription_correct() {
-        var cmd = new ModelCommand();
+        var cmd = new ModelCommand(mock(BotSessionStore.class), new BotProperties());
         assertThat(cmd.name()).isEqualTo("model");
         assertThat(cmd.description()).isNotBlank();
     }

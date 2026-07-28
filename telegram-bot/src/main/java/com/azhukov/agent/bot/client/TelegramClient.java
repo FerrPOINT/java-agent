@@ -13,6 +13,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Typed wrapper around the Telegram Bot API.
@@ -26,11 +30,42 @@ public class TelegramClient {
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final String botToken;
+    private final Semaphore rateLimiter;
+    private final int rateLimitPerSecond;
+    private final ScheduledExecutorService rateLimitScheduler;
 
-    public TelegramClient(RestClient restClient, ObjectMapper objectMapper, String botToken) {
+    public TelegramClient(RestClient restClient, ObjectMapper objectMapper, String botToken, int rateLimitPerSecond) {
         this.restClient = restClient;
         this.objectMapper = objectMapper;
         this.botToken = botToken != null ? botToken : "";
+        this.rateLimitPerSecond = rateLimitPerSecond;
+        this.rateLimiter = rateLimitPerSecond > 0
+                ? new Semaphore(rateLimitPerSecond, true)
+                : null;
+        this.rateLimitScheduler = Executors.newScheduledThreadPool(1, r -> {
+            Thread t = new Thread(r, "tg-rate-limiter");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    private void acquireRateLimit() {
+        if (rateLimiter != null) {
+            try {
+                if (!rateLimiter.tryAcquire(5, TimeUnit.SECONDS)) {
+                    log.warn("Rate limit exceeded, proceeding anyway");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("Rate limit acquire interrupted, proceeding anyway");
+            }
+        }
+    }
+
+    private void releaseRateLimit() {
+        if (rateLimiter != null) {
+            rateLimitScheduler.schedule(() -> rateLimiter.release(), 1, TimeUnit.SECONDS);
+        }
     }
 
     // ─── Text messages ────────────────────────────────────────────
@@ -197,6 +232,7 @@ public class TelegramClient {
             log.warn("Bot token is empty; cannot call {}", method);
             return Optional.empty();
         }
+        acquireRateLimit();
         try {
             TelegramResponse response = restClient.post()
                 .uri("/bot{token}/{method}", botToken, method)
@@ -212,6 +248,8 @@ public class TelegramClient {
         } catch (Exception e) {
             log.warn("Telegram {} exception: {}", method, e.getMessage());
             return Optional.empty();
+        } finally {
+            releaseRateLimit();
         }
     }
 
@@ -220,6 +258,7 @@ public class TelegramClient {
             log.warn("Bot token is empty; cannot call {}", method);
             return Optional.empty();
         }
+        acquireRateLimit();
         try {
             TelegramResponse response = restClient.post()
                 .uri("/bot{token}/{method}", botToken, method)
@@ -235,6 +274,8 @@ public class TelegramClient {
         } catch (Exception e) {
             log.warn("Telegram {} (multipart) exception: {}", method, e.getMessage());
             return Optional.empty();
+        } finally {
+            releaseRateLimit();
         }
     }
 }

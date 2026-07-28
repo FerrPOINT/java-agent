@@ -3,6 +3,8 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
+import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,11 +44,18 @@ class AgentControllerTest {
     @Mock
     private AgentStreamingService streamingService;
 
+    @Mock
+    private MemoryProvider memoryProvider;
+
+    @Mock
+    private SkillManager skillManager;
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
 
-        AgentController controller = new AgentController(agentRuntimeService, streamingService);
+        AgentController controller = new AgentController(agentRuntimeService, streamingService,
+            memoryProvider, skillManager);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

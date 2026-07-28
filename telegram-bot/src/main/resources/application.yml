@@ -41,6 +41,8 @@ bot:
   parse-mode: MarkdownV2
   register-commands: true
   rate-limit-per-second: 25
+  working-directory: ${BOT_WORKING_DIRECTORY:${user.dir}}
+  default-model: ${BOT_DEFAULT_MODEL:}
 
   polling:
     timeout-seconds: 30

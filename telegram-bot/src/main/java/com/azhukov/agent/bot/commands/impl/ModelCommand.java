@@ -1,12 +1,22 @@
 package com.azhukov.agent.bot.commands.impl;
 
 import com.azhukov.agent.bot.commands.CommandHandler;
+import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import com.azhukov.agent.bot.session.BotSessionStore;
 import org.springframework.stereotype.Component;
 
 @Component
 public class ModelCommand implements CommandHandler {
+
+    private final BotSessionStore store;
+    private final BotProperties properties;
+
+    public ModelCommand(BotSessionStore store, BotProperties properties) {
+        this.store = store;
+        this.properties = properties;
+    }
 
     @Override
     public String name() {
@@ -20,13 +30,26 @@ public class ModelCommand implements CommandHandler {
 
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
+        if (session == null || session.getId() == null) {
+            return "No active session.";
+        }
         String args = event.commandArgs();
         if (args == null || args.isBlank()) {
-            if (session != null && session.getModelOverride() != null) {
-                return "Current model: " + session.getModelOverride();
+            String model = session.getModelOverride();
+            if (model == null) {
+                model = properties.getDefaultModel();
             }
-            return "Current model: default. Usage: /model <name> to set, /model to clear.";
+            if (model == null || model.isBlank()) {
+                model = "default";
+            }
+            return "Current model: " + model;
         }
-        return "Model set to: " + args;
+        String trimmed = args.trim();
+        if ("default".equalsIgnoreCase(trimmed) || "reset".equalsIgnoreCase(trimmed)) {
+            store.setModelOverride(session.getId(), null);
+            return "Model reset to default.";
+        }
+        store.setModelOverride(session.getId(), trimmed);
+        return "Model set to: " + trimmed;
     }
 }

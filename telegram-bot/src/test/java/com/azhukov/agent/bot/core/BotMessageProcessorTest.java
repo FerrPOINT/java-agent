@@ -6,10 +6,12 @@ import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.commands.CommandRegistry;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
+import com.azhukov.agent.bot.media.InboundMediaHandler;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
 import com.azhukov.agent.bot.session.BusySessionHandler;
+import com.azhukov.agent.bot.streaming.StreamEditor;
 import com.azhukov.agent.bot.typing.TypingManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -33,6 +36,8 @@ class BotMessageProcessorTest {
     private CommandRegistry commandRegistry;
     private CallbackQueryHandler callbackQueryHandler;
     private BotProperties properties;
+    private StreamEditor streamEditor;
+    private InboundMediaHandler inboundMediaHandler;
     private BotMessageProcessor processor;
 
     @BeforeEach
@@ -48,10 +53,12 @@ class BotMessageProcessorTest {
         properties = new BotProperties();
         properties.setParseMode("MarkdownV2");
         properties.setBusyMode("queue");
+        streamEditor = mock(StreamEditor.class);
+        inboundMediaHandler = mock(InboundMediaHandler.class);
 
         processor = new BotMessageProcessor(telegramClient, authorizationService, sessionStore,
             busyHandler, typingManager, backendClient, commandRegistry,
-            callbackQueryHandler, properties);
+            callbackQueryHandler, properties, streamEditor, inboundMediaHandler);
 
         // Default: authorized
         when(authorizationService.isAuthorized(any(UpdateEvent.class))).thenReturn(true);
@@ -64,6 +71,27 @@ class BotMessageProcessorTest {
         // Default: sendMessage returns a message ID
         when(telegramClient.sendMessage(anyLong(), anyString())).thenReturn(Optional.of(1L));
         when(telegramClient.sendMessage(anyLong(), anyString(), anyString(), any(), any())).thenReturn(Optional.of(1L));
+        // Default: streamEditor stubs
+        when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(1L));
+        when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString())).thenReturn(true);
+        when(streamEditor.editStream(anyLong(), anyLong(), anyString())).thenReturn(true);
+        // Default: inboundMediaHandler returns empty (falls back to placeholder)
+        when(inboundMediaHandler.handle(any(UpdateEvent.class))).thenReturn(Optional.empty());
+    }
+
+    // ─── Helpers ───────────────────────────────────────────────────
+
+    @SuppressWarnings("unchecked")
+    private void mockChatStream(String... tokens) {
+        doAnswer(inv -> {
+            Consumer<String> tokenConsumer = inv.getArgument(2);
+            Runnable onComplete = inv.getArgument(3);
+            for (String token : tokens) {
+                tokenConsumer.accept(token);
+            }
+            onComplete.run();
+            return null;
+        }).when(backendClient).chatStream(anyString(), anyString(), any(), any(), any());
     }
 
     // ─── Text message flow ─────────────────────────────────────────
@@ -71,12 +99,12 @@ class BotMessageProcessorTest {
     @Test
     void accept_textMessage_callsBackendAndSendsResponse() {
         UpdateEvent event = textEvent(1L, "Hello agent");
-        when(backendClient.chat(eq("Hello agent"), anyString())).thenReturn("Hello human!");
+        mockChatStream("Hello human!");
 
         processor.accept(event);
 
         verify(typingManager).startTyping(event.chatId());
-        verify(backendClient).chat(eq("Hello agent"), anyString());
+        verify(backendClient).chatStream(eq("Hello agent"), anyString(), any(), any(), any());
         verify(typingManager).stopTyping(event.chatId());
         verify(busyHandler).markBusy(event.chatId());
         verify(busyHandler).markFree(event.chatId());
@@ -86,7 +114,7 @@ class BotMessageProcessorTest {
     @Test
     void accept_textMessage_resolvesSession() {
         UpdateEvent event = textEvent(1L, "Hello");
-        when(backendClient.chat(anyString(), anyString())).thenReturn("OK");
+        mockChatStream("OK");
 
         processor.accept(event);
 
@@ -102,11 +130,11 @@ class BotMessageProcessorTest {
         UpdateEvent event = new UpdateEvent(1L, UpdateEvent.Type.PHOTO, 100L, 200L,
             "jdoe", null, "Photo caption text", "file123", "photo",
             null, null, null, false, null, null);
-        when(backendClient.chat(eq("Photo caption text"), anyString())).thenReturn("Nice photo!");
+        mockChatStream("Nice photo!");
 
         processor.accept(event);
 
-        verify(backendClient).chat(eq("Photo caption text"), anyString());
+        verify(backendClient).chatStream(eq("Photo caption text"), anyString(), any(), any(), any());
         verify(telegramClient).sendMessage(eq(100L), anyString(), eq("MarkdownV2"), isNull(), isNull());
     }
 
@@ -115,11 +143,11 @@ class BotMessageProcessorTest {
         UpdateEvent event = new UpdateEvent(1L, UpdateEvent.Type.PHOTO, 100L, 200L,
             "jdoe", null, null, "file123", "photo",
             null, null, null, false, null, null);
-        when(backendClient.chat(anyString(), anyString())).thenReturn("Got it");
+        mockChatStream("Got it");
 
         processor.accept(event);
 
-        verify(backendClient).chat(eq("[Media attachment: photo]"), anyString());
+        verify(backendClient).chatStream(eq("[Media attachment: photo]"), anyString(), any(), any(), any());
     }
 
     // ─── Command flow ──────────────────────────────────────────────
@@ -219,7 +247,7 @@ class BotMessageProcessorTest {
         UpdateEvent event = textEvent(1L, "Hello");
         when(busyHandler.isBusy(event.chatId())).thenReturn(true);
         when(busyHandler.getBusyMode()).thenReturn("interrupt");
-        when(backendClient.chat(anyString(), anyString())).thenReturn("Response");
+        mockChatStream("Response");
 
         // In interrupt mode, the processor still marks busy and processes
         // (the interrupt signals to the in-flight turn, but we let the new
@@ -228,14 +256,14 @@ class BotMessageProcessorTest {
 
         verify(busyHandler).interrupt(event.chatId());
         // The message still goes through the backend call
-        verify(backendClient).chat(eq("Hello"), anyString());
+        verify(backendClient).chatStream(eq("Hello"), anyString(), any(), any(), any());
     }
 
     @Test
     void accept_afterProcessing_drainsQueuedMessages() {
         UpdateEvent event = textEvent(1L, "Hello");
         when(busyHandler.isBusy(event.chatId())).thenReturn(false);
-        when(backendClient.chat(anyString(), anyString())).thenReturn("Response");
+        mockChatStream("Response");
         when(busyHandler.hasQueued(event.chatId())).thenReturn(true);
         when(busyHandler.drainQueue(event.chatId())).thenReturn(List.of());
 
@@ -249,7 +277,7 @@ class BotMessageProcessorTest {
     void accept_noQueuedMessages_doesNotDrain() {
         UpdateEvent event = textEvent(1L, "Hello");
         when(busyHandler.isBusy(event.chatId())).thenReturn(false);
-        when(backendClient.chat(anyString(), anyString())).thenReturn("Response");
+        mockChatStream("Response");
         when(busyHandler.hasQueued(event.chatId())).thenReturn(false);
 
         processor.accept(event);
@@ -262,6 +290,9 @@ class BotMessageProcessorTest {
     @Test
     void accept_backendException_sendsErrorMessage() {
         UpdateEvent event = textEvent(1L, "Hello");
+        doAnswer(inv -> {
+            throw new RuntimeException("Backend down");
+        }).when(backendClient).chatStream(anyString(), anyString(), any(), any(), any());
         when(backendClient.chat(anyString(), anyString()))
             .thenThrow(new RuntimeException("Backend down"));
 
@@ -288,8 +319,7 @@ class BotMessageProcessorTest {
     @Test
     void accept_backendReturnsErrorString_stillSendsFormatted() {
         UpdateEvent event = textEvent(1L, "Hello");
-        when(backendClient.chat(anyString(), anyString()))
-            .thenReturn("Error: something went wrong");
+        mockChatStream("Error: something went wrong");
 
         processor.accept(event);
 

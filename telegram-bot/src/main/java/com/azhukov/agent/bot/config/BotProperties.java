@@ -20,6 +20,8 @@ public class BotProperties {
     private String parseMode = "MarkdownV2"; // MarkdownV2 | HTML
     private boolean registerCommands = true;
     private int rateLimitPerSecond = 25;
+    private String workingDirectory = System.getProperty("user.dir");
+    private String defaultModel = "";
 
     private final Polling polling = new Polling();
     private final Webhook webhook = new Webhook();
@@ -47,6 +49,10 @@ public class BotProperties {
     public void setRegisterCommands(boolean registerCommands) { this.registerCommands = registerCommands; }
     public int getRateLimitPerSecond() { return rateLimitPerSecond; }
     public void setRateLimitPerSecond(int rateLimitPerSecond) { this.rateLimitPerSecond = rateLimitPerSecond; }
+    public String getWorkingDirectory() { return workingDirectory; }
+    public void setWorkingDirectory(String workingDirectory) { this.workingDirectory = workingDirectory; }
+    public String getDefaultModel() { return defaultModel; }
+    public void setDefaultModel(String defaultModel) { this.defaultModel = defaultModel; }
     public Polling getPolling() { return polling; }
     public Webhook getWebhook() { return webhook; }
     public Auth getAuth() { return auth; }
