@@ -63,12 +63,36 @@ public class TelegramAdapter implements BasePlatformAdapter {
 
     @Override
     public CompletableFuture<SendResult> sendImage(SessionSource target, byte[] image, String caption) {
-        return CompletableFuture.completedFuture(new SendResult(true, "stub-image", null));
+        if (!connected) {
+            return CompletableFuture.completedFuture(new SendResult(false, null, "Not connected"));
+        }
+        long chatId = extractChatId(target);
+        if (chatId == 0L) {
+            return CompletableFuture.completedFuture(new SendResult(false, null, "No chat_id in target"));
+        }
+        return CompletableFuture.supplyAsync(() -> {
+            var messageId = botApiClient.sendPhoto(chatId, image, caption);
+            return messageId
+                .map(id -> new SendResult(true, id, null))
+                .orElseGet(() -> new SendResult(false, null, "Telegram sendPhoto failed"));
+        });
     }
 
     @Override
     public CompletableFuture<SendResult> sendDocument(SessionSource target, byte[] document, String fileName, String caption) {
-        return CompletableFuture.completedFuture(new SendResult(true, "stub-doc", null));
+        if (!connected) {
+            return CompletableFuture.completedFuture(new SendResult(false, null, "Not connected"));
+        }
+        long chatId = extractChatId(target);
+        if (chatId == 0L) {
+            return CompletableFuture.completedFuture(new SendResult(false, null, "No chat_id in target"));
+        }
+        return CompletableFuture.supplyAsync(() -> {
+            var messageId = botApiClient.sendDocument(chatId, document, fileName, caption);
+            return messageId
+                .map(id -> new SendResult(true, id, null))
+                .orElseGet(() -> new SendResult(false, null, "Telegram sendDocument failed"));
+        });
     }
 
     @Override
