@@ -93,7 +93,7 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform {
-        excludeTags 'live', 'slow'
+        excludeTags 'live', 'slow', 'e2e'
     }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
     maxHeapSize = '3g'

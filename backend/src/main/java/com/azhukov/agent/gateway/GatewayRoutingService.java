@@ -45,6 +45,14 @@ public class GatewayRoutingService {
         return adapter.send(target, text);
     }
 
+    public CompletableFuture<SendResult> sendTyping(Platform platform, SessionSource target) {
+        BasePlatformAdapter adapter = adapters.get(platform);
+        if (adapter == null) {
+            return CompletableFuture.completedFuture(new SendResult(false, null, "Platform not registered"));
+        }
+        return adapter.sendTyping(target);
+    }
+
     public void dispatchInbound(MessageEvent event) {
         messageHandler.accept(event);
     }

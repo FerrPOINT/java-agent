@@ -71,6 +71,9 @@ public class TelegramLongPollingService {
             log.warn("Telegram long polling not started: bot token is empty");
             return;
         }
+        // Connect the Telegram adapter so it can send responses back
+        routingService.connect(new com.azhukov.agent.gateway.model.PlatformConfig(
+            com.azhukov.agent.gateway.model.Platform.TELEGRAM, true, java.util.Map.of(), java.util.Map.of()));
         running.set(true);
         executor.submit(this::pollLoop);
         log.info("Telegram long polling started with token prefix={} and timeout={}s",

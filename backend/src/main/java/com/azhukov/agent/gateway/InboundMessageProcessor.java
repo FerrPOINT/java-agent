@@ -42,6 +42,8 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
         }
 
         try {
+            // Send typing indicator before LLM call (Telegram shows it for ~5s)
+            routingServiceProvider.getIfAvailable().sendTyping(source.platform(), source);
             Session session = sessionResolver.resolve(source);
             var turnResult = agentRuntime.runTurn(session, event.text(), List.of());
             String response = turnResult.finalText();
