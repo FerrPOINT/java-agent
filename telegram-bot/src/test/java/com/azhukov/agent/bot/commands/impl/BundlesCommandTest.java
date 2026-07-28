@@ -47,6 +47,47 @@ class BundlesCommandTest {
     }
 
     @Test
+    void handle_install_callsInstallBundle() {
+        AgentBackendClient client = mock(AgentBackendClient.class);
+        when(client.installBundle("my-bundle")).thenReturn("Bundle installed: my-bundle");
+
+        var cmd = new BundlesCommand(client);
+        UpdateEvent event = makeEvent("install my-bundle");
+
+        String result = cmd.handle(event, null);
+
+        assertThat(result).isEqualTo("Bundle installed: my-bundle");
+        verify(client).installBundle("my-bundle");
+        verify(client, never()).listBundles();
+    }
+
+    @Test
+    void handle_uninstall_callsUninstallBundle() {
+        AgentBackendClient client = mock(AgentBackendClient.class);
+        when(client.uninstallBundle("my-bundle")).thenReturn("Bundle uninstalled: my-bundle");
+
+        var cmd = new BundlesCommand(client);
+        UpdateEvent event = makeEvent("uninstall my-bundle");
+
+        String result = cmd.handle(event, null);
+
+        assertThat(result).isEqualTo("Bundle uninstalled: my-bundle");
+        verify(client).uninstallBundle("my-bundle");
+    }
+
+    @Test
+    void handle_invalidSubCommand_showsUsage() {
+        AgentBackendClient client = mock(AgentBackendClient.class);
+        var cmd = new BundlesCommand(client);
+        UpdateEvent event = makeEvent("foobar");
+
+        String result = cmd.handle(event, null);
+
+        assertThat(result).isEqualTo("Usage: /bundles [install <name> | uninstall <name>]");
+        verify(client, never()).listBundles();
+    }
+
+    @Test
     void nameAndDescription() {
         var cmd = new BundlesCommand(mock(AgentBackendClient.class));
         assertThat(cmd.name()).isEqualTo("bundles");

@@ -6,13 +6,13 @@ This document captures non-obvious translation issues and current design decisio
 
 ## 1. Dynamic Tool Discovery
 
-**Python:** Hermes uses `tools/registry.py` to AST-scan `tools/*.py`, then `importlib.import_module()` at runtime.
+**Python:** The original uses `tools/registry.py` to AST-scan `tools/*.py`, then `importlib.import_module()` at runtime.
 
 **Java:** Tool classes annotated with `@AgentTool` are discovered via Spring classpath scanning at startup (`SpringToolRegistry`). Each tool is a Spring bean; its `@AgentTool` annotation provides name/description, and its `execute(...)` method accepts a JSON string that is deserialized into the tool's args POJO/record.
 
 ## 2. Concurrency: Virtual Threads vs Reactive
 
-**Python:** Hermes has `_tool_loop`, `_worker_thread_local`, and `asyncio.run()` bridges because many tools are sync but the loop is async.
+**Python:** The original has `_tool_loop`, `_worker_thread_local`, and `asyncio.run()` bridges because many tools are sync but the loop is async.
 
 **Java:** We use **Spring MVC + virtual threads** (`spring.threads.virtual.enabled=true`) instead of WebFlux because:
 - Agent tools are mostly blocking I/O (JDBC, CDP, shell).
@@ -24,7 +24,7 @@ Use `CompletableFuture` only where composition or timeouts are needed.
 
 ## 3. OpenAI-Compatible Tool Schema
 
-Hermes builds JSON schemas for tools and sends them in the OpenAI `tools` field.
+The original builds JSON schemas for tools and sends them in the OpenAI `tools` field.
 
 **Java implementation:** `SpringToolRegistry.buildDefinition()` introspects `@AgentTool`, `@ToolParam`, and record/POJO fields to produce `ToolDefinition`. Required fields are derived from args class fields.
 
@@ -41,7 +41,7 @@ Without field-visibility `ANY`, Jackson cannot deserialize records whose accesso
 
 ## 5. System Prompt First
 
-`DefaultContextEngine.prepareContext()` always places the system message first, then extras (skills/memory/recall), then history, then the current turn. This matches Hermes behavior and prevents the model from ignoring its own name/instructions.
+`DefaultContextEngine.prepareContext()` always places the system message first, then extras (skills/memory/recall), then history, then the current turn. This matches the original behavior and prevents the model from ignoring its own name/instructions.
 
 ## 6. Message Role Alternation
 
@@ -63,7 +63,7 @@ True PTY support is deferred.
 
 ## 9. Patch Tool
 
-Deferred for Phase 4. The current prototype supports `read_file` and `write_file`; `patch` requires careful find-and-replace semantics matching Hermes.
+Deferred for Phase 4. The current prototype supports `read_file` and `write_file`; `patch` requires careful find-and-replace semantics matching the original implementation.
 
 ## 10. Context Compression
 

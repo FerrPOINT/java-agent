@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.prompt;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.context.CodingContextDetector;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.state.AgentConstants;
 import com.azhukov.agent.core.state.DefaultAgentConstants;
@@ -14,21 +15,27 @@ public class DefaultPromptBuilder implements PromptBuilder {
     private final ToolRegistry toolRegistry;
     private final AgentConstants constants;
     private final PromptCacheTracker cacheTracker;
+    private final CodingContextDetector codingContextDetector;
 
     @org.springframework.beans.factory.annotation.Autowired
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry) {
-        this(properties, toolRegistry, new DefaultAgentConstants(), null);
+        this(properties, toolRegistry, new DefaultAgentConstants(), null, null);
     }
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants) {
-        this(properties, toolRegistry, constants, null);
+        this(properties, toolRegistry, constants, null, null);
     }
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants, PromptCacheTracker cacheTracker) {
+        this(properties, toolRegistry, constants, cacheTracker, null);
+    }
+
+    public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants, PromptCacheTracker cacheTracker, CodingContextDetector codingContextDetector) {
         this.properties = properties;
         this.toolRegistry = toolRegistry;
         this.constants = constants;
         this.cacheTracker = cacheTracker;
+        this.codingContextDetector = codingContextDetector;
     }
 
     @Override
@@ -47,6 +54,21 @@ public class DefaultPromptBuilder implements PromptBuilder {
                 cacheTracker.markCached(String.valueOf(session.id()), prefixHash);
             }
         }
+
+        // Stage 15: Append detected coding context if enabled
+        if (codingContextDetector != null
+                && properties.getCodingContext() != null
+                && properties.getCodingContext().isEnabled()) {
+            String workingDir = properties.getCore().getWorkingDirectory();
+            CodingContextDetector.CodingContext ctx = codingContextDetector.detect(workingDir);
+            if (ctx.language() != null) {
+                text = text + "\n\nDetected coding context: language=" + ctx.language()
+                    + ", framework=" + ctx.framework()
+                    + ", buildTool=" + ctx.buildTool()
+                    + ", gitRepo=" + ctx.isGitRepo();
+            }
+        }
+
         return Message.system(text);
     }
 

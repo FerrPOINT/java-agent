@@ -54,6 +54,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ToolCallGuardrail guardrail;
     private final TurnStateManager turnStateManager;
     private final BackgroundReviewService backgroundReviewService;
+    private final InterruptToken interruptToken;
+    private final TurnFinalizer turnFinalizer;
 
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {
@@ -93,12 +95,18 @@ public class DefaultAgentRuntime implements AgentRuntime {
         for (int i = 0; i < maxTurns; i++) {
             if (guardrail.isHalted()) {
                 turnMessages.add(Message.assistant("Turn halted by guardrails.", turnIndex));
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, false);
+                }
                 return new TurnResult(turnMessages, true, null);
             }
             if (iterationBudget.isExhausted(budget)) {
                 log.warn("Iteration budget exhausted for session {} after {} model calls, {} tool executions",
                     session.id(), budget.modelCalls(), budget.toolExecutions());
                 turnMessages.add(Message.assistant("Iteration budget exhausted. Stopping to avoid runaway loop.", turnIndex));
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, false);
+                }
                 return new TurnResult(turnMessages, true, null);
             }
 
@@ -117,6 +125,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     response.content() != null ? response.content().length() : 0);
             } catch (Exception e) {
                 log.error("Model call failed", e);
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, false);
+                }
                 return TurnResult.error("Model call failed: " + e.getMessage());
             }
 
@@ -124,6 +135,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
                 log.debug("Turn {} completed without tool calls", i);
                 triggerBackgroundReview(session, turnMessages);
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, true);
+                }
                 return new TurnResult(turnMessages, true, null);
             }
 
@@ -132,6 +146,14 @@ public class DefaultAgentRuntime implements AgentRuntime {
             int currentTurnIndex = turnIndex;
             List<Message> toolResults = new ArrayList<>();
             for (ToolCall call : response.toolCalls()) {
+                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                    log.info("Turn cancelled by interrupt for session {}", session.id());
+                    turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
+                    if (turnFinalizer != null) {
+                        turnFinalizer.finalize(session.id(), turnMessages, false);
+                    }
+                    return new TurnResult(turnMessages, true, null);
+                }
                 long toolStart = System.currentTimeMillis();
                 ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState);
                 long duration = System.currentTimeMillis() - toolStart;
@@ -145,6 +167,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
             turnIndex++;
         }
 
+        if (turnFinalizer != null) {
+            turnFinalizer.finalize(session.id(), turnMessages, false);
+        }
         return TurnResult.error("Reached max turns without completion");
     }
 

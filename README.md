@@ -1,6 +1,6 @@
 # Java Agent
 
-Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-порт ядра NousResearch Hermes Agent.
+Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-агент с поддержкой LLM, инструментов, Telegram-шлюза и MCP.
 
 ## Стек
 
@@ -145,7 +145,7 @@ backend/
 
 - `backend/src/main/resources/` — конфигурация и миграции Flyway
 - `docs/` — архитектура и планирование
-- `prototype/` — удалён; для исходников Hermes используйте официальные репозитории NousResearch
+- `prototype/` — удалён
 
 ## Переменные окружения
 

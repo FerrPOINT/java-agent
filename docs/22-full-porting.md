@@ -1,6 +1,6 @@
-# План: Полный перенос Hermes в java-agent (剩余功能 + Lombok + application.yml)
+# План: Полный перенос оригиналом в java-agent (剩余功能 + Lombok + application.yml)
 
-> **Цель:** Перенести все оставшиеся функции Hermes, внедрить Lombok как приоритетный подход к коду, вынести ВСЕ настройки в application.yml.
+> **Цель:** Перенести все оставшиеся функции, внедрить Lombok как приоритетный подход к коду, вынести ВСЕ настройки в application.yml.
 
 ---
 
@@ -78,7 +78,7 @@ dependencies {
 | # | Компонент | Файл | Тесты |
 |---|-----------|------|-------|
 | 1.8 | AgentBackendClient: `createCronJob`, `listCronJobs`, `updateCronJob`, `pauseCronJob`, `resumeCronJob`, `removeCronJob` | `core/AgentBackendClient.java` (patch) | — |
-| 1.9 | BotMessageProcessor: deliver cron output to chat (like Hermes delivery) | `core/BotMessageProcessor.java` (patch) | — |
+| 1.9 | BotMessageProcessor: deliver cron output to chat (like the original delivery) | `core/BotMessageProcessor.java` (patch) | — |
 
 ---
 
@@ -615,4 +615,4 @@ Phase E: Final wiring + tests
 
 ---
 
-*Документ создан для планирования полного переноса Hermes в java-agent.*
+*Документ создан для планирования полного переноса в java-agent.*

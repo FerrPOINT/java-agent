@@ -1,6 +1,6 @@
 # План: Выделение Telegram-бота в отдельное приложение
 
-> **Цель:** Вынести Telegram-бота из монолитного `java-agent` в отдельное Spring Boot приложение `telegram-bot`, которое работает как полноценный Telegram-гейт, перенимая фишки Hermes Gateway.
+> **Цель:** Вынести Telegram-бота из монолитного `java-agent` в отдельное Spring Boot приложение `telegram-bot`, которое работает как полноценный Telegram-гейт, перенимая фишки Telegram Gateway.
 
 ---
 
@@ -24,7 +24,7 @@
 ### 1.2 Проблемы текущего подхода
 
 1. **Монолит**: бот打包 внутрь core-агента, невозможно деплоить отдельно
-2. **Нет slash-команд** Hermes: `/new`, `/reset`, `/model`, `/status`, `/stop`, `/help`, `/memory`, `/skills`, `/context`, `/usage`, `/title`, `/resume`, `/sessions`, `/yolo`, `/verbose`, `/compress`, `/fast`, `/reasoning`, `/profile`, `/whoami`
+2. **Нет slash-команд** оригинала: `/new`, `/reset`, `/model`, `/status`, `/stop`, `/help`, `/memory`, `/skills`, `/context`, `/usage`, `/title`, `/resume`, `/sessions`, `/yolo`, `/verbose`, `/compress`, `/fast`, `/reasoning`, `/profile`, `/whoami`
 3. **Нет message formatting**: Markdown → Telegram MarkdownV2/HTML не конвертируется
 4. **Нет long message splitting**: сообщения >4096 символов обрезаются
 5. **Нет typing refresh loop**: typing-индикатор сбрасывается через 5с и не обновляется
@@ -193,7 +193,7 @@ PostgreSQL (shared)
 | 4.2 | `PairingService.java` (опционально) — pairing codes для unknown users | `PairingServiceTest` — generate + approve |
 | 4.3 | Интеграция в `BotMessageProcessor` — unauthorized → ignore/pair | `BotMessageProcessorAuthTest` |
 
-### Этап 5: Slash-команды (перенос из Hermes)
+### Этап 5: Slash-команды (перенос из оригинала)
 
 | # | Команда | Описание | Тесты |
 |---|---------|----------|-------|
@@ -238,7 +238,7 @@ PostgreSQL (shared)
 | 8.1 | `InboundMediaHandler.java` — обработка photo/document/voice: download via `getFile`, cache, формирует описание для LLM (фото → vision, документ → текст, голос → transcription stub) | `InboundMediaHandlerTest` |
 | 8.2 | `MediaDownloader.java` — `getFile` → download file by `file_path` | `MediaDownloaderTest` |
 | 8.3 | `MediaCache.java` — кэш: `file_id` → local path; cleanup по TTL | `MediaCacheTest` |
-| 8.4 | Outbound: `sendPhoto` с `MEDIA:`-префиксом в ответе LLM (как в Hermes) — парсинг `MEDIA:/path` → photo/document | `MediaOutboundTest` |
+| 8.4 | Outbound: `sendPhoto` с `MEDIA:`-префиксом в ответе LLM (как в оригинале) — парсинг `MEDIA:/path` → photo/document | `MediaOutboundTest` |
 
 ### Этап 9: Inline keyboards & callback queries
 
@@ -253,7 +253,7 @@ PostgreSQL (shared)
 |---|--------|-------|
 | 10.1 | `BotSessionStore.java` — DB-backed: `bot_sessions` table (session_id, user_id, chat_id, title, created_at, updated_at, active, model_override, yolo_mode, verbose_mode, fast_mode, reasoning_level) | `BotSessionStoreTest` |
 | 10.2 | `BotSessionContext.java` — in-memory per-session state: busy flag, message queue, current turn future (для `/stop`) | `BotSessionContextTest` |
-| 10.3 | `SessionKeyBuilder.java` — ключ: `telegram:{chatId}:{userId}` (Hermes-стиль) | `SessionKeyBuilderTest` |
+| 10.3 | `SessionKeyBuilder.java` — ключ: `telegram:{chatId}:{userId}` (agent-style) | `SessionKeyBuilderTest` |
 | 10.4 | `BusySessionHandler.java` — если сессия занята: queue message, либо interrupt (config: `bot.busy-mode=queue|interrupt`) | `BusySessionHandlerTest` |
 
 ### Этап 11: Backend integration
@@ -277,9 +277,9 @@ PostgreSQL (shared)
 
 ---
 
-## 4. Сравнение фишек Hermes vs текущих vs план
+## 4. Сравнение фишек Оригинал vs текущих vs план
 
-| Фишка Hermes | Текущий java-agent | План `telegram-bot` | Этап |
+| Фишка | Текущий java-agent | План `telegram-bot` | Этап |
 |--------------|--------------------|---------------------|------|
 | Long-polling с reconnect | ✅ есть, но без reconnect | Reconnect watcher + backoff | 3 |
 | Webhook с secret | ✅ есть, но без secret | Secret validation, fail-closed | 3 |

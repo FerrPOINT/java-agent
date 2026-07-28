@@ -2,11 +2,11 @@
 
 ## 1. Purpose
 
-This directory (`/opt/dev/java-agent/`) contains a **Java-focused port** of the [NousResearch Hermes Agent](https://github.com/NousResearch/hermes-agent) core.
+This directory (`/opt/dev/java-agent/`) contains the **Java agent** — a standalone LLM agent runtime built on Spring Boot 4.1.
 
-Goal: extract the **minimal stable core** of an agent runtime that can run in Java, document which parts are essential, which are platform/integration-specific, and map each Python dependency to a Java alternative.
+Goal: build a **minimal stable core** of an agent runtime that runs in Java, document which parts are essential, which are platform/integration-specific, and track all architecture decisions.
 
-The `prototype/` directory holds clones of the relevant Hermes repositories for reference. The `backend/` directory is the actual application. The `docs/` directory is the single source of truth for the porting plan.
+The `backend/` directory is the actual application. The `docs/` directory is the single source of truth for architecture and design.
 
 ## 2. Repository Layout
 
@@ -26,18 +26,7 @@ The `prototype/` directory holds clones of the relevant Hermes repositories for 
 │       ├── security/       # approvals, safety, redaction
 │       ├── service/        # application services
 │       └── tools/          # @AgentTool implementations
-├── prototype/              # cloned reference repositories (not in git)
-│   ├── hermes-agent/
-│   ├── Hermes-Function-Calling/
-│   ├── hermes-example-plugins/
-│   ├── hermes-paperclip-adapter/
-│   ├── hermes-telegram-business/
-│   ├── agent-governance-toolkit/
-│   ├── OpenShell/
-│   ├── OpenShell-Community/
-│   ├── nousflash-agents/
-│   ├── wterm/
-│   └── hermes-agent-ci-infra/
+├── prototype/              # removed (reference repos, not in git)
 └── docs/                   # this documentation
     ├── README.md                         # this file
     ├── 01-scope.md                       # what we port, what we skip
@@ -137,5 +126,4 @@ Telegram gateway:
 
 ## Source
 
-- Upstream reference: https://github.com/NousResearch/hermes-agent
-- This port: https://github.com/FerrPOINT/java-agent
+- This project: https://github.com/FerrPOINT/java-agent

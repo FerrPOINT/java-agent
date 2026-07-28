@@ -31,12 +31,14 @@ public class SpringToolRegistry implements ToolRegistry {
     private final ApplicationContext context;
     private final AgentProperties properties;
     private final ObjectMapper objectMapper;
+    private final ManagedToolGateway managedToolGateway;
     private final Map<String, ToolEntry> entries = new LinkedHashMap<>();
 
-    public SpringToolRegistry(ApplicationContext context, AgentProperties properties, ObjectMapper objectMapper) {
+    public SpringToolRegistry(ApplicationContext context, AgentProperties properties, ObjectMapper objectMapper, ManagedToolGateway managedToolGateway) {
         this.context = context;
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.managedToolGateway = managedToolGateway;
         registerBeans();
     }
 
@@ -45,6 +47,9 @@ public class SpringToolRegistry implements ToolRegistry {
         for (Object bean : beans.values()) {
             AgentTool annotation = bean.getClass().getAnnotation(AgentTool.class);
             if (annotation == null || !(bean instanceof ToolHandler handler)) {
+                continue;
+            }
+            if (managedToolGateway != null && !managedToolGateway.isEnabled(annotation.name())) {
                 continue;
             }
             @SuppressWarnings("unchecked")

@@ -206,7 +206,7 @@ Agent uses `config.yaml` + `.env` for secrets. In Java:
 - **E2E:** real model call with `read_file` and `terminal` against a temp directory.
 - Use Testcontainers if PostgreSQL path is needed later.
 
-## 8. Files to Study in `prototype/hermes-agent/`
+## 8. Reference Files (removed)
 
 - `run_agent.py` — high-level agent class.
 - `agent/conversation_loop.py` — turn logic.

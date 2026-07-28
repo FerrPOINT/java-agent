@@ -33,12 +33,17 @@ public class ToolExecutionService {
     private final Retry retry;
     private final ToolCallGuardrail guardrail;
     private final SecretRedactor redactor;
+    private final ToolResultClassifier toolResultClassifier;
+    private final ToolOutputLimiter toolOutputLimiter;
 
-    public ToolExecutionService(ToolRegistry toolRegistry, AgentProperties properties, ToolCallGuardrail guardrail, SecretRedactor redactor) {
+    public ToolExecutionService(ToolRegistry toolRegistry, AgentProperties properties, ToolCallGuardrail guardrail, SecretRedactor redactor,
+                                ToolResultClassifier toolResultClassifier, ToolOutputLimiter toolOutputLimiter) {
         this.toolRegistry = toolRegistry;
         this.properties = properties;
         this.guardrail = guardrail;
         this.redactor = redactor;
+        this.toolResultClassifier = toolResultClassifier;
+        this.toolOutputLimiter = toolOutputLimiter;
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         RetryConfig config = RetryConfig.custom()
             .maxAttempts(3)
@@ -103,6 +108,15 @@ public class ToolExecutionService {
 
         String safeContent = result.success() ? redactor.redact(result.content()) : redactor.redact(result.error());
         ToolResult safeResult = result.success() ? ToolResult.ok(safeContent) : ToolResult.fail(safeContent);
+        // Classify result
+        if (toolResultClassifier != null) {
+            var resultType = toolResultClassifier.classify(safeResult);
+            log.debug("Tool {} result classified as: {}", toolName, resultType);
+        }
+        // Truncate output
+        if (toolOutputLimiter != null) {
+            return toolOutputLimiter.truncate(safeResult);
+        }
         return truncateIfNeeded(safeResult, toolName);
     }
 

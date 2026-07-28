@@ -37,10 +37,15 @@ public class LangChain4jModelClient implements ModelClient {
     private final StreamingChatModel streamingChatModel;
     private final AgentProperties properties;
     private final java.util.function.Consumer<Usage> usageConsumer;
+    private final ErrorClassifier errorClassifier;
+    private final RateLimitTracker rateLimitTracker;
 
-    public LangChain4jModelClient(AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer) {
+    public LangChain4jModelClient(AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
+                                   ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker) {
         this.properties = properties;
         this.usageConsumer = usageConsumer;
+        this.errorClassifier = errorClassifier;
+        this.rateLimitTracker = rateLimitTracker;
         this.chatModel = dev.langchain4j.model.openai.OpenAiChatModel.builder()
             .baseUrl(properties.getModel().getBaseUrl())
             .apiKey(properties.getModel().getApiKey())
@@ -59,11 +64,14 @@ public class LangChain4jModelClient implements ModelClient {
     }
 
     public LangChain4jModelClient(ChatModel chatModel, StreamingChatModel streamingChatModel,
-                                   AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer) {
+                                   AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
+                                   ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker) {
         this.chatModel = chatModel;
         this.streamingChatModel = streamingChatModel;
         this.properties = properties;
         this.usageConsumer = usageConsumer;
+        this.errorClassifier = errorClassifier;
+        this.rateLimitTracker = rateLimitTracker;
     }
 
     @Override
@@ -82,18 +90,30 @@ public class LangChain4jModelClient implements ModelClient {
             .build();
 
         log.debug("Sending {} messages to model {}", chatMessages.size(), request);
-        dev.langchain4j.model.chat.response.ChatResponse response = chatModel.chat(request);
-        AiMessage aiMessage = response.aiMessage();
-        persistUsage(response);
 
-        if (aiMessage.hasToolExecutionRequests()) {
-            List<ToolCall> calls = aiMessage.toolExecutionRequests().stream()
-                .map(r -> new ToolCall(r.id(), r.name(), r.arguments()))
-                .collect(Collectors.toList());
-            return ChatResponse.toolCalls(calls);
+        if (rateLimitTracker != null && rateLimitTracker.shouldBackoff()) {
+            log.warn("Rate limit backoff recommended — remaining={}, resetTime={}",
+                rateLimitTracker.getRemaining(), rateLimitTracker.getResetTime());
         }
 
-        return ChatResponse.text(aiMessage.text());
+        try {
+            dev.langchain4j.model.chat.response.ChatResponse response = chatModel.chat(request);
+            AiMessage aiMessage = response.aiMessage();
+            persistUsage(response);
+
+            if (aiMessage.hasToolExecutionRequests()) {
+                List<ToolCall> calls = aiMessage.toolExecutionRequests().stream()
+                    .map(r -> new ToolCall(r.id(), r.name(), r.arguments()))
+                    .collect(Collectors.toList());
+                return ChatResponse.toolCalls(calls);
+            }
+
+            return ChatResponse.text(aiMessage.text());
+        } catch (Exception e) {
+            ErrorClassifier.ErrorType errorType = errorClassifier != null ? errorClassifier.classify(e) : ErrorClassifier.ErrorType.RETRYABLE;
+            log.warn("Model complete() failed — errorType={}: {}", errorType, e.getMessage());
+            throw e;
+        }
     }
 
     @Override
@@ -135,6 +155,10 @@ public class LangChain4jModelClient implements ModelClient {
 
             @Override
             public void onError(Throwable error) {
+                ErrorClassifier.ErrorType errorType = errorClassifier != null
+                    ? errorClassifier.classify(error instanceof Exception e ? e : new RuntimeException(error))
+                    : ErrorClassifier.ErrorType.RETRYABLE;
+                log.warn("Model stream() error — errorType={}: {}", errorType, error.getMessage());
                 handler.onError(error);
             }
         });

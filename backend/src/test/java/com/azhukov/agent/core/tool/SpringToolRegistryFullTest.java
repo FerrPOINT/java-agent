@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SpringToolRegistryFullTest {
 
     @Configuration
-    @Import(SpringToolRegistry.class)
+    @Import({SpringToolRegistry.class, ManagedToolGateway.class})
     static class Config {
         @Bean
         AgentProperties agentProperties() {

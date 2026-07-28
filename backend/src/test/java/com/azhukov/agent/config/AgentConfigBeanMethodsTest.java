@@ -1,8 +1,12 @@
 package com.azhukov.agent.config;
 
+import com.azhukov.agent.client.langchain4j.ErrorClassifier;
 import com.azhukov.agent.client.langchain4j.LangChain4jModelClient;
+import com.azhukov.agent.client.langchain4j.RateLimitTracker;
 import com.azhukov.agent.client.NoOpModelClient;
 import com.azhukov.agent.core.agent.AgentRuntime;
+import com.azhukov.agent.core.agent.InterruptToken;
+import com.azhukov.agent.core.agent.TurnFinalizer;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.context.ContextCompressor;
@@ -63,7 +67,7 @@ class AgentConfigBeanMethodsTest {
     @Test
     void openAiCompatibleModelClient_bean() {
         properties.getModel().setProvider("openai-compatible");
-        assertThat(config.openAiCompatibleModelClient(properties, mock(TurnUsageCollector.class))).isInstanceOfAny(LangChain4jModelClient.class, ModelClient.class);
+        assertThat(config.openAiCompatibleModelClient(properties, mock(TurnUsageCollector.class), new ErrorClassifier(), new RateLimitTracker())).isInstanceOfAny(LangChain4jModelClient.class, ModelClient.class);
     }
 
     @Test
@@ -88,12 +92,12 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void agentRuntime_bean() {
-        assertThat(config.agentRuntime(mock(ModelClient.class), mock(ToolRegistry.class), mock(ToolExecutionService.class), mock(PromptBuilder.class), mock(ContextEngine.class), mock(MemoryProvider.class), mock(SkillManager.class), mock(IterationBudget.class), mock(MessageSanitizer.class), mock(ContextReferenceService.class), properties, mock(UserInputSanitizer.class), mock(ToolCallGuardrail.class), mock(TurnStateManager.class), mock(BackgroundReviewService.class))).isNotNull();
+        assertThat(config.agentRuntime(mock(ModelClient.class), mock(ToolRegistry.class), mock(ToolExecutionService.class), mock(PromptBuilder.class), mock(ContextEngine.class), mock(MemoryProvider.class), mock(SkillManager.class), mock(IterationBudget.class), mock(MessageSanitizer.class), mock(ContextReferenceService.class), properties, mock(UserInputSanitizer.class), mock(ToolCallGuardrail.class), mock(TurnStateManager.class), mock(BackgroundReviewService.class), mock(InterruptToken.class), mock(TurnFinalizer.class))).isNotNull();
     }
 
     @Test
     void promptBuilder_bean() {
-        assertThat(config.promptBuilder(properties, mock(ToolRegistry.class), mock(AgentConstants.class), mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class))).isNotNull();
+        assertThat(config.promptBuilder(properties, mock(ToolRegistry.class), mock(AgentConstants.class), mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.CodingContextDetector.class))).isNotNull();
     }
 
     @Test

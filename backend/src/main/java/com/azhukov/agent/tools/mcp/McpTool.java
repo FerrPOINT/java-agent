@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.mcp;
 
 import com.azhukov.agent.client.mcp.McpLifecycleManager;
+import com.azhukov.agent.client.mcp.McpOAuthManager;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
@@ -8,6 +9,7 @@ import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.stream.Collectors;
@@ -18,14 +20,18 @@ import java.util.stream.Collectors;
     toolset = "core"
 )
 @Component
+@Slf4j
 @RequiredArgsConstructor
 public class McpTool implements ToolHandler {
 
     private final McpLifecycleManager mcpLifecycleManager;
+    private final McpOAuthManager mcpOAuthManager;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         McpArgs args = ToolHandler.parseJson(arguments, McpArgs.class);
+        mcpOAuthManager.getToken(args.serverName())
+            .ifPresent(token -> log.debug("Using OAuth token for MCP server {}", args.serverName()));
         try {
             var result = mcpLifecycleManager.executeTool(args.serverName(), args.toolName(), args.arguments());
             String text = result.content().stream()

@@ -33,7 +33,8 @@ class ToolExecutionServiceFullTest {
     }
 
     private ToolExecutionService buildService(ToolRegistry registry, AgentProperties props) {
-        return new ToolExecutionService(registry, props, guardrail(), redactor());
+        return new ToolExecutionService(registry, props, guardrail(), redactor(),
+            new ToolResultClassifier(), new ToolOutputLimiter(props));
     }
 
     private ToolRegistry buildRegistry(ToolResult result) {
@@ -73,7 +74,7 @@ class ToolExecutionServiceFullTest {
 
         ToolResult result = service.execute("ok", "c1", "{}", null, null);
 
-        assertThat(result.content()).isEqualTo("12345\n[output truncated]");
+        assertThat(result.content()).isEqualTo("12345\n[output truncated at 5 chars]");
     }
 
     @Test

@@ -20,7 +20,7 @@ class LangChain4jModelClientBuilderTest {
         props.getModel().setMaxRetries(2);
         props.getModel().setTemperature(0.5);
 
-        ModelClient client = new LangChain4jModelClient(props, usage -> {});
+        ModelClient client = new LangChain4jModelClient(props, usage -> {}, null, null);
         assertThat(client).isNotNull();
     }
 }

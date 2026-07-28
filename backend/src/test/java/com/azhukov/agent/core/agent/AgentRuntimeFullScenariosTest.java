@@ -108,6 +108,8 @@ class AgentRuntimeFullScenariosTest {
             inputSanitizer,
             guardrail,
             turnStateManager,
+            null,
+            null,
             null
         );
     }
@@ -128,6 +130,8 @@ class AgentRuntimeFullScenariosTest {
             inputSanitizer,
             guardrail,
             turnStateManager,
+            null,
+            null,
             null
         );
     }

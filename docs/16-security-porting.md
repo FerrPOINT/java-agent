@@ -1,4 +1,4 @@
-# Портирование security/guardrails из Hermes
+# Портирование security/guardrails из оригинала
 
 Цель: повторить в java-agent минимальный набор guardrails, достаточный для безопасного запуска инструментов и хранения сообщений.
 
@@ -10,8 +10,8 @@
 | `agent/file_safety.py` | Write denylist, safe-root, read block for credentials, cross-profile warnings |
 | `agent/redact.py` | Secret redaction in text, terminal output, URL params, headers, bodies |
 | `agent/message_sanitization.py` | Sanitize prompt/response before API send and storage |
-| `hermes_cli/input_sanitize.py` | User-input prompt sanitization (control chars, Unicode normalization) |
-| `hermes_cli/urllib_security.py` | Credential-aware URL opener, private-IP / insecure-transport blocking |
+| `cli/input_sanitize.py` | User-input prompt sanitization (control chars, Unicode normalization) |
+| `cli/urllib_security.py` | Credential-aware URL opener, private-IP / insecure-transport blocking |
 | `tools/url_safety.py` | SSRF-safe HTTP client wrapper, URL redaction |
 | `tools/approval.py` | Dangerous-command detection, approval gate, smart/cron/yolo modes |
 | `tools/tirith_security.py` | Pre-exec command security scan via Tirith policy engine |
@@ -48,8 +48,8 @@ com.azhukov.agent.security
 | `tools/tirith_security.py` | `TirithSecurityScanner` (stub) | defer |
 | `agent/redact.py` | `SecretRedactor` | port |
 | `agent/message_sanitization.py` | `MessageSanitizer` | port |
-| `hermes_cli/input_sanitize.py` | `UserInputSanitizer` | port |
-| `hermes_cli/urllib_security.py` | `UrlSafetyHandler` | port |
+| `cli/input_sanitize.py` | `UserInputSanitizer` | port |
+| `cli/urllib_security.py` | `UrlSafetyHandler` | port |
 | `tools/url_safety.py` | `SsrfSafeHttpClient` | port |
 | `acp_adapter/edit_approval.py` | `EditApprovalManager` | defer |
 

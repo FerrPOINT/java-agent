@@ -1,4 +1,4 @@
-# Hermes upstream repositories — excluded from git
+# Reference repositories — excluded from git
 /prototype/
 
 # Java build artifacts

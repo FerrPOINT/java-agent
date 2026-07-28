@@ -1,6 +1,6 @@
-# Hermes Agent → Java MVP: Tool Layer Porting Summary
+# the original agent → Java MVP: Tool Layer Porting Summary
 
-**Scope:** Inventory every tool implementation under `/opt/dev/hermes-workspace/hermes-agent/tools/*.py`, group by functional category, and decide whether each tool belongs in the Java MVP (`port`), is out of scope (`skip`), or should be postponed (`defer`).
+**Scope:** Inventory every tool implementation under `/opt/dev/python-agent/tools/*.py`, group by functional category, and decide whether each tool belongs in the Java MVP (`port`), is out of scope (`skip`), or should be postponed (`defer`).
 
 **Target Java package:** `com.azhukov.agent.tools.*`
 

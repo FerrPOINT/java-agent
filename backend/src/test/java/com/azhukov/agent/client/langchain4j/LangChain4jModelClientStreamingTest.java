@@ -26,7 +26,7 @@ class LangChain4jModelClientStreamingTest {
         StreamingChatModel streaming = mock(StreamingChatModel.class);
         AgentProperties props = new AgentProperties();
         AtomicReference<LangChain4jModelClient.Usage> usage = new AtomicReference<>();
-        LangChain4jModelClient client = new LangChain4jModelClient(null, streaming, props, usage::set);
+        LangChain4jModelClient client = new LangChain4jModelClient(null, streaming, props, usage::set, null, null);
 
         List<String> tokens = new ArrayList<>();
         List<String> completes = new ArrayList<>();

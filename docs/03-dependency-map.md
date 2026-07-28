@@ -2,7 +2,7 @@
 
 Target stack: **Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groovy 5.0.7 + PostgreSQL 16 + H2 (noop profile) + OpenAI-compatible LLM endpoint**.
 
-This document maps every *core* Hermes Python dependency to a Java alternative. Optional/provider-specific deps are listed but marked out-of-scope.
+This document maps every *core* Python dependency to a Java alternative. Optional/provider-specific deps are listed but marked out-of-scope.
 
 ## 1. Core Dependencies
 

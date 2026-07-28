@@ -1,9 +1,13 @@
 package com.azhukov.agent.config;
 
+import com.azhukov.agent.client.langchain4j.ErrorClassifier;
 import com.azhukov.agent.client.langchain4j.LangChain4jModelClient;
+import com.azhukov.agent.client.langchain4j.RateLimitTracker;
 import com.azhukov.agent.client.NoOpModelClient;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.agent.DefaultAgentRuntime;
+import com.azhukov.agent.core.agent.InterruptToken;
+import com.azhukov.agent.core.agent.TurnFinalizer;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.budget.DefaultIterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
@@ -81,10 +85,11 @@ public class AgentConfig {
     @Bean
     @ConditionalOnProperty(name = "agent.model.provider", havingValue = "openai-compatible")
     @ConditionalOnMissingBean(ModelClient.class)
-    public ModelClient openAiCompatibleModelClient(AgentProperties properties, TurnUsageCollector turnUsageCollector) {
+    public ModelClient openAiCompatibleModelClient(AgentProperties properties, TurnUsageCollector turnUsageCollector,
+                                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker) {
         return new LangChain4jModelClient(properties, usage -> {
             turnUsageCollector.record(usage.promptTokens(), usage.completionTokens());
-        });
+        }, errorClassifier, rateLimitTracker);
     }
 
     @Bean
@@ -128,15 +133,17 @@ public class AgentConfig {
                                      UserInputSanitizer inputSanitizer,
                                      ToolCallGuardrail guardrail,
                                      TurnStateManager turnStateManager,
-                                     BackgroundReviewService backgroundReviewService) {
+                                     BackgroundReviewService backgroundReviewService,
+                                     InterruptToken interruptToken,
+                                     TurnFinalizer turnFinalizer) {
         return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
             memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
-            inputSanitizer, guardrail, turnStateManager, backgroundReviewService);
+            inputSanitizer, guardrail, turnStateManager, backgroundReviewService, interruptToken, turnFinalizer);
     }
 
     @Bean
-    public PromptBuilder promptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants agentConstants, com.azhukov.agent.core.prompt.PromptCacheTracker cacheTracker) {
-        return new DefaultPromptBuilder(properties, toolRegistry, agentConstants, cacheTracker);
+    public PromptBuilder promptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants agentConstants, com.azhukov.agent.core.prompt.PromptCacheTracker cacheTracker, com.azhukov.agent.core.context.CodingContextDetector codingContextDetector) {
+        return new DefaultPromptBuilder(properties, toolRegistry, agentConstants, cacheTracker, codingContextDetector);
     }
 
     @Bean

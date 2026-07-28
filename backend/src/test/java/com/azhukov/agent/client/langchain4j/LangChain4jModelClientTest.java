@@ -33,7 +33,7 @@ class LangChain4jModelClientTest {
     private final AtomicReference<LangChain4jModelClient.Usage> usage = new AtomicReference<>();
 
     private LangChain4jModelClient client() {
-        return new LangChain4jModelClient(chatModel, streamingChatModel, properties, usage::set);
+        return new LangChain4jModelClient(chatModel, streamingChatModel, properties, usage::set, null, null);
     }
 
     @Test

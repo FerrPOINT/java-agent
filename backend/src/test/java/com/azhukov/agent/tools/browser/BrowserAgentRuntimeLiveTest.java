@@ -88,14 +88,16 @@ class BrowserAgentRuntimeLiveTest {
         };
 
         ToolExecutionService toolExecutionService = new ToolExecutionService(registry, properties,
-            new DefaultToolCallGuardrail(properties), new SecretRedactor(properties));
+            new DefaultToolCallGuardrail(properties), new SecretRedactor(properties),
+            new com.azhukov.agent.core.tool.ToolResultClassifier(),
+            new com.azhukov.agent.core.tool.ToolOutputLimiter(properties));
 
         DefaultAgentRuntime runtime = new DefaultAgentRuntime(
             model, registry, toolExecutionService, promptBuilder, contextEngine, memoryProvider, skillManager,
             new DefaultIterationBudget(properties),
             new com.azhukov.agent.security.MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
-            new DefaultToolCallGuardrail(properties), new TurnStateManager(), null
+            new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null
         );
 
         var result = runtime.runTurn(session, "navigate and screenshot");

@@ -1,6 +1,6 @@
-# Hermes Gateway — Java Porting Summary
+# Telegram Gateway — Java Porting Summary
 
-> Source analyzed: `/opt/dev/java-agent/prototype/hermes-agent/gateway`  
+> Source analyzed: `/opt/dev/java-agent/prototype/python-agent/gateway`  
 > Target Java package root: `com.azhukov.agent.gateway.*`  
 > Classification per platform: **port / skip / defer**  
 > Credentials/keys in the original source are redacted and shown as `[REDACTED]`.
@@ -212,7 +212,7 @@ else:
 | Token | `self.config.token` (from `TELEGRAM_BOT_TOKEN`) | `telegramConfig.getToken()` |
 | HTTP client | `python-telegram-bot` + `HTTPXRequest` | Spring WebClient / TelegramBots Java library |
 | Custom base URL | `extra.base_url`, `extra.base_file_url`, `extra.local_mode` | `TelegramClientConfig` |
-| Fallback IPs | `HERMES_TELEGRAM_DISABLE_FALLBACK_IPS`, `TelegramFallbackTransport` | `TelegramTransportConfiguration` |
+| Fallback IPs | `AGENT_TELEGRAM_DISABLE_FALLBACK_IPS`, `TelegramFallbackTransport` | `TelegramTransportConfiguration` |
 | Proxy | `TELEGRAM_PROXY` → `resolve_proxy_url()` | `ProxyConfiguration` |
 | Polling mode | `start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True, error_callback=...)` | `TelegramLongPollingService` |
 | Webhook mode | `start_webhook(listen="0.0.0.0", port, url_path, webhook_url, secret_token)` | `TelegramWebhookController` |
@@ -221,8 +221,8 @@ else:
 | DM topics | `extra.dm_topics` + `_setup_dm_topics()` | `TelegramDmTopicManager` |
 | Status indicator | `extra.status_indicator` toggles bot short description | `TelegramStatusIndicatorService` |
 | Update handlers | text, command, location, media, callback query | `TelegramUpdateDispatcher` |
-| Media batching | `HERMES_TELEGRAM_MEDIA_BATCH_DELAY_SECONDS` | `MediaBatchBuffer` |
-| Text batching | `HERMES_TELEGRAM_TEXT_BATCH_DELAY_SECONDS` | `TextBatchBuffer` |
+| Media batching | `AGENT_TELEGRAM_MEDIA_BATCH_DELAY_SECONDS` | `MediaBatchBuffer` |
+| Text batching | `AGENT_TELEGRAM_TEXT_BATCH_DELAY_SECONDS` | `TextBatchBuffer` |
 
 ### 4.4 Webhook requirements
 
@@ -321,7 +321,7 @@ public interface GatewayAuthorization {
 - Config key: `unauthorized_dm_behavior` at platform or global level.
 - Email defaults to `ignore`.
 - When an allowlist is configured, default to `ignore` (do not spam pairing codes).
-- Otherwise `pair` → generate pairing code and ask owner to run `hermes pairing approve <platform> <code>`.
+- Otherwise `pair` → generate pairing code and ask owner to run `agent pairing approve <platform> <code>`.
 - Rate-limit pairing responses per `(platform, user_id)`.
 
 ---
@@ -488,4 +488,4 @@ public abstract class BasePlatformAdapter {
 
 ---
 
-*Document generated from analysis of `/opt/dev/java-agent/prototype/hermes-agent/gateway`.*
+*Document generated from analysis of `/opt/dev/java-agent/prototype/python-agent/gateway`.*

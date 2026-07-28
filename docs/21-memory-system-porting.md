@@ -1,6 +1,6 @@
-# План: Перенос системы памяти Hermes в java-agent
+# План: Перенос системы памяти the original в java-agent
 
-> **Цель:** Перенести полную систему памяти Hermes — self-improvement review, write-approval gate, memory tool (add/replace/remove), frozen snapshot, /memory pending/approve/reject — в java-agent backend + telegram-bot.
+> **Цель:** Перенести полную систему памяти the original — self-improvement review, write-approval gate, memory tool (add/replace/remove), frozen snapshot, /memory pending/approve/reject — в java-agent backend + telegram-bot.
 
 ---
 
@@ -20,9 +20,9 @@
 | `/memory` command (bot) | `commands/impl/MemoryCommand.java` | Только **чтение** — `backendClient.getMemory()` |
 | Backend `/agent/memory` endpoint | `api/AgentController.java` | `memoryProvider.recall("default", "", 100)` — userId зашит |
 
-### 1.2 Чего нет (что есть в Hermes)
+### 1.2 Чего нет (что есть в оригинале)
 
-| Фишка Hermes | Описание | Статус |
+| Фишка | Описание | Статус |
 |--------------|----------|--------|
 | **Self-improvement review** | После каждого turn фоновый поток анализирует диалог и сохраняет факты в memory | ❌ Нет |
 | **Memory tool: add/replace/remove** | Tool с actions: add, replace (old_text → new), remove (old_text) — не просто store | ❌ Нет (только store/recall) |
@@ -111,7 +111,7 @@ PostgreSQL
 
 | # | Задача | Файлы | Тесты |
 |---|--------|-------|-------|
-| 2.1 | Rewrite `MemoryTool.java` — actions: `add(target, content)`, `replace(target, old_text, content)`, `remove(target, old_text)`, `read(target)`. Schema description matches Hermes: "Save durable information to persistent memory... WHEN TO SAVE... TWO TARGETS... ACTIONS..." | `tools/memory/MemoryTool.java` (rewrite) | `MemoryToolTest` (8) |
+| 2.1 | Rewrite `MemoryTool.java` — actions: `add(target, content)`, `replace(target, old_text, content)`, `remove(target, old_text)`, `read(target)`. Schema description matches the original: "Save durable information to persistent memory... WHEN TO SAVE... TWO TARGETS... ACTIONS..." | `tools/memory/MemoryTool.java` (rewrite) | `MemoryToolTest` (8) |
 | 2.2 | `MemoryArgs` record: `action`, `target` (memory/user), `content`, `old_text`, `limit` | (в MemoryTool) | — |
 | 2.3 | Wire WriteApprovalGate in MemoryTool: if gate ON → stage write, return "Staged for approval". If OFF → apply directly | (в MemoryTool) | — |
 
@@ -244,4 +244,4 @@ PostgreSQL
 
 ---
 
-*Документ создан для планирования переноса системы памяти Hermes в java-agent.*
+*Документ создан для планирования переноса системы памяти the original в java-agent.*

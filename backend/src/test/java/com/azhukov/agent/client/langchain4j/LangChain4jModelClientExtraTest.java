@@ -34,7 +34,7 @@ class LangChain4jModelClientExtraTest {
     private final AtomicReference<LangChain4jModelClient.Usage> usage = new AtomicReference<>();
 
     private LangChain4jModelClient client() {
-        return new LangChain4jModelClient(chatModel, streamingChatModel, properties, usage::set);
+        return new LangChain4jModelClient(chatModel, streamingChatModel, properties, usage::set, null, null);
     }
 
     private dev.langchain4j.model.chat.response.ChatResponse lcResponse(String text) {
@@ -105,7 +105,7 @@ class LangChain4jModelClientExtraTest {
 
     @Test
     void streamWithToolCallsOnComplete() {
-        LangChain4jModelClient client = new LangChain4jModelClient(null, streamingChatModel, properties, usage::set);
+        LangChain4jModelClient client = new LangChain4jModelClient(null, streamingChatModel, properties, usage::set, null, null);
 
         List<ToolCall> toolCalls = new ArrayList<>();
         List<String> completes = new ArrayList<>();
@@ -132,7 +132,7 @@ class LangChain4jModelClientExtraTest {
 
     @Test
     void streamWithEmptyContentAndTextOnComplete() {
-        LangChain4jModelClient client = new LangChain4jModelClient(null, streamingChatModel, properties, usage::set);
+        LangChain4jModelClient client = new LangChain4jModelClient(null, streamingChatModel, properties, usage::set, null, null);
 
         List<String> tokens = new ArrayList<>();
 
@@ -154,7 +154,7 @@ class LangChain4jModelClientExtraTest {
 
     @Test
     void streamOnErrorPropagates() {
-        LangChain4jModelClient client = new LangChain4jModelClient(null, streamingChatModel, properties, usage::set);
+        LangChain4jModelClient client = new LangChain4jModelClient(null, streamingChatModel, properties, usage::set, null, null);
 
         List<Throwable> errors = new ArrayList<>();
 
@@ -230,7 +230,7 @@ class LangChain4jModelClientExtraTest {
     void persistUsageSwallowsExceptions() {
         properties.getModel().setModelName("gpt-4o");
         LangChain4jModelClient client = new LangChain4jModelClient(chatModel, streamingChatModel, properties,
-            u -> { throw new RuntimeException("consumer broke"); });
+            u -> { throw new RuntimeException("consumer broke"); }, null, null);
 
         dev.langchain4j.model.chat.response.ChatResponse response =
             dev.langchain4j.model.chat.response.ChatResponse.builder()

@@ -1,6 +1,6 @@
-# План: Доработка Telegram-бота до паритета с Hermes Gateway
+# План: Доработка Telegram-бота до паритета с оригиналом Gateway
 
-> **Цель:** Довести `telegram-bot` до полного паритета с Hermes Telegram Gateway — добавить недостающие slash-команды, adapter-level фишки и структурные компоненты.
+> **Цель:** Довести `telegram-bot` до полного паритета с оригиналом Telegram Gateway — добавить недостающие slash-команды, adapter-level фишки и структурные компоненты.
 
 ---
 
@@ -83,7 +83,7 @@
 | A3.1 | `/voice` | Voice mode: on/off/tts/channel/leave/status. **Out of scope** — заглушка "Voice not supported" | `VoiceCommandTest` (1) |
 | A3.2 | `/rollback` | Filesystem checkpoints: list/restore. Требует integration с terminal tool | `RollbackCommandTest` (1) |
 | A3.3 | `/credits` | Nous credit balance. **Out of scope** — заглушка | `CreditsCommandTest` (1) |
-| A3.4 | `/update` | Update Hermes Agent. Для Java — `System.exit(1)` + restart script | `UpdateCommandTest` (1) |
+| A3.4 | `/update` | Update the original agent. Для Java — `System.exit(1)` + restart script | `UpdateCommandTest` (1) |
 | A3.5 | `/debug` | Upload debug report (логи + config summary). Отправляет файл | `DebugCommandTest` (2) |
 | A3.6 | `/codex_runtime` | **Out of scope** — Codex-specific. Заглушка | `CodexRuntimeCommandTest` (1) |
 | A3.7 | `/personality` | List/set personality. Заглока (нет personality system) | `PersonalityCommandTest` (1) |
@@ -350,8 +350,8 @@ Phase 3:         B3.1  B3.2  B3.3  B3.4  B3.5  B3.6  B3.7  B3.8
 | **Итого** | **64** | **~153** | **10** | **2** | **~32** |
 
 **Финальное состояние:**
-- 45 slash-команд (паритет с Hermes)
-- 32 adapter-level фишки (паритет с Hermes)
+- 45 slash-команд (паритет с оригиналом)
+- 32 adapter-level фишки (паритет с оригиналом)
 - ~374 теста (221 существующих + ~153 новых)
 - 10 новых backend endpoints
 - 2 новые таблицы
@@ -365,7 +365,7 @@ Phase 3:         B3.1  B3.2  B3.3  B3.4  B3.5  B3.6  B3.7  B3.8
 | Telegram API rate limits при reactions | `setMessageReaction` через rate limiter (Semaphore) |
 | Text batch задерживает ответ | Adaptive delay tiers: 180ms для коротких, 1200ms для split-near-4096 |
 | Media group debounce теряет order | Сохранять `message_id` в порядке получения |
-| Slash access policy ломает существующие команды | Backward compat: если `admin-user-ids` пуст → gating disabled (как в Hermes) |
+| Slash access policy ломает существующие команды | Backward compat: если `admin-user-ids` пуст → gating disabled (как в оригинале) |
 | Pairing codes безопасность | 8-char alphabet (без 0/O/1/I), 1h expiry, max 3 pending, rate limit 1/30s |
 | Backend compress/undo атомарность | Транзакция + optimistic locking на session version |
 | Sticker cache рост | TTL 30 дней, cleanup по cron |
@@ -373,4 +373,4 @@ Phase 3:         B3.1  B3.2  B3.3  B3.4  B3.5  B3.6  B3.7  B3.8
 
 ---
 
-*Документ создан для планирования доработки telegram-bot до паритета с Hermes Telegram Gateway.*
+*Документ создан для планирования доработки telegram-bot до паритета с оригиналом Telegram Gateway.*

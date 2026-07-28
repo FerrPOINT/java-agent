@@ -1,10 +1,10 @@
-# Hermes Agent Core → Java Porting Summary
+# Agent Core → Java Porting Summary
 
-This document maps the essential Hermes Python agent implementation to a proposed Java structure under `com.azhukov.agent.core.*`. It covers only what must be ported; plugin hooks, display/TTS callbacks, kanban integration, credits tracking, and most provider-specific shims are intentionally omitted.
+This document maps the essential Python original agent implementation to a proposed Java structure under `com.azhukov.agent.core.*`. It covers only what must be ported; plugin hooks, display/TTS callbacks, kanban integration, credits tracking, and most provider-specific shims are intentionally omitted.
 
 ## Source Layout (Python)
 
-The relevant Python files are in `/opt/dev/hermes-workspace/hermes-agent`:
+The relevant Python files are in `/opt/dev/python-agent`:
 
 | File | Lines | Role |
 |------|------|------|

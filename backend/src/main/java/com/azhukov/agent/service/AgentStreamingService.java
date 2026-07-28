@@ -35,6 +35,7 @@ public class AgentStreamingService {
     }
 
     SseEmitter streamTurn(ChatRequest request, SseEmitter emitter) {
+        ThinkScrubber scrubber = new ThinkScrubber();
         CompletableFuture.runAsync(() -> {
             try {
                 List<Message> messages = List.of(
@@ -46,7 +47,10 @@ public class AgentStreamingService {
                 modelClient.stream(messages, tools, new StreamingResponseHandler() {
                     @Override
                     public void onToken(String token) {
-                        send(emitter, new StreamEvent("token", token, null, null));
+                        String scrubbed = scrubber.scrub(token);
+                        if (!scrubbed.isEmpty()) {
+                            send(emitter, new StreamEvent("token", scrubbed, null, null));
+                        }
                     }
 
                     @Override
@@ -56,6 +60,10 @@ public class AgentStreamingService {
 
                     @Override
                     public void onComplete() {
+                        String remaining = scrubber.flush();
+                        if (remaining != null && !remaining.isEmpty()) {
+                            send(emitter, new StreamEvent("token", remaining, null, null));
+                        }
                         send(emitter, new StreamEvent("done", null, null, null));
                         emitter.complete();
                     }

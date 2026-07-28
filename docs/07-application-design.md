@@ -5,8 +5,7 @@ Target stack: Java 25 LTS + Spring Boot 4.1.0 + Gradle 9.6.1 (Groovy DSL) + Groo
 ## 1. Naming Rule
 
 - Project name: **Java Agent**.
-- Code/config: use **agent** instead of *Hermes* or *гермес*.
-- Upstream reference: `https://github.com/NousResearch/hermes-agent` is kept as-is in the link label.
+- Code/config: use **agent** everywhere.
 
 ## 2. Runtime: Single Conversation Flow
 
@@ -240,7 +239,7 @@ agent:
     max-skills-in-prompt: ${AGENT_SKILLS_MAX_SKILLS_IN_PROMPT:20}
     max-chars-per-skill: ${AGENT_SKILLS_MAX_CHARS_PER_SKILL:4000}
     default-toolsets:
-      - hermes-cli
+      - cli
       - web
       - file
       - browser
@@ -288,11 +287,11 @@ agent:
 
 **Environment variables summary:** `AGENT_NAME`, `AGENT_MODEL_BASE_URL`, `AGENT_MODEL_API_KEY`, `AGENT_MODEL_NAME`, `OLLAMA_API_KEY`, `OPENAI_API_KEY`, `DB_PASSWORD` (used by Spring datasource).
 
-### Additional upstream Hermes settings not yet in config
+### Additional settings not yet in config
 
 These may be added in later phases:
 
-| Hermes setting | Planned Java mapping | Status |
+| Setting | Planned Java mapping | Status |
 |---|---|---|
 | `reasoning.enabled/mode` | `CoreProperties.reasoningConfig` partial | basic string only |
 | `system-prompt.*` paths | `CoreProperties` or `PromptBuilder` | not configured |
@@ -736,7 +735,7 @@ public interface ToolRegistry {
 | `agent-control` | `clarify`, `delegate_task` |
 | `cli` | union of core + web + file + browser + terminal + memory + skills + code-execution + agent-control + `session_search` |
 
-Toolset aliases mirror the Python upstream: `hermes-cli` → `cli`, `web`, `file`, `browser`, `cli`.
+Toolset aliases mirror the Python original: `cli` → `cli`, `web`, `file`, `browser`, `cli`.
 
 
 ### Progressive disclosure
@@ -815,7 +814,7 @@ REST controllers in `api/`. First version implements:
 | GET | `/api/v1/skills` | `SkillController` |
 | GET | `/api/v1/skills/{name}` | `SkillController` |
 
-Scope note: MVP implements only OpenAI-compatible `chat_completions` and session management. Hermes also exposes `/v1/responses`, `/v1/runs`, `/api/jobs`, `/api/cron/fire`, and platform webhook ingress — these are explicitly **out of scope** for the first Java version.
+Scope note: MVP implements only OpenAI-compatible `chat_completions` and session management. The original Python agent also exposes `/v1/responses`, `/v1/runs`, `/api/jobs`, `/api/cron/fire`, and platform webhook ingress — these are explicitly **out of scope** for the first Java version.
 
 
 ## 15. CLI / REPL
@@ -944,7 +943,7 @@ implementation 'org.apache.commons:commons-imaging:1.0-alpha3'
 
 ## 20. Explicitly Out of Scope
 
-These upstream Hermes features are intentionally deferred to keep the first Java version deliverable:
+These features are intentionally deferred to keep the first Java version deliverable:
 
 | Feature | Reason |
 |---|---|
@@ -1033,16 +1032,16 @@ Implemented with Picocli subcommands.
 
 | # | Question | Decision | Rationale |
 |---|---|---|---|
-| 1 | `execute_code` temp dir vs project CWD | Project CWD | Matches Python Hermes default |
+| 1 | `execute_code` temp dir vs project CWD | Project CWD | Matches Python original default |
 | 2 | `delegate_task` max depth | Configurable `max-depth` (default 3) | User wants nested delegation; guardrails prevent runaway |
 | 3 | MCP discovery | Auto-discover at `AgentRuntime` init | Faster first tool call, explicit failures at startup |
 | 4 | Skills in system prompt | Full local index with char cap | Simpler; progressive disclosure can be added later |
-| 5 | Memory vs todos scope | Memory per-user, todos per-session | Matches Hermes design |
+| 5 | Memory vs todos scope | Memory per-user, todos per-session | Matches original design |
 | 6 | Vision fallback | Auxiliary model first, main model fallback | Matches `tools/vision_tools.py` `_analyze_image` |
 | 7 | CDP WebSocket client | Java-WebSocket | Lighter footprint |
 | 8 | Terminal backend | Local `ProcessBuilder` + optional Docker | Docker added to scope per user request |
 | 9 | Approvals gate | Synchronous for CLI, async pending for HTTP | Different UX per transport |
-| 10 | Auto-title sessions | Auxiliary model, like Hermes | `agent/conversation_loop.py` uses auxiliary model |
+| 10 | Auto-title sessions | Auxiliary model, like original | `agent/conversation_loop.py` uses auxiliary model |
 
 ## 27. Dev / Prod Profiles
 

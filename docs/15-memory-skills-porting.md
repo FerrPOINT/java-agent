@@ -1,8 +1,8 @@
-# Hermes → Java Agent: Memory & Skills Porting Summary
+# the original → Java Agent: Memory & Skills Porting Summary
 
-**Scope:** Reverse-engineer the Hermes Python memory and skills subsystems so a Java implementation (`com.azhukov.agent.memory.*` and `com.azhukov.agent.skills.*`) can mirror observable behavior. This document lists key classes, storage models, recall/search algorithms, skill file formats, loading/management flows, and a per-area **port / skip / defer** recommendation.
+**Scope:** Reverse-engineer the Python original memory and skills subsystems so a Java implementation (`com.azhukov.agent.memory.*` and `com.azhukov.agent.skills.*`) can mirror observable behavior. This document lists key classes, storage models, recall/search algorithms, skill file formats, loading/management flows, and a per-area **port / skip / defer** recommendation.
 
-**Source tree analyzed:** `/opt/dev/java-agent/prototype/hermes-agent`
+**Source tree analyzed:** `/opt/dev/java-agent/prototype/python-agent`
 
 ---
 
@@ -11,11 +11,11 @@
 | Area | Verdict | Rationale |
 |------|---------|-----------|
 | Built-in file-backed memory (`MEMORY.md` / `USER.md`) | **PORT** | Core user-visible feature; simple text-file store with JSON-array helper. Straightforward Java port. |
-| Session/state SQLite database (`hermes_state.py`) | **PORT schema + FTS search** | Contains sessions, messages, and full-text search. Needed for session recall and `session_search`. Semantic/embedding search is **not** implemented locally; port only FTS + message anchoring. |
+| Session/state SQLite database (`session_state.py`) | **PORT schema + FTS search** | Contains sessions, messages, and full-text search. Needed for session recall and `session_search`. Semantic/embedding search is **not** implemented locally; port only FTS + message anchoring. |
 | Memory provider plugin architecture | **PORT contract, DEFER individual providers** | The ABC and `MemoryManager` orchestration are core. Concrete providers (Honcho, RetainDB, Supermemory, Hindsight, Mem0) delegate to external services; port the contract and one minimal built-in wrapper first. |
 | Context engine / memory-context fencing | **PORT** | Required to inject prefetched memory safely into prompts and scrub it from streams. |
 | Skill file format (`SKILL.md`) | **PORT** | YAML frontmatter + markdown body is the lingua-franca of the skill ecosystem. |
-| Skill discovery & listing (`skills_tool` / `skill_utils`) | **PORT** | Walks `~/.hermes/skills/` and optional external dirs; resolves collisions; filters by platform. |
+| Skill discovery & listing (`skills_tool` / `skill_utils`) | **PORT** | Walks `~/.agent/skills/` and optional external dirs; resolves collisions; filters by platform. |
 | Skill runtime serving (`_serve_plugin_skill`) | **PORT** | Loads SKILL.md body + support files into the system prompt / messages. |
 | Skill management (`skill_manager_tool`) | **PORT core actions, DEFER security scans/approval gates** | Create/edit/patch/delete/write_file/remove_file are needed. Security scanner (`skills_guard`), staging approval, and hub install can come later. |
 | Skills Hub / external sources (`skills_hub.py`) | **DEFER** | GitHub/skills.sh/well-known/URL adapters are large and network-dependent. Not needed for a self-contained local skill runtime. |
@@ -33,8 +33,8 @@
 | `agent/memory_provider.py` | `MemoryProvider` ABC + `BuiltinMemoryProvider` wrapper around the file store. | `com.azhukov.agent.memory.MemoryProvider` (interface) `com.azhukov.agent.memory.BuiltinMemoryProvider` |
 | `agent/memory_manager.py` | Orchestrates providers: registration, system prompt, prefetch, sync, tool routing, context fencing. | `com.azhukov.agent.memory.MemoryManager` |
 | `tools/memory_tool.py` | `MemoryStore`: reads/writes `MEMORY.md` and `USER.md`; tool schemas for `memory_search`, `memory_add`, `memory_replace`, `memory_remove`. | `com.azhukov.agent.memory.store.MemoryStore` `com.azhukov.agent.memory.tool.MemoryTool` |
-| `hermes_state.py` | SQLite session DB, schema, migrations, message CRUD, FTS search, anchored views. | `com.azhukov.agent.memory.store.SessionDatabase` + schema/migration classes |
-| `tools/session_search_tool.py` | Agent-facing `session_search` tool over `hermes_state.py`. | `com.azhukov.agent.memory.tool.SessionSearchTool` |
+| `session_state.py` | SQLite session DB, schema, migrations, message CRUD, FTS search, anchored views. | `com.azhukov.agent.memory.store.SessionDatabase` + schema/migration classes |
+| `tools/session_search_tool.py` | Agent-facing `session_search` tool over `session_state.py`. | `com.azhukov.agent.memory.tool.SessionSearchTool` |
 | `agent/context_engine.py` | Builds a ranked context string from memory files, sessions, and tools. | `com.azhukov.agent.memory.ContextEngine` |
 | `agent/agent_init.py` | Wires `MemoryStore`, `MemoryManager`, and plugins into the agent. | Wiring code in `com.azhukov.agent.runtime.AgentInitializer` |
 | `plugins/memory/__init__.py` | Plugin loader (`load_memory_provider`) and built-in registration. | `com.azhukov.agent.memory.spi.MemoryProviderLoader` |
@@ -44,7 +44,7 @@
 
 #### 2.2.1 File-backed built-in memory (`MemoryStore`)
 
-- Files live under the Hermes home directory (`~/.hermes/`):
+- Files live under the the original home directory (`~/.agent/`):
   - `MEMORY.md` — agent facts about the project/domain.
   - `USER.md` — user preferences / identity.
 - Format: each file is a flat markdown-ish text file. `MemoryStore` treats it as a list of entries delimited by blank lines, but the canonical on-disk format is plain paragraphs/bullets.
@@ -55,7 +55,7 @@
   - `"memory"` → `MEMORY.md`
   - `"user"` → `USER.md`
 
-#### 2.2.2 Session/state SQLite (`hermes_state.py`)
+#### 2.2.2 Session/state SQLite (`session_state.py`)
 
 Core tables (derived from schema/migration code):
 
@@ -117,7 +117,7 @@ END;
   3. Optional external memory provider context.
 - Produces a single text block injected into the system prompt or user context.
 
-#### Session search (`hermes_state.py` / `session_search_tool.py`)
+#### Session search (`session_state.py` / `session_search_tool.py`)
 - Searches `messages_fts` for query terms.
 - Supports:
   - `query` (required)
@@ -171,7 +171,7 @@ A skill is a directory (name = skill name) containing at minimum `SKILL.md`. Opt
 name: my-skill
 description: "Use when X happens. Does Y."
 metadata:
-  hermes:
+  agent:
     tags: [devops, docker]
     platforms: [linux, macos]   # optional platform filter
     requires: []                # optional list of required tool names
@@ -199,7 +199,7 @@ Validation constraints (from `skill_manager_tool.py`):
 ### 3.3 Skill loading and listing algorithm
 
 1. **Skill directories** (from `agent/skill_utils.py`):
-   - Primary: `~/.hermes/skills/`
+   - Primary: `~/.agent/skills/`
    - Optional external dirs from config `skills.external_dirs`.
    - Exclude paths matching `is_excluded_skill_path` (e.g. `.hub`, `.archive`, `optional-skills/` unless enabled).
 
@@ -214,7 +214,7 @@ Validation constraints (from `skill_manager_tool.py`):
    - Also supports qualified lookup `category/skill-name`.
 
 5. **Platform filtering** (from `agent/skill_utils.py`):
-   - If frontmatter contains `metadata.hermes.platforms`, only include skill if current platform matches.
+   - If frontmatter contains `metadata.platforms`, only include skill if current platform matches.
    - Platform value normalized from `sys.platform`.
 
 6. **Serving a skill** (`_serve_plugin_skill`):
@@ -230,7 +230,7 @@ Validation constraints (from `skill_manager_tool.py`):
 
 | Action | Behavior | Guards |
 |--------|----------|--------|
-| `create` | Write new `SKILL.md` under `~/.hermes/skills/` (optionally in a category subdir). | Name validation; frontmatter validation; size limit; collision check; optional security scan; write-approval gate. |
+| `create` | Write new `SKILL.md` under `~/.agent/skills/` (optionally in a category subdir). | Name validation; frontmatter validation; size limit; collision check; optional security scan; write-approval gate. |
 | `edit` | Full rewrite of existing `SKILL.md`. | Same validations; background-review write guard; read-before-write guard for autonomous curation. |
 | `patch` | Fuzzy find/replace in `SKILL.md` or a supporting file. | Validates result size & frontmatter; read-before-write guard. |
 | `delete` | Remove skill dir. | Pinned guard; path-traversal guard; curator consolidation guard (`absorbed_into`); foreground = `rmtree`, background curator = `archive_skill`. |
@@ -277,7 +277,7 @@ Important autonomous-curation policy (must preserve in Java):
 
 ## 5. Files created / modified
 
-- **Created:** `/opt/dev/java-agent/docs/15-hermes-memory-skills-porting.md`
+- **Created:** `/opt/dev/java-agent/docs/15-memory-skills-porting.md`
 - **Modified:** none
 
 ## 6. Issues encountered

@@ -569,6 +569,32 @@ public class AgentBackendClient {
         }
     }
 
+    public String installBundle(String bundleName) {
+        try {
+            return restClient.post()
+                .uri("/api/v1/agent/bundles/install")
+                .body(java.util.Map.of("bundleName", bundleName))
+                .retrieve()
+                .body(String.class);
+        } catch (Exception e) {
+            log.error("installBundle failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    public String uninstallBundle(String bundleName) {
+        try {
+            return restClient.post()
+                .uri("/api/v1/agent/bundles/uninstall")
+                .body(java.util.Map.of("bundleName", bundleName))
+                .retrieve()
+                .body(String.class);
+        } catch (Exception e) {
+            log.error("uninstallBundle failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
     public String branchSession(String sessionId, String name) {
         try {
             String url = "/api/v1/agent/session/" + sessionId + "/branch";
