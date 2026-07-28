@@ -1,6 +1,7 @@
 package com.azhukov.agent.persistence.repository;
 
 import com.azhukov.agent.persistence.entity.MemoryEntity;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -13,7 +14,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
+@Tag("slow")
 @TestPropertySource(properties = {
     "spring.datasource.url=jdbc:h2:mem:memoryrepo;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=false;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH",
     "spring.datasource.driver-class-name=org.h2.Driver",

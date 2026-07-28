@@ -11,14 +11,19 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 public class JavaAgentApplication {
 
     public static void main(String[] args) {
+        SpringApplication app = createApplication(args);
+        app.run(args);
+    }
+
+    static SpringApplication createApplication(String[] args) {
         SpringApplication app = new SpringApplication(JavaAgentApplication.class);
         if (isCliProfileActive(args)) {
             app.setWebApplicationType(WebApplicationType.NONE);
         }
-        app.run(args);
+        return app;
     }
 
-    private static boolean isCliProfileActive(String[] args) {
+    static boolean isCliProfileActive(String[] args) {
         for (String arg : args) {
             if (arg.contains("cli") && (arg.startsWith("--spring.profiles.active=") || arg.startsWith("-Dspring.profiles.active="))) {
                 return true;

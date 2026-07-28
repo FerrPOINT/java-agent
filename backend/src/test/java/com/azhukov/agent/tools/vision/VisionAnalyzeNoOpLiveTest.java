@@ -1,12 +1,14 @@
 package com.azhukov.agent.tools.vision;
 
 import com.azhukov.agent.client.NoOpModelClient;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @EnabledIfEnvironmentVariable(named = "RUN_LIVE_BROWSER_TEST", matches = "true")
+@Tag("live")
 class VisionAnalyzeNoOpLiveTest {
 
     @Test

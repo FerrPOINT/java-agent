@@ -111,11 +111,12 @@ docker compose up --build
 
 ```bash
 cd backend
-./gradlew test          # unit + integration
+./gradlew test          # unit + integration, исключает live/slow
+./gradlew jacocoTestReport
 ./gradlew bootJar       # собрать jar
 ```
 
-> ⚠️ Gradle `bootRun` падает с OOM/SIGKILL при реальных LLM-вызовах. Используйте `java -jar`.
+Текущий coverage gate: LINE ≥ 80%, per-package целевые пакеты ≥ 75%. Отчёт JaCoCo: `backend/build/reports/jacoco/test/html/index.html`.
 
 ## Структура
 
@@ -123,20 +124,23 @@ cd backend
 backend/
 ├── build.gradle
 ├── settings.gradle
+├── ARCHITECTURE.md      # текущий стек и профили
 └── src/main/java/com/azhukov/agent/
     ├── JavaAgentApplication.java
-    ├── api/                # REST controllers
+    ├── api/                # REST controllers + health indicators
     ├── cli/                # Picocli / JLine REPL
-    ├── client/             # LLM clients (LangChain4j, NoOp)
+    ├── client/             # LLM clients (LangChain4j, NoOp) + MCP client
     ├── config/             # AgentProperties, beans
-    ├── core/               # domain layer (AgentRuntime, ToolRegistry, prompts, context, memory, skills)
-    ├── persistence/        # JPA entities + repositories
-    └── tools/              # @AgentTool implementations (file, terminal, web, browser, coding, memory, skills, mcp)
+    ├── core/               # domain layer (AgentRuntime, ToolRegistry, prompts, context, memory, skills, state, audit)
+    ├── gateway/            # Telegram/webhook adapters + routing
+    ├── persistence/        # JPA entities + repositories + Flyway migrations
+    ├── security/           # SSRF-safe HTTP client, safety validators
+    └── tools/              # @AgentTool implementations (file, terminal, process, web, browser, coding, memory, skills, mcp)
 ```
 
 - `backend/src/main/resources/` — конфигурация и миграции Flyway
 - `docs/` — архитектура и планирование
-- `prototype/` — клоны репозиториев Hermes (не в git)
+- `prototype/` — удалён; для исходников Hermes используйте официальные репозитории NousResearch
 
 ## Переменные окружения
 

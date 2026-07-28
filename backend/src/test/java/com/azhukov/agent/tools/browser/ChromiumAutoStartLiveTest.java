@@ -2,12 +2,14 @@ package com.azhukov.agent.tools.browser;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @EnabledIfSystemProperty(named = "RUN_LIVE_CHROMIUM_TEST", matches = "true")
+@Tag("live")
 class ChromiumAutoStartLiveTest {
 
     @Test

@@ -7,6 +7,7 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.gateway.GatewayRoutingService;
 import com.azhukov.agent.gateway.telegram.TelegramLongPollingService;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -22,6 +23,7 @@ import org.springframework.test.context.TestPropertySource;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
+@Tag("slow")
 class AgentConfigProfilesTest {
 
     @SpringBootTest

@@ -32,7 +32,8 @@ class AgentCliRunnerTest {
 
         assertThat(output).containsExactly(
             "Agent CLI. Type 'exit' to quit.",
-            "hi back"
+            "hi back",
+            "Goodbye."
         );
     }
 
@@ -47,6 +48,26 @@ class AgentCliRunnerTest {
         List<String> output = new ArrayList<>();
         runner.runLoop(reader, Session.create("cli-user", "noop", ""), output::add);
 
-        assertThat(output).containsExactly("Agent CLI. Type 'exit' to quit.");
+        assertThat(output).containsExactly(
+            "Agent CLI. Type 'exit' to quit.",
+            "Goodbye."
+        );
+    }
+
+    @Test
+    void runLoopHandlesEmptyInput() {
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        AgentCliRunner runner = new AgentCliRunner(runtime);
+
+        LineReader reader = mock(LineReader.class);
+        when(reader.readLine("> ")).thenReturn("", "exit");
+
+        List<String> output = new ArrayList<>();
+        runner.runLoop(reader, Session.create("cli-user", "noop", ""), output::add);
+
+        assertThat(output).containsExactly(
+            "Agent CLI. Type 'exit' to quit.",
+            "Goodbye."
+        );
     }
 }

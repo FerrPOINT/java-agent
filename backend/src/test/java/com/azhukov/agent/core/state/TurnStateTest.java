@@ -10,41 +10,42 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TurnStateTest {
 
     @Test
-    void recordsModelCallAndExecution() {
+    void recordsExecutionsAndFailures() {
         TurnState state = new TurnState("s1", 1);
-        assertThat(state.modelCalls()).isEqualTo(0);
-        assertThat(state.totalExecutions()).isEqualTo(0);
-
         state.recordModelCall();
+        state.recordExecution(new ToolCall("tc-read_file", "read_file", "{}"), ToolResult.ok("data"), 10L);
+        state.recordExecution(new ToolCall("tc-read_file", "read_file", "{}"), ToolResult.fail("err"), 20L);
+
         assertThat(state.modelCalls()).isEqualTo(1);
-
-        state.recordExecution(new ToolCall("c1", "tool", "{}"), ToolResult.ok("res"), 10L);
-        assertThat(state.totalExecutions()).isEqualTo(1);
-        assertThat(state.failureCountFor("tool")).isEqualTo(0);
+        assertThat(state.totalExecutions()).isEqualTo(2);
+        assertThat(state.failureCountFor("read_file")).isEqualTo(1);
+        assertThat(state.repeatCountFor(new ToolCall("tc-read_file", "read_file", "{}"))).isEqualTo(2);
     }
 
     @Test
-    void tracksFailuresAndRepeats() {
+    void repeatedFailureDetection() {
         TurnState state = new TurnState("s1", 1);
-        ToolCall call = new ToolCall("c1", "tool", "{}");
-        state.recordExecution(call, ToolResult.fail("err"), 5L);
-        state.recordExecution(call, ToolResult.fail("err"), 5L);
-        assertThat(state.failureCountFor("tool")).isEqualTo(2);
-        assertThat(state.repeatCountFor(call)).isEqualTo(2);
+        ToolCall call = new ToolCall("tc-read_file", "read_file", "{}");
+        state.recordExecution(call, ToolResult.ok("a"), 1L);
+        state.recordExecution(call, ToolResult.ok("b"), 1L);
+        assertThat(state.isRepeatedFailure(call)).isTrue();
     }
 
     @Test
-    void haltedStateStored() {
+    void haltState() {
         TurnState state = new TurnState("s1", 1);
-        state.halt("too many failures");
+        state.halt("too many");
         assertThat(state.isHalted()).isTrue();
-        assertThat(state.haltReason()).isEqualTo("too many failures");
+        assertThat(state.haltReason()).isEqualTo("too many");
+        assertThat(state.sessionId()).isEqualTo("s1");
+        assertThat(state.turnIndex()).isEqualTo(1);
     }
 
     @Test
-    void executionsListIsUnmodifiable() {
+    void executionsAreUnmodifiable() {
         TurnState state = new TurnState("s1", 1);
-        state.recordExecution(new ToolCall("c1", "tool", "{}"), ToolResult.ok("x"), 1L);
-        assertThatThrownBy(() -> state.executions().clear()).isInstanceOf(UnsupportedOperationException.class);
+        state.recordExecution(new ToolCall("tc-x", "x", "{}"), ToolResult.ok(""), 1L);
+        assertThatThrownBy(() -> state.executions().add(null))
+            .isInstanceOf(UnsupportedOperationException.class);
     }
 }

@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.terminal;
 
 import com.azhukov.agent.core.model.ToolResult;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -13,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+@Tag("slow")
 class ProcessToolTest {
 
     @Test

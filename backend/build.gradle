@@ -93,9 +93,32 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform {
+        excludeTags 'live', 'slow'
+    }
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+    maxHeapSize = '3g'
+    finalizedBy jacocoTestReport
+}
+
+tasks.register('slowTest', Test) {
+    description = 'Runs slow integration tests'
+    group = 'verification'
+    useJUnitPlatform {
+        includeTags 'slow'
         excludeTags 'live'
     }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
+    maxHeapSize = '4g'
+}
+
+tasks.register('liveTest', Test) {
+    description = 'Runs live integration tests requiring external services'
+    group = 'verification'
+    useJUnitPlatform {
+        includeTags 'live'
+    }
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+    maxHeapSize = '4g'
     finalizedBy jacocoTestReport
 }
 
@@ -105,15 +128,6 @@ tasks.named('jacocoTestReport') {
         xml.required = true
         html.required = true
     }
-}
-
-tasks.register('liveTest', Test) {
-    group = 'verification'
-    description = 'Runs live tests that require external services.'
-    useJUnitPlatform {
-        includeTags 'live'
-    }
-    jvmArgs '-XX:+EnableDynamicAgentLoading'
 }
 
 tasks.withType(JavaCompile).configureEach {

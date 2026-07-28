@@ -1,6 +1,7 @@
 package com.azhukov.agent.config;
 
 import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -34,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
     "agent.chromium.auto-start=false",
     "agent.chromium.auto-install=false"
 })
+@Tag("slow")
 class FlywayMigrationTest {
 
     @Autowired
@@ -56,7 +58,7 @@ class FlywayMigrationTest {
         List<String> versions = jdbcTemplate.queryForList(
             "SELECT version FROM flyway_schema_history WHERE success = TRUE ORDER BY version", String.class);
 
-        assertThat(versions).contains("2", "3", "4", "5");
+        assertThat(versions).contains("1", "2", "3", "4", "5");
     }
 
     @Test

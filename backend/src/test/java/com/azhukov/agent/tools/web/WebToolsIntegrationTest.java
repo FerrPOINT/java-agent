@@ -5,6 +5,7 @@ import com.azhukov.agent.core.security.DefaultRedactor;
 import com.azhukov.agent.core.security.DefaultUrlSafety;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
@@ -14,6 +15,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @EnabledIfEnvironmentVariable(named = "ENABLE_NETWORK_TESTS", matches = "true")
+@Tag("slow")
 class WebToolsIntegrationTest {
 
     private final AgentProperties properties = new AgentProperties();

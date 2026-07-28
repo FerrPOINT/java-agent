@@ -24,10 +24,14 @@ public class ChromiumDownloader {
     private final HttpClient httpClient;
 
     public ChromiumDownloader(String baseUrl) {
-        this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
-        this.httpClient = HttpClient.newBuilder()
+        this(baseUrl, HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(60))
-            .build();
+            .build());
+    }
+
+    ChromiumDownloader(String baseUrl, HttpClient httpClient) {
+        this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        this.httpClient = httpClient;
     }
 
     public Path download(ChromiumPlatform.Platform platform, String revision, Path installDir) throws IOException, InterruptedException {

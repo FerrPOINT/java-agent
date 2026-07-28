@@ -32,8 +32,8 @@ public class ChromiumAutoStart {
         this.properties = properties;
         this.launcher = launcher;
         this.objectMapper = objectMapper;
-        this.revisionResolver = new ChromiumRevisionResolver(properties.getChromium().getDownloadUrl(), objectMapper);
-        this.downloader = new ChromiumDownloader(properties.getChromium().getDownloadUrl());
+        this.revisionResolver = createRevisionResolver();
+        this.downloader = createDownloader();
     }
 
     @PostConstruct
@@ -108,6 +108,22 @@ public class ChromiumAutoStart {
     public boolean isRunning() {
         Process p = process.get();
         return p != null && p.isAlive();
+    }
+
+        ChromiumPlatform.Platform detectPlatform() {
+        return ChromiumPlatform.detect();
+    }
+
+    ChromiumRevisionResolver createRevisionResolver() {
+        return new ChromiumRevisionResolver(properties.getChromium().getDownloadUrl(), objectMapper);
+    }
+
+    ChromiumDownloader createDownloader() {
+        return new ChromiumDownloader(properties.getChromium().getDownloadUrl());
+    }
+
+    void setProcess(Process p) {
+        process.set(p);
     }
 
     private Path chromiumHome() throws IOException {

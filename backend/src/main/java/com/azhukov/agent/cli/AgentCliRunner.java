@@ -23,26 +23,42 @@ public class AgentCliRunner implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
-        Terminal terminal = TerminalBuilder.builder()
+        Terminal terminal = buildTerminal();
+        LineReader reader = buildReader(terminal);
+        runLoop(reader, Session.create("cli-user", "openai-compatible", ""), System.out::println);
+    }
+
+    Terminal buildTerminal() throws Exception {
+        return TerminalBuilder.builder()
             .system(true)
             .dumb(true)
             .build();
-        LineReader reader = LineReaderBuilder.builder()
+    }
+
+    LineReader buildReader(Terminal terminal) {
+        return LineReaderBuilder.builder()
             .terminal(terminal)
             .appName("java-agent")
             .build();
-        runLoop(reader, Session.create("cli-user", "openai-compatible", ""), System.out::println);
     }
 
     void runLoop(LineReader reader, Session session, java.util.function.Consumer<String> output) {
         output.accept("Agent CLI. Type 'exit' to quit.");
         while (true) {
-            String line = reader.readLine("> ");
-            if (line == null || "exit".equalsIgnoreCase(line.trim())) {
-                break;
+            try {
+                String line = reader.readLine("> ");
+                if (line == null || "exit".equalsIgnoreCase(line.trim())) {
+                    break;
+                }
+                if (line.isBlank()) {
+                    continue;
+                }
+                TurnResult result = agentRuntime.runTurn(session, line);
+                output.accept(result.finalText());
+            } catch (Exception e) {
+                output.accept("Error: " + e.getMessage());
             }
-            TurnResult result = agentRuntime.runTurn(session, line);
-            output.accept(result.finalText());
         }
+        output.accept("Goodbye.");
     }
 }

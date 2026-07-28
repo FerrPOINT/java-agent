@@ -1,27 +1,29 @@
 package com.azhukov.agent.core.audit;
 
+import com.azhukov.agent.persistence.entity.AuditLogEntity;
 import com.azhukov.agent.persistence.repository.AuditLogRepository;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.*;
 
-@SpringBootTest
-@ActiveProfiles("noop")
 class AuditLogServiceTest {
 
-    @Autowired
-    private AuditLogService auditLogService;
-
-    @Autowired
-    private AuditLogRepository repository;
+    @Test
+    void logDelegatesToRepository() {
+        AuditLogRepository repository = mock(AuditLogRepository.class);
+        AuditLogService service = new AuditLogService(repository);
+        service.log("s1", "user", "tool", "event", "detail");
+        verify(repository).save(any(AuditLogEntity.class));
+    }
 
     @Test
-    void persistsAuditEntry() {
-        repository.deleteAll();
-        auditLogService.log("session-1", "user", "CHAT", "/api/v1/agent/chat", "message received");
-        assertThat(auditLogService.findAll()).hasSize(1);
+    void findAllReturnsRepositoryResult() {
+        AuditLogRepository repository = mock(AuditLogRepository.class);
+        AuditLogService service = new AuditLogService(repository);
+        when(repository.findAll()).thenReturn(List.of(new AuditLogEntity()));
+        assertThat(service.findAll()).hasSize(1);
     }
 }

@@ -12,6 +12,7 @@ import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -44,19 +45,23 @@ public class TelegramLongPollingService {
         return running.get();
     }
 
-    public TelegramLongPollingService(AgentProperties properties, GatewayRoutingService routingService, ObjectMapper objectMapper) {
+    public TelegramLongPollingService(AgentProperties properties, GatewayRoutingService routingService, ObjectMapper objectMapper, HttpClient httpClient) {
         this.properties = properties;
         this.routingService = routingService;
         this.objectMapper = objectMapper;
-        int timeout = properties.getGateway().getTelegram().getTimeoutSeconds();
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .build();
+        this.httpClient = httpClient;
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "telegram-long-polling");
             t.setDaemon(true);
             return t;
         });
+    }
+
+    @Autowired
+    public TelegramLongPollingService(AgentProperties properties, GatewayRoutingService routingService, ObjectMapper objectMapper) {
+        this(properties, routingService, objectMapper, HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .build());
     }
 
     @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
@@ -103,7 +108,7 @@ public class TelegramLongPollingService {
     }
 
     @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> fetchUpdates() throws InterruptedException {
+    List<Map<String, Object>> fetchUpdates() throws InterruptedException {
         String token = properties.getGateway().getTelegram().getBotToken();
         long offset = lastUpdateId.get() + 1;
         int timeout = properties.getGateway().getTelegram().getTimeoutSeconds();
@@ -150,7 +155,7 @@ public class TelegramLongPollingService {
     }
 
     @SuppressWarnings("unchecked")
-    private void processUpdate(Map<String, Object> update) {
+    void processUpdate(Map<String, Object> update) {
         Long updateId = ((Number) update.get("update_id")).longValue();
         lastUpdateId.updateAndGet(current -> Math.max(current, updateId));
 

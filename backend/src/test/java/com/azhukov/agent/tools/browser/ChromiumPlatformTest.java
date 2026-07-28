@@ -1,7 +1,5 @@
 package com.azhukov.agent.tools.browser;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -11,26 +9,27 @@ class ChromiumPlatformTest {
 
     @Test
     void detectsLinux() {
-        ChromiumPlatform.Platform p = ChromiumPlatform.Platform.LINUX_X64;
-        assertThat(p.snapshotFolder()).isEqualTo("Linux_x64");
-        assertThat(p.executableName()).isEqualTo("chrome");
+        ChromiumPlatform.Platform p = ChromiumPlatform.detect();
+        assertThat(p).isEqualTo(ChromiumPlatform.Platform.LINUX_X64);
     }
 
     @Test
-    void archiveNameForLinux() {
-        assertThat(ChromiumPlatform.archiveName(ChromiumPlatform.Platform.LINUX_X64, "r1"))
-            .isEqualTo("chrome-linux.zip");
+    void archiveNameForPlatforms() {
+        assertThat(ChromiumPlatform.archiveName(ChromiumPlatform.Platform.LINUX_X64, "123")).isEqualTo("chrome-linux.zip");
+        assertThat(ChromiumPlatform.archiveName(ChromiumPlatform.Platform.MAC_ARM64, "123")).isEqualTo("chrome-mac.zip");
+        assertThat(ChromiumPlatform.archiveName(ChromiumPlatform.Platform.WIN_X64, "123")).isEqualTo("chrome-win.zip");
     }
 
     @Test
-    void archiveNameForMacArm() {
-        assertThat(ChromiumPlatform.archiveName(ChromiumPlatform.Platform.MAC_ARM64, "r1"))
-            .isEqualTo("chrome-mac.zip");
+    void archiveNameThrowsForUnsupported() {
+        assertThatThrownBy(() -> ChromiumPlatform.archiveName(ChromiumPlatform.Platform.UNSUPPORTED, "123"))
+            .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
-    void detectDoesNotReturnUnsupportedOnLinux() {
-        // We run on linux; detect should return LINUX_X64 or at least not unsupported
-        assertThat(ChromiumPlatform.detect()).isNotEqualTo(ChromiumPlatform.Platform.UNSUPPORTED);
+    void platformFolders() {
+        assertThat(ChromiumPlatform.Platform.LINUX_X64.snapshotFolder()).isEqualTo("Linux_x64");
+        assertThat(ChromiumPlatform.Platform.MAC_ARM64.archiveFolder()).isEqualTo("chrome-mac");
+        assertThat(ChromiumPlatform.Platform.WIN_X64.executableName()).isEqualTo("chrome.exe");
     }
 }

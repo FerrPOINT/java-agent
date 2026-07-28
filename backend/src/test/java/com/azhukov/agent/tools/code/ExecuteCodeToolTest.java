@@ -2,10 +2,12 @@ package com.azhukov.agent.tools.code;
 
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@Tag("slow")
 class ExecuteCodeToolTest {
 
     @Test

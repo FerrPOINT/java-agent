@@ -5,12 +5,14 @@ import com.azhukov.agent.core.security.Redactor;
 import com.azhukov.agent.core.security.DefaultUrlSafety;
 import com.azhukov.agent.core.security.DefaultRedactor;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @EnabledIfEnvironmentVariable(named = "RUN_LIVE_BROWSER_TEST", matches = "true")
+@Tag("live")
 class BrowserToolsLiveTest {
 
     @Test

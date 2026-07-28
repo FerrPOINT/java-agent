@@ -86,4 +86,24 @@ class McpLifecycleManagerUnitTest {
         mgr.connectConfiguredServers();
         assertThat(mgr.listServers()).isEmpty();
     }
+
+    @Test
+    void closeAllClearsClients() {
+        AgentProperties props = new AgentProperties();
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx);
+        mgr.closeAll();
+        assertThat(mgr.listServers()).isEmpty();
+    }
+
+    @Test
+    void mcpToolHandlerExecuteDelegates() {
+        AgentProperties props = new AgentProperties();
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx);
+        var handler = mgr.new McpToolHandler("srv", "tool");
+        var r = handler.execute("{}", null, com.azhukov.agent.core.model.Session.create("u","noop",""));
+        assertThat(r.success()).isFalse();
+        assertThat(r.error()).contains("not connected");
+    }
 }

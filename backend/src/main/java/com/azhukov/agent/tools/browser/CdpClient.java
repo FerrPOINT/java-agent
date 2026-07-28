@@ -7,6 +7,7 @@ import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -34,6 +35,15 @@ public class CdpClient {
     private String webSocketUrl;
     private volatile boolean connected = false;
 
+    public CdpClient(URI webSocketUrl, ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+        this.httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(60))
+            .build();
+        this.webSocketUrl = webSocketUrl.toString();
+    }
+
+    @Autowired
     public CdpClient(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder()

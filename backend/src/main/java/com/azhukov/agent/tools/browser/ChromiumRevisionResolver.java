@@ -66,7 +66,7 @@ public class ChromiumRevisionResolver {
         }
     }
 
-    private String readCachedRevision(ChromiumPlatform.Platform platform) {
+    protected String readCachedRevision(ChromiumPlatform.Platform platform) {
         try {
             Path home = chromiumHome();
             Path file = home.resolve(".revision-" + platform.name().toLowerCase());
@@ -79,7 +79,7 @@ public class ChromiumRevisionResolver {
         return null;
     }
 
-    private Path chromiumHome() {
+    protected Path chromiumHome() {
         String home = System.getProperty("user.home");
         return Path.of(home, ".azhukov-agent", "chromium");
     }
