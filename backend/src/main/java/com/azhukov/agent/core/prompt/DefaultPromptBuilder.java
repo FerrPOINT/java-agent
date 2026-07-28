@@ -8,22 +8,27 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import org.springframework.stereotype.Component;
 
-@Component
 public class DefaultPromptBuilder implements PromptBuilder {
 
     private final AgentProperties properties;
     private final ToolRegistry toolRegistry;
     private final AgentConstants constants;
+    private final PromptCacheTracker cacheTracker;
 
     @org.springframework.beans.factory.annotation.Autowired
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry) {
-        this(properties, toolRegistry, new DefaultAgentConstants());
+        this(properties, toolRegistry, new DefaultAgentConstants(), null);
     }
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants) {
+        this(properties, toolRegistry, constants, null);
+    }
+
+    public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants, PromptCacheTracker cacheTracker) {
         this.properties = properties;
         this.toolRegistry = toolRegistry;
         this.constants = constants;
+        this.cacheTracker = cacheTracker;
     }
 
     @Override
@@ -33,6 +38,15 @@ public class DefaultPromptBuilder implements PromptBuilder {
             text = buildDefaultPrompt();
         }
         text = text.replace("${agent.name}", constants.resolve("agent.name"));
+        // Track system prompt hash for cache validation
+        if (cacheTracker != null && session != null && session.id() != null) {
+            String prefixHash = PromptCacheTracker.hashPrefix(text);
+            if (cacheTracker.isCacheValid(String.valueOf(session.id()), prefixHash)) {
+                // Cache is valid — system prompt unchanged from previous turn
+            } else {
+                cacheTracker.markCached(String.valueOf(session.id()), prefixHash);
+            }
+        }
         return Message.system(text);
     }
 

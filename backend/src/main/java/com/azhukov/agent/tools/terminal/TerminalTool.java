@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.terminal;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.service.CheckpointManager;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -9,6 +10,8 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.Redactor;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -24,6 +27,7 @@ import java.util.concurrent.TimeUnit;
 )
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class TerminalTool implements ToolHandler {
 
     private static final List<String> DEFAULT_BLOCKED_PATTERNS = List.of(
@@ -33,6 +37,7 @@ public class TerminalTool implements ToolHandler {
     private final ProcessTool processTool;
     private final AgentProperties properties;
     private final Redactor redactor;
+    private final CheckpointManager checkpointManager;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -42,6 +47,16 @@ public class TerminalTool implements ToolHandler {
             return ToolResult.fail("Command is required");
         }
         String command = args.command();
+
+        // Auto-checkpoint before dangerous commands
+        if (properties.getCheckpoints().isEnabled() && checkpointManager.isDangerousCommand(command)) {
+            try {
+                checkpointManager.snapshot("Auto-checkpoint before: " + command);
+                log.info("Auto-checkpoint created before dangerous command: {}", command);
+            } catch (Exception e) {
+                log.warn("Auto-checkpoint failed: {}", e.getMessage());
+            }
+        }
 
         List<String> blockedPatterns = properties.getSecurity().getBlockedCommands();
         if (blockedPatterns == null || blockedPatterns.isEmpty()) {

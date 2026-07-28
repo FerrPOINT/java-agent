@@ -381,6 +381,76 @@ public class AgentBackendClient {
         }
     }
 
+    public String compressSessionPartial(String sessionId, int keepLastN) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("keepLastN", keepLastN);
+        try {
+            restClient.post()
+            .uri("/api/v1/agent/session/{sessionId}/compress", sessionId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(body)
+            .retrieve()
+            .toBodilessEntity();
+        return "Context compressed (kept last " + keepLastN + " exchanges).";
+        } catch (Exception e) {
+            log.error("compressSessionPartial failed for sessionId={}: {}", sessionId, e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    public String listCheckpoints() {
+        try {
+            String json = restClient.get()
+            .uri("/api/v1/agent/checkpoint")
+            .retrieve()
+            .body(String.class);
+            if (json == null || json.isBlank()) return "No checkpoints found.";
+            JsonNode array = objectMapper.readTree(json);
+            if (!array.isArray() || array.isEmpty()) return "No checkpoints found.";
+            StringBuilder sb = new StringBuilder("Checkpoints:\n");
+            for (JsonNode node : array) {
+                String id = node.path("id").asText();
+                String desc = node.path("description").asText();
+                int files = node.path("fileCount").asInt();
+                sb.append(String.format("- %s | %s | %d files\n", id, desc, files));
+            }
+            return sb.toString().trim();
+        } catch (Exception e) {
+            log.error("listCheckpoints failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    public String restoreCheckpoint(String checkpointId) {
+        try {
+            restClient.post()
+            .uri("/api/v1/agent/checkpoint/{id}/restore", checkpointId)
+            .retrieve()
+            .toBodilessEntity();
+        return "Checkpoint restored: " + checkpointId;
+        } catch (Exception e) {
+            log.error("restoreCheckpoint failed for id={}: {}", checkpointId, e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    public String createCheckpoint(String description) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("description", description);
+        try {
+            restClient.post()
+            .uri("/api/v1/agent/checkpoint")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(body)
+            .retrieve()
+            .toBodilessEntity();
+        return "Checkpoint created: " + description;
+        } catch (Exception e) {
+            log.error("createCheckpoint failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
     public String approve(boolean all, String scope) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("all", all);

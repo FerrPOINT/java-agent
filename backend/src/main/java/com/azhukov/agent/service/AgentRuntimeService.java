@@ -45,6 +45,7 @@ public class AgentRuntimeService {
     private final MemoryProvider memoryProvider;
     private final MemoryRepository memoryRepository;
     private final WriteApprovalGate writeApprovalGate;
+    private final ConversationCompressor conversationCompressor;
 
     @Transactional
     public ChatResponseDto runDelegate(ChatRequest request) {
@@ -144,10 +145,46 @@ public class AgentRuntimeService {
 
     @Transactional
     public void compressSession(UUID sessionId, String focus) {
-        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        if (messages.size() <= 4) return;
-        List<MessageEntity> toDelete = messages.subList(0, messages.size() - 4);
-        messageRepository.deleteAll(toDelete);
+        compressSession(sessionId, focus, null);
+    }
+
+    @Transactional
+    public void compressSession(UUID sessionId, String focusTopic, Integer keepLastN) {
+        List<MessageEntity> messageEntities = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        if (messageEntities.size() <= 4) return;
+
+        // Convert to core Message objects
+        List<Message> messages = messageEntities.stream()
+            .map(e -> switch (e.getRole()) {
+                case "assistant" -> Message.assistant(e.getContent() != null ? e.getContent() : "",
+                    e.getTurnIndex() != null ? e.getTurnIndex() : 0);
+                case "tool" -> Message.toolResult(e.getToolCallId(),
+                    e.getContent() != null ? e.getContent() : "",
+                    e.getTurnIndex() != null ? e.getTurnIndex() : 0);
+                default -> Message.user(e.getContent() != null ? e.getContent() : "");
+            })
+            .toList();
+
+        // Use ConversationCompressor for LLM-based compression
+        List<Message> compressed;
+        if (keepLastN != null && keepLastN > 0) {
+            compressed = conversationCompressor.compressPartial(messages, keepLastN);
+        } else {
+            compressed = conversationCompressor.compress(messages, focusTopic);
+        }
+
+        // Delete all old messages and persist compressed versions
+        messageRepository.deleteAll(messageEntities);
+        Instant now = Instant.now();
+        for (Message m : compressed) {
+            MessageEntity e = new MessageEntity();
+            e.setSessionId(sessionId);
+            e.setRole(m.role().name().toLowerCase());
+            e.setContent(m.content());
+            e.setCreatedAt(now);
+            e.setTurnIndex(m.turnIndex() != null ? m.turnIndex() : 0);
+            messageRepository.save(e);
+        }
     }
 
     @Transactional

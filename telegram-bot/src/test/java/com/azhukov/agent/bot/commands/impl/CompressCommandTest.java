@@ -38,6 +38,18 @@ class CompressCommandTest {
     }
 
     @Test
+    void compressHereWithN() {
+        AgentBackendClient client = mock(AgentBackendClient.class);
+        UUID sessionId = UUID.randomUUID();
+        when(client.compressSessionPartial(sessionId.toString(), 5)).thenReturn("Partial compressed");
+        var cmd = new CompressCommand(client);
+        BotSessionEntity session = newSession(sessionId);
+        UpdateEvent event = makeEvent("here 5");
+        String result = cmd.handle(event, session);
+        assertThat(result).isEqualTo("Partial compressed");
+    }
+
+    @Test
     void nullSession_returnsNoActiveSession() {
         AgentBackendClient client = mock(AgentBackendClient.class);
         var cmd = new CompressCommand(client);

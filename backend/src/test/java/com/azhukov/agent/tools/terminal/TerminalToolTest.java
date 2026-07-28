@@ -2,6 +2,7 @@ package com.azhukov.agent.tools.terminal;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.Redactor;
+import com.azhukov.agent.service.CheckpointManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -27,6 +28,9 @@ class TerminalToolTest {
     @Mock
     private Redactor redactor;
 
+    @Mock
+    private CheckpointManager checkpointManager;
+
     @InjectMocks
     private TerminalTool tool;
 
@@ -34,10 +38,13 @@ class TerminalToolTest {
     void executesShellCommandAndReturnsOutput() {
         AgentProperties.TerminalProperties terminal = new AgentProperties.TerminalProperties();
         AgentProperties.SecurityProperties security = new AgentProperties.SecurityProperties();
+        AgentProperties.CheckpointProperties checkpoints = new AgentProperties.CheckpointProperties();
         security.setBlockedCommands(java.util.List.of());
 
         lenient().when(properties.getTerminal()).thenReturn(terminal);
         lenient().when(properties.getSecurity()).thenReturn(security);
+        lenient().when(properties.getCheckpoints()).thenReturn(checkpoints);
+        lenient().when(checkpointManager.isDangerousCommand(any())).thenReturn(false);
         lenient().when(redactor.redact(any())).thenAnswer(inv -> inv.getArgument(0));
 
         var result = tool.execute("{\"command\":\"echo hello\"}", null, null);
@@ -50,6 +57,7 @@ class TerminalToolTest {
     void startsBackgroundProcessAndReturnsSessionId() throws Exception {
         AgentProperties.TerminalProperties terminal = new AgentProperties.TerminalProperties();
         AgentProperties.SecurityProperties security = new AgentProperties.SecurityProperties();
+        AgentProperties.CheckpointProperties checkpoints = new AgentProperties.CheckpointProperties();
         security.setBlockedCommands(java.util.List.of());
 
         ProcessTool.ManagedProcess managed = new ProcessTool.ManagedProcess(
@@ -64,6 +72,8 @@ class TerminalToolTest {
         when(processTool.spawn(any(), anyInt())).thenReturn(managed);
         lenient().when(properties.getTerminal()).thenReturn(terminal);
         lenient().when(properties.getSecurity()).thenReturn(security);
+        lenient().when(properties.getCheckpoints()).thenReturn(checkpoints);
+        lenient().when(checkpointManager.isDangerousCommand(any())).thenReturn(false);
 
         var result = tool.execute("{\"command\":\"sleep 10\",\"background\":true}", null, null);
 
@@ -85,10 +95,13 @@ class TerminalToolTest {
     void blocksDangerousCommand() {
         AgentProperties.TerminalProperties terminal = new AgentProperties.TerminalProperties();
         AgentProperties.SecurityProperties security = new AgentProperties.SecurityProperties();
+        AgentProperties.CheckpointProperties checkpoints = new AgentProperties.CheckpointProperties();
         security.setBlockedCommands(java.util.List.of());
 
         lenient().when(properties.getTerminal()).thenReturn(terminal);
         lenient().when(properties.getSecurity()).thenReturn(security);
+        lenient().when(properties.getCheckpoints()).thenReturn(checkpoints);
+        lenient().when(checkpointManager.isDangerousCommand(any())).thenReturn(false);
         lenient().when(redactor.redact(any())).thenAnswer(inv -> inv.getArgument(0));
 
         var result = tool.execute("{\"command\":\"rm -rf /\"}", null, null);

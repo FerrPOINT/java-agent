@@ -95,6 +95,12 @@ public class AgentConfig {
     }
 
     @Bean
+    @ConditionalOnMissingBean
+    public com.azhukov.agent.core.prompt.PromptCacheTracker promptCacheTracker(AgentProperties properties) {
+        return new com.azhukov.agent.core.prompt.PromptCacheTracker(properties);
+    }
+
+    @Bean
     public ContextCompressor contextCompressor(ModelClient modelClient, CompressionLockRepository lockRepository, AgentProperties properties) {
         return new DefaultContextCompressor(modelClient, lockRepository, properties);
     }
@@ -126,8 +132,8 @@ public class AgentConfig {
     }
 
     @Bean
-    public PromptBuilder promptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants agentConstants) {
-        return new DefaultPromptBuilder(properties, toolRegistry, agentConstants);
+    public PromptBuilder promptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants agentConstants, com.azhukov.agent.core.prompt.PromptCacheTracker cacheTracker) {
+        return new DefaultPromptBuilder(properties, toolRegistry, agentConstants, cacheTracker);
     }
 
     @Bean
@@ -188,8 +194,9 @@ public class AgentConfig {
                                        SkillManager skillManager,
                                        MessageRepository messageRepository,
                                        ContextCompressor contextCompressor,
-                                       AgentProperties properties) {
-        return new DefaultContextEngine(memoryProvider, skillManager, messageRepository, contextCompressor, properties);
+                                       AgentProperties properties,
+                                       com.azhukov.agent.core.prompt.PromptCacheTracker cacheTracker) {
+        return new DefaultContextEngine(memoryProvider, skillManager, messageRepository, contextCompressor, properties, cacheTracker);
     }
 
     @Bean

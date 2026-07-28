@@ -92,7 +92,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void promptBuilder_bean() {
-        assertThat(config.promptBuilder(properties, mock(ToolRegistry.class), mock(AgentConstants.class))).isNotNull();
+        assertThat(config.promptBuilder(properties, mock(ToolRegistry.class), mock(AgentConstants.class), mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class))).isNotNull();
     }
 
     @Test
@@ -147,7 +147,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void contextEngine_bean() {
-        assertThat(config.contextEngine(mock(MemoryProvider.class), mock(SkillManager.class), mock(MessageRepository.class), mock(ContextCompressor.class), properties)).isNotNull();
+        assertThat(config.contextEngine(mock(MemoryProvider.class), mock(SkillManager.class), mock(MessageRepository.class), mock(ContextCompressor.class), properties, mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class))).isNotNull();
     }
 
     @Test

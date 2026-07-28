@@ -20,6 +20,8 @@ import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
+import com.azhukov.agent.service.CheckpointManager;
+import com.azhukov.agent.persistence.entity.CheckpointEntity;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -46,6 +48,7 @@ public class AgentController {
     private final AgentStreamingService streamingService;
     private final MemoryProvider memoryProvider;
     private final SkillManager skillManager;
+    private final CheckpointManager checkpointManager;
 
     @PostMapping("/agent/chat")
     public ChatResponseDto chat(@Valid @RequestBody ChatRequest request) {
@@ -130,9 +133,16 @@ public class AgentController {
     }
 
     @PostMapping("/agent/session/{sessionId}/compress")
-    public void compressSession(@PathVariable UUID sessionId, @RequestBody(required = false) CompressRequest request) {
-        String focus = request != null ? request.focus() : null;
-        agentRuntimeService.compressSession(sessionId, focus);
+    public String compressSession(@PathVariable UUID sessionId, @RequestBody(required = false) CompressRequest request) {
+        String focusTopic = request != null ? request.focusTopic() : null;
+        Integer keepLastN = request != null ? request.keepLastN() : null;
+        // If focusTopic is null, fall back to focus() for backward compatibility
+        if (focusTopic == null && request != null) {
+            focusTopic = request.focus();
+        }
+        agentRuntimeService.compressSession(sessionId, focusTopic, keepLastN);
+        return "Context compressed." + (focusTopic != null ? " Focus: " + focusTopic : "")
+            + (keepLastN != null ? " Kept last " + keepLastN : "");
     }
 
     @PostMapping("/agent/session/{sessionId}/undo")
@@ -192,4 +202,30 @@ public class AgentController {
     public String background(@RequestBody BackgroundRequest request) {
         return agentRuntimeService.runBackground(request.prompt(), request.sessionId());
     }
+
+    // ── Checkpoint / Rollback endpoints ──
+
+    @PostMapping("/agent/checkpoint")
+    public CheckpointEntity createCheckpoint(@RequestBody(required = false) CheckpointRequest request) {
+        String description = request != null ? request.description() : "Manual checkpoint";
+        return checkpointManager.snapshot(description);
+    }
+
+    @GetMapping("/agent/checkpoint")
+    public List<CheckpointEntity> listCheckpoints() {
+        return checkpointManager.list();
+    }
+
+    @PostMapping("/agent/checkpoint/{id}/restore")
+    public String restoreCheckpoint(@PathVariable UUID id) {
+        checkpointManager.restore(id);
+        return "Checkpoint restored: " + id;
+    }
+
+    @DeleteMapping("/agent/checkpoint/{id}")
+    public void deleteCheckpoint(@PathVariable UUID id) {
+        checkpointManager.remove(id);
+    }
+
+    public record CheckpointRequest(String description) {}
 }

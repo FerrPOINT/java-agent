@@ -5,6 +5,7 @@ import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -16,7 +17,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-@Component
 @Slf4j
 public class DefaultContextEngine implements ContextEngine {
 
@@ -29,18 +29,30 @@ public class DefaultContextEngine implements ContextEngine {
     private final MessageRepository messageRepository;
     private final ContextCompressor contextCompressor;
     private final AgentProperties.ContextProperties contextProps;
+    private final PromptCacheTracker cacheTracker;
     private final java.util.Map<UUID, Map<String, String>> snapshotCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<UUID, String> lastMemoryHash = new java.util.concurrent.ConcurrentHashMap<>();
 
     public DefaultContextEngine(MemoryProvider memoryProvider,
                                 SkillManager skillManager,
                                 MessageRepository messageRepository,
                                 ContextCompressor contextCompressor,
                                 AgentProperties properties) {
+        this(memoryProvider, skillManager, messageRepository, contextCompressor, properties, null);
+    }
+
+    public DefaultContextEngine(MemoryProvider memoryProvider,
+                                SkillManager skillManager,
+                                MessageRepository messageRepository,
+                                ContextCompressor contextCompressor,
+                                AgentProperties properties,
+                                PromptCacheTracker cacheTracker) {
         this.memoryProvider = memoryProvider;
         this.skillManager = skillManager;
         this.messageRepository = messageRepository;
         this.contextCompressor = contextCompressor;
         this.contextProps = properties.getContext();
+        this.cacheTracker = cacheTracker;
     }
 
     @Override
@@ -165,6 +177,17 @@ public class DefaultContextEngine implements ContextEngine {
                 for (String fact : facts) {
                     sb.append("- ").append(fact).append("\n");
                 }
+            }
+            // Check cache validity — if memory content changed, invalidate prompt cache
+            if (cacheTracker != null) {
+                String memoryContent = (memoryBlock != null ? memoryBlock : "") + (userBlock != null ? userBlock : "");
+                String memoryHash = PromptCacheTracker.hashPrefix(memoryContent);
+                String previousHash = lastMemoryHash.get(session.id());
+                if (previousHash != null && !previousHash.equals(memoryHash)) {
+                    log.debug("Memory changed for session {}, invalidating cache", session.id());
+                    cacheTracker.invalidate(String.valueOf(session.id()));
+                }
+                lastMemoryHash.put(session.id(), memoryHash);
             }
         } catch (Exception e) {
             log.debug("Memory recall failed: {}", e.getMessage());

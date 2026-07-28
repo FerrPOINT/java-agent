@@ -6,6 +6,7 @@ import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
+import com.azhukov.agent.service.CheckpointManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,12 +52,15 @@ class AgentControllerPhase2Test {
     @Mock
     private SkillManager skillManager;
 
+    @Mock
+    private CheckpointManager checkpointManager;
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
 
         AgentController controller = new AgentController(agentRuntimeService, streamingService,
-            memoryProvider, skillManager);
+            memoryProvider, skillManager, checkpointManager);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
