@@ -300,6 +300,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
             sendFormatted(chatId, backendResponse, event.messageId());
 
+            // Voice mode: synthesize TTS and send as voice message
+            if (session.isVoiceMode()) {
+                sendVoiceResponse(chatId, backendResponse);
+            }
+
             // B1.2: Reaction — processing complete (success)
             reactionManager.onProcessingComplete(chatId, event.messageId(), true);
         } catch (Exception e) {
@@ -554,4 +559,26 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
     /** Pattern to match MEDIA:/path in response text. */
     private static final java.util.regex.Pattern MEDIA_PATTERN =
         java.util.regex.Pattern.compile("MEDIA:(\\S+)");
+
+    /**
+     * Synthesize TTS audio for the response text and send as a voice message.
+     */
+    private void sendVoiceResponse(long chatId, String text) {
+        try {
+            // Strip MEDIA: lines and markdown from text before TTS
+            String cleanText = MEDIA_PATTERN.matcher(text).replaceAll("").trim();
+            if (cleanText.isBlank()) return;
+            // Limit text length for TTS (Telegram voice messages max ~1 hour, but keep it reasonable)
+            if (cleanText.length() > 4000) {
+                cleanText = cleanText.substring(0, 4000);
+            }
+            byte[] audio = backendClient.tts(cleanText, null);
+            if (audio != null && audio.length > 0) {
+                telegramClient.sendVoice(chatId, audio, null);
+                log.debug("Sent voice response to chat {} ({} bytes)", chatId, audio.length);
+            }
+        } catch (Exception e) {
+            log.warn("TTS voice response failed for chat {}: {}", chatId, e.getMessage());
+        }
+    }
 }

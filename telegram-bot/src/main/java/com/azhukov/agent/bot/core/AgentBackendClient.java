@@ -711,6 +711,60 @@ public class AgentBackendClient {
     }
 
     /**
+     * Synthesize text to speech via the backend TTS endpoint.
+     *
+     * @param text  the text to synthesize
+     * @param voice the voice to use (may be null)
+     * @return the audio bytes, or empty array on error
+     */
+    public byte[] tts(String text, String voice) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("text", text);
+        if (voice != null && !voice.isBlank()) {
+            body.put("voice", voice);
+        }
+        try {
+            byte[] audio = restClient.post()
+                .uri("/api/v1/agent/tts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(byte[].class);
+            return audio != null ? audio : new byte[0];
+        } catch (Exception e) {
+            log.error("tts failed: {}", e.getMessage());
+            return new byte[0];
+        }
+    }
+
+    /**
+     * Transcribe audio via the backend transcription endpoint.
+     *
+     * @param audioBytes the audio file bytes
+     * @return the transcribed text, or null on error
+     */
+    public String transcribe(byte[] audioBytes) {
+        try {
+            org.springframework.http.client.MultipartBodyBuilder builder = new org.springframework.http.client.MultipartBodyBuilder();
+            builder.part("file", new org.springframework.core.io.ByteArrayResource(audioBytes) {
+                @Override public String getFilename() { return "audio.ogg"; }
+            }, org.springframework.http.MediaType.parseMediaType("audio/ogg"));
+            String json = restClient.post()
+                .uri("/api/v1/agent/transcribe")
+                .contentType(org.springframework.http.MediaType.MULTIPART_FORM_DATA)
+                .body(builder.build())
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return null;
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("text").asText(null);
+        } catch (Exception e) {
+            log.error("transcribe failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Expose the base URL (for diagnostics/logging).
      *
      * @return the backend base URL

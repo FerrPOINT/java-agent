@@ -24,9 +24,11 @@ import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MemoryRepository;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.azhukov.agent.persistence.repository.UsageRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 import java.time.Instant;
 import java.util.Comparator;
@@ -36,6 +38,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AgentRuntimeService {
 
     private final AgentRuntime agentRuntime;
@@ -46,6 +49,8 @@ public class AgentRuntimeService {
     private final MemoryRepository memoryRepository;
     private final WriteApprovalGate writeApprovalGate;
     private final ConversationCompressor conversationCompressor;
+    private final UsageTracker usageTracker;
+    private final TurnUsageCollector turnUsageCollector;
 
     @Transactional
     public ChatResponseDto runDelegate(ChatRequest request) {
@@ -74,6 +79,14 @@ public class AgentRuntimeService {
         TurnResult result = agentRuntime.runTurn(session, request.message());
         persistMessages(session.id(), result.messages());
         sessionTitleService.maybeUpdateTitle(session.id(), result.messages(), isNew);
+
+        // Record token usage from the turn
+        int[] usage = turnUsageCollector.getAndClear();
+        if (usage != null && usage.length == 2) {
+            usageTracker.recordTurn(session.id(), session.userId(),
+                session.modelName() != null ? session.modelName() : "unknown",
+                usage[0], usage[1]);
+        }
 
         return new ChatResponseDto(
             session.id(),
@@ -120,12 +133,7 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public UsageDto getUsage(UUID sessionId) {
-        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        int messageCount = messages.size();
-        int tokenEstimate = messages.stream()
-            .mapToInt(m -> m.getContent() != null ? m.getContent().length() : 0)
-            .sum() / 4;
-        return new UsageDto(sessionId, messageCount, tokenEstimate);
+        return usageTracker.getSessionUsage(sessionId);
     }
 
     @Transactional(readOnly = true)
@@ -213,9 +221,7 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public InsightsDto getInsights() {
-        long msgCount = messageRepository.count();
-        int totalTokens = 0;
-        return new InsightsDto(totalTokens, (int) msgCount, java.util.Map.of());
+        return usageTracker.getInsights(null);
     }
 
     @Transactional

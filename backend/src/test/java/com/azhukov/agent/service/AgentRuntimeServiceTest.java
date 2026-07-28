@@ -55,6 +55,8 @@ class AgentRuntimeServiceTest {
     private MemoryRepository memoryRepository;
     private WriteApprovalGate writeApprovalGate;
     private ConversationCompressor conversationCompressor;
+    private UsageTracker usageTracker;
+    private TurnUsageCollector turnUsageCollector;
     private AgentRuntimeService agentRuntimeService;
 
     @BeforeEach
@@ -67,6 +69,8 @@ class AgentRuntimeServiceTest {
         memoryRepository = mock(MemoryRepository.class);
         writeApprovalGate = mock(WriteApprovalGate.class);
         conversationCompressor = mock(ConversationCompressor.class);
+        usageTracker = mock(UsageTracker.class);
+        turnUsageCollector = mock(TurnUsageCollector.class);
 
         agentRuntimeService = new AgentRuntimeService(
             agentRuntime,
@@ -76,7 +80,9 @@ class AgentRuntimeServiceTest {
             memoryProvider,
             memoryRepository,
             writeApprovalGate,
-            conversationCompressor
+            conversationCompressor,
+            usageTracker,
+            turnUsageCollector
         );
     }
 

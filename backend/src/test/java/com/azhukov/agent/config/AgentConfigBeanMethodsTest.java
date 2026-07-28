@@ -27,6 +27,7 @@ import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.persistence.MessagePersistenceService;
 import com.azhukov.agent.persistence.repository.*;
 import com.azhukov.agent.security.*;
+import com.azhukov.agent.service.TurnUsageCollector;
 import io.github.resilience4j.retry.RetryRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
 import org.junit.jupiter.api.Test;
@@ -62,7 +63,7 @@ class AgentConfigBeanMethodsTest {
     @Test
     void openAiCompatibleModelClient_bean() {
         properties.getModel().setProvider("openai-compatible");
-        assertThat(config.openAiCompatibleModelClient(properties)).isInstanceOfAny(LangChain4jModelClient.class, ModelClient.class);
+        assertThat(config.openAiCompatibleModelClient(properties, mock(TurnUsageCollector.class))).isInstanceOfAny(LangChain4jModelClient.class, ModelClient.class);
     }
 
     @Test

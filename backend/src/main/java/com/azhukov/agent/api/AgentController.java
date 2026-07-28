@@ -21,6 +21,8 @@ import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
 import com.azhukov.agent.service.CheckpointManager;
+import com.azhukov.agent.service.tts.TtsService;
+import com.azhukov.agent.service.transcription.TranscriptionService;
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
@@ -49,6 +51,8 @@ public class AgentController {
     private final MemoryProvider memoryProvider;
     private final SkillManager skillManager;
     private final CheckpointManager checkpointManager;
+    private final TtsService ttsService;
+    private final TranscriptionService transcriptionService;
 
     @PostMapping("/agent/chat")
     public ChatResponseDto chat(@Valid @RequestBody ChatRequest request) {
@@ -228,4 +232,26 @@ public class AgentController {
     }
 
     public record CheckpointRequest(String description) {}
+
+    // ── TTS endpoint ──
+
+    @PostMapping(value = "/agent/tts", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
+    public byte[] tts(@RequestBody TtsRequest request) {
+        return ttsService.synthesize(request.text(), request.voice());
+    }
+
+    public record TtsRequest(String text, String voice) {}
+
+    // ── Transcription endpoint ──
+
+    @PostMapping(value = "/agent/transcribe", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public java.util.Map<String, String> transcribe(@org.springframework.web.bind.annotation.RequestPart("file") org.springframework.web.multipart.MultipartFile file) {
+        try {
+            byte[] audio = file.getBytes();
+            String text = transcriptionService.transcribe(audio);
+            return java.util.Map.of("text", text != null ? text : "");
+        } catch (Exception e) {
+            return java.util.Map.of("text", "", "error", e.getMessage());
+        }
+    }
 }

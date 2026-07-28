@@ -14,14 +14,16 @@ class InboundMediaHandlerTest {
 
     private MediaDownloader mediaDownloader;
     private com.azhukov.agent.bot.sticker.StickerCache stickerCache;
+    private com.azhukov.agent.bot.core.AgentBackendClient backendClient;
     private InboundMediaHandler handler;
 
     @BeforeEach
     void setUp() {
         mediaDownloader = mock(MediaDownloader.class);
         stickerCache = mock(com.azhukov.agent.bot.sticker.StickerCache.class);
+        backendClient = mock(com.azhukov.agent.bot.core.AgentBackendClient.class);
         when(stickerCache.get(any())).thenReturn(Optional.empty());
-        handler = new InboundMediaHandler(mediaDownloader, stickerCache);
+        handler = new InboundMediaHandler(mediaDownloader, stickerCache, backendClient);
     }
 
     @Test

@@ -28,6 +28,7 @@ public class BotSessionEntity {
     private boolean verboseMode;
     private boolean fastMode;
     private boolean footerEnabled;
+    private boolean voiceMode;
     private String reasoningLevel = "medium";
     private boolean active = true;
     private Instant createdAt;

@@ -113,6 +113,25 @@ public class BotSessionStore {
     }
 
     @Transactional
+    public boolean toggleVoiceMode(UUID id) {
+        BotSessionEntity session = repository.findById(id).orElse(null);
+        if (session == null) return false;
+        session.setVoiceMode(!session.isVoiceMode());
+        session.setUpdatedAt(Instant.now());
+        repository.save(session);
+        return session.isVoiceMode();
+    }
+
+    @Transactional
+    public void setVoiceMode(UUID id, boolean enabled) {
+        repository.findById(id).ifPresent(session -> {
+            session.setVoiceMode(enabled);
+            session.setUpdatedAt(Instant.now());
+            repository.save(session);
+        });
+    }
+
+    @Transactional
     public void setReasoningLevel(UUID id, String level) {
         repository.findById(id).ifPresent(session -> {
             session.setReasoningLevel(level);

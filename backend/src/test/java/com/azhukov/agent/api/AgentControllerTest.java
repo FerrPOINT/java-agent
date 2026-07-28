@@ -54,12 +54,18 @@ class AgentControllerTest {
     @Mock
     private CheckpointManager checkpointManager;
 
+    @Mock
+    private com.azhukov.agent.service.tts.TtsService ttsService;
+
+    @Mock
+    private com.azhukov.agent.service.transcription.TranscriptionService transcriptionService;
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
 
         AgentController controller = new AgentController(agentRuntimeService, streamingService,
-            memoryProvider, skillManager, checkpointManager);
+            memoryProvider, skillManager, checkpointManager, ttsService, transcriptionService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

@@ -58,6 +58,7 @@ import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.persistence.repository.SkillRepository;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.service.TurnUsageCollector;
 import com.azhukov.agent.tools.memory.MemoryTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -80,8 +81,10 @@ public class AgentConfig {
     @Bean
     @ConditionalOnProperty(name = "agent.model.provider", havingValue = "openai-compatible")
     @ConditionalOnMissingBean(ModelClient.class)
-    public ModelClient openAiCompatibleModelClient(AgentProperties properties) {
-        return new LangChain4jModelClient(properties, usage -> {});
+    public ModelClient openAiCompatibleModelClient(AgentProperties properties, TurnUsageCollector turnUsageCollector) {
+        return new LangChain4jModelClient(properties, usage -> {
+            turnUsageCollector.record(usage.promptTokens(), usage.completionTokens());
+        });
     }
 
     @Bean
