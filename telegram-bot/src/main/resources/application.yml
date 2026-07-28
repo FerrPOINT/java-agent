@@ -1,0 +1,113 @@
+spring:
+  application:
+    name: telegram-bot
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:java_agent}
+    username: ${DB_USER:project_workflow}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+    show-sql: false
+
+  flyway:
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: ${BOT_SERVER_PORT:8091}
+  shutdown: immediate
+
+bot:
+  token: ${TELEGRAM_BOT_TOKEN:}
+  mode: ${BOT_MODE:polling}
+  agent-name: ${BOT_AGENT_NAME:Джава агент}
+  backend-url: ${BOT_BACKEND_URL:http://localhost:8090}
+  max-message-length: 4096
+  typing-refresh-interval: 4s
+  stream-edit-interval: 1500ms
+  busy-mode: queue
+  parse-mode: MarkdownV2
+  register-commands: true
+  rate-limit-per-second: 25
+
+  polling:
+    timeout-seconds: 30
+    limit: 100
+    reconnect-delay-ms: 5000
+    reconnect-backoff-multiplier: 1.5
+    reconnect-max-delay-ms: 60000
+
+  webhook:
+    url: ${BOT_WEBHOOK_URL:}
+    secret: ${BOT_WEBHOOK_SECRET:}
+    path: /webhook/telegram
+    port: 8443
+
+  auth:
+    allowed-user-ids: ${BOT_ALLOWED_USER_IDS:}
+    allowed-usernames: ${BOT_ALLOWED_USERNAMES:}
+    allowed-chat-ids: ${BOT_ALLOWED_CHAT_IDS:}
+    allow-by-default: ${BOT_ALLOW_BY_DEFAULT:false}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when_authorized
+
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=false
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+
+  flyway:
+    enabled: false
+
+bot:
+  token: test-token
+  mode: polling
+  backend-url: http://localhost:9999
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+bot:
+  mode: polling
+  auth:
+    allow-by-default: true
+
+logging:
+  level:
+    com.azhukov.agent.bot: DEBUG

@@ -23,6 +23,7 @@ import com.azhukov.agent.gateway.GatewayRoutingService;
 import com.azhukov.agent.gateway.InboundMessageProcessor;
 import com.azhukov.agent.gateway.SessionResolver;
 import com.azhukov.agent.gateway.model.MessageEvent;
+import com.azhukov.agent.persistence.MessagePersistenceService;
 import com.azhukov.agent.persistence.repository.*;
 import com.azhukov.agent.security.*;
 import io.github.resilience4j.retry.RetryRegistry;
@@ -200,7 +201,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void gatewayMessageHandler_bean() {
-        assertThat(config.gatewayMessageHandler(mock(SessionResolver.class), mock(AgentRuntime.class), mock(ObjectProvider.class))).isNotNull();
+        assertThat(config.gatewayMessageHandler(mock(SessionResolver.class), mock(AgentRuntime.class), mock(ObjectProvider.class), mock(MessagePersistenceService.class))).isNotNull();
     }
 
     @Test

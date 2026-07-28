@@ -255,8 +255,9 @@ public class AgentConfig {
     public java.util.function.Consumer<com.azhukov.agent.gateway.model.MessageEvent> gatewayMessageHandler(
             SessionResolver sessionResolver,
             AgentRuntime agentRuntime,
-            org.springframework.beans.factory.ObjectProvider<GatewayRoutingService> routingServiceProvider) {
-        return new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider);
+            org.springframework.beans.factory.ObjectProvider<GatewayRoutingService> routingServiceProvider,
+            com.azhukov.agent.persistence.MessagePersistenceService messagePersistenceService) {
+        return new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider, messagePersistenceService);
     }
 
     @Bean

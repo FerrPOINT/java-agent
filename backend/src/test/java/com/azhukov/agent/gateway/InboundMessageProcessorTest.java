@@ -10,6 +10,7 @@ import com.azhukov.agent.gateway.model.MessageType;
 import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.SendResult;
 import com.azhukov.agent.gateway.model.SessionSource;
+import com.azhukov.agent.persistence.MessagePersistenceService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -44,6 +45,7 @@ class InboundMessageProcessorTest {
     private AgentRuntime agentRuntime;
     private GatewayRoutingService routingService;
     private ObjectProvider<GatewayRoutingService> routingServiceProvider;
+    private MessagePersistenceService messagePersistenceService;
     private InboundMessageProcessor processor;
 
     @BeforeEach
@@ -51,13 +53,14 @@ class InboundMessageProcessorTest {
         sessionResolver = mock(SessionResolver.class);
         agentRuntime = mock(AgentRuntime.class);
         routingService = mock(GatewayRoutingService.class);
+        messagePersistenceService = mock(MessagePersistenceService.class);
 
         @SuppressWarnings("unchecked")
         ObjectProvider<GatewayRoutingService> provider = mock(ObjectProvider.class);
         routingServiceProvider = provider;
         when(routingServiceProvider.getIfAvailable()).thenReturn(routingService);
 
-        processor = new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider);
+        processor = new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider, messagePersistenceService);
     }
 
     @Test

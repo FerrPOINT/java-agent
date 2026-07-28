@@ -5,6 +5,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.SessionSource;
+import com.azhukov.agent.persistence.MessagePersistenceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -19,13 +20,16 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     private final SessionResolver sessionResolver;
     private final AgentRuntime agentRuntime;
     private final ObjectProvider<GatewayRoutingService> routingServiceProvider;
+    private final MessagePersistenceService messagePersistenceService;
 
     public InboundMessageProcessor(SessionResolver sessionResolver,
                                     AgentRuntime agentRuntime,
-                                    ObjectProvider<GatewayRoutingService> routingServiceProvider) {
+                                    ObjectProvider<GatewayRoutingService> routingServiceProvider,
+                                    MessagePersistenceService messagePersistenceService) {
         this.sessionResolver = sessionResolver;
         this.agentRuntime = agentRuntime;
         this.routingServiceProvider = routingServiceProvider;
+        this.messagePersistenceService = messagePersistenceService;
     }
 
     @Override
@@ -46,6 +50,10 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             routingServiceProvider.getIfAvailable().sendTyping(source.platform(), source);
             Session session = sessionResolver.resolve(source);
             var turnResult = agentRuntime.runTurn(session, event.text(), List.of());
+
+            // Persist user input + assistant response so context engine can load history on next turn
+            messagePersistenceService.persistTurn(session, event.text(), turnResult);
+
             String response = turnResult.finalText();
 
             if (response == null || response.isBlank()) {
