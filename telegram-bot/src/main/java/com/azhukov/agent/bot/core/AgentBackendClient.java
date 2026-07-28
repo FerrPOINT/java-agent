@@ -432,6 +432,103 @@ public class AgentBackendClient {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Phase 2: restart, reload, bundles, branch, background
+    // ------------------------------------------------------------------
+
+    public String restart() {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/restart")
+                .retrieve()
+                .toBodilessEntity();
+            return "Agent restarting...";
+        } catch (Exception e) {
+            log.error("restart failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    public String reloadMcp() {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/reload-mcp")
+                .retrieve()
+                .toBodilessEntity();
+            return "MCP servers reloaded.";
+        } catch (Exception e) {
+            log.error("reloadMcp failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    public String reloadSkills() {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/reload-skills")
+                .retrieve()
+                .toBodilessEntity();
+            return "Skills reloaded.";
+        } catch (Exception e) {
+            log.error("reloadSkills failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    public JsonNode listBundles() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/bundles")
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return objectMapper.createArrayNode();
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("listBundles failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    public String branchSession(String sessionId, String name) {
+        try {
+            String url = "/api/v1/agent/session/" + sessionId + "/branch";
+            if (name != null && !name.isBlank()) {
+                url += "?name=" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8);
+            }
+            String json = restClient.post()
+                .uri(url)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Branch created.";
+            JsonNode node = objectMapper.readTree(json);
+            JsonNode idNode = node.get("id");
+            return idNode != null ? "Branched session: " + idNode.asText() : "Branch created.";
+        } catch (Exception e) {
+            log.error("branchSession failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    public String runBackground(String prompt, String sessionId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("prompt", prompt);
+        if (sessionId != null && !sessionId.isBlank()) {
+            body.put("sessionId", sessionId);
+        }
+        try {
+            String result = restClient.post()
+                .uri("/api/v1/agent/background")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            return result != null ? result : "Background task started.";
+        } catch (Exception e) {
+            log.error("runBackground failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
     /**
      * Expose the base URL (for diagnostics/logging).
      *

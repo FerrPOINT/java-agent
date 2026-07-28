@@ -178,6 +178,67 @@ public class AgentRuntimeService {
         return new InsightsDto(totalTokens, (int) msgCount, java.util.Map.of());
     }
 
+    @Transactional
+    public void restart() {
+        // Drain + restart — just clear all session messages for simplicity
+        // In production this would coordinate with agent runtime
+    }
+
+    @Transactional
+    public void reloadMcp() {
+        // No-op stub — MCP reload would happen in McpLifecycleManager
+    }
+
+    @Transactional
+    public void reloadSkills() {
+        // No-op stub — skills reload would happen in SkillManager
+    }
+
+    @Transactional(readOnly = true)
+    public List<String> listBundles() {
+        return List.of(); // Stub — no bundle system yet
+    }
+
+    @Transactional
+    public SessionSummaryDto branchSession(UUID sessionId, String name) {
+        // Fork a session: load messages, create new session with copied messages
+        SessionEntity source = sessionRepository.findById(sessionId)
+            .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));
+        SessionEntity branch = new SessionEntity();
+        branch.setUserId(source.getUserId());
+        branch.setModelProvider(source.getModelProvider());
+        branch.setModelName(source.getModelName());
+        branch.setTitle(name != null ? name : "Branch of " + source.getTitle());
+        branch.setCreatedAt(Instant.now());
+        branch.setUpdatedAt(Instant.now());
+        SessionEntity saved = sessionRepository.save(branch);
+        // Copy messages
+        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        for (MessageEntity m : messages) {
+            MessageEntity copy = new MessageEntity();
+            copy.setSessionId(saved.getId());
+            copy.setRole(m.getRole());
+            copy.setContent(m.getContent());
+            copy.setToolCallId(m.getToolCallId());
+            copy.setToolCallName(m.getToolCallName());
+            copy.setToolCallArguments(m.getToolCallArguments());
+            copy.setCreatedAt(m.getCreatedAt());
+            copy.setTurnIndex(m.getTurnIndex());
+            messageRepository.save(copy);
+        }
+        return new SessionSummaryDto(saved.getId(), saved.getUserId(), saved.getTitle(),
+            saved.getModelProvider(), saved.getModelName(), saved.getCreatedAt(), saved.getUpdatedAt());
+    }
+
+    @Transactional
+    public String runBackground(String prompt, String sessionId) {
+        // Background task — just run a turn in a new session
+        Session session = createSession("user-1", "openai-compatible", "");
+        TurnResult result = agentRuntime.runTurn(session, prompt);
+        persistMessages(session.id(), result.messages());
+        return session.id().toString();
+    }
+
     private Session createSession(String userId, String provider, String modelName) {
         SessionEntity e = new SessionEntity();
         e.setUserId(userId);

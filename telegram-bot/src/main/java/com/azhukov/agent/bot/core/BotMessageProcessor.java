@@ -11,6 +11,7 @@ import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.footer.RuntimeFooter;
 import com.azhukov.agent.bot.formatting.MarkdownConverter;
 import com.azhukov.agent.bot.formatting.MessageSplitter;
+import com.azhukov.agent.bot.formatting.ResponseFilter;
 import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
@@ -66,6 +67,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
     private final PhotoBatchDebouncer photoBatchDebouncer;
     private final GroupMessageFilter groupMessageFilter;
     private final SlashAccessPolicy slashAccessPolicy;
+    private final ResponseFilter responseFilter;
 
     public BotMessageProcessor(TelegramClient telegramClient,
                                AuthorizationService authorizationService,
@@ -83,7 +85,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                                TextBatchDebouncer textBatchDebouncer,
                                PhotoBatchDebouncer photoBatchDebouncer,
                                GroupMessageFilter groupMessageFilter,
-                               SlashAccessPolicy slashAccessPolicy) {
+                               SlashAccessPolicy slashAccessPolicy,
+                               ResponseFilter responseFilter) {
         this.telegramClient = telegramClient;
         this.authorizationService = authorizationService;
         this.sessionStore = sessionStore;
@@ -101,6 +104,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
         this.photoBatchDebouncer = photoBatchDebouncer;
         this.groupMessageFilter = groupMessageFilter;
         this.slashAccessPolicy = slashAccessPolicy;
+        this.responseFilter = responseFilter;
 
         // B1.3: Wire text batch debouncer to dispatch merged events back through processor
         this.textBatchDebouncer.onDispatch(this::dispatchTextBatch);
@@ -215,6 +219,16 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
         // B1.8/B1.9: Group mention requirement + guest mode
         if (!groupMessageFilter.shouldProcess(event)) {
+            // B2.6: If observe-unmentioned is enabled, store message as context
+            if (groupMessageFilter.shouldObserveUnmentioned()) {
+                String observationText = groupMessageFilter.getObservationText(event);
+                if (observationText != null && !observationText.isBlank()) {
+                    log.debug("Observing unmentioned message in group chat {}", chatId);
+                    // Store as context — in a full implementation this would call
+                    // backend to append to session context without triggering a response.
+                    // For now, just log it as context observation.
+                }
+            }
             log.debug("Skipping message in group chat {} — bot not mentioned", chatId);
             return;
         }
@@ -223,8 +237,21 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
         if (!authorizationService.isAuthorized(event)) {
             log.debug("Unauthorized message from userId={} username={} chatId={}",
                 event.userId(), event.username(), chatId);
-            telegramClient.sendMessage(chatId,
-                "⛔ You are not authorized to use this bot.");
+            // B2.5: If pairing is enabled, generate a pairing code
+            if (authorizationService.isPairingEnabled()) {
+                java.util.Optional<String> code = authorizationService.generatePairingCode(
+                    event.userId(), event.username(), chatId);
+                if (code.isPresent()) {
+                    telegramClient.sendMessage(chatId,
+                        "🔐 You are not authorized. Send this code to the bot owner: " + code.get());
+                } else {
+                    telegramClient.sendMessage(chatId,
+                        "⛔ You are not authorized. Pairing code limit reached. Contact the bot owner.");
+                }
+            } else {
+                telegramClient.sendMessage(chatId,
+                    "⛔ You are not authorized to use this bot.");
+            }
             return;
         }
 
@@ -439,7 +466,9 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
      * @param userMessageId  the user's message ID for reply_to (0 = no reply)
      */
     private void sendFormatted(long chatId, String text, long userMessageId) {
-        if (text == null || text.isBlank()) {
+        // B2.8: Response filter — filter silent/empty responses
+        if (responseFilter.shouldFilter(text)) {
+            log.debug("Response filtered (silent or empty) for chat {}", chatId);
             return;
         }
 

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.*;
 
 class AuthorizationServiceTest {
 
@@ -16,7 +17,8 @@ class AuthorizationServiceTest {
     @BeforeEach
     void setUp() {
         properties = new BotProperties();
-        service = new AuthorizationService(properties);
+        PairingService pairingService = mock(PairingService.class);
+        service = new AuthorizationService(properties, pairingService);
     }
 
     @Test

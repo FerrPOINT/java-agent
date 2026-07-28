@@ -45,6 +45,7 @@ class BotMessageProcessorTest {
     private com.azhukov.agent.bot.batch.PhotoBatchDebouncer photoBatchDebouncer;
     private com.azhukov.agent.bot.group.GroupMessageFilter groupMessageFilter;
     private SlashAccessPolicy slashAccessPolicy;
+    private com.azhukov.agent.bot.formatting.ResponseFilter responseFilter;
     private BotMessageProcessor processor;
 
     @BeforeEach
@@ -68,6 +69,7 @@ class BotMessageProcessorTest {
         photoBatchDebouncer = mock(com.azhukov.agent.bot.batch.PhotoBatchDebouncer.class);
         groupMessageFilter = mock(com.azhukov.agent.bot.group.GroupMessageFilter.class);
         slashAccessPolicy = mock(SlashAccessPolicy.class);
+        responseFilter = new com.azhukov.agent.bot.formatting.ResponseFilter();
 
         // Default: slash access policy allows all
         when(slashAccessPolicy.canRun(anyLong(), anyString())).thenReturn(true);
@@ -85,7 +87,7 @@ class BotMessageProcessorTest {
             busyHandler, typingManager, backendClient, commandRegistry,
             callbackQueryHandler, properties, streamEditor, inboundMediaHandler,
             runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
-            groupMessageFilter, slashAccessPolicy);
+            groupMessageFilter, slashAccessPolicy, responseFilter);
 
         // Default: authorized
         when(authorizationService.isAuthorized(any(UpdateEvent.class))).thenReturn(true);

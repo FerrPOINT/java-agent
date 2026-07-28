@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.ActiveAgentDto;
 import com.azhukov.agent.api.dto.ApproveRequest;
+import com.azhukov.agent.api.dto.BackgroundRequest;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.CompressRequest;
@@ -129,5 +130,35 @@ public class AgentController {
     @GetMapping("/agent/insights")
     public InsightsDto insights() {
         return agentRuntimeService.getInsights();
+    }
+
+    @PostMapping("/agent/restart")
+    public void restart() {
+        agentRuntimeService.restart();
+    }
+
+    @PostMapping("/agent/reload-mcp")
+    public void reloadMcp() {
+        agentRuntimeService.reloadMcp();
+    }
+
+    @PostMapping("/agent/reload-skills")
+    public void reloadSkills() {
+        agentRuntimeService.reloadSkills();
+    }
+
+    @GetMapping("/agent/bundles")
+    public List<String> bundles() {
+        return agentRuntimeService.listBundles();
+    }
+
+    @PostMapping("/agent/session/{sessionId}/branch")
+    public SessionSummaryDto branchSession(@PathVariable UUID sessionId, @RequestParam(required = false) String name) {
+        return agentRuntimeService.branchSession(sessionId, name);
+    }
+
+    @PostMapping("/agent/background")
+    public String background(@RequestBody BackgroundRequest request) {
+        return agentRuntimeService.runBackground(request.prompt(), request.sessionId());
     }
 }

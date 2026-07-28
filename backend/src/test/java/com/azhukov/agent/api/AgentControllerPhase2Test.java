@@ -1,0 +1,141 @@
+package com.azhukov.agent.api;
+
+import com.azhukov.agent.api.dto.BackgroundRequest;
+import com.azhukov.agent.api.dto.SessionSummaryDto;
+import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.service.AgentRuntimeService;
+import com.azhukov.agent.service.AgentStreamingService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@ExtendWith(MockitoExtension.class)
+class AgentControllerPhase2Test {
+
+    private static final UUID SESSION_ID = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
+    private static final Instant FIXED_TIME = Instant.parse("2024-01-01T00:00:00Z");
+
+    private MockMvc mockMvc;
+    private ObjectMapper objectMapper;
+
+    @Mock
+    private AgentRuntimeService agentRuntimeService;
+
+    @Mock
+    private AgentStreamingService streamingService;
+
+    @Mock
+    private MemoryProvider memoryProvider;
+
+    @Mock
+    private SkillManager skillManager;
+
+    @BeforeEach
+    void setUp() {
+        objectMapper = new ObjectMapper();
+
+        AgentController controller = new AgentController(agentRuntimeService, streamingService,
+            memoryProvider, skillManager);
+        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    @Test
+    void restartReturns200() throws Exception {
+        doNothing().when(agentRuntimeService).restart();
+
+        mockMvc.perform(post("/api/v1/agent/restart"))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void reloadMcpReturns200() throws Exception {
+        doNothing().when(agentRuntimeService).reloadMcp();
+
+        mockMvc.perform(post("/api/v1/agent/reload-mcp"))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void reloadSkillsReturns200() throws Exception {
+        doNothing().when(agentRuntimeService).reloadSkills();
+
+        mockMvc.perform(post("/api/v1/agent/reload-skills"))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void bundlesReturns200WithArray() throws Exception {
+        when(agentRuntimeService.listBundles()).thenReturn(List.of("bundle-1", "bundle-2"));
+
+        mockMvc.perform(get("/api/v1/agent/bundles"))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$").isArray())
+            .andExpect(jsonPath("$.length()").value(2))
+            .andExpect(jsonPath("$[0]").value("bundle-1"))
+            .andExpect(jsonPath("$[1]").value("bundle-2"));
+    }
+
+    @Test
+    void branchSessionReturns200WithSessionDto() throws Exception {
+        SessionSummaryDto dto = new SessionSummaryDto(
+            SESSION_ID,
+            "user-1",
+            "Branch of Test session",
+            "openai-compatible",
+            "gpt-4",
+            FIXED_TIME,
+            FIXED_TIME
+        );
+        when(agentRuntimeService.branchSession(eq(SESSION_ID), any())).thenReturn(dto);
+
+        mockMvc.perform(post("/api/v1/agent/session/{sessionId}/branch", SESSION_ID)
+                .param("name", "Branch of Test session"))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.id").value(SESSION_ID.toString()))
+            .andExpect(jsonPath("$.userId").value("user-1"))
+            .andExpect(jsonPath("$.title").value("Branch of Test session"))
+            .andExpect(jsonPath("$.modelProvider").value("openai-compatible"))
+            .andExpect(jsonPath("$.modelName").value("gpt-4"))
+            .andExpect(jsonPath("$.createdAt").exists())
+            .andExpect(jsonPath("$.updatedAt").exists());
+    }
+
+    @Test
+    void backgroundReturns200WithString() throws Exception {
+        when(agentRuntimeService.runBackground(any(String.class), any())).thenReturn(SESSION_ID.toString());
+
+        String requestBody = objectMapper.writeValueAsString(
+            new BackgroundRequest("do something", null));
+
+        mockMvc.perform(post("/api/v1/agent/background")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+            .andExpect(status().isOk())
+            .andExpect(content().string(SESSION_ID.toString()));
+    }
+}

@@ -207,6 +207,20 @@ public class TelegramClient {
         }
     }
 
+    // B2.7: Forum commands — register commands scoped to a specific chat (for forum topics)
+    public boolean setMyCommandsForChat(long chatId, List<Map<String, String>> commands) {
+        try {
+            String commandsJson = objectMapper.writeValueAsString(commands);
+            Map<String, Object> params = new LinkedHashMap<>();
+            params.put("commands", commandsJson);
+            params.put("scope", Map.of("type", "chat", "chat_id", chatId));
+            return callApi("setMyCommands", params).isPresent();
+        } catch (Exception e) {
+            log.warn("setMyCommandsForChat failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
     // ─── Webhook management ───────────────────────────────────────
 
     public boolean setWebhook(String url, String secretToken) {

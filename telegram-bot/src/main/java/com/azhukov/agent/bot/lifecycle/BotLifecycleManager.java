@@ -72,7 +72,18 @@ public class BotLifecycleManager {
             command("approve", "Approve pending command"),
             command("deny", "Deny pending command"),
             command("agents", "List active agents"),
-            command("insights", "Show usage insights")
+            command("insights", "Show usage insights"),
+            // Phase 2: 10 new commands (A2.1-A2.10)
+            command("profile", "Show active profile and home directory"),
+            command("platform", "List connected platforms"),
+            command("restart", "Restart the agent"),
+            command("reload_mcp", "Reload MCP servers"),
+            command("reload_skills", "Reload skills"),
+            command("bundles", "List installed skill bundles"),
+            command("branch", "Fork current session"),
+            command("background", "Run prompt in background"),
+            command("topic", "Manage DM topic sessions"),
+            command("set_home", "Set current chat as home channel")
         );
 
         boolean ok = telegramClient.setMyCommands(commands);

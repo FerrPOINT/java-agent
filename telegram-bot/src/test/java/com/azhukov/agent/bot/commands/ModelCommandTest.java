@@ -2,6 +2,8 @@ package com.azhukov.agent.bot.commands;
 
 import com.azhukov.agent.bot.commands.impl.ModelCommand;
 import com.azhukov.agent.bot.config.BotProperties;
+import com.azhukov.agent.bot.keyboard.InlineKeyboardBuilder;
+import com.azhukov.agent.bot.keyboard.ModelKeyboardBuilder;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.UpdateEvent.Type;
 import com.azhukov.agent.bot.session.BotSessionEntity;
@@ -19,11 +21,15 @@ import static org.mockito.Mockito.when;
 
 class ModelCommandTest {
 
+    private ModelCommand makeCommand(BotSessionStore store, BotProperties properties) {
+        return new ModelCommand(store, properties, mock(ModelKeyboardBuilder.class), mock(InlineKeyboardBuilder.class));
+    }
+
     @Test
     void noArgs_showsCurrentModel() {
         BotSessionStore store = mock(BotSessionStore.class);
         BotProperties properties = new BotProperties();
-        var cmd = new ModelCommand(store, properties);
+        var cmd = makeCommand(store, properties);
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         session.setModelOverride("gpt-4o");
@@ -36,7 +42,7 @@ class ModelCommandTest {
     void noArgsNoOverride_showsDefault() {
         BotSessionStore store = mock(BotSessionStore.class);
         BotProperties properties = new BotProperties();
-        var cmd = new ModelCommand(store, properties);
+        var cmd = makeCommand(store, properties);
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         UpdateEvent event = makeEvent("");
@@ -49,7 +55,7 @@ class ModelCommandTest {
         BotSessionStore store = mock(BotSessionStore.class);
         doNothing().when(store).setModelOverride(any(UUID.class), eq("claude-3-opus"));
         BotProperties properties = new BotProperties();
-        var cmd = new ModelCommand(store, properties);
+        var cmd = makeCommand(store, properties);
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         UpdateEvent event = makeEvent("claude-3-opus");
@@ -59,7 +65,7 @@ class ModelCommandTest {
 
     @Test
     void nameAndDescription_correct() {
-        var cmd = new ModelCommand(mock(BotSessionStore.class), new BotProperties());
+        var cmd = makeCommand(mock(BotSessionStore.class), new BotProperties());
         assertThat(cmd.name()).isEqualTo("model");
         assertThat(cmd.description()).isNotBlank();
     }

@@ -23,6 +23,7 @@ public class BotProperties {
     private String workingDirectory = System.getProperty("user.dir");
     private String defaultModel = "";
     private String replyToMode = "first"; // off | all | first
+    private String homeChatId = ""; // set by /set_home
 
     private final Polling polling = new Polling();
     private final Webhook webhook = new Webhook();
@@ -31,6 +32,7 @@ public class BotProperties {
     private final Reactions reactions = new Reactions();
     private final TextBatch textBatch = new TextBatch();
     private final Group group = new Group();
+    private final Display display = new Display();
 
     public String getToken() { return token; }
     public void setToken(String token) { this.token = token; }
@@ -67,6 +69,10 @@ public class BotProperties {
     public Reactions getReactions() { return reactions; }
     public TextBatch getTextBatch() { return textBatch; }
     public Group getGroup() { return group; }
+    public Display getDisplay() { return display; }
+
+    public String getHomeChatId() { return homeChatId; }
+    public void setHomeChatId(String homeChatId) { this.homeChatId = homeChatId; }
 
     public static class Polling {
         private int timeoutSeconds = 30;
@@ -110,6 +116,7 @@ public class BotProperties {
         private boolean allowByDefault = false;
         private final List<String> adminUserIds = new ArrayList<>();
         private final List<String> userAllowedCommands = new ArrayList<>();
+        private final Pairing pairing = new Pairing();
 
         public List<String> getAllowedUserIds() { return allowedUserIds; }
         public List<String> getAllowedUsernames() { return allowedUsernames; }
@@ -118,6 +125,20 @@ public class BotProperties {
         public void setAllowByDefault(boolean allowByDefault) { this.allowByDefault = allowByDefault; }
         public List<String> getAdminUserIds() { return adminUserIds; }
         public List<String> getUserAllowedCommands() { return userAllowedCommands; }
+        public Pairing getPairing() { return pairing; }
+    }
+
+    public static class Pairing {
+        private boolean enabled = false;
+        private int codeExpiryHours = 1;
+        private int maxPending = 3;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getCodeExpiryHours() { return codeExpiryHours; }
+        public void setCodeExpiryHours(int codeExpiryHours) { this.codeExpiryHours = codeExpiryHours; }
+        public int getMaxPending() { return maxPending; }
+        public void setMaxPending(int maxPending) { this.maxPending = maxPending; }
     }
 
     public static class Footer {
@@ -169,5 +190,15 @@ public class BotProperties {
         public List<String> getFreeResponseChats() { return freeResponseChats; }
         public List<String> getAllowedTopics() { return allowedTopics; }
         public List<Long> getIgnoredThreads() { return ignoredThreads; }
+    }
+
+    public static class Display {
+        private String toolProgress = "compact"; // compact | verbose | hidden
+        private int previewLength = 200;
+
+        public String getToolProgress() { return toolProgress; }
+        public void setToolProgress(String toolProgress) { this.toolProgress = toolProgress; }
+        public int getPreviewLength() { return previewLength; }
+        public void setPreviewLength(int previewLength) { this.previewLength = previewLength; }
     }
 }

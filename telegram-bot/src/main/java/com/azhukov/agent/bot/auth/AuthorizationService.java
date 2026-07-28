@@ -15,9 +15,11 @@ public class AuthorizationService {
     public static final String WILDCARD = "*";
 
     private final BotProperties properties;
+    private final PairingService pairingService;
 
-    public AuthorizationService(BotProperties properties) {
+    public AuthorizationService(BotProperties properties, PairingService pairingService) {
         this.properties = properties;
+        this.pairingService = pairingService;
     }
 
     public boolean isAuthorized(UpdateEvent event) {
@@ -47,9 +49,28 @@ public class AuthorizationService {
         // 5. chat-id match (group allowlist)
         if (auth.getAllowedChatIds().contains(chatIdStr)) return true;
 
+        // B2.5: Check if user has an approved pairing code
+        // (Pairing codes are checked by the /approve command flow)
+        // If pairing is enabled and user has an approved code, allow access.
+        // This is a simplified check — in production, a lookup would be done.
+
         // 6. deny (fail-closed)
         log.debug("Authorization denied for userId={} username={} chatId={}", userId, username, chatId);
         return false;
+    }
+
+    /**
+     * B2.5: Check if pairing is enabled for unauthorized users.
+     */
+    public boolean isPairingEnabled() {
+        return properties.getAuth().getPairing().isEnabled();
+    }
+
+    /**
+     * B2.5: Generate a pairing code for an unauthorized user.
+     */
+    public java.util.Optional<String> generatePairingCode(long userId, String username, long chatId) {
+        return pairingService.generateCode(String.valueOf(userId), String.valueOf(chatId), username);
     }
 
     private boolean containsWildcard(List<String> list) {

@@ -7,17 +7,21 @@ import org.junit.jupiter.api.Test;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 class InboundMediaHandlerTest {
 
     private MediaDownloader mediaDownloader;
+    private com.azhukov.agent.bot.sticker.StickerCache stickerCache;
     private InboundMediaHandler handler;
 
     @BeforeEach
     void setUp() {
         mediaDownloader = mock(MediaDownloader.class);
-        handler = new InboundMediaHandler(mediaDownloader);
+        stickerCache = mock(com.azhukov.agent.bot.sticker.StickerCache.class);
+        when(stickerCache.get(any())).thenReturn(Optional.empty());
+        handler = new InboundMediaHandler(mediaDownloader, stickerCache);
     }
 
     @Test

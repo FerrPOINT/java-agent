@@ -85,6 +85,9 @@ public class CallbackQueryHandler {
             case "confirm" -> "Confirmed: " + value;
             case "cancel" -> "Action cancelled";
             case "select" -> "Selected: " + value;
+            case "mp" -> "Model switched to " + value;
+            case "pp" -> "Provider selected: " + value;
+            case "mpp" -> "Model page " + value;
             default -> "Unknown action: " + command;
         };
     }

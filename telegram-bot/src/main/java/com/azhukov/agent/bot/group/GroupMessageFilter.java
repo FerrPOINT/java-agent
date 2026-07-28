@@ -40,6 +40,9 @@ public class GroupMessageFilter {
      * <p>
      * Guest mode: if {@code guest-mode} is true and @botname is present, allows
      * processing even if the chat is not in the allowlist.
+     * <p>
+     * B2.10: Channel posts (from connected channels) are observed as context
+     * but don't trigger a response.
      *
      * @param event the incoming update event
      * @return true if the event should be processed, false if it should be skipped
@@ -50,6 +53,12 @@ public class GroupMessageFilter {
         // Private chats (DMs): always process
         if (chatId > 0) {
             return true;
+        }
+
+        // B2.10: Channel post updates — observe but don't trigger response
+        if (isChannelPost(event)) {
+            log.debug("Observing channel post in chat {} (no response)", chatId);
+            return false;
         }
 
         // Group chats (negative chat IDs)
@@ -132,5 +141,34 @@ public class GroupMessageFilter {
      */
     public boolean shouldObserveUnmentioned() {
         return properties.getGroup().isObserveUnmentioned();
+    }
+
+    /**
+     * B2.10: Check if the event is a channel post (from a connected channel).
+     * Channel posts have sender_chat set and are forwarded from channels.
+     */
+    boolean isChannelPost(UpdateEvent event) {
+        // Channel posts are detected by having no userId (0) or by the type being UNKNOWN
+        // with text content in a group chat. In practice, the UpdateEvent.from() parser
+        // would need to handle channel_post updates, but for now we detect by heuristics:
+        // - In a group chat (chatId < 0) with text but userId == 0
+        if (event == null) return false;
+        if (event.chatId() >= 0) return false;
+        return event.userId() == 0 && (event.text() != null || event.caption() != null);
+    }
+
+    /**
+     * B2.6: Get the text to observe for an unmentioned message.
+     * Returns the text or caption of the event, or null if nothing to observe.
+     */
+    public String getObservationText(UpdateEvent event) {
+        if (event == null) return null;
+        if (event.text() != null && !event.text().isBlank()) {
+            return event.text();
+        }
+        if (event.caption() != null && !event.caption().isBlank()) {
+            return event.caption();
+        }
+        return null;
     }
 }
