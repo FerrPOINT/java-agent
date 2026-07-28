@@ -2,8 +2,11 @@ package com.azhukov.agent.persistence.repository;
 
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -12,4 +15,8 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     SessionEntity findByUserId(String userId);
 
     List<SessionEntity> findAllByUserId(String userId);
+
+    @Modifying
+    @Query("UPDATE SessionEntity s SET s.updatedAt = :updatedAt WHERE s.id = :id")
+    void touchUpdatedAt(UUID id, Instant updatedAt);
 }

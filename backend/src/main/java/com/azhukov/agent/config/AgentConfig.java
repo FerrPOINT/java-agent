@@ -31,6 +31,7 @@ import com.azhukov.agent.security.UserInputSanitizer;
 import com.azhukov.agent.gateway.BasePlatformAdapter;
 import com.azhukov.agent.gateway.GatewayRoutingService;
 import com.azhukov.agent.gateway.InboundMessageProcessor;
+import com.azhukov.agent.gateway.SessionResolver;
 import com.azhukov.agent.core.state.AgentConstants;
 import com.azhukov.agent.core.state.AgentState;
 import com.azhukov.agent.core.state.DefaultAgentConstants;
@@ -252,11 +253,10 @@ public class AgentConfig {
 
     @Bean(name = "gatewayMessageHandler")
     public java.util.function.Consumer<com.azhukov.agent.gateway.model.MessageEvent> gatewayMessageHandler(
-            SessionRepository sessionRepository,
+            SessionResolver sessionResolver,
             AgentRuntime agentRuntime,
-            org.springframework.beans.factory.ObjectProvider<GatewayRoutingService> routingServiceProvider,
-            AgentProperties properties) {
-        return new InboundMessageProcessor(sessionRepository, agentRuntime, routingServiceProvider, properties);
+            org.springframework.beans.factory.ObjectProvider<GatewayRoutingService> routingServiceProvider) {
+        return new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider);
     }
 
     @Bean

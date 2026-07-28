@@ -123,6 +123,19 @@ tasks.register('liveTest', Test) {
     finalizedBy jacocoTestReport
 }
 
+tasks.register('e2eTest', Test) {
+    description = 'Runs E2E tests against a running java-agent instance (docker compose up first)'
+    group = 'verification'
+    useJUnitPlatform {
+        includeTags 'e2e'
+    }
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+    maxHeapSize = '2g'
+    systemProperty 'e2e.baseUrl', System.getProperty('e2e.baseUrl', 'http://localhost:18090')
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+}
+
 tasks.named('jacocoTestReport') {
     dependsOn test
     reports {
