@@ -2,8 +2,7 @@ package com.azhukov.agent.bot.streaming;
 
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
@@ -16,9 +15,8 @@ import java.util.Map;
  * to avoid hitting Telegram's rate limits.
  */
 @Service
+@Slf4j
 public class StreamEditor {
-
-    private static final Logger log = LoggerFactory.getLogger(StreamEditor.class);
 
     private final TelegramClient telegramClient;
     private final String parseMode;

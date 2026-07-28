@@ -1,8 +1,7 @@
 package com.azhukov.agent.bot.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
@@ -23,9 +22,8 @@ import java.util.concurrent.TimeUnit;
  * Supports sendMessage, editMessageText, deleteMessage, sendChatAction,
  * sendPhoto, sendDocument, sendVoice, getFile, answerCallbackQuery, setMyCommands.
  */
+@Slf4j
 public class TelegramClient {
-
-    private static final Logger log = LoggerFactory.getLogger(TelegramClient.class);
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;

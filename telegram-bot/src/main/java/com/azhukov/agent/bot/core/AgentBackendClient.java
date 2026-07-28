@@ -3,8 +3,7 @@ package com.azhukov.agent.bot.core;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -29,9 +28,8 @@ import java.util.function.Consumer;
  * <p>GET to {@code /api/v1/agent/health} for health checks.
  */
 @Service
+@Slf4j
 public class AgentBackendClient {
-
-    private static final Logger log = LoggerFactory.getLogger(AgentBackendClient.class);
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;

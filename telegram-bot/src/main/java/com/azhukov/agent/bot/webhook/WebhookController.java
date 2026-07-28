@@ -3,8 +3,8 @@ package com.azhukov.agent.bot.webhook;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,22 +17,15 @@ import java.util.function.Consumer;
 
 @RestController
 @ConditionalOnProperty(name = "bot.mode", havingValue = "webhook")
+@RequiredArgsConstructor
+@Slf4j
 public class WebhookController {
 
-    private static final Logger log = LoggerFactory.getLogger(WebhookController.class);
     private static final String SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token";
 
     private final WebhookSecretValidator secretValidator;
     private final ObjectMapper objectMapper;
     private final Consumer<UpdateEvent> updateHandler;
-
-    public WebhookController(WebhookSecretValidator secretValidator,
-                             ObjectMapper objectMapper,
-                             Consumer<UpdateEvent> updateHandler) {
-        this.secretValidator = secretValidator;
-        this.objectMapper = objectMapper;
-        this.updateHandler = updateHandler;
-    }
 
     @PostMapping("/webhook/telegram")
     public ResponseEntity<String> receive(

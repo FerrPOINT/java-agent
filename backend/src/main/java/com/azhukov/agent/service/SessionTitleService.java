@@ -5,30 +5,23 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.SessionRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.UUID;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class SessionTitleService {
 
-    private static final Logger log = LoggerFactory.getLogger(SessionTitleService.class);
     private static final int MAX_TITLE_LENGTH = 80;
 
     private final ModelClient modelClient;
     private final SessionRepository sessionRepository;
     private final AgentProperties properties;
-
-    public SessionTitleService(ModelClient modelClient,
-                               SessionRepository sessionRepository,
-                               AgentProperties properties) {
-        this.modelClient = modelClient;
-        this.sessionRepository = sessionRepository;
-        this.properties = properties;
-    }
 
     public void maybeUpdateTitle(UUID sessionId, List<Message> messages, boolean isNewSession) {
         if (!isNewSession || !properties.getCore().isAutoTitleSession()) {

@@ -5,6 +5,7 @@ import com.azhukov.agent.client.langchain4j.LangChain4jModelClient;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.tools.browser.BrowserService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -15,15 +16,11 @@ import java.util.Base64;
 
 @RestController
 @RequestMapping("/api/v1")
+@RequiredArgsConstructor
 public class VisionController {
 
     private final BrowserService browserService;
     private final ModelClient modelClient;
-
-    public VisionController(BrowserService browserService, ModelClient modelClient) {
-        this.browserService = browserService;
-        this.modelClient = modelClient;
-    }
 
     @PostMapping(value = "/agent/vision", produces = MediaType.TEXT_PLAIN_VALUE)
     public String vision(@Valid @RequestBody VisionRequest request) throws Exception {

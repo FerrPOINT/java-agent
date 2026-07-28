@@ -12,11 +12,13 @@ import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.introspect.VisibilityChecker;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
 @Component
+@RequiredArgsConstructor
 public class SendMessageTool implements ToolHandler {
 
     private static final ObjectMapper MAPPER = new ObjectMapper()
@@ -24,10 +26,6 @@ public class SendMessageTool implements ToolHandler {
         .setVisibility(new VisibilityChecker.Std(JsonAutoDetect.Visibility.ANY, JsonAutoDetect.Visibility.ANY, JsonAutoDetect.Visibility.ANY, JsonAutoDetect.Visibility.ANY, JsonAutoDetect.Visibility.ANY));
 
     private final GatewayRoutingService gateway;
-
-    public SendMessageTool(GatewayRoutingService gateway) {
-        this.gateway = gateway;
-    }
 
     @Override
     @SuppressWarnings("unchecked")

@@ -8,6 +8,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.persistence.entity.TodoEntity;
 import com.azhukov.agent.persistence.repository.TodoRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -19,13 +20,10 @@ import java.util.UUID;
     toolset = "todo"
 )
 @Component
+@RequiredArgsConstructor
 public class TodoTool implements ToolHandler {
 
     private final TodoRepository todoRepository;
-
-    public TodoTool(TodoRepository todoRepository) {
-        this.todoRepository = todoRepository;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

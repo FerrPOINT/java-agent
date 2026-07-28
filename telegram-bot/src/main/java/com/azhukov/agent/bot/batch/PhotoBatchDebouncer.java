@@ -1,8 +1,7 @@
 package com.azhukov.agent.bot.batch;
 
 import com.azhukov.agent.bot.polling.UpdateEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -13,9 +12,8 @@ import java.util.concurrent.*;
  * Debounces 500ms after the last photo in a group.
  */
 @Component
+@Slf4j
 public class PhotoBatchDebouncer {
-
-    private static final Logger log = LoggerFactory.getLogger(PhotoBatchDebouncer.class);
 
     private static final long DEBOUNCE_MS = 500;
 

@@ -9,9 +9,8 @@ import com.azhukov.agent.security.ToolCallGuardrail;
 import com.azhukov.agent.core.state.TurnState;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
 import java.util.concurrent.Callable;
@@ -25,9 +24,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 @Component
+@Slf4j
 public class ToolExecutionService {
-
-    private static final Logger log = LoggerFactory.getLogger(ToolExecutionService.class);
 
     private final ToolRegistry toolRegistry;
     private final AgentProperties properties;

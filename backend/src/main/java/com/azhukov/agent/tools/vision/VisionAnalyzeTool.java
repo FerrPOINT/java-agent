@@ -7,6 +7,7 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
@@ -23,13 +24,10 @@ import java.util.Base64;
     toolset = "browser"
 )
 @Component
+@RequiredArgsConstructor
 public class VisionAnalyzeTool implements ToolHandler {
 
     private final ModelClient modelClient;
-
-    public VisionAnalyzeTool(ModelClient modelClient) {
-        this.modelClient = modelClient;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

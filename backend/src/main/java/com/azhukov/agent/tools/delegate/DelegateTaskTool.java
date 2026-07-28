@@ -8,8 +8,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -26,9 +25,9 @@ import java.util.UUID;
     toolset = "delegation"
 )
 @Component
+@Slf4j
 public class DelegateTaskTool implements ToolHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(DelegateTaskTool.class);
     private static final int MAX_DEPTH = 3;
     private static final ObjectMapper MAPPER = new ObjectMapper();
 

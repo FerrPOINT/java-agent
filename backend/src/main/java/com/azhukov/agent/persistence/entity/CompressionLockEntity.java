@@ -4,8 +4,11 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
 
+import lombok.Data;
+
 @Entity
 @Table(name = "compression_locks")
+@Data
 public class CompressionLockEntity {
 
     @Id
@@ -17,11 +20,4 @@ public class CompressionLockEntity {
 
     @Column(name = "locked_at", nullable = false)
     private Instant lockedAt = Instant.now();
-
-    public UUID getId() { return id; }
-    public void setId(UUID id) { this.id = id; }
-    public UUID getSessionId() { return sessionId; }
-    public void setSessionId(UUID sessionId) { this.sessionId = sessionId; }
-    public Instant getLockedAt() { return lockedAt; }
-    public void setLockedAt(Instant lockedAt) { this.lockedAt = lockedAt; }
 }

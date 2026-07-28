@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.config;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -9,13 +10,10 @@ import org.springframework.stereotype.Component;
  * and preview-length. Resolution order: platform override → global → default.
  */
 @Component
+@RequiredArgsConstructor
 public class DisplayConfig {
 
     private final BotProperties properties;
-
-    public DisplayConfig(BotProperties properties) {
-        this.properties = properties;
-    }
 
     /**
      * Resolve the tool-progress mode for a given platform.

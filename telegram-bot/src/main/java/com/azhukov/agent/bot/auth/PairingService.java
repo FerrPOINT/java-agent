@@ -1,8 +1,8 @@
 package com.azhukov.agent.bot.auth;
 
 import com.azhukov.agent.bot.config.BotProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,9 +18,9 @@ import java.util.Optional;
  * The bot owner approves via /approve.
  */
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class PairingService {
-
-    private static final Logger log = LoggerFactory.getLogger(PairingService.class);
 
     // Unambiguous alphabet: no 0/O/1/I
     private static final char[] CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ".toCharArray();
@@ -29,11 +29,6 @@ public class PairingService {
     private final PairingCodeRepository repository;
     private final BotProperties properties;
     private final SecureRandom random = new SecureRandom();
-
-    public PairingService(PairingCodeRepository repository, BotProperties properties) {
-        this.repository = repository;
-        this.properties = properties;
-    }
 
     /**
      * Generate a pairing code for an unauthorized user.

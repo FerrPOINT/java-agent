@@ -8,9 +8,8 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,9 +17,9 @@ import java.util.Map;
 import java.util.UUID;
 
 @Component
+@Slf4j
 public class DefaultContextEngine implements ContextEngine {
 
-    private static final Logger log = LoggerFactory.getLogger(DefaultContextEngine.class);
     private static final int RECALL_LIMIT = 5;
     private static final int SKILL_LIMIT = 3;
     private static final int CHARS_PER_TOKEN_ESTIMATE = 4;

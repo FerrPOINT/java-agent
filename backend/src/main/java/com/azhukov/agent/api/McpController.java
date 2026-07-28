@@ -3,6 +3,7 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.azhukov.agent.config.AgentProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -14,17 +15,12 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1")
+@RequiredArgsConstructor
 public class McpController {
 
     private final McpLifecycleManager mcpLifecycleManager;
     private final AgentProperties properties;
     private final ObjectMapper objectMapper;
-
-    public McpController(McpLifecycleManager mcpLifecycleManager, AgentProperties properties, ObjectMapper objectMapper) {
-        this.mcpLifecycleManager = mcpLifecycleManager;
-        this.properties = properties;
-        this.objectMapper = objectMapper;
-    }
 
     @GetMapping("/mcp/servers")
     public List<McpLifecycleManager.McpServerInfo> listServers() {

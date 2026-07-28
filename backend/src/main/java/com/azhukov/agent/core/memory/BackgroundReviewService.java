@@ -9,9 +9,8 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.memory.MemoryTool;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -28,9 +27,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * the conversation and save durable facts to memory.
  */
 @Service
+@Slf4j
 public class BackgroundReviewService {
-
-    private static final Logger log = LoggerFactory.getLogger(BackgroundReviewService.class);
 
     private final ModelClient modelClient;
     private final MemoryProvider memoryProvider;

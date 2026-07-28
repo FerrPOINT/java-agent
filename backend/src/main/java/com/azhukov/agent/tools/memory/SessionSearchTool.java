@@ -10,6 +10,7 @@ import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -25,15 +26,11 @@ import java.util.stream.Collectors;
     toolset = "memory"
 )
 @Component
+@RequiredArgsConstructor
 public class SessionSearchTool implements ToolHandler {
 
     private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
-
-    public SessionSearchTool(SessionRepository sessionRepository, MessageRepository messageRepository) {
-        this.sessionRepository = sessionRepository;
-        this.messageRepository = messageRepository;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

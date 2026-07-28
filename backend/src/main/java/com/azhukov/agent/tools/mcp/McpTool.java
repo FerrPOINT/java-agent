@@ -7,6 +7,7 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.stream.Collectors;
@@ -17,13 +18,10 @@ import java.util.stream.Collectors;
     toolset = "core"
 )
 @Component
+@RequiredArgsConstructor
 public class McpTool implements ToolHandler {
 
     private final McpLifecycleManager mcpLifecycleManager;
-
-    public McpTool(McpLifecycleManager mcpLifecycleManager) {
-        this.mcpLifecycleManager = mcpLifecycleManager;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

@@ -5,6 +5,7 @@ import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 @AgentTool(
@@ -13,13 +14,10 @@ import org.springframework.stereotype.Component;
     toolset = "browser"
 )
 @Component
+@RequiredArgsConstructor
 public class BrowserSnapshotTool implements ToolHandler {
 
     private final BrowserService browserService;
-
-    public BrowserSnapshotTool(BrowserService browserService) {
-        this.browserService = browserService;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

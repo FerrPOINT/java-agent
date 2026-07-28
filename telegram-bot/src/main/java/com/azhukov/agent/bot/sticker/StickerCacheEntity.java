@@ -4,10 +4,13 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import lombok.Data;
+
 import java.time.Instant;
 
 @Entity
 @Table(name = "bot_sticker_cache")
+@Data
 public class StickerCacheEntity {
 
     @Id
@@ -27,11 +30,4 @@ public class StickerCacheEntity {
         this.description = description;
         this.createdAt = Instant.now();
     }
-
-    public String getFileUniqueId() { return fileUniqueId; }
-    public void setFileUniqueId(String fileUniqueId) { this.fileUniqueId = fileUniqueId; }
-    public String getDescription() { return description; }
-    public void setDescription(String description) { this.description = description; }
-    public Instant getCreatedAt() { return createdAt; }
-    public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
 }

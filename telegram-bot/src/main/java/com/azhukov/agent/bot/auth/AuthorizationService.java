@@ -2,25 +2,21 @@ package com.azhukov.agent.bot.auth;
 
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class AuthorizationService {
 
-    private static final Logger log = LoggerFactory.getLogger(AuthorizationService.class);
     public static final String WILDCARD = "*";
 
     private final BotProperties properties;
     private final PairingService pairingService;
-
-    public AuthorizationService(BotProperties properties, PairingService pairingService) {
-        this.properties = properties;
-        this.pairingService = pairingService;
-    }
 
     public boolean isAuthorized(UpdateEvent event) {
         return isAuthorized(event.userId(), event.username(), event.chatId());

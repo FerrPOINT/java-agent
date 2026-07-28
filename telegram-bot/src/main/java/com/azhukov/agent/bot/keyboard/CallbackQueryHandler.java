@@ -2,8 +2,8 @@ package com.azhukov.agent.bot.keyboard;
 
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
@@ -12,15 +12,11 @@ import org.springframework.stereotype.Service;
  * appropriate action, and answers the callback query via TelegramClient.
  */
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class CallbackQueryHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(CallbackQueryHandler.class);
-
     private final TelegramClient telegramClient;
-
-    public CallbackQueryHandler(TelegramClient telegramClient) {
-        this.telegramClient = telegramClient;
-    }
 
     /**
      * Handles a callback_query UpdateEvent. Parses the callback data,

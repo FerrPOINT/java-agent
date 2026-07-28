@@ -1,21 +1,19 @@
 package com.azhukov.agent.bot.auth;
 
 import com.azhukov.agent.bot.config.BotProperties;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.Set;
 import java.util.stream.Collectors;
 
 @Component
+@RequiredArgsConstructor
 public class SlashAccessPolicy {
 
     private static final Set<String> ALWAYS_ALLOWED = Set.of("help", "whoami");
 
     private final BotProperties properties;
-
-    public SlashAccessPolicy(BotProperties properties) {
-        this.properties = properties;
-    }
 
     public boolean canRun(long userId, String commandName) {
         if (commandName == null) return false;

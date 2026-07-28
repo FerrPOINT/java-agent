@@ -4,8 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -14,9 +13,8 @@ import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Component
+@Slf4j
 public class ChromiumAutoStart {
-
-    private static final Logger log = LoggerFactory.getLogger(ChromiumAutoStart.class);
 
     private final AgentProperties properties;
     private final ChromiumLauncher launcher;

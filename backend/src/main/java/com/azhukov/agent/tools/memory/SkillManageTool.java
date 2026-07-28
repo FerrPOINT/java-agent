@@ -7,19 +7,17 @@ import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import static com.azhukov.agent.tools.ToolHandler.parseJson;
 
 @AgentTool(name = "skill_manage", description = "Create, update, or delete a skill document. Actions: create, update, delete.", toolset = "skills")
 @Component
+@RequiredArgsConstructor
 public class SkillManageTool implements ToolHandler {
 
     private final SkillManager skillManager;
-
-    public SkillManageTool(SkillManager skillManager) {
-        this.skillManager = skillManager;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

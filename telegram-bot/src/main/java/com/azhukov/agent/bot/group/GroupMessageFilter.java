@@ -2,8 +2,8 @@ package com.azhukov.agent.bot.group;
 
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -14,16 +14,12 @@ import java.util.List;
  * Config-driven via {@code bot.group.require-mention} and {@code bot.group.guest-mode}.
  */
 @Component
+@RequiredArgsConstructor
+@Slf4j
 public class GroupMessageFilter {
-
-    private static final Logger log = LoggerFactory.getLogger(GroupMessageFilter.class);
 
     private final BotProperties properties;
     private String botUsername = "";
-
-    public GroupMessageFilter(BotProperties properties) {
-        this.properties = properties;
-    }
 
     /**
      * Set the bot's username (without @) for mention matching.

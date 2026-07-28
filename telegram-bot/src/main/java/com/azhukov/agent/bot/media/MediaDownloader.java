@@ -1,8 +1,8 @@
 package com.azhukov.agent.bot.media;
 
 import com.azhukov.agent.bot.client.TelegramClient;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -15,17 +15,12 @@ import java.util.Optional;
  * Results are cached in {@link MediaCache}.
  */
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class MediaDownloader {
-
-    private static final Logger log = LoggerFactory.getLogger(MediaDownloader.class);
 
     private final TelegramClient telegramClient;
     private final MediaCache cache;
-
-    public MediaDownloader(TelegramClient telegramClient, MediaCache cache) {
-        this.telegramClient = telegramClient;
-        this.cache = cache;
-    }
 
     /**
      * Downloads a file by its Telegram file_id. Returns cached data if available.

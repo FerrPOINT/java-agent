@@ -2,8 +2,8 @@ package com.azhukov.agent.bot.group;
 
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -17,18 +17,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * Configured via {@code bot.group.dm-topics} — a list of {chatId, topicName} entries.
  */
 @Component
+@RequiredArgsConstructor
+@Slf4j
 public class DmTopicManager {
-
-    private static final Logger log = LoggerFactory.getLogger(DmTopicManager.class);
 
     private final BotProperties properties;
     private final TelegramClient telegramClient;
     private final Map<String, Long> topicCache = new ConcurrentHashMap<>();
-
-    public DmTopicManager(BotProperties properties, TelegramClient telegramClient) {
-        this.properties = properties;
-        this.telegramClient = telegramClient;
-    }
 
     /**
      * Ensure a topic exists for the given chat. If a cached thread ID exists,

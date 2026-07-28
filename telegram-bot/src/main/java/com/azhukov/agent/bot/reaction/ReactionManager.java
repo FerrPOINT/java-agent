@@ -2,8 +2,8 @@ package com.azhukov.agent.bot.reaction;
 
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
@@ -12,9 +12,9 @@ import org.springframework.stereotype.Component;
  * Config-driven via {@code bot.reactions.enabled}.
  */
 @Component
+@RequiredArgsConstructor
+@Slf4j
 public class ReactionManager {
-
-    private static final Logger log = LoggerFactory.getLogger(ReactionManager.class);
 
     private static final String EYE = "\uD83D\uDC40";       // 👀
     private static final String THUMBS_UP = "\uD83D\uDC4D";   // 👍
@@ -22,11 +22,6 @@ public class ReactionManager {
 
     private final TelegramClient telegramClient;
     private final BotProperties properties;
-
-    public ReactionManager(TelegramClient telegramClient, BotProperties properties) {
-        this.telegramClient = telegramClient;
-        this.properties = properties;
-    }
 
     /**
      * Set 👀 reaction when processing starts.

@@ -1,11 +1,15 @@
 package com.azhukov.agent.bot.config;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
+@Getter
+@Setter
 @ConfigurationProperties(prefix = "bot")
 public class BotProperties {
 
@@ -35,84 +39,27 @@ public class BotProperties {
     private final Group group = new Group();
     private final Display display = new Display();
 
-    public String getToken() { return token; }
-    public void setToken(String token) { this.token = token; }
-    public String getMode() { return mode; }
-    public void setMode(String mode) { this.mode = mode; }
-    public String getAgentName() { return agentName; }
-    public void setAgentName(String agentName) { this.agentName = agentName; }
-    public String getBackendUrl() { return backendUrl; }
-    public void setBackendUrl(String backendUrl) { this.backendUrl = backendUrl; }
-    public int getMaxMessageLength() { return maxMessageLength; }
-    public void setMaxMessageLength(int maxMessageLength) { this.maxMessageLength = maxMessageLength; }
-    public Duration getTypingRefreshInterval() { return typingRefreshInterval; }
-    public void setTypingRefreshInterval(Duration typingRefreshInterval) { this.typingRefreshInterval = typingRefreshInterval; }
-    public Duration getStreamEditInterval() { return streamEditInterval; }
-    public void setStreamEditInterval(Duration streamEditInterval) { this.streamEditInterval = streamEditInterval; }
-    public String getBusyMode() { return busyMode; }
-    public void setBusyMode(String busyMode) { this.busyMode = busyMode; }
-    public String getParseMode() { return parseMode; }
-    public void setParseMode(String parseMode) { this.parseMode = parseMode; }
-    public boolean isRegisterCommands() { return registerCommands; }
-    public void setRegisterCommands(boolean registerCommands) { this.registerCommands = registerCommands; }
-    public int getRateLimitPerSecond() { return rateLimitPerSecond; }
-    public void setRateLimitPerSecond(int rateLimitPerSecond) { this.rateLimitPerSecond = rateLimitPerSecond; }
-    public String getWorkingDirectory() { return workingDirectory; }
-    public void setWorkingDirectory(String workingDirectory) { this.workingDirectory = workingDirectory; }
-    public String getDefaultModel() { return defaultModel; }
-    public void setDefaultModel(String defaultModel) { this.defaultModel = defaultModel; }
-    public String getReplyToMode() { return replyToMode; }
-    public void setReplyToMode(String replyToMode) { this.replyToMode = replyToMode; }
-    public Polling getPolling() { return polling; }
-    public Webhook getWebhook() { return webhook; }
-    public Auth getAuth() { return auth; }
-    public Footer getFooter() { return footer; }
-    public Reactions getReactions() { return reactions; }
-    public TextBatch getTextBatch() { return textBatch; }
-    public Group getGroup() { return group; }
-    public Display getDisplay() { return display; }
-
-    public String getHomeChatId() { return homeChatId; }
-    public void setHomeChatId(String homeChatId) { this.homeChatId = homeChatId; }
-
-    public boolean isLinkPreview() { return linkPreview; }
-    public void setLinkPreview(boolean linkPreview) { this.linkPreview = linkPreview; }
-
+    @Getter
+    @Setter
     public static class Polling {
         private int timeoutSeconds = 30;
         private int limit = 100;
         private long reconnectDelayMs = 5000;
         private double reconnectBackoffMultiplier = 1.5;
         private long reconnectMaxDelayMs = 60000;
-
-        public int getTimeoutSeconds() { return timeoutSeconds; }
-        public void setTimeoutSeconds(int timeoutSeconds) { this.timeoutSeconds = timeoutSeconds; }
-        public int getLimit() { return limit; }
-        public void setLimit(int limit) { this.limit = limit; }
-        public long getReconnectDelayMs() { return reconnectDelayMs; }
-        public void setReconnectDelayMs(long reconnectDelayMs) { this.reconnectDelayMs = reconnectDelayMs; }
-        public double getReconnectBackoffMultiplier() { return reconnectBackoffMultiplier; }
-        public void setReconnectBackoffMultiplier(double reconnectBackoffMultiplier) { this.reconnectBackoffMultiplier = reconnectBackoffMultiplier; }
-        public long getReconnectMaxDelayMs() { return reconnectMaxDelayMs; }
-        public void setReconnectMaxDelayMs(long reconnectMaxDelayMs) { this.reconnectMaxDelayMs = reconnectMaxDelayMs; }
     }
 
+    @Getter
+    @Setter
     public static class Webhook {
         private String url = "";
         private String secret = "";
         private String path = "/webhook/telegram";
         private int port = 8443;
-
-        public String getUrl() { return url; }
-        public void setUrl(String url) { this.url = url; }
-        public String getSecret() { return secret; }
-        public void setSecret(String secret) { this.secret = secret; }
-        public String getPath() { return path; }
-        public void setPath(String path) { this.path = path; }
-        public int getPort() { return port; }
-        public void setPort(int port) { this.port = port; }
     }
 
+    @Getter
+    @Setter
     public static class Auth {
         private final List<String> allowedUserIds = new ArrayList<>();
         private final List<String> allowedUsernames = new ArrayList<>();
@@ -121,59 +68,39 @@ public class BotProperties {
         private final List<String> adminUserIds = new ArrayList<>();
         private final List<String> userAllowedCommands = new ArrayList<>();
         private final Pairing pairing = new Pairing();
-
-        public List<String> getAllowedUserIds() { return allowedUserIds; }
-        public List<String> getAllowedUsernames() { return allowedUsernames; }
-        public List<String> getAllowedChatIds() { return allowedChatIds; }
-        public boolean isAllowByDefault() { return allowByDefault; }
-        public void setAllowByDefault(boolean allowByDefault) { this.allowByDefault = allowByDefault; }
-        public List<String> getAdminUserIds() { return adminUserIds; }
-        public List<String> getUserAllowedCommands() { return userAllowedCommands; }
-        public Pairing getPairing() { return pairing; }
     }
 
+    @Getter
+    @Setter
     public static class Pairing {
         private boolean enabled = false;
         private int codeExpiryHours = 1;
         private int maxPending = 3;
-
-        public boolean isEnabled() { return enabled; }
-        public void setEnabled(boolean enabled) { this.enabled = enabled; }
-        public int getCodeExpiryHours() { return codeExpiryHours; }
-        public void setCodeExpiryHours(int codeExpiryHours) { this.codeExpiryHours = codeExpiryHours; }
-        public int getMaxPending() { return maxPending; }
-        public void setMaxPending(int maxPending) { this.maxPending = maxPending; }
     }
 
+    @Getter
+    @Setter
     public static class Footer {
         private boolean enabled = false;
         private final List<String> fields = new ArrayList<>(List.of("model", "context_pct", "cwd"));
-
-        public boolean isEnabled() { return enabled; }
-        public void setEnabled(boolean enabled) { this.enabled = enabled; }
-        public List<String> getFields() { return fields; }
     }
 
+    @Getter
+    @Setter
     public static class Reactions {
         private boolean enabled = false;
-
-        public boolean isEnabled() { return enabled; }
-        public void setEnabled(boolean enabled) { this.enabled = enabled; }
     }
 
+    @Getter
+    @Setter
     public static class TextBatch {
         private int delayMs = 500;
         private int splitDelayMs = 1200;
         private int fastDelayMs = 180;
-
-        public int getDelayMs() { return delayMs; }
-        public void setDelayMs(int delayMs) { this.delayMs = delayMs; }
-        public int getSplitDelayMs() { return splitDelayMs; }
-        public void setSplitDelayMs(int splitDelayMs) { this.splitDelayMs = splitDelayMs; }
-        public int getFastDelayMs() { return fastDelayMs; }
-        public void setFastDelayMs(int fastDelayMs) { this.fastDelayMs = fastDelayMs; }
     }
 
+    @Getter
+    @Setter
     public static class Group {
         private boolean requireMention = false;
         private boolean guestMode = false;
@@ -183,38 +110,19 @@ public class BotProperties {
         private final List<String> allowedTopics = new ArrayList<>();
         private final List<Long> ignoredThreads = new ArrayList<>();
         private final List<DmTopic> dmTopics = new ArrayList<>();
-
-        public boolean isRequireMention() { return requireMention; }
-        public void setRequireMention(boolean requireMention) { this.requireMention = requireMention; }
-        public boolean isGuestMode() { return guestMode; }
-        public void setGuestMode(boolean guestMode) { this.guestMode = guestMode; }
-        public boolean isObserveUnmentioned() { return observeUnmentioned; }
-        public void setObserveUnmentioned(boolean observeUnmentioned) { this.observeUnmentioned = observeUnmentioned; }
-        public boolean isExclusiveBotMentions() { return exclusiveBotMentions; }
-        public void setExclusiveBotMentions(boolean exclusiveBotMentions) { this.exclusiveBotMentions = exclusiveBotMentions; }
-        public List<String> getFreeResponseChats() { return freeResponseChats; }
-        public List<String> getAllowedTopics() { return allowedTopics; }
-        public List<Long> getIgnoredThreads() { return ignoredThreads; }
-        public List<DmTopic> getDmTopics() { return dmTopics; }
     }
 
+    @Getter
+    @Setter
     public static class DmTopic {
         private String chatId = "";
         private String topicName = "";
-
-        public String getChatId() { return chatId; }
-        public void setChatId(String chatId) { this.chatId = chatId; }
-        public String getTopicName() { return topicName; }
-        public void setTopicName(String topicName) { this.topicName = topicName; }
     }
 
+    @Getter
+    @Setter
     public static class Display {
         private String toolProgress = "compact"; // compact | verbose | hidden
         private int previewLength = 200;
-
-        public String getToolProgress() { return toolProgress; }
-        public void setToolProgress(String toolProgress) { this.toolProgress = toolProgress; }
-        public int getPreviewLength() { return previewLength; }
-        public void setPreviewLength(int previewLength) { this.previewLength = previewLength; }
     }
 }

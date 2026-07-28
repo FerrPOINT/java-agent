@@ -1,7 +1,6 @@
 package com.azhukov.agent.gateway.telegram;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
@@ -11,9 +10,9 @@ import org.springframework.web.client.RestClient;
 import java.util.Map;
 import java.util.Optional;
 
+@Slf4j
 public class TelegramBotApiClient {
 
-    private static final Logger log = LoggerFactory.getLogger(TelegramBotApiClient.class);
     private final RestClient restClient;
     private final String botToken;
 

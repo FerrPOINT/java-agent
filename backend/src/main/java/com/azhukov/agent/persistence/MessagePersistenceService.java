@@ -6,8 +6,8 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,16 +20,12 @@ import java.util.UUID;
  * so that {@link com.azhukov.agent.core.context.ContextEngine} can load
  * conversation history on subsequent turns.
  */
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class MessagePersistenceService {
 
-    private static final Logger log = LoggerFactory.getLogger(MessagePersistenceService.class);
-
     private final MessageRepository messageRepository;
-
-    public MessagePersistenceService(MessageRepository messageRepository) {
-        this.messageRepository = messageRepository;
-    }
 
     @Transactional
     public void persistTurn(Session session, String userInput, TurnResult turnResult) {

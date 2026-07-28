@@ -8,6 +8,7 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.Redactor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -22,21 +23,16 @@ import java.util.concurrent.TimeUnit;
     toolset = "terminal"
 )
 @Component
+@RequiredArgsConstructor
 public class TerminalTool implements ToolHandler {
 
     private static final List<String> DEFAULT_BLOCKED_PATTERNS = List.of(
-        "rm -rf /", "rm -rf /*", "mkfs", "dd if=/dev/zero", ":(){ :|:\u0026 };:"
+        "rm -rf /", "rm -rf /*", "mkfs", "dd if=/dev/zero", ":(){ :|:& };:"
     );
 
     private final ProcessTool processTool;
     private final AgentProperties properties;
     private final Redactor redactor;
-
-    public TerminalTool(ProcessTool processTool, AgentProperties properties, Redactor redactor) {
-        this.processTool = processTool;
-        this.properties = properties;
-        this.redactor = redactor;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

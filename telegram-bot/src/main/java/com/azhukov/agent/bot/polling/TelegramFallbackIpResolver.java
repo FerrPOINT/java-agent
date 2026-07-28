@@ -1,7 +1,6 @@
 package com.azhukov.agent.bot.polling;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.net.InetAddress;
@@ -18,9 +17,8 @@ import java.util.concurrent.ThreadLocalRandom;
  * When DNS resolution for api.telegram.org fails, tries the fallback IPs in random order.
  */
 @Component
+@Slf4j
 public class TelegramFallbackIpResolver {
-
-    private static final Logger log = LoggerFactory.getLogger(TelegramFallbackIpResolver.class);
 
     private static final String HOST = "api.telegram.org";
     private static final String ENV_VAR = "TELEGRAM_FALLBACK_IPS";

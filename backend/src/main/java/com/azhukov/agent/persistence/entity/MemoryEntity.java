@@ -5,12 +5,14 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import lombok.Data;
 
 import java.time.Instant;
 import java.util.UUID;
 
 @Entity
 @Table(name = "memory")
+@Data
 public class MemoryEntity {
 
     @Id
@@ -26,17 +28,4 @@ public class MemoryEntity {
     private String target = "memory";
 
     private Instant createdAt;
-
-    public UUID getId() { return id; }
-    public void setId(UUID id) { this.id = id; }
-    public String getUserId() { return userId; }
-    public void setUserId(String userId) { this.userId = userId; }
-    public String getCategory() { return category; }
-    public void setCategory(String category) { this.category = category; }
-    public String getFact() { return fact; }
-    public void setFact(String fact) { this.fact = fact; }
-    public Instant getCreatedAt() { return createdAt; }
-    public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
-    public String getTarget() { return target; }
-    public void setTarget(String target) { this.target = target; }
 }

@@ -16,9 +16,8 @@ import io.modelcontextprotocol.client.transport.ServerParameters;
 import io.modelcontextprotocol.client.transport.StdioClientTransport;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.spec.McpSchema;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.context.event.EventListener;
@@ -31,21 +30,15 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Component
+@RequiredArgsConstructor
 public class McpLifecycleManager {
-
-    private static final Logger log = LoggerFactory.getLogger(McpLifecycleManager.class);
 
     private final AgentProperties properties;
     private final ObjectMapper objectMapper;
     private final ApplicationContext applicationContext;
     private final Map<String, McpServerState> clients = new ConcurrentHashMap<>();
-
-    public McpLifecycleManager(AgentProperties properties, ObjectMapper objectMapper, ApplicationContext applicationContext) {
-        this.properties = properties;
-        this.objectMapper = objectMapper;
-        this.applicationContext = applicationContext;
-    }
 
     private ToolRegistry toolRegistry() {
         return applicationContext.getBean(ToolRegistry.class);

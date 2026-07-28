@@ -2,8 +2,8 @@ package com.azhukov.agent.bot.media;
 
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.sticker.StickerCache;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
@@ -18,17 +18,12 @@ import java.util.Optional;
  * would be done by the backend).
  */
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class InboundMediaHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(InboundMediaHandler.class);
 
     private final MediaDownloader mediaDownloader;
     private final StickerCache stickerCache;
-
-    public InboundMediaHandler(MediaDownloader mediaDownloader, StickerCache stickerCache) {
-        this.mediaDownloader = mediaDownloader;
-        this.stickerCache = stickerCache;
-    }
 
     /**
      * Handles an UpdateEvent that contains media. If the event does not

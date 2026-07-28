@@ -1,6 +1,7 @@
 package com.azhukov.agent.bot.footer;
 
 import com.azhukov.agent.bot.config.BotProperties;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -12,15 +13,12 @@ import java.util.List;
  * Config-driven via {@code bot.footer.enabled} and {@code bot.footer.fields}.
  */
 @Component
+@RequiredArgsConstructor
 public class RuntimeFooter {
 
     private static final String SEPARATOR = " · ";
 
     private final BotProperties properties;
-
-    public RuntimeFooter(BotProperties properties) {
-        this.properties = properties;
-    }
 
     /**
      * Format the footer string from runtime metadata.

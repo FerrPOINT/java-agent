@@ -26,6 +26,7 @@ import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import lombok.RequiredArgsConstructor;
 
 import java.time.Instant;
 import java.util.Comparator;
@@ -34,6 +35,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
+@RequiredArgsConstructor
 public class AgentRuntimeService {
 
     private final AgentRuntime agentRuntime;
@@ -43,22 +45,6 @@ public class AgentRuntimeService {
     private final MemoryProvider memoryProvider;
     private final MemoryRepository memoryRepository;
     private final WriteApprovalGate writeApprovalGate;
-
-    public AgentRuntimeService(AgentRuntime agentRuntime,
-                               SessionRepository sessionRepository,
-                               MessageRepository messageRepository,
-                               SessionTitleService sessionTitleService,
-                               MemoryProvider memoryProvider,
-                               MemoryRepository memoryRepository,
-                               WriteApprovalGate writeApprovalGate) {
-        this.agentRuntime = agentRuntime;
-        this.sessionRepository = sessionRepository;
-        this.messageRepository = messageRepository;
-        this.sessionTitleService = sessionTitleService;
-        this.memoryProvider = memoryProvider;
-        this.memoryRepository = memoryRepository;
-        this.writeApprovalGate = writeApprovalGate;
-    }
 
     @Transactional
     public ChatResponseDto runDelegate(ChatRequest request) {

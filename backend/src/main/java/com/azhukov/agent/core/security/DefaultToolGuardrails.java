@@ -2,18 +2,16 @@ package com.azhukov.agent.core.security;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ToolCall;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 @Component
+@RequiredArgsConstructor
 public class DefaultToolGuardrails implements ToolGuardrails {
 
     private final AgentProperties properties;
-
-    public DefaultToolGuardrails(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     @Override
     public boolean isToolAllowed(String toolName) {

@@ -7,6 +7,7 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -22,15 +23,12 @@ import java.util.List;
     toolset = "file"
 )
 @Component
+@RequiredArgsConstructor
 public class WriteFileTool implements ToolHandler {
 
     private static final List<String> BLOCKED_PATHS = List.of("/.env", "/etc/shadow", "/etc/passwd", "/root/.ssh");
 
     private final AgentProperties properties;
-
-    public WriteFileTool(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

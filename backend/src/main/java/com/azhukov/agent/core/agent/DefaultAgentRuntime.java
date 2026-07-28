@@ -24,8 +24,8 @@ import com.azhukov.agent.security.UserInputSanitizer;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -34,10 +34,10 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+@Slf4j
 @Component
+@RequiredArgsConstructor
 public class DefaultAgentRuntime implements AgentRuntime {
-
-    private static final Logger log = LoggerFactory.getLogger(DefaultAgentRuntime.class);
 
     private final ModelClient modelClient;
     private final ToolRegistry toolRegistry;
@@ -54,35 +54,6 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ToolCallGuardrail guardrail;
     private final TurnStateManager turnStateManager;
     private final BackgroundReviewService backgroundReviewService;
-
-    public DefaultAgentRuntime(ModelClient modelClient, ToolRegistry toolRegistry,
-                               ToolExecutionService toolExecutionService,
-                               PromptBuilder promptBuilder, ContextEngine contextEngine,
-                               MemoryProvider memoryProvider, SkillManager skillManager,
-                               IterationBudget iterationBudget,
-                               MessageSanitizer messageSanitizer,
-                               ContextReferenceService contextReferenceService,
-                               AgentProperties properties,
-                               UserInputSanitizer inputSanitizer,
-                               ToolCallGuardrail guardrail,
-                               TurnStateManager turnStateManager,
-                               BackgroundReviewService backgroundReviewService) {
-        this.modelClient = modelClient;
-        this.toolRegistry = toolRegistry;
-        this.toolExecutionService = toolExecutionService;
-        this.promptBuilder = promptBuilder;
-        this.contextEngine = contextEngine;
-        this.memoryProvider = memoryProvider;
-        this.skillManager = skillManager;
-        this.iterationBudget = iterationBudget;
-        this.messageSanitizer = messageSanitizer;
-        this.contextReferenceService = contextReferenceService;
-        this.properties = properties;
-        this.inputSanitizer = inputSanitizer;
-        this.guardrail = guardrail;
-        this.turnStateManager = turnStateManager;
-        this.backgroundReviewService = backgroundReviewService;
-    }
 
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {

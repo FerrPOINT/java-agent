@@ -58,6 +58,12 @@ dependencies {
     implementation 'io.github.resilience4j:resilience4j-timelimiter:2.4.0'
     implementation 'io.github.resilience4j:resilience4j-spring6:2.4.0'
 
+    // Lombok
+    compileOnly 'org.projectlombok:lombok:1.18.38'
+    annotationProcessor 'org.projectlombok:lombok:1.18.38'
+    testCompileOnly 'org.projectlombok:lombok:1.18.38'
+    testAnnotationProcessor 'org.projectlombok:lombok:1.18.38'
+
     // CLI
     implementation 'info.picocli:picocli:4.7.7'
     implementation 'org.jline:jline:4.3.1'

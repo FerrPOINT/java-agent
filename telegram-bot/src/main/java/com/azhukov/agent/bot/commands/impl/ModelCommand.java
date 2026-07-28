@@ -8,26 +8,19 @@ import com.azhukov.agent.bot.keyboard.ModelKeyboardBuilder;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 @Component
+@RequiredArgsConstructor
 public class ModelCommand implements CommandHandler {
 
     private final BotSessionStore store;
     private final BotProperties properties;
     private final ModelKeyboardBuilder modelKeyboardBuilder;
     private final InlineKeyboardBuilder inlineKeyboardBuilder;
-
-    public ModelCommand(BotSessionStore store, BotProperties properties,
-                        ModelKeyboardBuilder modelKeyboardBuilder,
-                        InlineKeyboardBuilder inlineKeyboardBuilder) {
-        this.store = store;
-        this.properties = properties;
-        this.modelKeyboardBuilder = modelKeyboardBuilder;
-        this.inlineKeyboardBuilder = inlineKeyboardBuilder;
-    }
 
     @Override
     public String name() {

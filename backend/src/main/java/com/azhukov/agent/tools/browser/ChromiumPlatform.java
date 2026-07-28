@@ -1,13 +1,11 @@
 package com.azhukov.agent.tools.browser;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.Locale;
 
+@Slf4j
 public final class ChromiumPlatform {
-
-    private static final Logger log = LoggerFactory.getLogger(ChromiumPlatform.class);
 
     private ChromiumPlatform() {}
 

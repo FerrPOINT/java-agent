@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import lombok.RequiredArgsConstructor;
 
 import java.time.Instant;
 import java.util.List;
@@ -20,15 +21,11 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/gateway/telegram")
 @ConditionalOnProperty(name = "agent.gateway.telegram.webhook.enabled", havingValue = "true")
+@RequiredArgsConstructor
 public class TelegramWebhookController {
 
     private final GatewayRoutingService routingService;
     private final AgentProperties properties;
-
-    public TelegramWebhookController(GatewayRoutingService routingService, AgentProperties properties) {
-        this.routingService = routingService;
-        this.properties = properties;
-    }
 
     @PostMapping
     public String receive(@RequestBody Map<String, Object> update) {

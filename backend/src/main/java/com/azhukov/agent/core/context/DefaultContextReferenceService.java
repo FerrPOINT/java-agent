@@ -4,9 +4,8 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ContextReference;
 import com.azhukov.agent.core.model.ReferenceType;
 import com.azhukov.agent.core.skill.SkillManager;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.net.URI;
@@ -23,9 +22,8 @@ import java.util.List;
 import java.util.Optional;
 
 @Component
+@Slf4j
 public class DefaultContextReferenceService implements ContextReferenceService {
-
-    private static final Logger log = LoggerFactory.getLogger(DefaultContextReferenceService.class);
 
     private final AgentProperties properties;
     private final SkillManager skillManager;

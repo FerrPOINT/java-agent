@@ -1,7 +1,6 @@
 package com.azhukov.agent.tools.browser;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -16,9 +15,8 @@ import java.time.Duration;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+@Slf4j
 public class ChromiumDownloader {
-
-    private static final Logger log = LoggerFactory.getLogger(ChromiumDownloader.class);
 
     private final String baseUrl;
     private final HttpClient httpClient;

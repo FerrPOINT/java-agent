@@ -5,16 +5,14 @@ import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.fasterxml.jackson.databind.JsonNode;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 @Component
+@RequiredArgsConstructor
 public class AgentsCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
-
-    public AgentsCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
 
     @Override
     public String name() {

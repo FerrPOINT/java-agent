@@ -24,6 +24,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import lombok.RequiredArgsConstructor;
+
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -33,6 +35,7 @@ import java.util.concurrent.CompletableFuture;
 
 @RestController
 @RequestMapping("/v1/chat/completions")
+@RequiredArgsConstructor
 public class ChatCompletionsController {
 
     private final AgentRuntime agentRuntime;
@@ -40,18 +43,6 @@ public class ChatCompletionsController {
     private final PromptBuilder promptBuilder;
     private final ModelClient modelClient;
     private final ObjectMapper objectMapper;
-
-    public ChatCompletionsController(AgentRuntime agentRuntime,
-                                     ToolRegistry toolRegistry,
-                                     PromptBuilder promptBuilder,
-                                     ModelClient modelClient,
-                                     ObjectMapper objectMapper) {
-        this.agentRuntime = agentRuntime;
-        this.toolRegistry = toolRegistry;
-        this.promptBuilder = promptBuilder;
-        this.modelClient = modelClient;
-        this.objectMapper = objectMapper;
-    }
 
     @PostMapping
     public Object completions(@Valid @RequestBody OpenAiChatRequest request) {

@@ -6,6 +6,7 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.skill.SkillManager;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 @AgentTool(
@@ -14,13 +15,10 @@ import org.springframework.stereotype.Component;
     toolset = "core"
 )
 @Component
+@RequiredArgsConstructor
 public class SkillsListTool implements ToolHandler {
 
     private final SkillManager skillManager;
-
-    public SkillsListTool(SkillManager skillManager) {
-        this.skillManager = skillManager;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

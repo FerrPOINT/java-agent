@@ -32,27 +32,20 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import lombok.RequiredArgsConstructor;
+
 import java.util.List;
 import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1")
+@RequiredArgsConstructor
 public class AgentController {
 
     private final AgentRuntimeService agentRuntimeService;
     private final AgentStreamingService streamingService;
     private final MemoryProvider memoryProvider;
     private final SkillManager skillManager;
-
-    public AgentController(AgentRuntimeService agentRuntimeService,
-                         AgentStreamingService streamingService,
-                         MemoryProvider memoryProvider,
-                         SkillManager skillManager) {
-        this.agentRuntimeService = agentRuntimeService;
-        this.streamingService = streamingService;
-        this.memoryProvider = memoryProvider;
-        this.skillManager = skillManager;
-    }
 
     @PostMapping("/agent/chat")
     public ChatResponseDto chat(@Valid @RequestBody ChatRequest request) {

@@ -2,8 +2,7 @@ package com.azhukov.agent.bot.batch;
 
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -18,9 +17,8 @@ import java.util.concurrent.*;
  * 1200ms for long (near 4096 split).
  */
 @Component
+@Slf4j
 public class TextBatchDebouncer {
-
-    private static final Logger log = LoggerFactory.getLogger(TextBatchDebouncer.class);
 
     private final BotProperties properties;
     private final ScheduledExecutorService scheduler;

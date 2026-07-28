@@ -1,8 +1,8 @@
 package com.azhukov.agent.tools.browser;
 
 import com.azhukov.agent.config.AgentProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -17,15 +17,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Component
+@Slf4j
+@RequiredArgsConstructor
 public class ChromiumLauncher {
 
-    private static final Logger log = LoggerFactory.getLogger(ChromiumLauncher.class);
-
     private final AgentProperties properties;
-
-    public ChromiumLauncher(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     public Process launch(Path executable) throws IOException {
         AgentProperties.ChromiumProperties chromium = properties.getChromium();

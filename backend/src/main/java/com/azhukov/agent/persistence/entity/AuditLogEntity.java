@@ -5,12 +5,14 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import lombok.Data;
 import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.Instant;
 
 @Entity
 @Table(name = "audit_log")
+@Data
 public class AuditLogEntity {
 
     @Id
@@ -35,12 +37,4 @@ public class AuditLogEntity {
         this.resource = resource;
         this.details = details;
     }
-
-    public Long getId() { return id; }
-    public String getSessionId() { return sessionId; }
-    public String getActor() { return actor; }
-    public String getAction() { return action; }
-    public String getResource() { return resource; }
-    public String getDetails() { return details; }
-    public Instant getCreatedAt() { return createdAt; }
 }

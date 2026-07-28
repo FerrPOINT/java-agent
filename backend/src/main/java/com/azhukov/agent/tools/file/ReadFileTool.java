@@ -7,6 +7,7 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -21,13 +22,10 @@ import java.util.List;
     description = "Read a text file with optional offset and limit. Returns content with line numbers. Paths outside allowed directories are blocked when file safety is enabled.",
     toolset = "file"
 )
+@RequiredArgsConstructor
 public class ReadFileTool implements ToolHandler {
 
     private final AgentProperties properties;
-
-    public ReadFileTool(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

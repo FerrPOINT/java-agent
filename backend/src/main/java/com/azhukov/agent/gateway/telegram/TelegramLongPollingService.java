@@ -9,8 +9,7 @@ import com.azhukov.agent.gateway.model.SessionSource;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -30,9 +29,9 @@ import java.util.concurrent.atomic.AtomicLong;
 
 @ConditionalOnProperty(name = "agent.gateway.telegram.long-polling.enabled", havingValue = "true")
 @Component
+@Slf4j
 public class TelegramLongPollingService {
 
-    private static final Logger log = LoggerFactory.getLogger(TelegramLongPollingService.class);
     private final AgentProperties properties;
     private final GatewayRoutingService routingService;
     private final HttpClient httpClient;

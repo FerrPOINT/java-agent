@@ -2,8 +2,8 @@ package com.azhukov.agent.bot.session;
 
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -24,9 +24,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * available for draining.
  */
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class BusySessionHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(BusySessionHandler.class);
 
     private final BotProperties properties;
 
@@ -38,10 +38,6 @@ public class BusySessionHandler {
 
     /** Interrupt flags per chat (used in "interrupt" mode). */
     private final ConcurrentHashMap<Long, AtomicBoolean> interruptFlags = new ConcurrentHashMap<>();
-
-    public BusySessionHandler(BotProperties properties) {
-        this.properties = properties;
-    }
 
     /** Whether the given chat is currently processing a turn. */
     public boolean isBusy(long chatId) {

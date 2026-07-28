@@ -6,31 +6,21 @@ import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.SessionSource;
 import com.azhukov.agent.persistence.MessagePersistenceService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.List;
 import java.util.function.Consumer;
 
+@Slf4j
+@RequiredArgsConstructor
 public class InboundMessageProcessor implements Consumer<MessageEvent> {
-
-    private static final Logger log = LoggerFactory.getLogger(InboundMessageProcessor.class);
 
     private final SessionResolver sessionResolver;
     private final AgentRuntime agentRuntime;
     private final ObjectProvider<GatewayRoutingService> routingServiceProvider;
     private final MessagePersistenceService messagePersistenceService;
-
-    public InboundMessageProcessor(SessionResolver sessionResolver,
-                                    AgentRuntime agentRuntime,
-                                    ObjectProvider<GatewayRoutingService> routingServiceProvider,
-                                    MessagePersistenceService messagePersistenceService) {
-        this.sessionResolver = sessionResolver;
-        this.agentRuntime = agentRuntime;
-        this.routingServiceProvider = routingServiceProvider;
-        this.messagePersistenceService = messagePersistenceService;
-    }
 
     @Override
     public void accept(MessageEvent event) {

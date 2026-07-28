@@ -19,8 +19,7 @@ import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
 import java.util.Map;
@@ -31,9 +30,8 @@ import java.util.stream.Collectors;
  * LangChain4j-backed OpenAI-compatible model client.
  * Supports text completion, tool calls, streaming, and vision.
  */
+@Slf4j
 public class LangChain4jModelClient implements ModelClient {
-
-    private static final Logger log = LoggerFactory.getLogger(LangChain4jModelClient.class);
 
     private final ChatModel chatModel;
     private final StreamingChatModel streamingChatModel;

@@ -1,8 +1,7 @@
 package com.azhukov.agent.bot.typing;
 
 import com.azhukov.agent.bot.client.TelegramClient;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.ScheduledExecutorService;
@@ -13,9 +12,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
 @Service
+@Slf4j
 public class TypingManager {
-
-    private static final Logger log = LoggerFactory.getLogger(TypingManager.class);
 
     private final TelegramClient telegramClient;
     private final long intervalMs;

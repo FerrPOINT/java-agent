@@ -2,8 +2,8 @@ package com.azhukov.agent.bot.keyboard;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -18,15 +18,11 @@ import java.util.List;
  * </pre>
  */
 @Component
+@RequiredArgsConstructor
+@Slf4j
 public class InlineKeyboardBuilder {
 
-    private static final Logger log = LoggerFactory.getLogger(InlineKeyboardBuilder.class);
-
     private final ObjectMapper objectMapper;
-
-    public InlineKeyboardBuilder(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
 
     /**
      * Builds the InlineKeyboardMarkup JSON string.

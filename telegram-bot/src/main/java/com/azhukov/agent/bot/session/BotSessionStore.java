@@ -1,7 +1,7 @@
 package com.azhukov.agent.bot.session;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,15 +15,11 @@ import java.util.UUID;
  * Wraps {@link BotSessionRepository} with higher-level operations used by commands and the message pipeline.
  */
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class BotSessionStore {
 
-    private static final Logger log = LoggerFactory.getLogger(BotSessionStore.class);
-
     private final BotSessionRepository repository;
-
-    public BotSessionStore(BotSessionRepository repository) {
-        this.repository = repository;
-    }
 
     /**
      * Find the active session for the given user, or create a new one.

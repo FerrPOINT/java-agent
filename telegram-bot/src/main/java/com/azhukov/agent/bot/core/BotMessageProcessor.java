@@ -22,8 +22,7 @@ import com.azhukov.agent.bot.session.BotSessionStore;
 import com.azhukov.agent.bot.session.BusySessionHandler;
 import com.azhukov.agent.bot.streaming.StreamEditor;
 import com.azhukov.agent.bot.typing.TypingManager;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
@@ -46,9 +45,8 @@ import java.util.function.Consumer;
  * </ol>
  */
 @Service
+@Slf4j
 public class BotMessageProcessor implements Consumer<UpdateEvent> {
-
-    private static final Logger log = LoggerFactory.getLogger(BotMessageProcessor.class);
 
     private final TelegramClient telegramClient;
     private final AuthorizationService authorizationService;

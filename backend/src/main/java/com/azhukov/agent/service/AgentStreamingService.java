@@ -10,8 +10,8 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -20,25 +20,15 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class AgentStreamingService {
-
-    private static final Logger log = LoggerFactory.getLogger(AgentStreamingService.class);
 
     private final ModelClient modelClient;
     private final ToolRegistry toolRegistry;
     private final PromptBuilder promptBuilder;
     private final ObjectMapper objectMapper;
-
-    public AgentStreamingService(ModelClient modelClient,
-                                 ToolRegistry toolRegistry,
-                                 PromptBuilder promptBuilder,
-                                 ObjectMapper objectMapper) {
-        this.modelClient = modelClient;
-        this.toolRegistry = toolRegistry;
-        this.promptBuilder = promptBuilder;
-        this.objectMapper = objectMapper;
-    }
 
     public SseEmitter streamTurn(ChatRequest request) {
         return streamTurn(request, new SseEmitter(request.timeoutMs() != null ? request.timeoutMs() : 600_000L));

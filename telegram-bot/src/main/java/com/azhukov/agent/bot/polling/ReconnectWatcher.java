@@ -1,8 +1,7 @@
 package com.azhukov.agent.bot.polling;
 
 import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ExecutorService;
@@ -12,9 +11,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
+@Slf4j
 public class ReconnectWatcher {
-
-    private static final Logger log = LoggerFactory.getLogger(ReconnectWatcher.class);
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "telegram-reconnect");

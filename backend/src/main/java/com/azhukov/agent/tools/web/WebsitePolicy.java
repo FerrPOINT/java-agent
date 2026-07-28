@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.web;
 
 import com.azhukov.agent.config.AgentProperties;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -16,13 +17,10 @@ import java.util.List;
  * If allowedDomains is empty, all domains are permitted except those in blockedDomains.
  */
 @Component
+@RequiredArgsConstructor
 public class WebsitePolicy {
 
     private final AgentProperties properties;
-
-    public WebsitePolicy(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     /**
      * Check if a URL is allowed by the website policy.

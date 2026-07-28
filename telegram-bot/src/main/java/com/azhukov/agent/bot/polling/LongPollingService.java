@@ -3,8 +3,7 @@ package com.azhukov.agent.bot.polling;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.event.EventListener;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -20,9 +19,8 @@ import java.util.function.Consumer;
 
 @Component
 @ConditionalOnProperty(name = "bot.mode", havingValue = "polling")
+@Slf4j
 public class LongPollingService {
-
-    private static final Logger log = LoggerFactory.getLogger(LongPollingService.class);
 
     private final TelegramClient telegramClient;
     private final BotProperties properties;

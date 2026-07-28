@@ -1,7 +1,6 @@
 package com.azhukov.agent.bot.media;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -15,9 +14,8 @@ import java.util.Map;
  * Default TTL is 24 hours.
  */
 @Service
+@Slf4j
 public class MediaCache {
-
-    private static final Logger log = LoggerFactory.getLogger(MediaCache.class);
 
     private record CacheEntry(byte[] data, Instant expiresAt) {}
 

@@ -1,8 +1,7 @@
 package com.azhukov.agent.tools.browser;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.net.URI;
@@ -14,9 +13,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 
+@Slf4j
 public class ChromiumRevisionResolver {
-
-    private static final Logger log = LoggerFactory.getLogger(ChromiumRevisionResolver.class);
 
     // Known good Chromium revisions per platform (synced periodically). Fallbacks.
     private static final Map<ChromiumPlatform.Platform, String> FALLBACK_REVISIONS = Map.of(

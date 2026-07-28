@@ -1,8 +1,7 @@
 package com.azhukov.agent.bot.media;
 
 import com.azhukov.agent.bot.polling.UpdateEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
@@ -14,9 +13,8 @@ import java.util.Optional;
  * formats it as "Location: lat, lon" for inclusion in LLM context.
  */
 @Component
+@Slf4j
 public class LocationHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(LocationHandler.class);
 
     /**
      * Handle a location UpdateEvent and return a formatted description for the LLM.
