@@ -26,16 +26,17 @@ Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-пор
 
 ## Конкурентность: виртуальные потоки
 
-Проект использует **Spring MVC + виртуальные потоки**, а не WebFlux/Reactor:
+Проект использует **Spring MVC + виртуальные потоки** (`spring.threads.virtual.enabled=true`), не WebFlux/Reactor.
 
-```yaml
-spring:
-  threads:
-    virtual:
-      enabled: true
-```
+## Coverage
 
-Обоснование — в `docs/03-dependency-map.md` и `docs/05-migration-notes.md`.
+| Метрика | Значение |
+|---------|----------|
+| LINE | 87.3% |
+| BRANCH | 74.3% |
+| METHOD | 85.9% |
+| CLASS | 98.3% |
+| Тестов | 725, 0 failures |
 
 ## Имя агента
 
@@ -98,8 +99,12 @@ curl -s -X POST http://localhost:8090/v1/chat/completions \
 ## Production
 
 ```bash
-docker compose up --build
+docker compose up --build      # production, порт 8080
+docker compose -f docker-compose.local.yml up --build  # local dev, порты 18090/18091
 ```
+
+- `docker-compose.yml` — production (порт 8080, PostgreSQL 5432)
+- `docker-compose.local.yml` — local dev (порт 18090, PostgreSQL 18091) — не конфликтует с другими сервисами
 
 - Dockerfile: `eclipse-temurin:25-jre-noble` + Chromium runtime deps.
 - `server.shutdown: immediate` — workaround для graceful shutdown бага Spring Boot 4.1.0.

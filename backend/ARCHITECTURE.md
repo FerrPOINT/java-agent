@@ -31,6 +31,8 @@ backend/src/main/java/com/azhukov/agent/
 - `noop` (dumb echo ModelClient, H2, no memory/skills, CLI smoke)
 - `cli` (`--enable-native-access=ALL-UNNAMED` for JLine)
 
-## Coverage gate (target)
-- LINE ≥ 80%, per-package target packages ≥ 75% (excluding `tools/code` which requires external Python execution)
+## Coverage gate (current)
+- LINE **87.3%**, BRANCH **74.3%**, METHOD **85.9%**, CLASS **98.3%**
+- 725 tests, 0 failures, 0 errors
+- All packages ≥ 75% LINE
 - Main test run excludes `@Tag("live")` and `@Tag("slow")` integration tests
