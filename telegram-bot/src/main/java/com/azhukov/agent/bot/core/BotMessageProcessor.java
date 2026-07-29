@@ -213,6 +213,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
     // ─── Text / Media ──────────────────────────────────────────────
 
     private void handleTextOrMedia(UpdateEvent event) {
+        handleTextOrMediaInternal(event);
+        // Drain queued messages after top-level processing (not recursive)
+        drainQueue(event.chatId());
+    }
+
+    private void handleTextOrMediaInternal(UpdateEvent event) {
         long chatId = event.chatId();
 
         // B1.8/B1.9: Group mention requirement + guest mode
@@ -324,13 +330,29 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
         } finally {
             typingManager.stopTyping(chatId);
             busyHandler.markFree(chatId);
+        }
+    }
 
-            // Drain queued messages (in queue mode)
-            if (busyHandler.hasQueued(chatId)) {
-                List<UpdateEvent> queued = busyHandler.drainQueue(chatId);
-                log.debug("Draining {} queued messages for chat {}", queued.size(), chatId);
-                for (UpdateEvent queuedEvent : queued) {
-                    accept(queuedEvent);
+    /**
+     * Drain queued messages for a chat — linear, not recursive.
+     * Uses {@link #handleTextOrMediaInternal} to avoid recursive drain calls.
+     * Guards against infinite loops with a max drain depth.
+     */
+    private void drainQueue(long chatId) {
+        int maxDrainDepth = 100;
+        int drained = 0;
+        while (busyHandler.hasQueued(chatId) && drained < maxDrainDepth) {
+            List<UpdateEvent> queued = busyHandler.drainQueue(chatId);
+            for (UpdateEvent queuedEvent : queued) {
+                try {
+                    handleTextOrMediaInternal(queuedEvent);
+                } catch (Exception e) {
+                    log.error("Error draining queued message for chat {}: {}", chatId, e.getMessage(), e);
+                }
+                drained++;
+                if (drained >= maxDrainDepth) {
+                    log.warn("Queue drain depth limit ({}) reached for chat {}, dropping remaining", maxDrainDepth, chatId);
+                    break;
                 }
             }
         }
