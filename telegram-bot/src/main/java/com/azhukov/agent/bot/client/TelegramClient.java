@@ -63,13 +63,13 @@ public class TelegramClient {
                 Thread.currentThread().interrupt();
                 log.warn("Rate limit acquire interrupted, proceeding anyway");
             }
+            // Release permit 1s after acquire (not after call completes) for accurate rate
+            rateLimitScheduler.schedule(() -> rateLimiter.release(), 1, TimeUnit.SECONDS);
         }
     }
 
     private void releaseRateLimit() {
-        if (rateLimiter != null) {
-            rateLimitScheduler.schedule(() -> rateLimiter.release(), 1, TimeUnit.SECONDS);
-        }
+        // No-op — release is now scheduled right after acquire for accurate rate limiting
     }
 
     // ─── Text messages ────────────────────────────────────────────
@@ -280,6 +280,29 @@ public class TelegramClient {
                 .retrieve()
                 .body(TelegramResponse.class);
             if (response == null || !response.isSuccess()) {
+                // Check for 429 rate limit from Telegram — retry once after waiting
+                if (response != null && response.errorCode() == 429 && response.parameters() != null
+                    && response.parameters().containsKey("retry_after")) {
+                    int retryAfter = response.parameters().get("retry_after").asInt(1);
+                    log.warn("Telegram 429 rate limit, retrying after {}s", retryAfter);
+                    try {
+                        Thread.sleep(retryAfter * 1000L);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return Optional.empty();
+                    }
+                    // Single retry
+                    response = restClient.post()
+                        .uri("/bot{token}/{method}", botToken, method)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(params)
+                        .retrieve()
+                        .body(TelegramResponse.class);
+                    if (response != null && response.isSuccess()) {
+                        return Optional.of(response);
+                    }
+                }
                 log.warn("Telegram {} failed: {}", method, response != null ? response.errorMessage() : "null response");
                 return Optional.empty();
             }

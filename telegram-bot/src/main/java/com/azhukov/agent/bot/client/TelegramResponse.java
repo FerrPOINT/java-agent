@@ -10,8 +10,14 @@ public record TelegramResponse(
     boolean ok,
     @JsonProperty("error_code") Integer errorCode,
     String description,
-    Object result
+    Object result,
+    Map<String, com.fasterxml.jackson.databind.JsonNode> parameters
 ) {
+
+    /** Compact constructor with null-safe default for parameters. */
+    public TelegramResponse(boolean ok, Integer errorCode, String description, Object result) {
+        this(ok, errorCode, description, result, null);
+    }
 
     public boolean isSuccess() {
         return ok;
