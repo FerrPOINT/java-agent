@@ -103,11 +103,7 @@ public class AgentBackendClient {
             }
             responseText = responseField.asText();
 
-            // Check for memoryUpdated flag (Stage 7.3)
-            JsonNode memoryUpdatedNode = node.get("memoryUpdated");
-            if (memoryUpdatedNode != null && memoryUpdatedNode.asBoolean(false)) {
-                responseText = responseText + "\n\n💾 Self-improvement review: Memory updated";
-            }
+            // Memory updates are silent — not injected into response text (Hermes parity)
 
             String modelUsed = node.has("modelUsed") ? node.get("modelUsed").asText(null) : null;
             Integer contextTokens = node.has("contextTokens") ? node.get("contextTokens").asInt(0) : null;
