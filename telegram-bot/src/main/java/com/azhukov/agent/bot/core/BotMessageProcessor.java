@@ -324,14 +324,15 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
             // B1.2: Reaction — processing complete (success)
             reactionManager.onProcessingComplete(chatId, event.messageId(), true);
+            typingManager.stopTyping(chatId);
         } catch (Exception e) {
             log.error("Backend call failed for chat {}: {}", chatId, e.getMessage(), e);
             typingManager.flushTyping(chatId);
             sendError(chatId, "Error contacting the agent backend: " + e.getMessage());
             // B1.2: Reaction — processing complete (failure)
             reactionManager.onProcessingComplete(chatId, event.messageId(), false);
-        } finally {
             typingManager.stopTyping(chatId);
+        } finally {
             busyHandler.markFree(chatId);
         }
     }

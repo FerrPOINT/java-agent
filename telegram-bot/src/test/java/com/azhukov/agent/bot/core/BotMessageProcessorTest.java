@@ -177,6 +177,38 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void stopTypingCalledAfterSendNotInFinally() {
+        long chatId = 700L;
+        List<String> callOrder = new java.util.ArrayList<>();
+
+        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                callOrder.add("chatStream");
+                return new AgentBackendClient.ChatResult("reply", null, 100, 1000, false);
+            });
+        when(backendClient.chat(anyString(), anyString()))
+            .thenAnswer(inv -> {
+                callOrder.add("chat");
+                return new AgentBackendClient.ChatResult("reply", "test-model", 100, 1000, false);
+            });
+
+        // Track call order: sendFormatted → sendMessage, stopTyping
+        doAnswer(inv -> { callOrder.add("sendMessage"); return java.util.Optional.of(1L); })
+            .when(telegramClient).sendMessage(anyLong(), anyString(), anyString(), any(), any());
+        doAnswer(inv -> { callOrder.add("stopTyping"); return null; })
+            .when(typingManager).stopTyping(anyLong());
+
+        processor.accept(textEvent(1, chatId, "test"));
+
+        // stopTyping should come AFTER sendMessage
+        int sendIdx = callOrder.indexOf("sendMessage");
+        int stopIdx = callOrder.indexOf("stopTyping");
+        assertThat(sendIdx).as("sendMessage should have been called").isGreaterThanOrEqualTo(0);
+        assertThat(stopIdx).as("stopTyping should have been called").isGreaterThanOrEqualTo(0);
+        assertThat(stopIdx).as("stopTyping should come after sendMessage").isGreaterThan(sendIdx);
+    }
+
+    @Test
     void sendErrorEscapesMarkdownV2() {
         long chatId = 600L;
         properties.setParseMode("MarkdownV2");
