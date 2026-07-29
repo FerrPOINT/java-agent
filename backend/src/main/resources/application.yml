@@ -395,6 +395,9 @@ agent:
   model:
     provider: noop
 
+server:
+  shutdown: immediate
+
 ---
 spring:
   config:

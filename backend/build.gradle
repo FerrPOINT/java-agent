@@ -110,6 +110,8 @@ tasks.named('test') {
 tasks.register('slowTest', Test) {
     description = 'Runs slow integration tests'
     group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
     useJUnitPlatform {
         includeTags 'slow'
         excludeTags 'live'
@@ -121,6 +123,8 @@ tasks.register('slowTest', Test) {
 tasks.register('liveTest', Test) {
     description = 'Runs live integration tests requiring external services'
     group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
     useJUnitPlatform {
         includeTags 'live'
     }
