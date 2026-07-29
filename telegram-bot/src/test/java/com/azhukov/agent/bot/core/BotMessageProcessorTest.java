@@ -177,6 +177,48 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void toolProgressNotInFinalText() {
+        long chatId = 500L;
+        java.util.List<String> finalizedTexts = new java.util.ArrayList<>();
+
+        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                String msg = inv.getArgument(0);
+                // Simulate: token consumer called with LLM text
+                java.util.function.Consumer<String> tokenConsumer = inv.getArgument(2);
+                tokenConsumer.accept("Here is the answer");
+
+                // Simulate: tool call consumer
+                java.util.function.Consumer<String> toolCallConsumer = inv.getArgument(3);
+                toolCallConsumer.accept("search");
+
+                // Simulate: tool result consumer
+                java.util.function.BiConsumer<String, String> toolResultConsumer = inv.getArgument(4);
+                toolResultConsumer.accept("search", "results found");
+
+                // Simulate: onComplete with result
+                java.util.function.Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(5);
+                onComplete.accept(new AgentBackendClient.ChatResult("Here is the answer", "test-model", 100, 1000, true));
+                return new AgentBackendClient.ChatResult("Here is the answer", "test-model", 100, 1000, true);
+            });
+
+        // Capture finalized text
+        when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString()))
+            .thenAnswer(inv -> {
+                finalizedTexts.add(inv.getArgument(2));
+                return true;
+            });
+
+        processor.accept(textEvent(1, chatId, "test msg"));
+
+        // Finalized text should NOT contain tool progress markers
+        assertThat(finalizedTexts).isNotEmpty();
+        assertThat(finalizedTexts.get(0)).doesNotContain("🔧");
+        assertThat(finalizedTexts.get(0)).doesNotContain("✅");
+        assertThat(finalizedTexts.get(0)).contains("Here is the answer");
+    }
+
+    @Test
     void interruptMessageQueuedForReprocessing() {
         // Switch to interrupt mode
         properties.setBusyMode("interrupt");

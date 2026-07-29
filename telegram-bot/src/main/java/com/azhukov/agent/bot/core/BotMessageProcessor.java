@@ -387,7 +387,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
      */
     private AgentBackendClient.ChatResult streamChat(long chatId, String messageText, String sessionId,
                                                       BotSessionEntity session, long userMessageId) {
-        StringBuilder accumulated = new StringBuilder();
+        StringBuilder accumulated = new StringBuilder();      // clean LLM text only
+        StringBuilder toolProgress = new StringBuilder();     // transient tool progress (🔧/✅ lines)
         final long[] messageId = {-1};
         final boolean[] finalized = {false};
 
@@ -416,19 +417,19 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                 // toolCallConsumer — called when backend emits tool_calls event
                 toolCall -> {
                     if (messageId[0] >= 0) {
-                        // Show tool progress in the streaming message
+                        // Show tool progress in the streaming message (transient)
                         String toolLine = "\n\n🔧 " + toolCall + "...";
-                        accumulated.append(toolLine);
-                        streamEditor.editStream(chatId, messageId[0], accumulated.toString());
+                        toolProgress.append(toolLine);
+                        streamEditor.editStream(chatId, messageId[0], accumulated.toString() + toolProgress);
                     }
                 },
                 // toolResultConsumer — called when backend emits tool_result event
                 (toolName, toolResultPreview) -> {
                     if (messageId[0] >= 0) {
-                        // Show tool result in the streaming message
+                        // Show tool result in the streaming message (transient)
                         String resultLine = "\n✅ " + toolName + ": " + truncatePreview(toolResultPreview, 200);
-                        accumulated.append(resultLine);
-                        streamEditor.editStream(chatId, messageId[0], accumulated.toString());
+                        toolProgress.append(resultLine);
+                        streamEditor.editStream(chatId, messageId[0], accumulated.toString() + toolProgress);
                     }
                 },
                 // onComplete
