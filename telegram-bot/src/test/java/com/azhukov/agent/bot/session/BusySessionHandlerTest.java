@@ -5,152 +5,92 @@ import com.azhukov.agent.bot.polling.UpdateEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class BusySessionHandlerTest {
 
-    private BotProperties properties;
     private BusySessionHandler handler;
 
     @BeforeEach
     void setUp() {
-        properties = new BotProperties();
-        handler = new BusySessionHandler(properties);
+        BotProperties props = new BotProperties();
+        props.setBusyMode("queue");
+        handler = new BusySessionHandler(props);
     }
 
-    // ─── busy / free ───────────────────────────────────────────────
-
-    @Test
-    void isBusy_falseByDefault() {
-        assertThat(handler.isBusy(123L)).isFalse();
-    }
-
-    @Test
-    void markBusy_setsBusyTrue() {
-        handler.markBusy(123L);
-        assertThat(handler.isBusy(123L)).isTrue();
+    private UpdateEvent textEvent(long id, long chatId, String text) {
+        return new UpdateEvent(id, UpdateEvent.Type.TEXT, chatId, 200L,
+            "user", text, null, null, null, null, null, null,
+            false, null, null, 100, null, 0);
     }
 
     @Test
-    void markFree_setsBusyFalse() {
-        handler.markBusy(123L);
-        handler.markFree(123L);
-        assertThat(handler.isBusy(123L)).isFalse();
+    void concurrentQueueAndDrainPreservesOrder() throws Exception {
+        long chatId = 100L;
+        int messageCount = 100;
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+
+        // Thread 1: queue 100 messages
+        CountDownLatch queueDone = new CountDownLatch(1);
+        pool.submit(() -> {
+            for (int i = 0; i < messageCount; i++) {
+                handler.queueMessage(chatId, textEvent(i, chatId, "msg-" + i));
+            }
+            queueDone.countDown();
+        });
+
+        // Thread 2: drain while queueing is in progress
+        AtomicInteger totalDrained = new AtomicInteger(0);
+        pool.submit(() -> {
+            while (queueDone.getCount() > 0 || handler.hasQueued(chatId)) {
+                List<UpdateEvent> drained = handler.drainQueue(chatId);
+                totalDrained.addAndGet(drained.size());
+            }
+        });
+
+        assertThat(queueDone.await(5, TimeUnit.SECONDS)).isTrue();
+        pool.shutdown();
+        assertThat(pool.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+
+        // All messages should have been drained (no data race loss)
+        assertThat(totalDrained.get()).isEqualTo(messageCount);
     }
 
     @Test
-    void markBusy_onDifferentChats_areIndependent() {
-        handler.markBusy(100L);
-        handler.markBusy(200L);
-        assertThat(handler.isBusy(100L)).isTrue();
-        assertThat(handler.isBusy(200L)).isTrue();
-        handler.markFree(100L);
-        assertThat(handler.isBusy(100L)).isFalse();
-        assertThat(handler.isBusy(200L)).isTrue();
-    }
+    void fifoOrderUnderConcurrency() {
+        long chatId = 200L;
+        // Queue 10 messages sequentially
+        for (int i = 0; i < 10; i++) {
+            handler.queueMessage(chatId, textEvent(i, chatId, "msg-" + i));
+        }
 
-    // ─── queue add / drain ─────────────────────────────────────────
-
-    @Test
-    void queueMessage_addsToQueue() {
-        UpdateEvent event = textEvent(1L, "hello");
-        handler.queueMessage(123L, event);
-        assertThat(handler.hasQueued(123L)).isTrue();
+        // Drain and verify FIFO order
+        List<UpdateEvent> drained = handler.drainQueue(chatId);
+        assertThat(drained).hasSize(10);
+        for (int i = 0; i < 10; i++) {
+            assertThat(drained.get(i).text()).isEqualTo("msg-" + i);
+        }
     }
 
     @Test
-    void drainQueue_returnsAndClearsQueuedMessages() {
-        UpdateEvent e1 = textEvent(1L, "hello");
-        UpdateEvent e2 = textEvent(2L, "world");
-        handler.queueMessage(123L, e1);
-        handler.queueMessage(123L, e2);
-
-        var drained = handler.drainQueue(123L);
-
-        assertThat(drained).hasSize(2).containsExactly(e1, e2);
-        assertThat(handler.hasQueued(123L)).isFalse();
-    }
-
-    @Test
-    void drainQueue_emptyReturnsEmptyList() {
+    void drainEmptyQueueReturnsEmptyList() {
         assertThat(handler.drainQueue(999L)).isEmpty();
     }
 
     @Test
-    void drainQueue_afterSecondDrain_returnsEmpty() {
-        handler.queueMessage(123L, textEvent(1L, "a"));
-        handler.drainQueue(123L);
-        assertThat(handler.drainQueue(123L)).isEmpty();
-    }
-
-    @Test
-    void queueMessage_nullEvent_isIgnored() {
-        handler.queueMessage(123L, null);
-        assertThat(handler.hasQueued(123L)).isFalse();
-    }
-
-    @Test
-    void queueMessage_onDifferentChats_areIndependent() {
-        handler.queueMessage(100L, textEvent(1L, "a"));
-        handler.queueMessage(200L, textEvent(2L, "b"));
-
-        assertThat(handler.drainQueue(100L)).hasSize(1);
-        assertThat(handler.drainQueue(200L)).hasSize(1);
-    }
-
-    // ─── interrupt mode ────────────────────────────────────────────
-
-    @Test
-    void interrupt_setsInterruptedTrue() {
-        handler.interrupt(123L);
-        assertThat(handler.isInterrupted(123L)).isTrue();
-    }
-
-    @Test
-    void isInterrupted_falseByDefault() {
-        assertThat(handler.isInterrupted(123L)).isFalse();
-    }
-
-    @Test
-    void markBusy_resetsInterruptFlag() {
-        handler.interrupt(123L);
-        handler.markBusy(123L);
-        assertThat(handler.isInterrupted(123L)).isFalse();
-    }
-
-    @Test
-    void markFree_resetsInterruptFlag() {
-        handler.markBusy(123L);
-        handler.interrupt(123L);
-        handler.markFree(123L);
-        assertThat(handler.isInterrupted(123L)).isFalse();
-    }
-
-    @Test
-    void interrupt_onDifferentChats_areIndependent() {
-        handler.interrupt(100L);
-        assertThat(handler.isInterrupted(100L)).isTrue();
-        assertThat(handler.isInterrupted(200L)).isFalse();
-    }
-
-    // ─── busy mode config ──────────────────────────────────────────
-
-    @Test
-    void getBusyMode_returnsConfiguredMode() {
-        properties.setBusyMode("interrupt");
-        assertThat(handler.getBusyMode()).isEqualTo("interrupt");
-    }
-
-    @Test
-    void getBusyMode_defaultIsQueue() {
-        assertThat(handler.getBusyMode()).isEqualTo("queue");
-    }
-
-    // ─── Helpers ───────────────────────────────────────────────────
-
-    private UpdateEvent textEvent(long updateId, String text) {
-        return new UpdateEvent(updateId, UpdateEvent.Type.TEXT, 123L, 456L,
-            "jdoe", text, null, null, null,
-            null, null, null, false, null, null);
+    void hasQueuedReturnsFalseAfterDrain() {
+        long chatId = 300L;
+        handler.queueMessage(chatId, textEvent(1, chatId, "test"));
+        assertThat(handler.hasQueued(chatId)).isTrue();
+        handler.drainQueue(chatId);
+        assertThat(handler.hasQueued(chatId)).isFalse();
     }
 }

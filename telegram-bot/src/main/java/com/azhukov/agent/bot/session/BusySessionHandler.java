@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -33,8 +34,8 @@ public class BusySessionHandler {
     /** Chat IDs currently processing a turn. */
     private final ConcurrentHashMap<Long, AtomicBoolean> busyChats = new ConcurrentHashMap<>();
 
-    /** Queued messages per chat, populated in "queue" mode. */
-    private final ConcurrentHashMap<Long, List<UpdateEvent>> queues = new ConcurrentHashMap<>();
+    /** Queued messages per chat, populated in "queue" mode. Thread-safe. */
+    private final ConcurrentHashMap<Long, ConcurrentLinkedQueue<UpdateEvent>> queues = new ConcurrentHashMap<>();
 
     /** Interrupt flags per chat (used in "interrupt" mode). */
     private final ConcurrentHashMap<Long, AtomicBoolean> interruptFlags = new ConcurrentHashMap<>();
@@ -70,7 +71,7 @@ public class BusySessionHandler {
      */
     public void queueMessage(long chatId, UpdateEvent event) {
         if (event == null) return;
-        queues.computeIfAbsent(chatId, k -> new ArrayList<>()).add(event);
+        queues.computeIfAbsent(chatId, k -> new ConcurrentLinkedQueue<>()).add(event);
         log.debug("Queued message for chat {} (queue size: {})", chatId,
             queues.get(chatId).size());
     }
@@ -82,8 +83,10 @@ public class BusySessionHandler {
      * @return list of queued events (empty if none)
      */
     public List<UpdateEvent> drainQueue(long chatId) {
-        List<UpdateEvent> queued = queues.remove(chatId);
-        return queued != null ? List.copyOf(queued) : List.of();
+        ConcurrentLinkedQueue<UpdateEvent> queued = queues.remove(chatId);
+        if (queued == null) return List.of();
+        List<UpdateEvent> result = new ArrayList<>(queued);
+        return List.copyOf(result);
     }
 
     /**
@@ -93,7 +96,7 @@ public class BusySessionHandler {
      * @return true if there are queued messages
      */
     public boolean hasQueued(long chatId) {
-        List<UpdateEvent> queued = queues.get(chatId);
+        ConcurrentLinkedQueue<UpdateEvent> queued = queues.get(chatId);
         return queued != null && !queued.isEmpty();
     }
 
