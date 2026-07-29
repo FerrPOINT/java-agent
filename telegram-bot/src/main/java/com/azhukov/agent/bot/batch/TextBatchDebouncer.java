@@ -170,7 +170,10 @@ public class TextBatchDebouncer {
         }
 
         String mergedText() {
-            return String.join("\n", texts);
+            // Adaptive join: space for short messages, newline for long
+            boolean allShort = texts.stream().allMatch(t -> t.length() <= 320);
+            String separator = allShort ? " " : "\n";
+            return String.join(separator, texts);
         }
     }
 }

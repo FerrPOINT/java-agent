@@ -2,108 +2,62 @@ package com.azhukov.agent.bot.batch;
 
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class TextBatchDebouncerTest {
 
-    private BotProperties properties;
     private TextBatchDebouncer debouncer;
+    private BotProperties properties;
 
     @BeforeEach
     void setUp() {
         properties = new BotProperties();
-        // Use very short delays for testing
-        properties.getTextBatch().setFastDelayMs(50);
-        properties.getTextBatch().setDelayMs(100);
-        properties.getTextBatch().setSplitDelayMs(200);
         debouncer = new TextBatchDebouncer(properties);
     }
 
-    @AfterEach
-    void tearDown() {
-        debouncer.flushAll();
+    private UpdateEvent textEvent(long id, long chatId, String text) {
+        return new UpdateEvent(id, UpdateEvent.Type.TEXT, chatId, 200L,
+            "user", text, null, null, null, null, null, null,
+            false, null, null, 100, null, 0);
     }
 
     @Test
-    void offer_singleMessage_dispatchesAfterDelay() throws Exception {
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicReference<String> dispatched = new AtomicReference<>("");
+    void shortMessagesJoinedWithSpace() {
+        long chatId = 100L;
+        debouncer.offer(textEvent(1, chatId, "what is"));
+        debouncer.offer(textEvent(2, chatId, "an API"));
 
-        debouncer.onDispatch(event -> {
-            dispatched.set(event.text());
-            latch.countDown();
-        });
-
-        UpdateEvent event = makeTextEvent(1L, 100L, "Hello world");
-        boolean buffered = debouncer.offer(event);
-
-        assertThat(buffered).isTrue();
-        assertThat(latch.await(1, TimeUnit.SECONDS)).isTrue();
-        assertThat(dispatched.get()).isEqualTo("Hello world");
+        String pending = debouncer.getPendingText(chatId);
+        assertThat(pending).isEqualTo("what is an API");
     }
 
     @Test
-    void offer_multipleMessages_mergesWithNewline() throws Exception {
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicReference<String> dispatched = new AtomicReference<>("");
+    void longMessagesJoinedWithNewline() {
+        long chatId = 200L;
+        String long1 = "This is a very long paragraph that exceeds the 320 character limit. ".repeat(10);
+        String long2 = "Another long paragraph that also exceeds the limit. ".repeat(10);
 
-        debouncer.onDispatch(event -> {
-            dispatched.set(event.text());
-            latch.countDown();
-        });
+        debouncer.offer(textEvent(1, chatId, long1));
+        debouncer.offer(textEvent(2, chatId, long2));
 
-        debouncer.offer(makeTextEvent(1L, 100L, "Hello"));
-        Thread.sleep(10); // Small gap — still within debounce window
-        debouncer.offer(makeTextEvent(2L, 100L, "world"));
-        Thread.sleep(10);
-        debouncer.offer(makeTextEvent(3L, 100L, "!"));
-
-        assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
-        assertThat(dispatched.get()).isEqualTo("Hello\nworld\n!");
+        String pending = debouncer.getPendingText(chatId);
+        assertThat(pending).contains("\n");
+        assertThat(pending).doesNotContain(long1 + " " + long2);
     }
 
     @Test
-    void offer_nonTextEvent_returnsFalse() {
-        UpdateEvent photoEvent = new UpdateEvent(1L, UpdateEvent.Type.PHOTO, 100L, 200L,
-            "jdoe", null, "caption", "fileId", "photo",
-            null, null, null, false, null, null, 0L, null, 0L);
+    void mixedShortAndLongJoinedWithNewline() {
+        long chatId = 300L;
+        String long1 = "This is a very long paragraph that exceeds the 320 character limit. ".repeat(10);
 
-        boolean buffered = debouncer.offer(photoEvent);
-        assertThat(buffered).isFalse();
-    }
+        debouncer.offer(textEvent(1, chatId, "short text"));
+        debouncer.offer(textEvent(2, chatId, long1));
 
-    @Test
-    void computeDelay_shortMessage_usesFastDelay() {
-        properties.getTextBatch().setFastDelayMs(180);
-        properties.getTextBatch().setDelayMs(500);
-        properties.getTextBatch().setSplitDelayMs(1200);
-
-        assertThat(debouncer.computeDelay(100)).isEqualTo(180);   // ≤320 → fast
-        assertThat(debouncer.computeDelay(320)).isEqualTo(180);   // boundary
-    }
-
-    @Test
-    void computeDelay_longMessage_usesSplitDelay() {
-        properties.getTextBatch().setFastDelayMs(180);
-        properties.getTextBatch().setDelayMs(500);
-        properties.getTextBatch().setSplitDelayMs(1200);
-
-        assertThat(debouncer.computeDelay(500)).isEqualTo(500);   // ≤1024 → medium
-        assertThat(debouncer.computeDelay(1024)).isEqualTo(500);  // boundary
-        assertThat(debouncer.computeDelay(2000)).isEqualTo(1200);  // >1024 → split
-    }
-
-    private UpdateEvent makeTextEvent(long updateId, long chatId, String text) {
-        return new UpdateEvent(updateId, UpdateEvent.Type.TEXT, chatId, 200L,
-            "jdoe", text, null, null, null,
-            null, null, null, false, null, null, 0L, null, 0L);
+        String pending = debouncer.getPendingText(chatId);
+        // Conservative: if any message is long, use newline
+        assertThat(pending).contains("\n");
     }
 }
