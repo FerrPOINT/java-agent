@@ -322,8 +322,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                 sendVoiceResponse(chatId, result.content());
             }
 
-            // B1.2: Reaction — processing complete (success)
-            reactionManager.onProcessingComplete(chatId, event.messageId(), true);
+            // B1.2: Reaction — processing complete (success or cancelled)
+            if (busyHandler.isInterrupted(chatId)) {
+                reactionManager.onCancel(chatId, event.messageId());
+            } else {
+                reactionManager.onProcessingComplete(chatId, event.messageId(), true);
+            }
             typingManager.stopTyping(chatId);
         } catch (Exception e) {
             log.error("Backend call failed for chat {}: {}", chatId, e.getMessage(), e);
@@ -392,6 +396,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
         StringBuilder toolProgress = new StringBuilder();     // transient tool progress (🔧/✅ lines)
         final long[] messageId = {-1};
         final boolean[] finalized = {false};
+        final boolean[] interrupted = {false};
 
         // Try streaming first
         try {
@@ -455,6 +460,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                 error -> {
                     if (error instanceof StreamInterruptedException) {
                         // Interrupted — finalize with what we have
+                        interrupted[0] = true;
                         if (messageId[0] >= 0 && accumulated.length() > 0) {
                             streamEditor.finalizeStream(chatId, messageId[0],
                                 accumulated + "\n\n[Interrupted by user]");
