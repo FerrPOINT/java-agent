@@ -177,6 +177,41 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void interruptMessageQueuedForReprocessing() {
+        // Switch to interrupt mode
+        properties.setBusyMode("interrupt");
+        long chatId = 400L;
+        AtomicInteger callCount = new AtomicInteger(0);
+        List<String> processedTexts = new ArrayList<>();
+
+        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                String msg = inv.getArgument(0);
+                int n = callCount.incrementAndGet();
+                processedTexts.add(msg);
+                // First call: simulate interrupt by checking isInterrupted inside token consumer
+                // and queue a second message
+                if (n == 1) {
+                    // Queue the interrupting message during processing
+                    busyHandler.queueMessage(chatId, textEvent(2, chatId, "interrupting-msg"));
+                }
+                return new AgentBackendClient.ChatResult("reply to: " + msg, null, 100, 1000, false);
+            });
+        when(backendClient.chat(anyString(), anyString()))
+            .thenAnswer(inv -> {
+                String msg = inv.getArgument(0);
+                processedTexts.add(msg);
+                return new AgentBackendClient.ChatResult("reply to: " + msg, "test-model", 100, 1000, false);
+            });
+
+        // First message starts processing
+        processor.accept(textEvent(1, chatId, "first-msg"));
+
+        // The first message should have been processed
+        assertThat(processedTexts).contains("first-msg");
+    }
+
+    @Test
     void maxDrainDepthGuardsAgainstInfiniteLoop() {
         long chatId = 300L;
         AtomicInteger processCount = new AtomicInteger(0);

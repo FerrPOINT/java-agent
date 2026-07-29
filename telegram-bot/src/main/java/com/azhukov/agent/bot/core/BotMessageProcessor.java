@@ -274,7 +274,10 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             String busyMode = busyHandler.getBusyMode();
             if ("interrupt".equalsIgnoreCase(busyMode)) {
                 busyHandler.interrupt(chatId);
-                log.debug("Interrupting busy chat {}", chatId);
+                // Queue the interrupting message for re-processing after the current turn stops
+                busyHandler.queueMessage(chatId, event);
+                log.debug("Interrupting busy chat {} and queued interrupting message", chatId);
+                return;
             } else {
                 busyHandler.queueMessage(chatId, event);
                 log.debug("Queued message for busy chat {}", chatId);
