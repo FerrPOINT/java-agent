@@ -5,8 +5,8 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.gateway.model.SessionSource;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.SessionRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,18 +16,13 @@ import java.time.Instant;
  * Resolves or creates a Session for an inbound gateway message.
  * Separate Spring bean so @Transactional AOP proxy works.
  */
+@Slf4j
 @Component
+@RequiredArgsConstructor
 public class SessionResolver {
-
-    private static final Logger log = LoggerFactory.getLogger(SessionResolver.class);
 
     private final SessionRepository sessionRepository;
     private final AgentProperties properties;
-
-    public SessionResolver(SessionRepository sessionRepository, AgentProperties properties) {
-        this.sessionRepository = sessionRepository;
-        this.properties = properties;
-    }
 
     @Transactional
     public Session resolve(SessionSource source) {

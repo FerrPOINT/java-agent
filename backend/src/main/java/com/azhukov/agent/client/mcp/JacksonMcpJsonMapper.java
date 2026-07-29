@@ -4,17 +4,15 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.TypeRef;
+import lombok.RequiredArgsConstructor;
 
 import java.io.IOException;
 import java.lang.reflect.Type;
 
+@RequiredArgsConstructor
 public class JacksonMcpJsonMapper implements McpJsonMapper {
 
     private final ObjectMapper objectMapper;
-
-    public JacksonMcpJsonMapper(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
 
     @Override
     public <T> T readValue(String s, Class<T> aClass) throws IOException {

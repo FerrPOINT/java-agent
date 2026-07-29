@@ -2,17 +2,15 @@ package com.azhukov.agent.core.skill;
 
 import com.azhukov.agent.persistence.entity.SkillEntity;
 import com.azhukov.agent.persistence.repository.SkillRepository;
+import lombok.RequiredArgsConstructor;
 
 import java.time.Instant;
 import java.util.List;
 
+@RequiredArgsConstructor
 public class DatabaseSkillManager implements SkillManager {
 
     private final SkillRepository skillRepository;
-
-    public DatabaseSkillManager(SkillRepository skillRepository) {
-        this.skillRepository = skillRepository;
-    }
 
     @Override
     public List<String> listSkillNames() {

@@ -7,6 +7,7 @@ import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.PlatformConfig;
 import com.azhukov.agent.gateway.model.SendResult;
 import com.azhukov.agent.gateway.model.SessionSource;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -15,17 +16,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 @Component
+@RequiredArgsConstructor
 public class TelegramAdapter implements BasePlatformAdapter {
 
     private final AgentProperties properties;
     private final TelegramBotApiClient botApiClient;
     private Consumer<MessageEvent> messageHandler;
     private volatile boolean connected;
-
-    public TelegramAdapter(AgentProperties properties, TelegramBotApiClient botApiClient) {
-        this.properties = properties;
-        this.botApiClient = botApiClient;
-    }
 
     @Override
     public Platform platform() {

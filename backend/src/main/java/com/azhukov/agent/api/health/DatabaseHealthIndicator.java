@@ -1,7 +1,7 @@
 package com.azhukov.agent.api.health;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
@@ -9,16 +9,12 @@ import org.springframework.stereotype.Component;
 import javax.sql.DataSource;
 import java.sql.Connection;
 
+@Slf4j
 @Component
+@RequiredArgsConstructor
 public class DatabaseHealthIndicator implements HealthIndicator {
 
-    private static final Logger log = LoggerFactory.getLogger(DatabaseHealthIndicator.class);
-
     private final DataSource dataSource;
-
-    public DatabaseHealthIndicator(DataSource dataSource) {
-        this.dataSource = dataSource;
-    }
 
     @Override
     public Health health() {

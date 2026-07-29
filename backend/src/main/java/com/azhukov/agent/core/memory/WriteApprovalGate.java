@@ -3,8 +3,7 @@ package com.azhukov.agent.core.memory;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.PendingMemoryEntity;
 import com.azhukov.agent.persistence.repository.PendingMemoryRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -16,10 +15,9 @@ import java.util.UUID;
  * Write-approval gate: if enabled, memory writes are staged to a pending queue
  * instead of being applied directly. Users can approve or reject pending writes.
  */
+@Slf4j
 @Component
 public class WriteApprovalGate {
-
-    private static final Logger log = LoggerFactory.getLogger(WriteApprovalGate.class);
 
     private final PendingMemoryRepository pendingRepository;
     private final MemoryProvider memoryProvider;

@@ -2,19 +2,17 @@ package com.azhukov.agent.core.memory;
 
 import com.azhukov.agent.persistence.entity.MemoryEntity;
 import com.azhukov.agent.persistence.repository.MemoryRepository;
+import lombok.RequiredArgsConstructor;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+@RequiredArgsConstructor
 public class DatabaseMemoryProvider implements MemoryProvider {
 
     private final MemoryRepository memoryRepository;
-
-    public DatabaseMemoryProvider(MemoryRepository memoryRepository) {
-        this.memoryRepository = memoryRepository;
-    }
 
     @Override
     public List<String> recall(String userId, String query, int limit) {

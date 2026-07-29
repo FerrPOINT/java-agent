@@ -8,8 +8,8 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.persistence.entity.CompressionLockEntity;
 import com.azhukov.agent.persistence.repository.CompressionLockRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -17,21 +17,15 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+@Slf4j
 @Component
+@RequiredArgsConstructor
 public class DefaultContextCompressor implements ContextCompressor {
-
-    private static final Logger log = LoggerFactory.getLogger(DefaultContextCompressor.class);
 
     private final ModelClient modelClient;
     private final CompressionLockRepository lockRepository;
     private final AgentProperties properties;
     private final ConcurrentHashMap<String, Integer> inMemoryLocks = new ConcurrentHashMap<>();
-
-    public DefaultContextCompressor(ModelClient modelClient, CompressionLockRepository lockRepository, AgentProperties properties) {
-        this.modelClient = modelClient;
-        this.lockRepository = lockRepository;
-        this.properties = properties;
-    }
 
     @Override
     public List<Message> compress(List<Message> messages, int targetChars) {

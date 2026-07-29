@@ -1,7 +1,7 @@
 package com.azhukov.agent.bot.sticker;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
@@ -12,16 +12,12 @@ import java.util.Optional;
  * When a sticker is received, the bot checks this cache first.
  * On a miss, it calls the backend vision API for analysis and caches the result.
  */
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class StickerCache {
 
-    private static final Logger log = LoggerFactory.getLogger(StickerCache.class);
-
     private final StickerCacheRepository repository;
-
-    public StickerCache(StickerCacheRepository repository) {
-        this.repository = repository;
-    }
 
     /**
      * Get a cached sticker description by file_unique_id.
