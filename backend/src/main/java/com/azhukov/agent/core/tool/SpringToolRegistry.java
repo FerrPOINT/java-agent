@@ -11,9 +11,11 @@ import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
+import jakarta.annotation.PostConstruct;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
@@ -26,6 +28,7 @@ import java.util.Objects;
 import java.util.Set;
 
 @Component
+@RequiredArgsConstructor
 public class SpringToolRegistry implements ToolRegistry {
 
     private final ApplicationContext context;
@@ -34,14 +37,7 @@ public class SpringToolRegistry implements ToolRegistry {
     private final ManagedToolGateway managedToolGateway;
     private final Map<String, ToolEntry> entries = new LinkedHashMap<>();
 
-    public SpringToolRegistry(ApplicationContext context, AgentProperties properties, ObjectMapper objectMapper, ManagedToolGateway managedToolGateway) {
-        this.context = context;
-        this.properties = properties;
-        this.objectMapper = objectMapper;
-        this.managedToolGateway = managedToolGateway;
-        registerBeans();
-    }
-
+    @PostConstruct
     private void registerBeans() {
         Map<String, Object> beans = context.getBeansWithAnnotation(AgentTool.class);
         for (Object bean : beans.values()) {
