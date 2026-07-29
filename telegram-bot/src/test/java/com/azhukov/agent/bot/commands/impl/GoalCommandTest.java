@@ -2,28 +2,77 @@ package com.azhukov.agent.bot.commands.impl;
 
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.UpdateEvent.Type;
+import com.azhukov.agent.bot.session.BotSessionEntity;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
+
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class GoalCommandTest {
 
+    private GoalCommand cmd;
+    private BotSessionEntity session;
+
+    @BeforeEach
+    void setUp() {
+        cmd = new GoalCommand();
+        session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+    }
+
     @Test
     void nameAndDescription() {
-        var cmd = new GoalCommand();
         assertThat(cmd.name()).isEqualTo("goal");
-        assertThat(cmd.description()).isEqualTo("Goal management (not available)");
+        assertThat(cmd.description()).isEqualTo("Set or manage a standing goal");
     }
 
     @Test
-    void handleReturnsStubMessage() {
-        var cmd = new GoalCommand();
-        UpdateEvent event = makeEvent();
-        String result = cmd.handle(event, null);
-        assertThat(result).isEqualTo("Goal management is not available in this build.");
+    void noGoalShowsUsage() {
+        String result = cmd.handle(textEvent("/goal", null), session);
+        assertThat(result).contains("No standing goal");
+        assertThat(result).contains("Usage:");
     }
 
-    private UpdateEvent makeEvent() {
-        return new UpdateEvent(1, Type.COMMAND, 123, 456, "user", "/goal", null, null, null, null, null, null, true, "goal", "");
+    @Test
+    void setGoal() {
+        String result = cmd.handle(textEvent("/goal", "Fix all tests"), session);
+        assertThat(result).contains("Fix all tests");
+        assertThat(result).contains("Goal set");
+    }
+
+    @Test
+    void statusShowsGoal() {
+        cmd.handle(textEvent("/goal", "Fix all tests"), session);
+        String result = cmd.handle(textEvent("/goal", "status"), session);
+        assertThat(result).contains("Fix all tests");
+        assertThat(result).contains("active");
+    }
+
+    @Test
+    void pauseAndResume() {
+        cmd.handle(textEvent("/goal", "Fix all tests"), session);
+        cmd.handle(textEvent("/goal", "pause"), session);
+        String result = cmd.handle(textEvent("/goal", "status"), session);
+        assertThat(result).contains("paused");
+
+        cmd.handle(textEvent("/goal", "resume"), session);
+        result = cmd.handle(textEvent("/goal", "status"), session);
+        assertThat(result).contains("active");
+    }
+
+    @Test
+    void clearRemovesGoal() {
+        cmd.handle(textEvent("/goal", "Fix all tests"), session);
+        String result = cmd.handle(textEvent("/goal", "clear"), session);
+        assertThat(result).contains("cleared");
+
+        result = cmd.handle(textEvent("/goal", "status"), session);
+        assertThat(result).contains("No standing goal");
+    }
+
+    private UpdateEvent textEvent(String text, String args) {
+        return new UpdateEvent(1, Type.COMMAND, 123, 456, "user", text, null, null, null, null, null, null, true, "goal", args != null ? args : "");
     }
 }

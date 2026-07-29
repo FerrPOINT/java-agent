@@ -5,10 +5,13 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import lombok.Data;
 
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
 
 @Entity
 @Table(name = "bot_sessions")
@@ -33,4 +36,23 @@ public class BotSessionEntity {
     private boolean active = true;
     private Instant createdAt;
     private Instant updatedAt;
+
+    /**
+     * In-memory metadata storage (not persisted).
+     * Used for transient session state like standing goals, subgoals, etc.
+     */
+    @Transient
+    private final Map<String, String> metadata = new ConcurrentHashMap<>();
+
+    public String getMetadata(String key) {
+        return metadata.get(key);
+    }
+
+    public void setMetadata(String key, String value) {
+        if (value == null) {
+            metadata.remove(key);
+        } else {
+            metadata.put(key, value);
+        }
+    }
 }
