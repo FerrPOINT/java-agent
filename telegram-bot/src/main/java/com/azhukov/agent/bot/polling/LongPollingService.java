@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -26,6 +27,7 @@ public class LongPollingService {
     private final BotProperties properties;
     private final Consumer<UpdateEvent> updateHandler;
     private final ExecutorService executor;
+    private final ExecutorService processPool;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong lastUpdateId = new AtomicLong(0);
     private final ReconnectWatcher reconnectWatcher;
@@ -40,6 +42,11 @@ public class LongPollingService {
         this.reconnectWatcher = reconnectWatcher;
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "telegram-polling");
+            t.setDaemon(true);
+            return t;
+        });
+        this.processPool = Executors.newFixedThreadPool(4, r -> {
+            Thread t = new Thread(r, "telegram-update-" + System.nanoTime());
             t.setDaemon(true);
             return t;
         });
@@ -69,6 +76,15 @@ public class LongPollingService {
         running.set(false);
         reconnectWatcher.stop();
         executor.shutdownNow();
+        processPool.shutdown();
+        try {
+            if (!processPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                processPool.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            processPool.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
         log.info("Telegram long-polling stopped");
     }
 
@@ -84,9 +100,15 @@ public class LongPollingService {
                     try {
                         UpdateEvent event = UpdateEvent.from(update);
                         lastUpdateId.updateAndGet(current -> Math.max(current, event.updateId()));
-                        updateHandler.accept(event);
+                        processPool.submit(() -> {
+                            try {
+                                updateHandler.accept(event);
+                            } catch (Exception e) {
+                                log.error("Error processing update: {}", e.getMessage(), e);
+                            }
+                        });
                     } catch (Exception e) {
-                        log.error("Error processing update: {}", e.getMessage(), e);
+                        log.error("Error parsing update: {}", e.getMessage(), e);
                     }
                 }
             } catch (InterruptedException e) {
