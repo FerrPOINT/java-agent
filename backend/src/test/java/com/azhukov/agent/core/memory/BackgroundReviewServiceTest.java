@@ -5,102 +5,94 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ToolCall;
-import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.memory.MemoryTool;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
 class BackgroundReviewServiceTest {
 
-    @Mock
     private ModelClient modelClient;
-    @Mock
     private MemoryProvider memoryProvider;
-    @Mock
     private WriteApprovalGate writeApprovalGate;
-    @Mock
     private MemoryTool memoryTool;
-
     private AgentProperties properties;
-    private BackgroundReviewService service;
+    private AgentProperties.MemoryProperties memProps;
+    private AgentProperties.BackgroundReviewProperties reviewProps;
 
     @BeforeEach
     void setUp() {
-        properties = new AgentProperties();
-        properties.getMemory().getBackgroundReview().setDelayMs(0); // no delay for tests
-        // We need the @AgentTool annotation — use a mock-friendly approach
-        service = new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
+        modelClient = mock(ModelClient.class);
+        memoryProvider = mock(MemoryProvider.class);
+        writeApprovalGate = mock(WriteApprovalGate.class);
+        memoryTool = mock(MemoryTool.class);
+        properties = mock(AgentProperties.class);
+        memProps = mock(AgentProperties.MemoryProperties.class);
+        reviewProps = mock(AgentProperties.BackgroundReviewProperties.class);
+
+        when(properties.getMemory()).thenReturn(memProps);
+        when(memProps.getBackgroundReview()).thenReturn(reviewProps);
+        when(reviewProps.isEnabled()).thenReturn(true);
+        when(reviewProps.getDelayMs()).thenReturn(0);
     }
 
-    @AfterEach
-    void tearDown() {
-        if (service != null) service.shutdown();
-    }
-
-    // 1. Review does nothing when disabled
     @Test
-    void reviewDoesNothingWhenDisabled() throws Exception {
-        properties.getMemory().getBackgroundReview().setEnabled(false);
-        UUID sessionId = UUID.randomUUID();
-        service.reviewTurn(sessionId, List.of(Message.user("hello")));
-        Thread.sleep(100);
+    void reviewTurn_disabled_doesNothing() {
+        when(reviewProps.isEnabled()).thenReturn(false);
+        var svc = new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
+        svc.reviewTurn(UUID.randomUUID(), List.of(Message.user("hello")));
         verifyNoInteractions(modelClient);
+        svc.shutdown();
     }
 
-    // 2. Review does nothing with empty messages
     @Test
-    void reviewDoesNothingWithEmptyMessages() throws Exception {
-        UUID sessionId = UUID.randomUUID();
-        service.reviewTurn(sessionId, List.of());
-        Thread.sleep(100);
+    void reviewTurn_emptyMessages_doesNothing() {
+        var svc = new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
+        svc.reviewTurn(UUID.randomUUID(), List.of());
         verifyNoInteractions(modelClient);
+        svc.shutdown();
     }
 
-    // 3. Memory updated flag starts false
     @Test
-    void memoryUpdatedFlagStartsFalse() {
+    void reviewTurn_noToolCalls_doesNotUpdateMemory() throws Exception {
+        when(modelClient.complete(any(), any())).thenReturn(new ChatResponse("", List.of()));
+        var svc = new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
         UUID sessionId = UUID.randomUUID();
-        assertThat(service.wasMemoryUpdated(sessionId)).isFalse();
+        svc.reviewTurn(sessionId, List.of(Message.user("hello"), Message.assistant("hi", 0)));
+        Thread.sleep(200);
+        assertThat(svc.wasMemoryUpdated(sessionId)).isFalse();
+        svc.shutdown();
     }
 
-    // 4. Clear flag works
     @Test
-    void clearFlagWorks() {
-        UUID sessionId = UUID.randomUUID();
-        service.clearFlag(sessionId);
-        assertThat(service.wasMemoryUpdated(sessionId)).isFalse();
-    }
-
-    // 5. Review with tool calls sets memory updated
-    @Test
-    void reviewWithToolCallsSetsMemoryUpdated() throws Exception {
-        UUID sessionId = UUID.randomUUID();
-
-        // Mock model client to return a response with memory tool calls
-        ToolCall memoryCall = new ToolCall("call-1", "memory", "{\"action\":\"add\",\"content\":\"test fact\"}");
-        ChatResponse response = new ChatResponse("", List.of(memoryCall));
+    void reviewTurn_withMemoryToolCall_updatesFlag() throws Exception {
+        ChatResponse response = new ChatResponse("", List.of(
+            new ToolCall("call_1", "memory", "{\"action\":\"add\",\"content\":\"User prefers Java\"}")
+        ));
         when(modelClient.complete(any(), any())).thenReturn(response);
-
-        // Mock memory tool to return success
         when(memoryTool.execute(any(), any(), any())).thenReturn(ToolResult.ok("Added to memory store."));
 
-        service.reviewTurn(sessionId, List.of(Message.user("I prefer dark mode"), Message.assistant("Noted!", 1)));
-        Thread.sleep(200);
+        var svc = new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
+        UUID sessionId = UUID.randomUUID();
+        svc.reviewTurn(sessionId, List.of(Message.user("I like Java"), Message.assistant("Great!", 0)));
+        Thread.sleep(500);
+        assertThat(svc.wasMemoryUpdated(sessionId)).isTrue();
+        svc.shutdown();
+    }
 
-        assertThat(service.wasMemoryUpdated(sessionId)).isTrue();
+    @Test
+    void clearFlag_removesFlag() {
+        var svc = new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
+        UUID sessionId = UUID.randomUUID();
+        svc.clearFlag(sessionId);
+        assertThat(svc.wasMemoryUpdated(sessionId)).isFalse();
+        svc.shutdown();
     }
 }

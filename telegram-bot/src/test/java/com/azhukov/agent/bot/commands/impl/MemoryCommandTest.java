@@ -101,6 +101,24 @@ class MemoryCommandTest {
         verify(client).setMemoryApproval(true);
     }
 
+    @Test
+    void approvalOff() {
+        AgentBackendClient client = mock(AgentBackendClient.class);
+        var cmd = new MemoryCommand(client);
+        String result = cmd.handle(makeEvent("approval off"), null);
+        assertThat(result).contains("OFF");
+        verify(client).setMemoryApproval(false);
+    }
+
+    @Test
+    void removeText() {
+        AgentBackendClient client = mock(AgentBackendClient.class);
+        var cmd = new MemoryCommand(client);
+        String result = cmd.handle(makeEvent("remove some fact"), null);
+        assertThat(result).contains("agent");
+        assertThat(result).contains("forget");
+    }
+
     private UpdateEvent makeEvent(String args) {
         String text = args != null ? "/memory " + args : "/memory";
         String commandArgs = args != null ? args : "";

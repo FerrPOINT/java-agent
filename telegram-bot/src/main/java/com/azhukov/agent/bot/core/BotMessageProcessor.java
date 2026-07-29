@@ -322,6 +322,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                 sendVoiceResponse(chatId, result.content());
             }
 
+            // 💾 Memory updated notification (Hermes parity)
+            if (result.memoryUpdated()) {
+                sendFormatted(chatId, "💾 Self-improvement review: Memory updated", event.messageId());
+            }
+
             // B1.2: Reaction — processing complete (success or cancelled)
             if (busyHandler.isInterrupted(chatId)) {
                 reactionManager.onCancel(chatId, event.messageId());
@@ -487,7 +492,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                     streamResult.modelUsed(),
                     streamResult.contextTokens(),
                     streamResult.contextLength(),
-                    finalized[0]
+                    finalized[0],
+                    streamResult.memoryUpdated()
                 );
             }
             // If streaming produced no visible tokens but has metadata, prefer the sync fallback to get content
@@ -496,10 +502,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             }
             // Stream finished but produced no content and no metadata
             return new AgentBackendClient.ChatResult(accumulated.toString(),
-                streamResult.modelUsed(), streamResult.contextTokens(), streamResult.contextLength(), false);
+                streamResult.modelUsed(), streamResult.contextTokens(), streamResult.contextLength(), false,
+                streamResult.memoryUpdated());
         } catch (StreamInterruptedException e) {
             // Already handled in onError callback
-            return new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, finalized[0]);
+            return new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, finalized[0], false);
         } catch (Exception e) {
             log.warn("Streaming failed for chat {}: {}", chatId, e.getMessage());
             // Clean up the initial message if streaming failed
@@ -524,7 +531,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             syncResult.modelUsed() != null ? syncResult.modelUsed() : streamResult.modelUsed(),
             syncResult.contextTokens() != null ? syncResult.contextTokens() : streamResult.contextTokens(),
             syncResult.contextLength() != null ? syncResult.contextLength() : streamResult.contextLength(),
-            false
+            false,
+            syncResult.memoryUpdated() || streamResult.memoryUpdated()
         );
     }
 

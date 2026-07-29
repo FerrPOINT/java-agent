@@ -52,14 +52,19 @@ public class AgentBackendClient {
         String modelUsed,
         Integer contextTokens,
         Integer contextLength,
-        boolean streamFinalized
+        boolean streamFinalized,
+        boolean memoryUpdated
     ) {
         public ChatResult(String content) {
-            this(content, null, null, null, false);
+            this(content, null, null, null, false, false);
         }
 
         public ChatResult(String content, String modelUsed, Integer contextTokens, Integer contextLength) {
-            this(content, modelUsed, contextTokens, contextLength, false);
+            this(content, modelUsed, contextTokens, contextLength, false, false);
+        }
+
+        public ChatResult(String content, String modelUsed, Integer contextTokens, Integer contextLength, boolean streamFinalized) {
+            this(content, modelUsed, contextTokens, contextLength, streamFinalized, false);
         }
     }
 
@@ -108,8 +113,9 @@ public class AgentBackendClient {
             String modelUsed = node.has("modelUsed") ? node.get("modelUsed").asText(null) : null;
             Integer contextTokens = node.has("contextTokens") ? node.get("contextTokens").asInt(0) : null;
             Integer contextLength = node.has("contextLength") ? node.get("contextLength").asInt(0) : null;
+            boolean memoryUpdated = node.has("memoryUpdated") && node.get("memoryUpdated").asBoolean(false);
 
-            return new ChatResult(responseText, modelUsed, contextTokens, contextLength);
+            return new ChatResult(responseText, modelUsed, contextTokens, contextLength, false, memoryUpdated);
         } catch (Exception e) {
             log.error("Backend chat failed for sessionId={}: {}", sessionId, e.getMessage());
             return new ChatResult("Error: " + e.getMessage());
@@ -402,7 +408,8 @@ public class AgentBackendClient {
                 // Stream ended without explicit "done" event
                 ChatResult result = metadataHolder[0] != null
                     ? new ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
-                        metadataHolder[0].contextTokens(), metadataHolder[0].contextLength())
+                        metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(), false,
+                        metadataHolder[0].memoryUpdated())
                     : new ChatResult(accumulated.toString());
                 onComplete.accept(result);
                 return result;
@@ -418,7 +425,8 @@ public class AgentBackendClient {
         String modelUsed = event.has("modelUsed") ? event.get("modelUsed").asText(null) : null;
         Integer contextTokens = event.has("contextTokens") ? event.get("contextTokens").asInt(0) : null;
         Integer contextLength = event.has("contextLength") ? event.get("contextLength").asInt(0) : null;
-        return new ChatResult(null, modelUsed, contextTokens, contextLength);
+        boolean memoryUpdated = event.has("memoryUpdated") && event.get("memoryUpdated").asBoolean(false);
+        return new ChatResult(null, modelUsed, contextTokens, contextLength, false, memoryUpdated);
     }
 
     // ------------------------------------------------------------------

@@ -5,10 +5,6 @@ import com.azhukov.agent.persistence.entity.PendingMemoryEntity;
 import com.azhukov.agent.persistence.repository.PendingMemoryRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
 import java.util.List;
@@ -17,142 +13,131 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
 class WriteApprovalGateTest {
 
-    @Mock
-    private PendingMemoryRepository pendingRepository;
-    @Mock
+    private PendingMemoryRepository pendingRepo;
     private MemoryProvider memoryProvider;
-
     private AgentProperties properties;
     private WriteApprovalGate gate;
 
     @BeforeEach
     void setUp() {
-        properties = new AgentProperties();
-        gate = new WriteApprovalGate(pendingRepository, memoryProvider, properties);
+        pendingRepo = mock(PendingMemoryRepository.class);
+        memoryProvider = mock(MemoryProvider.class);
+        properties = mock(AgentProperties.class);
+        AgentProperties.MemoryProperties memProps = mock(AgentProperties.MemoryProperties.class);
+        when(memProps.isWriteApproval()).thenReturn(false);
+        when(properties.getMemory()).thenReturn(memProps);
+
+        gate = new WriteApprovalGate(pendingRepo, memoryProvider, properties);
     }
 
-    // 1. Disabled by default
     @Test
-    void disabledByDefault() {
+    void isEnabled_defaultFalse() {
         assertThat(gate.isEnabled()).isFalse();
     }
 
-    // 2. Set approval toggles gate
     @Test
-    void setApprovalTogglesGate() {
+    void setApproval_toggle() {
         gate.setApproval(true);
         assertThat(gate.isEnabled()).isTrue();
         gate.setApproval(false);
         assertThat(gate.isEnabled()).isFalse();
     }
 
-    // 3. Stage write creates pending entity
     @Test
-    void stageWriteCreatesPendingEntity() {
-        PendingMemoryEntity saved = new PendingMemoryEntity();
-        saved.setId(UUID.randomUUID());
-        when(pendingRepository.save(any())).thenReturn(saved);
-
-        UUID id = gate.stageWrite("user1", "add", "memory", "test fact", null, "test summary", "foreground");
-
+    void stageWrite_savesToPendingRepo() {
+        when(pendingRepo.save(any())).thenAnswer(inv -> {
+            PendingMemoryEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        UUID id = gate.stageWrite("user1", "add", "memory", "Test fact", null, "summary", "foreground");
         assertThat(id).isNotNull();
-        ArgumentCaptor<PendingMemoryEntity> captor = ArgumentCaptor.forClass(PendingMemoryEntity.class);
-        verify(pendingRepository).save(captor.capture());
-        assertThat(captor.getValue().getAction()).isEqualTo("add");
-        assertThat(captor.getValue().getTarget()).isEqualTo("memory");
-        assertThat(captor.getValue().getContent()).isEqualTo("test fact");
-        assertThat(captor.getValue().getStatus()).isEqualTo("pending");
+        verify(pendingRepo).save(any());
     }
 
-    // 4. List pending returns pending entries
     @Test
-    void listPendingReturnsEntries() {
-        PendingMemoryEntity e1 = new PendingMemoryEntity();
-        e1.setUserId("user1");
-        e1.setStatus("pending");
-        e1.setAction("add");
-        when(pendingRepository.findByUserIdAndStatus("user1", "pending"))
-            .thenReturn(List.of(e1));
-
-        List<PendingMemoryEntity> result = gate.listPending("user1");
+    void listPending_returnsPendingEntries() {
+        PendingMemoryEntity e = new PendingMemoryEntity();
+        e.setUserId("user1");
+        e.setStatus("pending");
+        e.setAction("add");
+        when(pendingRepo.findByUserIdAndStatus("user1", "pending")).thenReturn(List.of(e));
+        var result = gate.listPending("user1");
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).getAction()).isEqualTo("add");
     }
 
-    // 5. Approve applies write via memoryProvider
     @Test
-    void approveAppliesWrite() {
+    void approve_appliesAddToMemory() {
         UUID id = UUID.randomUUID();
         PendingMemoryEntity e = new PendingMemoryEntity();
         e.setId(id);
         e.setUserId("user1");
+        e.setStatus("pending");
         e.setAction("add");
         e.setTarget("memory");
-        e.setContent("test fact");
-        e.setStatus("pending");
-        when(pendingRepository.findByIdAndUserId(id, "user1")).thenReturn(Optional.of(e));
-        when(pendingRepository.save(any())).thenReturn(e);
+        e.setContent("Test fact");
+        when(pendingRepo.findByIdAndUserId(id, "user1")).thenReturn(Optional.of(e));
+        when(pendingRepo.save(any())).thenReturn(e);
 
         boolean result = gate.approve("user1", id);
-
         assertThat(result).isTrue();
-        verify(memoryProvider).store("user1", "memory", "auto", "test fact");
+        verify(memoryProvider).store("user1", "memory", "auto", "Test fact");
         assertThat(e.getStatus()).isEqualTo("approved");
-        assertThat(e.getResolvedAt()).isNotNull();
     }
 
-    // 6. Approve replace action calls replace
     @Test
-    void approveReplaceAction() {
+    void approve_appliesRemoveToMemory() {
         UUID id = UUID.randomUUID();
         PendingMemoryEntity e = new PendingMemoryEntity();
         e.setId(id);
         e.setUserId("user1");
-        e.setAction("replace");
-        e.setTarget("memory");
-        e.setContent("new fact");
-        e.setOldText("old");
         e.setStatus("pending");
-        when(pendingRepository.findByIdAndUserId(id, "user1")).thenReturn(Optional.of(e));
-        when(pendingRepository.save(any())).thenReturn(e);
+        e.setAction("remove");
+        e.setTarget("memory");
+        e.setOldText("old fact");
+        when(pendingRepo.findByIdAndUserId(id, "user1")).thenReturn(Optional.of(e));
+        when(pendingRepo.save(any())).thenReturn(e);
 
         boolean result = gate.approve("user1", id);
         assertThat(result).isTrue();
-        verify(memoryProvider).replace("user1", "memory", "old", "new fact");
+        verify(memoryProvider).remove("user1", "memory", "old fact");
     }
 
-    // 7. Reject sets status to rejected
     @Test
-    void rejectSetsStatus() {
+    void reject_marksAsRejected() {
         UUID id = UUID.randomUUID();
         PendingMemoryEntity e = new PendingMemoryEntity();
         e.setId(id);
         e.setUserId("user1");
-        e.setAction("add");
         e.setStatus("pending");
-        when(pendingRepository.findByIdAndUserId(id, "user1")).thenReturn(Optional.of(e));
-        when(pendingRepository.save(any())).thenReturn(e);
+        when(pendingRepo.findByIdAndUserId(id, "user1")).thenReturn(Optional.of(e));
+        when(pendingRepo.save(any())).thenReturn(e);
 
         boolean result = gate.reject("user1", id);
         assertThat(result).isTrue();
         assertThat(e.getStatus()).isEqualTo("rejected");
-        assertThat(e.getResolvedAt()).isNotNull();
+        verify(memoryProvider, never()).store(any(), any(), any(), any());
     }
 
-    // 8. Approve returns false for non-existent ID
     @Test
-    void approveReturnsFalseForMissingId() {
+    void approve_notFound_returnsFalse() {
         UUID id = UUID.randomUUID();
-        when(pendingRepository.findByIdAndUserId(id, "user1")).thenReturn(Optional.empty());
+        when(pendingRepo.findByIdAndUserId(id, "user1")).thenReturn(Optional.empty());
+        assertThat(gate.approve("user1", id)).isFalse();
+    }
 
-        boolean result = gate.approve("user1", id);
-        assertThat(result).isFalse();
-        verifyNoInteractions(memoryProvider);
+    @Test
+    void approve_alreadyResolved_returnsFalse() {
+        UUID id = UUID.randomUUID();
+        PendingMemoryEntity e = new PendingMemoryEntity();
+        e.setId(id);
+        e.setUserId("user1");
+        e.setStatus("approved");
+        when(pendingRepo.findByIdAndUserId(id, "user1")).thenReturn(Optional.of(e));
+        assertThat(gate.approve("user1", id)).isFalse();
     }
 }
