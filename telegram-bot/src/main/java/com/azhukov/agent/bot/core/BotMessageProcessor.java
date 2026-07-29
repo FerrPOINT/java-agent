@@ -660,7 +660,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
     private void sendError(long chatId, String message) {
         try {
-            telegramClient.sendMessage(chatId, message, properties.getParseMode(), null, null);
+            String parseMode = properties.getParseMode();
+            String text = message;
+            if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
+                text = MarkdownConverter.convert(message);
+            }
+            telegramClient.sendMessage(chatId, text, parseMode, null, null);
         } catch (Exception e) {
             log.error("Failed to send error message to chat {}: {}", chatId, e.getMessage());
         }

@@ -177,6 +177,23 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void sendErrorEscapesMarkdownV2() {
+        long chatId = 600L;
+        properties.setParseMode("MarkdownV2");
+
+        // Backend throws an error with special chars
+        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any()))
+            .thenThrow(new RuntimeException("Error at C:\\Users\\test_file.java"));
+
+        processor.accept(textEvent(1, chatId, "test"));
+
+        // Verify sendMessage was called with escaped text
+        verify(telegramClient).sendMessage(eq(chatId), argThat(text -> 
+            text != null && !text.contains("C:\\Users\\test_file.java") // raw chars should be escaped
+        ), eq("MarkdownV2"), isNull(), isNull());
+    }
+
+    @Test
     void toolProgressNotInFinalText() {
         long chatId = 500L;
         java.util.List<String> finalizedTexts = new java.util.ArrayList<>();
