@@ -51,10 +51,15 @@ public class AgentBackendClient {
         String content,
         String modelUsed,
         Integer contextTokens,
-        Integer contextLength
+        Integer contextLength,
+        boolean streamFinalized
     ) {
         public ChatResult(String content) {
-            this(content, null, null, null);
+            this(content, null, null, null, false);
+        }
+
+        public ChatResult(String content, String modelUsed, Integer contextTokens, Integer contextLength) {
+            this(content, modelUsed, contextTokens, contextLength, false);
         }
     }
 
@@ -291,16 +296,20 @@ public class AgentBackendClient {
      * <p>This is a <strong>blocking</strong> call — the caller should run it
      * in a separate thread.
      *
-     * @param message        the user's message text
-     * @param sessionId      the session UUID (may be null)
-     * @param tokenConsumer  called for each token received
-     * @param onComplete     called when the stream completes successfully with the final metadata
-     * @param onError        called with an exception if the stream fails
+     * @param message             the user's message text
+     * @param sessionId           the session UUID (may be null)
+     * @param tokenConsumer       called for each token received
+     * @param toolCallConsumer    called for each tool call announcement (tool name)
+     * @param toolResultConsumer  called for each tool result (toolName, resultPreview)
+     * @param onComplete          called when the stream completes successfully with the final metadata
+     * @param onError             called with an exception if the stream fails
      * @return the accumulated response content and metadata (also delivered via onComplete callback)
      */
     public ChatResult chatStream(String message,
                                  String sessionId,
                                  Consumer<String> tokenConsumer,
+                                 Consumer<String> toolCallConsumer,
+                                 java.util.function.BiConsumer<String, String> toolResultConsumer,
                                  Consumer<ChatResult> onComplete,
                                  Consumer<Throwable> onError) {
         Map<String, Object> body = new LinkedHashMap<>();
@@ -344,6 +353,34 @@ public class AgentBackendClient {
                                 }
                                 if ("metadata".equalsIgnoreCase(type)) {
                                     metadataHolder[0] = extractMetadata(event);
+                                    continue;
+                                }
+                                // tool_calls event — notify tool call consumer
+                                if ("tool_calls".equalsIgnoreCase(type)) {
+                                    JsonNode toolCallsNode = event.get("toolCalls");
+                                    if (toolCallsNode != null && toolCallsNode.isArray()) {
+                                        for (JsonNode tc : toolCallsNode) {
+                                            String toolName = tc.path("name").asText("unknown");
+                                            toolCallConsumer.accept(toolName);
+                                        }
+                                    }
+                                    continue;
+                                }
+                                // tool_start event — notify tool call consumer
+                                if ("tool_start".equalsIgnoreCase(type)) {
+                                    String toolName = event.path("toolName").asText("");
+                                    if (!toolName.isEmpty()) {
+                                        toolCallConsumer.accept(toolName);
+                                    }
+                                    continue;
+                                }
+                                // tool_result event — notify tool result consumer
+                                if ("tool_result".equalsIgnoreCase(type)) {
+                                    String toolName = event.path("toolName").asText("");
+                                    String toolResult = event.path("toolResult").asText("");
+                                    if (!toolName.isEmpty()) {
+                                        toolResultConsumer.accept(toolName, toolResult);
+                                    }
                                     continue;
                                 }
                                 JsonNode tokenNode = event.get("token");

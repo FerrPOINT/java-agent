@@ -286,26 +286,31 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
         AgentBackendClient.ChatResult result;
         try {
             String sessionId = session.getId() != null ? session.getId().toString() : null;
-            result = streamChat(chatId, messageText, sessionId);
 
-            // B1.1: Append runtime footer if enabled
-            String footer = runtimeFooter.format(
-                resolveModelUsed(session, result),
-                result.contextTokens() != null ? result.contextTokens() : 0,
-                result.contextLength() != null ? result.contextLength() : 0,
-                properties.getWorkingDirectory()
-            );
-            String backendResponse = result.content();
-            if (!footer.isEmpty()) {
-                backendResponse = backendResponse + footer;
+            // Build footer text (will be appended to streaming message or sync response)
+            result = streamChat(chatId, messageText, sessionId, session, event.messageId());
+
+            // If streaming produced content and finalized a message, don't send duplicate
+            if (!result.streamFinalized()) {
+                // Streaming didn't finalize (failed or no content) — send via sendFormatted
+                String footer = runtimeFooter.format(
+                    resolveModelUsed(session, result),
+                    result.contextTokens() != null ? result.contextTokens() : 0,
+                    result.contextLength() != null ? result.contextLength() : 0,
+                    properties.getWorkingDirectory()
+                );
+                String backendResponse = result.content();
+                if (!footer.isEmpty()) {
+                    backendResponse = backendResponse + footer;
+                }
+
+                typingManager.flushTyping(chatId);
+                sendFormatted(chatId, backendResponse, event.messageId());
             }
 
-            typingManager.flushTyping(chatId);
-            sendFormatted(chatId, backendResponse, event.messageId());
-
             // Voice mode: synthesize TTS and send as voice message
-            if (session.isVoiceMode()) {
-                sendVoiceResponse(chatId, backendResponse);
+            if (session.isVoiceMode() && result.content() != null && !result.content().isBlank()) {
+                sendVoiceResponse(chatId, result.content());
             }
 
             // B1.2: Reaction — processing complete (success)
@@ -351,11 +356,15 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
      * @param chatId      the Telegram chat ID
      * @param messageText the user's message
      * @param sessionId   the session UUID string (may be null)
+     * @param session     the bot session (for footer model resolution)
+     * @param userMessageId the user's message ID (for reply)
      * @return the full accumulated response content and metadata
      */
-    private AgentBackendClient.ChatResult streamChat(long chatId, String messageText, String sessionId) {
+    private AgentBackendClient.ChatResult streamChat(long chatId, String messageText, String sessionId,
+                                                      BotSessionEntity session, long userMessageId) {
         StringBuilder accumulated = new StringBuilder();
         final long[] messageId = {-1};
+        final boolean[] finalized = {false};
 
         // Try streaming first
         try {
@@ -379,10 +388,40 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                         streamEditor.editStream(chatId, messageId[0], accumulated.toString());
                     }
                 },
+                // toolCallConsumer — called when backend emits tool_calls event
+                toolCall -> {
+                    if (messageId[0] >= 0) {
+                        // Show tool progress in the streaming message
+                        String toolLine = "\n\n🔧 " + toolCall + "...";
+                        accumulated.append(toolLine);
+                        streamEditor.editStream(chatId, messageId[0], accumulated.toString());
+                    }
+                },
+                // toolResultConsumer — called when backend emits tool_result event
+                (toolName, toolResultPreview) -> {
+                    if (messageId[0] >= 0) {
+                        // Show tool result in the streaming message
+                        String resultLine = "\n✅ " + toolName + ": " + truncatePreview(toolResultPreview, 200);
+                        accumulated.append(resultLine);
+                        streamEditor.editStream(chatId, messageId[0], accumulated.toString());
+                    }
+                },
                 // onComplete
                 result -> {
                     if (messageId[0] >= 0 && accumulated.length() > 0) {
-                        streamEditor.finalizeStream(chatId, messageId[0], accumulated.toString());
+                        // Append footer to the streaming message before finalizing
+                        String footer = runtimeFooter.format(
+                            resolveModelUsed(session, result),
+                            result.contextTokens() != null ? result.contextTokens() : 0,
+                            result.contextLength() != null ? result.contextLength() : 0,
+                            properties.getWorkingDirectory()
+                        );
+                        String finalText = accumulated.toString();
+                        if (!footer.isEmpty()) {
+                            finalText = finalText + footer;
+                        }
+                        streamEditor.finalizeStream(chatId, messageId[0], finalText);
+                        finalized[0] = true;
                     }
                 },
                 // onError
@@ -392,6 +431,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                         if (messageId[0] >= 0 && accumulated.length() > 0) {
                             streamEditor.finalizeStream(chatId, messageId[0],
                                 accumulated + "\n\n[Interrupted by user]");
+                            finalized[0] = true;
                         }
                     } else {
                         log.error("Stream error for chat {}: {}", chatId, error.getMessage());
@@ -401,18 +441,20 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                                 ? accumulated + "\n\n[Error: " + error.getMessage() + "]"
                                 : "[Error: " + error.getMessage() + "]";
                             streamEditor.finalizeStream(chatId, messageId[0], errorText);
+                            finalized[0] = true;
                         }
                     }
                 }
             );
 
             // If streaming produced content, return it (with metadata from the stream)
-            if (accumulated.length() > 0) {
+            if (accumulated.length() > 0 || finalized[0]) {
                 return new AgentBackendClient.ChatResult(
                     accumulated.toString(),
                     streamResult.modelUsed(),
                     streamResult.contextTokens(),
-                    streamResult.contextLength()
+                    streamResult.contextLength(),
+                    finalized[0]
                 );
             }
             // If streaming produced no visible tokens but has metadata, prefer the sync fallback to get content
@@ -421,10 +463,10 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             }
             // Stream finished but produced no content and no metadata
             return new AgentBackendClient.ChatResult(accumulated.toString(),
-                streamResult.modelUsed(), streamResult.contextTokens(), streamResult.contextLength());
+                streamResult.modelUsed(), streamResult.contextTokens(), streamResult.contextLength(), false);
         } catch (StreamInterruptedException e) {
             // Already handled in onError callback
-            return new AgentBackendClient.ChatResult(accumulated.toString());
+            return new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, finalized[0]);
         } catch (Exception e) {
             log.warn("Streaming failed for chat {}: {}", chatId, e.getMessage());
             // Clean up the initial message if streaming failed
@@ -435,6 +477,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
         }
     }
 
+    private String truncatePreview(String text, int maxLen) {
+        if (text == null) return "";
+        if (text.length() <= maxLen) return text;
+        return text.substring(0, maxLen) + "...";
+    }
+
     private AgentBackendClient.ChatResult fallbackSyncWithMetadata(String messageText, String sessionId,
                                                                    AgentBackendClient.ChatResult streamResult) {
         AgentBackendClient.ChatResult syncResult = backendClient.chat(messageText, sessionId);
@@ -442,7 +490,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             syncResult.content(),
             syncResult.modelUsed() != null ? syncResult.modelUsed() : streamResult.modelUsed(),
             syncResult.contextTokens() != null ? syncResult.contextTokens() : streamResult.contextTokens(),
-            syncResult.contextLength() != null ? syncResult.contextLength() : streamResult.contextLength()
+            syncResult.contextLength() != null ? syncResult.contextLength() : streamResult.contextLength(),
+            false
         );
     }
 

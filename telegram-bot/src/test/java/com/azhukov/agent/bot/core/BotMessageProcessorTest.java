@@ -102,8 +102,9 @@ class BotMessageProcessorTest {
         // Default: sendMessage returns a message ID
         when(telegramClient.sendMessage(anyLong(), anyString())).thenReturn(Optional.of(1L));
         when(telegramClient.sendMessage(anyLong(), anyString(), anyString(), any(), any())).thenReturn(Optional.of(1L));
-        // Default: streamEditor stubs
-        when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(1L));
+        // Default: streamEditor stubs — startStream returns empty (no streaming message by default)
+        // Tests that need streaming should override with Optional.of(1L)
+        when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.<Long>empty());
         when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString())).thenReturn(true);
         when(streamEditor.editStream(anyLong(), anyLong(), anyString())).thenReturn(true);
         // Default: inboundMediaHandler returns empty (falls back to placeholder)
@@ -117,13 +118,15 @@ class BotMessageProcessorTest {
         lastStreamResult = new AgentBackendClient.ChatResult(String.join("", tokens), "kimi-k2.6", 1000, 20000);
         doAnswer(inv -> {
             Consumer<String> tokenConsumer = inv.getArgument(2);
-            Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(3);
+            Consumer<String> toolCallConsumer = inv.getArgument(3);
+            java.util.function.BiConsumer<String, String> toolResultConsumer = inv.getArgument(4);
+            Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(5);
             for (String token : tokens) {
                 tokenConsumer.accept(token);
             }
             onComplete.accept(lastStreamResult);
             return lastStreamResult;
-        }).when(backendClient).chatStream(anyString(), anyString(), any(), any(), any());
+        }).when(backendClient).chatStream(anyString(), anyString(), any(), any(), any(), any(), any());
     }
 
     // ─── Text message flow ─────────────────────────────────────────
@@ -185,7 +188,7 @@ class BotMessageProcessorTest {
 
         processor.accept(event);
 
-        verify(backendClient).chatStream(eq("Photo caption text"), anyString(), any(), any(), any());
+        verify(backendClient).chatStream(eq("Photo caption text"), anyString(), any(), any(), any(), any(), any());
         verify(telegramClient).sendMessage(eq(100L), anyString(), eq("MarkdownV2"), isNull(), isNull());
     }
 
@@ -198,7 +201,7 @@ class BotMessageProcessorTest {
 
         processor.accept(event);
 
-        verify(backendClient).chatStream(eq("[Media attachment: photo]"), anyString(), any(), any(), any());
+        verify(backendClient).chatStream(eq("[Media attachment: photo]"), anyString(), any(), any(), any(), any(), any());
     }
 
     // ─── Command flow ──────────────────────────────────────────────
@@ -307,7 +310,7 @@ class BotMessageProcessorTest {
 
         verify(busyHandler).interrupt(event.chatId());
         // The message still goes through the backend call
-        verify(backendClient).chatStream(eq("Hello"), anyString(), any(), any(), any());
+        verify(backendClient).chatStream(eq("Hello"), anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -343,7 +346,7 @@ class BotMessageProcessorTest {
         UpdateEvent event = textEvent(1L, "Hello");
         doAnswer(inv -> {
             throw new RuntimeException("Backend down");
-        }).when(backendClient).chatStream(anyString(), anyString(), any(), any(), any());
+        }).when(backendClient).chatStream(anyString(), anyString(), any(), any(), any(), any(), any());
         when(backendClient.chat(anyString(), anyString()))
             .thenReturn(new AgentBackendClient.ChatResult("fallback error"));
 

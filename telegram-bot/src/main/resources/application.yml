@@ -47,14 +47,14 @@ bot:
   link-preview: ${BOT_LINK_PREVIEW:true}
 
   footer:
-    enabled: ${BOT_FOOTER_ENABLED:false}
+    enabled: ${BOT_FOOTER_ENABLED:true}
     fields:
       - model
       - context_pct
       - cwd
 
   reactions:
-    enabled: ${BOT_REACTIONS_ENABLED:false}
+    enabled: ${BOT_REACTIONS_ENABLED:true}
 
   text-batch:
     delay-ms: 500
