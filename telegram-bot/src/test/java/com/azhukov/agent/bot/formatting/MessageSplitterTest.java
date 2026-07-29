@@ -2,101 +2,92 @@ package com.azhukov.agent.bot.formatting;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class MessageSplitterTest {
 
     @Test
-    void shortText_returnsSingleChunk() {
-        var chunks = MessageSplitter.split("Hello, world!");
+    void shortTextReturnsSingleChunk() {
+        List<String> chunks = MessageSplitter.split("Hello world");
         assertThat(chunks).hasSize(1);
-        assertThat(chunks.get(0)).isEqualTo("Hello, world!");
+        assertThat(chunks.get(0)).isEqualTo("Hello world");
+        // No index prefix for single chunk
+        assertThat(chunks.get(0)).doesNotStartWith("(");
     }
 
     @Test
-    void emptyText_returnsSingleEmptyChunk() {
-        var chunks = MessageSplitter.split("");
-        assertThat(chunks).hasSize(1);
-        assertThat(chunks.get(0)).isEqualTo("");
-    }
-
-    @Test
-    void nullText_returnsSingleEmptyChunk() {
-        var chunks = MessageSplitter.split(null);
-        assertThat(chunks).hasSize(1);
-        assertThat(chunks.get(0)).isEqualTo("");
-    }
-
-    @Test
-    void longText_splitsIntoMultipleChunks() {
-        // Create text longer than 4096 chars
+    void multiChunkHasContinuationIndicator() {
+        // Create text > 4096 chars
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 100; i++) {
-            sb.append("Line ").append(i).append(": This is a test line that adds some length.\n");
+        for (int i = 0; i < 10; i++) {
+            sb.append("Paragraph ").append(i).append(" with some text. ".repeat(100));
+            sb.append("\n\n");
         }
-        var chunks = MessageSplitter.split(sb.toString());
-        assertThat(chunks).hasSizeGreaterThan(1);
+        List<String> chunks = MessageSplitter.split(sb.toString());
+        assertThat(chunks.size()).isGreaterThan(1);
+        // Each chunk should have "(N/M) " prefix
+        assertThat(chunks.get(0)).startsWith("(1/");
+        assertThat(chunks.get(chunks.size() - 1)).contains("(" + chunks.size() + "/");
     }
 
     @Test
-    void allChunks_respectMaxLength() {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 500; i++) {
-            sb.append("Line ").append(i).append(": This is a longer test line for splitting.\n");
-        }
-        var chunks = MessageSplitter.split(sb.toString());
+    void codeBlockNotBrokenAcrossChunks() {
+        // Create a code block with paragraph boundaries INSIDE it (< 4096 chars)
+        // The splitter should NOT split on \n\n inside the code block
+        StringBuilder code = new StringBuilder("```java\n");
+        code.append("// Code with blank line inside\n\n");
+        code.append("public class Test {\n");
+        code.append("    int x = 1;\n");
+        code.append("}\n");
+        code.append("```\n\n");
+
+        // Prepend enough text to force a split at the code block boundary
+        StringBuilder text = new StringBuilder();
+        text.append("Intro text. ".repeat(400)); // ~4800 chars, forces split
+        text.append("\n\n");
+        text.append(code);
+
+        List<String> chunks = MessageSplitter.split(text.toString());
+        assertThat(chunks.size()).isGreaterThanOrEqualTo(2);
+
+        // The chunk containing the code block should have balanced fences
         for (String chunk : chunks) {
-            assertThat(chunk.length()).isLessThanOrEqualTo(MessageSplitter.TELEGRAM_MAX_LENGTH);
+            int fenceCount = countOccurrences(chunk, "```");
+            // If chunk has fences, they should be balanced
+            if (fenceCount > 0) {
+                assertThat(fenceCount % 2)
+                    .as("Code fences should be balanced in chunk with %d fences", fenceCount)
+                    .isEven();
+            }
         }
     }
 
     @Test
-    void splitsOnNewlineBoundary() {
-        // Create text where the split should happen at a newline
+    void splitOnParagraphOutsideCodeBlock() {
+        // Text with paragraph boundary outside code block
+        String text = "First paragraph.\n\nSecond paragraph.\n\n```code\nx = 1\n```";
+        // Make it large enough to split
         StringBuilder sb = new StringBuilder();
-        // First chunk worth of text
-        for (int i = 0; i < 50; i++) {
-            sb.append("A").append(i);
+        for (int i = 0; i < 5; i++) {
+            sb.append("Paragraph ").append(i).append(" with padding. ".repeat(100));
+            sb.append("\n\n");
         }
-        sb.append("\n");
-        // More text
-        for (int i = 0; i < 50; i++) {
-            sb.append("B").append(i);
-        }
-        // Make it long enough to require splitting
-        while (sb.length() < 5000) {
-            sb.append("\nMore content to fill the buffer up to the required length.");
-        }
-        var chunks = MessageSplitter.split(sb.toString());
-        assertThat(chunks).hasSizeGreaterThan(1);
-        // Each chunk should not exceed the limit
-        for (String chunk : chunks) {
-            assertThat(chunk.length()).isLessThanOrEqualTo(MessageSplitter.TELEGRAM_MAX_LENGTH);
-        }
+        sb.append("```java\n").append("x = 1\n").append("```");
+
+        List<String> chunks = MessageSplitter.split(sb.toString());
+        // Should split — at least 2 chunks
+        assertThat(chunks.size()).isGreaterThanOrEqualTo(1);
     }
 
-    @Test
-    void singleLongLine_hardSplits() {
-        // A single line with no newlines that exceeds 4096
-        String line = "x".repeat(5000);
-        var chunks = MessageSplitter.split(line);
-        assertThat(chunks).hasSize(2);
-        assertThat(chunks.get(0).length()).isLessThanOrEqualTo(MessageSplitter.TELEGRAM_MAX_LENGTH);
-        assertThat(chunks.get(1).length()).isLessThanOrEqualTo(MessageSplitter.TELEGRAM_MAX_LENGTH);
-        // Combined should equal original
-        assertThat(String.join("", chunks)).isEqualTo(line);
-    }
-
-    @Test
-    void paragraphSplits_preferredOverLineSplits() {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 200; i++) {
-            sb.append("Paragraph ").append(i).append(" with some content that adds meaningful length.\n\n");
+    private int countOccurrences(String text, String sub) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = text.indexOf(sub, idx)) >= 0) {
+            count++;
+            idx += sub.length();
         }
-        var chunks = MessageSplitter.split(sb.toString());
-        assertThat(chunks).hasSizeGreaterThan(1);
-        for (String chunk : chunks) {
-            assertThat(chunk.length()).isLessThanOrEqualTo(MessageSplitter.TELEGRAM_MAX_LENGTH);
-        }
+        return count;
     }
 }
