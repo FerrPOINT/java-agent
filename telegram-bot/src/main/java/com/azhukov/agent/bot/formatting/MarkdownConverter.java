@@ -217,10 +217,15 @@ public final class MarkdownConverter {
         StringBuilder sb = new StringBuilder(text.length() * 2);
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
-            if (SPECIAL_CHARS.indexOf(c) >= 0) {
+            // Don't escape > at start of line (blockquote syntax in Telegram MarkdownV2)
+            if (c == '>' && (i == 0 || text.charAt(i - 1) == '\n')) {
+                sb.append(c);
+            } else if (SPECIAL_CHARS.indexOf(c) >= 0) {
                 sb.append('\\');
+                sb.append(c);
+            } else {
+                sb.append(c);
             }
-            sb.append(c);
         }
         return sb.toString();
     }

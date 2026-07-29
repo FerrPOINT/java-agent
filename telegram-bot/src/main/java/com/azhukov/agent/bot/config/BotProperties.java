@@ -1,8 +1,10 @@
 package com.azhukov.agent.bot.config;
 
+import jakarta.validation.constraints.Min;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -10,6 +12,7 @@ import java.util.List;
 
 @Getter
 @Setter
+@Validated
 @ConfigurationProperties(prefix = "bot")
 public class BotProperties {
 
@@ -17,12 +20,14 @@ public class BotProperties {
     private String mode = "polling"; // polling | webhook
     private String agentName = "Джава агент";
     private String backendUrl = "http://localhost:8090";
+    @Min(1)
     private int maxMessageLength = 4096;
     private Duration typingRefreshInterval = Duration.ofSeconds(4);
     private Duration streamEditInterval = Duration.ofMillis(1500);
     private String busyMode = "queue"; // queue | interrupt
     private String parseMode = "MarkdownV2"; // MarkdownV2 | HTML
     private boolean registerCommands = true;
+    @Min(1)
     private int rateLimitPerSecond = 25;
     private String workingDirectory = System.getProperty("user.dir");
     private String defaultModel = "";

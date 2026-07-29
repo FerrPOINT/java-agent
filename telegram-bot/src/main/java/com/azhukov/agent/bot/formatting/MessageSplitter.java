@@ -23,15 +23,26 @@ public final class MessageSplitter {
      * @return list of chunks
      */
     public static List<String> split(String text) {
+        return split(text, TELEGRAM_MAX_LENGTH);
+    }
+
+    /**
+     * Split text into chunks, each no longer than maxLength UTF-16 code units.
+     *
+     * @param text      the text to split
+     * @param maxLength max UTF-16 code units per chunk
+     * @return list of chunks
+     */
+    public static List<String> split(String text, int maxLength) {
         if (text == null || text.isEmpty()) {
             return List.of("");
         }
 
-        if (utf16Length(text) <= TELEGRAM_MAX_LENGTH) {
+        if (utf16Length(text) <= maxLength) {
             return List.of(text);
         }
 
-        List<String> chunks = doSplit(text);
+        List<String> chunks = doSplit(text, maxLength);
 
         // Add "(1/N)" continuation indicator when splitting into multiple chunks
         if (chunks.size() > 1) {
@@ -46,7 +57,7 @@ public final class MessageSplitter {
         return chunks;
     }
 
-    private static List<String> doSplit(String text) {
+    private static List<String> doSplit(String text, int maxLength) {
         List<String> chunks = new ArrayList<>();
 
         // Split by paragraphs (double newline), but not inside code blocks
@@ -73,7 +84,7 @@ public final class MessageSplitter {
                 }
                 // Try to fit segment + current
                 String paraWithJoin = current.length() > 0 ? current + "\n\n" + segment : segment;
-                if (utf16Length(paraWithJoin) <= TELEGRAM_MAX_LENGTH) {
+                if (utf16Length(paraWithJoin) <= maxLength) {
                     if (current.length() > 0) current.append("\n\n");
                     current.append(segment);
                 } else {
@@ -81,10 +92,10 @@ public final class MessageSplitter {
                         chunks.add(current.toString());
                         current.setLength(0);
                     }
-                    if (utf16Length(segment) <= TELEGRAM_MAX_LENGTH) {
+                    if (utf16Length(segment) <= maxLength) {
                         current.append(segment);
                     } else {
-                        splitByLines(segment, chunks, current);
+                        splitByLines(segment, chunks, current, maxLength);
                     }
                 }
             }
@@ -96,22 +107,22 @@ public final class MessageSplitter {
             String remaining = text.substring(start);
             if (current.length() > 0) {
                 String combined = current + "\n\n" + remaining;
-                if (utf16Length(combined) <= TELEGRAM_MAX_LENGTH) {
+                if (utf16Length(combined) <= maxLength) {
                     current.append("\n\n").append(remaining);
                 } else {
                     chunks.add(current.toString());
                     current.setLength(0);
-                    if (utf16Length(remaining) <= TELEGRAM_MAX_LENGTH) {
+                    if (utf16Length(remaining) <= maxLength) {
                         current.append(remaining);
                     } else {
-                        splitByLines(remaining, chunks, current);
+                        splitByLines(remaining, chunks, current, maxLength);
                     }
                 }
             } else {
-                if (utf16Length(remaining) <= TELEGRAM_MAX_LENGTH) {
+                if (utf16Length(remaining) <= maxLength) {
                     current.append(remaining);
                 } else {
-                    splitByLines(remaining, chunks, current);
+                    splitByLines(remaining, chunks, current, maxLength);
                 }
             }
         }
@@ -128,7 +139,7 @@ public final class MessageSplitter {
         return segment.contains("```") || segment.contains("~~~");
     }
 
-    private static void splitByLines(String paragraph, List<String> chunks, StringBuilder current) {
+    private static void splitByLines(String paragraph, List<String> chunks, StringBuilder current, int maxLength) {
         String[] lines = paragraph.split("\n", -1);
         for (String line : lines) {
             String lineWithJoin = line;
@@ -136,7 +147,7 @@ public final class MessageSplitter {
                 lineWithJoin = current + "\n" + line;
             }
 
-            if (utf16Length(lineWithJoin) <= TELEGRAM_MAX_LENGTH) {
+            if (utf16Length(lineWithJoin) <= maxLength) {
                 if (current.length() > 0) {
                     current.append("\n");
                 }
@@ -149,27 +160,27 @@ public final class MessageSplitter {
                 }
 
                 // Single line too big — hard split
-                if (utf16Length(line) <= TELEGRAM_MAX_LENGTH) {
+                if (utf16Length(line) <= maxLength) {
                     current.append(line);
                 } else {
-                    splitHard(line, chunks, current);
+                    splitHard(line, chunks, current, maxLength);
                 }
             }
         }
     }
 
-    private static void splitHard(String text, List<String> chunks, StringBuilder current) {
+    private static void splitHard(String text, List<String> chunks, StringBuilder current, int maxLength) {
         int start = 0;
         while (start < text.length()) {
             int remaining = text.length() - start;
-            // Calculate how many chars fit in TELEGRAM_MAX_LENGTH UTF-16 code units
-            int capacity = TELEGRAM_MAX_LENGTH - utf16Length(current.toString());
+            // Calculate how many chars fit in maxLength UTF-16 code units
+            int capacity = maxLength - utf16Length(current.toString());
             if (capacity <= 0) {
                 if (current.length() > 0) {
                     chunks.add(current.toString());
                     current.setLength(0);
                 }
-                capacity = TELEGRAM_MAX_LENGTH;
+                capacity = maxLength;
             }
 
             int end = start;
@@ -203,7 +214,7 @@ public final class MessageSplitter {
             current.append(text, start, end);
             start = end;
 
-            if (utf16Length(current.toString()) >= TELEGRAM_MAX_LENGTH) {
+            if (utf16Length(current.toString()) >= maxLength) {
                 chunks.add(current.toString());
                 current.setLength(0);
             }
