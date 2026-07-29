@@ -70,10 +70,21 @@ public class AgentRuntimeService {
 
     @Transactional
     public ChatResponseDto runTurn(ChatRequest request) {
-        boolean isNew = request.sessionId() == null;
-        Session session = isNew
-            ? createSession("user-1", "openai-compatible", "")
-            : loadSession(request.sessionId());
+        boolean isNew;
+        Session session;
+        if (request.sessionId() == null) {
+            isNew = true;
+            session = createSession("user-1", "openai-compatible", properties.getModel().getModelName());
+        } else {
+            try {
+                isNew = false;
+                session = loadSession(request.sessionId());
+            } catch (IllegalArgumentException e) {
+                log.warn("Session {} not found in backend (sync path), creating new session", request.sessionId());
+                isNew = true;
+                session = createSession("user-1", "openai-compatible", properties.getModel().getModelName());
+            }
+        }
 
         TurnResult result = agentRuntime.runTurn(session, request.message());
         persistMessages(session.id(), result.messages());

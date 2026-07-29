@@ -20,6 +20,8 @@ spring:
   flyway:
     locations: classpath:db/migration
     baseline-on-migrate: true
+    baseline-version: 0
+    table: flyway_bot_schema_history
 
   threads:
     virtual:

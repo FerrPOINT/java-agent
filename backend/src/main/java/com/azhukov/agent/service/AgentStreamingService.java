@@ -103,11 +103,24 @@ public class AgentStreamingService {
     private void runAgenticLoop(ChatRequest request, SseEmitter emitter) {
         ThinkScrubber scrubber = new ThinkScrubber();
 
-        // Resolve or create session
-        boolean isNew = request.sessionId() == null;
-        Session session = isNew
-            ? createSession("user-1", "openai-compatible", "")
-            : loadSession(request.sessionId());
+        // Resolve or create session — if sessionId is provided but not found in backend DB,
+        // create a new session (the bot may have a sessionId from its own bot_sessions table
+        // which is separate from backend's sessions table).
+        boolean isNew;
+        Session session;
+        if (request.sessionId() == null) {
+            isNew = true;
+            session = createSession("user-1", "openai-compatible", properties.getModel().getModelName());
+        } else {
+            try {
+                isNew = false;
+                session = loadSession(request.sessionId());
+            } catch (IllegalArgumentException e) {
+                log.warn("Session {} not found in backend, creating new session", request.sessionId());
+                isNew = true;
+                session = createSession("user-1", "openai-compatible", properties.getModel().getModelName());
+            }
+        }
 
         // Build messages with full session context (system + history + user)
         List<Message> turnMessages = new ArrayList<>();
@@ -115,7 +128,7 @@ public class AgentStreamingService {
 
         // Load existing conversation history for this session
         if (!isNew) {
-            List<Message> history = loadHistory(request.sessionId());
+            List<Message> history = loadHistory(session.id());
             turnMessages.addAll(history);
         }
 
@@ -182,7 +195,7 @@ public class AgentStreamingService {
                     @Override
                     public void onError(Throwable error) {
                         send(emitter, new StreamEvent("error", null, null, error.getMessage()));
-                        emitter.completeWithError(error);
+                        safeCompleteWithError(emitter, error);
                     }
                 });
 
@@ -197,7 +210,7 @@ public class AgentStreamingService {
             } catch (Exception e) {
                 log.error("Model call failed during streaming", e);
                 send(emitter, new StreamEvent("error", null, null, "Model call failed: " + e.getMessage()));
-                emitter.completeWithError(e);
+                safeCompleteWithError(emitter, e);
                 return;
             }
 
@@ -399,12 +412,22 @@ public class AgentStreamingService {
             e.getModelProvider(), e.getModelName(), null, java.util.Map.of());
     }
 
+    private void safeCompleteWithError(SseEmitter emitter, Throwable error) {
+        try {
+            emitter.completeWithError(error);
+        } catch (IllegalStateException e) {
+            // Emitter already completed — ignore
+        }
+    }
+
     private void send(SseEmitter emitter, StreamEvent event) {
         try {
             emitter.send(SseEmitter.event()
                 .id(UUID.randomUUID().toString())
                 .name(event.type())
                 .data(objectMapper.writeValueAsString(event)));
+        } catch (IllegalStateException e) {
+            // Emitter already completed — ignore, don't log
         } catch (IOException e) {
             log.warn("Failed to send SSE event: {}", e.getMessage());
         }

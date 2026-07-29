@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -164,11 +165,12 @@ class LangChain4jModelClientExtraTest {
             return null;
         }).when(streamingChatModel).doChat(any(ChatRequest.class), any());
 
-        client.stream(List.of(Message.user("hi")), List.of(), new StreamingResponseHandler() {
+        assertThatThrownBy(() -> client.stream(List.of(Message.user("hi")), List.of(), new StreamingResponseHandler() {
             @Override public void onToken(String token) { }
             @Override public void onComplete() { }
             @Override public void onError(Throwable error) { errors.add(error); }
-        });
+        })).isInstanceOf(RuntimeException.class)
+          .hasMessageContaining("stream broke");
 
         assertThat(errors).hasSize(1);
         assertThat(errors.get(0).getMessage()).isEqualTo("stream broke");

@@ -15,6 +15,7 @@ import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
@@ -86,7 +87,10 @@ public class LangChain4jModelClient implements ModelClient {
 
         ChatRequest request = ChatRequest.builder()
             .messages(chatMessages)
-            .toolSpecifications(specs)
+            .parameters(OpenAiChatRequestParameters.builder()
+                .modelName(properties.getModel().getModelName())
+                .toolSpecifications(specs)
+                .build())
             .build();
 
         log.debug("Sending {} messages to model {}", chatMessages.size(), request);
@@ -128,8 +132,15 @@ public class LangChain4jModelClient implements ModelClient {
 
         ChatRequest request = ChatRequest.builder()
             .messages(chatMessages)
-            .toolSpecifications(specs)
+            .parameters(OpenAiChatRequestParameters.builder()
+                .modelName(properties.getModel().getModelName())
+                .toolSpecifications(specs)
+                .build())
             .build();
+
+        // OpenAiStreamingChatModel.doChat() is async — block until streaming completes
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicReference<Throwable> errorRef = new java.util.concurrent.atomic.AtomicReference<>();
 
         streamingChatModel.doChat(request, new StreamingChatResponseHandler() {
             private final StringBuilder content = new StringBuilder();
@@ -142,26 +153,47 @@ public class LangChain4jModelClient implements ModelClient {
 
             @Override
             public void onCompleteResponse(dev.langchain4j.model.chat.response.ChatResponse completeResponse) {
-                if (completeResponse.aiMessage().hasToolExecutionRequests()) {
-                    List<ToolCall> calls = completeResponse.aiMessage().toolExecutionRequests().stream()
-                        .map(r -> new ToolCall(r.id(), r.name(), r.arguments()))
-                        .collect(Collectors.toList());
-                    handler.onToolCalls(calls);
-                } else if (content.isEmpty() && completeResponse.aiMessage().text() != null) {
-                    handler.onToken(completeResponse.aiMessage().text());
+                try {
+                    if (completeResponse.aiMessage().hasToolExecutionRequests()) {
+                        List<ToolCall> calls = completeResponse.aiMessage().toolExecutionRequests().stream()
+                            .map(r -> new ToolCall(r.id(), r.name(), r.arguments()))
+                            .collect(Collectors.toList());
+                        handler.onToolCalls(calls);
+                    } else if (content.isEmpty() && completeResponse.aiMessage().text() != null) {
+                        handler.onToken(completeResponse.aiMessage().text());
+                    }
+                    handler.onComplete();
+                } finally {
+                    latch.countDown();
                 }
-                handler.onComplete();
             }
 
             @Override
             public void onError(Throwable error) {
-                ErrorClassifier.ErrorType errorType = errorClassifier != null
-                    ? errorClassifier.classify(error instanceof Exception e ? e : new RuntimeException(error))
-                    : ErrorClassifier.ErrorType.RETRYABLE;
-                log.warn("Model stream() error — errorType={}: {}", errorType, error.getMessage());
-                handler.onError(error);
+                try {
+                    ErrorClassifier.ErrorType errorType = errorClassifier != null
+                        ? errorClassifier.classify(error instanceof Exception e ? e : new RuntimeException(error))
+                        : ErrorClassifier.ErrorType.RETRYABLE;
+                    log.warn("Model stream() error — errorType={}: {}", errorType, error.getMessage());
+                    errorRef.set(error);
+                    handler.onError(error);
+                } finally {
+                    latch.countDown();
+                }
             }
         });
+
+        // Block until streaming completes or errors
+        try {
+            latch.await(properties.getModel().getTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Model stream() interrupted");
+            handler.onError(e);
+        }
+        if (errorRef.get() != null) {
+            throw new RuntimeException("Model call failed: " + errorRef.get().getMessage(), errorRef.get());
+        }
     }
 
     @Override
@@ -177,6 +209,9 @@ public class LangChain4jModelClient implements ModelClient {
         );
         ChatRequest request = ChatRequest.builder()
             .messages(List.of(message))
+            .parameters(OpenAiChatRequestParameters.builder()
+                .modelName(properties.getModel().getModelName())
+                .build())
             .build();
         dev.langchain4j.model.chat.response.ChatResponse response = chatModel.chat(request);
         persistUsage(response);

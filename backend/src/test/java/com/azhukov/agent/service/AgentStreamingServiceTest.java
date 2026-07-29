@@ -46,6 +46,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AgentStreamingServiceTest {
@@ -251,6 +252,36 @@ class AgentStreamingServiceTest {
 
         assertThat(emitter.events).hasSizeGreaterThanOrEqualTo(1);
         assertThat(emitter.error.get()).isNotNull().hasMessage("model exploded");
+    }
+
+    @Test
+    void streamTurnCreatesNewSessionWhenSessionIdNotFoundInBackend() throws Exception {
+        UUID unknownSessionId = UUID.fromString("99999999-9999-9999-9999-999999999999");
+        ChatRequest request = new ChatRequest(unknownSessionId, USER_MESSAGE, null, 10_000L);
+
+        // sessionRepository.findById returns empty for this UUID (not mocked → default empty Optional)
+        when(sessionRepository.findById(unknownSessionId)).thenReturn(Optional.empty());
+        // messageRepository returns empty for any UUID (default mock returns null, need explicit stub)
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+            .thenReturn(List.of());
+        // sessionRepository.save must return the entity (default mock returns null)
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        CollectingEmitter emitter = new CollectingEmitter(500L);
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(2);
+            handler.onToken("created");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        assertThat(emitter.error.get()).isNull();
+        assertThat(emitter.completed.get()).isTrue();
+        // Verify a new session was saved
+        verify(sessionRepository).save(any(SessionEntity.class));
     }
 
     @Test

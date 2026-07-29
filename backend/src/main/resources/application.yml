@@ -55,7 +55,6 @@ agent:
     max-retries: ${AGENT_MODEL_MAX_RETRIES:3}
     max-tokens: ${AGENT_MODEL_MAX_TOKENS:4096}
     temperature: ${AGENT_MODEL_TEMPERATURE:0.7}
-    headers: {}
   
   # ─── Auxiliary model ───
   auxiliary:

@@ -74,6 +74,9 @@ class AgentRuntimeServiceTest {
         usageTracker = mock(UsageTracker.class);
         turnUsageCollector = mock(TurnUsageCollector.class);
         properties = mock(AgentProperties.class);
+        AgentProperties.ModelProperties modelProps = mock(AgentProperties.ModelProperties.class);
+        when(modelProps.getModelName()).thenReturn(MODEL_NAME);
+        when(properties.getModel()).thenReturn(modelProps);
 
         agentRuntimeService = new AgentRuntimeService(
             agentRuntime,
@@ -224,16 +227,25 @@ class AgentRuntimeServiceTest {
     }
 
     @Test
-    void throwsExceptionWhenSessionIdUnknown() {
+    void createsNewSessionWhenSessionIdNotFoundInBackend() {
         ChatRequest request = new ChatRequest(UNKNOWN_SESSION_ID, USER_MESSAGE, null, null);
         when(sessionRepository.findById(UNKNOWN_SESSION_ID)).thenReturn(Optional.empty());
+        SessionEntity savedEntity = newSessionEntity(SESSION_ID, USER_ID, "New chat");
+        when(sessionRepository.save(any(SessionEntity.class))).thenReturn(savedEntity);
 
-        assertThatThrownBy(() -> agentRuntimeService.runTurn(request))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("Session not found: " + UNKNOWN_SESSION_ID);
+        TurnResult result = new TurnResult(
+            List.of(Message.user(USER_MESSAGE), Message.assistant(ASSISTANT_REPLY, 1)),
+            true,
+            null
+        );
+        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE))).thenReturn(result);
 
-        verify(agentRuntime, never()).runTurn(any(), any());
-        verify(messageRepository, never()).save(any());
+        ChatResponseDto response = agentRuntimeService.runTurn(request);
+
+        assertThat(response.sessionId()).isEqualTo(SESSION_ID);
+        assertThat(response.content()).isEqualTo(ASSISTANT_REPLY);
+        verify(sessionRepository).save(any(SessionEntity.class));
+        verify(agentRuntime).runTurn(any(Session.class), eq(USER_MESSAGE));
     }
 
     private SessionEntity newSessionEntity(UUID id, String userId, String title) {

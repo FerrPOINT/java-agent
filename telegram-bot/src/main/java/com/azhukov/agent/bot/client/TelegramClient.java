@@ -276,6 +276,7 @@ public class TelegramClient {
         try {
             TelegramResponse response = restClient.post()
                 .uri("/bot{token}/{method}", botToken, method)
+                .accept(MediaType.APPLICATION_JSON)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(params)
                 .retrieve()

@@ -75,7 +75,6 @@ services:
       BOT_ALLOWED_USER_IDS: ${BOT_ALLOWED_USER_IDS:-}
       BOT_ALLOWED_USERNAMES: ${BOT_ALLOWED_USERNAMES:-}
       BOT_ALLOW_BY_DEFAULT: ${BOT_ALLOW_BY_DEFAULT:-true}
-      BOT_MODE: ${BOT_MODE:-polling}
     ports:
       - "18092:18092"
 
