@@ -114,9 +114,9 @@ Keep the interface but not the full sandbox runtime:
 
 `agent-paperclip-adapter/` contains adapter patterns. Study for how external tools/APIs are wrapped; use as a template for Java plugin adapters.
 
-## 9. NousFlash Agents
+## 9. Flash Agents
 
-`nousflash-agents/` is experimental. Review for advanced patterns (multi-agent, reflection, learning graph) but do not port for the prototype.
+`flash-agents/` is experimental. Review for advanced patterns (multi-agent, reflection, learning graph) but do not port for the prototype.
 
 ## 10. wterm
 

@@ -189,7 +189,7 @@ registry.register(
 
 | Tool name | File | Python handler / schema | Argument schema (key fields) | Return type | Side effects | Java package | Decision |
 |-----------|------|------------------------|------------------------------|-------------|--------------|--------------|----------|
-| `image_gen` | `image_generation_tool.py` | `IMAGE_GEN_SCHEMA`, `image_gen_tool` | `prompt`, `model`, `aspect_ratio`, etc. | JSON image URL/path | calls FAL/Nous image API | `com.azhukov.agent.tools.media.ImageGenerationTool` | **defer** |
+| `image_gen` | `image_generation_tool.py` | `IMAGE_GEN_SCHEMA`, `image_gen_tool` | `prompt`, `model`, `aspect_ratio`, etc. | JSON image URL/path | calls FAL image API | `com.azhukov.agent.tools.media.ImageGenerationTool` | **defer** |
 | `video_gen` | `video_generation_tool.py` | `VIDEO_GEN_SCHEMA` | `prompt`, `model`, `aspect_ratio`, etc. | JSON video URL/path | calls FAL video API | `com.azhukov.agent.tools.media.VideoGenerationTool` | **skip** |
 | `tts` | `tts_tool.py` | `TTS_SCHEMA`, `tts_tool` | `text`, `voice`, `speed`, `model` | JSON audio path/URL | calls TTS API | `com.azhukov.agent.tools.media.TtsTool` | **skip** |
 | `transcribe` | `transcription_tools.py` | `TRANSCRIBE_SCHEMA` | `audio_url`/`audio_path`, `language` | JSON transcript | calls Whisper API | `com.azhukov.agent.tools.media.TranscriptionTool` | **skip** |
@@ -203,7 +203,7 @@ registry.register(
 | `qrcode` | `qrcode_tool.py` | QR code generation | `text` | image | generates QR image | `com.azhukov.agent.tools.media.QrCodeTool` | **skip** |
 | `clarify` | `clarify_tool.py` | asks user for clarification | `question` | JSON answer | blocks for user input | `com.azhukov.agent.tools.interaction.ClarifyTool` | **defer** |
 | `mixture_of_agents` | `mixture_of_agents_tool.py` | parallel model ensemble | `prompt`, `models`, `aggregator` | JSON result | multiple LLM calls | `com.azhukov.agent.tools.delegate.MixtureOfAgentsTool` | **skip** |
-| `managed_tool_gateway` | `managed_tool_gateway.py` | routes to managed Nous tool gateway | — | — | HTTP proxy to tool backend | `com.azhukov.agent.tools.gateway.ManagedToolGateway` | **skip** |
+| `managed_tool_gateway` | `managed_tool_gateway.py` | routes to managed tool gateway | — | — | HTTP proxy to tool backend | `com.azhukov.agent.tools.gateway.ManagedToolGateway` | **skip** |
 | `tool_backend_helpers` | `tool_backend_helpers.py` | resolves FAL/managed gateway config | — | — | reads env/config | `com.azhukov.agent.tools.gateway.ToolBackendConfig` | **defer** |
 
 **MVP notes:**

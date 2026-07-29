@@ -2,6 +2,8 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.StreamEvent;
+import com.azhukov.agent.api.dto.UsageDto;
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.model.Message;
@@ -29,6 +31,8 @@ public class AgentStreamingService {
     private final ToolRegistry toolRegistry;
     private final PromptBuilder promptBuilder;
     private final ObjectMapper objectMapper;
+    private final UsageTracker usageTracker;
+    private final AgentProperties properties;
 
     public SseEmitter streamTurn(ChatRequest request) {
         return streamTurn(request, new SseEmitter(request.timeoutMs() != null ? request.timeoutMs() : 600_000L));
@@ -64,6 +68,7 @@ public class AgentStreamingService {
                         if (remaining != null && !remaining.isEmpty()) {
                             send(emitter, new StreamEvent("token", remaining, null, null));
                         }
+                        sendMetadataEvent(emitter, request.sessionId());
                         send(emitter, new StreamEvent("done", null, null, null));
                         emitter.complete();
                     }
@@ -83,6 +88,30 @@ public class AgentStreamingService {
         });
 
         return emitter;
+    }
+
+    private void sendMetadataEvent(SseEmitter emitter, UUID sessionId) {
+        try {
+            String modelUsed = resolveModelUsed();
+            int contextLength = properties.getContext().getMaxTokens();
+            int contextTokens = estimateContextTokens(sessionId);
+            send(emitter, new StreamEvent("metadata", null, null, null, modelUsed, contextTokens, contextLength));
+        } catch (Exception e) {
+            log.debug("Failed to send stream metadata event: {}", e.getMessage());
+        }
+    }
+
+    private String resolveModelUsed() {
+        String modelName = properties.getModel().getModelName();
+        return (modelName != null && !modelName.isBlank()) ? modelName : "unknown";
+    }
+
+    private int estimateContextTokens(UUID sessionId) {
+        if (sessionId == null) {
+            return 0;
+        }
+        UsageDto usage = usageTracker.getSessionUsage(sessionId);
+        return usage != null ? usage.tokenEstimate() : 0;
     }
 
     private void send(SseEmitter emitter, StreamEvent event) {

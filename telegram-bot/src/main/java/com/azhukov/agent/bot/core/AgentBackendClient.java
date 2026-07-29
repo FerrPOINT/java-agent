@@ -44,13 +44,28 @@ public class AgentBackendClient {
     }
 
     /**
+     * Result of a chat call, including the response content and runtime metadata
+     * for the footer (model, context usage, working directory).
+     */
+    public record ChatResult(
+        String content,
+        String modelUsed,
+        Integer contextTokens,
+        Integer contextLength
+    ) {
+        public ChatResult(String content) {
+            this(content, null, null, null);
+        }
+    }
+
+    /**
      * Send a chat message to the agent backend.
      *
      * @param message   the user's message text
      * @param sessionId the session UUID (may be null — omitted from body when null)
-     * @return the response text from the agent, or an error message on failure
+     * @return the response content and metadata from the agent, or an error message on failure
      */
-    public String chat(String message, String sessionId) {
+    public ChatResult chat(String message, String sessionId) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("message", message);
         if (sessionId != null && !sessionId.isBlank()) {
@@ -67,7 +82,7 @@ public class AgentBackendClient {
 
             if (responseJson == null || responseJson.isBlank()) {
                 log.warn("Backend chat returned empty response for sessionId={}", sessionId);
-                return "Error: empty response from backend";
+                return new ChatResult("Error: empty response from backend");
             }
 
             JsonNode node = objectMapper.readTree(responseJson);
@@ -79,7 +94,7 @@ public class AgentBackendClient {
             }
             if (responseField == null || responseField.isNull()) {
                 log.warn("Backend chat response missing 'response' or 'content' field: {}", responseJson);
-                return "Error: missing 'response' field in backend reply";
+                return new ChatResult("Error: missing 'response' field in backend reply");
             }
             responseText = responseField.asText();
 
@@ -89,10 +104,14 @@ public class AgentBackendClient {
                 responseText = responseText + "\n\n💾 Self-improvement review: Memory updated";
             }
 
-            return responseText;
+            String modelUsed = node.has("modelUsed") ? node.get("modelUsed").asText(null) : null;
+            Integer contextTokens = node.has("contextTokens") ? node.get("contextTokens").asInt(0) : null;
+            Integer contextLength = node.has("contextLength") ? node.get("contextLength").asInt(0) : null;
+
+            return new ChatResult(responseText, modelUsed, contextTokens, contextLength);
         } catch (Exception e) {
             log.error("Backend chat failed for sessionId={}: {}", sessionId, e.getMessage());
-            return "Error: " + e.getMessage();
+            return new ChatResult("Error: " + e.getMessage());
         }
     }
 
@@ -275,19 +294,23 @@ public class AgentBackendClient {
      * @param message        the user's message text
      * @param sessionId      the session UUID (may be null)
      * @param tokenConsumer  called for each token received
-     * @param onComplete     called when the stream completes successfully
+     * @param onComplete     called when the stream completes successfully with the final metadata
      * @param onError        called with an exception if the stream fails
+     * @return the accumulated response content and metadata (also delivered via onComplete callback)
      */
-    public void chatStream(String message,
-                           String sessionId,
-                           Consumer<String> tokenConsumer,
-                           Runnable onComplete,
-                           Consumer<Throwable> onError) {
+    public ChatResult chatStream(String message,
+                                 String sessionId,
+                                 Consumer<String> tokenConsumer,
+                                 Consumer<ChatResult> onComplete,
+                                 Consumer<Throwable> onError) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("message", message);
         if (sessionId != null && !sessionId.isBlank()) {
             body.put("sessionId", sessionId);
         }
+
+        StringBuilder accumulated = new StringBuilder();
+        ChatResult[] metadataHolder = new ChatResult[1];
 
         try {
             InputStream is = restClient.post()
@@ -300,13 +323,12 @@ public class AgentBackendClient {
 
             if (is == null) {
                 onError.accept(new IllegalStateException("Backend stream returned null input stream"));
-                return;
+                return new ChatResult("");
             }
 
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(is, StandardCharsets.UTF_8))) {
                 String line;
-                StringBuilder dataBuilder = new StringBuilder();
                 while ((line = reader.readLine()) != null) {
                     if (line.startsWith("data:")) {
                         String data = line.substring(5).strip();
@@ -318,15 +340,25 @@ public class AgentBackendClient {
                                     String errorMsg = event.path("error").asText(
                                             event.path("message").asText("Unknown stream error"));
                                     onError.accept(new RuntimeException(errorMsg));
-                                    return;
+                                    return new ChatResult(accumulated.toString());
+                                }
+                                if ("metadata".equalsIgnoreCase(type)) {
+                                    metadataHolder[0] = extractMetadata(event);
+                                    continue;
                                 }
                                 JsonNode tokenNode = event.get("token");
                                 if (tokenNode != null && !tokenNode.isNull()) {
-                                    tokenConsumer.accept(tokenNode.asText());
+                                    String token = tokenNode.asText();
+                                    accumulated.append(token);
+                                    tokenConsumer.accept(token);
                                 }
                                 if ("done".equalsIgnoreCase(type)) {
-                                    onComplete.run();
-                                    return;
+                                    ChatResult result = metadataHolder[0] != null
+                                        ? new ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
+                                            metadataHolder[0].contextTokens(), metadataHolder[0].contextLength())
+                                        : new ChatResult(accumulated.toString());
+                                    onComplete.accept(result);
+                                    return result;
                                 }
                             } catch (Exception parseEx) {
                                 log.warn("Failed to parse SSE data line: {}", data, parseEx);
@@ -335,12 +367,25 @@ public class AgentBackendClient {
                     }
                 }
                 // Stream ended without explicit "done" event
-                onComplete.run();
+                ChatResult result = metadataHolder[0] != null
+                    ? new ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
+                        metadataHolder[0].contextTokens(), metadataHolder[0].contextLength())
+                    : new ChatResult(accumulated.toString());
+                onComplete.accept(result);
+                return result;
             }
         } catch (Exception e) {
             log.error("chatStream failed for sessionId={}: {}", sessionId, e.getMessage());
             onError.accept(e);
+            return new ChatResult(accumulated.toString());
         }
+    }
+
+    private ChatResult extractMetadata(JsonNode event) {
+        String modelUsed = event.has("modelUsed") ? event.get("modelUsed").asText(null) : null;
+        Integer contextTokens = event.has("contextTokens") ? event.get("contextTokens").asInt(0) : null;
+        Integer contextLength = event.has("contextLength") ? event.get("contextLength").asInt(0) : null;
+        return new ChatResult(null, modelUsed, contextTokens, contextLength);
     }
 
     // ------------------------------------------------------------------

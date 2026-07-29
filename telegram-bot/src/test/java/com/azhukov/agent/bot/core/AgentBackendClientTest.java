@@ -54,9 +54,22 @@ class AgentBackendClientTest {
         when(responseSpec.body(String.class))
             .thenReturn("{\"response\":\"Hello from agent\"}");
 
-        String result = client.chat("Hello", "session-123");
+        AgentBackendClient.ChatResult result = client.chat("Hello", "session-123");
 
-        assertThat(result).isEqualTo("Hello from agent");
+        assertThat(result.content()).isEqualTo("Hello from agent");
+    }
+
+    @Test
+    void chat_extractsMetadataFields() {
+        when(responseSpec.body(String.class))
+            .thenReturn("{\"response\":\"Hello\",\"modelUsed\":\"kimi-k2.6\",\"contextTokens\":5000,\"contextLength\":20000}");
+
+        AgentBackendClient.ChatResult result = client.chat("Hello", "session-123");
+
+        assertThat(result.content()).isEqualTo("Hello");
+        assertThat(result.modelUsed()).isEqualTo("kimi-k2.6");
+        assertThat(result.contextTokens()).isEqualTo(5000);
+        assertThat(result.contextLength()).isEqualTo(20000);
     }
 
     @Test
@@ -64,9 +77,9 @@ class AgentBackendClientTest {
         when(responseSpec.body(String.class))
             .thenReturn("{\"response\":\"OK\"}");
 
-        String result = client.chat("Hello", null);
+        AgentBackendClient.ChatResult result = client.chat("Hello", null);
 
-        assertThat(result).isEqualTo("OK");
+        assertThat(result.content()).isEqualTo("OK");
         // Verify the body map was passed (we can't easily inspect the map, but verify the call chain)
         verify(postSpec).body(any(Object.class));
     }
@@ -76,9 +89,9 @@ class AgentBackendClientTest {
         when(responseSpec.body(String.class))
             .thenReturn("{\"response\":\"OK\"}");
 
-        String result = client.chat("Hello", "  ");
+        AgentBackendClient.ChatResult result = client.chat("Hello", "  ");
 
-        assertThat(result).isEqualTo("OK");
+        assertThat(result.content()).isEqualTo("OK");
     }
 
     @Test
@@ -86,9 +99,9 @@ class AgentBackendClientTest {
         when(responseSpec.body(String.class))
             .thenReturn("{\"response\":\"Result\",\"metadata\":\"extra\",\"tokens\":42}");
 
-        String result = client.chat("test", "s1");
+        AgentBackendClient.ChatResult result = client.chat("test", "s1");
 
-        assertThat(result).isEqualTo("Result");
+        assertThat(result.content()).isEqualTo("Result");
     }
 
     // ─── chat error handling ───────────────────────────────────────
@@ -98,10 +111,10 @@ class AgentBackendClientTest {
         when(responseSpec.body(String.class))
             .thenThrow(new RuntimeException("Connection refused"));
 
-        String result = client.chat("Hello", "s1");
+        AgentBackendClient.ChatResult result = client.chat("Hello", "s1");
 
-        assertThat(result).startsWith("Error:");
-        assertThat(result).contains("Connection refused");
+        assertThat(result.content()).startsWith("Error:");
+        assertThat(result.content()).contains("Connection refused");
     }
 
     @Test
@@ -109,10 +122,10 @@ class AgentBackendClientTest {
         when(responseSpec.body(String.class))
             .thenReturn("");
 
-        String result = client.chat("Hello", "s1");
+        AgentBackendClient.ChatResult result = client.chat("Hello", "s1");
 
-        assertThat(result).startsWith("Error:");
-        assertThat(result).contains("empty response");
+        assertThat(result.content()).startsWith("Error:");
+        assertThat(result.content()).contains("empty response");
     }
 
     @Test
@@ -120,10 +133,10 @@ class AgentBackendClientTest {
         when(responseSpec.body(String.class))
             .thenReturn(null);
 
-        String result = client.chat("Hello", "s1");
+        AgentBackendClient.ChatResult result = client.chat("Hello", "s1");
 
-        assertThat(result).startsWith("Error:");
-        assertThat(result).contains("empty response");
+        assertThat(result.content()).startsWith("Error:");
+        assertThat(result.content()).contains("empty response");
     }
 
     @Test
@@ -131,10 +144,10 @@ class AgentBackendClientTest {
         when(responseSpec.body(String.class))
             .thenReturn("{\"other\":\"value\"}");
 
-        String result = client.chat("Hello", "s1");
+        AgentBackendClient.ChatResult result = client.chat("Hello", "s1");
 
-        assertThat(result).startsWith("Error:");
-        assertThat(result).contains("missing 'response' field");
+        assertThat(result.content()).startsWith("Error:");
+        assertThat(result.content()).contains("missing 'response' field");
     }
 
     @Test
@@ -142,10 +155,10 @@ class AgentBackendClientTest {
         when(responseSpec.body(String.class))
             .thenReturn("{\"response\":null}");
 
-        String result = client.chat("Hello", "s1");
+        AgentBackendClient.ChatResult result = client.chat("Hello", "s1");
 
-        assertThat(result).startsWith("Error:");
-        assertThat(result).contains("missing 'response' field");
+        assertThat(result.content()).startsWith("Error:");
+        assertThat(result.content()).contains("missing 'response' field");
     }
 
     @Test
@@ -153,9 +166,9 @@ class AgentBackendClientTest {
         when(responseSpec.body(String.class))
             .thenReturn("not valid json{{{");
 
-        String result = client.chat("Hello", "s1");
+        AgentBackendClient.ChatResult result = client.chat("Hello", "s1");
 
-        assertThat(result).startsWith("Error:");
+        assertThat(result.content()).startsWith("Error:");
     }
 
     // ─── health check ──────────────────────────────────────────────

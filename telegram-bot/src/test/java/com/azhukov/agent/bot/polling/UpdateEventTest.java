@@ -51,7 +51,7 @@ class UpdateEventTest {
     @Test
     void fromCommandWithBotMention() {
         Map<String, Object> update = baseUpdate(103L);
-        update.put("message", messageWithText(123L, 456L, "jdoe", "/help@wartz_java_bot"));
+        update.put("message", messageWithText(123L, 456L, "jdoe", "/help@java_agent_bot"));
         UpdateEvent event = UpdateEvent.from(update);
 
         assertThat(event.commandName()).isEqualTo("help");

@@ -52,6 +52,19 @@ public class TypingManager {
         }
     }
 
+    /**
+     * Send one final typing action immediately before stopping. Keeps the indicator
+     * alive up until the moment the final message is about to be delivered.
+     */
+    public void flushTyping(long chatId) {
+        if (!activeTyping.containsKey(chatId)) return;
+        try {
+            telegramClient.sendTyping(chatId);
+        } catch (Exception e) {
+            log.debug("Final typing refresh failed for chat {}: {}", chatId, e.getMessage());
+        }
+    }
+
     public boolean isTyping(long chatId) {
         return activeTyping.containsKey(chatId);
     }

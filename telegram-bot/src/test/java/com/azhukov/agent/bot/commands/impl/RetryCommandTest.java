@@ -28,7 +28,7 @@ class RetryCommandTest {
         assistantMsg.setRole("assistant");
         assistantMsg.setContent("Hi there");
         when(repo.findBySessionIdOrderByCreatedAtDesc(sessionId)).thenReturn(List.of(assistantMsg, userMsg));
-        when(client.chat("Hello", sessionId.toString())).thenReturn("Hi again");
+        when(client.chat("Hello", sessionId.toString())).thenReturn(new AgentBackendClient.ChatResult("Hi again"));
         var cmd = new RetryCommand(repo, client);
         BotSessionEntity session = newSession(sessionId);
         UpdateEvent event = makeEvent("");

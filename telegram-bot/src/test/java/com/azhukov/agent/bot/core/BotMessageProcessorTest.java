@@ -25,6 +25,7 @@ import java.util.function.Consumer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import org.mockito.InOrder;
 
 class BotMessageProcessorTest {
 
@@ -47,6 +48,7 @@ class BotMessageProcessorTest {
     private SlashAccessPolicy slashAccessPolicy;
     private com.azhukov.agent.bot.formatting.ResponseFilter responseFilter;
     private BotMessageProcessor processor;
+    private AgentBackendClient.ChatResult lastStreamResult;
 
     @BeforeEach
     void setUp() {
@@ -112,18 +114,37 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     private void mockChatStream(String... tokens) {
+        lastStreamResult = new AgentBackendClient.ChatResult(String.join("", tokens), "kimi-k2.6", 1000, 20000);
         doAnswer(inv -> {
             Consumer<String> tokenConsumer = inv.getArgument(2);
-            Runnable onComplete = inv.getArgument(3);
+            Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(3);
             for (String token : tokens) {
                 tokenConsumer.accept(token);
             }
-            onComplete.run();
-            return null;
+            onComplete.accept(lastStreamResult);
+            return lastStreamResult;
         }).when(backendClient).chatStream(anyString(), anyString(), any(), any(), any());
     }
 
     // ─── Text message flow ─────────────────────────────────────────
+
+    @Test
+    void accept_textMessage_footerReceivesRealMetadata() {
+        UpdateEvent event = textEvent(1L, "Hello agent");
+        mockChatStream("Hello human!");
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString()))
+            .thenReturn("\n\nmodel: kim-k2.6 | ctx: 1000/20000 5% | cwd: /tmp");
+
+        processor.accept(event);
+
+        verify(runtimeFooter).format("kimi-k2.6", 1000, 20000, properties.getWorkingDirectory());
+        verify(telegramClient).sendMessage(eq(event.chatId()),
+            contains("1000/20000"),
+            anyString(), isNull(), isNull());
+        verify(telegramClient).sendMessage(eq(event.chatId()),
+            contains("/tmp"),
+            anyString(), isNull(), isNull());
+    }
 
     @Test
     void accept_textMessage_callsBackendAndSendsResponse() {
@@ -132,12 +153,13 @@ class BotMessageProcessorTest {
 
         processor.accept(event);
 
-        verify(typingManager).startTyping(event.chatId());
-        verify(backendClient).chatStream(eq("Hello agent"), anyString(), any(), any(), any());
-        verify(typingManager).stopTyping(event.chatId());
+        InOrder inOrder = inOrder(typingManager, telegramClient);
+        inOrder.verify(typingManager).startTyping(event.chatId());
+        inOrder.verify(typingManager).flushTyping(event.chatId());
+        inOrder.verify(telegramClient).sendMessage(eq(event.chatId()), anyString(), eq("MarkdownV2"), isNull(), isNull());
+        inOrder.verify(typingManager).stopTyping(event.chatId());
         verify(busyHandler).markBusy(event.chatId());
         verify(busyHandler).markFree(event.chatId());
-        verify(telegramClient).sendMessage(eq(event.chatId()), anyString(), eq("MarkdownV2"), isNull(), isNull());
     }
 
     @Test
@@ -323,12 +345,14 @@ class BotMessageProcessorTest {
             throw new RuntimeException("Backend down");
         }).when(backendClient).chatStream(anyString(), anyString(), any(), any(), any());
         when(backendClient.chat(anyString(), anyString()))
-            .thenThrow(new RuntimeException("Backend down"));
+            .thenReturn(new AgentBackendClient.ChatResult("fallback error"));
 
         processor.accept(event);
 
-        verify(telegramClient).sendMessage(eq(event.chatId()), contains("Error"));
-        verify(typingManager).stopTyping(event.chatId());
+        InOrder inOrder = inOrder(typingManager, telegramClient);
+        inOrder.verify(typingManager).flushTyping(event.chatId());
+        inOrder.verify(telegramClient).sendMessage(eq(event.chatId()), contains("Error contacting the agent backend"), anyString(), isNull(), isNull());
+        inOrder.verify(typingManager).stopTyping(event.chatId());
         verify(busyHandler).markFree(event.chatId());
     }
 
@@ -342,7 +366,7 @@ class BotMessageProcessorTest {
 
         processor.accept(event);
 
-        verify(telegramClient).sendMessage(eq(event.chatId()), contains("Error"));
+        verify(telegramClient).sendMessage(eq(event.chatId()), contains("Error executing command"), anyString(), isNull(), isNull());
     }
 
     @Test

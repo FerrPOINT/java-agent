@@ -9,6 +9,13 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.api.dto.UsageDto;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import com.azhukov.agent.api.dto.UsageDto;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import com.azhukov.agent.config.AgentProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,6 +49,8 @@ class AgentStreamingServiceTest {
     private ToolRegistry toolRegistry;
     private PromptBuilder promptBuilder;
     private ObjectMapper objectMapper;
+    private UsageTracker usageTracker;
+    private AgentProperties properties;
     private AgentStreamingService streamingService;
 
     @BeforeEach
@@ -50,13 +59,18 @@ class AgentStreamingServiceTest {
         toolRegistry = mock(ToolRegistry.class);
         promptBuilder = mock(PromptBuilder.class);
         objectMapper = new ObjectMapper();
+        usageTracker = mock(UsageTracker.class);
+        properties = new AgentProperties();
+        properties.getContext().setMaxTokens(8192);
+        properties.getModel().setModelName("moonshotai/kimi-k2.6");
 
         when(promptBuilder.buildSystemMessage(null)).thenReturn(Message.system(SYSTEM_PROMPT));
         when(toolRegistry.getDefinitions()).thenReturn(List.of(
             new ToolDefinition("weather", "Get weather", Map.of())
         ));
 
-        streamingService = new AgentStreamingService(modelClient, toolRegistry, promptBuilder, objectMapper);
+        streamingService = new AgentStreamingService(modelClient, toolRegistry, promptBuilder,
+            objectMapper, usageTracker, properties);
     }
 
     @Test
@@ -78,12 +92,13 @@ class AgentStreamingServiceTest {
         emitter.awaitDone();
 
         assertThat(emitter.error.get()).isNull();
-        assertThat(emitter.events).hasSize(3);
+        assertThat(emitter.events).hasSize(4);
         assertThat(emitter.events.get(0).name).isEqualTo("token");
         assertThat(deserialize(emitter.events.get(0).data, StreamEvent.class).token()).isEqualTo("Hello");
         assertThat(emitter.events.get(1).name).isEqualTo("token");
         assertThat(deserialize(emitter.events.get(1).data, StreamEvent.class).token()).isEqualTo(" world");
-        assertThat(emitter.events.get(2).name).isEqualTo("done");
+        assertThat(emitter.events.get(2).name).isEqualTo("metadata");
+        assertThat(emitter.events.get(3).name).isEqualTo("done");
         assertThat(emitter.completed.get()).isTrue();
     }
 
@@ -104,13 +119,13 @@ class AgentStreamingServiceTest {
         emitter.awaitDone();
 
         assertThat(emitter.error.get()).isNull();
-        List<SseEvent> events = emitter.events;
-        assertThat(events).hasSize(2);
-        assertThat(events.get(0).name).isEqualTo("tool_calls");
-        StreamEvent streamEvent = deserialize(events.get(0).data, StreamEvent.class);
+        assertThat(emitter.events).hasSize(3);
+        assertThat(emitter.events.get(0).name).isEqualTo("tool_calls");
+        StreamEvent streamEvent = deserialize(emitter.events.get(0).data, StreamEvent.class);
         assertThat(streamEvent.toolCalls()).hasSize(1);
         assertThat(streamEvent.toolCalls().get(0).name()).isEqualTo("weather");
-        assertThat(events.get(1).name).isEqualTo("done");
+        assertThat(emitter.events.get(1).name).isEqualTo("metadata");
+        assertThat(emitter.events.get(2).name).isEqualTo("done");
         assertThat(emitter.completed.get()).isTrue();
     }
 
@@ -130,10 +145,37 @@ class AgentStreamingServiceTest {
         emitter.awaitDone();
 
         assertThat(emitter.error.get()).isNull();
-        assertThat(emitter.events).hasSize(2);
+        assertThat(emitter.events).hasSize(3);
         assertThat(emitter.events.get(0).name).isEqualTo("token");
-        assertThat(emitter.events.get(1).name).isEqualTo("done");
+        assertThat(emitter.events.get(1).name).isEqualTo("metadata");
+        assertThat(emitter.events.get(2).name).isEqualTo("done");
         assertThat(emitter.completed.get()).isTrue();
+    }
+
+    @Test
+    void streamTurnEmitsMetadataFromUsageTracker() throws Exception {
+        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+
+        CollectingEmitter emitter = new CollectingEmitter(500L);
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(2);
+            handler.onToken("Hi");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        when(usageTracker.getSessionUsage(eq(SESSION_ID)))
+            .thenReturn(new UsageDto(SESSION_ID, 3, 1500));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        List<SseEvent> events = emitter.events;
+        assertThat(events).hasSize(3);
+        StreamEvent metadata = deserialize(events.get(1).data, StreamEvent.class);
+        assertThat(metadata.type()).isEqualTo("metadata");
+        assertThat(metadata.contextTokens()).isEqualTo(1500);
+        assertThat(metadata.contextLength()).isEqualTo(8192);
+        assertThat(metadata.modelUsed()).isEqualTo("moonshotai/kimi-k2.6");
     }
 
     @Test
@@ -166,6 +208,7 @@ class AgentStreamingServiceTest {
         doAnswer(invocation -> {
             capturedTimeout.set(getEmitterTimeout(streamingService.streamTurn(request)));
             StreamingResponseHandler handler = invocation.getArgument(2);
+            handler.onToken("x");
             handler.onComplete();
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
@@ -186,6 +229,7 @@ class AgentStreamingServiceTest {
         doAnswer(invocation -> {
             capturedTimeout.set(getEmitterTimeout(streamingService.streamTurn(request)));
             StreamingResponseHandler handler = invocation.getArgument(2);
+            handler.onToken("x");
             handler.onComplete();
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));

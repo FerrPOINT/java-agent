@@ -11,6 +11,7 @@ import com.azhukov.agent.api.dto.PendingMemoryDto;
 import com.azhukov.agent.api.dto.RejectMemoryRequest;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.UsageDto;
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.WriteApprovalGate;
@@ -51,6 +52,9 @@ public class AgentRuntimeService {
     private final ConversationCompressor conversationCompressor;
     private final UsageTracker usageTracker;
     private final TurnUsageCollector turnUsageCollector;
+    private final AgentProperties properties;
+
+    private static final String UNKNOWN_MODEL = "unknown";
 
     @Transactional
     public ChatResponseDto runDelegate(ChatRequest request) {
@@ -61,12 +65,7 @@ public class AgentRuntimeService {
         TurnResult result = agentRuntime.runTurn(session, request.message());
         persistMessages(session.id(), result.messages());
 
-        return new ChatResponseDto(
-            session.id(),
-            result.finalText(),
-            null,
-            result.completed()
-        );
+        return buildResponse(session, result, false);
     }
 
     @Transactional
@@ -84,16 +83,41 @@ public class AgentRuntimeService {
         int[] usage = turnUsageCollector.getAndClear();
         if (usage != null && usage.length == 2) {
             usageTracker.recordTurn(session.id(), session.userId(),
-                session.modelName() != null ? session.modelName() : "unknown",
+                session.modelName() != null ? session.modelName() : UNKNOWN_MODEL,
                 usage[0], usage[1]);
         }
 
+        return buildResponse(session, result, false);
+    }
+
+    private ChatResponseDto buildResponse(Session session, TurnResult result, boolean memoryUpdated) {
+        String modelUsed = resolveModelUsed(session);
+        UsageDto usage = usageTracker.getSessionUsage(session.id());
+        int contextLength = properties != null && properties.getContext() != null
+            ? properties.getContext().getMaxTokens()
+            : 0;
         return new ChatResponseDto(
             session.id(),
             result.finalText(),
             null,
-            result.completed()
+            result.completed(),
+            memoryUpdated,
+            modelUsed,
+            usage != null ? usage.tokenEstimate() : null,
+            contextLength
         );
+    }
+
+    private String resolveModelUsed(Session session) {
+        if (session.modelName() != null && !session.modelName().isBlank()) {
+            return session.modelName();
+        }
+        if (properties != null && properties.getModel() != null
+            && properties.getModel().getModelName() != null
+            && !properties.getModel().getModelName().isBlank()) {
+            return properties.getModel().getModelName();
+        }
+        return UNKNOWN_MODEL;
     }
 
     @Transactional(readOnly = true)

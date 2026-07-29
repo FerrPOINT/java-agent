@@ -8,5 +8,12 @@ public record StreamEvent(
     String type,
     String token,
     List<ToolCall> toolCalls,
-    String error
-) {}
+    String error,
+    String modelUsed,
+    Integer contextTokens,
+    Integer contextLength
+) {
+    public StreamEvent(String type, String token, List<ToolCall> toolCalls, String error) {
+        this(type, token, toolCalls, error, null, null, null);
+    }
+}

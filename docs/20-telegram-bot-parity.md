@@ -82,7 +82,7 @@
 |---|---------|----------|-------|
 | A3.1 | `/voice` | Voice mode: on/off/tts/channel/leave/status. **Out of scope** — заглушка "Voice not supported" | `VoiceCommandTest` (1) |
 | A3.2 | `/rollback` | Filesystem checkpoints: list/restore. Требует integration с terminal tool | `RollbackCommandTest` (1) |
-| A3.3 | `/credits` | Nous credit balance. **Out of scope** — заглушка | `CreditsCommandTest` (1) |
+| A3.3 | `/credits` | Credit balance. **Out of scope** — заглушка | `CreditsCommandTest` (1) |
 | A3.4 | `/update` | Update the original agent. Для Java — `System.exit(1)` + restart script | `UpdateCommandTest` (1) |
 | A3.5 | `/debug` | Upload debug report (логи + config summary). Отправляет файл | `DebugCommandTest` (2) |
 | A3.6 | `/codex_runtime` | **Out of scope** — Codex-specific. Заглушка | `CodexRuntimeCommandTest` (1) |

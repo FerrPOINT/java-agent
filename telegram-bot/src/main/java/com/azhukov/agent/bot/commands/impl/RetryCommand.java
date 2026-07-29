@@ -38,8 +38,8 @@ public class RetryCommand implements CommandHandler {
         for (BotMessageEntity msg : messages) {
             if ("user".equalsIgnoreCase(msg.getRole()) && msg.getContent() != null && !msg.getContent().isBlank()) {
                 String lastMessage = msg.getContent();
-                String response = backendClient.chat(lastMessage, session.getId().toString());
-                return response;
+                AgentBackendClient.ChatResult result = backendClient.chat(lastMessage, session.getId().toString());
+                return result.content();
             }
         }
         return "No previous user message found to retry.";

@@ -8,10 +8,18 @@ public record ChatResponseDto(
     String content,
     List<String> toolCalls,
     boolean completed,
-    boolean memoryUpdated
+    boolean memoryUpdated,
+    String modelUsed,
+    Integer contextTokens,
+    Integer contextLength
 ) {
-    // Backward-compatible constructor (memoryUpdated defaults to false)
+    // Backward-compatible constructor (memoryUpdated defaults to false, no metadata)
     public ChatResponseDto(UUID sessionId, String content, List<String> toolCalls, boolean completed) {
-        this(sessionId, content, toolCalls, completed, false);
+        this(sessionId, content, toolCalls, completed, false, null, null, null);
+    }
+
+    public ChatResponseDto(UUID sessionId, String content, List<String> toolCalls, boolean completed,
+                           boolean memoryUpdated) {
+        this(sessionId, content, toolCalls, completed, memoryUpdated, null, null, null);
     }
 }

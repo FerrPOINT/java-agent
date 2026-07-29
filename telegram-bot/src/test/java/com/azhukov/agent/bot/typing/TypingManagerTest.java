@@ -59,4 +59,23 @@ class TypingManagerTest {
         manager.stopTyping(123L);
         assertThat(manager.isTyping(123L)).isFalse();
     }
+
+    @Test
+    void flushTyping_sendsOneFinalActionBeforeStopping() {
+        when(client.sendTyping(anyLong())).thenReturn(true);
+        manager.startTyping(123L);
+        clearInvocations(client);
+
+        manager.flushTyping(123L);
+        verify(client).sendTyping(123L);
+
+        manager.stopTyping(123L);
+    }
+
+    @Test
+    void flushTyping_whenNotActive_doesNothing() {
+        when(client.sendTyping(anyLong())).thenReturn(true);
+        manager.flushTyping(123L);
+        verifyNoInteractions(client);
+    }
 }

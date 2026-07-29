@@ -2,6 +2,7 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.WriteApprovalGate;
@@ -58,6 +59,7 @@ class AgentRuntimeServiceTest {
     private UsageTracker usageTracker;
     private TurnUsageCollector turnUsageCollector;
     private AgentRuntimeService agentRuntimeService;
+    private AgentProperties properties;
 
     @BeforeEach
     void setUp() {
@@ -71,6 +73,7 @@ class AgentRuntimeServiceTest {
         conversationCompressor = mock(ConversationCompressor.class);
         usageTracker = mock(UsageTracker.class);
         turnUsageCollector = mock(TurnUsageCollector.class);
+        properties = mock(AgentProperties.class);
 
         agentRuntimeService = new AgentRuntimeService(
             agentRuntime,
@@ -82,7 +85,8 @@ class AgentRuntimeServiceTest {
             writeApprovalGate,
             conversationCompressor,
             usageTracker,
-            turnUsageCollector
+            turnUsageCollector,
+            properties
         );
     }
 
