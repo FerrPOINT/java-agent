@@ -65,7 +65,7 @@ class AgentControllerTest {
         objectMapper = new ObjectMapper();
 
         AgentController controller = new AgentController(agentRuntimeService, streamingService,
-            memoryProvider, skillManager, checkpointManager, ttsService, transcriptionService);
+            memoryProvider, skillManager, checkpointManager, ttsService, transcriptionService, new com.azhukov.agent.core.agent.SteerBuffer());
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

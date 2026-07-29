@@ -110,7 +110,8 @@ class AgentRuntimeFullScenariosTest {
             turnStateManager,
             null,
             null,
-            null
+            null,
+            new SteerBuffer()
         );
     }
 
@@ -132,7 +133,8 @@ class AgentRuntimeFullScenariosTest {
             turnStateManager,
             null,
             null,
-            null
+            null,
+            new SteerBuffer()
         );
     }
 

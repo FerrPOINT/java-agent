@@ -26,7 +26,8 @@ public class CommandRegistry {
         Map.entry("tasks", "agents"),
         Map.entry("codex-runtime", "codex_runtime"),
         Map.entry("reload-mcp", "reload_mcp"),
-        Map.entry("reload-skills", "reload_skills")
+        Map.entry("reload-skills", "reload_skills"),
+        Map.entry("suggest", "suggestions")
     );
 
     public CommandRegistry(List<CommandHandler> handlers) {

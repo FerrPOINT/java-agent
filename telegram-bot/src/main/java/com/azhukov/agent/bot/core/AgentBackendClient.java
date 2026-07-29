@@ -717,6 +717,102 @@ public class AgentBackendClient {
     // Memory management (Stage 7.2)
     // ------------------------------------------------------------------
 
+    /**
+     * Inject a steer note into the active turn for the given session.
+     * The note is appended to the next tool result's content.
+     *
+     * @param sessionId the session UUID
+     * @param text      the steer text
+     * @return true if accepted by the backend
+     */
+    public boolean steer(String sessionId, String text) {
+        if (sessionId == null || sessionId.isBlank() || text == null || text.isBlank()) {
+            return false;
+        }
+        try {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("sessionId", sessionId);
+            body.put("text", text);
+            String result = restClient.post()
+                .uri("/api/v1/agent/steer")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            return result != null && result.contains("\"accepted\":true");
+        } catch (Exception e) {
+            log.error("steer failed for sessionId={}: {}", sessionId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * List all cron jobs from the backend.
+     */
+    public JsonNode listCronJobs() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/cron")
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) {
+                return objectMapper.createArrayNode();
+            }
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("listCronJobs failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    /**
+     * Delete (dismiss) a cron job by ID.
+     */
+    public boolean deleteCronJob(String id) {
+        try {
+            restClient.delete()
+                .uri("/api/v1/agent/cron/{id}", id)
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("deleteCronJob failed for id={}: {}", id, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Pause a cron job by ID.
+     */
+    public boolean pauseCronJob(String id) {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/cron/{id}/pause", id)
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("pauseCronJob failed for id={}: {}", id, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Resume a cron job by ID.
+     */
+    public boolean resumeCronJob(String id) {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/cron/{id}/resume", id)
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("resumeCronJob failed for id={}: {}", id, e.getMessage());
+            return false;
+        }
+    }
+
     public JsonNode listPendingMemory(String userId) {
         try {
             String json = restClient.get()

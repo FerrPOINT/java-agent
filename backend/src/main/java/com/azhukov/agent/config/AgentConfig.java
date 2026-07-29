@@ -135,10 +135,11 @@ public class AgentConfig {
                                      TurnStateManager turnStateManager,
                                      BackgroundReviewService backgroundReviewService,
                                      InterruptToken interruptToken,
-                                     TurnFinalizer turnFinalizer) {
+                                     TurnFinalizer turnFinalizer,
+                                     com.azhukov.agent.core.agent.SteerBuffer steerBuffer) {
         return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
             memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
-            inputSanitizer, guardrail, turnStateManager, backgroundReviewService, interruptToken, turnFinalizer);
+            inputSanitizer, guardrail, turnStateManager, backgroundReviewService, interruptToken, turnFinalizer, steerBuffer);
     }
 
     @Bean

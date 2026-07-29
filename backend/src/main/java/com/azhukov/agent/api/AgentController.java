@@ -16,6 +16,7 @@ import com.azhukov.agent.api.dto.PendingMemoryDto;
 import com.azhukov.agent.api.dto.RejectMemoryRequest;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.UsageDto;
+import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.service.AgentRuntimeService;
@@ -53,6 +54,7 @@ public class AgentController {
     private final CheckpointManager checkpointManager;
     private final TtsService ttsService;
     private final TranscriptionService transcriptionService;
+    private final SteerBuffer steerBuffer;
 
     @PostMapping("/agent/chat")
     public ChatResponseDto chat(@Valid @RequestBody ChatRequest request) {
@@ -232,6 +234,19 @@ public class AgentController {
     }
 
     public record CheckpointRequest(String description) {}
+
+    // ── Steer endpoint ──
+
+    @PostMapping("/agent/steer")
+    public java.util.Map<String, Object> steer(@RequestBody SteerRequest request) {
+        if (request.sessionId() == null || request.text() == null || request.text().isBlank()) {
+            return java.util.Map.of("accepted", false, "reason", "sessionId and text are required");
+        }
+        boolean accepted = steerBuffer.steer(request.sessionId(), request.text());
+        return java.util.Map.of("accepted", accepted, "sessionId", request.sessionId().toString());
+    }
+
+    public record SteerRequest(UUID sessionId, String text) {}
 
     // ── TTS endpoint ──
 

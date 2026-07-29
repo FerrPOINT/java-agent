@@ -56,6 +56,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final BackgroundReviewService backgroundReviewService;
     private final InterruptToken interruptToken;
     private final TurnFinalizer turnFinalizer;
+    private final SteerBuffer steerBuffer;
 
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {
@@ -162,6 +163,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     call.name(), duration, result.success(),
                     result.content() != null ? result.content().length() : 0, result.error());
                 toolResults.add(Message.toolResult(call.id(), formatResult(result), currentTurnIndex));
+            }
+            // Inject pending steer note into the last tool result
+            String steerText = steerBuffer.consume(session.id());
+            if (steerText != null && !toolResults.isEmpty()) {
+                Message lastToolResult = toolResults.get(toolResults.size() - 1);
+                String enhancedContent = lastToolResult.content() + "\n\n[STEER NOTE] " + steerText;
+                toolResults.set(toolResults.size() - 1,
+                    Message.toolResult(lastToolResult.toolCallId(), enhancedContent, currentTurnIndex));
+                log.info("Injected steer note for session {}", session.id());
             }
             turnMessages.addAll(toolResults);
             turnIndex++;

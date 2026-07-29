@@ -3,6 +3,7 @@ package com.azhukov.agent.tools.browser;
 import com.azhukov.agent.client.NoOpModelClient;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.DefaultAgentRuntime;
+import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.budget.DefaultIterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.context.ContextEngine;
@@ -97,7 +98,7 @@ class BrowserAgentRuntimeLiveTest {
             new DefaultIterationBudget(properties),
             new com.azhukov.agent.security.MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
-            new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null
+            new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer()
         );
 
         var result = runtime.runTurn(session, "navigate and screenshot");

@@ -126,14 +126,17 @@ public class BotLifecycleManager {
             // Phase 3: 10 new commands (A3.1-A3.10)
             command("voice", "Voice mode (not supported)"),
             command("rollback", "Filesystem rollback (not available)"),
-            command("credits", "Credit balance (not available)"),
+            command("credits", "Show usage balance"),
             command("update", "Show update instructions"),
             command("debug", "Show debug information"),
             command("codex_runtime", "Codex runtime (not supported)"),
-            command("personality", "Personality system (not available)"),
+            command("personality", "Set or show agent personality"),
             command("kanban", "Kanban integration (not available)"),
             command("goal", "Goal management (not available)"),
-            command("subgoal", "Subgoal management (not available)")
+            command("subgoal", "Subgoal management (not available)"),
+            command("steer", "Inject a mid-run note to the agent"),
+            command("curator", "Skill maintenance: status, run, reload"),
+            command("suggestions", "Review suggested automations")
         );
     }
 
