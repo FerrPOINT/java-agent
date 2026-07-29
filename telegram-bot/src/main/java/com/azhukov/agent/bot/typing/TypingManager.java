@@ -1,6 +1,7 @@
 package com.azhukov.agent.bot.typing;
 
 import com.azhukov.agent.bot.client.TelegramClient;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -31,6 +32,7 @@ public class TypingManager {
     }
 
     public void startTyping(long chatId) {
+        // Atomic: putIfAbsent prevents duplicate tasks from concurrent calls
         if (activeTyping.containsKey(chatId)) return;
         telegramClient.sendTyping(chatId);
         ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(() -> {
@@ -40,7 +42,11 @@ public class TypingManager {
                 log.debug("Typing refresh failed for chat {}: {}", chatId, e.getMessage());
             }
         }, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
-        activeTyping.put(chatId, future);
+        ScheduledFuture<?> existing = activeTyping.putIfAbsent(chatId, future);
+        if (existing != null) {
+            // Another thread already started typing — cancel the duplicate
+            future.cancel(false);
+        }
         log.debug("Started typing for chat {}", chatId);
     }
 
@@ -72,5 +78,12 @@ public class TypingManager {
     public void stopAll() {
         activeTyping.values().forEach(f -> f.cancel(false));
         activeTyping.clear();
+    }
+
+    @PreDestroy
+    public void destroy() {
+        stopAll();
+        scheduler.shutdownNow();
+        log.info("TypingManager shutdown complete");
     }
 }
