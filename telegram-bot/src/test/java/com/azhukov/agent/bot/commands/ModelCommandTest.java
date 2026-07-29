@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.commands;
 
+import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.commands.impl.ModelCommand;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.keyboard.InlineKeyboardBuilder;
@@ -10,10 +11,12 @@ import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
 import org.junit.jupiter.api.Test;
 
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
@@ -22,7 +25,10 @@ import static org.mockito.Mockito.when;
 class ModelCommandTest {
 
     private ModelCommand makeCommand(BotSessionStore store, BotProperties properties) {
-        return new ModelCommand(store, properties, mock(ModelKeyboardBuilder.class), mock(InlineKeyboardBuilder.class));
+        TelegramClient tc = mock(TelegramClient.class);
+        when(tc.sendMessage(anyLong(), any())).thenReturn(Optional.of(1L));
+        when(tc.sendMessage(anyLong(), any(), any(), any(), any())).thenReturn(Optional.of(1L));
+        return new ModelCommand(store, properties, mock(ModelKeyboardBuilder.class), mock(InlineKeyboardBuilder.class), tc);
     }
 
     @Test

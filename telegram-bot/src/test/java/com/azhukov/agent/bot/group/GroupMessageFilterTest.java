@@ -178,7 +178,7 @@ class GroupMessageFilterTest {
         properties.getGroup().setExclusiveBotMentions(true);
         UpdateEvent event = new UpdateEvent(1L, UpdateEvent.Type.TEXT, -100123L, 200L,
             "jdoe", null, "Check this @mybot", null, null,
-            null, null, null, false, null, null, 0L, null);
+            null, null, null, false, null, null, 0L, null, 0L);
         assertThat(filter.shouldProcess(event)).isTrue();
     }
 
@@ -187,6 +187,6 @@ class GroupMessageFilterTest {
     private UpdateEvent makeEvent(long chatId, String text, long messageId) {
         return new UpdateEvent(1L, UpdateEvent.Type.TEXT, chatId, 200L,
             "jdoe", text, null, null, null,
-            null, null, null, false, null, null, messageId, null);
+            null, null, null, false, null, null, messageId, null, 0L);
     }
 }

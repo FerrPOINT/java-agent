@@ -112,7 +112,8 @@ public class TextBatchDebouncer {
             first.username(), mergedText, first.caption(), first.fileId(),
             first.fileType(), first.callbackQueryId(), first.callbackData(),
             first.replyToText(), first.isCommand(), first.commandName(),
-            first.commandArgs(), first.messageId(), first.mediaGroupId()
+            first.commandArgs(), first.messageId(), first.mediaGroupId(),
+            first.messageThreadId()
         );
 
         log.debug("Dispatching batched text for chat {}: {} chars", chatId, mergedText.length());

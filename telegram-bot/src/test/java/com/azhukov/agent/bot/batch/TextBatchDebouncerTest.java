@@ -74,7 +74,7 @@ class TextBatchDebouncerTest {
     void offer_nonTextEvent_returnsFalse() {
         UpdateEvent photoEvent = new UpdateEvent(1L, UpdateEvent.Type.PHOTO, 100L, 200L,
             "jdoe", null, "caption", "fileId", "photo",
-            null, null, null, false, null, null, 0L, null);
+            null, null, null, false, null, null, 0L, null, 0L);
 
         boolean buffered = debouncer.offer(photoEvent);
         assertThat(buffered).isFalse();
@@ -104,6 +104,6 @@ class TextBatchDebouncerTest {
     private UpdateEvent makeTextEvent(long updateId, long chatId, String text) {
         return new UpdateEvent(updateId, UpdateEvent.Type.TEXT, chatId, 200L,
             "jdoe", text, null, null, null,
-            null, null, null, false, null, null, 0L, null);
+            null, null, null, false, null, null, 0L, null, 0L);
     }
 }

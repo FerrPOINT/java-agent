@@ -90,6 +90,6 @@ class PhotoBatchDebouncerTest {
                                         String mediaGroupId, String caption) {
         return new UpdateEvent(updateId, UpdateEvent.Type.PHOTO, chatId, 200L,
             "jdoe", null, caption, fileId, "photo",
-            null, null, null, false, null, null, 0L, mediaGroupId);
+            null, null, null, false, null, null, 0L, mediaGroupId, 0L);
     }
 }

@@ -97,7 +97,8 @@ public class PhotoBatchDebouncer {
             first.username(), first.text(), mergedCaption, mergedFileIds,
             first.fileType(), first.callbackQueryId(), first.callbackData(),
             first.replyToText(), first.isCommand(), first.commandName(),
-            first.commandArgs(), first.messageId(), first.mediaGroupId()
+            first.commandArgs(), first.messageId(), first.mediaGroupId(),
+            first.messageThreadId()
         );
 
         log.debug("Dispatching photo group {}: {} photos", mediaGroupId, group.events.size());

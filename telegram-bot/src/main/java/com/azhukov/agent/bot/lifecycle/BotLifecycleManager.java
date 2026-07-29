@@ -30,6 +30,7 @@ public class BotLifecycleManager {
 
         if (properties.isRegisterCommands()) {
             registerCommands();
+            registerCommandsForForums();
         }
 
         if ("webhook".equals(properties.getMode())) {
@@ -39,7 +40,50 @@ public class BotLifecycleManager {
     }
 
     private void registerCommands() {
-        List<Map<String, String>> commands = List.of(
+        List<Map<String, String>> commands = buildCommandList();
+
+        boolean ok = telegramClient.setMyCommands(commands);
+        if (ok) {
+            log.info("Registered {} bot commands (global scope)", commands.size());
+        } else {
+            log.warn("Failed to register bot commands");
+        }
+    }
+
+    /**
+     * B2.7: Register commands scoped to specific forum chats.
+     * Uses {@code bot.group.allowed-topics} config — each entry is a numeric chat_id
+     * of a forum where the bot should register commands with {@code BotCommandScopeChat}.
+     */
+    private void registerCommandsForForums() {
+        List<String> allowedTopics = properties.getGroup().getAllowedTopics();
+        if (allowedTopics == null || allowedTopics.isEmpty()) {
+            return;
+        }
+
+        List<Map<String, String>> commands = buildCommandList();
+        int registered = 0;
+        for (String topic : allowedTopics) {
+            try {
+                long chatId = Long.parseLong(topic.trim());
+                boolean ok = telegramClient.setMyCommandsForChat(chatId, commands);
+                if (ok) {
+                    registered++;
+                    log.info("Registered {} commands for forum chat {}", commands.size(), chatId);
+                } else {
+                    log.warn("Failed to register commands for forum chat {}", chatId);
+                }
+            } catch (NumberFormatException e) {
+                log.warn("Skipping forum command registration: '{}' is not a valid chat_id", topic);
+            }
+        }
+        if (registered > 0) {
+            log.info("Registered commands for {} forum chat(s)", registered);
+        }
+    }
+
+    private List<Map<String, String>> buildCommandList() {
+        return List.of(
             command("new", "Start new session (clear context)"),
             command("reset", "Full reset: new session, new history"),
             command("status", "Show current status"),
@@ -91,13 +135,6 @@ public class BotLifecycleManager {
             command("goal", "Goal management (not available)"),
             command("subgoal", "Subgoal management (not available)")
         );
-
-        boolean ok = telegramClient.setMyCommands(commands);
-        if (ok) {
-            log.info("Registered {} bot commands", commands.size());
-        } else {
-            log.warn("Failed to register bot commands");
-        }
     }
 
     private void setupWebhook() {

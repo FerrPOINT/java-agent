@@ -1,124 +1,116 @@
 package com.azhukov.agent.bot.keyboard;
 
 import com.azhukov.agent.bot.client.TelegramClient;
+import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
+import com.azhukov.agent.bot.session.BotSessionEntity;
+import com.azhukov.agent.bot.session.BotSessionStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class CallbackQueryHandlerTest {
 
     private TelegramClient client;
+    private ProviderKeyboardBuilder providerKeyboardBuilder;
+    private ModelKeyboardBuilder modelKeyboardBuilder;
+    private InlineKeyboardBuilder inlineKeyboardBuilder;
+    private BotSessionStore sessionStore;
+    private BotProperties properties;
     private CallbackQueryHandler handler;
 
     @BeforeEach
     void setUp() {
         client = mock(TelegramClient.class);
-        handler = new CallbackQueryHandler(client);
+        providerKeyboardBuilder = new ProviderKeyboardBuilder();
+        modelKeyboardBuilder = new ModelKeyboardBuilder();
+        inlineKeyboardBuilder = new InlineKeyboardBuilder(new com.fasterxml.jackson.databind.ObjectMapper());
+        sessionStore = mock(BotSessionStore.class);
+        properties = new BotProperties();
+        handler = new CallbackQueryHandler(client, providerKeyboardBuilder, modelKeyboardBuilder,
+            inlineKeyboardBuilder, sessionStore, properties);
+
+        when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean())).thenReturn(true);
+        when(client.sendMessage(anyLong(), any())).thenReturn(Optional.of(1L));
+        when(client.sendMessage(anyLong(), any(), any(), any(), any())).thenReturn(Optional.of(1L));
     }
 
     @Test
-    void handle_modelCallback_returnsModelResponse() {
-        UpdateEvent event = callbackEvent("cq-1", "model:gpt-4");
-        when(client.answerCallbackQuery("cq-1", "Model switched to gpt-4", false))
-            .thenReturn(true);
+    void handle_mpCallback_setsModel() {
+        BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
 
+        UpdateEvent event = callbackEvent("cq-1", "mp:kimi-k2");
         String result = handler.handle(event);
 
-        assertThat(result).isEqualTo("Model switched to gpt-4");
-        verify(client).answerCallbackQuery("cq-1", "Model switched to gpt-4", false);
+        assertThat(result).isEqualTo("Model set to: kimi-k2");
+        verify(sessionStore).setModelOverride(session.getId(), "kimi-k2");
     }
 
     @Test
-    void handle_modeCallback_returnsModeResponse() {
-        UpdateEvent event = callbackEvent("cq-2", "mode:verbose");
-        when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
+    void handle_mpCallback_noSession_returnsError() {
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(null);
 
+        UpdateEvent event = callbackEvent("cq-2", "mp:gpt-4");
         String result = handler.handle(event);
 
-        assertThat(result).isEqualTo("Mode set to verbose");
+        assertThat(result).isEqualTo("No active session");
     }
 
     @Test
-    void handle_confirmCallback_returnsConfirmResponse() {
-        UpdateEvent event = callbackEvent("cq-3", "confirm:delete");
-        when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
+    void handle_ppCallback_sendsProviderModels() {
+        properties.getAvailableModels().add("kimi-k2");
+        properties.getAvailableModels().add("gpt-4");
 
+        UpdateEvent event = callbackEvent("cq-3", "pp:openai");
         String result = handler.handle(event);
 
-        assertThat(result).isEqualTo("Confirmed: delete");
+        // Should send a message with inline keyboard
+        verify(client).sendMessage(eq(123L), eq("Models for openai:"), any(), any(), any());
     }
 
     @Test
-    void handle_cancelCallback_returnsCancelResponse() {
-        UpdateEvent event = callbackEvent("cq-4", "cancel:noop");
-        when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
-
+    void handle_ppBack_sendsProviderList() {
+        UpdateEvent event = callbackEvent("cq-4", "pp:back");
         String result = handler.handle(event);
 
-        assertThat(result).isEqualTo("Action cancelled");
+        verify(client).sendMessage(eq(123L), eq("Select a provider:"), any(), any(), any());
     }
 
     @Test
-    void handle_selectCallback_returnsSelectResponse() {
-        UpdateEvent event = callbackEvent("cq-5", "select:option3");
-        when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
+    void handle_mppCallback_sendsModelPage() {
+        properties.getAvailableModels().add("model1");
+        properties.getAvailableModels().add("model2");
 
+        UpdateEvent event = callbackEvent("cq-5", "mpp:0");
         String result = handler.handle(event);
 
-        assertThat(result).isEqualTo("Selected: option3");
+        verify(client).sendMessage(eq(123L), contains("Select a model"), any(), any(), any());
     }
 
     @Test
     void handle_unknownCommand_returnsUnknownAction() {
         UpdateEvent event = callbackEvent("cq-6", "unknown:foo");
-        when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
-
         String result = handler.handle(event);
 
         assertThat(result).isEqualTo("Unknown action: unknown");
     }
 
     @Test
-    void handle_noColon_treatsEntireDataAsCommand() {
-        UpdateEvent event = callbackEvent("cq-7", "cancel");
-        when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
-
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("Action cancelled");
-    }
-
-    @Test
-    void handle_nullCallbackData_answersUnknownAction() {
-        UpdateEvent event = callbackEvent("cq-8", null);
-        when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
-
+    void handle_nullCallbackData_returnsNull() {
+        UpdateEvent event = callbackEvent("cq-7", null);
         String result = handler.handle(event);
 
         assertThat(result).isNull();
-        verify(client).answerCallbackQuery("cq-8", "Unknown action", false);
-    }
-
-    @Test
-    void handle_blankCallbackData_answersUnknownAction() {
-        UpdateEvent event = callbackEvent("cq-9", "");
-        when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
-
-        String result = handler.handle(event);
-
-        assertThat(result).isNull();
-        verify(client).answerCallbackQuery("cq-9", "Unknown action", false);
+        verify(client).answerCallbackQuery("cq-7", "Unknown action", false);
     }
 
     @Test
@@ -139,39 +131,6 @@ class CallbackQueryHandlerTest {
 
         assertThat(result).isNull();
         verifyNoInteractions(client);
-    }
-
-    @Test
-    void handle_alwaysAnswersCallbackQuery() {
-        UpdateEvent event = callbackEvent("cq-10", "model:kimi-k2");
-        when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
-
-        handler.handle(event);
-
-        verify(client).answerCallbackQuery(eq("cq-10"), anyString(), eq(false));
-    }
-
-    @Test
-    void handle_emptyCommand_returnsUnknownCommand() {
-        UpdateEvent event = callbackEvent("cq-11", ":value");
-        when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
-
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("Unknown command");
-    }
-
-    @Test
-    void handle_emptyValue_stillWorks() {
-        UpdateEvent event = callbackEvent("cq-12", "model:");
-        when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
-
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("Model switched to ");
     }
 
     // ─── Helpers ──────────────────────────────────────────────────

@@ -24,7 +24,8 @@ public record UpdateEvent(
     String commandName,
     String commandArgs,
     long messageId,
-    String mediaGroupId
+    String mediaGroupId,
+    long messageThreadId
 ) {
 
     public enum Type {
@@ -38,7 +39,7 @@ public record UpdateEvent(
                        boolean isCommand, String commandName, String commandArgs) {
         this(updateId, type, chatId, userId, username, text, caption, fileId, fileType,
             callbackQueryId, callbackData, replyToText, isCommand, commandName, commandArgs,
-            0L, null);
+            0L, null, 0L);
     }
 
     @SuppressWarnings("unchecked")
@@ -120,6 +121,10 @@ public record UpdateEvent(
         String mediaGroupId = Optional.ofNullable(message.get("media_group_id"))
             .map(Object::toString).orElse(null);
 
+        // Forum topic thread ID (message_thread_id in Telegram API)
+        long threadId = message.get("message_thread_id") != null
+            ? ((Number) message.get("message_thread_id")).longValue() : 0L;
+
         // Check for media
         Type type = Type.UNKNOWN;
         String fileId = null;
@@ -172,6 +177,6 @@ public record UpdateEvent(
         return new UpdateEvent(updateId, type, chatId, userId,
             username != null ? username : "", text, caption, fileId, fileType,
             null, null, replyToText, isCommand, commandName, commandArgs,
-            msgId, mediaGroupId);
+            msgId, mediaGroupId, threadId);
     }
 }

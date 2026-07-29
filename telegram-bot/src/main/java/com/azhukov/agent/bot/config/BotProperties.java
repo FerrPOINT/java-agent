@@ -26,6 +26,7 @@ public class BotProperties {
     private int rateLimitPerSecond = 25;
     private String workingDirectory = System.getProperty("user.dir");
     private String defaultModel = "";
+    private final List<String> availableModels = new ArrayList<>();
     private String replyToMode = "first"; // off | all | first
     private String homeChatId = ""; // set by /set_home
     private boolean linkPreview = true; // B3.7: include link previews in sent messages
