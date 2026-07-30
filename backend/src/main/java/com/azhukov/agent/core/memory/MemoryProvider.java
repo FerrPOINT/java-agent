@@ -32,4 +32,40 @@ public interface MemoryProvider {
         String facts = read(userId, "memory");
         return Map.of("memory", facts, "user", "");
     }
+
+    // ── Turn lifecycle methods (backward-compatible defaults) ──
+
+    /**
+     * Called before each turn to prefetch relevant memories.
+     * Default implementation is a no-op.
+     *
+     * @param query     the user input for this turn (may be used for semantic search)
+     * @param sessionId the session identifier
+     */
+    default void prefetch(String query, String sessionId) {}
+
+    /**
+     * Called after a turn completes (success or error) to sync turn data.
+     * Default implementation is a no-op. Implementations should make this non-blocking.
+     *
+     * @param sessionId    the session identifier
+     * @param turnMessages the messages from the completed turn
+     */
+    default void syncTurn(String sessionId, List<com.azhukov.agent.core.model.Message> turnMessages) {}
+
+    /**
+     * Called when a session starts.
+     * Default implementation is a no-op.
+     *
+     * @param sessionId the session identifier
+     */
+    default void onSessionStart(String sessionId) {}
+
+    /**
+     * Called when a session ends.
+     * Default implementation is a no-op.
+     *
+     * @param sessionId the session identifier
+     */
+    default void onSessionEnd(String sessionId) {}
 }

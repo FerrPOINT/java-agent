@@ -30,7 +30,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void nonBlankToolNameIsAllowed() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         assertThat(guardrails.isToolAllowed("read_file")).isTrue();
         assertThat(guardrails.isToolAllowed("")).isFalse();
     }
@@ -40,7 +40,7 @@ class DefaultToolGuardrailsTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
         properties.getSecurity().setAlwaysRequireApprovalTools(List.of("write_file", "terminal"));
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         assertThat(guardrails.requiresApproval(new ToolCall("1", "write_file", "{}"))).isTrue();
         assertThat(guardrails.requiresApproval(new ToolCall("2", "read_file", "{}"))).isFalse();
     }
@@ -50,7 +50,7 @@ class DefaultToolGuardrailsTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(false);
         properties.getSecurity().setAlwaysRequireApprovalTools(List.of("write_file"));
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         assertThat(guardrails.requiresApproval(new ToolCall("1", "write_file", "{}"))).isFalse();
     }
 
@@ -58,7 +58,7 @@ class DefaultToolGuardrailsTest {
     void nullToolCallDoesNotRequireApproval() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         assertThat(guardrails.requiresApproval(null)).isFalse();
     }
 
@@ -67,21 +67,21 @@ class DefaultToolGuardrailsTest {
     @Test
     void nullToolName_isNotAllowed() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         assertThat(guardrails.isToolAllowed(null)).isFalse();
     }
 
     @Test
     void blankToolName_isNotAllowed() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         assertThat(guardrails.isToolAllowed("")).isFalse();
     }
 
     @Test
     void whitespaceOnlyToolName_isNotAllowed() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         assertThat(guardrails.isToolAllowed("   ")).isFalse();
         assertThat(guardrails.isToolAllowed("\t\n")).isFalse();
     }
@@ -89,7 +89,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void anyNonBlankToolNameIsAllowed_whenNoBlockedTools() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // With no blocked tools configured, any non-blank name is allowed
         assertThat(guardrails.isToolAllowed("exec")).isTrue();
@@ -103,7 +103,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void blockedTools_toolInBlockedList_isNotAllowed() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         guardrails.setBlockedTools(Set.of("exec", "eval", "system"));
 
         assertThat(guardrails.isToolAllowed("exec")).isFalse();
@@ -114,7 +114,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void blockedTools_toolNotInBlockedList_isAllowed() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         guardrails.setBlockedTools(Set.of("exec", "eval"));
 
         assertThat(guardrails.isToolAllowed("read_file")).isTrue();
@@ -124,7 +124,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void blockedTools_emptySet_allAllowed() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         guardrails.setBlockedTools(Set.of());
 
         assertThat(guardrails.isToolAllowed("exec")).isTrue();
@@ -134,7 +134,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void blockedTools_nullSet_allAllowed() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         guardrails.setBlockedTools(null);
 
         assertThat(guardrails.isToolAllowed("exec")).isTrue();
@@ -143,7 +143,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void getBlockedTools_returnsEmptyByDefault() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         assertThat(guardrails.getBlockedTools()).isEmpty();
     }
@@ -151,7 +151,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void getBlockedTools_returnsConfiguredSet() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         Set<String> blocked = Set.of("exec", "eval");
         guardrails.setBlockedTools(blocked);
 
@@ -163,7 +163,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void loopDetection_sameToolSameArgs_5calls_haltsWithNoProgress() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // Call same tool with same args 5 times → should halt
         for (int i = 0; i < 4; i++) {
@@ -180,7 +180,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void loopDetection_sameToolSameArgs_20calls_haltsAndBlocksTool() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // Even 20 identical calls — should halt after 5
         for (int i = 0; i < 20; i++) {
@@ -194,7 +194,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void loopDetection_repeatedFailures_3consecutive_haltsWithFailureLoop() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // 3 consecutive failures → halt
         guardrails.recordToolCall("failing_tool", "{}", false);
@@ -210,7 +210,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void loopDetection_idempotentNoProgress_5sameCalls_halts() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // read_file called 5 times on same path → no-progress loop detected
         for (int i = 0; i < 5; i++) {
@@ -222,7 +222,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void loopDetection_interfaceHasRecordAndHaltAndReset() {
         // Verify the interface now has recordToolCall, isHalted, and reset
-        ToolGuardrails guardrails = new DefaultToolGuardrails(new AgentProperties());
+        ToolGuardrails guardrails = new DefaultToolGuardrails(new AgentProperties(), new ApprovalQueue());
 
         assertThat(guardrails.isToolAllowed("any_tool")).isTrue();
         assertThat(guardrails.requiresApproval(null)).isFalse();
@@ -239,7 +239,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void reset_clearsHaltedState() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // Trigger halt via 5 identical calls
         for (int i = 0; i < 5; i++) {
@@ -256,7 +256,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void reset_clearsFailureCount() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // 3 consecutive failures → halt
         for (int i = 0; i < 3; i++) {
@@ -277,7 +277,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void reset_clearsIdenticalArgsCount() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // 4 identical calls — not yet halted
         for (int i = 0; i < 4; i++) {
@@ -300,7 +300,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void loopDetection_differentArgs_doesNotTriggerIdenticalArgsHalt() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // Same tool but different args each time — should not trigger identical-args halt
         for (int i = 0; i < 10; i++) {
@@ -314,7 +314,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void loopDetection_successResetsConsecutiveFailures() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // 2 failures with same args
         guardrails.recordToolCall("tool", "{\"v\":1}", false);
@@ -336,7 +336,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void halted_blocksAllTools() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // Trigger halt
         for (int i = 0; i < 5; i++) {
@@ -355,7 +355,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void recordToolCall_nullArgs_treatedAsEmptyString() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // null args should be treated as empty string, not cause NPE
         for (int i = 0; i < 5; i++) {
@@ -367,7 +367,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void recordToolCall_nullToolName_ignored() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // null tool name should be ignored, not cause NPE or tracking
         guardrails.recordToolCall(null, "{}", true);
@@ -381,7 +381,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void recordToolCall_blankToolName_ignored() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         guardrails.recordToolCall("", "{}", true);
         guardrails.recordToolCall("  ", "{}", true);
@@ -394,7 +394,7 @@ class DefaultToolGuardrailsTest {
     void requiresApproval_emptyApprovalList_alwaysFalse() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         assertThat(guardrails.requiresApproval(new ToolCall("1", "write_file", "{}"))).isFalse();
         assertThat(guardrails.requiresApproval(new ToolCall("2", "terminal", "{}"))).isFalse();
@@ -406,7 +406,7 @@ class DefaultToolGuardrailsTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
         properties.getSecurity().setAlwaysRequireApprovalTools(List.of("write_file"));
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         assertThat(guardrails.requiresApproval(new ToolCall("1", "write_file", "{}"))).isTrue();
     }
@@ -416,7 +416,7 @@ class DefaultToolGuardrailsTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
         properties.getSecurity().setAlwaysRequireApprovalTools(List.of("write_file"));
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         assertThat(guardrails.requiresApproval(new ToolCall("1", "read_file", "{}"))).isFalse();
         assertThat(guardrails.requiresApproval(new ToolCall("2", "delete_file", "{}"))).isFalse();
@@ -426,7 +426,7 @@ class DefaultToolGuardrailsTest {
     void requiresApproval_approvalsEnabledButNullList_noApproval() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         assertThat(guardrails.requiresApproval(new ToolCall("1", "any_tool", "{}"))).isFalse();
     }
@@ -436,7 +436,7 @@ class DefaultToolGuardrailsTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
         properties.getSecurity().setAlwaysRequireApprovalTools(List.of("write_file"));
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         assertThat(guardrails.requiresApproval(new ToolCall("1", "Write_File", "{}"))).isFalse();
         assertThat(guardrails.requiresApproval(new ToolCall("2", "WRITE_FILE", "{}"))).isFalse();
@@ -448,7 +448,7 @@ class DefaultToolGuardrailsTest {
         properties.getSecurity().setApprovalsEnabled(true);
         properties.getSecurity().setAlwaysRequireApprovalTools(
                 List.of("write_file", "terminal", "delete_file", "exec"));
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         assertThat(guardrails.requiresApproval(new ToolCall("1", "write_file", "{}"))).isTrue();
         assertThat(guardrails.requiresApproval(new ToolCall("2", "terminal", "{}"))).isTrue();
@@ -464,7 +464,7 @@ class DefaultToolGuardrailsTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(false);
         properties.getSecurity().setAlwaysRequireApprovalTools(List.of("write_file", "terminal"));
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         assertThat(guardrails.requiresApproval(new ToolCall("1", "write_file", "{}"))).isFalse();
         assertThat(guardrails.requiresApproval(new ToolCall("2", "terminal", "{}"))).isFalse();
@@ -475,7 +475,7 @@ class DefaultToolGuardrailsTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
         properties.getSecurity().setAlwaysRequireApprovalTools(List.of("write_file"));
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         assertThat(guardrails.requiresApproval(null)).isFalse();
     }
@@ -485,7 +485,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void isToolAllowed_isStateful_afterHalt_blocksAllTools() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // Before any recording, all tools allowed
         for (int i = 0; i < 10; i++) {
@@ -507,7 +507,7 @@ class DefaultToolGuardrailsTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
         properties.getSecurity().setAlwaysRequireApprovalTools(List.of("write_file"));
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         // requiresApproval is stateless — always returns same result regardless of call history
         for (int i = 0; i < 10; i++) {
@@ -523,7 +523,7 @@ class DefaultToolGuardrailsTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
         properties.getSecurity().setAlwaysRequireApprovalTools(List.of("write_file"));
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
 
         assertThat(guardrails.requiresApproval(new ToolCall("1", "write_file", "{\"path\":\"/etc/passwd\"}"))).isTrue();
         assertThat(guardrails.requiresApproval(new ToolCall("2", "write_file", "{\"path\":\"/tmp/safe.txt\"}"))).isTrue();
@@ -532,7 +532,7 @@ class DefaultToolGuardrailsTest {
     @Test
     void isToolAllowed_considersBlockedToolsList() {
         AgentProperties properties = new AgentProperties();
-        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         guardrails.setBlockedTools(Set.of("dangerous_tool"));
 
         assertThat(guardrails.isToolAllowed("dangerous_tool")).isFalse();

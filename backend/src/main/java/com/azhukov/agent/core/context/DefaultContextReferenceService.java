@@ -29,6 +29,8 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class DefaultContextReferenceService implements ContextReferenceService {
 
+    private static final int CHARS_PER_TOKEN = 4;
+
     private final AgentProperties properties;
     private final SkillManager skillManager;
     @Getter
@@ -39,6 +41,30 @@ public class DefaultContextReferenceService implements ContextReferenceService {
         this.httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(properties.getCore().getHttpClientTimeoutSeconds()))
             .build();
+    }
+
+    /**
+     * Returns the effective maximum reference token budget.  If
+     * {@code maxReferenceTokens} is configured as 0 (the default), it is
+     * computed as {@code maxTokens / 4}.
+     */
+    private int getMaxReferenceTokens() {
+        int configured = properties.getContext().getMaxReferenceTokens();
+        if (configured > 0) {
+            return configured;
+        }
+        return Math.max(1, properties.getContext().getMaxTokens() / 4);
+    }
+
+    /**
+     * Estimates the token count for a given text using the standard
+     * approximation of chars / 4.
+     */
+    private int estimateTokens(String text) {
+        if (text == null || text.isEmpty()) {
+            return 0;
+        }
+        return text.length() / CHARS_PER_TOKEN + 1;
     }
 
     @Override
@@ -67,6 +93,55 @@ public class DefaultContextReferenceService implements ContextReferenceService {
             case SKILL -> loadSkill(reference.source());
             case UNKNOWN -> Optional.of("[unknown reference type: " + reference.source() + "]");
         };
+    }
+
+    /**
+     * Loads content for all resolved references while enforcing a token budget.
+     * <p>
+     * If the total estimated token count of injected reference content exceeds
+     * 25% of {@code maxTokens} a warning is logged.  If it exceeds 50% of
+     * {@code maxTokens} the injection is refused and an error message is
+     * returned instead of the content.
+     *
+     * @param refs the resolved context references to load
+     * @return the concatenated content of all references, or an error message
+     *         if the token budget is exceeded
+     */
+    public Optional<String> loadContentWithBudget(List<ContextReference> refs) {
+        if (refs == null || refs.isEmpty()) {
+            return Optional.empty();
+        }
+        int maxTokens = properties.getContext().getMaxTokens();
+        int maxRefTokens = getMaxReferenceTokens();
+        int warnThreshold = maxRefTokens;       // 25% of maxTokens
+        int refuseThreshold = maxRefTokens * 2; // 50% of maxTokens
+
+        StringBuilder sb = new StringBuilder();
+        int totalTokens = 0;
+
+        for (ContextReference ref : refs) {
+            Optional<String> content = loadContent(ref);
+            if (content.isPresent()) {
+                String text = content.get();
+                int tokens = estimateTokens(text);
+                totalTokens += tokens;
+                sb.append("[").append(ref.displayName()).append("]\n").append(text).append("\n\n");
+            }
+        }
+
+        if (totalTokens > refuseThreshold) {
+            log.warn("Reference content exceeds budget: {} tokens > {} max (50% of maxTokens={})",
+                totalTokens, refuseThreshold, maxTokens);
+            return Optional.of("[Reference content exceeds token budget: " + totalTokens
+                + " tokens > " + refuseThreshold + " max. References were not injected.]");
+        }
+
+        if (totalTokens > warnThreshold) {
+            log.warn("Reference content approaching budget: {} tokens > {} max (25% of maxTokens={})",
+                totalTokens, warnThreshold, maxTokens);
+        }
+
+        return Optional.of(sb.toString().trim());
     }
 
     private ContextReference classify(String ref) {

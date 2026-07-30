@@ -18,6 +18,7 @@ import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
@@ -55,6 +56,7 @@ public class AgentController {
     private final TtsService ttsService;
     private final TranscriptionService transcriptionService;
     private final SteerBuffer steerBuffer;
+    private final ApprovalQueue approvalQueue;
 
     @PostMapping("/agent/chat")
     public ChatResponseDto chat(@Valid @RequestBody ChatRequest request) {
@@ -167,6 +169,23 @@ public class AgentController {
     public String deny(@RequestBody DenyRequest request) {
         boolean all = request.all();
         return "Denied" + (all ? " all" : "");
+    }
+
+    // ── Tool approval endpoints (A12) ──
+
+    @GetMapping("/agent/approvals/pending")
+    public List<ApprovalQueue.PendingApproval> pendingApprovals() {
+        return approvalQueue.getPendingApprovals();
+    }
+
+    @PostMapping("/agent/approvals/{sessionId}/approve")
+    public ApprovalQueue.PendingApproval approveTool(@PathVariable UUID sessionId, @RequestParam(required = false, defaultValue = "approve") String decision, @RequestBody(required = false) String note) {
+        return approvalQueue.approve(sessionId, decision, note);
+    }
+
+    @PostMapping("/agent/approvals/{sessionId}/deny")
+    public ApprovalQueue.PendingApproval denyTool(@PathVariable UUID sessionId, @RequestBody(required = false) String note) {
+        return approvalQueue.deny(sessionId, note);
     }
 
     @GetMapping("/agent/agents")

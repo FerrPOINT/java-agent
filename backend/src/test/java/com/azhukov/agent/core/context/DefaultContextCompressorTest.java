@@ -26,17 +26,25 @@ class DefaultContextCompressorTest {
     void fallsBackToTruncationWhenModelFails() {
         var model = mock(com.azhukov.agent.core.client.ModelClient.class);
         Mockito.when(model.complete(Mockito.any(), Mockito.any())).thenThrow(new RuntimeException("boom"));
-        var compressor = new DefaultContextCompressor(model, null, new AgentProperties());
+        var props = new AgentProperties();
+        // Use small protect values so 3 messages will compress
+        props.getContext().setProtectFirstN(1);
+        props.getContext().setProtectLastN(1);
+        var compressor = new DefaultContextCompressor(model, null, props);
         var messages = List.of(
             Message.user("a".repeat(2000)),
             Message.assistant("b".repeat(2000), 1),
             Message.user("current")
         );
         var result = compressor.compress(messages, 100);
-        assertThat(result).hasSize(2); // summary + current
-        assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
-        assertThat(result.get(1).role()).isEqualTo(Role.USER);
-        assertThat(result.get(1).content()).isEqualTo("current");
+        // protectFirstN=1 → head = [user "a"×2000], protectLastN=1 → tail = [user "current"]
+        // middle = [assistant "b"×2000] → summarized
+        // result = head(1) + summary(1) + tail(1) = 3
+        assertThat(result).hasSize(3); // head + summary + tail
+        assertThat(result.get(0).role()).isEqualTo(Role.USER); // head preserved
+        assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM); // summary
+        assertThat(result.get(2).role()).isEqualTo(Role.USER); // tail preserved
+        assertThat(result.get(2).content()).isEqualTo("current");
     }
 
     @Test

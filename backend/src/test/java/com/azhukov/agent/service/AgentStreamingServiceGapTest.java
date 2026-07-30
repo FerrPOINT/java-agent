@@ -524,15 +524,15 @@ class AgentStreamingServiceGapTest {
         }
     }
 
-    // ─── GAP: No retry on streaming errors ───
+    // ─── Streaming error recovery (A2) ───
 
     @Nested
-    @DisplayName("GAP: No retry on streaming errors")
-    class GapNoRetry {
+    @DisplayName("Streaming error recovery — transient errors are retried")
+    class StreamingErrorRecovery {
 
         @Test
-        @DisplayName("GAP: Streaming error terminates immediately — no retry attempt")
-        void gap_noRetryOnStreamError() throws Exception {
+        @DisplayName("Transient streaming error is retried and succeeds on second attempt")
+        void transientErrorRetriedAndSucceeds() throws Exception {
             ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
             CollectingEmitter emitter = new CollectingEmitter(500L);
 
@@ -551,9 +551,14 @@ class AgentStreamingServiceGapTest {
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
 
-            // GAP: Only one stream call was made — no retry
-            assertThat(streamCallCount.get()).isEqualTo(1);
-            assertThat(emitter.error.get()).isNotNull();
+            // A2 fix: transient error is retried — 2 stream calls made
+            assertThat(streamCallCount.get()).isEqualTo(2);
+            assertThat(emitter.completed.get()).isTrue();
+            assertThat(emitter.error.get()).isNull();
+            // A retry SSE event should have been sent
+            boolean hasRetryEvent = emitter.events.stream()
+                .anyMatch(e -> "retry".equals(e.name));
+            assertThat(hasRetryEvent).isTrue();
         }
     }
 

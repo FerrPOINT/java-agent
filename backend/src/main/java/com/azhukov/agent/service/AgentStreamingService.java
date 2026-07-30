@@ -20,6 +20,7 @@ import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.budget.IterationBudget;
+import com.azhukov.agent.client.langchain4j.ErrorClassifier;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
@@ -38,6 +39,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 
 @Slf4j
@@ -60,6 +62,10 @@ public class AgentStreamingService {
     private final TurnStateManager turnStateManager;
     private final SessionEntityMapper sessionMapper;
     private final MessageMapper messageMapper;
+    private final ErrorClassifier errorClassifier = new ErrorClassifier();
+
+    private static final int MAX_STREAM_RETRIES = 2;
+    private static final int MAX_CONTINUATION_ATTEMPTS = 1;
 
 
     public SseEmitter streamTurn(ChatRequest request) {
@@ -137,60 +143,99 @@ public class AgentStreamingService {
             // Prepare context (trimming/summarization as needed)
             List<Message> context = contextEngine.prepareContext(session, turnMessages);
 
-            // Call model — streaming tokens to SSE
+            // Call model — streaming tokens to SSE, with error recovery
+            int streamRetries = 0;
+            int continuationAttempts = 0;
             ChatResponse response;
-            try {
+            while (true) {
                 final StringBuilder contentBuilder = new StringBuilder();
                 final List<ToolCall> collectedToolCalls = new ArrayList<>();
-                final boolean[] hasToolCalls = {false};
+                final AtomicReference<Throwable> capturedError = new AtomicReference<>();
 
-                modelClient.stream(context, tools, new StreamingResponseHandler() {
-                    @Override
-                    public void onToken(String token) {
-                        String scrubbed = scrubber.scrub(token);
-                        if (!scrubbed.isEmpty()) {
-                            send(emitter, new StreamEvent("token", scrubbed, null, null));
-                            contentBuilder.append(scrubbed);
+                try {
+                    modelClient.stream(context, tools, new StreamingResponseHandler() {
+                        @Override
+                        public void onToken(String token) {
+                            String scrubbed = scrubber.scrub(token);
+                            if (!scrubbed.isEmpty()) {
+                                send(emitter, new StreamEvent("token", scrubbed, null, null));
+                                contentBuilder.append(scrubbed);
+                            }
                         }
-                    }
 
-                    @Override
-                    public void onToolCalls(List<ToolCall> toolCalls) {
-                        hasToolCalls[0] = true;
-                        collectedToolCalls.addAll(toolCalls);
-                        // Emit tool_calls event so the client can show tool progress
-                        send(emitter, new StreamEvent("tool_calls", null, toolCalls, null));
-                    }
-
-                    @Override
-                    public void onComplete() {
-                        String remaining = scrubber.flush();
-                        if (remaining != null && !remaining.isEmpty()) {
-                            send(emitter, new StreamEvent("token", remaining, null, null));
-                            contentBuilder.append(remaining);
+                        @Override
+                        public void onToolCalls(List<ToolCall> toolCalls) {
+                            collectedToolCalls.addAll(toolCalls);
+                            send(emitter, new StreamEvent("tool_calls", null, toolCalls, null));
                         }
-                    }
 
-                    @Override
-                    public void onError(Throwable error) {
-                        send(emitter, new StreamEvent("error", null, null, error.getMessage()));
-                        safeCompleteWithError(emitter, error);
-                    }
-                });
+                        @Override
+                        public void onComplete() {
+                            String remaining = scrubber.flush();
+                            if (remaining != null && !remaining.isEmpty()) {
+                                send(emitter, new StreamEvent("token", remaining, null, null));
+                                contentBuilder.append(remaining);
+                            }
+                        }
+
+                        @Override
+                        public void onError(Throwable error) {
+                            capturedError.set(error);
+                        }
+                    });
+                } catch (Exception e) {
+                    capturedError.set(e);
+                }
 
                 budget = iterationBudget.recordModelCall(budget,
                     estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
 
-                if (hasToolCalls[0]) {
+                // Handle errors with retry
+                if (capturedError.get() != null) {
+                    Throwable error = capturedError.get();
+                    if (streamRetries < MAX_STREAM_RETRIES) {
+                        ErrorClassifier.ErrorType errorType = error instanceof Exception
+                            ? errorClassifier.classify((Exception) error)
+                            : ErrorClassifier.ErrorType.RETRYABLE;
+                        if (errorType == ErrorClassifier.ErrorType.RETRYABLE
+                            || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
+                            log.warn("Streaming attempt {} failed ({}), retrying: {}",
+                                streamRetries + 1, errorType, error.getMessage());
+                            send(emitter, new StreamEvent("retry", null, null,
+                                "Retrying after " + errorType));
+                            streamRetries++;
+                            continue;
+                        }
+                    }
+                    // Permanent error or retries exhausted
+                    log.error("Model call failed during streaming after {} retries", streamRetries, error);
+                    send(emitter, new StreamEvent("error", null, null, "Model call failed: " + error.getMessage()));
+                    safeCompleteWithError(emitter, error instanceof Exception
+                        ? (Exception) error : new RuntimeException(error));
+                    persistTurn(session, turnMessages, isNew);
+                    return;
+                }
+
+                // Check for truncated response (empty content + no tool calls + no error)
+                boolean isEmpty = (contentBuilder.length() == 0) && collectedToolCalls.isEmpty();
+                if (isEmpty && continuationAttempts < MAX_CONTINUATION_ATTEMPTS) {
+                    log.warn("Truncated response detected (empty content, no tool calls), sending continuation prompt");
+                    send(emitter, new StreamEvent("continuation", null, null,
+                        "Continuation prompt sent to model"));
+                    continuationAttempts++;
+                    turnMessages.add(Message.assistant("", turnIndex));
+                    turnMessages.add(Message.user("Please continue your response."));
+                    context = contextEngine.prepareContext(session, turnMessages);
+                    continue;
+                }
+
+                // Success — construct response
+                if (!collectedToolCalls.isEmpty()) {
                     response = ChatResponse.toolCalls(collectedToolCalls);
                 } else {
                     response = ChatResponse.text(contentBuilder.toString());
                 }
-            } catch (Exception e) {
-                log.error("Model call failed during streaming", e);
-                send(emitter, new StreamEvent("error", null, null, "Model call failed: " + e.getMessage()));
-                safeCompleteWithError(emitter, e);
-                return;
+                break;
             }
 
             // No tool calls → turn is complete

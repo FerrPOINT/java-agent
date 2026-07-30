@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.terminal;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.security.Redactor;
 import com.azhukov.agent.service.CheckpointManager;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,9 @@ class TerminalToolTest {
 
     @Mock
     private CheckpointManager checkpointManager;
+
+    @Mock
+    private InterruptToken interruptToken;
 
     @InjectMocks
     private TerminalTool tool;

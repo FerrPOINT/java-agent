@@ -52,4 +52,26 @@ public interface ToolGuardrails {
     default void setBlockedTools(java.util.Set<String> blockedTools) {
         // no-op by default for backward compatibility
     }
+
+    /**
+     * Returns true if the given tool is classified as mutating (destructive).
+     * Mutating tools may make progress across repeated calls with similar args.
+     *
+     * @param toolName the tool name to check
+     * @return true if the tool is classified as mutating, false otherwise
+     */
+    default boolean isMutating(String toolName) {
+        return false;
+    }
+
+    /**
+     * Returns true if the given tool is classified as idempotent.
+     * Idempotent tools called with the same args repeatedly are definitely in a loop.
+     *
+     * @param toolName the tool name to check
+     * @return true if the tool is classified as idempotent, false otherwise
+     */
+    default boolean isIdempotent(String toolName) {
+        return false;
+    }
 }

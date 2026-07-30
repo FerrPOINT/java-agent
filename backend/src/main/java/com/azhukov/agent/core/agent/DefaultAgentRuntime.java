@@ -5,8 +5,10 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.budget.IterationBudget.TurnSnapshot;
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.context.ContextCompressor;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.context.ContextReferenceService;
+import com.azhukov.agent.core.context.DefaultContextReferenceService;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.BackgroundReviewService;
 import com.azhukov.agent.core.model.ChatResponse;
@@ -32,8 +34,13 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
@@ -60,6 +67,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final TurnFinalizer turnFinalizer;
     private final SteerBuffer steerBuffer;
     private final ErrorClassifier errorClassifier;
+    private final ContextCompressor contextCompressor;
+    private final com.azhukov.agent.core.security.ApprovalQueue approvalQueue;
 
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {
@@ -81,13 +90,24 @@ public class DefaultAgentRuntime implements AgentRuntime {
         List<Message> turnMessages = new ArrayList<>();
         turnMessages.add(promptBuilder.buildSystemMessage(session));
         if (references != null && !references.isEmpty()) {
-            StringBuilder sb = new StringBuilder();
-            sb.append(safeInput).append("\n\n").append("--- References ---");
-            for (var ref : contextReferenceService.resolve(references)) {
-                contextReferenceService.loadContent(ref).ifPresent(content ->
-                    sb.append("\n\n").append("[").append(ref.displayName()).append("]\n").append(content));
+            var resolvedRefs = contextReferenceService.resolve(references);
+            Optional<String> refContent;
+            if (contextReferenceService instanceof DefaultContextReferenceService defaultSvc) {
+                refContent = defaultSvc.loadContentWithBudget(resolvedRefs);
+            } else {
+                // Fallback: load content individually without budget enforcement
+                StringBuilder sb = new StringBuilder();
+                for (var ref : resolvedRefs) {
+                    contextReferenceService.loadContent(ref).ifPresent(content ->
+                        sb.append("[").append(ref.displayName()).append("]\n").append(content).append("\n\n"));
+                }
+                refContent = sb.length() > 0 ? Optional.of(sb.toString().trim()) : Optional.empty();
             }
-            turnMessages.add(Message.user(sb.toString()));
+            if (refContent.isPresent()) {
+                turnMessages.add(Message.user(safeInput + "\n\n--- References ---\n\n" + refContent.get()));
+            } else {
+                turnMessages.add(Message.user(safeInput));
+            }
         } else {
             turnMessages.add(Message.user(safeInput));
         }
@@ -96,6 +116,39 @@ public class DefaultAgentRuntime implements AgentRuntime {
         int maxTurns = properties.getCore().getMaxTurns();
         int turnIndex = 1;
 
+        // Prefetch relevant memories before the turn (A7)
+        try {
+            memoryProvider.prefetch(safeInput, sessionId);
+        } catch (Exception e) {
+            log.debug("Memory prefetch failed for session {}: {}", sessionId, e.getMessage());
+        }
+
+        TurnResult result = null;
+        try {
+        result = runTurnLoop(session, turnMessages, tools, maxTurns, turnIndex, budget, turnState, sessionId, sessionIdUuid);
+        } finally {
+            // Sync turn data asynchronously after turn completes (A7)
+            try {
+                var executor = Executors.newVirtualThreadPerTaskExecutor();
+                final List<Message> messagesToSync = List.copyOf(turnMessages);
+                executor.submit(() -> {
+                    try {
+                        memoryProvider.syncTurn(sessionId, messagesToSync);
+                    } catch (Exception e) {
+                        log.debug("Memory syncTurn failed for session {}: {}", sessionId, e.getMessage());
+                    }
+                });
+                executor.shutdown();
+            } catch (Exception e) {
+                log.debug("Failed to submit memory syncTurn for session {}: {}", sessionId, e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    private TurnResult runTurnLoop(Session session, List<Message> turnMessages, List<ToolDefinition> tools,
+                                   int maxTurns, int turnIndex, TurnSnapshot budget, TurnState turnState,
+                                   String sessionId, UUID sessionIdUuid) {
         for (int i = 0; i < maxTurns; i++) {
             if (guardrail.isHalted()) {
                 turnMessages.add(Message.assistant("Turn halted by guardrails.", turnIndex));
@@ -148,8 +201,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
             turnMessages.add(Message.assistantToolCalls(response.toolCalls(), turnIndex));
 
             int currentTurnIndex = turnIndex;
-            List<Message> toolResults = new ArrayList<>();
-            for (ToolCall call : response.toolCalls()) {
+            List<ToolCall> toolCalls = response.toolCalls();
+            List<Message> toolResults;
+
+            if (toolCalls.size() == 1) {
+                // Sequential path for single tool call
+                toolResults = new ArrayList<>();
+                ToolCall call = toolCalls.get(0);
                 if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                     log.info("Turn cancelled by interrupt for session {}", session.id());
                     turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
@@ -158,14 +216,65 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     }
                     return new TurnResult(turnMessages, true, null);
                 }
-                long toolStart = System.currentTimeMillis();
-                ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState);
-                long duration = System.currentTimeMillis() - toolStart;
-                budget = iterationBudget.recordToolExecution(budget, call.name(), duration);
-                log.debug("Tool {} executed in {} ms: success={}, content length={}, error={}",
-                    call.name(), duration, result.success(),
-                    result.content() != null ? result.content().length() : 0, result.error());
-                toolResults.add(Message.toolResult(call.id(), formatResult(result), currentTurnIndex));
+                // Check approval flow
+                if (approvalQueue != null && approvalQueue.isPending(session.id())) {
+                    log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
+                    long approvalWaitStart = System.currentTimeMillis();
+                    long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
+                    while (approvalQueue.isPending(session.id())) {
+                        if (System.currentTimeMillis() - approvalWaitStart > approvalTimeoutMs) {
+                            log.warn("Approval wait timed out for session {} after {} ms", session.id(), approvalTimeoutMs);
+                            break;
+                        }
+                        try {
+                            Thread.sleep(200);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                        if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                            log.info("Session {} interrupted while waiting for approval", session.id());
+                            break;
+                        }
+                    }
+                }
+                if (approvalQueue != null && approvalQueue.isDenied(session.id())) {
+                    log.info("Tool {} denied for session {}, skipping", call.name(), session.id());
+                    ToolResult deniedResult = ToolResult.fail("Tool execution denied by user approval");
+                    toolResults.add(Message.toolResult(call.id(), formatResult(deniedResult), currentTurnIndex));
+                    approvalQueue.clear(session.id());
+                } else {
+                    long toolStart = System.currentTimeMillis();
+                    ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState);
+                    long duration = System.currentTimeMillis() - toolStart;
+                    budget = iterationBudget.recordToolExecution(budget, call.name(), duration);
+                    log.debug("Tool {} executed in {} ms: success={}, content length={}, error={}",
+                        call.name(), duration, result.success(),
+                        result.content() != null ? result.content().length() : 0, result.error());
+                    toolResults.add(Message.toolResult(call.id(), formatResult(result), currentTurnIndex));
+                }
+            } else {
+                // Parallel path for multiple tool calls
+                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                    log.info("Turn cancelled by interrupt for session {}", session.id());
+                    turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
+                    if (turnFinalizer != null) {
+                        turnFinalizer.finalize(session.id(), turnMessages, false);
+                    }
+                    return new TurnResult(turnMessages, true, null);
+                }
+                toolResults = executeToolsInParallel(toolCalls, session, turnState, currentTurnIndex);
+                for (ToolCall call : toolCalls) {
+                    budget = iterationBudget.recordToolExecution(budget, call.name(), 0);
+                }
+                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                    log.info("Turn cancelled by interrupt after parallel tool execution for session {}", session.id());
+                    turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
+                    if (turnFinalizer != null) {
+                        turnFinalizer.finalize(session.id(), turnMessages, false);
+                    }
+                    return new TurnResult(turnMessages, true, null);
+                }
             }
             // Inject pending steer note into the last tool result
             String steerText = steerBuffer.consume(session.id());
@@ -190,26 +299,60 @@ public class DefaultAgentRuntime implements AgentRuntime {
      * Calls modelClient.complete() with retry logic based on ErrorClassifier.
      * RETRYABLE errors use jittered backoff (500ms * 2^attempt + 0-250ms, cap 5s).
      * RATE_LIMIT errors use longer backoff (2s * 2^attempt, cap 30s).
-     * PERMANENT/BILLING/CONTEXT_OVERFLOW/CONTENT_POLICY errors fail immediately.
+     * CONTEXT_OVERFLOW errors trigger compression, then retry with compressed context.
+     * PERMANENT/BILLING/CONTENT_POLICY errors fail immediately.
      */
     private ChatResponse callModelWithRetry(List<Message> context, List<ToolDefinition> tools, Session session) {
         int retryAttempts = properties.getError().getRetryAttempts();
         Exception lastException = null;
         int totalAttempts = 0;
+        List<Message> currentContext = context;
+        boolean compressionAttempted = false;
 
         for (int attempt = 0; attempt <= retryAttempts; attempt++) {
             totalAttempts++;
             try {
-                return modelClient.complete(context, tools);
+                return modelClient.complete(currentContext, tools);
             } catch (Exception e) {
                 lastException = e;
                 if (attempt >= retryAttempts) {
                     break;
                 }
                 ErrorClassifier.ErrorType errorType = errorClassifier.classify(e);
+
+                // Context overflow: try compression before giving up
+                if (errorType == ErrorClassifier.ErrorType.CONTEXT_OVERFLOW) {
+                    if (compressionAttempted || contextCompressor == null) {
+                        log.warn("Context overflow detected, compression already attempted or unavailable, failing: {}", e.getMessage());
+                        break;
+                    }
+                    log.info("Context overflow detected, triggering compression");
+                    try {
+                        int targetChars = properties.getContext().getTargetTokens() * 4;
+                        List<Message> compressed = contextCompressor.compress(currentContext, targetChars);
+                        if (compressed.size() < currentContext.size()
+                            || (compressed.size() == currentContext.size()
+                                && compressed.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum()
+                                < currentContext.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum())) {
+                            currentContext = compressed;
+                            compressionAttempted = true;
+                            log.info("Context compressed from {} to {} messages, retrying model call",
+                                context.size(), compressed.size());
+                            // Don't consume a retry attempt for compression — retry immediately
+                            attempt--;
+                            continue;
+                        } else {
+                            log.warn("Context overflow detected, compression did not reduce context, failing: {}", e.getMessage());
+                            break;
+                        }
+                    } catch (Exception ce) {
+                        log.warn("Context compression failed: {}", ce.getMessage());
+                        break;
+                    }
+                }
+
                 if (errorType == ErrorClassifier.ErrorType.PERMANENT
                     || errorType == ErrorClassifier.ErrorType.BILLING
-                    || errorType == ErrorClassifier.ErrorType.CONTEXT_OVERFLOW
                     || errorType == ErrorClassifier.ErrorType.CONTENT_POLICY) {
                     log.warn("Model call failed with {} error, not retrying: {}", errorType, e.getMessage());
                     break;
@@ -246,6 +389,58 @@ public class DefaultAgentRuntime implements AgentRuntime {
         } catch (Exception e) {
             log.debug("Background review trigger failed: {}", e.getMessage());
         }
+    }
+
+    private List<Message> executeToolsInParallel(List<ToolCall> toolCalls, Session session,
+                                                  TurnState turnState, int currentTurnIndex) {
+        List<CompletableFuture<ToolResult>> futures = new ArrayList<>();
+        try (ExecutorService parallelExecutor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (ToolCall call : toolCalls) {
+                futures.add(CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return toolExecutionService.execute(call.name(), call.id(),
+                            call.arguments(), null, session, turnState);
+                    } catch (Exception e) {
+                        log.warn("Tool {} failed in parallel execution: {}", call.name(), e.getMessage());
+                        return ToolResult.fail("Tool execution failed: " + call.name() + " - " + e.getMessage());
+                    }
+                }, parallelExecutor));
+            }
+
+            // Wait for all futures to complete
+            CompletableFuture<Void> allOf = CompletableFuture.allOf(
+                futures.toArray(new CompletableFuture[0]));
+            try {
+                allOf.join();
+            } catch (CompletionException e) {
+                log.warn("Parallel tool execution had unexpected error", e);
+            }
+
+            // If interrupted, cancel remaining futures
+            if (Thread.currentThread().isInterrupted()) {
+                for (CompletableFuture<ToolResult> f : futures) {
+                    f.cancel(true);
+                }
+            }
+        }
+
+        // Collect results in order (preserve tool call ID ordering)
+        List<Message> toolResults = new ArrayList<>();
+        for (int i = 0; i < toolCalls.size(); i++) {
+            ToolCall call = toolCalls.get(i);
+            ToolResult result;
+            CompletableFuture<ToolResult> future = futures.get(i);
+            if (future.isDone() && !future.isCompletedExceptionally()) {
+                result = future.getNow(ToolResult.fail("Tool not completed: " + call.name()));
+            } else {
+                result = ToolResult.fail("Tool cancelled: " + call.name());
+            }
+            log.debug("Parallel tool {} result: success={}, content length={}, error={}",
+                call.name(), result.success(),
+                result.content() != null ? result.content().length() : 0, result.error());
+            toolResults.add(Message.toolResult(call.id(), formatResult(result), currentTurnIndex));
+        }
+        return toolResults;
     }
 
     private String formatResult(ToolResult result) {

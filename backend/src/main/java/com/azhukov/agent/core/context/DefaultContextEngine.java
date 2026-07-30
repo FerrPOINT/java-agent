@@ -9,13 +9,15 @@ import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
-import org.springframework.stereotype.Component;
 import lombok.extern.slf4j.Slf4j;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 public class DefaultContextEngine implements ContextEngine {
@@ -23,6 +25,8 @@ public class DefaultContextEngine implements ContextEngine {
     private static final int RECALL_LIMIT = 5;
     private static final int SKILL_LIMIT = 3;
     private static final int CHARS_PER_TOKEN_ESTIMATE = 4;
+    private static final long COMPRESSION_COOLDOWN_SECONDS = 600;
+    private static final double PREFLIGHT_THRESHOLD = 0.8;
 
     private final MemoryProvider memoryProvider;
     private final SkillManager skillManager;
@@ -32,6 +36,7 @@ public class DefaultContextEngine implements ContextEngine {
     private final PromptCacheTracker cacheTracker;
     private final java.util.Map<UUID, Map<String, String>> snapshotCache = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<UUID, String> lastMemoryHash = new java.util.concurrent.ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Instant> lastCompressedAt = new ConcurrentHashMap<>();
 
     public DefaultContextEngine(MemoryProvider memoryProvider,
                                 SkillManager skillManager,
@@ -81,10 +86,25 @@ public class DefaultContextEngine implements ContextEngine {
         context.addAll(messages.subList(start, messages.size()));
 
         List<Message> trimmed = trimToFit(context);
-        if (estimateChars(trimmed) > contextProps.getMaxTokens() * CHARS_PER_TOKEN_ESTIMATE) {
-            trimmed = contextCompressor.compress(trimmed, contextProps.getTargetTokens() * CHARS_PER_TOKEN_ESTIMATE);
+        // Preflight: trigger compression at 80% of maxTokens (before API call)
+        if (shouldCompressPreflight(trimmed)) {
+            // Check cooldown — skip if compressed recently
+            Instant lastCompressed = lastCompressedAt.get(session.id());
+            if (lastCompressed == null || Duration.between(lastCompressed, Instant.now()).getSeconds() >= COMPRESSION_COOLDOWN_SECONDS) {
+                trimmed = contextCompressor.compress(trimmed, contextProps.getTargetTokens() * CHARS_PER_TOKEN_ESTIMATE);
+                lastCompressedAt.put(session.id(), Instant.now());
+            } else {
+                log.debug("Skipping compression for session {} — within cooldown (last compressed {})", session.id(), lastCompressed);
+            }
         }
         return trimmed;
+    }
+
+    @Override
+    public boolean shouldCompressPreflight(List<Message> messages) {
+        if (messages == null || messages.isEmpty()) return false;
+        int estimatedTokens = estimateChars(messages) / CHARS_PER_TOKEN_ESTIMATE;
+        return estimatedTokens > contextProps.getMaxTokens() * PREFLIGHT_THRESHOLD;
     }
 
     private List<Message> trimToFit(List<Message> context) {

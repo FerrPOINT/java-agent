@@ -1,14 +1,18 @@
 package com.azhukov.agent.core.memory;
 
+import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MemoryEntity;
 import com.azhukov.agent.persistence.repository.MemoryRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @RequiredArgsConstructor
 public class DatabaseMemoryProvider implements MemoryProvider {
 
@@ -81,5 +85,43 @@ public class DatabaseMemoryProvider implements MemoryProvider {
         snapshot.put("memory", read(userId, "memory"));
         snapshot.put("user", read(userId, "user"));
         return snapshot;
+    }
+
+    @Override
+    public void syncTurn(String sessionId, List<Message> turnMessages) {
+        if (turnMessages == null || turnMessages.isEmpty()) {
+            return;
+        }
+        // Build a brief summary of the turn from user and assistant messages
+        StringBuilder summary = new StringBuilder();
+        summary.append("[Turn ").append(sessionId).append("] ");
+        for (Message m : turnMessages) {
+            if (m.content() == null || m.content().isBlank()) {
+                continue;
+            }
+            if (m.role() == Role.USER) {
+                summary.append("User: ").append(truncate(m.content(), 200)).append("; ");
+            } else if (m.role() == Role.ASSISTANT) {
+                summary.append("Assistant: ").append(truncate(m.content(), 200)).append("; ");
+            }
+        }
+        String fact = summary.toString();
+        if (fact.length() > 10) {
+            try {
+                MemoryEntity entity = new MemoryEntity();
+                entity.setUserId(sessionId);
+                entity.setCategory("turn_summary");
+                entity.setFact(fact);
+                entity.setTarget("memory");
+                entity.setCreatedAt(Instant.now());
+                memoryRepository.save(entity);
+            } catch (Exception e) {
+                log.debug("Failed to sync turn for session {}: {}", sessionId, e.getMessage());
+            }
+        }
+    }
+
+    private static String truncate(String text, int max) {
+        return text.length() <= max ? text : text.substring(0, max) + "...";
     }
 }

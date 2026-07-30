@@ -116,7 +116,8 @@ class DefaultAgentRuntimeRetryTest {
             contextEngine, memoryProvider, skillManager, iterationBudget,
             messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
-            interruptToken, turnFinalizer, steerBuffer, errorClassifier);
+            interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
+            new com.azhukov.agent.core.security.ApprovalQueue());
     }
 
     // ─── Retry on transient errors ───
@@ -421,7 +422,8 @@ class DefaultAgentRuntimeRetryTest {
             contextEngine, mock(MemoryProvider.class), mock(SkillManager.class), iterationBudget,
             messageSanitizer, mock(ContextReferenceService.class), properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
-            interruptToken, turnFinalizer, steerBuffer, errorClassifier);
+            interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
+            new com.azhukov.agent.core.security.ApprovalQueue());
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         customRuntime.runTurn(session, "Hello");

@@ -182,6 +182,11 @@ public class AgentProperties {
         private int targetTokens = 12000;
         private int summaryChunkTokens = 2000;
         private int maxContextMessages = 50;
+        /** Maximum tokens allowed for injected reference content; default is maxTokens / 4. */
+        private int maxReferenceTokens = 0; // 0 → computed as maxTokens / 4 at runtime
+        private int protectFirstN = 3;
+        /** Number of trailing messages (recent context) to protect from compression. */
+        private int protectLastN = 6;
     }
 
     @Getter @Setter

@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.terminal;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.service.CheckpointManager;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
@@ -9,7 +10,6 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.Redactor;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -18,7 +18,9 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @AgentTool(
     name = "terminal",
@@ -26,7 +28,6 @@ import java.util.concurrent.TimeUnit;
     toolset = "terminal"
 )
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class TerminalTool implements ToolHandler {
 
@@ -38,6 +39,18 @@ public class TerminalTool implements ToolHandler {
     private final AgentProperties properties;
     private final Redactor redactor;
     private final CheckpointManager checkpointManager;
+    private final InterruptToken interruptToken;
+
+    @Autowired
+    public TerminalTool(ProcessTool processTool, AgentProperties properties,
+                        Redactor redactor, CheckpointManager checkpointManager,
+                        InterruptToken interruptToken) {
+        this.processTool = processTool;
+        this.properties = properties;
+        this.redactor = redactor;
+        this.checkpointManager = checkpointManager;
+        this.interruptToken = interruptToken;
+    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -83,15 +96,45 @@ public class TerminalTool implements ToolHandler {
             }
         }
 
-        return runCommand(command, timeout);
+        UUID sessionId = session != null ? session.id() : null;
+        return runCommand(command, timeout, sessionId);
     }
 
-    private ToolResult runCommand(String command, int timeoutSeconds) {
+    private ToolResult runCommand(String command, int timeoutSeconds, UUID sessionId) {
+        Process process = null;
+        AtomicBoolean interrupted = new AtomicBoolean(false);
         try {
             ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
             pb.redirectErrorStream(true);
-            Process process = pb.start();
+            process = pb.start();
+
+            // Register a cancellation callback so that if the user interrupts
+            // during this long-running command, the process is killed immediately.
+            final Process managedProcess = process;
+            if (interruptToken != null && sessionId != null) {
+                Runnable callback = () -> {
+                    interrupted.set(true);
+                    try {
+                        managedProcess.descendants().forEach(ProcessHandle::destroyForcibly);
+                        managedProcess.destroyForcibly();
+                    } catch (Exception e) {
+                        log.debug("Failed to destroy process on interrupt: {}", e.getMessage());
+                    }
+                };
+                interruptToken.registerCancellationCallback(sessionId, callback);
+            }
+
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+
+            // Clean up the callback registration
+            if (interruptToken != null && sessionId != null) {
+                interruptToken.unregister(sessionId);
+            }
+
+            if (interrupted.get()) {
+                return ToolResult.fail("Interrupted by user");
+            }
+
             if (!finished) {
                 process.destroyForcibly();
                 return ToolResult.fail("Command timed out after " + timeoutSeconds + " seconds");
@@ -99,7 +142,20 @@ public class TerminalTool implements ToolHandler {
             String output = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))
                 .lines().collect(java.util.stream.Collectors.joining("\n"));
             return ToolResult.ok(redact(output));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            if (process != null) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+            }
+            if (interruptToken != null && sessionId != null) {
+                interruptToken.unregister(sessionId);
+            }
+            return ToolResult.fail("Interrupted by user");
         } catch (Exception e) {
+            if (interruptToken != null && sessionId != null) {
+                interruptToken.unregister(sessionId);
+            }
             return ToolResult.fail("Failed to execute command: " + e.getMessage());
         }
     }

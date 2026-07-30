@@ -45,39 +45,34 @@ public class DefaultContextCompressor implements ContextCompressor {
             return messages;
         }
 
-        // Preserve system message if first message is SYSTEM
-        Message systemMessage = null;
-        int startIndex = 0;
-        if (messages.get(0).role() == Role.SYSTEM) {
-            systemMessage = messages.get(0);
-            startIndex = 1;
+        int protectFirstN = properties.getContext().getProtectFirstN();
+        int protectLastN = properties.getContext().getProtectLastN();
+
+        // If total messages <= protectFirstN + protectLastN, skip compression (not enough to compress)
+        if (messages.size() <= protectFirstN + protectLastN) {
+            log.debug("Not enough messages to compress (total={}, protectFirst={}, protectLast={})",
+                messages.size(), protectFirstN, protectLastN);
+            return messages;
         }
 
-        // Find last user message index to ensure it's always in the tail
-        int lastUserIndex = -1;
-        for (int i = messages.size() - 1; i >= startIndex; i--) {
-            if (messages.get(i).role() == Role.USER) {
-                lastUserIndex = i;
-                break;
-            }
+        // Protect head: first N messages (system + first user + first assistant, etc.)
+        int headEnd = Math.min(protectFirstN, messages.size());
+        // Protect tail: last N messages (recent context)
+        int tailStart = Math.max(headEnd, messages.size() - protectLastN);
+
+        // Messages between head and tail are candidates for compression
+        List<Message> headMessages = messages.subList(0, headEnd);
+        List<Message> middleMessages = messages.subList(headEnd, tailStart);
+        List<Message> tailMessages = messages.subList(tailStart, messages.size());
+
+        if (middleMessages.isEmpty()) {
+            log.debug("No middle messages to compress after protecting head and tail");
+            return messages;
         }
 
-        // Calculate split point on the remaining messages (after system)
-        int remainingSize = messages.size() - startIndex;
-        int keepCount = Math.max(2, remainingSize / 2);
-        int splitPoint = startIndex + keepCount;
-
-        // Ensure last user message is in the tail, but only if it leaves at least one message in head
-        if (lastUserIndex > startIndex && lastUserIndex < splitPoint) {
-            splitPoint = lastUserIndex;
-        }
-
-        List<Message> head = messages.subList(startIndex, splitPoint);
-        List<Message> tail = messages.subList(splitPoint, messages.size());
-
-        // Build summary input with tool output pruning
+        // Build summary input from middle messages with tool output pruning
         StringBuilder summaryInput = new StringBuilder();
-        for (Message m : head) {
+        for (Message m : middleMessages) {
             if (m.content() != null) {
                 String content = pruneToolOutput(m);
                 summaryInput.append(m.role()).append(": ").append(content).append("\n\n");
@@ -86,12 +81,12 @@ public class DefaultContextCompressor implements ContextCompressor {
         String summary = summarize(summaryInput.toString());
 
         List<Message> compressed = new ArrayList<>();
-        // Preserve original system message as first message
-        if (systemMessage != null) {
-            compressed.add(systemMessage);
-        }
+        // Preserve protected head messages (includes system message)
+        compressed.addAll(headMessages);
+        // Add summary as a system message
         compressed.add(Message.system(ANTI_INJECTION_PREFIX + "Earlier conversation (summarized):\n" + summary));
-        compressed.addAll(tail);
+        // Preserve protected tail messages
+        compressed.addAll(tailMessages);
         return compressed;
     }
 

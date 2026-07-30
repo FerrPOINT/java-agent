@@ -137,11 +137,13 @@ public class AgentConfig {
                                      InterruptToken interruptToken,
                                      TurnFinalizer turnFinalizer,
                                      com.azhukov.agent.core.agent.SteerBuffer steerBuffer,
-                                     ErrorClassifier errorClassifier) {
+                                     ErrorClassifier errorClassifier,
+                                     ContextCompressor contextCompressor,
+                                     com.azhukov.agent.core.security.ApprovalQueue approvalQueue) {
         return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
             memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService, interruptToken, turnFinalizer, steerBuffer,
-            errorClassifier);
+            errorClassifier, contextCompressor, approvalQueue);
     }
 
     @Bean
@@ -198,8 +200,9 @@ public class AgentConfig {
 
     @Bean
     @ConditionalOnMissingBean(com.azhukov.agent.core.security.ToolGuardrails.class)
-    public com.azhukov.agent.core.security.ToolGuardrails legacyToolGuardrails(AgentProperties properties) {
-        return new com.azhukov.agent.core.security.DefaultToolGuardrails(properties);
+    public com.azhukov.agent.core.security.ToolGuardrails legacyToolGuardrails(AgentProperties properties,
+                                                                                com.azhukov.agent.core.security.ApprovalQueue approvalQueue) {
+        return new com.azhukov.agent.core.security.DefaultToolGuardrails(properties, approvalQueue);
     }
 
     @Bean
@@ -287,8 +290,9 @@ public class AgentConfig {
 
     @Bean
     @ConditionalOnMissingBean(ToolGuardrails.class)
-    public ToolGuardrails toolGuardrails(AgentProperties properties) {
-        return new DefaultToolGuardrails(properties);
+    public ToolGuardrails toolGuardrails(AgentProperties properties,
+                                         com.azhukov.agent.core.security.ApprovalQueue approvalQueue) {
+        return new DefaultToolGuardrails(properties, approvalQueue);
     }
 
     @Bean

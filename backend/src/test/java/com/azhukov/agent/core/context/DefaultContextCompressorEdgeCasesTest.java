@@ -23,6 +23,9 @@ class DefaultContextCompressorEdgeCasesTest {
         Mockito.when(model.complete(any(), any())).thenThrow(new RuntimeException("model unavailable"));
         AgentProperties properties = new AgentProperties();
         properties.getContext().setMaxTokens(200);
+        // Use small protect values so tests with few messages still compress
+        properties.getContext().setProtectFirstN(1);
+        properties.getContext().setProtectLastN(1);
         return new DefaultContextCompressor(model, null, properties);
     }
 
@@ -50,8 +53,8 @@ class DefaultContextCompressorEdgeCasesTest {
     @Test
     void compressLongContextReducesTotalLengthBelowTarget() {
         DefaultContextCompressor compressor = compressorWithFailingModel();
-        // Three messages: a short system message, one very long user message (head),
-        // and a short final user message (tail). The summarized head must fit under target.
+        // Three messages: a short system message, one very long user message (middle),
+        // and a short final user message (tail). The summarized middle must fit under target.
         List<Message> messages = List.of(
             Message.system("Important system instructions: be helpful and concise."),
             Message.user(REPEATED_CHAR.repeat(2000)),
@@ -67,6 +70,7 @@ class DefaultContextCompressorEdgeCasesTest {
 
         assertThat(compressedLength).isLessThanOrEqualTo(targetChars);
         assertThat(result).isNotSameAs(messages);
+        // The tail (last message) is preserved
         assertThat(result.get(result.size() - 1).content()).isEqualTo("short final user question");
     }
 
@@ -93,7 +97,8 @@ class DefaultContextCompressorEdgeCasesTest {
 
         List<Message> result = compressor.compress(messages, 100);
 
-        // Original system message is preserved as first message
+        // With protectFirstN=1: head = [system msg], protectLastN=1: tail = ["current user message"]
+        // Original system message is preserved as first message (protected head)
         assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
         assertThat(result.get(0).content()).isEqualTo("First system instruction.");
         // Summary system message is second
@@ -105,6 +110,7 @@ class DefaultContextCompressorEdgeCasesTest {
     void compressRespectsTargetCharsParameter() {
         DefaultContextCompressor compressor = compressorWithFailingModel();
         // Two messages whose total length is between 50 and 500 characters.
+        // With protectFirstN=1, protectLastN=1: 2 messages <= 1+1=2 → skip compression
         List<Message> messages = List.of(
             Message.user("a".repeat(200)),
             Message.assistant("b".repeat(200), 1)
@@ -115,9 +121,10 @@ class DefaultContextCompressorEdgeCasesTest {
         List<Message> resultAt500 = compressor.compress(messages, 500);
         List<Message> resultAt50 = compressor.compress(messages, 50);
 
+        // 2 messages <= 2 (protectFirst+protectLast) → skip compression in both cases
         assertThat(resultAt500).isSameAs(messages);
         assertThat(totalLength(resultAt500)).isEqualTo(originalLength);
-        assertThat(resultAt50).isNotSameAs(messages);
-        assertThat(totalLength(resultAt50)).isLessThanOrEqualTo(totalLength(resultAt500));
+        // Also same since compression is skipped
+        assertThat(resultAt50).isSameAs(messages);
     }
 }
