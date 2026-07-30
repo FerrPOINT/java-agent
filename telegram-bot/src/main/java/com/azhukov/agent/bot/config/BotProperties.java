@@ -36,7 +36,13 @@ public class BotProperties {
     private String homeChatId = ""; // set by /set_home
     private boolean linkPreview = true; // B3.7: include link previews in sent messages
 
-    // B7: When true, streaming edit messages are delivered silently (disable_notification=true).
+    // P0: When true, new bot instance can take over from an existing instance (--replace)
+    private boolean replaceOnStart = false;
+
+    // P0: PII Redaction — hash user IDs and chat IDs before injecting into system prompt
+    private boolean redactPii = true;
+
+    // P0: B7: When true, streaming edit messages are delivered silently (disable_notification=true).
     // Only the final message after streaming completes triggers a push notification.
     private boolean streamingSilent = true;
 
@@ -48,6 +54,17 @@ public class BotProperties {
     private final TextBatch textBatch = new TextBatch();
     private final Group group = new Group();
     private final Display display = new Display();
+    private final RichMessages richMessages = new RichMessages();
+    private final SessionReset sessionReset = new SessionReset();
+
+    @Getter
+    @Setter
+    public static class SessionReset {
+        private String mode = "both"; // daily | idle | both | none
+        private int atHour = 4;
+        private int idleMinutes = 1440;
+        private boolean notify = true;
+    }
 
     @Getter
     @Setter
@@ -129,6 +146,16 @@ public class BotProperties {
     public static class DmTopic {
         private String chatId = "";
         private String topicName = "";
+        private Long threadId = null;
+        private Integer iconColor = null;
+        private String iconCustomEmojiId = null;
+        private String skill = null;
+    }
+
+    @Getter
+    @Setter
+    public static class RichMessages {
+        private boolean enabled = true;
     }
 
     @Getter

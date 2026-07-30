@@ -10,6 +10,7 @@ import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.context.ContextReferenceService;
 import com.azhukov.agent.core.context.DefaultContextReferenceService;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.memory.MemoryManager;
 import com.azhukov.agent.core.memory.BackgroundReviewService;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
@@ -69,6 +70,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ErrorClassifier errorClassifier;
     private final ContextCompressor contextCompressor;
     private final com.azhukov.agent.core.security.ApprovalQueue approvalQueue;
+    private final MemoryManager memoryManager;
 
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {
@@ -86,6 +88,16 @@ public class DefaultAgentRuntime implements AgentRuntime {
         turnStateManager.clear(sessionIdUuid);
         TurnSnapshot budget = iterationBudget.startTurn(sessionIdUuid);
         String safeInput = inputSanitizer.sanitize(userInput);
+
+        // S14: MemoryManager lifecycle hook — on_turn_start
+        if (memoryManager != null) {
+            try {
+                memoryManager.onTurnStart(sessionId, safeInput);
+            } catch (Exception e) {
+                log.debug("MemoryManager onTurnStart failed: {}", e.getMessage());
+            }
+        }
+
         TurnState turnState = turnStateManager.getOrStart(sessionIdUuid, 1);
         List<Message> turnMessages = new ArrayList<>();
         turnMessages.add(promptBuilder.buildSystemMessage(session));
@@ -127,20 +139,31 @@ public class DefaultAgentRuntime implements AgentRuntime {
         try {
         result = runTurnLoop(session, turnMessages, tools, maxTurns, turnIndex, budget, turnState, sessionId, sessionIdUuid);
         } finally {
-            // Sync turn data asynchronously after turn completes (A7)
-            try {
-                var executor = Executors.newVirtualThreadPerTaskExecutor();
-                final List<Message> messagesToSync = List.copyOf(turnMessages);
-                executor.submit(() -> {
-                    try {
-                        memoryProvider.syncTurn(sessionId, messagesToSync);
-                    } catch (Exception e) {
-                        log.debug("Memory syncTurn failed for session {}: {}", sessionId, e.getMessage());
-                    }
-                });
-                executor.shutdown();
-            } catch (Exception e) {
-                log.debug("Failed to submit memory syncTurn for session {}: {}", sessionId, e.getMessage());
+            // S14: MemoryManager — sync turn data + queue prefetch for next turn
+            if (memoryManager != null && memoryManager.hasProviders()) {
+                try {
+                    final List<Message> messagesToSync = List.copyOf(turnMessages);
+                    memoryManager.syncAll(sessionId, messagesToSync);
+                    memoryManager.queuePrefetchAll(safeInput, sessionId);
+                } catch (Exception e) {
+                    log.debug("MemoryManager sync/queue failed for session {}: {}", sessionId, e.getMessage());
+                }
+            } else {
+                // Fallback: direct memory provider sync (legacy path)
+                try {
+                    var executor = Executors.newVirtualThreadPerTaskExecutor();
+                    final List<Message> messagesToSync = List.copyOf(turnMessages);
+                    executor.submit(() -> {
+                        try {
+                            memoryProvider.syncTurn(sessionId, messagesToSync);
+                        } catch (Exception e) {
+                            log.debug("Memory syncTurn failed for session {}: {}", sessionId, e.getMessage());
+                        }
+                    });
+                    executor.shutdown();
+                } catch (Exception e) {
+                    log.debug("Failed to submit memory syncTurn for session {}: {}", sessionId, e.getMessage());
+                }
             }
         }
         return result;

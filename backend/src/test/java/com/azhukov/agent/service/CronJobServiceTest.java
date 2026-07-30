@@ -24,6 +24,7 @@ class CronJobServiceTest {
     @Mock private CronJobRepository cronJobRepository;
     @Mock private org.springframework.beans.factory.ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider;
     @Mock private AgentRuntimeService agentRuntimeService;
+    @Mock private com.azhukov.agent.core.skill.SkillManager skillManager;
 
     private AgentProperties properties;
     private CronJobService service;
@@ -33,7 +34,7 @@ class CronJobServiceTest {
         properties = new AgentProperties();
         properties.getCron().setEnabled(false); // Disable scheduling for tests
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties);
+        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager);
     }
 
     @Test
@@ -134,5 +135,57 @@ class CronJobServiceTest {
         Optional<CronJobEntity> found = service.findByName("find-me");
         assertThat(found).isPresent();
         assertThat(found.get().getName()).isEqualTo("find-me");
+    }
+
+    @Test
+    void createWithSkills_setsSkillsField() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        CronJobEntity job = service.create("skill-job", "0 * * * *", "Run task", null, "hermes-agent,backend-dev");
+        assertThat(job.getSkills()).isEqualTo("hermes-agent,backend-dev");
+    }
+
+    @Test
+    void runNowWithSkills_loadsAndInjectsSkillContent() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("skill-cron");
+        job.setPrompt("Do something");
+        job.setEnabled(true);
+        job.setSkills("hermes-agent,backend-dev");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(skillManager.getSkill("hermes-agent")).thenReturn("# Hermes Agent\nUse this skill.");
+        when(skillManager.getSkill("backend-dev")).thenReturn("# Backend Dev\nDev conventions.");
+
+        service.runNow(id);
+
+        // Verify skills were loaded
+        verify(skillManager).getSkill("hermes-agent");
+        verify(skillManager).getSkill("backend-dev");
+        // Verify the enhanced prompt (with skills injected) was passed to runtime
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("Use this skill"), eq(null));
+    }
+
+    @Test
+    void runNowWithoutSkills_passesOriginalPrompt() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("no-skill-cron");
+        job.setPrompt("Do something plain");
+        job.setEnabled(true);
+        job.setSkills(null);
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.runNow(id);
+
+        verify(agentRuntimeService).runBackground("Do something plain", null);
+        verifyNoInteractions(skillManager);
     }
 }

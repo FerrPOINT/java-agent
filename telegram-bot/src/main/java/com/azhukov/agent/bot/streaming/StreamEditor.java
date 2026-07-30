@@ -3,6 +3,7 @@ package com.azhukov.agent.bot.streaming;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.formatting.MarkdownConverter;
+import com.azhukov.agent.bot.rich.RichMessageSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -10,7 +11,6 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
-import lombok.RequiredArgsConstructor;
 import jakarta.annotation.PostConstruct;
 
 /**
@@ -32,10 +32,14 @@ import jakarta.annotation.PostConstruct;
  * {@code disable_notification=true} to avoid push notification spam. Only the
  * final message (after streaming completes) is sent with push enabled.
  * Controlled by {@code bot.streaming.silent} config (default true).
+ *
+ * <p>P1 Rich Messages: Final message delivery now opportunistically uses
+ * Bot API 10.1 {@code sendRichMessage} via {@link RichMessageSupport} for
+ * richer rendering (tables, task lists, etc.). Falls back to MarkdownV2
+ * when rich is not available or fails.
  */
 @Service
 @Slf4j
-@RequiredArgsConstructor
 public class StreamEditor {
 
     private final TelegramClient telegramClient;
@@ -60,12 +64,23 @@ public class StreamEditor {
     // B6: Think-block scrubber (stateful, per-chat)
     private final Map<Long, ThinkScrubber> thinkScrubbers = new ConcurrentHashMap<>();
 
+    // P1: Rich message support for final delivery
+    private RichMessageSupport richMessageSupport;
+
+    public StreamEditor(TelegramClient telegramClient, BotProperties properties) {
+        this.telegramClient = telegramClient;
+        this.properties = properties;
+    }
+
     @PostConstruct
     void init() {
         parseMode = properties.getParseMode();
         editIntervalMs = properties.getStreamEditInterval().toMillis();
         minIntervalMs = editIntervalMs; // B5: use configured interval as the floor
         streamingSilent = properties.isStreamingSilent();
+        // P1: Initialize rich message support
+        this.richMessageSupport = new RichMessageSupport(telegramClient);
+        this.richMessageSupport.setRichMessagesEnabled(properties.getRichMessages().isEnabled());
     }
 
     /**
@@ -154,6 +169,9 @@ public class StreamEditor {
      * <p>B7: The final message is sent WITHOUT disable_notification (push enabled),
      * so the user gets a notification when the response is complete.
      *
+     * <p>P1 Rich Messages: Attempts rich message delivery first, falling back
+     * to the MarkdownV2 edit path when rich is unavailable or fails.
+     *
      * @param chatId    target chat id
      * @param messageId the message id returned by {@link #startStream}
      * @param finalText the complete final text
@@ -162,21 +180,39 @@ public class StreamEditor {
     public boolean finalizeStream(long chatId, long messageId, String finalText) {
         // B6: Final scrub — also flush any remaining think-block state
         String scrubbed = scrubThinkFinal(chatId, finalText);
+
+        // P1: Try rich message delivery first (uses raw markdown, not formatted)
+        if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
+            Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null, null);
+            if (richMsgId.isPresent()) {
+                // Rich message sent successfully — delete the old streaming message
+                log.debug("Finalized stream via rich message for chat {}, deleting old msg {}", chatId, messageId);
+                telegramClient.deleteMessage(chatId, messageId);
+                cleanupStream(chatId);
+                return true;
+            }
+            // Rich failed — fall through to MarkdownV2 edit
+            log.debug("Rich message delivery failed for chat {}, falling back to MarkdownV2", chatId);
+        }
+
         String formatted = formatForTelegram(scrubbed);
         // B7: Final message — NOT silent (push notification enabled)
         boolean success = telegramClient.editMessageText(chatId, messageId, formatted, parseMode, false);
-        lastEditTime.remove(chatId);
-        // B5: Clean up flood state
-        floodStrikes.remove(chatId);
-        streamingDisabled.remove(chatId);
-        // B6: Clean up scrubber
-        thinkScrubbers.remove(chatId);
+        cleanupStream(chatId);
         if (success) {
             log.debug("Finalized stream for chat {}, messageId={}", chatId, messageId);
         } else {
             log.warn("Failed to finalize stream for chat {}, messageId={}", chatId, messageId);
         }
         return success;
+    }
+
+    /** Clean up streaming state for a chat. */
+    private void cleanupStream(long chatId) {
+        lastEditTime.remove(chatId);
+        floodStrikes.remove(chatId);
+        streamingDisabled.remove(chatId);
+        thinkScrubbers.remove(chatId);
     }
 
     /**
@@ -496,5 +532,12 @@ public class StreamEditor {
             return MarkdownConverter.convert(text);
         }
         return text;
+    }
+
+    // ─── P1: Rich message support accessors ───────────────────────
+
+    /** Get the RichMessageSupport instance (for testing). */
+    RichMessageSupport getRichMessageSupport() {
+        return richMessageSupport;
     }
 }

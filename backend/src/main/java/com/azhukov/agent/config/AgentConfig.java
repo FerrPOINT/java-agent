@@ -142,11 +142,12 @@ public class AgentConfig {
                                      com.azhukov.agent.core.agent.SteerBuffer steerBuffer,
                                      ErrorClassifier errorClassifier,
                                      ContextCompressor contextCompressor,
-                                     com.azhukov.agent.core.security.ApprovalQueue approvalQueue) {
+                                     com.azhukov.agent.core.security.ApprovalQueue approvalQueue,
+                                     com.azhukov.agent.core.memory.MemoryManager memoryManager) {
         return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
             memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService, interruptToken, turnFinalizer, steerBuffer,
-            errorClassifier, contextCompressor, approvalQueue);
+            errorClassifier, contextCompressor, approvalQueue, memoryManager);
     }
 
     @Bean

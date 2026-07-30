@@ -19,6 +19,9 @@ public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UU
 
     List<BotSessionEntity> findByUserIdOrderByUpdatedAtDesc(String userId);
 
+    // P0: Session expiry watcher — list all active sessions
+    List<BotSessionEntity> findByActiveTrue();
+
     @Modifying
     @Query("UPDATE BotSessionEntity s SET s.updatedAt = :ts WHERE s.id = :id")
     void touchUpdatedAt(UUID id, Instant ts);

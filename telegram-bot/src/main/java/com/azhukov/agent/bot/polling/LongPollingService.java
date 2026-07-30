@@ -2,6 +2,7 @@ package com.azhukov.agent.bot.polling;
 
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
+import com.azhukov.agent.bot.lock.BotLockManager;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -31,6 +32,9 @@ public class LongPollingService {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong lastUpdateId = new AtomicLong(0);
     private final ReconnectWatcher reconnectWatcher;
+
+    // P0: Gateway lock — prevents concurrent instances with the same bot token
+    private BotLockManager lockManager;
 
     // B3: 409 conflict tracking
     private int conflictRetryCount = 0;
@@ -66,6 +70,16 @@ public class LongPollingService {
             log.warn("Long-polling not started: bot token is empty");
             return;
         }
+        // P0: Acquire gateway lock to prevent token collision
+        lockManager = new BotLockManager(properties.getToken(), properties.isReplaceOnStart());
+        try {
+            lockManager.acquire();
+        } catch (BotLockManager.LockAcquisitionException e) {
+            log.error("Gateway lock acquisition failed: {}", e.getMessage());
+            return;
+        } catch (Exception e) {
+            log.warn("Gateway lock acquisition error (proceeding without lock): {}", e.getMessage());
+        }
         // Delete stale webhook to avoid silent update loss
         telegramClient.deleteWebhook();
         running.set(true);
@@ -88,6 +102,11 @@ public class LongPollingService {
         } catch (InterruptedException e) {
             processPool.shutdownNow();
             Thread.currentThread().interrupt();
+        }
+        // P0: Release gateway lock
+        if (lockManager != null) {
+            lockManager.release();
+            lockManager = null;
         }
         log.info("Telegram long-polling stopped");
     }

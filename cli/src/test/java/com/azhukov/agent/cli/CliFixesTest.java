@@ -299,6 +299,8 @@ class CliFixesTest {
     void prefixMatchReturnsNullForAmbiguous() {
         // "c" matches many commands (clear, checkpoint, checkpoints, compress, context, cron, etc.)
         assertThat(registry.resolveCommand("c")).isNull();
+        // "ver" now matches both "version" and "verbose" — ambiguous
+        assertThat(registry.resolveCommand("ver")).isNull();
     }
 
     @Test
@@ -312,8 +314,8 @@ class CliFixesTest {
     @Test
     void prefixMatchForUniqueCommandWorks() {
         when(client.health()).thenReturn(true);
-        // "ver" should match "version"
-        String result = registry.execute("/ver", client, "sid");
+        // "vers" should match "version" (verbose starts with "ver" too, so "vers" is needed)
+        String result = registry.execute("/vers", client, "sid");
         assertThat(result).contains("Java Agent CLI");
     }
 
@@ -337,6 +339,10 @@ class CliFixesTest {
     void isSlashCommandRecognizesPrefixMatches() {
         assertThat(registry.isSlashCommand("/hel")).isTrue();
         assertThat(registry.isSlashCommand("/rol")).isTrue();
+        // "ver" is now ambiguous (version + verbose)
+        assertThat(registry.isSlashCommand("/ver")).isFalse();
+        // "vers" uniquely matches "version"
+        assertThat(registry.isSlashCommand("/vers")).isTrue();
     }
 
     // ── C6: Dynamic skill commands ──

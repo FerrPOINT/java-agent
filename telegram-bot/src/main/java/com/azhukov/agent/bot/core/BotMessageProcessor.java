@@ -20,6 +20,7 @@ import com.azhukov.agent.bot.reaction.ReactionManager;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
 import com.azhukov.agent.bot.session.BusySessionHandler;
+import com.azhukov.agent.bot.session.PiiRedactor;
 import com.azhukov.agent.bot.streaming.StreamEditor;
 import com.azhukov.agent.bot.typing.TypingManager;
 import lombok.extern.slf4j.Slf4j;
@@ -358,6 +359,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
      */
     private AgentBackendClient.ChatResult streamChat(long chatId, String messageText, String sessionId,
                                                       BotSessionEntity session, long userMessageId) {
+        // P0: PII Redaction — prepend redacted session context to the message
+        String fullMessage = buildMessageWithContext(messageText, session, chatId);
         StringBuilder accumulated = new StringBuilder();      // clean LLM text only
         StringBuilder toolProgress = new StringBuilder();     // transient tool progress (🔧/✅ lines)
         final long[] messageId = {-1};
@@ -372,7 +375,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                 messageId[0] = initialMsgId.get();
             }
 
-            AgentBackendClient.ChatResult streamResult = backendClient.chatStream(messageText, sessionId,
+            AgentBackendClient.ChatResult streamResult = backendClient.chatStream(fullMessage, sessionId,
                 // token consumer
                 token -> {
                     accumulated.append(token);
@@ -459,7 +462,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             }
             // If streaming produced no visible tokens but has metadata, prefer the sync fallback to get content
             if (streamResult.modelUsed() != null || streamResult.contextTokens() != null) {
-                return fallbackSyncWithMetadata(messageText, sessionId, streamResult);
+                return fallbackSyncWithMetadata(fullMessage, sessionId, streamResult);
             }
             // Stream finished but produced no content and no metadata
             return new AgentBackendClient.ChatResult(accumulated.toString(),
@@ -509,6 +512,32 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
         String chatId = String.valueOf(event.chatId());
         String username = event.username();
         return sessionStore.resolveOrCreate(userId, chatId, username);
+    }
+
+    /**
+     * P0: PII Redaction — Build the message with a redacted session context prefix.
+     *
+     * <p>When {@code redactPii} is enabled, prepends a session context prompt
+     * where user IDs and chat IDs are hashed via {@link PiiRedactor}.
+     * When disabled, the original message text is returned unchanged.
+     *
+     * @param messageText the user's message
+     * @param session     the bot session
+     * @param chatId      the chat ID
+     * @return the full message (context prefix + user message)
+     */
+    private String buildMessageWithContext(String messageText, BotSessionEntity session, long chatId) {
+        if (!properties.isRedactPii()) {
+            return messageText;
+        }
+        String userId = session.getUserId();
+        String chatIdStr = String.valueOf(chatId);
+        String username = session.getUsername();
+        // Determine chat type — default to "dm" for private chats
+        String chatType = "dm";
+        String contextPrompt = PiiRedactor.buildRedactedContextPrompt(
+            "telegram", userId, chatIdStr, username, chatType, null);
+        return contextPrompt + "\n\n" + messageText;
     }
 
     private String extractMessageText(UpdateEvent event) {

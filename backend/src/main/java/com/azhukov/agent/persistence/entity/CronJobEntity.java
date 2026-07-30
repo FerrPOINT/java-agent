@@ -32,6 +32,10 @@ public class CronJobEntity {
     @Column(name = "deliver_to")
     private String deliverTo;
 
+    // S17: Per-job skill loading — comma-separated skill names
+    @Column(name = "skills")
+    private String skills;
+
     @Column(name = "created_at")
     private Instant createdAt;
 

@@ -20,7 +20,7 @@ public class CronJobController {
 
     @PostMapping
     public CronJobEntity create(@RequestBody CreateCronRequest request) {
-        return cronJobService.create(request.name(), request.schedule(), request.prompt(), request.deliverTo());
+        return cronJobService.create(request.name(), request.schedule(), request.prompt(), request.deliverTo(), request.skills());
     }
 
     @GetMapping
@@ -54,6 +54,6 @@ public class CronJobController {
         return cronJobService.runNow(id);
     }
 
-    public record CreateCronRequest(String name, String schedule, String prompt, String deliverTo) {}
+    public record CreateCronRequest(String name, String schedule, String prompt, String deliverTo, String skills) {}
     public record UpdateCronRequest(String name, String schedule, String prompt, String deliverTo, Boolean enabled) {}
 }

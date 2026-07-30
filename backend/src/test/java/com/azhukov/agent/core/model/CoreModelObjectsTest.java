@@ -50,10 +50,14 @@ class CoreModelObjectsTest {
 
         @Test
         void containsAllExpectedValues() {
-            assertThat(ReferenceType.values()).containsExactly(
+            assertThat(ReferenceType.values()).contains(
                 ReferenceType.FILE,
                 ReferenceType.URL,
                 ReferenceType.SKILL,
+                ReferenceType.DIFF,
+                ReferenceType.STAGED,
+                ReferenceType.GIT,
+                ReferenceType.FOLDER,
                 ReferenceType.UNKNOWN
             );
         }

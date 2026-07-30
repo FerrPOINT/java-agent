@@ -6,7 +6,6 @@ import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
-import org.jline.reader.impl.BufferImpl;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.springframework.boot.CommandLineRunner;
@@ -28,6 +27,13 @@ import java.util.UUID;
  * C5: SlashAutoSuggest wired into LineReader for inline command suggestions
  * C6: Dynamic skill commands loaded on startup
  * C8: BackendUnavailableException handled with friendly messages
+ * P1-1: Multi-line input with Alt+Enter
+ * P1-2: Streaming markdown rendering
+ * P1-3: Destructive command confirmation
+ * P1-5: Session DB persistence
+ * P1-7: @-context reference expansion
+ * P1-9: External editor support
+ * P1-10: Input history persistence
  */
 @Component
 @RequiredArgsConstructor
@@ -84,18 +90,31 @@ public class CliReplRunner implements CommandLineRunner {
         System.out.println("═══════════════════════════════════════════════════");
         System.out.println("  Type /help for commands, /exit to quit.");
         System.out.println("  Streaming: " + (streaming ? "ON" : "OFF") + " (use /stream to toggle)");
+        System.out.println("  Alt+Enter: multi-line | /editor: external editor | @file: refs");
         System.out.println("═══════════════════════════════════════════════════");
         System.out.println();
 
         // C6: Load dynamic skill commands on startup
         loadDynamicSkills();
 
+        // P1-5: Load session store and record current session
+        commandRegistry.getSessionStore().recordSession(sessionId, null);
+
         try (Terminal terminal = TerminalBuilder.builder().system(true).build()) {
-            // C5: Wire SlashAutoSuggest into LineReader
+            // C5: Wire SlashCompleter into LineReader
             LineReader reader = LineReaderBuilder.builder()
                 .terminal(terminal)
                 .completer(new SlashCompleter(commandRegistry))
                 .build();
+
+            // P1-1: Enable multi-line input — Alt+Enter inserts newline
+            reader.setOpt(LineReader.Option.BRACKETED_PASTE);
+
+            // P1-10: Attach file-based history persistence
+            InputHistoryManager.attachHistory(reader);
+
+            // P1-7: Context reference expander
+            ContextReferenceExpander contextExpander = new ContextReferenceExpander();
 
             while (true) {
                 String prompt = "agent> ";
@@ -115,11 +134,50 @@ public class CliReplRunner implements CommandLineRunner {
                     continue;
                 }
 
+                // P1-10: Persist input history
+                InputHistoryManager.appendEntry(line);
+
+                // P1-9: External editor — /editor or \e
+                if (line.equals("/editor") || line.equals("\\e")) {
+                    String edited = ExternalEditor.edit(line.equals("\\e") ? "" : line);
+                    if (edited != null && !edited.isBlank()) {
+                        line = edited.strip();
+                        System.out.println("(editor) " + line);
+                    } else {
+                        System.out.println("(editor cancelled)");
+                        continue;
+                    }
+                }
+
                 if (line.startsWith("/")) {
+                    // P1-3: Destructive command confirmation
+                    if (DestructiveCommandConfirmation.isDestructiveLine(line)) {
+                        var result = commandRegistry.getDestructiveConfirmation()
+                            .evaluateWithPrompt(line, p -> {
+                                try {
+                                    System.out.print(p);
+                                    return reader.readLine("");
+                                } catch (Exception e) {
+                                    return "cancel";
+                                }
+                            });
+                        if (result == DestructiveCommandConfirmation.ConfirmResult.CANCEL) {
+                            System.out.println("🟡 Command cancelled.");
+                            continue;
+                        }
+                        // Strip skip tokens from args
+                        if (DestructiveCommandConfirmation.hasSkipToken(
+                                line.substring(1).strip())) {
+                            String cmdName = DestructiveCommandConfirmation.getCommandName(line);
+                            String cleanArgs = DestructiveCommandConfirmation.getCleanArgs(line);
+                            line = "/" + cmdName + (cleanArgs.isBlank() ? "" : " " + cleanArgs);
+                        }
+                    }
                     try {
                         String result = commandRegistry.execute(line, backendClient, sessionId);
                         if (result != null && !result.isEmpty()) {
-                            System.out.println(result);
+                            // P1-2: Use markdown renderer
+                            System.out.println(new MarkdownRenderer(true).render(result));
                         }
                         System.out.println();
                     } catch (BackendUnavailableException e) {
@@ -131,20 +189,34 @@ public class CliReplRunner implements CommandLineRunner {
                     continue;
                 }
 
+                // P1-7: Expand @-context references before sending to backend
+                if (ContextReferenceExpander.hasReferences(line)) {
+                    line = contextExpander.expand(line);
+                }
+
+                // P1-4: Record last user message for /retry
+                commandRegistry.getCliState().setLastUserMessage(line);
+
+                // P1-5: Record session in local store
+                commandRegistry.getSessionStore().incrementMessages(sessionId);
+
                 // Chat message — stream or blocking
                 if (streaming) {
                     System.out.println();
                     StringBuilder fullResponse = new StringBuilder();
                     try {
+                        // P1-2: Use streaming markdown renderer
+                        MarkdownRenderer mdRenderer = new MarkdownRenderer(true);
+                        MarkdownRenderer.StreamingRenderer streamRenderer =
+                            new MarkdownRenderer.StreamingRenderer(mdRenderer, System.out::print);
+
                         backendClient.chatStream(line, sessionId,
-                            token -> {
-                                System.out.print(token);
-                                fullResponse.append(token);
-                            },
+                            streamRenderer::accept,
                             toolInfo -> {
                                 System.out.println("\n  [" + toolInfo + "]");
                             },
                             () -> {
+                                streamRenderer.flush();
                                 System.out.println("\n");
                             }
                         );
@@ -158,7 +230,7 @@ public class CliReplRunner implements CommandLineRunner {
                     System.out.println();
                     try {
                         String response = backendClient.chat(line, sessionId);
-                        System.out.println(response);
+                        System.out.println(new MarkdownRenderer(true).render(response));
                         System.out.println();
                     } catch (BackendUnavailableException e) {
                         System.out.println("Backend unavailable. Is the backend running on " +

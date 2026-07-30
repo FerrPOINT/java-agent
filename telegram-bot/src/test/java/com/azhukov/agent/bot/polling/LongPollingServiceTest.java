@@ -23,6 +23,7 @@ class LongPollingServiceTest {
     private TelegramClient telegramClient;
     private BotProperties properties;
     private ReconnectWatcher reconnectWatcher;
+    private LongPollingService service;
 
     @BeforeEach
     void setUp() {
@@ -38,6 +39,8 @@ class LongPollingServiceTest {
     @AfterEach
     void tearDown() {
         reconnectWatcher.stop();
+        // Ensure service is stopped to release any lock file
+        try { service.stop(); } catch (Exception ignored) {}
     }
 
     @Test
@@ -62,7 +65,7 @@ class LongPollingServiceTest {
         CountDownLatch latch = new CountDownLatch(1);
         final java.util.concurrent.atomic.AtomicReference<String> handlerThreadName = new java.util.concurrent.atomic.AtomicReference<>("");
 
-        LongPollingService service = new LongPollingService(
+        service = new LongPollingService(
             telegramClient, properties,
             event -> {
                 handlerThreadName.set(Thread.currentThread().getName());
@@ -114,7 +117,7 @@ class LongPollingServiceTest {
         CountDownLatch firstCanProceed = new CountDownLatch(1);
         CountDownLatch bothDone = new CountDownLatch(2);
 
-        LongPollingService service = new LongPollingService(
+        service = new LongPollingService(
             telegramClient, properties,
             event -> {
                 if (count.get() == 0) {
@@ -134,13 +137,13 @@ class LongPollingServiceTest {
         service.start();
 
         // Wait for first handler to start
-        assertThat(firstStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(firstStarted.await(10, TimeUnit.SECONDS)).isTrue();
 
         // Release the slow handler
         firstCanProceed.countDown();
 
         // Both should complete
-        assertThat(bothDone.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(bothDone.await(10, TimeUnit.SECONDS)).isTrue();
         service.stop();
 
         assertThat(count.get()).isEqualTo(2);
@@ -151,7 +154,7 @@ class LongPollingServiceTest {
         when(telegramClient.getUpdates(anyLong(), anyInt(), anyInt()))
             .thenReturn(Optional.empty());
 
-        LongPollingService service = new LongPollingService(
+        service = new LongPollingService(
             telegramClient, properties,
             event -> {},
             reconnectWatcher

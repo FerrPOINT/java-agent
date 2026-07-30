@@ -30,7 +30,8 @@ class DefaultPromptBuilderTest {
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
 
         assertThat(msg.role()).isEqualTo(Role.SYSTEM);
-        assertThat(msg.content()).contains("Джава агент");
+        // Three-tier prompt uses properties.getName() in the stable tier
+        assertThat(msg.content()).contains("Agent");
     }
 
     @Test

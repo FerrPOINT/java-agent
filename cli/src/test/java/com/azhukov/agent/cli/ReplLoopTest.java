@@ -169,8 +169,11 @@ class ReplLoopTest {
         List<String> output = new ArrayList<>();
         replLoop.runLoop(reader, "session-1", output::add);
 
-        assertThat(output).contains("Hello");
-        assertThat(output).contains(" world");
+        // P1-2: Streaming renderer buffers tokens and flushes on line boundaries
+        // or on flush(). The tokens "Hello" and " world" are flushed together.
+        String combined = String.join("", output);
+        assertThat(combined).contains("Hello");
+        assertThat(combined).contains("world");
     }
 
     @Test

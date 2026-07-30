@@ -2,6 +2,7 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.InsightsDto;
 import com.azhukov.agent.api.dto.UsageDto;
+import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.persistence.entity.UsageEntity;
 import com.azhukov.agent.persistence.repository.UsageRepository;
 import lombok.RequiredArgsConstructor;
@@ -20,7 +21,8 @@ import java.util.UUID;
 
 /**
  * Tracks token usage per turn/session/day.
- * S10: Now supports per-model pricing instead of flat $0.01/1K tokens.
+ * Supports per-model pricing and real token counts from API responses
+ * (prompt_tokens, completion_tokens, cache_read, cache_write, reasoning).
  */
 @Component
 @Slf4j
@@ -29,7 +31,7 @@ public class UsageTracker {
 
     private final UsageRepository usageRepository;
 
-    // S10: Per-model pricing map (USD per 1M tokens)
+    // Per-model pricing map (USD per 1M tokens)
     // Format: model_name -> [input_cost_per_1M, output_cost_per_1M, cache_read_cost_per_1M]
     private static final Map<String, double[]> MODEL_PRICING = Map.ofEntries(
         Map.entry("gpt-4o", new double[]{2.50, 10.00, 1.25}),
@@ -74,38 +76,51 @@ public class UsageTracker {
         Map.entry("glm-5.2", new double[]{0.0, 0.0, 0.0})
     );
 
-    // Fallback pricing
     private static final double DEFAULT_INPUT_COST = 0.50;
     private static final double DEFAULT_OUTPUT_COST = 1.50;
     private static final double DEFAULT_CACHE_READ_COST = 0.05;
 
     /**
-     * Record a single turn's token usage.
+     * Record a single turn's token usage (basic).
      */
     public void recordTurn(UUID sessionId, String userId, String model, int promptTokens, int completionTokens) {
         recordTurn(sessionId, userId, model, promptTokens, completionTokens, 0, 0);
     }
 
     /**
-     * S10: Record a turn with cache token tracking.
+     * Record a turn with cache token tracking.
      */
     public void recordTurn(UUID sessionId, String userId, String model, int promptTokens, int completionTokens,
                            int cacheReadTokens, int cacheWriteTokens) {
+        recordTurn(sessionId, userId, model, TokenUsage.of(promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens, 0));
+    }
+
+    /**
+     * Record a turn from real API response token usage.
+     * Uses real token counts (prompt_tokens, completion_tokens, cache_read, cache_write, reasoning).
+     */
+    public void recordTurn(UUID sessionId, String userId, String model, TokenUsage usage) {
         try {
+            int promptTokens = usage.promptTokens();
+            int completionTokens = usage.completionTokens();
+            int cacheReadTokens = usage.cacheReadTokens();
+            int cacheWriteTokens = usage.cacheWriteTokens();
+
             UsageEntity entity = new UsageEntity();
             entity.setSessionId(sessionId);
             entity.setUserId(userId);
             entity.setModel(model);
             entity.setPromptTokens(promptTokens);
             entity.setCompletionTokens(completionTokens);
-            entity.setTotalTokens(promptTokens + completionTokens);
+            entity.setTotalTokens(usage.totalTokens());
             entity.setCost(computeCost(model, promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens));
             entity.setCacheReadTokens(cacheReadTokens);
             entity.setCacheWriteTokens(cacheWriteTokens);
             entity.setCreatedAt(Instant.now());
             usageRepository.save(entity);
-            log.debug("Recorded usage: session={}, model={}, prompt={}, completion={}, total={}, cost={}",
-                sessionId, model, promptTokens, completionTokens, entity.getTotalTokens(), entity.getCost());
+            log.debug("Recorded usage: session={}, model={}, prompt={}, completion={}, total={}, cacheRead={}, cacheWrite={}, reasoning={}, cost={}",
+                sessionId, model, promptTokens, completionTokens, entity.getTotalTokens(),
+                cacheReadTokens, cacheWriteTokens, usage.reasoningTokens(), entity.getCost());
         } catch (Exception e) {
             log.warn("Failed to record usage for session {}: {}", sessionId, e.getMessage());
         }
@@ -141,7 +156,7 @@ public class UsageTracker {
     }
 
     /**
-     * S10: Get usage insights with per-model cost breakdown.
+     * Get usage insights with per-model cost breakdown.
      */
     public InsightsDto getInsights(String userId) {
         List<UsageEntity> allRecords = usageRepository.findAll();
@@ -161,7 +176,7 @@ public class UsageTracker {
     }
 
     /**
-     * S10: Get cost breakdown per model.
+     * Get cost breakdown per model.
      */
     public Map<String, Double> getCostBreakdown(String userId) {
         List<UsageEntity> allRecords = usageRepository.findAll();
@@ -180,14 +195,14 @@ public class UsageTracker {
     }
 
     /**
-     * S10: Get total cost across all models.
+     * Get total cost across all models.
      */
     public double getTotalCost(String userId) {
         return getCostBreakdown(userId).values().stream().mapToDouble(Double::doubleValue).sum();
     }
 
     /**
-     * S10: Compute cost based on model-specific pricing.
+     * Compute cost based on model-specific pricing.
      */
     private Double computeCost(String model, int promptTokens, int completionTokens,
                                int cacheReadTokens, int cacheWriteTokens) {
@@ -197,20 +212,15 @@ public class UsageTracker {
         double inputCost = (promptTokens / 1_000_000.0) * pricing[0];
         double outputCost = (completionTokens / 1_000_000.0) * pricing[1];
         double cacheReadCost = (cacheReadTokens / 1_000_000.0) * pricing[2];
-        // Cache write cost is typically 1.25x input cost
         double cacheWriteCost = (cacheWriteTokens / 1_000_000.0) * (pricing[0] * 1.25);
 
         double total = inputCost + outputCost + cacheReadCost + cacheWriteCost;
         return BigDecimal.valueOf(total).setScale(6, RoundingMode.HALF_UP).doubleValue();
     }
 
-    /**
-     * Normalize model name for pricing lookup (strip version suffixes, etc.)
-     */
     private String normalizeModel(String model) {
         if (model == null) return "";
         String lower = model.toLowerCase();
-        // Try prefix matching for common model families
         if (lower.startsWith("gpt-4o-mini")) return "gpt-4o-mini";
         if (lower.startsWith("gpt-4o")) return "gpt-4o";
         if (lower.startsWith("gpt-4-turbo")) return "gpt-4-turbo";

@@ -12,6 +12,8 @@ import java.util.List;
 @Component
 public class DefaultMessageSanitizer implements MessageSanitizer {
 
+    private final ToolCallArgumentRepair argumentRepair = new ToolCallArgumentRepair();
+
     @Override
     public List<Message> sanitize(List<Message> messages) {
         if (messages == null || messages.isEmpty()) {
@@ -34,6 +36,17 @@ public class DefaultMessageSanitizer implements MessageSanitizer {
                     log.debug("Inserting placeholder user message before {}", m.role());
                     cleaned.add(Message.user("(context)"));
                 }
+            }
+            // Repair tool-call arguments if present
+            if (m.toolCalls() != null && !m.toolCalls().isEmpty()) {
+                List<com.azhukov.agent.core.model.ToolCall> repairedCalls = new ArrayList<>();
+                for (var tc : m.toolCalls()) {
+                    String repairedArgs = argumentRepair.repair(tc.arguments(), tc.name());
+                    repairedCalls.add(new com.azhukov.agent.core.model.ToolCall(
+                        tc.id(), tc.name(), repairedArgs
+                    ));
+                }
+                m = Message.assistantWithToolCalls(m.content(), repairedCalls, m.turnIndex());
             }
             cleaned.add(m);
         }

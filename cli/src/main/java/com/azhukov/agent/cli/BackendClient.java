@@ -1029,4 +1029,280 @@ public class BackendClient {
         log.error("{} failed: {}", method, e.getMessage());
         return "Error: " + e.getMessage();
     }
+
+    // ------------------------------------------------------------------
+    // P1-4: New backend methods for 15 additional slash commands
+    // ------------------------------------------------------------------
+
+    /**
+     * Retry: resend the last user message to the agent.
+     */
+    public String retry(String sessionId, String lastMessage) {
+        if (lastMessage == null || lastMessage.isBlank()) {
+            return "No previous message to retry.";
+        }
+        return chat(lastMessage, sessionId);
+    }
+
+    /**
+     * Set session title.
+     */
+    public String setTitle(String sessionId, String title) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        body.put("title", title);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/session/title")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Title set: " + title;
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Title set: " + title);
+        } catch (Exception e) {
+            return handleErr("setTitle", e);
+        }
+    }
+
+    /**
+     * Queue a prompt for the next turn.
+     */
+    public String queuePrompt(String sessionId, String prompt) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        body.put("prompt", prompt);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/queue")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Prompt queued for next turn.";
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Prompt queued for next turn.");
+        } catch (Exception e) {
+            return handleErr("queuePrompt", e);
+        }
+    }
+
+    /**
+     * Create a state snapshot.
+     */
+    public String createSnapshot(String sessionId, String description) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        if (description != null && !description.isBlank()) {
+            body.put("description", description);
+        }
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/snapshot")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Snapshot created.";
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Snapshot created.");
+        } catch (Exception e) {
+            return handleErr("createSnapshot", e);
+        }
+    }
+
+    /**
+     * Set personality (system prompt injection).
+     */
+    public String setPersonality(String sessionId, String personality) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        body.put("personality", personality);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/personality")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Personality set: " + personality;
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Personality set: " + personality);
+        } catch (Exception e) {
+            return handleErr("setPersonality", e);
+        }
+    }
+
+    /**
+     * Set reasoning effort level.
+     */
+    public String setReasoningEffort(String sessionId, String level) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        body.put("reasoningEffort", level);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/reasoning")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Reasoning effort set: " + level;
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Reasoning effort set: " + level);
+        } catch (Exception e) {
+            return handleErr("setReasoningEffort", e);
+        }
+    }
+
+    /**
+     * Toggle fast mode.
+     */
+    public String setFastMode(String sessionId, boolean enabled) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        body.put("fastMode", enabled);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/fast-mode")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Fast mode: " + (enabled ? "ON" : "OFF");
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Fast mode: " + (enabled ? "ON" : "OFF"));
+        } catch (Exception e) {
+            return handleErr("setFastMode", e);
+        }
+    }
+
+    /**
+     * Toggle voice mode.
+     */
+    public String setVoiceMode(String sessionId, boolean enabled) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        body.put("voiceMode", enabled);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/voice-mode")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Voice mode: " + (enabled ? "ON" : "OFF");
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Voice mode: " + (enabled ? "ON" : "OFF"));
+        } catch (Exception e) {
+            return handleErr("setVoiceMode", e);
+        }
+    }
+
+    /**
+     * Connect browser tools to CDP.
+     */
+    public String connectBrowser(String cdpUrl) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("cdpUrl", cdpUrl);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/browser/connect")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Browser connected: " + cdpUrl;
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Browser connected: " + cdpUrl);
+        } catch (Exception e) {
+            return handleErr("connectBrowser", e);
+        }
+    }
+
+    /**
+     * List installed plugins.
+     */
+    public JsonNode listPlugins() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/plugins")
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return objectMapper.createArrayNode();
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("listPlugins failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    /**
+     * List available tools.
+     */
+    public JsonNode listTools(String sessionId) {
+        try {
+            String uri = sessionId != null && !sessionId.isBlank()
+                ? "/api/v1/agent/tools?sessionId=" + sessionId
+                : "/api/v1/agent/tools";
+            String json = restClient.get()
+                .uri(uri)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return objectMapper.createArrayNode();
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("listTools failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    /**
+     * Enable or disable a tool.
+     */
+    public String toggleTool(String sessionId, String toolName, boolean enabled) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        body.put("toolName", toolName);
+        body.put("enabled", enabled);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/tools/toggle")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) {
+                return "Tool " + toolName + ": " + (enabled ? "enabled" : "disabled");
+            }
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText(
+                "Tool " + toolName + ": " + (enabled ? "enabled" : "disabled"));
+        } catch (Exception e) {
+            return handleErr("toggleTool", e);
+        }
+    }
+
+    /**
+     * Add criteria to active goal (subgoal).
+     */
+    public String addSubgoal(String sessionId, String criteria) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        body.put("criteria", criteria);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/subgoal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Subgoal added: " + criteria;
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Subgoal added: " + criteria);
+        } catch (Exception e) {
+            return handleErr("addSubgoal", e);
+        }
+    }
 }

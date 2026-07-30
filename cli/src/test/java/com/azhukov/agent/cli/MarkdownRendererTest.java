@@ -57,8 +57,12 @@ class MarkdownRendererTest {
     void rendersCodeBlockWithLanguage() {
         String markdown = "```python\nprint('hello')\n```";
         String result = renderer.render(markdown);
-        assertThat(result).contains("print('hello')");
+        // P1-2: Syntax highlighting adds ANSI codes around keywords and strings,
+        // so check for the individual parts rather than the full string
+        assertThat(result).contains("print");
+        assertThat(result).contains("'hello'");
         assertThat(result).doesNotContain("```");
+        // Language tag should be stripped
         assertThat(result).doesNotContain("python");
     }
 

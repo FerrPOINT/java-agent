@@ -158,4 +158,81 @@ public class BotSessionStore {
     public int deactivateAll(String userId) {
         return repository.deactivateAllForUser(userId);
     }
+
+    // ─── P0: Session Reset Policy ──────────────────────────────────
+
+    /**
+     * List all active sessions (for the expiry watcher).
+     *
+     * @return list of active sessions
+     */
+    @Transactional(readOnly = true)
+    public java.util.List<BotSessionEntity> listActiveSessions() {
+        return repository.findByActiveTrue();
+    }
+
+    /**
+     * Finalize an expired session — deactivate it and update timestamp.
+     *
+     * @param sessionId the session UUID
+     */
+    @Transactional
+    public void finalizeSession(UUID sessionId) {
+        repository.findById(sessionId).ifPresent(session -> {
+            session.setActive(false);
+            session.setUpdatedAt(Instant.now());
+            repository.save(session);
+        });
+    }
+
+    /**
+     * Suspend a session — marks it for auto-reset on next access.
+     * Used by /stop to break stuck-resume loops.
+     *
+     * @param sessionId the session UUID
+     * @return true if the session was found and suspended
+     */
+    @Transactional
+    public boolean suspendSession(UUID sessionId) {
+        BotSessionEntity session = repository.findById(sessionId).orElse(null);
+        if (session == null) return false;
+        session.setSuspended(true);
+        session.setUpdatedAt(Instant.now());
+        repository.save(session);
+        return true;
+    }
+
+    /**
+     * Mark a session as resume-pending — preserves the session_id
+     * so the user auto-continues from where they left off after a restart.
+     *
+     * @param sessionId the session UUID
+     * @return true if the session was found and marked
+     */
+    @Transactional
+    public boolean markResumePending(UUID sessionId) {
+        BotSessionEntity session = repository.findById(sessionId).orElse(null);
+        if (session == null) return false;
+        if (session.isSuspended()) return false; // Never override explicit suspend
+        session.setResumePending(true);
+        session.setUpdatedAt(Instant.now());
+        repository.save(session);
+        return true;
+    }
+
+    /**
+     * Clear the resume-pending flag after a successful resumed turn.
+     *
+     * @param sessionId the session UUID
+     * @return true if the flag was cleared
+     */
+    @Transactional
+    public boolean clearResumePending(UUID sessionId) {
+        BotSessionEntity session = repository.findById(sessionId).orElse(null);
+        if (session == null || !session.isResumePending()) return false;
+        session.setResumePending(false);
+        session.setUpdatedAt(Instant.now());
+        repository.save(session);
+        return true;
+    }
 }

@@ -1,5 +1,8 @@
 package com.azhukov.agent.bot.config;
 
+import com.azhukov.agent.bot.client.DohIpDiscovery;
+import com.azhukov.agent.bot.client.FallbackIpTransport;
+import com.azhukov.agent.bot.client.TelegramRequestFactory;
 import com.azhukov.agent.bot.core.BotMessageProcessor;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.ReconnectWatcher;
@@ -44,16 +47,32 @@ public class BotConfig {
         supportedTypes.add(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM);
         jacksonConverter.setSupportedMediaTypes(supportedTypes);
 
+        // P0: Fallback IP Transport — discover fallback IPs via DoH and retry
+        // against them when primary api.telegram.org is unreachable.
+        // Wrapped in try-catch with short timeout: DoH discovery is a network call
+        // that may fail in test/offline environments — degrade gracefully to seed IPs.
+        FallbackIpTransport fallbackTransport;
+        try {
+            DohIpDiscovery dohDiscovery = new DohIpDiscovery();
+            List<String> fallbackIps = dohDiscovery.discover();
+            fallbackTransport = new FallbackIpTransport(fallbackIps);
+        } catch (Exception e) {
+            log.warn("DoH discovery failed during startup, using seed fallback IPs: {}", e.getMessage());
+            fallbackTransport = new FallbackIpTransport(DohIpDiscovery.SEED_FALLBACK_IPS);
+        }
+
+        SimpleClientHttpRequestFactory requestFactory = new TelegramRequestFactory();
+        requestFactory.setConnectTimeout((int) Duration.ofSeconds(10).toMillis());
+        requestFactory.setReadTimeout((int) Duration.ofSeconds(60).toMillis());
+
         return RestClient.builder()
             .baseUrl("https://api.telegram.org")
-            .requestFactory(new SimpleClientHttpRequestFactory() {{
-                setConnectTimeout((int) Duration.ofSeconds(10).toMillis());
-                setReadTimeout((int) Duration.ofSeconds(60).toMillis());
-            }})
+            .requestFactory(requestFactory)
             .messageConverters(converters -> {
                 converters.removeIf(c -> c instanceof MappingJackson2HttpMessageConverter);
                 converters.add(jacksonConverter);
             })
+            .requestInterceptor(fallbackTransport)
             .build();
     }
 
@@ -76,5 +95,16 @@ public class BotConfig {
     @Bean
     public Consumer<UpdateEvent> updateHandler(BotMessageProcessor botMessageProcessor) {
         return botMessageProcessor::accept;
+    }
+
+    @Bean
+    public com.azhukov.agent.bot.session.SessionResetPolicy sessionResetPolicy(BotProperties properties) {
+        com.azhukov.agent.bot.session.SessionResetPolicy policy = new com.azhukov.agent.bot.session.SessionResetPolicy();
+        BotProperties.SessionReset config = properties.getSessionReset();
+        policy.setMode(com.azhukov.agent.bot.session.SessionResetMode.valueOf(config.getMode().toUpperCase()));
+        policy.setAtHour(config.getAtHour());
+        policy.setIdleMinutes(config.getIdleMinutes());
+        policy.setNotify(config.isNotify());
+        return policy;
     }
 }

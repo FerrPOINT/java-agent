@@ -1,11 +1,13 @@
 package com.azhukov.agent.bot.streaming;
 
 import com.azhukov.agent.bot.client.TelegramClient;
+import com.azhukov.agent.bot.client.TelegramResponse;
 import com.azhukov.agent.bot.config.BotProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,6 +27,11 @@ class StreamEditorTest {
         props.setStreamingSilent(true);
         editor = new StreamEditor(client, props);
         editor.init();
+        // Mock getMe to return no rich messages support, so existing tests use legacy path
+        TelegramResponse meResponse = mock(TelegramResponse.class);
+        when(meResponse.isSuccess()).thenReturn(true);
+        when(meResponse.resultAsMap()).thenReturn(Map.of()); // no supports_rich_messages field
+        when(client.callApi("getMe", Map.of())).thenReturn(Optional.of(meResponse));
     }
 
     @Test

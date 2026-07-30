@@ -62,6 +62,7 @@ class BotMessageProcessorTest {
         properties = new BotProperties();
         properties.setDefaultModel("test-model");
         properties.setBusyMode("queue");
+        properties.setRedactPii(false);  // Disable PII redaction for unit tests
         busyHandler = new BusySessionHandler(properties);
         typingManager = mock(TypingManager.class);
         backendClient = mock(AgentBackendClient.class);

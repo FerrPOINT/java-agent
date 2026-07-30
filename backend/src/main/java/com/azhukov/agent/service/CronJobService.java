@@ -1,6 +1,7 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.persistence.repository.CronJobRepository;
 import com.cronutils.model.Cron;
@@ -36,6 +37,7 @@ public class CronJobService {
     private final CronJobRepository cronJobRepository;
     private final ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider;
     private final AgentProperties properties;
+    private final SkillManager skillManager;
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10);
     private final Map<UUID, ScheduledFuture<?>> scheduledTasks = new ConcurrentHashMap<>();
@@ -72,19 +74,24 @@ public class CronJobService {
     }
 
     public CronJobEntity create(String name, String schedule, String prompt, String deliverTo) {
+        return create(name, schedule, prompt, deliverTo, null);
+    }
+
+    public CronJobEntity create(String name, String schedule, String prompt, String deliverTo, String skills) {
         validateCronExpression(schedule);
         CronJobEntity entity = new CronJobEntity();
         entity.setName(name);
         entity.setSchedule(schedule);
         entity.setPrompt(prompt);
         entity.setDeliverTo(deliverTo);
+        entity.setSkills(skills);
         entity.setEnabled(true);
         entity.setCreatedAt(Instant.now());
         entity = cronJobRepository.save(entity);
         if (properties.getCron().isEnabled()) {
             scheduleJob(entity);
         }
-        log.info("Created cron job: {} (schedule: {})", name, schedule);
+        log.info("Created cron job: {} (schedule: {}, skills: {})", name, schedule, skills);
         return entity;
     }
 
@@ -181,16 +188,23 @@ public class CronJobService {
     }
 
     private void executeJob(CronJobEntity job) {
-        log.info("Executing cron job: {} (deliverTo: {})", job.getName(), job.getDeliverTo());
+        log.info("Executing cron job: {} (deliverTo: {}, skills: {})", job.getName(), job.getDeliverTo(), job.getSkills());
         try {
             if (job.getDeliverTo() != null && !job.getDeliverTo().isBlank()) {
                 // Deliver to platform — could be extended for telegram, discord, etc.
                 log.info("Delivering cron job '{}' output to: {}", job.getName(), job.getDeliverTo());
             }
+            // S17: Load attached skills and inject into agent context
+            String enhancedPrompt = job.getPrompt();
+            String loadedSkills = loadJobSkills(job.getSkills());
+            if (loadedSkills != null && !loadedSkills.isBlank()) {
+                enhancedPrompt = loadedSkills + "\n\n---\n\n" + job.getPrompt();
+                log.debug("Injected {} skills into cron job '{}'", job.getSkills(), job.getName());
+            }
             // Run the prompt through the agent runtime
             AgentRuntimeService runtimeService = agentRuntimeServiceProvider.getIfAvailable();
             if (runtimeService != null) {
-                runtimeService.runBackground(job.getPrompt(), null);
+                runtimeService.runBackground(enhancedPrompt, null);
             } else {
                 log.warn("AgentRuntimeService not available, skipping cron job execution: {}", job.getName());
             }
@@ -199,6 +213,37 @@ public class CronJobService {
         } catch (Exception e) {
             log.error("Failed to execute cron job {}: {}", job.getName(), e.getMessage());
         }
+    }
+
+    /**
+     * S17: Load skills attached to a cron job and return their content for injection.
+     *
+     * @param skillsCsv comma-separated skill names
+     * @return combined skill content, or null if no skills attached
+     */
+    private String loadJobSkills(String skillsCsv) {
+        if (skillsCsv == null || skillsCsv.isBlank()) {
+            return null;
+        }
+        if (skillManager == null) {
+            log.debug("SkillManager not available — cannot load cron job skills");
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String skillName : skillsCsv.split(",")) {
+            String trimmed = skillName.trim();
+            if (trimmed.isEmpty()) continue;
+            try {
+                String content = skillManager.getSkill(trimmed);
+                if (content != null && !content.isBlank()) {
+                    sb.append("=== Skill: ").append(trimmed).append(" ===\n");
+                    sb.append(content).append("\n\n");
+                }
+            } catch (Exception e) {
+                log.warn("Failed to load skill '{}' for cron job: {}", trimmed, e.getMessage());
+            }
+        }
+        return sb.toString().trim();
     }
 
     private void cancelJob(UUID id) {

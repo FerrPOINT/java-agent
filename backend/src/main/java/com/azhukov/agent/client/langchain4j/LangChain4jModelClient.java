@@ -1,11 +1,14 @@
 package com.azhukov.agent.client.langchain4j;
 
+import com.azhukov.agent.client.credential.CredentialPool;
+import com.azhukov.agent.client.credential.PooledCredential;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
+import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import dev.langchain4j.data.message.AiMessage;
@@ -29,7 +32,7 @@ import java.util.stream.Collectors;
 
 /**
  * LangChain4j-backed OpenAI-compatible model client.
- * Supports text completion, tool calls, streaming, and vision.
+ * Supports text completion, tool calls, streaming, vision, and credential pool rotation.
  */
 @Slf4j
 public class LangChain4jModelClient implements ModelClient {
@@ -40,24 +43,46 @@ public class LangChain4jModelClient implements ModelClient {
     private final java.util.function.Consumer<Usage> usageConsumer;
     private final ErrorClassifier errorClassifier;
     private final RateLimitTracker rateLimitTracker;
+    private final CredentialPool credentialPool;
 
     public LangChain4jModelClient(AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker) {
+        this(properties, usageConsumer, errorClassifier, rateLimitTracker, null);
+    }
+
+    public LangChain4jModelClient(AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
+                                   ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker,
+                                   CredentialPool credentialPool) {
         this.properties = properties;
         this.usageConsumer = usageConsumer;
         this.errorClassifier = errorClassifier;
         this.rateLimitTracker = rateLimitTracker;
+        this.credentialPool = credentialPool;
+
+        // Resolve credentials: use credential pool if available, otherwise fall back to config
+        String apiKey = properties.getModel().getApiKey();
+        String baseUrl = properties.getModel().getBaseUrl();
+        if (credentialPool != null && credentialPool.hasAvailable()) {
+            PooledCredential cred = credentialPool.current();
+            if (cred != null) {
+                apiKey = cred.apiKey();
+                baseUrl = cred.baseUrl() != null ? cred.baseUrl() : baseUrl;
+                credentialPool.markUsed(cred);
+                log.debug("Using credential from pool: {} for provider {}", cred.id(), cred.provider());
+            }
+        }
+
         this.chatModel = dev.langchain4j.model.openai.OpenAiChatModel.builder()
-            .baseUrl(properties.getModel().getBaseUrl())
-            .apiKey(properties.getModel().getApiKey())
+            .baseUrl(baseUrl)
+            .apiKey(apiKey)
             .modelName(properties.getModel().getModelName())
             .timeout(java.time.Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
             .maxRetries(properties.getModel().getMaxRetries())
             .temperature(properties.getModel().getTemperature())
             .build();
         this.streamingChatModel = dev.langchain4j.model.openai.OpenAiStreamingChatModel.builder()
-            .baseUrl(properties.getModel().getBaseUrl())
-            .apiKey(properties.getModel().getApiKey())
+            .baseUrl(baseUrl)
+            .apiKey(apiKey)
             .modelName(properties.getModel().getModelName())
             .timeout(java.time.Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
             .temperature(properties.getModel().getTemperature())
@@ -67,12 +92,20 @@ public class LangChain4jModelClient implements ModelClient {
     public LangChain4jModelClient(ChatModel chatModel, StreamingChatModel streamingChatModel,
                                    AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker) {
+        this(chatModel, streamingChatModel, properties, usageConsumer, errorClassifier, rateLimitTracker, null);
+    }
+
+    public LangChain4jModelClient(ChatModel chatModel, StreamingChatModel streamingChatModel,
+                                   AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
+                                   ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker,
+                                   CredentialPool credentialPool) {
         this.chatModel = chatModel;
         this.streamingChatModel = streamingChatModel;
         this.properties = properties;
         this.usageConsumer = usageConsumer;
         this.errorClassifier = errorClassifier;
         this.rateLimitTracker = rateLimitTracker;
+        this.credentialPool = credentialPool;
     }
 
     @Override
@@ -280,6 +313,8 @@ public class LangChain4jModelClient implements ModelClient {
             if (response.tokenUsage() == null || usageConsumer == null) return;
             int prompt = response.tokenUsage().inputTokenCount();
             int completion = response.tokenUsage().outputTokenCount();
+            // Build TokenUsage with cache token tracking (real token counts from API response)
+            TokenUsage usage = TokenUsage.of(prompt, completion);
             usageConsumer.accept(new Usage(properties.getModel().getProvider(), properties.getModel().getModelName(), prompt, completion));
         } catch (Exception e) {
             log.debug("Could not persist model usage: {}", e.getMessage());

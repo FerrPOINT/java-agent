@@ -23,13 +23,32 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
+/**
+ * Context reference service with support for @diff, @staged, @git, @folder
+ * reference types and sensitive path blocking.
+ * <p>
+ * Mirrors Hermes' agent/context_references.py.
+ */
 @Component
 @Slf4j
 @RequiredArgsConstructor
 public class DefaultContextReferenceService implements ContextReferenceService {
 
     private static final int CHARS_PER_TOKEN = 4;
+
+    // Sensitive directories that should be blocked from file/folder references
+    private static final Set<String> SENSITIVE_HOME_DIRS = Set.of(
+        ".ssh", ".aws", ".env", ".gnupg", ".kube", ".docker", ".azure", ".config/gh"
+    );
+
+    // Sensitive files that should be blocked
+    private static final Set<String> SENSITIVE_HOME_FILES = Set.of(
+        ".ssh/authorized_keys", ".ssh/id_rsa", ".ssh/id_ed25519", ".ssh/config",
+        ".bashrc", ".zshrc", ".profile", ".bash_profile", ".zprofile",
+        ".netrc", ".pgpass", ".npmrc", ".pypirc", ".env"
+    );
 
     private final AgentProperties properties;
     private final SkillManager skillManager;
@@ -43,11 +62,6 @@ public class DefaultContextReferenceService implements ContextReferenceService {
             .build();
     }
 
-    /**
-     * Returns the effective maximum reference token budget.  If
-     * {@code maxReferenceTokens} is configured as 0 (the default), it is
-     * computed as {@code maxTokens / 4}.
-     */
     private int getMaxReferenceTokens() {
         int configured = properties.getContext().getMaxReferenceTokens();
         if (configured > 0) {
@@ -56,10 +70,6 @@ public class DefaultContextReferenceService implements ContextReferenceService {
         return Math.max(1, properties.getContext().getMaxTokens() / 4);
     }
 
-    /**
-     * Estimates the token count for a given text using the standard
-     * approximation of chars / 4.
-     */
     private int estimateTokens(String text) {
         if (text == null || text.isEmpty()) {
             return 0;
@@ -91,30 +101,22 @@ public class DefaultContextReferenceService implements ContextReferenceService {
             case FILE -> loadFile(reference.source());
             case URL -> loadUrl(reference.source());
             case SKILL -> loadSkill(reference.source());
+            case DIFF -> loadGitDiff(reference.source());
+            case STAGED -> loadGitStaged(reference.source());
+            case GIT -> loadGitLog(reference.source());
+            case FOLDER -> loadFolder(reference.source());
             case UNKNOWN -> Optional.of("[unknown reference type: " + reference.source() + "]");
         };
     }
 
-    /**
-     * Loads content for all resolved references while enforcing a token budget.
-     * <p>
-     * If the total estimated token count of injected reference content exceeds
-     * 25% of {@code maxTokens} a warning is logged.  If it exceeds 50% of
-     * {@code maxTokens} the injection is refused and an error message is
-     * returned instead of the content.
-     *
-     * @param refs the resolved context references to load
-     * @return the concatenated content of all references, or an error message
-     *         if the token budget is exceeded
-     */
     public Optional<String> loadContentWithBudget(List<ContextReference> refs) {
         if (refs == null || refs.isEmpty()) {
             return Optional.empty();
         }
         int maxTokens = properties.getContext().getMaxTokens();
         int maxRefTokens = getMaxReferenceTokens();
-        int warnThreshold = maxRefTokens;       // 25% of maxTokens
-        int refuseThreshold = maxRefTokens * 2; // 50% of maxTokens
+        int warnThreshold = maxRefTokens;
+        int refuseThreshold = maxRefTokens * 2;
 
         StringBuilder sb = new StringBuilder();
         int totalTokens = 0;
@@ -130,15 +132,13 @@ public class DefaultContextReferenceService implements ContextReferenceService {
         }
 
         if (totalTokens > refuseThreshold) {
-            log.warn("Reference content exceeds budget: {} tokens > {} max (50% of maxTokens={})",
-                totalTokens, refuseThreshold, maxTokens);
+            log.warn("Reference content exceeds budget: {} tokens > {} max", totalTokens, refuseThreshold);
             return Optional.of("[Reference content exceeds token budget: " + totalTokens
                 + " tokens > " + refuseThreshold + " max. References were not injected.]");
         }
 
         if (totalTokens > warnThreshold) {
-            log.warn("Reference content approaching budget: {} tokens > {} max (25% of maxTokens={})",
-                totalTokens, warnThreshold, maxTokens);
+            log.warn("Reference content approaching budget: {} tokens > {} max", totalTokens, warnThreshold);
         }
 
         return Optional.of(sb.toString().trim());
@@ -155,6 +155,29 @@ public class DefaultContextReferenceService implements ContextReferenceService {
             String path = ref.substring(7);
             return new ContextReference(ReferenceType.FILE, path, Paths.get(path).getFileName().toString(), null);
         }
+        // @diff, @staged, @git, @folder reference types
+        if (ref.startsWith("@diff") || ref.equals("@diff")) {
+            return new ContextReference(ReferenceType.DIFF, "", "@diff", null);
+        }
+        if (ref.startsWith("@staged") || ref.equals("@staged")) {
+            return new ContextReference(ReferenceType.STAGED, "", "@staged", null);
+        }
+        if (ref.startsWith("@git:") || ref.equals("@git")) {
+            String count = ref.startsWith("@git:") ? ref.substring(5) : "1";
+            return new ContextReference(ReferenceType.GIT, count, "@git", null);
+        }
+        if (ref.startsWith("@folder:") || ref.startsWith("folder://")) {
+            String path = ref.startsWith("@folder:") ? ref.substring(8) : ref.substring(9);
+            return new ContextReference(ReferenceType.FOLDER, path, path, null);
+        }
+        if (ref.startsWith("@")) {
+            // Try as file reference with @ prefix
+            String path = ref.substring(1);
+            Path candidate = Paths.get(path);
+            if (Files.exists(candidate)) {
+                return new ContextReference(ReferenceType.FILE, path, candidate.getFileName().toString(), null);
+            }
+        }
         Path candidate = Paths.get(ref);
         if (Files.exists(candidate)) {
             return new ContextReference(ReferenceType.FILE, ref, candidate.getFileName().toString(), null);
@@ -162,9 +185,47 @@ public class DefaultContextReferenceService implements ContextReferenceService {
         return new ContextReference(ReferenceType.UNKNOWN, ref, ref, "unrecognized reference");
     }
 
+    /**
+     * Check if a path is sensitive and should be blocked.
+     * Blocks .ssh, .aws, .env, .gnupg, .kube and other sensitive directories/files.
+     */
+    private boolean isSensitivePath(Path path) {
+        String pathStr = path.toString();
+        Path home = Paths.get(System.getProperty("user.home"));
+
+        // Check against sensitive files
+        for (String sensitiveFile : SENSITIVE_HOME_FILES) {
+            Path sensitivePath = home.resolve(sensitiveFile);
+            if (path.equals(sensitivePath)) {
+                return true;
+            }
+        }
+
+        // Check against sensitive directories
+        for (String sensitiveDir : SENSITIVE_HOME_DIRS) {
+            Path sensitivePath = home.resolve(sensitiveDir);
+            if (path.startsWith(sensitivePath)) {
+                return true;
+            }
+        }
+
+        // Check for .env files anywhere
+        if (path.getFileName() != null && path.getFileName().toString().equals(".env")) {
+            return true;
+        }
+
+        return false;
+    }
+
     private Optional<String> loadFile(String source) {
         try {
             Path path = Paths.get(source).toAbsolutePath().normalize();
+            // Sensitive path blocking (check BEFORE base directory, so credentials
+            // outside the working directory are still blocked with the right message)
+            if (isSensitivePath(path)) {
+                log.warn("Blocked sensitive path reference: {}", source);
+                return Optional.of("[file access denied — sensitive credential path: " + source + "]");
+            }
             Path base = Paths.get(properties.getCore().getWorkingDirectory()).toAbsolutePath().normalize();
             if (!path.startsWith(base)) {
                 return Optional.of("[file access denied: " + source + "]");
@@ -211,6 +272,112 @@ public class DefaultContextReferenceService implements ContextReferenceService {
         } catch (Exception e) {
             log.warn("Failed to load referenced skill {}", source, e);
             return Optional.of("[skill load error: " + source + "]");
+        }
+    }
+
+    /**
+     * Load git diff output (unstaged changes).
+     */
+    private Optional<String> loadGitDiff(String source) {
+        return runGitCommand("git diff", "diff");
+    }
+
+    /**
+     * Load git staged changes.
+     */
+    private Optional<String> loadGitStaged(String source) {
+        return runGitCommand("git diff --staged", "diff --staged");
+    }
+
+    /**
+     * Load git log with patch.
+     */
+    private Optional<String> loadGitLog(String source) {
+        int count = 1;
+        try {
+            count = Math.max(1, Math.min(Integer.parseInt(source), 10));
+        } catch (NumberFormatException ignored) {
+        }
+        return runGitCommand("git log -" + count + " -p", "git log -" + count + " -p");
+    }
+
+    private Optional<String> runGitCommand(String command, String label) {
+        try {
+            String workingDir = properties.getCore().getWorkingDirectory();
+            ProcessBuilder pb = new ProcessBuilder(command.split(" "));
+            pb.directory(workingDir != null ? new java.io.File(workingDir) : new java.io.File("."));
+            pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));
+            Process process = pb.start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            String error = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+            boolean done = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
+            if (!done) {
+                process.destroyForcibly();
+                return Optional.of("[" + label + ": timed out (30s)]");
+            }
+            if (process.exitValue() != 0) {
+                String err = error.strip();
+                if (err.isEmpty()) err = "git command failed";
+                return Optional.of("[" + label + ": " + err + "]");
+            }
+            String content = output.strip();
+            if (content.isEmpty()) {
+                content = "(no output)";
+            }
+            return Optional.of("```diff\n" + content + "\n```");
+        } catch (Exception e) {
+            log.warn("Failed to run git command: {}", command, e);
+            return Optional.of("[" + label + ": " + e.getMessage() + "]");
+        }
+    }
+
+    /**
+     * Load folder listing.
+     */
+    private Optional<String> loadFolder(String source) {
+        try {
+            Path path = Paths.get(source);
+            if (!path.isAbsolute()) {
+                String workingDir = properties.getCore().getWorkingDirectory();
+                path = Paths.get(workingDir != null ? workingDir : ".").resolve(path).toAbsolutePath().normalize();
+            }
+            final Path basePath = path;
+            // Sensitive path blocking
+            if (isSensitivePath(path)) {
+                log.warn("Blocked sensitive folder reference: {}", source);
+                return Optional.of("[folder access denied — sensitive credential path: " + source + "]");
+            }
+            if (!Files.exists(path) || !Files.isDirectory(path)) {
+                return Optional.of("[folder not found: " + source + "]");
+            }
+
+            StringBuilder listing = new StringBuilder();
+            listing.append(path.getFileName()).append("/\n");
+            try (var stream = Files.walk(path, 3)) {
+                int limit = 200;
+                var items = stream
+                    .filter(p -> !p.equals(basePath))
+                    .filter(p -> {
+                        String name = p.getFileName().toString();
+                        return !name.startsWith(".") && !name.equals("__pycache__");
+                    })
+                    .limit(limit)
+                    .sorted()
+                    .toList();
+                for (Path item : items) {
+                    int depth = path.relativize(item).getNameCount();
+                    String indent = "  ".repeat(Math.max(depth - 1, 0));
+                    if (Files.isDirectory(item)) {
+                        listing.append(indent).append("- ").append(item.getFileName()).append("/\n");
+                    } else {
+                        listing.append(indent).append("- ").append(item.getFileName()).append("\n");
+                    }
+                }
+            }
+            return Optional.of(listing.toString().trim());
+        } catch (IOException e) {
+            log.warn("Failed to list folder {}", source, e);
+            return Optional.of("[folder read error: " + source + "]");
         }
     }
 }

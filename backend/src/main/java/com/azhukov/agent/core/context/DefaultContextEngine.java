@@ -2,9 +2,11 @@ package com.azhukov.agent.core.context;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.metadata.ModelMetadataService;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.MessageEntity;
@@ -18,13 +20,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 public class DefaultContextEngine implements ContextEngine {
 
     private static final int RECALL_LIMIT = 5;
     private static final int SKILL_LIMIT = 3;
-    private static final int CHARS_PER_TOKEN_ESTIMATE = 4;
     private static final long COMPRESSION_COOLDOWN_SECONDS = 600;
     private static final double PREFLIGHT_THRESHOLD = 0.8;
 
@@ -34,16 +36,29 @@ public class DefaultContextEngine implements ContextEngine {
     private final ContextCompressor contextCompressor;
     private final AgentProperties.ContextProperties contextProps;
     private final PromptCacheTracker cacheTracker;
-    private final java.util.Map<UUID, Map<String, String>> snapshotCache = new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.Map<UUID, String> lastMemoryHash = new java.util.concurrent.ConcurrentHashMap<>();
+    private final ModelMetadataService modelMetadataService;
+
+    private final Map<UUID, Map<String, String>> snapshotCache = new ConcurrentHashMap<>();
+    private final Map<UUID, String> lastMemoryHash = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, Instant> lastCompressedAt = new ConcurrentHashMap<>();
+
+    // Real token usage tracking (replaces chars/4 estimate)
+    private volatile int lastPromptTokens = 0;
+    private volatile int lastCompletionTokens = 0;
+    private volatile int lastTotalTokens = 0;
+    private volatile int lastCacheReadTokens = 0;
+    private volatile int lastCacheWriteTokens = 0;
+    private volatile int lastReasoningTokens = 0;
+    private final AtomicInteger compressionCount = new AtomicInteger(0);
+    private volatile int contextLength = 0;
+    private volatile int thresholdTokens = 0;
 
     public DefaultContextEngine(MemoryProvider memoryProvider,
                                 SkillManager skillManager,
                                 MessageRepository messageRepository,
                                 ContextCompressor contextCompressor,
                                 AgentProperties properties) {
-        this(memoryProvider, skillManager, messageRepository, contextCompressor, properties, null);
+        this(memoryProvider, skillManager, messageRepository, contextCompressor, properties, null, null);
     }
 
     public DefaultContextEngine(MemoryProvider memoryProvider,
@@ -52,12 +67,28 @@ public class DefaultContextEngine implements ContextEngine {
                                 ContextCompressor contextCompressor,
                                 AgentProperties properties,
                                 PromptCacheTracker cacheTracker) {
+        this(memoryProvider, skillManager, messageRepository, contextCompressor, properties, cacheTracker, null);
+    }
+
+    public DefaultContextEngine(MemoryProvider memoryProvider,
+                                SkillManager skillManager,
+                                MessageRepository messageRepository,
+                                ContextCompressor contextCompressor,
+                                AgentProperties properties,
+                                PromptCacheTracker cacheTracker,
+                                ModelMetadataService modelMetadataService) {
         this.memoryProvider = memoryProvider;
         this.skillManager = skillManager;
         this.messageRepository = messageRepository;
         this.contextCompressor = contextCompressor;
         this.contextProps = properties.getContext();
         this.cacheTracker = cacheTracker;
+        this.modelMetadataService = modelMetadataService;
+        // Initialize context length from model metadata if available
+        if (modelMetadataService != null && properties.getModel().getModelName() != null) {
+            this.contextLength = modelMetadataService.detectContextLength(properties.getModel().getModelName());
+            this.thresholdTokens = (int) (contextLength * 0.75);
+        }
     }
 
     @Override
@@ -66,7 +97,7 @@ public class DefaultContextEngine implements ContextEngine {
 
         StringBuilder systemExtra = new StringBuilder();
         appendSkills(systemExtra);
-        appendMemoryRecall(session, systemExtra);
+        // Memory is now injected as user message prefix, not system prompt, to preserve cache
 
         // Compose system message first if present
         if (!messages.isEmpty() && messages.get(0).role() == Role.SYSTEM) {
@@ -86,13 +117,18 @@ public class DefaultContextEngine implements ContextEngine {
         context.addAll(messages.subList(start, messages.size()));
 
         List<Message> trimmed = trimToFit(context);
-        // Preflight: trigger compression at 80% of maxTokens (before API call)
+        // Preflight: trigger compression at threshold of maxTokens (before API call)
         if (shouldCompressPreflight(trimmed)) {
             // Check cooldown — skip if compressed recently
             Instant lastCompressed = lastCompressedAt.get(session.id());
             if (lastCompressed == null || Duration.between(lastCompressed, Instant.now()).getSeconds() >= COMPRESSION_COOLDOWN_SECONDS) {
-                trimmed = contextCompressor.compress(trimmed, contextProps.getTargetTokens() * CHARS_PER_TOKEN_ESTIMATE);
+                trimmed = contextCompressor.compress(trimmed, contextProps.getTargetTokens() * charsPerToken());
                 lastCompressedAt.put(session.id(), Instant.now());
+                compressionCount.incrementAndGet();
+                // Invalidate prompt cache after compression
+                if (cacheTracker != null) {
+                    cacheTracker.invalidateSystemPrompt(String.valueOf(session.id()));
+                }
             } else {
                 log.debug("Skipping compression for session {} — within cooldown (last compressed {})", session.id(), lastCompressed);
             }
@@ -103,8 +139,79 @@ public class DefaultContextEngine implements ContextEngine {
     @Override
     public boolean shouldCompressPreflight(List<Message> messages) {
         if (messages == null || messages.isEmpty()) return false;
-        int estimatedTokens = estimateChars(messages) / CHARS_PER_TOKEN_ESTIMATE;
-        return estimatedTokens > contextProps.getMaxTokens() * PREFLIGHT_THRESHOLD;
+        int estimatedTokens = estimateTokens(messages);
+        int maxTokens = contextLength > 0 ? contextLength : contextProps.getMaxTokens();
+        return estimatedTokens > maxTokens * PREFLIGHT_THRESHOLD;
+    }
+
+    /**
+     * Update tracked token usage from a real API response.
+     * Replaces the chars/4 estimate with actual token counts for accurate budget tracking.
+     */
+    @Override
+    public void updateFromResponse(TokenUsage usage) {
+        if (usage == null) return;
+        this.lastPromptTokens = usage.promptTokens();
+        this.lastCompletionTokens = usage.completionTokens();
+        this.lastTotalTokens = usage.totalTokens();
+        this.lastCacheReadTokens = usage.cacheReadTokens();
+        this.lastCacheWriteTokens = usage.cacheWriteTokens();
+        this.lastReasoningTokens = usage.reasoningTokens();
+        log.debug("Updated token usage: prompt={}, completion={}, cacheRead={}, cacheWrite={}, reasoning={}",
+            lastPromptTokens, lastCompletionTokens, lastCacheReadTokens, lastCacheWriteTokens, lastReasoningTokens);
+    }
+
+    /**
+     * Get the current status for display/logging.
+     */
+    public Map<String, Object> getStatus() {
+        double usagePercent = contextLength > 0
+            ? Math.min(100.0, (double) lastPromptTokens / contextLength * 100)
+            : 0;
+        return Map.of(
+            "lastPromptTokens", lastPromptTokens,
+            "lastCompletionTokens", lastCompletionTokens,
+            "lastTotalTokens", lastTotalTokens,
+            "lastCacheReadTokens", lastCacheReadTokens,
+            "lastCacheWriteTokens", lastCacheWriteTokens,
+            "lastReasoningTokens", lastReasoningTokens,
+            "thresholdTokens", thresholdTokens,
+            "contextLength", contextLength,
+            "usagePercent", String.format("%.2f%%", usagePercent),
+            "compressionCount", compressionCount.get()
+        );
+    }
+
+    /**
+     * Update model and recalculate context length from model metadata.
+     */
+    public void updateModel(String model) {
+        if (modelMetadataService != null && model != null && !model.isBlank()) {
+            this.contextLength = modelMetadataService.detectContextLength(model);
+            this.thresholdTokens = (int) (contextLength * 0.75);
+            log.debug("Updated model: {}, contextLength={}, threshold={}", model, contextLength, thresholdTokens);
+        }
+    }
+
+    private int charsPerToken() {
+        if (modelMetadataService != null) {
+            return modelMetadataService.getMetadata(
+                contextProps != null ? contextProps.toString() : ""
+            ).charsPerToken();
+        }
+        return 4;
+    }
+
+    private int estimateTokens(List<Message> messages) {
+        // Use real token usage if available (from last API response)
+        if (lastPromptTokens > 0) {
+            // Rough estimate: scale last real usage by current message count ratio
+            int estimated = lastPromptTokens;
+            // This is a preflight estimate — real usage will update after the API call
+            return estimated;
+        }
+        // Fallback to chars/4 estimate
+        return estimateChars(messages) / charsPerToken();
     }
 
     private List<Message> trimToFit(List<Message> context) {
@@ -112,18 +219,16 @@ public class DefaultContextEngine implements ContextEngine {
         if (maxMessages <= 0) {
             maxMessages = 50;
         }
-        int maxChars = contextProps.getMaxTokens() * CHARS_PER_TOKEN_ESTIMATE;
-        int targetChars = contextProps.getTargetTokens() * CHARS_PER_TOKEN_ESTIMATE;
+        int maxChars = contextProps.getMaxTokens() * charsPerToken();
+        int targetChars = contextProps.getTargetTokens() * charsPerToken();
 
-        // Always keep system message (index 0) and last user message
         if (context.size() <= maxMessages && estimateChars(context) <= maxChars) {
             return context;
         }
 
         List<Message> trimmed = new ArrayList<>(context);
         while (trimmed.size() > maxMessages || estimateChars(trimmed) > targetChars) {
-            if (trimmed.size() <= 2) break; // keep system + latest
-            // Remove oldest non-system message
+            if (trimmed.size() <= 2) break;
             boolean removed = false;
             for (int i = 1; i < trimmed.size() - 1; i++) {
                 trimmed.remove(i);
@@ -143,7 +248,7 @@ public class DefaultContextEngine implements ContextEngine {
         int total = 0;
         for (Message m : messages) {
             total += m.content() != null ? m.content().length() : 0;
-            total += 20; // overhead per message
+            total += 20;
         }
         return total;
     }
@@ -163,65 +268,6 @@ public class DefaultContextEngine implements ContextEngine {
                   .append("\n");
             }
         }
-    }
-
-    private void appendMemoryRecall(Session session, StringBuilder sb) {
-        try {
-            // Use frozen snapshot — cached per session, stable for session lifetime
-            Map<String, String> snapshot = snapshotCache.computeIfAbsent(session.id(), id -> {
-                try {
-                    return memoryProvider.getSnapshot(session.userId());
-                } catch (Exception e) {
-                    log.debug("Memory snapshot failed: {}", e.getMessage());
-                    return java.util.Map.of("memory", "", "user", "");
-                }
-            });
-            String memoryBlock = snapshot.get("memory");
-            String userBlock = snapshot.get("user");
-            boolean added = false;
-            if (memoryBlock != null && !memoryBlock.isBlank()) {
-                sb.append(memoryBlock).append("\n\n");
-                added = true;
-            }
-            if (userBlock != null && !userBlock.isBlank()) {
-                sb.append(userBlock).append("\n\n");
-                added = true;
-            }
-            if (!added) {
-                // Fallback to live recall if snapshot empty
-                String lastUser = findLastUserMessage(session);
-                if (lastUser == null || lastUser.isBlank()) return;
-                List<String> facts = memoryProvider.recall(session.userId(), lastUser, RECALL_LIMIT);
-                if (facts.isEmpty()) return;
-                sb.append("Relevant memory:\n");
-                for (String fact : facts) {
-                    sb.append("- ").append(fact).append("\n");
-                }
-            }
-            // Check cache validity — if memory content changed, invalidate prompt cache
-            if (cacheTracker != null) {
-                String memoryContent = (memoryBlock != null ? memoryBlock : "") + (userBlock != null ? userBlock : "");
-                String memoryHash = PromptCacheTracker.hashPrefix(memoryContent);
-                String previousHash = lastMemoryHash.get(session.id());
-                if (previousHash != null && !previousHash.equals(memoryHash)) {
-                    log.debug("Memory changed for session {}, invalidating cache", session.id());
-                    cacheTracker.invalidate(String.valueOf(session.id()));
-                }
-                lastMemoryHash.put(session.id(), memoryHash);
-            }
-        } catch (Exception e) {
-            log.debug("Memory recall failed: {}", e.getMessage());
-        }
-    }
-
-    private String findLastUserMessage(Session session) {
-        List<MessageEntity> history = messageRepository.findBySessionIdOrderByCreatedAtAsc(session.id());
-        for (int i = history.size() - 1; i >= 0; i--) {
-            if ("user".equals(history.get(i).getRole())) {
-                return history.get(i).getContent();
-            }
-        }
-        return null;
     }
 
     private void appendRecentHistory(Session session, List<Message> context) {

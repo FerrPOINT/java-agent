@@ -37,6 +37,12 @@ public class BotSessionEntity {
     private Instant createdAt;
     private Instant updatedAt;
 
+    // P0: Session lifecycle states — suspend / resume-pending
+    @Transient
+    private boolean suspended = false;
+    @Transient
+    private boolean resumePending = false;
+
     /**
      * In-memory metadata storage (not persisted).
      * Used for transient session state like standing goals, subgoals, etc.

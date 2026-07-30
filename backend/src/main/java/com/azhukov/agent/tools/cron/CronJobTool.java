@@ -50,7 +50,7 @@ public class CronJobTool implements ToolHandler {
         if (args.schedule() == null || args.schedule().isBlank()) return ToolResult.fail("schedule is required");
         if (args.prompt() == null || args.prompt().isBlank()) return ToolResult.fail("prompt is required");
         try {
-            CronJobEntity entity = cronJobService.create(args.name(), args.schedule(), args.prompt(), args.deliverTo());
+            CronJobEntity entity = cronJobService.create(args.name(), args.schedule(), args.prompt(), args.deliverTo(), args.skills());
             return ToolResult.ok(formatJob(entity));
         } catch (Exception e) {
             return ToolResult.fail("Failed to create cron job: " + e.getMessage());
@@ -130,6 +130,7 @@ public class CronJobTool implements ToolHandler {
         String name,
         String schedule,
         String prompt,
-        @JsonProperty("deliver_to") String deliverTo
+        @JsonProperty("deliver_to") String deliverTo,
+        String skills
     ) {}
 }

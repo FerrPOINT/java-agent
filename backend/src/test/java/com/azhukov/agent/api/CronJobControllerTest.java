@@ -44,7 +44,7 @@ class CronJobControllerTest {
         entity.setSchedule("0 * * * *");
         entity.setPrompt("test prompt");
         entity.setEnabled(true);
-        when(cronJobService.create(any(), any(), any(), any())).thenReturn(entity);
+        when(cronJobService.create(any(), any(), any(), any(), any())).thenReturn(entity);
 
         mockMvc.perform(post("/api/v1/agent/cron")
                 .contentType(MediaType.APPLICATION_JSON)

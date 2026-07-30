@@ -32,6 +32,15 @@ public class SlashCommandRegistry {
     private final Map<String, String> aliases = new LinkedHashMap<>();
     private final List<String> dynamicSkillNames = new ArrayList<>();
 
+    // P1-3: Destructive command confirmation state machine
+    private final DestructiveCommandConfirmation destructiveConfirmation = new DestructiveCommandConfirmation();
+
+    // P1-4: Shared CLI state for local-only settings
+    private final CliState cliState = new CliState();
+
+    // P1-5: Session store for local session persistence
+    private final SessionStore sessionStore = new SessionStore();
+
     public SlashCommandRegistry() {
         registerAll();
     }
@@ -562,6 +571,185 @@ public class SlashCommandRegistry {
             return "";
         });
 
+        // ── P1-4: 15 New slash commands ──
+
+        register("retry", "Resend the last user message to the agent", (args, client, sessionId) -> {
+            String lastMsg = cliState.getLastUserMessage();
+            if (lastMsg == null || lastMsg.isBlank()) {
+                return "No previous message to retry.";
+            }
+            return client.retry(sessionId, lastMsg);
+        });
+
+        register("title", "Set session title: /title <text>", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                var entry = sessionStore.getSession(sessionId);
+                return entry != null ? "Current title: " + entry.title : "No title set. Use /title <text>";
+            }
+            sessionStore.setTitle(sessionId, args.strip());
+            return client.setTitle(sessionId, args.strip());
+        });
+
+        register("queue", "Queue a prompt for next turn: /queue <prompt>", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                String q = cliState.getQueuedPrompt();
+                return q != null ? "Queued: " + q : "No prompt queued. Use /queue <prompt>";
+            }
+            cliState.setQueuedPrompt(args.strip());
+            return client.queuePrompt(sessionId, args.strip());
+        });
+
+        register("snapshot", "Create a state snapshot (optionally with description)", (args, client, sessionId) ->
+            client.createSnapshot(sessionId, args.isBlank() ? null : args.strip()));
+
+        register("personality", "Set personality: /personality <text>", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                String p = cliState.getPersonality();
+                return p.isBlank() ? "No personality set. Use /personality <text>" : "Current personality: " + p;
+            }
+            cliState.setPersonality(args.strip());
+            return client.setPersonality(sessionId, args.strip());
+        });
+
+        register("verbose", "Cycle tool progress display (off→new→all→verbose)", (args, client, sessionId) -> {
+            CliState.VerboseMode mode = cliState.cycleVerboseMode();
+            return "Verbose mode: " + mode.name().toLowerCase() + "\n" +
+                "(off=no tool output, new=only new tools, all=all tools, verbose=full details)";
+        });
+
+        register("yolo", "Toggle YOLO mode (skip approvals)", (args, client, sessionId) -> {
+            boolean yolo = cliState.toggleYoloMode();
+            return "YOLO mode: " + (yolo ? "ON ⚡ (approvals skipped)" : "OFF (approvals required)");
+        });
+
+        register("reasoning", "Manage reasoning effort: /reasoning [none|minimal|low|medium|high|xhigh]", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                return "Current reasoning effort: " + cliState.getReasoningEffort() + "\n" +
+                    "Levels: " + String.join(", ", CliState.getValidReasoningLevels()) + "\n" +
+                    "Use /reasoning <level> to set, or /reasoning cycle to cycle.";
+            }
+            if ("cycle".equalsIgnoreCase(args.strip())) {
+                String level = cliState.cycleReasoningEffort();
+                client.setReasoningEffort(sessionId, level);
+                return "Reasoning effort: " + level;
+            }
+            if (!cliState.setReasoningEffortIfValid(args.strip())) {
+                return "Invalid level: " + args + "\nValid levels: " +
+                    String.join(", ", CliState.getValidReasoningLevels());
+            }
+            String level = cliState.getReasoningEffort();
+            client.setReasoningEffort(sessionId, level);
+            return "Reasoning effort: " + level;
+        });
+
+        register("fast", "Toggle fast mode", (args, client, sessionId) -> {
+            boolean fast = cliState.toggleFastMode();
+            client.setFastMode(sessionId, fast);
+            return "Fast mode: " + (fast ? "ON ⚡" : "OFF");
+        });
+
+        register("voice", "Toggle voice mode: /voice [on|off|tts|status]", (args, client, sessionId) -> {
+            String arg = args.strip().toLowerCase();
+            switch (arg) {
+                case "on" -> {
+                    cliState.setVoiceMode(true);
+                    client.setVoiceMode(sessionId, true);
+                    return "Voice mode: ON";
+                }
+                case "off" -> {
+                    cliState.setVoiceMode(false);
+                    client.setVoiceMode(sessionId, false);
+                    return "Voice mode: OFF";
+                }
+                case "tts" -> {
+                    boolean tts = !cliState.isTtsEnabled();
+                    cliState.setTtsEnabled(tts);
+                    return "TTS: " + (tts ? "ON" : "OFF");
+                }
+                case "status", "" -> {
+                    return "Voice mode: " + (cliState.isVoiceMode() ? "ON" : "OFF") + "\n" +
+                        "TTS: " + (cliState.isTtsEnabled() ? "ON" : "OFF");
+                }
+                default -> {
+                    return "Usage: /voice [on|off|tts|status]";
+                }
+            }
+        });
+
+        register("busy", "Control Enter behavior while agent is working: /busy [queue|steer|interrupt|status]", (args, client, sessionId) -> {
+            String arg = args.strip().toLowerCase();
+            switch (arg) {
+                case "queue" -> {
+                    cliState.setBusyMode(CliState.BusyMode.QUEUE);
+                    return "Busy mode: QUEUE (Enter queues your message for next turn)";
+                }
+                case "steer" -> {
+                    cliState.setBusyMode(CliState.BusyMode.STEER);
+                    return "Busy mode: STEER (Enter injects a steer note)";
+                }
+                case "interrupt" -> {
+                    cliState.setBusyMode(CliState.BusyMode.INTERRUPT);
+                    return "Busy mode: INTERRUPT (Enter interrupts the agent)";
+                }
+                case "status", "" -> {
+                    return "Busy mode: " + cliState.getBusyMode().name().toLowerCase();
+                }
+                default -> {
+                    return "Usage: /busy [queue|steer|interrupt|status]";
+                }
+            }
+        });
+
+        register("tools", "List/disable/enable tools: /tools [list|disable <name>|enable <name>]", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                JsonNode tools = client.listTools(sessionId);
+                return client.prettyPrint(tools);
+            }
+            String[] parts = args.split("\\s+", 2);
+            String subCmd = parts[0].toLowerCase();
+            switch (subCmd) {
+                case "list" -> {
+                    JsonNode tools = client.listTools(sessionId);
+                    return client.prettyPrint(tools);
+                }
+                case "disable" -> {
+                    if (parts.length < 2) return "Usage: /tools disable <tool-name>";
+                    cliState.setToolEnabled(parts[1].strip(), false);
+                    return client.toggleTool(sessionId, parts[1].strip(), false);
+                }
+                case "enable" -> {
+                    if (parts.length < 2) return "Usage: /tools enable <tool-name>";
+                    cliState.setToolEnabled(parts[1].strip(), true);
+                    return client.toggleTool(sessionId, parts[1].strip(), true);
+                }
+                default -> {
+                    return "Usage: /tools [list|disable <name>|enable <name>]";
+                }
+            }
+        });
+
+        register("browser", "Connect browser tools to CDP: /browser <cdp-url>", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                String url = cliState.getCdpUrl();
+                return url.isBlank() ? "No CDP URL configured. Use /browser <cdp-url>" : "CDP URL: " + url;
+            }
+            cliState.setCdpUrl(args.strip());
+            return client.connectBrowser(args.strip());
+        });
+
+        register("plugins", "List installed plugins", (args, client, sessionId) -> {
+            JsonNode plugins = client.listPlugins();
+            return client.prettyPrint(plugins);
+        });
+
+        register("subgoal", "Add criteria to active goal: /subgoal <criteria>", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                String goal = cliState.getActiveGoal();
+                return goal.isBlank() ? "No active goal set. Use /goal <text> first." : "Active goal: " + goal;
+            }
+            return client.addSubgoal(sessionId, args.strip());
+        });
+
         // ── C7: Aliases ──
         registerAlias("q", "quit");
         registerAlias("reset", "new");
@@ -575,4 +763,25 @@ public class SlashCommandRegistry {
 
     // Simple in-memory goal storage for /goal command (C3)
     private final Map<String, String> goalStorage = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * P1-3: Get the destructive command confirmation instance.
+     */
+    public DestructiveCommandConfirmation getDestructiveConfirmation() {
+        return destructiveConfirmation;
+    }
+
+    /**
+     * P1-4: Get shared CLI state.
+     */
+    public CliState getCliState() {
+        return cliState;
+    }
+
+    /**
+     * P1-5: Get session store.
+     */
+    public SessionStore getSessionStore() {
+        return sessionStore;
+    }
 }

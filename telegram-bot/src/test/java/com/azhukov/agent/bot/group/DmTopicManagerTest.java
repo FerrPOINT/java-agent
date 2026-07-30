@@ -3,194 +3,253 @@ package com.azhukov.agent.bot.group;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.client.TelegramResponse;
 import com.azhukov.agent.bot.config.BotProperties;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyMap;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
-/**
- * B3.1: Tests for DmTopicManager — caching behavior, getCachedTopicId, clearCache, cacheSize.
- */
 class DmTopicManagerTest {
 
+    private TelegramClient client;
     private BotProperties properties;
-    private TelegramClient telegramClient;
-    private DmTopicManager topicManager;
+    private DmTopicManager manager;
+
+    @TempDir
+    Path tempDir;
+
+    private Path configFile;
 
     @BeforeEach
     void setUp() {
+        client = mock(TelegramClient.class);
         properties = new BotProperties();
-        telegramClient = mock(TelegramClient.class);
-        topicManager = new DmTopicManager(properties, telegramClient);
-    }
-
-    /**
-     * Helper to create a TelegramResponse with a message_thread_id result.
-     */
-    private TelegramResponse createTopicResponse(long threadId) {
-        Map<String, Object> resultMap = new LinkedHashMap<>();
-        resultMap.put("message_thread_id", threadId);
-        return new TelegramResponse(true, null, null, resultMap);
+        configFile = tempDir.resolve("bot-config.json");
+        manager = new DmTopicManager(properties, client, configFile,
+            new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT));
     }
 
     @Test
-    void ensureTopic_cachesResults_secondCallDoesNotHitApi() {
-        // Arrange: mock callApi to return a response with message_thread_id
-        when(telegramClient.callApi(anyString(), anyMap()))
-            .thenReturn(Optional.of(createTopicResponse(42L)));
-
-        // Act: first call should hit the API
-        Optional<Long> firstResult = topicManager.ensureTopic(-100123L, "general");
-        assertThat(firstResult).isPresent();
-        assertThat(firstResult.get()).isEqualTo(42L);
-
-        // Act: second call should return cached result
-        Optional<Long> secondResult = topicManager.ensureTopic(-100123L, "general");
-        assertThat(secondResult).isPresent();
-        assertThat(secondResult.get()).isEqualTo(42L);
-
-        // Verify: callApi was invoked only once (cached on second call)
-        verify(telegramClient, times(1)).callApi(anyString(), anyMap());
-    }
-
-    @Test
-    void ensureTopic_differentTopicNames_cachedSeparately() {
-        when(telegramClient.callApi(anyString(), anyMap()))
-            .thenReturn(Optional.of(createTopicResponse(10L)))
-            .thenReturn(Optional.of(createTopicResponse(20L)));
-
-        Optional<Long> first = topicManager.ensureTopic(-100123L, "topic-a");
-        Optional<Long> second = topicManager.ensureTopic(-100123L, "topic-b");
-
-        assertThat(first).isPresent();
-        assertThat(first.get()).isEqualTo(10L);
-        assertThat(second).isPresent();
-        assertThat(second.get()).isEqualTo(20L);
-
-        // Both calls hit the API because different topic names
-        verify(telegramClient, times(2)).callApi(anyString(), anyMap());
-    }
-
-    @Test
-    void ensureTopic_nullTopicName_returnsEmpty() {
-        Optional<Long> result = topicManager.ensureTopic(-100123L, null);
+    void ensureTopic_blankName_returnsEmpty() {
+        Optional<Long> result = manager.ensureTopic(123L, "");
         assertThat(result).isEmpty();
-        verifyNoInteractions(telegramClient);
     }
 
     @Test
-    void ensureTopic_blankTopicName_returnsEmpty() {
-        Optional<Long> result = topicManager.ensureTopic(-100123L, "  ");
+    void ensureTopic_nullName_returnsEmpty() {
+        Optional<Long> result = manager.ensureTopic(123L, null);
         assertThat(result).isEmpty();
-        verifyNoInteractions(telegramClient);
     }
 
     @Test
-    void ensureTopic_apiReturnsEmptyResult_returnsEmptyAndDoesNotCache() {
-        when(telegramClient.callApi(anyString(), anyMap()))
-            .thenReturn(Optional.empty());
+    void ensureTopic_cached_returnsFromCache() {
+        // First call creates the topic
+        Map<String, Object> createResult = new LinkedHashMap<>();
+        createResult.put("message_thread_id", 100L);
+        TelegramResponse createResponse = mock(TelegramResponse.class);
+        when(createResponse.isSuccess()).thenReturn(true);
+        when(createResponse.result()).thenReturn(createResult);
+        when(client.callApi(eq("createForumTopic"), any())).thenReturn(Optional.of(createResponse));
 
-        Optional<Long> result = topicManager.ensureTopic(-100123L, "failed-topic");
-        assertThat(result).isEmpty();
-        assertThat(topicManager.cacheSize()).isZero();
+        // Mock seed message
+        TelegramResponse seedResponse = mock(TelegramResponse.class);
+        when(seedResponse.isSuccess()).thenReturn(true);
+        when(client.callApi(eq("sendMessage"), any())).thenReturn(Optional.of(seedResponse));
 
-        // Second call should still hit the API since nothing was cached
-        topicManager.ensureTopic(-100123L, "failed-topic");
-        verify(telegramClient, times(2)).callApi(anyString(), anyMap());
+        Optional<Long> first = manager.ensureTopic(123L, "General");
+        assertThat(first).contains(100L);
+
+        // Second call should return from cache — no API call
+        Optional<Long> second = manager.ensureTopic(123L, "General");
+        assertThat(second).contains(100L);
+
+        // createForumTopic should only be called once
+        verify(client, times(1)).callApi(eq("createForumTopic"), any());
+    }
+
+    @Test
+    void ensureTopic_loadsFromConfigPersistedThreadId() {
+        // Configure a topic with persisted thread_id
+        BotProperties.DmTopic dmTopic = new BotProperties.DmTopic();
+        dmTopic.setChatId("123");
+        dmTopic.setTopicName("General");
+        dmTopic.setThreadId(200L);
+        properties.getGroup().getDmTopics().add(dmTopic);
+
+        Optional<Long> result = manager.ensureTopic(123L, "General");
+        assertThat(result).contains(200L);
+        // Should not call createForumTopic
+        verify(client, never()).callApi(eq("createForumTopic"), any());
+    }
+
+    @Test
+    void ensureTopic_createsViaApiAndPersists() throws Exception {
+        // No persisted thread_id in config
+        BotProperties.DmTopic dmTopic = new BotProperties.DmTopic();
+        dmTopic.setChatId("123");
+        dmTopic.setTopicName("News");
+        properties.getGroup().getDmTopics().add(dmTopic);
+
+        Map<String, Object> createResult = new LinkedHashMap<>();
+        createResult.put("message_thread_id", 300L);
+        TelegramResponse createResponse = mock(TelegramResponse.class);
+        when(createResponse.isSuccess()).thenReturn(true);
+        when(createResponse.result()).thenReturn(createResult);
+        when(client.callApi(eq("createForumTopic"), any())).thenReturn(Optional.of(createResponse));
+
+        TelegramResponse seedResponse = mock(TelegramResponse.class);
+        when(seedResponse.isSuccess()).thenReturn(true);
+        when(client.callApi(eq("sendMessage"), any())).thenReturn(Optional.of(seedResponse));
+
+        Optional<Long> result = manager.ensureTopic(123L, "News");
+        assertThat(result).contains(300L);
+
+        // Verify the thread_id was persisted to config file
+        assertThat(Files.exists(configFile)).isTrue();
+        String configContent = Files.readString(configFile);
+        assertThat(configContent).contains("300");
     }
 
     @Test
     void getCachedTopicId_returnsEmptyWhenNotCached() {
-        Optional<Long> cached = topicManager.getCachedTopicId(-100123L, "nonexistent");
-        assertThat(cached).isEmpty();
+        Optional<Long> result = manager.getCachedTopicId(123L, "General");
+        assertThat(result).isEmpty();
     }
 
     @Test
-    void getCachedTopicId_returnsCachedValueAfterEnsureTopic() {
-        when(telegramClient.callApi(anyString(), anyMap()))
-            .thenReturn(Optional.of(createTopicResponse(99L)));
+    void getCachedTopicId_returnsCachedValue() {
+        // Create topic to cache it
+        Map<String, Object> createResult = new LinkedHashMap<>();
+        createResult.put("message_thread_id", 500L);
+        TelegramResponse createResponse = mock(TelegramResponse.class);
+        when(createResponse.isSuccess()).thenReturn(true);
+        when(createResponse.result()).thenReturn(createResult);
+        when(client.callApi(eq("createForumTopic"), any())).thenReturn(Optional.of(createResponse));
 
-        topicManager.ensureTopic(-100456L, "cached-topic");
+        TelegramResponse seedResponse = mock(TelegramResponse.class);
+        when(seedResponse.isSuccess()).thenReturn(true);
+        when(client.callApi(eq("sendMessage"), any())).thenReturn(Optional.of(seedResponse));
 
-        Optional<Long> cached = topicManager.getCachedTopicId(-100456L, "cached-topic");
-        assertThat(cached).isPresent();
-        assertThat(cached.get()).isEqualTo(99L);
+        manager.ensureTopic(999L, "TestTopic");
+
+        Optional<Long> cached = manager.getCachedTopicId(999L, "TestTopic");
+        assertThat(cached).contains(500L);
     }
 
     @Test
-    void getCachedTopicId_nullTopicName_returnsEmpty() {
-        Optional<Long> cached = topicManager.getCachedTopicId(-100123L, null);
-        assertThat(cached).isEmpty();
+    void renameDmTopic_callsEditForumTopic() {
+        TelegramResponse response = mock(TelegramResponse.class);
+        when(response.isSuccess()).thenReturn(true);
+        when(client.callApi(eq("editForumTopic"), any())).thenReturn(Optional.of(response));
+
+        boolean result = manager.renameDmTopic(123L, 100L, "New Name");
+        assertThat(result).isTrue();
+        verify(client).callApi(eq("editForumTopic"), argThat(params -> {
+            return params.get("chat_id").equals(123L)
+                && params.get("message_thread_id").equals(100L)
+                && params.get("name").equals("New Name");
+        }));
     }
 
     @Test
-    void getCachedTopicId_blankTopicName_returnsEmpty() {
-        Optional<Long> cached = topicManager.getCachedTopicId(-100123L, "");
-        assertThat(cached).isEmpty();
+    void renameDmTopic_blankName_returnsFalse() {
+        boolean result = manager.renameDmTopic(123L, 100L, "");
+        assertThat(result).isFalse();
     }
 
     @Test
-    void clearCache_removesAllCachedEntries() {
-        when(telegramClient.callApi(anyString(), anyMap()))
-            .thenReturn(Optional.of(createTopicResponse(1L)))
-            .thenReturn(Optional.of(createTopicResponse(2L)));
+    void renameDmTopic_apiFailure_returnsFalse() {
+        TelegramResponse response = mock(TelegramResponse.class);
+        when(response.isSuccess()).thenReturn(false);
+        when(client.callApi(eq("editForumTopic"), any())).thenReturn(Optional.of(response));
 
-        topicManager.ensureTopic(-1001L, "topic-1");
-        topicManager.ensureTopic(-1002L, "topic-2");
-        assertThat(topicManager.cacheSize()).isEqualTo(2);
-
-        topicManager.clearCache();
-
-        assertThat(topicManager.cacheSize()).isZero();
+        boolean result = manager.renameDmTopic(123L, 100L, "New Name");
+        assertThat(result).isFalse();
     }
 
     @Test
-    void clearCache_subsequentEnsureTopicHitsApiAgain() {
-        when(telegramClient.callApi(anyString(), anyMap()))
-            .thenReturn(Optional.of(createTopicResponse(55L)));
+    void sendWithDmTopicReplyAnchorRetry_successOnFirstTry() {
+        Map<String, Object> sendResult = new LinkedHashMap<>();
+        sendResult.put("message_id", 42L);
+        TelegramResponse sendResponse = mock(TelegramResponse.class);
+        when(sendResponse.isSuccess()).thenReturn(true);
+        when(sendResponse.result()).thenReturn(sendResult);
+        when(sendResponse.resultMessageIdAsLong()).thenReturn(42L);
+        when(client.callApi(eq("sendMessage"), any())).thenReturn(Optional.of(sendResponse));
 
-        // First call caches
-        topicManager.ensureTopic(-100789L, "recycled-topic");
-        verify(telegramClient, times(1)).callApi(anyString(), anyMap());
-
-        // Clear cache
-        topicManager.clearCache();
-        assertThat(topicManager.cacheSize()).isZero();
-
-        // Second call should hit API again
-        Optional<Long> result = topicManager.ensureTopic(-100789L, "recycled-topic");
-        assertThat(result).isPresent();
-        assertThat(result.get()).isEqualTo(55L);
-        verify(telegramClient, times(2)).callApi(anyString(), anyMap());
+        Optional<Long> result = manager.sendWithDmTopicReplyAnchorRetry(
+            123L, "Hello", "MarkdownV2", 55L, 77L, null);
+        assertThat(result).contains(42L);
     }
 
     @Test
-    void cacheSize_returnsCorrectCount() {
-        assertThat(topicManager.cacheSize()).isZero();
+    void sendWithDmTopicReplyAnchorRetry_retriesWithoutReplyAnchor() {
+        // First call (with reply anchor) returns empty
+        when(client.callApi(eq("sendMessage"), any()))
+            .thenReturn(Optional.empty());
 
-        when(telegramClient.callApi(anyString(), anyMap()))
-            .thenReturn(Optional.of(createTopicResponse(1L)))
-            .thenReturn(Optional.of(createTopicResponse(2L)))
-            .thenReturn(Optional.of(createTopicResponse(3L)));
+        // Second call (without reply anchor) succeeds
+        Map<String, Object> sendResult = new LinkedHashMap<>();
+        sendResult.put("message_id", 99L);
+        TelegramResponse sendResponse = mock(TelegramResponse.class);
+        when(sendResponse.isSuccess()).thenReturn(true);
+        when(sendResponse.result()).thenReturn(sendResult);
+        when(sendResponse.resultMessageIdAsLong()).thenReturn(99L);
 
-        topicManager.ensureTopic(-1001L, "a");
-        assertThat(topicManager.cacheSize()).isEqualTo(1);
+        // Reconfigure mock: first call fails, second succeeds
+        when(client.callApi(eq("sendMessage"), any()))
+            .thenReturn(Optional.empty())  // First attempt
+            .thenReturn(Optional.empty())  // Second attempt (without reply)
+            .thenReturn(Optional.of(sendResponse));  // Third attempt (without thread)
 
-        topicManager.ensureTopic(-1002L, "b");
-        assertThat(topicManager.cacheSize()).isEqualTo(2);
+        Optional<Long> result = manager.sendWithDmTopicReplyAnchorRetry(
+            123L, "Hello", "MarkdownV2", 55L, 77L, null);
+        assertThat(result).contains(99L);
+    }
 
-        topicManager.ensureTopic(-1003L, "c");
-        assertThat(topicManager.cacheSize()).isEqualTo(3);
+    @Test
+    void clearCache_removesAllEntries() {
+        // Create a topic to cache it
+        Map<String, Object> createResult = new LinkedHashMap<>();
+        createResult.put("message_thread_id", 700L);
+        TelegramResponse createResponse = mock(TelegramResponse.class);
+        when(createResponse.isSuccess()).thenReturn(true);
+        when(createResponse.result()).thenReturn(createResult);
+        when(client.callApi(eq("createForumTopic"), any())).thenReturn(Optional.of(createResponse));
 
-        // Duplicate call (same chat+topic) should not increase cache size
-        topicManager.ensureTopic(-1001L, "a");
-        assertThat(topicManager.cacheSize()).isEqualTo(3);
+        TelegramResponse seedResponse = mock(TelegramResponse.class);
+        when(seedResponse.isSuccess()).thenReturn(true);
+        when(client.callApi(eq("sendMessage"), any())).thenReturn(Optional.of(seedResponse));
+
+        manager.ensureTopic(123L, "Topic1");
+        assertThat(manager.cacheSize()).isEqualTo(1);
+
+        manager.clearCache();
+        assertThat(manager.cacheSize()).isZero();
+    }
+
+    @Test
+    void initializeConfiguredTopics_loadsPersistedThreadIds() {
+        BotProperties.DmTopic dmTopic = new BotProperties.DmTopic();
+        dmTopic.setChatId("123");
+        dmTopic.setTopicName("Persisted");
+        dmTopic.setThreadId(800L);
+        properties.getGroup().getDmTopics().add(dmTopic);
+
+        manager.initializeConfiguredTopics();
+
+        Optional<Long> cached = manager.getCachedTopicId(123L, "Persisted");
+        assertThat(cached).contains(800L);
+        // Should not call createForumTopic
+        verify(client, never()).callApi(eq("createForumTopic"), any());
     }
 }

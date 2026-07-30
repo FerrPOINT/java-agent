@@ -26,7 +26,7 @@ class CronJobToolTest {
 
     @Test
     void createJob() {
-        when(cronJobService.create(any(), any(), any(), any())).thenAnswer(inv -> {
+        when(cronJobService.create(any(), any(), any(), any(), any())).thenAnswer(inv -> {
             CronJobEntity e = new CronJobEntity();
             e.setId(UUID.randomUUID());
             e.setName(inv.getArgument(0));
@@ -41,7 +41,7 @@ class CronJobToolTest {
             """;
         ToolResult result = tool.execute(args, null, null);
         assertThat(result.success()).isTrue();
-        verify(cronJobService).create("daily-report", "0 9 * * *", "Generate report", null);
+        verify(cronJobService).create("daily-report", "0 9 * * *", "Generate report", null, null);
     }
 
     @Test

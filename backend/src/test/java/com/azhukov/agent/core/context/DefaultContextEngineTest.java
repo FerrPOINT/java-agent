@@ -111,18 +111,17 @@ class DefaultContextEngineTest {
         MessageEntity userMsg = entity("user", "What do you know about me?", 1);
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.id()))
                 .thenReturn(List.of(userMsg));
-        when(memoryProvider.recall("user-42", "What do you know about me?", 5))
-                .thenReturn(List.of("User prefers concise answers.", "User works with Java."));
 
         List<Message> incoming = List.of(Message.system("System prompt"), Message.user("Tell me something"));
         List<Message> result = contextEngine.prepareContext(session, incoming);
 
+        // Memory is NOT injected into the system prompt by DefaultContextEngine.
+        // Memory is handled via DefaultPromptBuilder.buildMemoryPrefix() as a user message prefix.
         assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
         assertThat(result.get(0).content())
-                .contains("System prompt")
-                .contains("Relevant memory:")
-                .contains("User prefers concise answers.")
-                .contains("User works with Java.");
+                .contains("System prompt");
+        // Verify memoryProvider.recall is NOT called by prepareContext
+        verify(memoryProvider, never()).recall(anyString(), anyString(), anyInt());
     }
 
     @Test

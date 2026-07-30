@@ -155,7 +155,7 @@ class AgentRuntimeUnitTest {
             new MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
-            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue()
+            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null
         );
 
         var result = runtime.runTurn(session, "hi");
@@ -193,7 +193,7 @@ class AgentRuntimeUnitTest {
             new MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
-            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue()
+            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null
         );
     }
 
