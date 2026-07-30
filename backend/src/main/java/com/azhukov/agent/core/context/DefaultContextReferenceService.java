@@ -4,8 +4,11 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ContextReference;
 import com.azhukov.agent.core.model.ReferenceType;
 import com.azhukov.agent.core.skill.SkillManager;
-import org.springframework.stereotype.Component;
+import jakarta.annotation.PostConstruct;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.net.URI;
@@ -23,15 +26,16 @@ import java.util.Optional;
 
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class DefaultContextReferenceService implements ContextReferenceService {
 
     private final AgentProperties properties;
     private final SkillManager skillManager;
-    private final HttpClient httpClient;
+    @Getter
+    private HttpClient httpClient;
 
-    public DefaultContextReferenceService(AgentProperties properties, SkillManager skillManager) {
-        this.properties = properties;
-        this.skillManager = skillManager;
+    @PostConstruct
+    public void initHttpClient() {
         this.httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(properties.getCore().getHttpClientTimeoutSeconds()))
             .build();

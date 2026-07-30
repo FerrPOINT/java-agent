@@ -1,5 +1,7 @@
 package com.azhukov.agent.core.memory;
 
+import lombok.RequiredArgsConstructor;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -11,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Char limits: memory=2200, user=1375. Entry delimiter: §.
  * Snapshot is frozen per session — captured once and stable for the session lifetime.
  */
+@RequiredArgsConstructor
 public class MemoryStore {
 
     public static final String TARGET_MEMORY = "memory";
@@ -24,12 +27,11 @@ public class MemoryStore {
     private final MemoryThreatScanner threatScanner;
     private final Map<UUID, Map<String, String>> snapshotCache = new ConcurrentHashMap<>();
 
+    /**
+     * Creates an empty store without threat scanning.
+     */
     public MemoryStore() {
         this(null);
-    }
-
-    public MemoryStore(MemoryThreatScanner threatScanner) {
-        this.threatScanner = threatScanner;
     }
 
     /**

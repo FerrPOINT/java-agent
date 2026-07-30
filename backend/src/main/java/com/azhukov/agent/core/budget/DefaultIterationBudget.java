@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.budget;
 
 import com.azhukov.agent.config.AgentProperties;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -10,14 +11,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
+@RequiredArgsConstructor
 public class DefaultIterationBudget implements IterationBudget {
 
-    private final AgentProperties.BudgetProperties config;
+    private final AgentProperties properties;
     private final Map<UUID, AtomicInteger> sessionTurnCounters = new ConcurrentHashMap<>();
-
-    public DefaultIterationBudget(AgentProperties properties) {
-        this.config = properties.getBudget();
-    }
 
     @Override
     public TurnSnapshot startTurn(UUID sessionId) {
@@ -41,6 +39,7 @@ public class DefaultIterationBudget implements IterationBudget {
 
     @Override
     public TurnSnapshot recordModelCall(TurnSnapshot snapshot, int inputTokens, int outputTokens) {
+        AgentProperties.BudgetProperties config = properties.getBudget();
         if (!config.isEnabled()) {
             return snapshot;
         }
@@ -58,7 +57,7 @@ public class DefaultIterationBudget implements IterationBudget {
             snapshot.totalToolDurationMs(),
             false,
             null
-        ));
+        ), config);
         return new TurnSnapshot(
             snapshot.sessionId(),
             snapshot.startedAt(),
@@ -75,6 +74,7 @@ public class DefaultIterationBudget implements IterationBudget {
 
     @Override
     public TurnSnapshot recordToolExecution(TurnSnapshot snapshot, String toolName, long durationMs) {
+        AgentProperties.BudgetProperties config = properties.getBudget();
         if (!config.isEnabled()) {
             return snapshot;
         }
@@ -92,7 +92,7 @@ public class DefaultIterationBudget implements IterationBudget {
             snapshot.totalToolDurationMs() + Math.max(0, durationMs),
             false,
             null
-        ));
+        ), config);
         return new TurnSnapshot(
             snapshot.sessionId(),
             snapshot.startedAt(),
@@ -112,6 +112,10 @@ public class DefaultIterationBudget implements IterationBudget {
         if (snapshot.exhausted()) {
             return true;
         }
+        return isExhausted(snapshot, properties.getBudget());
+    }
+
+    private boolean isExhausted(TurnSnapshot snapshot, AgentProperties.BudgetProperties config) {
         if (!config.isEnabled()) {
             return false;
         }
@@ -123,6 +127,7 @@ public class DefaultIterationBudget implements IterationBudget {
 
     @Override
     public BudgetStatus status(TurnSnapshot snapshot) {
+        AgentProperties.BudgetProperties config = properties.getBudget();
         if (snapshot.exhausted()) {
             return new BudgetStatus(false, 0, 0, 0, snapshot.reason());
         }
