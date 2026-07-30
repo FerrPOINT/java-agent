@@ -1,0 +1,15 @@
+spring:
+  main:
+    web-application-type: none
+  application:
+    name: java-agent-cli
+
+cli:
+  backend-url: http://localhost:8090
+  session-id: ""
+  model: ""
+
+logging:
+  level:
+    root: WARN
+    com.azhukov.agent.cli: INFO

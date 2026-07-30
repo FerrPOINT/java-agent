@@ -1,6 +1,5 @@
 package com.azhukov.agent.config;
 
-import com.azhukov.agent.cli.AgentCliRunner;
 import com.azhukov.agent.client.NoOpModelClient;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.client.ModelClient;
@@ -11,17 +10,12 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ApplicationContext;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.TestPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
 
 @Tag("slow")
 class AgentConfigProfilesTest {
@@ -47,35 +41,18 @@ class AgentConfigProfilesTest {
         }
     }
 
-    @TestConfiguration
-    static class CliNoOpTestConfiguration {
-
-        @Bean
-        @Primary
-        public AgentCliRunner agentCliRunner(AgentRuntime agentRuntime) {
-            return mock(AgentCliRunner.class);
-        }
-    }
-
     @SpringBootTest
-    @ActiveProfiles({"cli", "noop"})
-    @ContextConfiguration(classes = CliNoOpTestConfiguration.class)
+    @ActiveProfiles({"noop"})
     @TestPropertySource(properties = {
-        "agent.cli.enabled=true",
         "agent.model.provider=noop",
         "agent.memory.enabled=false",
         "agent.skills.enabled=false"
     })
     @DirtiesContext
-    static class CliNoOpProfileTest {
+    static class NoOpProfileTest {
 
         @Autowired
         private ApplicationContext context;
-
-        @Test
-        void cliRunnerExists() {
-            assertThat(context.getBean(AgentCliRunner.class)).isNotNull();
-        }
 
         @Test
         void noOpModelClientExists() {

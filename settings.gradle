@@ -2,3 +2,4 @@ rootProject.name = 'java-agent'
 
 include 'backend'
 include 'telegram-bot'
+include 'cli'

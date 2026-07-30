@@ -402,16 +402,6 @@ server:
 spring:
   config:
     activate:
-      on-profile: cli
-
-agent:
-  cli:
-    enabled: true
-
----
-spring:
-  config:
-    activate:
       on-profile: prod
 
 agent:
