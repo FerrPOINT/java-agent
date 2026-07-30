@@ -3,6 +3,7 @@ package com.azhukov.agent.health;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
+import lombok.RequiredArgsConstructor;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
@@ -10,18 +11,15 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 @Component
+@RequiredArgsConstructor
 public class ModelHealthIndicator implements HealthIndicator {
 
     private final ModelClient modelClient;
-    private final String modelName;
-
-    public ModelHealthIndicator(ModelClient modelClient, AgentProperties properties) {
-        this.modelClient = modelClient;
-        this.modelName = properties.getModel().getModelName();
-    }
+    private final AgentProperties properties;
 
     @Override
     public Health health() {
+        String modelName = properties.getModel().getModelName();
         try {
             var response = modelClient.complete(List.of(Message.user("ping")), List.of());
             String content = response.content() != null ? response.content().trim() : "";

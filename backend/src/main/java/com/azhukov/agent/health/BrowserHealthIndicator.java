@@ -2,23 +2,21 @@ package com.azhukov.agent.health;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.tools.browser.CdpClient;
+import lombok.RequiredArgsConstructor;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
 
 @Component
+@RequiredArgsConstructor
 public class BrowserHealthIndicator implements HealthIndicator {
 
     private final CdpClient cdpClient;
-    private final String cdpUrl;
-
-    public BrowserHealthIndicator(CdpClient cdpClient, AgentProperties properties) {
-        this.cdpClient = cdpClient;
-        this.cdpUrl = properties.getBrowser().getCdpUrl();
-    }
+    private final AgentProperties properties;
 
     @Override
     public Health health() {
+        String cdpUrl = properties.getBrowser().getCdpUrl();
         try {
             cdpClient.connect(cdpUrl);
             if (cdpClient.isConnected()) {

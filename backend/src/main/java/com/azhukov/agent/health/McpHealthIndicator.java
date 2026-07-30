@@ -1,18 +1,16 @@
 package com.azhukov.agent.health;
 
 import com.azhukov.agent.client.mcp.McpLifecycleManager;
+import lombok.RequiredArgsConstructor;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
 
 @Component
+@RequiredArgsConstructor
 public class McpHealthIndicator implements HealthIndicator {
 
     private final McpLifecycleManager mcpLifecycleManager;
-
-    public McpHealthIndicator(McpLifecycleManager mcpLifecycleManager) {
-        this.mcpLifecycleManager = mcpLifecycleManager;
-    }
 
     @Override
     public Health health() {
