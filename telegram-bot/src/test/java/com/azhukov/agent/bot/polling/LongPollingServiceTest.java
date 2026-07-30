@@ -29,7 +29,9 @@ class LongPollingServiceTest {
     void setUp() {
         telegramClient = mock(TelegramClient.class);
         properties = new BotProperties();
-        properties.setToken("test-token");
+        // Use unique token per test to avoid lock file collision across tests
+        properties.setToken("test-token-" + System.nanoTime());
+        properties.setReplaceOnStart(true); // Allow takeover if stale lock exists
         properties.getPolling().setTimeoutSeconds(0);
         properties.getPolling().setLimit(10);
 
