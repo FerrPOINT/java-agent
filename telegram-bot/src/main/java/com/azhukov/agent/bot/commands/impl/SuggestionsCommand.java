@@ -14,14 +14,15 @@ import org.springframework.stereotype.Component;
  * /suggestions dismiss <id> — delete a cron job
  * /suggestions clear        — delete all cron jobs
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class SuggestionsCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public SuggestionsCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

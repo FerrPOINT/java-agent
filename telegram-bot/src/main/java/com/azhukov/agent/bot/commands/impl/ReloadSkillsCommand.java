@@ -9,14 +9,15 @@ import org.springframework.stereotype.Component;
 /**
  * A2.5: /reload_skills — Call backend POST /api/v1/agent/reload-skills. Show result.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class ReloadSkillsCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public ReloadSkillsCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

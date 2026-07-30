@@ -17,14 +17,15 @@ import org.springframework.stereotype.Component;
  *   <li>{@code /bundles uninstall <name>} — uninstall a bundle</li>
  * </ul>
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class BundlesCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public BundlesCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

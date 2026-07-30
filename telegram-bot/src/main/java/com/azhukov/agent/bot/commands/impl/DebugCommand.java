@@ -13,14 +13,15 @@ import java.time.format.DateTimeFormatter;
  * A3.5: /debug — Gather config summary and recent info, return as text.
  * Uses BotProperties to show non-secret configuration.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class DebugCommand implements CommandHandler {
 
     private final BotProperties properties;
 
-    public DebugCommand(BotProperties properties) {
-        this.properties = properties;
-    }
+    
 
     @Override
     public String name() {

@@ -8,14 +8,15 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class SessionsCommand implements CommandHandler {
 
     private final BotSessionStore store;
 
-    public SessionsCommand(BotSessionStore store) {
-        this.store = store;
-    }
+    
 
     @Override
     public String name() {

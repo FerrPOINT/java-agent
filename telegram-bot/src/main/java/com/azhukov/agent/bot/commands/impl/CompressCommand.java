@@ -4,6 +4,7 @@ import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -12,13 +13,10 @@ import org.springframework.stereotype.Component;
  * /compress here <N> — partial compress keeping last N exchanges
  */
 @Component
+@RequiredArgsConstructor
 public class CompressCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
-
-    public CompressCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
 
     @Override
     public String name() {

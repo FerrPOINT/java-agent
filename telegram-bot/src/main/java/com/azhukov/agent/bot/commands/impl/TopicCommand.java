@@ -15,15 +15,16 @@ import java.util.Map;
  * Topic sessions allow separate conversation contexts within a single DM chat.
  * This is a local-only implementation (no backend involvement).
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class TopicCommand implements CommandHandler {
 
     private final BotSessionStore sessionStore;
     private final Map<String, String> topicSessions = new HashMap<>();
 
-    public TopicCommand(BotSessionStore sessionStore) {
-        this.sessionStore = sessionStore;
-    }
+    
 
     @Override
     public String name() {

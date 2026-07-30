@@ -12,16 +12,17 @@ import org.springframework.stereotype.Component;
  * /personality <name>   — set new personality
  * /personality reset    — reset to default
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class PersonalityCommand implements CommandHandler {
 
     private static final String DEFAULT_PERSONALITY = "Джава агент";
 
     private final BotProperties properties;
 
-    public PersonalityCommand(BotProperties properties) {
-        this.properties = properties;
-    }
+    
 
     @Override
     public String name() {

@@ -6,14 +6,15 @@ import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import org.springframework.stereotype.Component;
 
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class ApproveCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public ApproveCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

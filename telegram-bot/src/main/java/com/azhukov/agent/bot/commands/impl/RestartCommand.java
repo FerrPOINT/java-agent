@@ -9,14 +9,15 @@ import org.springframework.stereotype.Component;
 /**
  * A2.3: /restart — Drain active work, send notification, call backend POST /api/v1/agent/restart.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class RestartCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public RestartCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

@@ -9,14 +9,15 @@ import org.springframework.stereotype.Component;
 /**
  * A2.7: /branch [name] — Fork current session. Call backend POST /api/v1/agent/session/{id}/branch.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class BranchCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public BranchCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

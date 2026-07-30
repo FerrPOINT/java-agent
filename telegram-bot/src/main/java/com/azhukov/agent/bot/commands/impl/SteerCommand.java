@@ -10,14 +10,15 @@ import org.springframework.stereotype.Component;
  * /steer &lt;prompt&gt; — Inject a mid-run note that arrives at the agent
  * after the next tool call, without interrupting the current turn.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class SteerCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public SteerCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

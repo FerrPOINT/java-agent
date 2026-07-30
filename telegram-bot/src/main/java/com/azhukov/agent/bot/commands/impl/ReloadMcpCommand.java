@@ -9,14 +9,15 @@ import org.springframework.stereotype.Component;
 /**
  * A2.4: /reload_mcp — Call backend POST /api/v1/agent/reload-mcp. Show result.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class ReloadMcpCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public ReloadMcpCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

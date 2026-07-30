@@ -9,14 +9,15 @@ import org.springframework.stereotype.Component;
 /**
  * A2.10: /set_home — Set current chat as home channel. Save to BotProperties/session.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class SetHomeCommand implements CommandHandler {
 
     private final BotProperties properties;
 
-    public SetHomeCommand(BotProperties properties) {
-        this.properties = properties;
-    }
+    
 
     @Override
     public String name() {

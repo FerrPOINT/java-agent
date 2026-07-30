@@ -9,14 +9,15 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class CommandsCommand implements CommandHandler {
 
     private final ObjectProvider<CommandRegistry> registryProvider;
 
-    public CommandsCommand(ObjectProvider<CommandRegistry> registryProvider) {
-        this.registryProvider = registryProvider;
-    }
+    
 
     @Override
     public String name() {

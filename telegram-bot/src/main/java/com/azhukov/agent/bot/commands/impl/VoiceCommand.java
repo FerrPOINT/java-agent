@@ -10,14 +10,15 @@ import org.springframework.stereotype.Component;
  * /voice on|off|status — Toggle voice mode for TTS responses.
  * When voice mode is on, agent responses are automatically converted to voice messages.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class VoiceCommand implements CommandHandler {
 
     private final BotSessionStore sessionStore;
 
-    public VoiceCommand(BotSessionStore sessionStore) {
-        this.sessionStore = sessionStore;
-    }
+    
 
     @Override
     public String name() {

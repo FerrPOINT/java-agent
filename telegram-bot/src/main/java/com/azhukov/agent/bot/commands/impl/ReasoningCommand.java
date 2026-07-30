@@ -8,16 +8,17 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class ReasoningCommand implements CommandHandler {
 
     private static final List<String> LEVELS = List.of("off", "low", "medium", "high");
 
     private final BotSessionStore store;
 
-    public ReasoningCommand(BotSessionStore store) {
-        this.store = store;
-    }
+    
 
     @Override
     public String name() {

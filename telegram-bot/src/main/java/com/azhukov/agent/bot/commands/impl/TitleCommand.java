@@ -6,14 +6,15 @@ import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
 import org.springframework.stereotype.Component;
 
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class TitleCommand implements CommandHandler {
 
     private final BotSessionStore store;
 
-    public TitleCommand(BotSessionStore store) {
-        this.store = store;
-    }
+    
 
     @Override
     public String name() {

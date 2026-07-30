@@ -8,14 +8,15 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class ResumeCommand implements CommandHandler {
 
     private final BotSessionStore store;
 
-    public ResumeCommand(BotSessionStore store) {
-        this.store = store;
-    }
+    
 
     @Override
     public String name() {

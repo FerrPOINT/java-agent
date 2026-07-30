@@ -9,14 +9,15 @@ import org.springframework.stereotype.Component;
 /**
  * A2.8: /background &lt;prompt&gt; — Run in background. Call backend POST /api/v1/agent/background.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class BackgroundCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public BackgroundCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

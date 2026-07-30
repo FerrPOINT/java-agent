@@ -13,14 +13,15 @@ import org.springframework.stereotype.Component;
  * /curator run     — trigger skill review/refresh
  * /curator reload  — reload skills from disk
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class CuratorCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public CuratorCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

@@ -6,14 +6,15 @@ import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import org.springframework.stereotype.Component;
 
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class DenyCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public DenyCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

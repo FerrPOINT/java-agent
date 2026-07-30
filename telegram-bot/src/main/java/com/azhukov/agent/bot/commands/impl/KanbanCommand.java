@@ -15,14 +15,15 @@ import org.springframework.stereotype.Component;
  * Note: Full multi-profile kanban board is not available in this build.
  * This shows active background agents as a lightweight task board.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class KanbanCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public KanbanCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

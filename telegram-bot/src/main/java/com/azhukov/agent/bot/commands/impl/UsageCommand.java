@@ -7,14 +7,15 @@ import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
 
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class UsageCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public UsageCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

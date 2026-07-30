@@ -12,14 +12,15 @@ import org.springframework.stereotype.Component;
  * /rollback list — list available checkpoints
  * /rollback restore <id> — restore a checkpoint
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class RollbackCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public RollbackCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

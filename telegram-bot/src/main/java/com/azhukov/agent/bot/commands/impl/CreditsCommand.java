@@ -11,14 +11,15 @@ import org.springframework.stereotype.Component;
  * /credits — Show usage-based credit balance (tokens, messages, cost estimate).
  * Unlike Hermes (which shows Nous credit balance), this build shows local usage stats.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class CreditsCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
 
-    public CreditsCommand(AgentBackendClient backendClient) {
-        this.backendClient = backendClient;
-    }
+    
 
     @Override
     public String name() {

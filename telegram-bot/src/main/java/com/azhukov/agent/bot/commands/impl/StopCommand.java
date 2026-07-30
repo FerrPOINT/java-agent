@@ -6,14 +6,15 @@ import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BusySessionHandler;
 import org.springframework.stereotype.Component;
 
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class StopCommand implements CommandHandler {
 
     private final BusySessionHandler busyHandler;
 
-    public StopCommand(BusySessionHandler busyHandler) {
-        this.busyHandler = busyHandler;
-    }
+    
 
     @Override
     public String name() {

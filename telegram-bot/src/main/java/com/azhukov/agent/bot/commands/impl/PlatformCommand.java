@@ -12,14 +12,15 @@ import java.util.Map;
 /**
  * A2.2: /platform — List connected platforms. For the Telegram bot, just shows "telegram".
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class PlatformCommand implements CommandHandler {
 
     private final BotProperties properties;
 
-    public PlatformCommand(BotProperties properties) {
-        this.properties = properties;
-    }
+    
 
     @Override
     public String name() {

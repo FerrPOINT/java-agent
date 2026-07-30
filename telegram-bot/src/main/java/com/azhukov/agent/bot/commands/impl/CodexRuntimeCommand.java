@@ -15,14 +15,15 @@ import org.springframework.stereotype.Component;
  * Note: This is a lightweight version of Hermes' codex runtime switching.
  * It uses session.modelOverride for per-session model selection.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class CodexRuntimeCommand implements CommandHandler {
 
     private final BotProperties properties;
 
-    public CodexRuntimeCommand(BotProperties properties) {
-        this.properties = properties;
-    }
+    
 
     @Override
     public String name() {

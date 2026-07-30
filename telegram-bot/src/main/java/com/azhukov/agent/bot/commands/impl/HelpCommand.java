@@ -4,17 +4,15 @@ import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.commands.CommandRegistry;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 @Component
+@RequiredArgsConstructor
 public class HelpCommand implements CommandHandler {
 
     private final ObjectProvider<CommandRegistry> registryProvider;
-
-    public HelpCommand(ObjectProvider<CommandRegistry> registryProvider) {
-        this.registryProvider = registryProvider;
-    }
 
     @Override
     public String name() {

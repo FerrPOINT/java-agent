@@ -9,14 +9,15 @@ import org.springframework.stereotype.Component;
 /**
  * A2.1: /profile — Show active profile name and home directory from BotProperties.
  */
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class ProfileCommand implements CommandHandler {
 
     private final BotProperties properties;
 
-    public ProfileCommand(BotProperties properties) {
-        this.properties = properties;
-    }
+    
 
     @Override
     public String name() {
