@@ -313,7 +313,7 @@ management:
         readiness:
           include: db
         liveness:
-          include: livenessState
+          include: livenessState,ping
 
 resilience4j:
   retry:

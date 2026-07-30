@@ -43,6 +43,19 @@ services:
     volumes:
       - agent_chromium:/home/agent/.azhukov-agent
       - ${AGENT_WORK_DIR:-./work}:/workspace
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/readiness >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
 
 volumes:
   java_agent_pg:
