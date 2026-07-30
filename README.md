@@ -16,27 +16,33 @@ Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-аге
 | MCP Java SDK | 2.0.0 |
 | Flyway | 12.4.0 (Spring Boot BOM) |
 | PostgreSQL JDBC | 42.7.11 (Spring Boot BOM) |
-| Hibernate ORM | 7.4.1.Final (Spring Boot BOM) |
-| Jackson | 3.1.4 (Spring Boot BOM) |
-| Resilience4j | 2.4.0 |
-| Picocli | 4.7.7 |
-| JLine | 4.3.1 |
-| Pebble | 4.1.2 |
-| Testcontainers | 2.0.5 |
+|| Hibernate ORM | 7.4.1.Final (Spring Boot BOM) |
+|| Jackson | 3.1.4 (Spring Boot BOM) |
+|| Resilience4j | 2.4.0 |
+|| Picocli | 4.7.7 |
+|| JLine | 4.3.1 |
+|| Pebble | 4.1.2 |
+|| Lombok | 1.18.38 |
+|| MapStruct | 1.6.3 |
+|| Testcontainers | 2.0.5 |
+
+## Code style: Lombok / records / MapStruct
+
+- **Records** для DTO и immutable core models (например, `ChatRequest`, `Message`, `ToolCall`).
+- **Lombok** для Spring bean'ов (`@RequiredArgsConstructor` + `@Slf4j`) и JPA entities (`@Entity` + `@Data`).
+- **MapStruct** для mapping'а entity → domain → DTO; generated mappers — Spring beans.
 
 ## Конкурентность: виртуальные потоки
-
-Проект использует **Spring MVC + виртуальные потоки** (`spring.threads.virtual.enabled=true`), не WebFlux/Reactor.
 
 ## Coverage
 
 | Метрика | Значение |
 |---------|----------|
-| LINE | 87.3% |
-| BRANCH | 74.3% |
-| METHOD | 85.9% |
-| CLASS | 98.3% |
-| Тестов | 725, 0 failures |
+|| LINE | 87.3% |
+|| BRANCH | 74.3% |
+|| METHOD | 85.9% |
+|| CLASS | 98.3% |
+|| Тестов | 1414 unit + 60 slow, 0 failures |
 
 ## Имя агента
 
@@ -119,6 +125,15 @@ cd backend
 ./gradlew test          # unit + integration, исключает live/slow
 ./gradlew jacocoTestReport
 ./gradlew bootJar       # собрать jar
+```
+
+### Slow / E2E tests
+
+```bash
+cd backend
+./gradlew slowTest      # @Tag("slow") integration tests (no external services, uses noop LLM)
+cd ..
+./scripts/e2e-docker-compose-test.sh  # Docker Compose E2E (noop provider + PostgreSQL)
 ```
 
 Текущий coverage gate: LINE ≥ 80%, per-package целевые пакеты ≥ 75%. Отчёт JaCoCo: `backend/build/reports/jacoco/test/html/index.html`.

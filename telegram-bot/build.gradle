@@ -61,7 +61,13 @@ dependencies {
     testCompileOnly 'org.projectlombok:lombok:1.18.38'
     testAnnotationProcessor 'org.projectlombok:lombok:1.18.38'
 
-    // Test
+    // MapStruct
+    implementation 'org.mapstruct:mapstruct:1.6.3'
+    annotationProcessor 'org.mapstruct:mapstruct-processor:1.6.3'
+    testCompileOnly 'org.mapstruct:mapstruct:1.6.3'
+    testAnnotationProcessor 'org.mapstruct:mapstruct-processor:1.6.3'
+
+    implementation project(':backend')
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
     testImplementation 'org.apache.groovy:groovy-test:5.0.7'
@@ -88,6 +94,11 @@ tasks.named('jacocoTestReport') {
 
 tasks.withType(JavaCompile).configureEach {
     options.release = 25
+    options.compilerArgs += [
+        '-Amapstruct.defaultComponentModel=spring',
+        '-Amapstruct.unmappedTargetPolicy=ERROR',
+        '-Amapstruct.suppressGeneratorTimestamp=true'
+    ]
 }
 
 springBoot {
