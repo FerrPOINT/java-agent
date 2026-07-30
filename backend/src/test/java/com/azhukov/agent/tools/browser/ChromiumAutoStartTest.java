@@ -21,6 +21,7 @@ class ChromiumAutoStartTest {
 
         ChromiumLauncher launcher = mock(ChromiumLauncher.class);
         ChromiumAutoStart autoStart = new ChromiumAutoStart(properties, launcher, new ObjectMapper());
+        autoStart.init();
         autoStart.start();
 
         verifyNoInteractions(launcher);
@@ -35,6 +36,7 @@ class ChromiumAutoStartTest {
 
         ChromiumLauncher launcher = mock(ChromiumLauncher.class);
         ChromiumAutoStart autoStart = new ChromiumAutoStart(properties, launcher, new ObjectMapper());
+        autoStart.init();
         autoStart.start();
 
         verifyNoInteractions(launcher);
@@ -52,6 +54,7 @@ class ChromiumAutoStartTest {
         when(launcher.findExecutable(any(), any())).thenReturn(null);
 
         ChromiumAutoStart autoStart = new ChromiumAutoStart(properties, launcher, new ObjectMapper());
+        autoStart.init();
         autoStart.start();
 
         assertThat(autoStart.isRunning()).isFalse();
@@ -90,6 +93,7 @@ class ChromiumAutoStartTest {
                 return downloader;
             }
         };
+        autoStart.init();
 
         autoStart.start();
 
@@ -122,6 +126,7 @@ class ChromiumAutoStartTest {
                 return resolver;
             }
         };
+        autoStart.init();
 
         autoStart.start();
 
@@ -133,6 +138,7 @@ class ChromiumAutoStartTest {
         AgentProperties properties = new AgentProperties();
         ChromiumLauncher launcher = mock(ChromiumLauncher.class);
         ChromiumAutoStart autoStart = new ChromiumAutoStart(properties, launcher, new ObjectMapper());
+        autoStart.init();
 
         Process process = mock(Process.class);
         when(process.isAlive()).thenReturn(true);
@@ -148,6 +154,7 @@ class ChromiumAutoStartTest {
         AgentProperties properties = new AgentProperties();
         ChromiumLauncher launcher = mock(ChromiumLauncher.class);
         ChromiumAutoStart autoStart = new ChromiumAutoStart(properties, launcher, new ObjectMapper());
+        autoStart.init();
 
         autoStart.stop();
 

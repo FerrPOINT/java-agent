@@ -3,6 +3,7 @@ package com.azhukov.agent.service.transcription;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Service for audio transcription (speech-to-text).
@@ -10,13 +11,11 @@ import org.springframework.stereotype.Service;
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class TranscriptionService {
 
     private final ObjectProvider<TranscriptionProvider> providerProvider;
 
-    public TranscriptionService(ObjectProvider<TranscriptionProvider> providerProvider) {
-        this.providerProvider = providerProvider;
-    }
 
     /**
      * Transcribe audio to text.

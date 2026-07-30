@@ -6,8 +6,10 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class MessageSanitizer {
 
     private static final Pattern CONTROL_CHARS = Pattern.compile("[\\p{Cntrl}&&[^\\n\\r\\t]]");
@@ -16,9 +18,6 @@ public class MessageSanitizer {
 
     private final SecretRedactor redactor;
 
-    public MessageSanitizer(SecretRedactor redactor) {
-        this.redactor = redactor;
-    }
 
     public List<Message> sanitize(List<Message> messages) {
         List<Message> result = new ArrayList<>();

@@ -16,33 +16,123 @@ Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-аге
 | MCP Java SDK | 2.0.0 |
 | Flyway | 12.4.0 (Spring Boot BOM) |
 | PostgreSQL JDBC | 42.7.11 (Spring Boot BOM) |
-|| Hibernate ORM | 7.4.1.Final (Spring Boot BOM) |
-|| Jackson | 3.1.4 (Spring Boot BOM) |
-|| Resilience4j | 2.4.0 |
-|| Picocli | 4.7.7 |
-|| JLine | 4.3.1 |
-|| Pebble | 4.1.2 |
-|| Lombok | 1.18.38 |
-|| MapStruct | 1.6.3 |
-|| Testcontainers | 2.0.5 |
+| Hibernate ORM | 7.4.1.Final (Spring Boot BOM) |
+| Jackson | 3.1.4 (Spring Boot BOM) |
+| Resilience4j | 2.4.0 |
+| Picocli | 4.7.7 |
+| JLine | 4.3.1 |
+| Pebble | 4.1.2 |
+| Lombok | 1.18.38 |
+| MapStruct | 1.6.3 |
+| Testcontainers | 2.0.5 |
 
-## Code style: Lombok / records / MapStruct
+## Архитектурные правила
 
-- **Records** для DTO и immutable core models (например, `ChatRequest`, `Message`, `ToolCall`).
-- **Lombok** для Spring bean'ов (`@RequiredArgsConstructor` + `@Slf4j`) и JPA entities (`@Entity` + `@Data`).
-- **MapStruct** для mapping'а entity → domain → DTO; generated mappers — Spring beans.
+### Lombok
 
-## Конкурентность: виртуальные потоки
+| Правило | Аннотация | Применение |
+|---------|-----------|------------|
+| Spring beans (сервисы, контроллеры, компоненты) | `@RequiredArgsConstructor` + `@Slf4j` | Все классы с final-зависимостями и чистыми конструкторами |
+| JPA entities | `@Entity` + `@Data` | `MessageEntity`, `SessionEntity`, `BotSessionEntity` и др. |
+| Records для DTO и core models | `record` (без Lombok) | `ChatRequest`, `Message`, `ToolCall`, `Session`, `ChatResponse` |
+| Логирование | `@Slf4j` | Заменяет ручной `LoggerFactory.getLogger(...)` |
+
+**Когда НЕ использовать Lombok:**
+- Конструктор с логикой (HttpClient.new, Executors.new, RestClient.builder)
+- Null-checks в конструкторе (`x == null ? "" : x`)
+- `@Qualifier` на параметр конструктора (Lombok не поддерживает)
+- Множественные конструкторы
+- Классы без DI-зависимостей
+
+**@PostConstruct для derived fields:**
+Когда поле вычисляется из injected-зависимости (например `configuredLimit = properties.getWeb().getSearchResults()`), поле делается non-final, а вычисление переносится в `@PostConstruct void init()`. В unit-тестах `init()` вызывается вручную после `new`.
+
+**Inline init для runtime state:**
+Поля, не зависящие от injected-зависимостей (executors, caches, maps), инициализируются inline: `private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(...)`.
+
+### MapStruct
+
+| Маппер | Пакет | Направление |
+|--------|-------|-------------|
+| `MessageMapper` | `persistence.mapper` | `MessageEntity` ↔ `Message` |
+| `SessionEntityMapper` | `persistence.mapper` | `SessionEntity` ↔ `Session` |
+| `DomainDtoMapper` | `api.mapper` | `Session` → `SessionSummaryDto` |
+| `OpenAiMapper` | `api.mapper` | `Message` ↔ `OpenAiMessage`, `ChatResponse` ↔ `OpenAiChatResponse`, `ToolCall` → `OpenAiToolCall` |
+
+**Конфигурация:** `MapStructConfig` — `componentModel = "spring"`, `unmappedTargetPolicy = ERROR`.
+
+**Правила:**
+- Мапперы — Spring beans (`@Mapper(config = MapStructConfig.class)`)
+- В unit-тестах — `Mappers.getMapper(X.class)` (не mock)
+- `@Named` helper methods для non-trivial conversion (enum → string, nested objects)
+- `default` methods для conditional logic
+- `roleToString` → `role.name().toLowerCase()`, `stringToRole` → `Role.valueOf(role.toUpperCase())`
+
+**Когда НЕ использовать MapStruct:**
+- `buildResponse` в сервисах, где DTO собирается из множества источников (Session + TurnResult + UsageTracker + Properties)
+- Streaming chunk creation (DTO specifique to SSE format)
+- Bot layer: entities используются как domain models, mapping не нужен
+
+### Структура проекта
+
+```
+java-agent/
+├── backend/                    # Backend: REST API, LLM client, tools, persistence
+│   └── src/main/java/com/azhukov/agent/
+│       ├── api/                # REST controllers + DTO + mappers (OpenAiMapper, DomainDtoMapper)
+│       ├── cli/                # Picocli / JLine REPL
+│       ├── client/             # LLM clients (LangChain4j, NoOp) + MCP client
+│       ├── config/             # AgentProperties, MapStructConfig, beans
+│       ├── core/               # domain layer (AgentRuntime, tools, context, memory, skills, state, security)
+│       ├── gateway/            # Telegram/webhook adapters + routing
+│       ├── persistence/        # JPA entities + repositories + mappers (MessageMapper, SessionEntityMapper) + Flyway
+│       ├── security/           # SSRF-safe HTTP client, safety validators
+│       ├── service/            # AgentRuntimeService, AgentStreamingService, TTS, transcription
+│       └── tools/              # @AgentTool implementations (file, terminal, web, browser, memory, delegate, etc.)
+├── telegram-bot/               # Telegram bot: 56 commands, streaming, polling, media
+│   └── src/main/java/com/azhukov/agent/bot/
+│       ├── api/                # Bot API DTOs
+│       ├── auth/               # Authorization, pairing
+│       ├── batch/              # Text/photo batch debouncers
+│       ├── client/             # TelegramClient, RestClient config
+│       ├── commands/           # 56 command handlers + CommandRegistry (10 aliases)
+│       ├── config/             # BotProperties, BotConfig
+│       ├── core/               # BotMessageProcessor, AgentBackendClient
+│       ├── footer/             # Runtime footer
+│       ├── formatting/         # Markdown converter, response filter
+│       ├── group/              # Group message filter
+│       ├── keyboard/           # Inline keyboards (model/provider selection)
+│       ├── lifecycle/          # Bot lifecycle
+│       ├── media/              # Media cache, inbound media, location handler
+│       ├── polling/            # Long polling, reconnect watcher, fallback IP resolver
+│       ├── reaction/           # Reaction manager
+│       ├── session/            # BotSessionEntity, BotSessionStore
+│       ├── sticker/            # Sticker cache
+│       ├── streaming/          # StreamEditor (edit-message streaming)
+│       ├── typing/             # TypingManager
+│       └── webhook/            # Webhook secret validator
+├── docs/                       # Architecture docs
+└── docker-compose.yml          # Production deployment
+```
 
 ## Coverage
 
 | Метрика | Значение |
 |---------|----------|
-| LINE | 87.3% |
-| BRANCH | 74.3% |
-| METHOD | 85.9% |
-| CLASS | 98.3% |
-| Тестов | 1414 unit + 60 slow, 0 failures |
+| LINE | 80.4% |
+| BRANCH | 66.0% |
+| METHOD | 84.5% |
+| CLASS | 92.7% |
+| Тестов | 1500 (279 test files), 0 failures |
+| @RequiredArgsConstructor | 159 файлов |
+| @Slf4j | 83 файла |
+| @Data (JPA entities) | 16 файлов |
+| MapStruct мапперов | 4 (+ 5 тестов) |
+| Bot команд | 56 (+ 10 алиасов) |
+| Backend endpoints | 50 |
+| MCP файлов | 21 |
+
+## Конкурентность: виртуальные потоки
 
 ## Имя агента
 
@@ -68,7 +158,7 @@ agent:
 
 ```bash
 cd backend
-export OLLAMA_API_KEY=<ключ>
+export OLLAMA_API_KEY=***
 java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
   --spring.profiles.active=dev \
   --spring.datasource.password=project_workflow \
@@ -138,30 +228,6 @@ cd ..
 
 Текущий coverage gate: LINE ≥ 80%, per-package целевые пакеты ≥ 75%. Отчёт JaCoCo: `backend/build/reports/jacoco/test/html/index.html`.
 
-## Структура
-
-```
-backend/
-├── build.gradle
-├── settings.gradle
-├── ARCHITECTURE.md      # текущий стек и профили
-└── src/main/java/com/azhukov/agent/
-    ├── JavaAgentApplication.java
-    ├── api/                # REST controllers + health indicators
-    ├── cli/                # Picocli / JLine REPL
-    ├── client/             # LLM clients (LangChain4j, NoOp) + MCP client
-    ├── config/             # AgentProperties, beans
-    ├── core/               # domain layer (AgentRuntime, ToolRegistry, prompts, context, memory, skills, state, audit)
-    ├── gateway/            # Telegram/webhook adapters + routing
-    ├── persistence/        # JPA entities + repositories + Flyway migrations
-    ├── security/           # SSRF-safe HTTP client, safety validators
-    └── tools/              # @AgentTool implementations (file, terminal, process, web, browser, coding, memory, skills, mcp)
-```
-
-- `backend/src/main/resources/` — конфигурация и миграции Flyway
-- `docs/` — архитектура и планирование
-- `prototype/` — удалён
-
 ## Переменные окружения
 
 | Переменная | Назначение |
@@ -194,3 +260,4 @@ backend/
 - `backend/docs/11-chromium.md` — Chromium auto-install
 - `backend/docs/12-streaming.md` — SSE streaming
 - `backend/docs/13-production-hardening.md` — context compression и production packaging
+- `backend/docs/conventions.md` — конвенции Lombok / Records / MapStruct

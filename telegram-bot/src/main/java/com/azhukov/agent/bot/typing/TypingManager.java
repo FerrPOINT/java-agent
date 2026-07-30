@@ -1,6 +1,7 @@
 package com.azhukov.agent.bot.typing;
 
 import com.azhukov.agent.bot.client.TelegramClient;
+import com.azhukov.agent.bot.config.BotProperties;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -11,25 +12,30 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
+import jakarta.annotation.PostConstruct;
 
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class TypingManager {
 
     private final TelegramClient telegramClient;
-    private final long intervalMs;
-    private final ScheduledExecutorService scheduler;
-    private final Map<Long, ScheduledFuture<?>> activeTyping = new ConcurrentHashMap<>();
+    private final BotProperties properties;
+    private long intervalMs;
+    private ScheduledExecutorService scheduler;
 
-    public TypingManager(TelegramClient telegramClient, com.azhukov.agent.bot.config.BotProperties properties) {
-        this.telegramClient = telegramClient;
-        this.intervalMs = properties.getTypingRefreshInterval().toMillis();
-        this.scheduler = Executors.newScheduledThreadPool(2, r -> {
+    @PostConstruct
+    void init() {
+        intervalMs = properties.getTypingRefreshInterval().toMillis();
+        scheduler = Executors.newScheduledThreadPool(2, r -> {
             Thread t = new Thread(r, "typing-refresh");
             t.setDaemon(true);
             return t;
         });
     }
+    private final Map<Long, ScheduledFuture<?>> activeTyping = new ConcurrentHashMap<>();
+
 
     public void startTyping(long chatId) {
         // Atomic: putIfAbsent prevents duplicate tasks from concurrent calls

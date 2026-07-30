@@ -6,17 +6,15 @@ import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
 import org.springframework.stereotype.Component;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class NewSessionCommand implements CommandHandler {
 
     private final BotSessionStore store;
     private final AgentBackendClient backendClient;
 
-    public NewSessionCommand(BotSessionStore store, AgentBackendClient backendClient) {
-        this.store = store;
-        this.backendClient = backendClient;
-    }
 
     @Override
     public String name() {

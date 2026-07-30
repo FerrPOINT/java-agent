@@ -7,17 +7,15 @@ import com.azhukov.agent.bot.session.BotSessionEntity;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.stereotype.Component;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class VersionCommand implements CommandHandler {
 
     private final BotProperties properties;
     private final ObjectProvider<BuildProperties> buildPropertiesProvider;
 
-    public VersionCommand(BotProperties properties, ObjectProvider<BuildProperties> buildPropertiesProvider) {
-        this.properties = properties;
-        this.buildPropertiesProvider = buildPropertiesProvider;
-    }
 
     @Override
     public String name() {

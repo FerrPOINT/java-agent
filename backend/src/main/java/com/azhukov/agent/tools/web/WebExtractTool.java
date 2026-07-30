@@ -17,6 +17,8 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
+import jakarta.annotation.PostConstruct;
 
 @AgentTool(
     name = "web_extract",
@@ -24,20 +26,22 @@ import java.util.List;
     toolset = "web"
 )
 @Component
+@RequiredArgsConstructor
 public class WebExtractTool implements ToolHandler {
 
-    private final int timeoutSeconds;
-    private final int maxChars;
+    private final AgentProperties agentProperties;
+    private int timeoutSeconds;
+    private int maxChars;
     private final UrlSafety urlSafety;
     private final Redactor redactor;
 
-    public WebExtractTool(AgentProperties agentProperties, UrlSafety urlSafety, Redactor redactor) {
-        this.timeoutSeconds = agentProperties.getWeb().getExtractTimeoutSeconds();
-        this.maxChars = agentProperties.getWeb().getExtractMaxChars();
-        this.urlSafety = urlSafety;
-        this.redactor = redactor;
-    }
 
+
+    @PostConstruct
+    void init() {
+        timeoutSeconds = agentProperties.getWeb().getExtractTimeoutSeconds();
+        maxChars = agentProperties.getWeb().getExtractMaxChars();
+    }
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         ExtractArgs args = ToolHandler.parseJson(arguments, ExtractArgs.class);

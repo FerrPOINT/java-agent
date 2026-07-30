@@ -22,6 +22,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
+import jakarta.annotation.PostConstruct;
 
 @AgentTool(
     name = "web_search",
@@ -29,24 +31,25 @@ import java.util.Map;
     toolset = "web"
 )
 @Component
+@RequiredArgsConstructor
 public class WebSearchTool implements ToolHandler {
 
     private static final String DUCKDUCKGO_HTML = "https://html.duckduckgo.com/html/";
     private static final int DEFAULT_LIMIT = 5;
     private static final int MAX_LIMIT = 20;
 
-    private final int configuredLimit;
+    private final AgentProperties agentProperties;
+    private int configuredLimit;
     private final ObjectMapper objectMapper;
     private final UrlSafety urlSafety;
     private final Redactor redactor;
 
-    public WebSearchTool(AgentProperties agentProperties, ObjectMapper objectMapper, UrlSafety urlSafety, Redactor redactor) {
-        this.configuredLimit = agentProperties.getWeb().getSearchResults();
-        this.objectMapper = objectMapper;
-        this.urlSafety = urlSafety;
-        this.redactor = redactor;
-    }
 
+
+    @PostConstruct
+    void init() {
+        configuredLimit = agentProperties.getWeb().getSearchResults();
+    }
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         SearchArgs args = ToolHandler.parseJson(arguments, SearchArgs.class);

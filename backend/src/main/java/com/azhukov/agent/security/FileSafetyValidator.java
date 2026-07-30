@@ -6,8 +6,10 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class FileSafetyValidator {
 
     private final AgentProperties properties;
@@ -17,9 +19,6 @@ public class FileSafetyValidator {
         "token", "secret", "password", "api_key", "apikey"
     );
 
-    public FileSafetyValidator(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     public String checkRead(Path path) {
         if (path == null) return "Path is null";

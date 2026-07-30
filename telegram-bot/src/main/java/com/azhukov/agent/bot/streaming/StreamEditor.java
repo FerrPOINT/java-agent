@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
+import jakarta.annotation.PostConstruct;
 
 /**
  * Manages edit-message streaming: sends an initial message, then edits it
@@ -17,19 +19,22 @@ import java.util.Map;
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class StreamEditor {
 
     private final TelegramClient telegramClient;
-    private final String parseMode;
-    private final long editIntervalMs;
+    private final BotProperties properties;
+    private String parseMode;
+    private long editIntervalMs;
     private final Map<Long, Long> lastEditTime = new ConcurrentHashMap<>();
 
-    public StreamEditor(TelegramClient telegramClient, BotProperties properties) {
-        this.telegramClient = telegramClient;
-        this.parseMode = properties.getParseMode();
-        this.editIntervalMs = properties.getStreamEditInterval().toMillis();
-    }
 
+
+    @PostConstruct
+    void init() {
+        parseMode = properties.getParseMode();
+        editIntervalMs = properties.getStreamEditInterval().toMillis();
+    }
     /**
      * Sends the initial streaming message.
      *

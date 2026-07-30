@@ -23,6 +23,7 @@ class ChromiumAutoStartLiveTest {
 
         ChromiumLauncher launcher = new ChromiumLauncher(props);
         ChromiumAutoStart autoStart = new ChromiumAutoStart(props, launcher, new ObjectMapper());
+        autoStart.init();
         autoStart.start();
 
         try {

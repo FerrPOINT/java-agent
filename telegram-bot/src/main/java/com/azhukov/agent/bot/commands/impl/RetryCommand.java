@@ -9,17 +9,15 @@ import com.azhukov.agent.bot.session.BotSessionEntity;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class RetryCommand implements CommandHandler {
 
     private final BotMessageRepository messageRepository;
     private final AgentBackendClient backendClient;
 
-    public RetryCommand(BotMessageRepository messageRepository, AgentBackendClient backendClient) {
-        this.messageRepository = messageRepository;
-        this.backendClient = backendClient;
-    }
 
     @Override
     public String name() {

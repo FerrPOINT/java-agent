@@ -86,4 +86,52 @@ public interface OpenAiMapper {
             .map(tc -> new ToolCall(tc.id(), tc.function().name(), tc.function().arguments()))
             .toList();
     }
+
+    // ── Reverse mappings for ChatCompletionsController ──
+
+    default Message toMessage(OpenAiChatRequest.OpenAiMessage m) {
+        if (m == null) return Message.user("");
+        String role = m.role() != null ? m.role() : "user";
+        return switch (role) {
+            case "system" -> Message.system(m.content());
+            case "assistant" -> Message.assistant(m.content(), 0);
+            case "tool" -> Message.toolResult(m.toolCallId(), m.content(), 0);
+            default -> Message.user(m.content());
+        };
+    }
+
+    default ToolDefinition toToolDefinition(OpenAiChatRequest.OpenAiTool tool) {
+        if (tool == null || tool.function() == null) return null;
+        return new ToolDefinition(
+            tool.function().name(),
+            tool.function().description(),
+            tool.function().parameters()
+        );
+    }
+
+    default OpenAiChatResponse.ToolCall toOpenAiToolCall(ToolCall tc) {
+        return new OpenAiChatResponse.ToolCall(
+            tc.id() != null ? tc.id() : java.util.UUID.randomUUID().toString(),
+            "function",
+            new OpenAiChatResponse.Function(tc.name(), tc.arguments())
+        );
+    }
+
+    default OpenAiChatResponse toOpenAiResponse(String model, com.azhukov.agent.core.model.ChatResponse response) {
+        String content = response.content() != null ? response.content() : "";
+        List<OpenAiChatResponse.ToolCall> toolCalls = response.toolCalls() != null
+            ? response.toolCalls().stream().map(this::toOpenAiToolCall).toList()
+            : List.of();
+        OpenAiChatResponse.Message message = toolCalls.isEmpty()
+            ? new OpenAiChatResponse.Message("assistant", content, null)
+            : new OpenAiChatResponse.Message("assistant", null, toolCalls);
+        return new OpenAiChatResponse(
+            java.util.UUID.randomUUID().toString(),
+            "chat.completion",
+            java.time.Instant.now().getEpochSecond(),
+            model,
+            List.of(new OpenAiChatResponse.Choice(0, message, "stop")),
+            new OpenAiChatResponse.Usage(0, 0, 0)
+        );
+    }
 }

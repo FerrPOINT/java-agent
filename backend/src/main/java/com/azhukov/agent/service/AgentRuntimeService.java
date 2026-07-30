@@ -2,7 +2,6 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.*;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
-import com.azhukov.agent.api.mapper.OpenAiMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.memory.MemoryProvider;

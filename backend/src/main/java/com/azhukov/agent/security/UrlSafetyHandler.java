@@ -8,15 +8,14 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class UrlSafetyHandler {
 
     private final AgentProperties properties;
 
-    public UrlSafetyHandler(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     public String checkUrl(String url) {
         if (url == null || url.isBlank()) {

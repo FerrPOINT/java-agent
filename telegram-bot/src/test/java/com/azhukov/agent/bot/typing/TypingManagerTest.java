@@ -21,6 +21,7 @@ class TypingManagerTest {
         BotProperties props = new BotProperties();
         props.setTypingRefreshInterval(Duration.ofMillis(50));
         manager = new TypingManager(client, props);
+        manager.init();
     }
 
     @Test

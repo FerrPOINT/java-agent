@@ -16,6 +16,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import com.azhukov.agent.api.mapper.OpenAiMapper;
+import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
@@ -66,13 +68,15 @@ class ChatCompletionsControllerTest {
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
+        OpenAiMapper openAiMapper = Mappers.getMapper(OpenAiMapper.class);
 
         ChatCompletionsController controller = new ChatCompletionsController(
             agentRuntime,
             toolRegistry,
             promptBuilder,
             modelClient,
-            objectMapper
+            objectMapper,
+            openAiMapper
         );
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)

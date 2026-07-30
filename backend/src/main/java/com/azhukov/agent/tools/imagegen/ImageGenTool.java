@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Agent tool for generating images from text prompts.
@@ -26,13 +27,11 @@ import java.util.UUID;
 )
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class ImageGenTool implements ToolHandler {
 
     private final ObjectProvider<ImageGenProvider> providerProvider;
 
-    public ImageGenTool(ObjectProvider<ImageGenProvider> providerProvider) {
-        this.providerProvider = providerProvider;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

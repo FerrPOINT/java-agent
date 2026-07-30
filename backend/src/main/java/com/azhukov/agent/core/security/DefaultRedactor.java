@@ -6,16 +6,15 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class DefaultRedactor implements Redactor {
 
     private final AgentProperties properties;
     private final Pattern envVarPattern = Pattern.compile("\\b([A-Z_][A-Z0-9_]*)=(\\S+)");
 
-    public DefaultRedactor(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     @Override
     public String redact(String output) {

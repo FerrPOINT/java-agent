@@ -7,20 +7,18 @@ import com.azhukov.agent.bot.session.BotSessionEntity;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.stereotype.Component;
+import lombok.RequiredArgsConstructor;
 
 /**
  * A3.4: /update — Show current version and update instructions.
  */
 @Component
+@RequiredArgsConstructor
 public class UpdateCommand implements CommandHandler {
 
     private final BotProperties properties;
     private final ObjectProvider<BuildProperties> buildPropertiesProvider;
 
-    public UpdateCommand(BotProperties properties, ObjectProvider<BuildProperties> buildPropertiesProvider) {
-        this.properties = properties;
-        this.buildPropertiesProvider = buildPropertiesProvider;
-    }
 
     @Override
     public String name() {

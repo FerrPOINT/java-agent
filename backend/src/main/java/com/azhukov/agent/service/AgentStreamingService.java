@@ -21,6 +21,8 @@ import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.persistence.entity.SessionEntity;
+import com.azhukov.agent.persistence.mapper.MessageMapper;
+import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -36,9 +38,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import lombok.RequiredArgsConstructor;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class AgentStreamingService {
 
     private final ModelClient modelClient;
@@ -54,34 +58,9 @@ public class AgentStreamingService {
     private final TransactionTemplate transactionTemplate;
     private final IterationBudget iterationBudget;
     private final TurnStateManager turnStateManager;
+    private final SessionEntityMapper sessionMapper;
+    private final MessageMapper messageMapper;
 
-    public AgentStreamingService(ModelClient modelClient,
-                                  ToolRegistry toolRegistry,
-                                  ToolExecutionService toolExecutionService,
-                                  PromptBuilder promptBuilder,
-                                  ContextEngine contextEngine,
-                                  ObjectMapper objectMapper,
-                                  UsageTracker usageTracker,
-                                  AgentProperties properties,
-                                  SessionRepository sessionRepository,
-                                  MessageRepository messageRepository,
-                                  TransactionTemplate transactionTemplate,
-                                  IterationBudget iterationBudget,
-                                  TurnStateManager turnStateManager) {
-        this.modelClient = modelClient;
-        this.toolRegistry = toolRegistry;
-        this.toolExecutionService = toolExecutionService;
-        this.promptBuilder = promptBuilder;
-        this.contextEngine = contextEngine;
-        this.objectMapper = objectMapper;
-        this.usageTracker = usageTracker;
-        this.properties = properties;
-        this.sessionRepository = sessionRepository;
-        this.messageRepository = messageRepository;
-        this.transactionTemplate = transactionTemplate;
-        this.iterationBudget = iterationBudget;
-        this.turnStateManager = turnStateManager;
-    }
 
     public SseEmitter streamTurn(ChatRequest request) {
         return streamTurn(request, new SseEmitter(request.timeoutMs() != null ? request.timeoutMs() : 600_000L));
@@ -332,17 +311,9 @@ public class AgentStreamingService {
                 for (Message m : turnMessages) {
                     // Skip system message — it's regenerated each turn
                     if (m.role() == com.azhukov.agent.core.model.Role.SYSTEM) continue;
-                    var e = new com.azhukov.agent.persistence.entity.MessageEntity();
+                    var e = messageMapper.toEntity(m);
                     e.setSessionId(session.id());
-                    e.setRole(m.role().name().toLowerCase());
-                    e.setContent(m.content());
-                    e.setToolCallId(m.toolCallId());
-                    if (m.toolCalls() != null && !m.toolCalls().isEmpty()) {
-                        e.setToolCallName(m.toolCalls().get(0).name());
-                        e.setToolCallArguments(m.toolCalls().get(0).arguments());
-                    }
                     e.setCreatedAt(now);
-                    e.setTurnIndex(m.turnIndex() != null ? m.turnIndex() : 0);
                     messageRepository.save(e);
                 }
                 // Touch session updated_at
@@ -374,22 +345,8 @@ public class AgentStreamingService {
     }
 
     private List<Message> loadHistory(UUID sessionId) {
-        List<com.azhukov.agent.persistence.entity.MessageEntity> entities =
-            messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        List<Message> history = new ArrayList<>();
-        for (var e : entities) {
-            history.add(switch (e.getRole()) {
-                case "assistant" -> Message.assistant(
-                    e.getContent() != null ? e.getContent() : "",
-                    e.getTurnIndex() != null ? e.getTurnIndex() : 0);
-                case "tool" -> Message.toolResult(
-                    e.getToolCallId(),
-                    e.getContent() != null ? e.getContent() : "",
-                    e.getTurnIndex() != null ? e.getTurnIndex() : 0);
-                default -> Message.user(e.getContent() != null ? e.getContent() : "");
-            });
-        }
-        return history;
+        return messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)
+            .stream().map(messageMapper::toDomain).toList();
     }
 
     private Session createSession(String userId, String provider, String modelName) {
@@ -401,15 +358,13 @@ public class AgentStreamingService {
         e.setCreatedAt(Instant.now());
         e.setUpdatedAt(Instant.now());
         var saved = sessionRepository.save(e);
-        return new Session(saved.getId(), saved.getUserId(), saved.getTitle(),
-            saved.getModelProvider(), saved.getModelName(), null, java.util.Map.of());
+        return sessionMapper.toDomain(saved);
     }
 
     private Session loadSession(UUID id) {
         var e = sessionRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
-        return new Session(e.getId(), e.getUserId(), e.getTitle(),
-            e.getModelProvider(), e.getModelName(), null, java.util.Map.of());
+        return sessionMapper.toDomain(e);
     }
 
     private void safeCompleteWithError(SseEmitter emitter, Throwable error) {

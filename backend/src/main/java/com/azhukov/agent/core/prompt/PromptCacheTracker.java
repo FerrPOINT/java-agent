@@ -9,6 +9,7 @@ import java.security.MessageDigest;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Tracks cached prompt prefixes per session to enable prompt caching optimization.
@@ -16,6 +17,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class PromptCacheTracker {
 
     private final AgentProperties properties;
@@ -24,9 +26,6 @@ public class PromptCacheTracker {
     private final Map<String, AtomicLong> cacheHits = new ConcurrentHashMap<>();
     private final Map<String, AtomicLong> cacheMisses = new ConcurrentHashMap<>();
 
-    public PromptCacheTracker(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     public void markCached(String sessionId, String prefixHash) {
         if (!properties.getPromptCaching().isEnabled()) return;

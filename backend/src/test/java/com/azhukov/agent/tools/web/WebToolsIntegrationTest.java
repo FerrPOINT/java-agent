@@ -24,6 +24,8 @@ class WebToolsIntegrationTest {
     @Test
     void webSearchReturnsResults() throws Exception {
         WebSearchTool tool = new WebSearchTool(properties, objectMapper, new DefaultUrlSafety(properties), new DefaultRedactor(properties));
+        tool.init();
+        tool.init();
         var result = tool.execute("{\"query\":\"OpenAI\",\"limit\":3}", null, null);
 
         assertThat(result.success()).isTrue();
@@ -37,6 +39,7 @@ class WebToolsIntegrationTest {
     @Test
     void webExtractReturnsText() {
         WebExtractTool tool = new WebExtractTool(properties, new DefaultUrlSafety(properties), new DefaultRedactor(properties));
+        tool.init();
         var result = tool.execute("{\"urls\":\"https://example.com\"}", null, null);
 
         assertThat(result.success()).isTrue();

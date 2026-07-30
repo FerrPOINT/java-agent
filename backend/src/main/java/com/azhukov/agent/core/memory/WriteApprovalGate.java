@@ -10,6 +10,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
+import jakarta.annotation.PostConstruct;
 
 /**
  * Write-approval gate: if enabled, memory writes are staged to a pending queue
@@ -17,6 +19,7 @@ import java.util.UUID;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class WriteApprovalGate {
 
     private final PendingMemoryRepository pendingRepository;
@@ -24,15 +27,12 @@ public class WriteApprovalGate {
     private final AgentProperties properties;
     private volatile boolean enabled;
 
-    public WriteApprovalGate(PendingMemoryRepository pendingRepository,
-                             MemoryProvider memoryProvider,
-                             AgentProperties properties) {
-        this.pendingRepository = pendingRepository;
-        this.memoryProvider = memoryProvider;
-        this.properties = properties;
-        this.enabled = properties.getMemory().isWriteApproval();
-    }
 
+
+    @PostConstruct
+    void init() {
+        enabled = properties.getMemory().isWriteApproval();
+    }
     public boolean isEnabled() {
         return enabled;
     }

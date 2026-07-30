@@ -8,11 +8,13 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Tracks state for a single agent turn: tool calls, failures, results.
  * Used by guardrails and the runtime to detect loops and escalate.
  */
+@RequiredArgsConstructor
 public class TurnState {
 
     public record ToolExecution(
@@ -32,10 +34,6 @@ public class TurnState {
     private boolean halted = false;
     private String haltReason;
 
-    public TurnState(String sessionId, int turnIndex) {
-        this.sessionId = sessionId;
-        this.turnIndex = turnIndex;
-    }
 
     public void recordModelCall() {
         modelCalls++;

@@ -74,7 +74,7 @@ class WebExtractToolTest {
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect("https://example.com")).thenReturn(connection);
 
-            WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor);
+            WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
             var result = tool.execute("{\"urls\":\"https://example.com\"}", null, null);
 
             assertThat(result.success()).isTrue();
@@ -115,7 +115,7 @@ class WebExtractToolTest {
             jsoup.when(() -> Jsoup.connect("https://one.com")).thenReturn(conn1);
             jsoup.when(() -> Jsoup.connect("https://two.com")).thenReturn(conn2);
 
-            WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor);
+            WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
             var result = tool.execute("{\"urls\":\"https://one.com, https://two.com\"}", null, null);
 
             assertThat(result.success()).isTrue();
@@ -135,7 +135,7 @@ class WebExtractToolTest {
         when(urlSafety.isUrlAllowed("https://evil.com")).thenReturn(false);
         when(redactor.redact(anyString())).thenAnswer(i -> i.getArgument(0));
 
-        WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor);
+        WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
         var result = tool.execute("{\"urls\":\"https://evil.com\"}", null, null);
 
         assertThat(result.success()).isTrue();
@@ -149,7 +149,7 @@ class WebExtractToolTest {
         when(urlSafety.isUrlAllowed("not-a-url")).thenReturn(false);
         when(redactor.redact(anyString())).thenAnswer(i -> i.getArgument(0));
 
-        WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor);
+        WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
         var result = tool.execute("{\"urls\":\"not-a-url\"}", null, null);
 
         assertThat(result.success()).isTrue();
@@ -172,7 +172,7 @@ class WebExtractToolTest {
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect("https://empty.example")).thenReturn(connection);
 
-            WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor);
+            WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
             var result = tool.execute("{\"urls\":\"https://empty.example\"}", null, null);
 
             assertThat(result.success()).isTrue();
@@ -191,8 +191,9 @@ class WebExtractToolTest {
                 throw new IOException("connection reset");
             }
         };
-        var result = tool.execute("{\"urls\":\"https://down.example\"}", null, null);
 
+        tool.init();
+        var result = tool.execute("{\"urls\":\"https://down.example\"}", null, null);
         assertThat(result.success()).isTrue();
         assertThat(result.content())
             .contains("--- URL: https://down.example ---")
@@ -202,7 +203,7 @@ class WebExtractToolTest {
     @Test
     void requiresUrlsArgument() {
         AgentProperties properties = properties();
-        WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor);
+        WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
 
         var result = tool.execute("{}", null, null);
 
@@ -226,7 +227,7 @@ class WebExtractToolTest {
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect("https://long.example")).thenReturn(connection);
 
-            WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor);
+            WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
             var result = tool.execute("{\"urls\":\"https://long.example\"}", null, null);
 
             assertThat(result.success()).isTrue();

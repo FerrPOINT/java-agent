@@ -6,8 +6,10 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class CommandApprovalManager {
 
     private static final Set<String> DANGEROUS_PATTERNS = Set.of(
@@ -19,9 +21,6 @@ public class CommandApprovalManager {
     private final AgentProperties properties;
     private final Set<String> sessionAllowlist = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    public CommandApprovalManager(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     public ApprovalStatus requireApproval(String command) {
         if (!properties.getSecurity().isApprovalsEnabled()) {

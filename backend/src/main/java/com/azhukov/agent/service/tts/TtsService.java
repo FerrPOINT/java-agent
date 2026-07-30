@@ -4,6 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Service for text-to-speech synthesis.
@@ -11,15 +12,12 @@ import org.springframework.stereotype.Service;
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class TtsService {
 
     private final ObjectProvider<TtsProvider> providerProvider;
     private final AgentProperties properties;
 
-    public TtsService(ObjectProvider<TtsProvider> providerProvider, AgentProperties properties) {
-        this.providerProvider = providerProvider;
-        this.properties = properties;
-    }
 
     /**
      * Synthesize text to speech audio.

@@ -30,6 +30,8 @@ import java.nio.file.Files;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
+import lombok.RequiredArgsConstructor;
+import jakarta.annotation.PostConstruct;
 
 /**
  * Main message processor — the orchestrator for all incoming {@link UpdateEvent}s.
@@ -46,6 +48,7 @@ import java.util.function.Consumer;
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
     private final TelegramClient telegramClient;
@@ -67,48 +70,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
     private final SlashAccessPolicy slashAccessPolicy;
     private final ResponseFilter responseFilter;
 
-    public BotMessageProcessor(TelegramClient telegramClient,
-                               AuthorizationService authorizationService,
-                               BotSessionStore sessionStore,
-                               BusySessionHandler busyHandler,
-                               TypingManager typingManager,
-                               AgentBackendClient backendClient,
-                               CommandRegistry commandRegistry,
-                               CallbackQueryHandler callbackQueryHandler,
-                               BotProperties properties,
-                               StreamEditor streamEditor,
-                               InboundMediaHandler inboundMediaHandler,
-                               RuntimeFooter runtimeFooter,
-                               ReactionManager reactionManager,
-                               TextBatchDebouncer textBatchDebouncer,
-                               PhotoBatchDebouncer photoBatchDebouncer,
-                               GroupMessageFilter groupMessageFilter,
-                               SlashAccessPolicy slashAccessPolicy,
-                               ResponseFilter responseFilter) {
-        this.telegramClient = telegramClient;
-        this.authorizationService = authorizationService;
-        this.sessionStore = sessionStore;
-        this.busyHandler = busyHandler;
-        this.typingManager = typingManager;
-        this.backendClient = backendClient;
-        this.commandRegistry = commandRegistry;
-        this.callbackQueryHandler = callbackQueryHandler;
-        this.properties = properties;
-        this.streamEditor = streamEditor;
-        this.inboundMediaHandler = inboundMediaHandler;
-        this.runtimeFooter = runtimeFooter;
-        this.reactionManager = reactionManager;
-        this.textBatchDebouncer = textBatchDebouncer;
-        this.photoBatchDebouncer = photoBatchDebouncer;
-        this.groupMessageFilter = groupMessageFilter;
-        this.slashAccessPolicy = slashAccessPolicy;
-        this.responseFilter = responseFilter;
-
-        // B1.3: Wire text batch debouncer to dispatch merged events back through processor
-        this.textBatchDebouncer.onDispatch(this::dispatchTextBatch);
-        // B1.4: Wire photo batch debouncer to dispatch merged events
-        this.photoBatchDebouncer.onDispatch(this::dispatchPhotoBatch);
-    }
 
     /**
      * B1.3: Called by TextBatchDebouncer when a batch is ready to dispatch.
@@ -690,6 +651,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
     private static final java.util.regex.Pattern MEDIA_PATTERN =
         java.util.regex.Pattern.compile("MEDIA:(\\S+)");
 
+
+    @PostConstruct
+    void init() {
+        textBatchDebouncer.onDispatch(this::dispatchTextBatch);
+        photoBatchDebouncer.onDispatch(this::dispatchPhotoBatch);
+    }
     /**
      * Synthesize TTS audio for the response text and send as a voice message.
      */

@@ -6,17 +6,16 @@ import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
+import lombok.RequiredArgsConstructor;
 
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class ManagedToolGateway {
 
     private final AgentProperties properties;
     private final ConcurrentHashMap<String, Predicate<String>> registeredChecks = new ConcurrentHashMap<>();
 
-    public ManagedToolGateway(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     public boolean isEnabled(String toolName) {
         if (!properties.getTools().isManagedGatewayEnabled()) {

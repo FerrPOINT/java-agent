@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Agent tool for text-to-speech synthesis.
@@ -27,15 +28,12 @@ import java.util.UUID;
 )
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class TtsTool implements ToolHandler {
 
     private final ObjectProvider<TtsProvider> providerProvider;
     private final AgentProperties properties;
 
-    public TtsTool(ObjectProvider<TtsProvider> providerProvider, AgentProperties properties) {
-        this.providerProvider = providerProvider;
-        this.properties = properties;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

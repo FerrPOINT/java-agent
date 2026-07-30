@@ -7,15 +7,14 @@ import com.azhukov.agent.core.model.ToolCall;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class ApprovalGate {
 
     private final AgentProperties properties;
 
-    public ApprovalGate(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     public boolean requiresApproval(ToolCall call) {
         List<String> destructive = properties.getSecurity().getAlwaysRequireApprovalTools();

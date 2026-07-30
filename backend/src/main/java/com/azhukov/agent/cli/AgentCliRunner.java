@@ -10,16 +10,15 @@ import org.jline.terminal.TerminalBuilder;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import lombok.RequiredArgsConstructor;
 
 @Component
 @ConditionalOnProperty(name = "agent.cli.enabled", havingValue = "true")
+@RequiredArgsConstructor
 public class AgentCliRunner implements CommandLineRunner {
 
     private final AgentRuntime agentRuntime;
 
-    public AgentCliRunner(AgentRuntime agentRuntime) {
-        this.agentRuntime = agentRuntime;
-    }
 
     @Override
     public void run(String... args) throws Exception {

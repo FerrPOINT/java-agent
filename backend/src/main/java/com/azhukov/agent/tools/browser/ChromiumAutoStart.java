@@ -11,29 +11,29 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicReference;
+import lombok.RequiredArgsConstructor;
 
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class ChromiumAutoStart {
 
     private final AgentProperties properties;
     private final ChromiumLauncher launcher;
-    private final ChromiumRevisionResolver revisionResolver;
-    private final ChromiumDownloader downloader;
+    private ChromiumRevisionResolver revisionResolver;
+    private ChromiumDownloader downloader;
     private final ObjectMapper objectMapper;
 
     private final AtomicReference<Process> process = new AtomicReference<>();
     private final AtomicReference<String> cdpUrl = new AtomicReference<>("http://localhost:9222");
 
-    public ChromiumAutoStart(AgentProperties properties, ChromiumLauncher launcher,
-                             ObjectMapper objectMapper) {
-        this.properties = properties;
-        this.launcher = launcher;
-        this.objectMapper = objectMapper;
-        this.revisionResolver = createRevisionResolver();
-        this.downloader = createDownloader();
-    }
 
+
+    @PostConstruct
+    void init() {
+        revisionResolver = createRevisionResolver();
+        downloader = createDownloader();
+    }
     @PostConstruct
     public void start() {
         AgentProperties.ChromiumProperties chromium = properties.getChromium();

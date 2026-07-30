@@ -45,6 +45,7 @@ class AgentBackendClientTest {
         properties = new BotProperties();
         properties.setBackendUrl("http://localhost:8090");
         client = new AgentBackendClient(restClient, objectMapper, properties);
+        client.init();
     }
 
     // ─── chat success ──────────────────────────────────────────────

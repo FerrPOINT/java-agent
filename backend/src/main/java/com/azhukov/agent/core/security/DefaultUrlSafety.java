@@ -6,15 +6,14 @@ import org.springframework.stereotype.Component;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class DefaultUrlSafety implements UrlSafety {
 
     private final AgentProperties properties;
 
-    public DefaultUrlSafety(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     @Override
     public boolean isUrlAllowed(String url) {

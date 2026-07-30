@@ -23,6 +23,7 @@ class StreamEditorTest {
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
         editor = new StreamEditor(client, props);
+        editor.init();
     }
 
     @Test

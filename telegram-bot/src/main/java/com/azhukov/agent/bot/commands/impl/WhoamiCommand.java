@@ -6,17 +6,15 @@ import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import org.springframework.stereotype.Component;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class WhoamiCommand implements CommandHandler {
 
     private final BotProperties properties;
     private final SlashAccessPolicy slashAccessPolicy;
 
-    public WhoamiCommand(BotProperties properties, SlashAccessPolicy slashAccessPolicy) {
-        this.properties = properties;
-        this.slashAccessPolicy = slashAccessPolicy;
-    }
 
     @Override
     public String name() {

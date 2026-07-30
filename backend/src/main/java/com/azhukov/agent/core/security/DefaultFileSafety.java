@@ -6,15 +6,14 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class DefaultFileSafety implements FileSafety {
 
     private final AgentProperties properties;
 
-    public DefaultFileSafety(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     @Override
     public boolean isPathAllowed(Path path) {

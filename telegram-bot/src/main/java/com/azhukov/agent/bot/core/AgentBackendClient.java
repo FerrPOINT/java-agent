@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Consumer;
+import jakarta.annotation.PostConstruct;
 
 /**
  * HTTP client for the agent backend.
@@ -33,16 +34,21 @@ public class AgentBackendClient {
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
-    private final String baseUrl;
+    private final BotProperties properties;
+    private String baseUrl;
 
     public AgentBackendClient(@Qualifier("backendRestClient") RestClient restClient,
                               ObjectMapper objectMapper,
                               BotProperties properties) {
         this.restClient = restClient;
         this.objectMapper = objectMapper;
-        this.baseUrl = properties.getBackendUrl();
+        this.properties = properties;
     }
 
+    @PostConstruct
+    void init() {
+        baseUrl = properties.getBackendUrl();
+    }
     /**
      * Result of a chat call, including the response content and runtime metadata
      * for the footer (model, context usage, working directory).

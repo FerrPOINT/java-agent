@@ -15,6 +15,7 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.api.mapper.OpenAiMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
@@ -43,6 +44,7 @@ public class ChatCompletionsController {
     private final PromptBuilder promptBuilder;
     private final ModelClient modelClient;
     private final ObjectMapper objectMapper;
+    private final OpenAiMapper openAiMapper;
 
     @PostMapping
     public Object completions(@Valid @RequestBody OpenAiChatRequest request) {
@@ -57,7 +59,7 @@ public class ChatCompletionsController {
         List<Message> messages = buildMessages(session, request);
         List<ToolDefinition> tools = buildTools(request);
         ChatResponse response = agentRuntime.run(messages, tools);
-        return toOpenAiResponse(request.model(), response);
+        return openAiMapper.toOpenAiResponse(request.model(), response);
     }
 
     private SseEmitter streamCompletions(OpenAiChatRequest request) {
@@ -107,33 +109,15 @@ public class ChatCompletionsController {
         List<Message> messages = new ArrayList<>();
         messages.add(promptBuilder.buildSystemMessage(session));
         for (OpenAiChatRequest.OpenAiMessage m : request.messages()) {
-            messages.add(toMessage(m));
+            messages.add(openAiMapper.toMessage(m));
         }
         return messages;
     }
 
     private List<ToolDefinition> buildTools(OpenAiChatRequest request) {
         return request.tools() != null
-            ? request.tools().stream().map(this::toToolDefinition).toList()
+            ? request.tools().stream().map(openAiMapper::toToolDefinition).toList()
             : toolRegistry.getDefinitions();
-    }
-
-    private Message toMessage(OpenAiChatRequest.OpenAiMessage m) {
-        String role = m.role() != null ? m.role() : "user";
-        return switch (role) {
-            case "system" -> Message.system(m.content());
-            case "assistant" -> Message.assistant(m.content(), 0);
-            case "tool" -> Message.toolResult(m.toolCallId(), m.content(), 0);
-            default -> Message.user(m.content());
-        };
-    }
-
-    private ToolDefinition toToolDefinition(OpenAiChatRequest.OpenAiTool tool) {
-        return new ToolDefinition(
-            tool.function().name(),
-            tool.function().description(),
-            tool.function().parameters()
-        );
     }
 
     private void sendSse(SseEmitter emitter, Object data) {
@@ -186,30 +170,4 @@ public class ChatCompletionsController {
             .toList();
     }
 
-    private OpenAiChatResponse toOpenAiResponse(String model, ChatResponse response) {
-        String content = response.content() != null ? response.content() : "";
-        List<OpenAiChatResponse.ToolCall> toolCalls = response.toolCalls() != null
-            ? response.toolCalls().stream().map(this::toOpenAiToolCall).toList()
-            : List.of();
-        OpenAiChatResponse.Message message = toolCalls.isEmpty()
-            ? new OpenAiChatResponse.Message("assistant", content, null)
-            : new OpenAiChatResponse.Message("assistant", null, toolCalls);
-
-        return new OpenAiChatResponse(
-            UUID.randomUUID().toString(),
-            "chat.completion",
-            Instant.now().getEpochSecond(),
-            model,
-            List.of(new OpenAiChatResponse.Choice(0, message, "stop")),
-            new OpenAiChatResponse.Usage(0, 0, 0)
-        );
-    }
-
-    private OpenAiChatResponse.ToolCall toOpenAiToolCall(ToolCall tc) {
-        return new OpenAiChatResponse.ToolCall(
-            tc.id() != null ? tc.id() : UUID.randomUUID().toString(),
-            "function",
-            new OpenAiChatResponse.Function(tc.name(), tc.arguments())
-        );
-    }
 }

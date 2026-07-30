@@ -47,6 +47,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import com.azhukov.agent.persistence.mapper.MessageMapper;
+import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
 import static org.mockito.Mockito.when;
 
 class AgentStreamingServiceTest {
@@ -134,11 +136,14 @@ class AgentStreamingServiceTest {
                 return callback.doInTransaction(null);
             });
 
+        SessionEntityMapper sessionMapper = org.mapstruct.factory.Mappers.getMapper(SessionEntityMapper.class);
+        MessageMapper messageMapper = org.mapstruct.factory.Mappers.getMapper(MessageMapper.class);
+
         streamingService = new AgentStreamingService(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,
             contextEngine, objectMapper, usageTracker, properties,
             sessionRepository, messageRepository, transactionTemplate,
-            iterationBudget, turnStateManager);
+            iterationBudget, turnStateManager, sessionMapper, messageMapper);
     }
 
     @Test

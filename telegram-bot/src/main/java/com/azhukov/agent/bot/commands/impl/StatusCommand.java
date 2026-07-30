@@ -7,8 +7,10 @@ import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class StatusCommand implements CommandHandler {
 
     private static final int MAX_CONTEXT_CHARS = 64000;
@@ -16,10 +18,6 @@ public class StatusCommand implements CommandHandler {
     private final BotProperties properties;
     private final AgentBackendClient backendClient;
 
-    public StatusCommand(BotProperties properties, AgentBackendClient backendClient) {
-        this.properties = properties;
-        this.backendClient = backendClient;
-    }
 
     @Override
     public String name() {

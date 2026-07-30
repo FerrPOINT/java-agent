@@ -20,6 +20,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Self-improvement background review service.
@@ -28,33 +29,24 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class BackgroundReviewService {
 
     private final ModelClient modelClient;
     private final MemoryProvider memoryProvider;
     private final WriteApprovalGate writeApprovalGate;
-    private final AgentProperties properties;
-    private final ScheduledExecutorService executor;
     private final MemoryTool memoryTool;
+    private final AgentProperties properties;
+    private ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "background-review");
+        t.setDaemon(true);
+        return t;
+    });
 
     private final ConcurrentHashMap<UUID, AtomicBoolean> memoryUpdatedFlags = new ConcurrentHashMap<>();
 
-    public BackgroundReviewService(ModelClient modelClient,
-                                    MemoryProvider memoryProvider,
-                                    WriteApprovalGate writeApprovalGate,
-                                    MemoryTool memoryTool,
-                                    AgentProperties properties) {
-        this.modelClient = modelClient;
-        this.memoryProvider = memoryProvider;
-        this.writeApprovalGate = writeApprovalGate;
-        this.memoryTool = memoryTool;
-        this.properties = properties;
-        this.executor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "background-review");
-            t.setDaemon(true);
-            return t;
-        });
-    }
+
+
 
     /**
      * Review a turn's conversation and save facts to memory if appropriate.

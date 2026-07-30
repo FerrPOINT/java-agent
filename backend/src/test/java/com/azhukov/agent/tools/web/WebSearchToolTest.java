@@ -71,7 +71,7 @@ class WebSearchToolTest {
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect(contains("q=OpenAI"))).thenReturn(connection);
 
-            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor);
+            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor); tool.init();
             var result = tool.execute("{\"query\":\"OpenAI\",\"limit\":2}", null, null);
 
             assertThat(result.success()).isTrue();
@@ -105,7 +105,7 @@ class WebSearchToolTest {
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect(contains("q=many"))).thenReturn(connection);
 
-            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor);
+            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor); tool.init();
             var result = tool.execute("{\"query\":\"many\",\"limit\":3}", null, null);
 
             assertThat(result.success()).isTrue();
@@ -128,7 +128,7 @@ class WebSearchToolTest {
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect(contains("q=nothing"))).thenReturn(connection);
 
-            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor);
+            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor); tool.init();
             var result = tool.execute("{\"query\":\"nothing\",\"limit\":5}", null, null);
 
             assertThat(result.success()).isTrue();
@@ -141,7 +141,7 @@ class WebSearchToolTest {
         AgentProperties properties = properties();
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(false);
 
-        WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor);
+        WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor); tool.init();
         var result = tool.execute("{\"query\":\"blocked\",\"limit\":5}", null, null);
 
         assertThat(result.success()).isFalse();
@@ -162,7 +162,7 @@ class WebSearchToolTest {
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect(contains("q=timeout"))).thenReturn(connection);
 
-            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor);
+            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor); tool.init();
             var result = tool.execute("{\"query\":\"timeout\",\"limit\":5}", null, null);
 
             assertThat(result.success()).isFalse();
@@ -173,7 +173,7 @@ class WebSearchToolTest {
     @Test
     void searchRequiresNonBlankQuery() {
         AgentProperties properties = properties();
-        WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor);
+        WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor); tool.init();
 
         assertThat(tool.execute("{\"query\":\"\"}", null, null).success()).isFalse();
         assertThat(tool.execute("{\"query\":\"   \"}", null, null).success()).isFalse();
@@ -200,7 +200,7 @@ class WebSearchToolTest {
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect(contains("q=default"))).thenReturn(connection);
 
-            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor);
+            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor); tool.init();
             var result = tool.execute("{\"query\":\"default\"}", null, null);
 
             assertThat(result.success()).isTrue();

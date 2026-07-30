@@ -32,6 +32,7 @@ class WriteApprovalGateTest {
         when(properties.getMemory()).thenReturn(memProps);
 
         gate = new WriteApprovalGate(pendingRepo, memoryProvider, properties);
+        gate.init();
     }
 
     @Test
