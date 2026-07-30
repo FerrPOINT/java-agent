@@ -10,20 +10,17 @@ import java.nio.file.Paths;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Comprehensive tests for {@link DefaultFileSafety}.
  *
- * <p>Current implementation only checks {@code path.startsWith(allowedPath)} after
- * normalization. It does NOT have:
+ * <p>Implementation now includes:
  * <ul>
- *   <li>A denylist for sensitive files (.ssh/id_rsa, .env, .aws/credentials)</li>
- *   <li>Symlink resolution (uses {@code normalize()} not {@code toRealPath()})</li>
+ *   <li>A denylist for sensitive files (.ssh/id_rsa, .env, .aws/credentials, etc.)</li>
+ *   <li>Read blocking for sensitive credential files</li>
+ *   <li>Path traversal protection</li>
  *   <li>Null-safe path handling</li>
- *   <li>Extension-based blocking</li>
  * </ul>
- * Tests below verify current behavior and document gaps via test names.
  */
 class DefaultFileSafetyTest {
 
@@ -120,17 +117,17 @@ class DefaultFileSafetyTest {
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/sub/../file.txt"))).isTrue();
     }
 
-    // ─── Sensitive file denylist tests (GAP: no denylist exists) ───
+    // ─── Sensitive file denylist tests (FIXED: denylist now blocks) ───
 
     @Test
-    void sshKeyPath_currentlyAllowed_noDenylist() {
+    void sshKeyPath_blockedByDenylist() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        // .ssh/id_rsa inside allowed base is allowed — no file denylist exists
-        assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.ssh/id_rsa"))).isTrue();
+        // .ssh/id_rsa inside allowed base is now BLOCKED by denylist
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.ssh/id_rsa"))).isFalse();
     }
 
     @Test
@@ -140,60 +137,244 @@ class DefaultFileSafetyTest {
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        // Blocked because outside allowed base, NOT because of .ssh denylist
+        // Blocked because outside allowed base AND because of .ssh denylist
         assertThat(safety.isPathAllowed(Paths.get("/root/.ssh/id_rsa"))).isFalse();
     }
 
     @Test
-    void dotEnvFile_currentlyAllowed_noDenylist() {
+    void dotEnvFile_blockedByDenylist() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.env"))).isTrue();
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.env"))).isFalse();
     }
 
     @Test
-    void awsCredentialsFile_currentlyAllowed_noDenylist() {
+    void dotEnvFile_nestedAtAnyLevel_blockedByDenylist() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.aws/credentials"))).isTrue();
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/subdir/.env"))).isFalse();
     }
 
     @Test
-    void dotGitConfigFile_currentlyAllowed_noDenylist() {
+    void awsCredentialsFile_blockedByDenylist() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.aws/credentials"))).isFalse();
+    }
+
+    @Test
+    void dotGitConfigFile_stillAllowed_notInDenylist() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        // .git/config is NOT in the denylist — still allowed
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.git/config"))).isTrue();
     }
 
     @Test
-    void privateKeyFile_currentlyAllowed_noDenylist() {
+    void privateKeyFile_stillAllowed_notInDenylist() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
+        // private_key.pem is NOT in the denylist — still allowed
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/private_key.pem"))).isTrue();
     }
 
     @Test
-    void sensitiveFiles_allAllowedWhenNoAllowedPathsConfigured() {
+    void gnupgDirectory_blockedByDenylist() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
-        // No allowedPaths → everything allowed
+        properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        assertThat(safety.isPathAllowed(Paths.get("/root/.ssh/id_rsa"))).isTrue();
-        assertThat(safety.isPathAllowed(Paths.get("/root/.env"))).isTrue();
-        assertThat(safety.isPathAllowed(Paths.get("/root/.aws/credentials"))).isTrue();
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.gnupg/secring.gpg"))).isFalse();
+    }
+
+    @Test
+    void kubeConfig_blockedByDenylist() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.kube/config"))).isFalse();
+    }
+
+    @Test
+    void dockerConfigJson_blockedByDenylist() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.docker/config.json"))).isFalse();
+    }
+
+    @Test
+    void netrc_blockedByDenylist() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.netrc"))).isFalse();
+    }
+
+    @Test
+    void pgpass_blockedByDenylist() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.pgpass"))).isFalse();
+    }
+
+    @Test
+    void etcSudoers_blockedByDenylist() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        properties.getSecurity().setAllowedPaths(List.of("/etc"));
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isPathAllowed(Paths.get("/etc/sudoers"))).isFalse();
+    }
+
+    @Test
+    void etcShadow_blockedByDenylist() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        properties.getSecurity().setAllowedPaths(List.of("/etc"));
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isPathAllowed(Paths.get("/etc/shadow"))).isFalse();
+    }
+
+    @Test
+    void sensitiveFiles_blockedEvenWhenNoAllowedPathsConfigured() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        // No allowedPaths → denylist still blocks sensitive files
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isPathAllowed(Paths.get("/root/.ssh/id_rsa"))).isFalse();
+        assertThat(safety.isPathAllowed(Paths.get("/root/.env"))).isFalse();
+        assertThat(safety.isPathAllowed(Paths.get("/root/.aws/credentials"))).isFalse();
+    }
+
+    // ─── Read blocking tests (NEW: isReadBlocked) ───
+
+    @Test
+    void readBlock_envFile_isBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isReadBlocked(Paths.get("/tmp/agent-work/.env"))).isTrue();
+    }
+
+    @Test
+    void readBlock_authJson_isBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isReadBlocked(Paths.get("/root/.config/auth.json"))).isTrue();
+    }
+
+    @Test
+    void readBlock_anthropicOauth_isBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isReadBlocked(Paths.get("/root/.anthropic_oauth.json"))).isTrue();
+    }
+
+    @Test
+    void readBlock_webhookSubscriptions_isBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isReadBlocked(Paths.get("/root/webhook_subscriptions.json"))).isTrue();
+    }
+
+    @Test
+    void readBlock_googleOauth_isBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isReadBlocked(Paths.get("/root/google_oauth.json"))).isTrue();
+    }
+
+    @Test
+    void readBlock_bwsCache_isBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isReadBlocked(Paths.get("/root/bws_cache.json"))).isTrue();
+    }
+
+    @Test
+    void readBlock_sshDirectory_isBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isReadBlocked(Paths.get("/root/.ssh/id_rsa"))).isTrue();
+        assertThat(safety.isReadBlocked(Paths.get("/root/.ssh/config"))).isTrue();
+    }
+
+    @Test
+    void readBlock_awsCredentials_isBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isReadBlocked(Paths.get("/root/.aws/credentials"))).isTrue();
+    }
+
+    @Test
+    void readBlock_gnupgDirectory_isBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isReadBlocked(Paths.get("/root/.gnupg/secring.gpg"))).isTrue();
+    }
+
+    @Test
+    void readBlock_normalFile_notBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isReadBlocked(Paths.get("/tmp/agent-work/file.txt"))).isFalse();
+    }
+
+    @Test
+    void readBlock_nullPath_notBlocked_returnsFalse() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isReadBlocked(null)).isFalse();
     }
 
     // ─── Symlink escape tests (GAP: uses normalize() not toRealPath()) ───
@@ -232,15 +413,14 @@ class DefaultFileSafetyTest {
     // ─── Null and edge case tests ───
 
     @Test
-    void nullPath_currentlyThrowsNpe_noNullCheck() {
+    void nullPath_returnsFalse_notNpe() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        // GAP: no null check — should return false or throw a meaningful exception
-        assertThatThrownBy(() -> safety.isPathAllowed(null))
-                .isInstanceOf(NullPointerException.class);
+        // FIXED: null path returns false instead of throwing NPE
+        assertThat(safety.isPathAllowed(null)).isFalse();
     }
 
     @Test
@@ -251,7 +431,6 @@ class DefaultFileSafetyTest {
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         // Empty path resolves to CWD (current working directory), likely outside allowed base
-        // This is not ideal but documents current behavior
         assertThat(safety.isPathAllowed(Paths.get("")))
                 .as("Empty path resolves to CWD via toAbsolutePath()")
                 .isFalse();
@@ -375,11 +554,9 @@ class DefaultFileSafetyTest {
     void allowedPathsNull_currentlyAllowsAll() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
-        // Default allowedPaths is an empty ArrayList, not null
-        // But let's test the null case by clearing
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        // Empty list → returns true for all paths
-        assertThat(safety.isPathAllowed(Paths.get("/etc/passwd"))).isTrue();
+        // Empty list → returns true for all non-denylisted paths
+        assertThat(safety.isPathAllowed(Paths.get("/etc/hostname"))).isTrue();
     }
 }

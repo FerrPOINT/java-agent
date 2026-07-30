@@ -93,8 +93,12 @@ class DefaultContextCompressorEdgeCasesTest {
 
         List<Message> result = compressor.compress(messages, 100);
 
+        // Original system message is preserved as first message
         assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
-        assertThat(result.get(0).content()).contains("Earlier conversation (summarized):");
+        assertThat(result.get(0).content()).isEqualTo("First system instruction.");
+        // Summary system message is second
+        assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
+        assertThat(result.get(1).content()).contains("Earlier conversation (summarized):");
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.agent;
 
+import com.azhukov.agent.client.langchain4j.ErrorClassifier;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
@@ -111,7 +112,8 @@ class AgentRuntimeFullScenariosTest {
             null,
             null,
             null,
-            new SteerBuffer()
+            new SteerBuffer(),
+            new ErrorClassifier()
         );
     }
 
@@ -134,7 +136,8 @@ class AgentRuntimeFullScenariosTest {
             null,
             null,
             null,
-            new SteerBuffer()
+            new SteerBuffer(),
+            new ErrorClassifier()
         );
     }
 
@@ -338,7 +341,8 @@ class AgentRuntimeFullScenariosTest {
         TurnResult result = runtime.runTurn(session, "hello");
 
         assertThat(result.completed()).isFalse();
-        assertThat(result.error()).isEqualTo("Model call failed: provider outage");
+        assertThat(result.error()).contains("Model call failed");
+        assertThat(result.error()).contains("provider outage");
         assertThat(result.messages()).isEmpty();
     }
 

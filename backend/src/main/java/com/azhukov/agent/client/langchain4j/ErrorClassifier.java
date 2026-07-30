@@ -16,7 +16,10 @@ public class ErrorClassifier {
     public enum ErrorType {
         RETRYABLE,
         PERMANENT,
-        RATE_LIMIT
+        RATE_LIMIT,
+        BILLING,
+        CONTEXT_OVERFLOW,
+        CONTENT_POLICY
     }
 
     /**
@@ -32,6 +35,28 @@ public class ErrorClassifier {
 
         String message = exception.getMessage();
         String lowerMessage = message != null ? message.toLowerCase(Locale.ROOT) : "";
+
+        // Billing errors — permanent, no retry
+        if (lowerMessage.contains("insufficient credits") || lowerMessage.contains("insufficient_quota")
+            || lowerMessage.contains("insufficient balance") || lowerMessage.contains("credit balance")
+            || lowerMessage.contains("billing quota") || lowerMessage.contains("payment required")
+            || lowerMessage.contains("quota exceeded")) {
+            return ErrorType.BILLING;
+        }
+
+        // Context overflow — permanent, no retry
+        if (lowerMessage.contains("context length") || lowerMessage.contains("context window")
+            || lowerMessage.contains("maximum context") || lowerMessage.contains("token limit exceeded")
+            || lowerMessage.contains("context_length_exceeded")) {
+            return ErrorType.CONTEXT_OVERFLOW;
+        }
+
+        // Content policy violations — permanent, no retry
+        if (lowerMessage.contains("content policy") || lowerMessage.contains("content filter")
+            || lowerMessage.contains("content management") || lowerMessage.contains("safety")
+            || lowerMessage.contains("harmful content") || lowerMessage.contains("prohibited content")) {
+            return ErrorType.CONTENT_POLICY;
+        }
 
         // Rate limit
         if (lowerMessage.contains("rate limit") || lowerMessage.contains("429") || lowerMessage.contains("too many requests")) {

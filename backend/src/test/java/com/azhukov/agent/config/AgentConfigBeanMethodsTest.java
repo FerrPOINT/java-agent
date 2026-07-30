@@ -92,7 +92,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void agentRuntime_bean() {
-        assertThat(config.agentRuntime(mock(ModelClient.class), mock(ToolRegistry.class), mock(ToolExecutionService.class), mock(PromptBuilder.class), mock(ContextEngine.class), mock(MemoryProvider.class), mock(SkillManager.class), mock(IterationBudget.class), mock(MessageSanitizer.class), mock(ContextReferenceService.class), properties, mock(UserInputSanitizer.class), mock(ToolCallGuardrail.class), mock(TurnStateManager.class), mock(BackgroundReviewService.class), mock(InterruptToken.class), mock(TurnFinalizer.class), mock(com.azhukov.agent.core.agent.SteerBuffer.class))).isNotNull();
+        assertThat(config.agentRuntime(mock(ModelClient.class), mock(ToolRegistry.class), mock(ToolExecutionService.class), mock(PromptBuilder.class), mock(ContextEngine.class), mock(MemoryProvider.class), mock(SkillManager.class), mock(IterationBudget.class), mock(MessageSanitizer.class), mock(ContextReferenceService.class), properties, mock(UserInputSanitizer.class), mock(ToolCallGuardrail.class), mock(TurnStateManager.class), mock(BackgroundReviewService.class), mock(InterruptToken.class), mock(TurnFinalizer.class), mock(com.azhukov.agent.core.agent.SteerBuffer.class), mock(ErrorClassifier.class))).isNotNull();
     }
 
     @Test

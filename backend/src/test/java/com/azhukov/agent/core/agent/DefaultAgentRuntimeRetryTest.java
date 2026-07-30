@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.agent;
 
+import com.azhukov.agent.client.langchain4j.ErrorClassifier;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
@@ -43,17 +44,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Tests for P0 gap: Model API call retry behaviour.
+ * Tests for model API call retry behaviour.
  * <p>
- * Current behaviour ({@link DefaultAgentRuntime#runTurn}): there is NO retry on
- * model API calls. A single exception from {@code modelClient.complete()} aborts
- * the turn immediately, returning {@code TurnResult.error(...)}.
- * <p>
- * GAP: No retry mechanism exists for model API calls, even transient errors
- * (timeouts, connection resets, rate limits) cause immediate turn failure.
- * The {@link com.azhukov.agent.client.langchain4j.ErrorClassifier} and
- * {@code AgentProperties.error.retryAttempts} config exist but are not wired
- * into the runtime loop.
+ * The runtime wraps modelClient.complete() in a retry loop using ErrorClassifier.
+ * RETRYABLE/RATE_LIMIT errors trigger jittered backoff and retry up to retryAttempts.
+ * PERMANENT/BILLING/CONTEXT_OVERFLOW/CONTENT_POLICY errors fail immediately.
  */
 class DefaultAgentRuntimeRetryTest {
 
@@ -68,6 +63,7 @@ class DefaultAgentRuntimeRetryTest {
     private SteerBuffer steerBuffer;
     private BackgroundReviewService backgroundReviewService;
     private ToolCallGuardrail guardrail;
+    private ErrorClassifier errorClassifier;
 
     @BeforeEach
     void setUp() {
@@ -83,6 +79,8 @@ class DefaultAgentRuntimeRetryTest {
         ContextReferenceService contextReferenceService = mock(ContextReferenceService.class);
         AgentProperties properties = new AgentProperties();
         properties.getCore().setMaxTurns(10);
+        // Set retry attempts to 3 (default) for predictable test behaviour
+        properties.getError().setRetryAttempts(3);
         UserInputSanitizer inputSanitizer = mock(UserInputSanitizer.class);
         guardrail = mock(ToolCallGuardrail.class);
         turnStateManager = mock(TurnStateManager.class);
@@ -90,6 +88,7 @@ class DefaultAgentRuntimeRetryTest {
         interruptToken = mock(InterruptToken.class);
         turnFinalizer = mock(TurnFinalizer.class);
         steerBuffer = mock(SteerBuffer.class);
+        errorClassifier = new ErrorClassifier();
 
         // Default stubs
         when(messageSanitizer.sanitize(any(Message.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -117,34 +116,116 @@ class DefaultAgentRuntimeRetryTest {
             contextEngine, memoryProvider, skillManager, iterationBudget,
             messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
-            interruptToken, turnFinalizer, steerBuffer);
+            interruptToken, turnFinalizer, steerBuffer, errorClassifier);
     }
 
-    // ─── Current behaviour: no retry ───
+    // ─── Retry on transient errors ───
 
     @Test
-    @DisplayName("When modelClient.complete() throws, turn ends with error result (no retry)")
-    void modelCallExceptionAbortsTurnImmediately() {
+    @DisplayName("When modelClient.complete() throws transient error (timeout), turn ends with error after retries exhausted")
+    void transientTimeoutIsRetriedThenFails() {
         when(modelClient.complete(any(List.class), any(List.class)))
-            .thenThrow(new RuntimeException("connection refused"));
+            .thenThrow(new RuntimeException("read timed out"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         TurnResult result = runtime.runTurn(session, "Hello");
 
+        // Timeout is RETRYABLE → retried up to retryAttempts (3) + 1 initial = 4 total calls
         assertThat(result.completed()).isFalse();
         assertThat(result.error()).contains("Model call failed");
-        assertThat(result.error()).contains("connection refused");
+        verify(modelClient, times(4)).complete(any(List.class), any(List.class));
     }
 
     @Test
-    @DisplayName("When modelClient.complete() throws, modelClient.complete is called exactly once (no retry)")
-    void modelCallExceptionResultsInSingleCall() {
+    @DisplayName("When modelClient.complete() throws rate limit error, turn ends with error after retries exhausted")
+    void rateLimitErrorIsRetriedThenFails() {
         when(modelClient.complete(any(List.class), any(List.class)))
-            .thenThrow(new RuntimeException("timeout"));
+            .thenThrow(new RuntimeException("rate limit exceeded (429)"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
-        runtime.runTurn(session, "Hello");
+        TurnResult result = runtime.runTurn(session, "Hello");
 
+        // Rate limit is RATE_LIMIT → retried up to retryAttempts (3) + 1 initial = 4 total calls
+        assertThat(result.completed()).isFalse();
+        assertThat(result.error()).contains("Model call failed");
+        verify(modelClient, times(4)).complete(any(List.class), any(List.class));
+    }
+
+    @Test
+    @DisplayName("When modelClient.complete() throws connection reset, turn ends with error after retries exhausted")
+    void connectionResetIsRetriedThenFails() {
+        when(modelClient.complete(any(List.class), any(List.class)))
+            .thenThrow(new RuntimeException("connection reset by peer"));
+
+        Session session = Session.create("user-1", "openai-compatible", "test-model");
+        TurnResult result = runtime.runTurn(session, "Hello");
+
+        // Connection reset is RETRYABLE → retried up to retryAttempts (3) + 1 initial = 4 total calls
+        assertThat(result.completed()).isFalse();
+        assertThat(result.error()).contains("Model call failed");
+        verify(modelClient, times(4)).complete(any(List.class), any(List.class));
+    }
+
+    // ─── No retry on permanent errors ───
+
+    @Test
+    @DisplayName("When modelClient.complete() throws permanent error (invalid key), turn ends immediately with error")
+    void permanentErrorNotRetried() {
+        when(modelClient.complete(any(List.class), any(List.class)))
+            .thenThrow(new RuntimeException("invalid API key"));
+
+        Session session = Session.create("user-1", "openai-compatible", "test-model");
+        TurnResult result = runtime.runTurn(session, "Hello");
+
+        // Invalid API key is PERMANENT → no retry, single call
+        assertThat(result.completed()).isFalse();
+        assertThat(result.error()).contains("Model call failed");
+        assertThat(result.error()).contains("invalid API key");
+        verify(modelClient, times(1)).complete(any(List.class), any(List.class));
+    }
+
+    @Test
+    @DisplayName("When modelClient.complete() throws billing error, turn ends immediately with error")
+    void billingErrorNotRetried() {
+        when(modelClient.complete(any(List.class), any(List.class)))
+            .thenThrow(new RuntimeException("insufficient credits"));
+
+        Session session = Session.create("user-1", "openai-compatible", "test-model");
+        TurnResult result = runtime.runTurn(session, "Hello");
+
+        // Billing error is PERMANENT → no retry, single call
+        assertThat(result.completed()).isFalse();
+        assertThat(result.error()).contains("Model call failed");
+        verify(modelClient, times(1)).complete(any(List.class), any(List.class));
+    }
+
+    @Test
+    @DisplayName("When modelClient.complete() throws context overflow error, turn ends immediately with error")
+    void contextOverflowErrorNotRetried() {
+        when(modelClient.complete(any(List.class), any(List.class)))
+            .thenThrow(new RuntimeException("context length exceeded"));
+
+        Session session = Session.create("user-1", "openai-compatible", "test-model");
+        TurnResult result = runtime.runTurn(session, "Hello");
+
+        // Context overflow is PERMANENT → no retry, single call
+        assertThat(result.completed()).isFalse();
+        assertThat(result.error()).contains("Model call failed");
+        verify(modelClient, times(1)).complete(any(List.class), any(List.class));
+    }
+
+    @Test
+    @DisplayName("When modelClient.complete() throws content policy error, turn ends immediately with error")
+    void contentPolicyErrorNotRetried() {
+        when(modelClient.complete(any(List.class), any(List.class)))
+            .thenThrow(new RuntimeException("content policy violation"));
+
+        Session session = Session.create("user-1", "openai-compatible", "test-model");
+        TurnResult result = runtime.runTurn(session, "Hello");
+
+        // Content policy is PERMANENT → no retry, single call
+        assertThat(result.completed()).isFalse();
+        assertThat(result.error()).contains("Model call failed");
         verify(modelClient, times(1)).complete(any(List.class), any(List.class));
     }
 
@@ -152,59 +233,12 @@ class DefaultAgentRuntimeRetryTest {
     @DisplayName("When modelClient.complete() throws, TurnFinalizer is called with success=false")
     void modelCallExceptionCallsFinalizerWithFailure() {
         when(modelClient.complete(any(List.class), any(List.class)))
-            .thenThrow(new RuntimeException("boom"));
+            .thenThrow(new RuntimeException("connection refused"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         runtime.runTurn(session, "Hello");
 
         verify(turnFinalizer).finalize(any(UUID.class), any(List.class), org.mockito.ArgumentMatchers.eq(false));
-    }
-
-    // ─── GAP: No retry on transient errors ───
-
-    @Test
-    @DisplayName("GAP: transient error (timeout) is not retried — single call, immediate failure")
-    void gap_transientTimeoutIsNotRetried() {
-        // Use RuntimeException wrapping timeout to avoid checked exception issues with Mockito
-        when(modelClient.complete(any(List.class), any(List.class)))
-            .thenThrow(new RuntimeException("read timed out"));
-
-        Session session = Session.create("user-1", "openai-compatible", "test-model");
-        TurnResult result = runtime.runTurn(session, "Hello");
-
-        // Document gap: timeout should be retryable but isn't
-        assertThat(result.completed()).isFalse();
-        assertThat(result.error()).contains("Model call failed");
-        verify(modelClient, times(1)).complete(any(List.class), any(List.class));
-    }
-
-    @Test
-    @DisplayName("GAP: rate limit error is not retried — single call, immediate failure")
-    void gap_rateLimitErrorIsNotRetried() {
-        when(modelClient.complete(any(List.class), any(List.class)))
-            .thenThrow(new RuntimeException("rate limit exceeded (429)"));
-
-        Session session = Session.create("user-1", "openai-compatible", "test-model");
-        TurnResult result = runtime.runTurn(session, "Hello");
-
-        // Document gap: rate limit should trigger backoff+retry but doesn't
-        assertThat(result.completed()).isFalse();
-        assertThat(result.error()).contains("Model call failed");
-        verify(modelClient, times(1)).complete(any(List.class), any(List.class));
-    }
-
-    @Test
-    @DisplayName("GAP: connection reset is not retried — single call, immediate failure")
-    void gap_connectionResetIsNotRetried() {
-        when(modelClient.complete(any(List.class), any(List.class)))
-            .thenThrow(new RuntimeException("connection reset by peer"));
-
-        Session session = Session.create("user-1", "openai-compatible", "test-model");
-        TurnResult result = runtime.runTurn(session, "Hello");
-
-        assertThat(result.completed()).isFalse();
-        assertThat(result.error()).contains("Model call failed");
-        verify(modelClient, times(1)).complete(any(List.class), any(List.class));
     }
 
     // ─── Successful path works normally ───
@@ -224,11 +258,11 @@ class DefaultAgentRuntimeRetryTest {
         verify(turnFinalizer).finalize(any(UUID.class), any(List.class), org.mockito.ArgumentMatchers.eq(true));
     }
 
-    // ─── GAP: No retry even if second call would succeed ───
+    // ─── Retry succeeds on second call ───
 
     @Test
-    @DisplayName("GAP: if first call fails, second call (which would succeed) is never attempted")
-    void gap_secondCallWouldSucceedButIsNeverAttempted() {
+    @DisplayName("When first call fails with transient error, second call (which succeeds) is attempted")
+    void secondCallSucceedsAfterTransientFailure() {
         AtomicInteger callCount = new AtomicInteger(0);
         when(modelClient.complete(any(List.class), any(List.class)))
             .thenAnswer(inv -> {
@@ -241,10 +275,10 @@ class DefaultAgentRuntimeRetryTest {
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         TurnResult result = runtime.runTurn(session, "Hello");
 
-        // Document gap: a retry mechanism would have succeeded here
-        assertThat(result.completed()).isFalse();
-        assertThat(result.error()).contains("transient 503");
-        assertThat(callCount.get()).isEqualTo(1); // Only one call made
+        // Retry mechanism succeeds here
+        assertThat(result.completed()).isTrue();
+        assertThat(result.error()).isNull();
+        assertThat(callCount.get()).isEqualTo(2); // First failed, second succeeded
     }
 
     // ─── Tool call loop continues after successful model call ───
@@ -279,8 +313,8 @@ class DefaultAgentRuntimeRetryTest {
     }
 
     @Test
-    @DisplayName("When model returns tool calls but second model call fails, turn ends with error")
-    void modelReturnsToolCalls_thenSecondModelCallFails() {
+    @DisplayName("When model returns tool calls but second model call fails with transient error, it is retried")
+    void modelReturnsToolCalls_thenSecondModelCallFailsWithRetry() {
         ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"London\"}");
         AtomicInteger modelCallCount = new AtomicInteger(0);
 
@@ -289,7 +323,10 @@ class DefaultAgentRuntimeRetryTest {
                 if (modelCallCount.incrementAndGet() == 1) {
                     return ChatResponse.toolCalls(List.of(toolCall));
                 }
-                throw new RuntimeException("model crashed on second call");
+                if (modelCallCount.get() == 2) {
+                    throw new RuntimeException("transient timeout");
+                }
+                return ChatResponse.text("The weather in London is sunny.");
             });
 
         when(toolExecutionService.execute(
@@ -300,17 +337,44 @@ class DefaultAgentRuntimeRetryTest {
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         TurnResult result = runtime.runTurn(session, "What's the weather?");
 
-        // Second model call failure also has no retry
-        assertThat(result.completed()).isFalse();
-        assertThat(result.error()).contains("model crashed on second call");
-        assertThat(modelCallCount.get()).isEqualTo(2); // First succeeded, second failed
+        // Second model call failed with transient error → retried and succeeded
+        assertThat(result.completed()).isTrue();
+        assertThat(modelCallCount.get()).isEqualTo(3); // First succeeded, second failed, third succeeded
     }
 
-    // ─── GAP: error config exists but is unused ───
+    @Test
+    @DisplayName("When model returns tool calls but second model call fails permanently, turn ends with error")
+    void modelReturnsToolCalls_thenSecondModelCallFailsPermanently() {
+        ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"London\"}");
+        AtomicInteger modelCallCount = new AtomicInteger(0);
+
+        when(modelClient.complete(any(List.class), any(List.class)))
+            .thenAnswer(inv -> {
+                if (modelCallCount.incrementAndGet() == 1) {
+                    return ChatResponse.toolCalls(List.of(toolCall));
+                }
+                throw new RuntimeException("invalid API key");
+            });
+
+        when(toolExecutionService.execute(
+            any(String.class), any(String.class), any(String.class),
+            any(), any(Session.class), any()))
+            .thenReturn(ToolResult.ok("Sunny, 22C"));
+
+        Session session = Session.create("user-1", "openai-compatible", "test-model");
+        TurnResult result = runtime.runTurn(session, "What's the weather?");
+
+        // Second model call fails permanently → no retry
+        assertThat(result.completed()).isFalse();
+        assertThat(result.error()).contains("invalid API key");
+        assertThat(modelCallCount.get()).isEqualTo(2); // First succeeded, second failed permanently
+    }
+
+    // ─── Error config is used by runtime ───
 
     @Test
-    @DisplayName("GAP: AgentProperties.error.retryAttempts is configured but not used by runtime")
-    void gap_errorRetryConfigExistsButIsUnused() {
+    @DisplayName("AgentProperties.error.retryAttempts is configured and used by runtime")
+    void errorRetryConfigIsUsed() {
         AgentProperties properties = new AgentProperties();
         properties.getCore().setMaxTurns(10);
         // The config exists with defaults
@@ -319,6 +383,50 @@ class DefaultAgentRuntimeRetryTest {
         assertThat(properties.getError().getBackoffMultiplier()).isEqualTo(2);
         // Also model-level retry config
         assertThat(properties.getModel().getMaxRetries()).isEqualTo(3);
-        // GAP: these configs are never read by DefaultAgentRuntime
+    }
+
+    @Test
+    @DisplayName("Retry count respects retryAttempts config — 1 retry means 2 total calls")
+    void retryCountRespectsConfig() {
+        // Create a runtime with retryAttempts=1
+        AgentProperties properties = new AgentProperties();
+        properties.getCore().setMaxTurns(10);
+        properties.getError().setRetryAttempts(1);
+
+        when(modelClient.complete(any(List.class), any(List.class)))
+            .thenThrow(new RuntimeException("connection refused"));
+
+        PromptBuilder promptBuilder = mock(PromptBuilder.class);
+        ContextEngine contextEngine = mock(ContextEngine.class);
+        MessageSanitizer messageSanitizer = mock(MessageSanitizer.class);
+        UserInputSanitizer inputSanitizer = mock(UserInputSanitizer.class);
+        when(messageSanitizer.sanitize(any(Message.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(inputSanitizer.sanitize(any(String.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(promptBuilder.buildSystemMessage(any(Session.class)))
+            .thenReturn(Message.system("You are a test assistant."));
+        when(contextEngine.prepareContext(any(Session.class), any(List.class)))
+            .thenAnswer(inv -> inv.getArgument(1));
+        when(toolRegistry.getDefinitions(anySet()))
+            .thenReturn(List.<ToolDefinition>of());
+        IterationBudget.TurnSnapshot snapshot = mock(IterationBudget.TurnSnapshot.class);
+        when(iterationBudget.startTurn(any(UUID.class))).thenReturn(snapshot);
+        when(iterationBudget.isExhausted(any())).thenReturn(false);
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenReturn(snapshot);
+        when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
+            .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
+        when(guardrail.isHalted()).thenReturn(false);
+
+        DefaultAgentRuntime customRuntime = new DefaultAgentRuntime(
+            modelClient, toolRegistry, toolExecutionService, promptBuilder,
+            contextEngine, mock(MemoryProvider.class), mock(SkillManager.class), iterationBudget,
+            messageSanitizer, mock(ContextReferenceService.class), properties,
+            inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
+            interruptToken, turnFinalizer, steerBuffer, errorClassifier);
+
+        Session session = Session.create("user-1", "openai-compatible", "test-model");
+        customRuntime.runTurn(session, "Hello");
+
+        // retryAttempts=1 → 1 initial + 1 retry = 2 total calls
+        verify(modelClient, times(2)).complete(any(List.class), any(List.class));
     }
 }

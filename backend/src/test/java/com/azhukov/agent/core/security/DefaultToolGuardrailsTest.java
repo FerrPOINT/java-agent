@@ -5,28 +5,23 @@ import com.azhukov.agent.core.model.ToolCall;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Comprehensive tests for {@link DefaultToolGuardrails}.
  *
- * <p>Current implementation only has:
+ * <p>Implementation now includes:
  * <ul>
- *   <li>{@code isToolAllowed(String)} — checks name is non-blank</li>
+ *   <li>{@code isToolAllowed(String)} — checks name is non-blank and not in blocked list</li>
  *   <li>{@code requiresApproval(ToolCall)} — checks if tool is in approval list</li>
+ *   <li>{@code recordToolCall(String, String, boolean)} — records calls for loop detection</li>
+ *   <li>{@code isHalted()} — returns true when loop detection halts further calls</li>
+ *   <li>{@code reset()} — clears state between turns</li>
+ *   <li>Loop detection: 5+ identical calls halt, 3+ consecutive failures halt, 10+ total warns</li>
+ *   <li>Configurable blocked tools list via getBlockedTools()/setBlockedTools()</li>
  * </ul>
- *
- * <p>It does NOT have:
- * <ul>
- *   <li>Tool loop detection (same tool called N times with same args)</li>
- *   <li>Failure detection (same tool failing N times)</li>
- *   <li>Idempotent no-progress detection (read_file called 3x on same path)</li>
- *   <li>A blocked tools list</li>
- *   <li>Any stateful tracking of tool call history</li>
- *   <li>Any interface method for recording calls or checking loops</li>
- * </ul>
- * Tests below verify current behavior and document gaps via test names.
  */
 class DefaultToolGuardrailsTest {
 
@@ -92,94 +87,308 @@ class DefaultToolGuardrailsTest {
     }
 
     @Test
-    void anyNonBlankToolNameIsAllowed_noBlockedToolsList() {
+    void anyNonBlankToolNameIsAllowed_whenNoBlockedTools() {
         AgentProperties properties = new AgentProperties();
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
 
-        // GAP: there is no blocked tools list — ANY non-blank name is allowed
-        // Even dangerous-looking tool names pass
+        // With no blocked tools configured, any non-blank name is allowed
         assertThat(guardrails.isToolAllowed("exec")).isTrue();
         assertThat(guardrails.isToolAllowed("eval")).isTrue();
         assertThat(guardrails.isToolAllowed("system")).isTrue();
-        assertThat(guardrails.isToolAllowed("rm_rf")).isTrue();
         assertThat(guardrails.isToolAllowed("arbitrary_tool_name")).isTrue();
     }
 
-    // ─── Loop detection tests (GAP: no loop detection exists) ───
+    // ─── Blocked tools list tests (NEW) ───
 
     @Test
-    void toolLoopDetection_sameToolSameArgs_currentlyNotDetected_alwaysAllowed() {
+    void blockedTools_toolInBlockedList_isNotAllowed() {
         AgentProperties properties = new AgentProperties();
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        guardrails.setBlockedTools(Set.of("exec", "eval", "system"));
 
-        // Call same tool 5 times — isToolAllowed is stateless, always returns true
-        // GAP: no loop detection mechanism exists in the interface or implementation
-        for (int i = 0; i < 5; i++) {
-            assertThat(guardrails.isToolAllowed("read_file"))
-                    .as("isToolAllowed is stateless — call #" + (i + 1) + " still allowed")
-                    .isTrue();
-        }
+        assertThat(guardrails.isToolAllowed("exec")).isFalse();
+        assertThat(guardrails.isToolAllowed("eval")).isFalse();
+        assertThat(guardrails.isToolAllowed("system")).isFalse();
     }
 
     @Test
-    void toolLoopDetection_sameToolSameArgs_currentlyNotDetected_noStateTracking() {
+    void blockedTools_toolNotInBlockedList_isAllowed() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        guardrails.setBlockedTools(Set.of("exec", "eval"));
+
+        assertThat(guardrails.isToolAllowed("read_file")).isTrue();
+        assertThat(guardrails.isToolAllowed("write_file")).isTrue();
+    }
+
+    @Test
+    void blockedTools_emptySet_allAllowed() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        guardrails.setBlockedTools(Set.of());
+
+        assertThat(guardrails.isToolAllowed("exec")).isTrue();
+        assertThat(guardrails.isToolAllowed("any_tool")).isTrue();
+    }
+
+    @Test
+    void blockedTools_nullSet_allAllowed() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        guardrails.setBlockedTools(null);
+
+        assertThat(guardrails.isToolAllowed("exec")).isTrue();
+    }
+
+    @Test
+    void getBlockedTools_returnsEmptyByDefault() {
         AgentProperties properties = new AgentProperties();
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
 
-        // Even 20 identical calls don't trigger any detection
+        assertThat(guardrails.getBlockedTools()).isEmpty();
+    }
+
+    @Test
+    void getBlockedTools_returnsConfiguredSet() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        Set<String> blocked = Set.of("exec", "eval");
+        guardrails.setBlockedTools(blocked);
+
+        assertThat(guardrails.getBlockedTools()).containsExactlyInAnyOrder("exec", "eval");
+    }
+
+    // ─── Loop detection tests (FIXED: loop detection now works) ───
+
+    @Test
+    void loopDetection_sameToolSameArgs_5calls_haltsWithNoProgress() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+
+        // Call same tool with same args 5 times → should halt
+        for (int i = 0; i < 4; i++) {
+            guardrails.recordToolCall("read_file", "{\"path\":\"/tmp/test\"}", true);
+            assertThat(guardrails.isHalted())
+                    .as("Not yet halted after " + (i + 1) + " identical calls")
+                    .isFalse();
+        }
+        // 5th identical call triggers halt
+        guardrails.recordToolCall("read_file", "{\"path\":\"/tmp/test\"}", true);
+        assertThat(guardrails.isHalted()).isTrue();
+    }
+
+    @Test
+    void loopDetection_sameToolSameArgs_20calls_haltsAndBlocksTool() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+
+        // Even 20 identical calls — should halt after 5
         for (int i = 0; i < 20; i++) {
-            assertThat(guardrails.isToolAllowed("write_file")).isTrue();
+            guardrails.recordToolCall("write_file", "{}", true);
         }
+        assertThat(guardrails.isHalted()).isTrue();
+        // Once halted, isToolAllowed returns false
+        assertThat(guardrails.isToolAllowed("write_file")).isFalse();
     }
 
     @Test
-    void toolLoopDetection_repeatedFailures_currentlyNotDetected() {
+    void loopDetection_repeatedFailures_3consecutive_haltsWithFailureLoop() {
         AgentProperties properties = new AgentProperties();
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
 
-        // GAP: no method to report failures or track failure count
-        // The interface only has isToolAllowed(String) and requiresApproval(ToolCall)
-        // There is no recordFailure(String toolName) or similar method
-        for (int i = 0; i < 3; i++) {
-            // Simulate a failed tool call — but there's no way to report it
-            assertThat(guardrails.isToolAllowed("failing_tool"))
-                    .as("No failure tracking — tool still allowed after hypothetical failures")
-                    .isTrue();
-        }
+        // 3 consecutive failures → halt
+        guardrails.recordToolCall("failing_tool", "{}", false);
+        assertThat(guardrails.isHalted()).isFalse();
+
+        guardrails.recordToolCall("failing_tool", "{}", false);
+        assertThat(guardrails.isHalted()).isFalse();
+
+        guardrails.recordToolCall("failing_tool", "{}", false);
+        assertThat(guardrails.isHalted()).isTrue();
     }
 
     @Test
-    void toolLoopDetection_idempotentNoProgress_currentlyNotDetected() {
+    void loopDetection_idempotentNoProgress_5sameCalls_halts() {
         AgentProperties properties = new AgentProperties();
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
 
-        // GAP: no method to check if same tool+args have been called before
-        // read_file called 3 times on same path would be a no-progress loop
-        // But isToolAllowed only checks the name, not arguments or history
-        for (int i = 0; i < 3; i++) {
-            assertThat(guardrails.isToolAllowed("read_file"))
-                    .as("No idempotent no-progress detection")
-                    .isTrue();
+        // read_file called 5 times on same path → no-progress loop detected
+        for (int i = 0; i < 5; i++) {
+            guardrails.recordToolCall("read_file", "{\"path\":\"/same/path\"}", true);
         }
+        assertThat(guardrails.isHalted()).isTrue();
     }
 
     @Test
-    void toolLoopDetection_interfaceHasNoMethodForHistoryTracking() {
-        // GAP: The ToolGuardrails interface has no method for:
-        // - Recording tool calls
-        // - Checking if a loop has been detected
-        // - Getting call history
-        // - Reporting failures
-        // Only isToolAllowed(String) and requiresApproval(ToolCall) exist
+    void loopDetection_interfaceHasRecordAndHaltAndReset() {
+        // Verify the interface now has recordToolCall, isHalted, and reset
         ToolGuardrails guardrails = new DefaultToolGuardrails(new AgentProperties());
 
-        // Verify only the two existing methods are available
         assertThat(guardrails.isToolAllowed("any_tool")).isTrue();
         assertThat(guardrails.requiresApproval(null)).isFalse();
-        // No other methods available on the interface
+        assertThat(guardrails.isHalted()).isFalse();
+
+        // Record some calls
+        guardrails.recordToolCall("test_tool", "{}", true);
+        guardrails.reset();
+        assertThat(guardrails.isHalted()).isFalse();
     }
 
-    // ─── Approval tests ───
+    // ─── Reset tests ───
+
+    @Test
+    void reset_clearsHaltedState() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+
+        // Trigger halt via 5 identical calls
+        for (int i = 0; i < 5; i++) {
+            guardrails.recordToolCall("read_file", "{}", true);
+        }
+        assertThat(guardrails.isHalted()).isTrue();
+
+        // Reset clears state
+        guardrails.reset();
+        assertThat(guardrails.isHalted()).isFalse();
+        assertThat(guardrails.isToolAllowed("read_file")).isTrue();
+    }
+
+    @Test
+    void reset_clearsFailureCount() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+
+        // 3 consecutive failures → halt
+        for (int i = 0; i < 3; i++) {
+            guardrails.recordToolCall("failing_tool", "{}", false);
+        }
+        assertThat(guardrails.isHalted()).isTrue();
+
+        // Reset clears state
+        guardrails.reset();
+        assertThat(guardrails.isHalted()).isFalse();
+
+        // After reset, 2 failures should NOT halt (need 3 again)
+        guardrails.recordToolCall("failing_tool", "{}", false);
+        guardrails.recordToolCall("failing_tool", "{}", false);
+        assertThat(guardrails.isHalted()).isFalse();
+    }
+
+    @Test
+    void reset_clearsIdenticalArgsCount() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+
+        // 4 identical calls — not yet halted
+        for (int i = 0; i < 4; i++) {
+            guardrails.recordToolCall("read_file", "{\"path\":\"/test\"}", true);
+        }
+        assertThat(guardrails.isHalted()).isFalse();
+
+        // Reset
+        guardrails.reset();
+
+        // After reset, 4 more identical calls should NOT halt (need 5 again)
+        for (int i = 0; i < 4; i++) {
+            guardrails.recordToolCall("read_file", "{\"path\":\"/test\"}", true);
+        }
+        assertThat(guardrails.isHalted()).isFalse();
+    }
+
+    // ─── Different args don't trigger identical-args loop ───
+
+    @Test
+    void loopDetection_differentArgs_doesNotTriggerIdenticalArgsHalt() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+
+        // Same tool but different args each time — should not trigger identical-args halt
+        for (int i = 0; i < 10; i++) {
+            guardrails.recordToolCall("read_file", "{\"path\":\"/file" + i + "\"}", true);
+        }
+        assertThat(guardrails.isHalted()).isFalse();
+    }
+
+    // ─── Success resets consecutive failure count ───
+
+    @Test
+    void loopDetection_successResetsConsecutiveFailures() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+
+        // 2 failures with same args
+        guardrails.recordToolCall("tool", "{\"v\":1}", false);
+        guardrails.recordToolCall("tool", "{\"v\":1}", false);
+        assertThat(guardrails.isHalted()).isFalse();
+
+        // Success with different args resets consecutive failure count
+        guardrails.recordToolCall("tool", "{\"v\":2}", true);
+        assertThat(guardrails.isHalted()).isFalse();
+
+        // 2 more failures with different args — should not halt (need 3 consecutive)
+        guardrails.recordToolCall("tool", "{\"v\":3}", false);
+        guardrails.recordToolCall("tool", "{\"v\":4}", false);
+        assertThat(guardrails.isHalted()).isFalse();
+    }
+
+    // ─── Halted state blocks all tools ───
+
+    @Test
+    void halted_blocksAllTools() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+
+        // Trigger halt
+        for (int i = 0; i < 5; i++) {
+            guardrails.recordToolCall("read_file", "{}", true);
+        }
+        assertThat(guardrails.isHalted()).isTrue();
+
+        // All tools are blocked when halted
+        assertThat(guardrails.isToolAllowed("read_file")).isFalse();
+        assertThat(guardrails.isToolAllowed("write_file")).isFalse();
+        assertThat(guardrails.isToolAllowed("any_tool")).isFalse();
+    }
+
+    // ─── Null/blank args handling ───
+
+    @Test
+    void recordToolCall_nullArgs_treatedAsEmptyString() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+
+        // null args should be treated as empty string, not cause NPE
+        for (int i = 0; i < 5; i++) {
+            guardrails.recordToolCall("tool", null, true);
+        }
+        assertThat(guardrails.isHalted()).isTrue();
+    }
+
+    @Test
+    void recordToolCall_nullToolName_ignored() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+
+        // null tool name should be ignored, not cause NPE or tracking
+        guardrails.recordToolCall(null, "{}", true);
+        guardrails.recordToolCall(null, "{}", true);
+        guardrails.recordToolCall(null, "{}", true);
+        guardrails.recordToolCall(null, "{}", true);
+        guardrails.recordToolCall(null, "{}", true);
+        assertThat(guardrails.isHalted()).isFalse();
+    }
+
+    @Test
+    void recordToolCall_blankToolName_ignored() {
+        AgentProperties properties = new AgentProperties();
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+
+        guardrails.recordToolCall("", "{}", true);
+        guardrails.recordToolCall("  ", "{}", true);
+        assertThat(guardrails.isHalted()).isFalse();
+    }
+
+    // ─── Approval tests (preserved) ───
 
     @Test
     void requiresApproval_emptyApprovalList_alwaysFalse() {
@@ -217,7 +426,6 @@ class DefaultToolGuardrailsTest {
     void requiresApproval_approvalsEnabledButNullList_noApproval() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
-        // Default is empty ArrayList, not null — but test the path
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
 
         assertThat(guardrails.requiresApproval(new ToolCall("1", "any_tool", "{}"))).isFalse();
@@ -230,7 +438,6 @@ class DefaultToolGuardrailsTest {
         properties.getSecurity().setAlwaysRequireApprovalTools(List.of("write_file"));
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
 
-        // Case-sensitive — "Write_File" does NOT match "write_file"
         assertThat(guardrails.requiresApproval(new ToolCall("1", "Write_File", "{}"))).isFalse();
         assertThat(guardrails.requiresApproval(new ToolCall("2", "WRITE_FILE", "{}"))).isFalse();
     }
@@ -273,36 +480,43 @@ class DefaultToolGuardrailsTest {
         assertThat(guardrails.requiresApproval(null)).isFalse();
     }
 
-    // ─── Statelessness ───
+    // ─── Statefulness after recordToolCall ───
 
     @Test
-    void isToolAllowed_isStateless_noMemoryBetweenCalls() {
+    void isToolAllowed_isStateful_afterHalt_blocksAllTools() {
         AgentProperties properties = new AgentProperties();
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
 
-        // Calling isToolAllowed many times with different tools — no state changes
+        // Before any recording, all tools allowed
         for (int i = 0; i < 10; i++) {
             assertThat(guardrails.isToolAllowed("tool_" + i)).isTrue();
         }
-        // Going back to first tool — still allowed (no state tracking)
-        assertThat(guardrails.isToolAllowed("tool_0")).isTrue();
+
+        // Trigger halt via 5 identical calls
+        for (int i = 0; i < 5; i++) {
+            guardrails.recordToolCall("tool_0", "{}", true);
+        }
+
+        // After halt, all tools blocked
+        assertThat(guardrails.isToolAllowed("tool_0")).isFalse();
+        assertThat(guardrails.isToolAllowed("tool_1")).isFalse();
     }
 
     @Test
-    void requiresApproval_isStateless_noMemoryBetweenCalls() {
+    void requiresApproval_isStateless_alwaysReturnsSameResult() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
         properties.getSecurity().setAlwaysRequireApprovalTools(List.of("write_file"));
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
 
-        // Call requiresApproval many times — always returns same result
+        // requiresApproval is stateless — always returns same result regardless of call history
         for (int i = 0; i < 10; i++) {
             ToolCall call = new ToolCall(String.valueOf(i), "write_file", "{}");
             assertThat(guardrails.requiresApproval(call)).isTrue();
         }
     }
 
-    // ─── ToolCall with different arguments (GAP: args not checked) ───
+    // ─── ToolCall with different arguments ───
 
     @Test
     void requiresApproval_doesNotCheckArguments_onlyChecksName() {
@@ -311,20 +525,17 @@ class DefaultToolGuardrailsTest {
         properties.getSecurity().setAlwaysRequireApprovalTools(List.of("write_file"));
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
 
-        // Different arguments — same result because only name is checked
         assertThat(guardrails.requiresApproval(new ToolCall("1", "write_file", "{\"path\":\"/etc/passwd\"}"))).isTrue();
         assertThat(guardrails.requiresApproval(new ToolCall("2", "write_file", "{\"path\":\"/tmp/safe.txt\"}"))).isTrue();
-        // GAP: no argument-based approval (e.g., write_file to /tmp is fine, write_file to /etc needs approval)
     }
 
     @Test
-    void isToolAllowed_doesNotConsiderArguments() {
-        // isToolAllowed only takes a String (tool name), not arguments
-        // GAP: no way to block specific argument patterns
+    void isToolAllowed_considersBlockedToolsList() {
         AgentProperties properties = new AgentProperties();
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties);
+        guardrails.setBlockedTools(Set.of("dangerous_tool"));
 
-        // Dangerous tool name is allowed regardless
-        assertThat(guardrails.isToolAllowed("dangerous_tool")).isTrue();
+        assertThat(guardrails.isToolAllowed("dangerous_tool")).isFalse();
+        assertThat(guardrails.isToolAllowed("safe_tool")).isTrue();
     }
 }

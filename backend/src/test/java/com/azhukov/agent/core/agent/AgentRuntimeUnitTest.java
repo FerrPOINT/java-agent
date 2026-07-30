@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.agent;
 
+import com.azhukov.agent.client.langchain4j.ErrorClassifier;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.budget.DefaultIterationBudget;
 import com.azhukov.agent.core.context.ContextEngine;
@@ -153,7 +154,8 @@ class AgentRuntimeUnitTest {
             new DefaultIterationBudget(properties),
             new MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
-            new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer()
+            new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
+            new ErrorClassifier()
         );
 
         var result = runtime.runTurn(session, "hi");
@@ -190,7 +192,8 @@ class AgentRuntimeUnitTest {
             new DefaultIterationBudget(properties),
             new MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
-            new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer()
+            new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
+            new ErrorClassifier()
         );
     }
 

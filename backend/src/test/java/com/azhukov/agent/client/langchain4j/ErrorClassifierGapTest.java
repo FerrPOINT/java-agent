@@ -9,17 +9,11 @@ import java.util.concurrent.TimeoutException;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Tests for P0 gap: Error classification.
+ * Tests for Error classification.
  * <p>
- * {@link ErrorClassifier} supports 3 categories: RETRYABLE, PERMANENT, RATE_LIMIT.
- * Tests verify correct classification for known patterns and document gaps where
- * important error categories are misclassified.
- *
- * GAPS documented:
- * - Billing errors ("insufficient credits") → classified as RETRYABLE (should be PERMANENT)
- * - Context overflow ("context length exceeded") → classified as RETRYABLE (should be PERMANENT)
- * - Content policy violations ("content policy violation") → classified as RETRYABLE (should be PERMANENT or have own category)
- * - No specific handling for auth token expiry, quota exceeded, model not found, etc.
+ * {@link ErrorClassifier} supports 6 categories: RETRYABLE, PERMANENT, RATE_LIMIT,
+ * BILLING, CONTEXT_OVERFLOW, CONTENT_POLICY.
+ * Tests verify correct classification for known patterns.
  */
 class ErrorClassifierGapTest {
 
@@ -185,100 +179,168 @@ class ErrorClassifierGapTest {
         }
     }
 
-    // ─── GAP: Missing categories ───
+    // ─── BILLING ───
 
     @Nested
-    @DisplayName("GAP: Misclassified error categories")
-    class GapMisclassifiedErrors {
+    @DisplayName("BILLING errors (permanent, no retry)")
+    class BillingErrors {
 
         @Test
-        @DisplayName("GAP: 'insufficient credits' (billing) → classified as RETRYABLE, should be PERMANENT")
-        void gap_billingError() {
+        @DisplayName("'insufficient credits' → BILLING")
+        void billingInsufficientCredits() {
             ErrorClassifier.ErrorType type = classifier.classify(
                 new RuntimeException("insufficient credits"));
-            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
-            // GAP: should be PERMANENT — retrying won't fix a billing issue
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.BILLING);
         }
 
         @Test
-        @DisplayName("GAP: 'billing quota exceeded' → classified as RETRYABLE, should be PERMANENT")
-        void gap_billingQuota() {
+        @DisplayName("'billing quota exceeded' → BILLING")
+        void billingQuotaExceeded() {
             ErrorClassifier.ErrorType type = classifier.classify(
                 new RuntimeException("billing quota exceeded for this period"));
-            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
-            // GAP: should be PERMANENT
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.BILLING);
         }
 
         @Test
-        @DisplayName("GAP: 'context length exceeded' (context overflow) → classified as RETRYABLE, should be PERMANENT")
-        void gap_contextOverflow() {
-            ErrorClassifier.ErrorType type = classifier.classify(
-                new RuntimeException("context length exceeded maximum tokens"));
-            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
-            // GAP: should be PERMANENT — retrying with the same context will always fail
-        }
-
-        @Test
-        @DisplayName("GAP: 'maximum context length' → classified as RETRYABLE, should be PERMANENT")
-        void gap_maxContextLength() {
-            ErrorClassifier.ErrorType type = classifier.classify(
-                new RuntimeException("This model's maximum context length is 8192 tokens"));
-            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
-            // GAP: should be PERMANENT
-        }
-
-        @Test
-        @DisplayName("GAP: 'content policy violation' → classified as RETRYABLE, should be PERMANENT")
-        void gap_contentPolicy() {
-            ErrorClassifier.ErrorType type = classifier.classify(
-                new RuntimeException("content policy violation detected"));
-            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
-            // GAP: should be PERMANENT or have its own category
-        }
-
-        @Test
-        @DisplayName("GAP: 'content filter triggered' → classified as RETRYABLE, should be PERMANENT")
-        void gap_contentFilter() {
-            ErrorClassifier.ErrorType type = classifier.classify(
-                new RuntimeException("content filter triggered on input"));
-            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
-            // GAP: should be PERMANENT
-        }
-
-        @Test
-        @DisplayName("GAP: 'model not found' → classified as RETRYABLE, should be PERMANENT")
-        void gap_modelNotFound() {
-            ErrorClassifier.ErrorType type = classifier.classify(
-                new RuntimeException("model not found: gpt-99"));
-            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
-            // GAP: should be PERMANENT — model name won't become valid on retry
-        }
-
-        @Test
-        @DisplayName("GAP: 'authentication expired' (not 'invalid key') → classified as RETRYABLE")
-        void gap_authExpired() {
-            ErrorClassifier.ErrorType type = classifier.classify(
-                new RuntimeException("authentication token expired"));
-            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
-            // GAP: token expiry might be retriable (refresh token) or permanent
-        }
-
-        @Test
-        @DisplayName("GAP: 'quota exceeded' (without 'rate limit') → classified as RETRYABLE")
-        void gap_quotaExceeded() {
-            ErrorClassifier.ErrorType type = classifier.classify(
-                new RuntimeException("quota exceeded for this organization"));
-            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
-            // GAP: should be RATE_LIMIT or PERMANENT depending on quota type
-        }
-
-        @Test
-        @DisplayName("GAP: 'insufficient_quota' → classified as RETRYABLE, should be PERMANENT or RATE_LIMIT")
-        void gap_insufficientQuota() {
+        @DisplayName("'insufficient_quota' → BILLING")
+        void insufficientQuota() {
             ErrorClassifier.ErrorType type = classifier.classify(
                 new RuntimeException("insufficient_quota"));
-            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
-            // GAP: OpenAI returns this for billing quota issues
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.BILLING);
+        }
+
+        @Test
+        @DisplayName("'insufficient balance' → BILLING")
+        void insufficientBalance() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("insufficient balance on account"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.BILLING);
+        }
+
+        @Test
+        @DisplayName("'credit balance' → BILLING")
+        void creditBalance() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("credit balance is zero"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.BILLING);
+        }
+
+        @Test
+        @DisplayName("'payment required' → BILLING")
+        void paymentRequired() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("payment required to continue"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.BILLING);
+        }
+
+        @Test
+        @DisplayName("'quota exceeded' → BILLING")
+        void quotaExceeded() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("quota exceeded for this organization"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.BILLING);
+        }
+    }
+
+    // ─── CONTEXT_OVERFLOW ───
+
+    @Nested
+    @DisplayName("CONTEXT_OVERFLOW errors (permanent, no retry)")
+    class ContextOverflowErrors {
+
+        @Test
+        @DisplayName("'context length exceeded' → CONTEXT_OVERFLOW")
+        void contextLengthExceeded() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("context length exceeded maximum tokens"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.CONTEXT_OVERFLOW);
+        }
+
+        @Test
+        @DisplayName("'maximum context length' → CONTEXT_OVERFLOW")
+        void maxContextLength() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("This model's maximum context length is 8192 tokens"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.CONTEXT_OVERFLOW);
+        }
+
+        @Test
+        @DisplayName("'context window' → CONTEXT_OVERFLOW")
+        void contextWindow() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("exceeds context window of 4096 tokens"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.CONTEXT_OVERFLOW);
+        }
+
+        @Test
+        @DisplayName("'token limit exceeded' → CONTEXT_OVERFLOW")
+        void tokenLimitExceeded() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("token limit exceeded"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.CONTEXT_OVERFLOW);
+        }
+
+        @Test
+        @DisplayName("'context_length_exceeded' → CONTEXT_OVERFLOW")
+        void contextLengthExceededSnakeCase() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("context_length_exceeded"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.CONTEXT_OVERFLOW);
+        }
+    }
+
+    // ─── CONTENT_POLICY ───
+
+    @Nested
+    @DisplayName("CONTENT_POLICY errors (permanent, no retry)")
+    class ContentPolicyErrors {
+
+        @Test
+        @DisplayName("'content policy violation' → CONTENT_POLICY")
+        void contentPolicyViolation() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("content policy violation detected"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.CONTENT_POLICY);
+        }
+
+        @Test
+        @DisplayName("'content filter triggered' → CONTENT_POLICY")
+        void contentFilterTriggered() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("content filter triggered on input"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.CONTENT_POLICY);
+        }
+
+        @Test
+        @DisplayName("'content management' → CONTENT_POLICY")
+        void contentManagement() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("content management policy blocked this"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.CONTENT_POLICY);
+        }
+
+        @Test
+        @DisplayName("'safety' → CONTENT_POLICY")
+        void safety() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("safety filter triggered"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.CONTENT_POLICY);
+        }
+
+        @Test
+        @DisplayName("'harmful content' → CONTENT_POLICY")
+        void harmfulContent() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("harmful content detected"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.CONTENT_POLICY);
+        }
+
+        @Test
+        @DisplayName("'prohibited content' → CONTENT_POLICY")
+        void prohibitedContent() {
+            ErrorClassifier.ErrorType type = classifier.classify(
+                new RuntimeException("prohibited content in request"));
+            assertThat(type).isEqualTo(ErrorClassifier.ErrorType.CONTENT_POLICY);
         }
     }
 
@@ -306,7 +368,7 @@ class ErrorClassifierGapTest {
         @Test
         @DisplayName("IllegalArgumentException with timeout message → RETRYABLE (message checked before type)")
         void illegalArgumentWithTimeoutMessage() {
-            // timeout check (lines 42-47) comes before IllegalArgumentException (lines 50-52)
+            // timeout check comes before IllegalArgumentException
             assertThat(classifier.classify(new IllegalArgumentException("request timeout")))
                 .isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
         }
@@ -316,7 +378,13 @@ class ErrorClassifierGapTest {
         void invalidWithoutKeyOrApi() {
             assertThat(classifier.classify(new RuntimeException("invalid request format")))
                 .isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
-            // "invalid" alone without "key" or "api" doesn't trigger PERMANENT
+        }
+
+        @Test
+        @DisplayName("Billing takes priority over rate limit when both patterns match")
+        void billingTakesPriorityOverRateLimit() {
+            assertThat(classifier.classify(new RuntimeException("quota exceeded rate limit")))
+                .isEqualTo(ErrorClassifier.ErrorType.BILLING);
         }
     }
 }

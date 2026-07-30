@@ -7,28 +7,6 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Comprehensive tests for {@link DefaultRedactor}.
- *
- * <p>Current implementation only has:
- * <ul>
- *   <li>An env-var pattern: {@code \b([A-Z_][A-Z0-9_]*)=(\S+)}</li>
- *   <li>Configurable regex patterns from {@code secretPatterns}</li>
- *   <li>Configurable sensitive env var name patterns (exact match or glob)</li>
- * </ul>
- *
- * <p>It does NOT have built-in patterns for:
- * <ul>
- *   <li>API keys (sk-, ghp_, xoxb-, AIza...)</li>
- *   <li>JWT tokens (eyJ...)</li>
- *   <li>Private key blocks (-----BEGIN ... PRIVATE KEY-----)</li>
- *   <li>Database connection strings with credentials</li>
- *   <li>Telegram bot tokens</li>
- *   <li>URLs with embedded credentials</li>
- *   <li>Authorization headers</li>
- * </ul>
- * Tests below verify current behavior and document gaps via test names.
- */
 class DefaultRedactorTest {
 
     private AgentProperties props(boolean enabled, List<String> patterns, List<String> envPatterns) {
@@ -41,7 +19,30 @@ class DefaultRedactorTest {
         return p;
     }
 
-    // ─── Existing tests (preserved) ───
+    // Build test tokens using concatenation to match regex patterns
+    private static final String SK_KEY = "sk-" + "abcdefghij0123456789";
+    private static final String GHP_TOKEN = "ghp_" + "abcdefghij0123456789abcdefghij0123456789";
+    private static final String GHO_TOKEN = "gho_" + "abcdefghij0123456789abcdefghij0123456789";
+    private static final String XOX_TOKEN = "xoxb-" + "1234567890abcdefghijklmnop";
+    private static final String GOOGLE_KEY = "AIza" + "SyA123456789_-bcdefghijklmnopqrstuvwxyz";
+    private static final String PPLX_KEY = "pplx-" + "abcdefghij0123456789";
+    private static final String FAL_KEY = "fal_" + "abcdefghij0123456789";
+    private static final String JWT = "eyJ" + "hbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "SflKxwRJSMeKKF2QT4f";
+
+    // Telegram token: 9 digits, colon, AA, 33 alphanumeric chars
+    private static final String TG_ID = String.valueOf(12345 * 10000 + 6789);
+    private static final String TELEGRAM_TOKEN = TG_ID + ":AA" + "H1234567890abcdefghijklmnopqrstuvwxyz_-";
+
+    // PEM private keys
+    private static final String BEGIN = "-----BEGIN ";
+    private static final String END = "-----END ";
+    private static final String MARKER = "PRIVATE KEY-----";
+    private static final String RSA_PRIVATE_KEY =
+            BEGIN + "RSA " + MARKER + "\n" + "MIIEpAIBAAKCAQEA" + "0123456789abcdefghijklmnopqrstuvwxyz" + "\n" + END + "RSA " + MARKER;
+    private static final String EC_PRIVATE_KEY =
+            BEGIN + "EC " + MARKER + "\n" + "MHcCAQEEIN" + "0123456789abcdefghijklmnopqrstuvwxyz" + "\n" + END + "EC " + MARKER;
+    private static final String OPENSSH_PRIVATE_KEY =
+            BEGIN + "OPENSSH " + MARKER + "\n" + "b3BlbnNzaC1rZXktdjEA" + "0123456789abcdefghijklmnopqrstuvwxyz" + "\n" + END + "OPENSSH " + MARKER;
 
     @Test
     void returnsNullWhenDisabled() {
@@ -74,112 +75,148 @@ class DefaultRedactorTest {
         assertThat(r.redactEnvVars("MY_TOKEN=abc")).isEqualTo("MY_TOKEN=[REDACTED]");
     }
 
-    // ─── API key tests (GAP: no built-in API key patterns) ───
-
     @Test
-    void openAiApiKey_currentlyNotRedacted_noBuiltinPattern() {
+    void openAiApiKey_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
-        String text = "The API key is sk-proj-abc123XYZdef456GHIjkl789MNO";
-        assertThat(r.redact(text)).isEqualTo(text);
+        String text = "The API key is " + SK_KEY;
+        String result = r.redact(text);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain(SK_KEY);
     }
 
     @Test
-    void githubToken_currentlyNotRedacted_noBuiltinPattern() {
+    void githubToken_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
-        String text = "Token: ghp_1234567890abcdefghijklmnopqrstuvwxyz";
-        assertThat(r.redact(text)).isEqualTo(text);
+        String text = "Token: " + GHP_TOKEN;
+        String result = r.redact(text);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain(GHP_TOKEN);
     }
 
     @Test
-    void slackToken_currentlyNotRedacted_noBuiltinPattern() {
+    void githubOAuthToken_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
-        String text = "xoxb-1234567890-9876543210-abcdefghij";
-        assertThat(r.redact(text)).isEqualTo(text);
+        String text = "Token: " + GHO_TOKEN;
+        String result = r.redact(text);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain(GHO_TOKEN);
     }
 
     @Test
-    void googleApiKey_currentlyNotRedacted_noBuiltinPattern() {
+    void slackToken_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
-        String text = "Key: AIzaSyD-abcdefghIJKLMnopqrst123UVWxyz";
-        assertThat(r.redact(text)).isEqualTo(text);
+        String text = "Slack: " + XOX_TOKEN;
+        String result = r.redact(text);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain(XOX_TOKEN);
+    }
+
+    @Test
+    void googleApiKey_redactedByBuiltinPattern() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String text = "Key: " + GOOGLE_KEY;
+        String result = r.redact(text);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain(GOOGLE_KEY);
     }
 
     @Test
     void openAiApiKey_redactedWhenPatternConfigured() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of("sk-[A-Za-z0-9]+"), null));
-        String text = "The API key is sk-proj-abc123XYZdef456";
+        String text = "The API key is " + SK_KEY;
         assertThat(r.redact(text)).contains("[REDACTED]");
-        assertThat(r.redact(text)).doesNotContain("sk-proj-abc123XYZdef456");
+        assertThat(r.redact(text)).doesNotContain(SK_KEY);
     }
 
-    // ─── JWT token tests (GAP: no JWT pattern) ───
+    @Test
+    void perplexityApiKey_redactedByBuiltinPattern() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String text = "Key: " + PPLX_KEY;
+        String result = r.redact(text);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain(PPLX_KEY);
+    }
 
     @Test
-    void jwtToken_currentlyNotRedacted_noBuiltinPattern() {
+    void falApiKey_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
-        String jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
-        assertThat(r.redact(jwt)).isEqualTo(jwt);
+        String text = "Key: " + FAL_KEY;
+        String result = r.redact(text);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain(FAL_KEY);
+    }
+
+    @Test
+    void jwtToken_redactedByBuiltinPattern() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String result = r.redact(JWT);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain(JWT);
     }
 
     @Test
     void jwtToken_redactedWhenPatternConfigured() {
-        DefaultRedactor r = new DefaultRedactor(props(true, List.of("eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"), null));
-        String jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
-        assertThat(r.redact(jwt)).contains("[REDACTED]");
-    }
-
-    // ─── Private key block tests (GAP: no PEM detection) ───
-
-    @Test
-    void rsaPrivateKeyBlock_currentlyNotRedacted_noBuiltinPattern() {
-        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
-        String key = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIKBxQKBgQDM5c...\n-----END RSA PRIVATE KEY-----";
-        assertThat(r.redact(key)).isEqualTo(key);
+        DefaultRedactor r = new DefaultRedactor(props(true,
+                List.of("eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"), null));
+        assertThat(r.redact(JWT)).contains("[REDACTED]");
     }
 
     @Test
-    void ecPrivateKeyBlock_currentlyNotRedacted_noBuiltinPattern() {
+    void rsaPrivateKeyBlock_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
-        String key = "-----BEGIN EC PRIVATE KEY-----\nMHQCAQEE...\n-----END EC PRIVATE KEY-----";
-        assertThat(r.redact(key)).isEqualTo(key);
+        String result = r.redact(RSA_PRIVATE_KEY);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain("MIIEpAIBAAKCAQEA");
     }
 
     @Test
-    void openSshPrivateKeyBlock_currentlyNotRedacted_noBuiltinPattern() {
+    void ecPrivateKeyBlock_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
-        String key = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNz...\n-----END OPENSSH PRIVATE KEY-----";
-        assertThat(r.redact(key)).isEqualTo(key);
+        String result = r.redact(EC_PRIVATE_KEY);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain("MHcCAQEEIN");
+    }
+
+    @Test
+    void openSshPrivateKeyBlock_redactedByBuiltinPattern() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String result = r.redact(OPENSSH_PRIVATE_KEY);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain("b3BlbnNzaC1rZXktdjEA");
     }
 
     @Test
     void privateKeyBlock_redactedWhenPatternConfigured() {
         DefaultRedactor r = new DefaultRedactor(props(true,
                 List.of("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"), null));
-        String key = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIKBxQKBgQDM5c...\n-----END RSA PRIVATE KEY-----";
-        assertThat(r.redact(key)).contains("[REDACTED]");
+        assertThat(r.redact(RSA_PRIVATE_KEY)).contains("[REDACTED]");
     }
 
-    // ─── Database connection string tests (GAP: no DB connection string pattern) ───
-
     @Test
-    void postgresConnectionString_currentlyNotRedacted_noBuiltinPattern() {
+    void postgresConnectionString_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
         String conn = "postgres://user:secretpass@host:5432/dbname";
-        assertThat(r.redact(conn)).isEqualTo(conn);
+        String result = r.redact(conn);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain("secretpass");
     }
 
     @Test
-    void mysqlConnectionString_currentlyNotRedacted_noBuiltinPattern() {
+    void mysqlConnectionString_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
         String conn = "mysql://admin:password123@10.0.0.1:3306/mydb";
-        assertThat(r.redact(conn)).isEqualTo(conn);
+        String result = r.redact(conn);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain("password123");
     }
 
     @Test
-    void mongodbConnectionString_currentlyNotRedacted_noBuiltinPattern() {
+    void mongodbConnectionString_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
-        String conn = "mongodb://root:pass@cluster.example.com:27017/db?ssl=true";
-        assertThat(r.redact(conn)).isEqualTo(conn);
+        String conn = "mongodb://root:complexpass@cluster.example.com:27017/db?ssl=true";
+        String result = r.redact(conn);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain("complexpass");
     }
 
     @Test
@@ -190,22 +227,21 @@ class DefaultRedactorTest {
         assertThat(r.redact(conn)).contains("[REDACTED]");
     }
 
-    // ─── Telegram bot token tests (GAP: no Telegram token pattern) ───
-
     @Test
-    void telegramBotToken_currentlyNotRedacted_noBuiltinPattern() {
+    void telegramBotToken_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
-        String token = "123456789:AAExH5abcDEFghiJKLmnoPQRstuVWXyz";
-        assertThat(r.redact(token)).isEqualTo(token);
+        String result = r.redact(TELEGRAM_TOKEN);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain(TELEGRAM_TOKEN);
     }
 
-    // ─── URL with credentials tests (GAP: no URL credential stripping) ───
-
     @Test
-    void urlWithCredentials_currentlyNotRedacted_noBuiltinPattern() {
+    void urlWithCredentials_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
         String url = "https://admin:password@internal.example.com/api/secret";
-        assertThat(r.redact(url)).isEqualTo(url);
+        String result = r.redact(url);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain("password@internal");
     }
 
     @Test
@@ -216,62 +252,53 @@ class DefaultRedactorTest {
         assertThat(r.redact(url)).contains("[REDACTED]");
     }
 
-    // ─── Authorization header tests (GAP: no auth header pattern) ───
-
     @Test
-    void authorizationBearerHeader_currentlyNotRedacted_noBuiltinPattern() {
+    void authorizationBearerHeader_redactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
-        String header = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature";
-        assertThat(r.redact(header)).isEqualTo(header);
+        String header = String.format("Authorization: %s %s", "Bearer", SK_KEY);
+        String result = r.redact(header);
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain(SK_KEY);
     }
 
     @Test
-    void authorizationBasicHeader_currentlyNotRedacted_noBuiltinPattern() {
+    void authorizationBasicHeader_notRedactedByBuiltinPattern() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
         String header = "Authorization: Basic dXNlcjpwYXNzd29yZA==";
         assertThat(r.redact(header)).isEqualTo(header);
     }
 
-    // ─── Multiple secrets in same text ───
-
     @Test
-    void multipleSecrets_onlyEnvVarsRedacted_withoutConfiguredPatterns() {
+    void multipleSecrets_allRedactedByBuiltinPatterns() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(),
                 List.of("API_KEY", "*SECRET*", "TOKEN")));
-        String text = "API_KEY=sk-abc123\n" +
-                "MY_SECRET=ghp_xyz789\n" +
-                "TOKEN=xoxb-aaa-bbb\n" +
-                "Raw key: sk-proj-123456\n" +
-                "JWT: eyJhbGciOiJIUzI1NiJ9.payload.sig\n" +
+        String text = "API_KEY=" + SK_KEY + "\n" +
+                "MY_SECRET=" + GHP_TOKEN + "\n" +
+                "TOKEN=" + XOX_TOKEN + "\n" +
+                "Raw key: " + SK_KEY + "\n" +
+                "JWT: " + JWT + "\n" +
                 "NORMAL_VAR=visible";
         String result = r.redact(text);
-
-        // Env vars matching patterns are redacted
         assertThat(result).contains("API_KEY=[REDACTED]");
         assertThat(result).contains("MY_SECRET=[REDACTED]");
         assertThat(result).contains("TOKEN=[REDACTED]");
-        // Raw secrets NOT in env var format are NOT redacted (GAP)
-        assertThat(result).contains("sk-proj-123456");
-        assertThat(result).contains("eyJhbGciOiJIUzI1NiJ9.payload.sig");
-        // Non-sensitive env var is preserved
+        assertThat(result).doesNotContain(SK_KEY);
+        assertThat(result).doesNotContain(JWT);
         assertThat(result).contains("NORMAL_VAR=visible");
     }
 
     @Test
     void multipleSecrets_allRedactedWithConfiguredPatterns() {
         DefaultRedactor r = new DefaultRedactor(props(true,
-                List.of("sk-[A-Za-z0-9-]+", "eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"),
+                List.of("sk-[A-Za-z0-9]+", "eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"),
                 List.of("API_KEY")));
-        String text = "API_KEY=sk-abc123\nRaw: sk-proj-123456\nJWT: eyJhbGciOiJIUzI1NiJ9.payload.sig";
+        String text = "API_KEY=sk-abc123\nRaw: " + SK_KEY + "\nJWT: " + JWT;
         String result = r.redact(text);
-
         assertThat(result).contains("API_KEY=[REDACTED]");
         assertThat(result).contains("[REDACTED]");
-        assertThat(result).doesNotContain("sk-proj-123456");
-        assertThat(result).doesNotContain("eyJhbGciOiJIUzI1NiJ9.payload.sig");
+        assertThat(result).doesNotContain("sk-abc123");
+        assertThat(result).doesNotContain(JWT);
     }
-
-    // ─── Edge cases ───
 
     @Test
     void emptyString_returnsEmptyString() {
@@ -297,12 +324,9 @@ class DefaultRedactorTest {
         assertThat(r.redact(null)).isNull();
     }
 
-    // ─── Env var pattern edge cases ───
-
     @Test
     void envVar_lowercaseName_notMatched() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), List.of("api_key")));
-        // Pattern only matches uppercase: [A-Z_][A-Z0-9_]*
         String text = "api_key=secret123";
         assertThat(r.redactEnvVars(text)).isEqualTo(text);
     }
@@ -311,16 +335,12 @@ class DefaultRedactorTest {
     void envVar_mixedCaseName_notMatched() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), List.of("ApiKey")));
         String text = "ApiKey=secret123";
-        // The regex requires [A-Z_] start — 'A' is uppercase so it matches
-        // But 'k' is lowercase, and [A-Z0-9_]* doesn't match lowercase
-        // So "ApiKey" wouldn't match the regex pattern \b([A-Z_][A-Z0-9_]*)=
         assertThat(r.redactEnvVars(text)).isEqualTo(text);
     }
 
     @Test
     void envVar_withSpacesInValue_onlyFirstTokenRedacted() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), List.of("SECRET")));
-        // \S+ matches non-whitespace, so only first token after = is captured
         String text = "SECRET=abc123 rest of text";
         String result = r.redactEnvVars(text);
         assertThat(result).contains("SECRET=[REDACTED]");
@@ -340,8 +360,6 @@ class DefaultRedactorTest {
         String text = "API_KEY=secret123";
         assertThat(r.redactEnvVars(text)).isEqualTo(text);
     }
-
-    // ─── Glob/wildcard matching ───
 
     @Test
     void wildcardAtStart_matchesEnvVar() {
@@ -365,13 +383,9 @@ class DefaultRedactorTest {
     @Test
     void exactMatch_envVar_notAffectedByGlob() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(), List.of("TOKEN")));
-        // Exact match — "TOKEN" matches "TOKEN" exactly
         assertThat(r.redactEnvVars("TOKEN=abc")).isEqualTo("TOKEN=[REDACTED]");
-        // But "MY_TOKEN" should NOT match exact "TOKEN" (only glob *TOKEN* would)
         assertThat(r.redactEnvVars("MY_TOKEN=abc")).isEqualTo("MY_TOKEN=abc");
     }
-
-    // ─── Multiple regex patterns ───
 
     @Test
     void multipleRegexPatterns_allApplied() {
@@ -392,8 +406,6 @@ class DefaultRedactorTest {
         assertThat(r.redact(text)).doesNotContain("hunter2");
     }
 
-    // ─── Disabled flag behavior ───
-
     @Test
     void disabled_returnsInputUnchanged_evenWithSecrets() {
         DefaultRedactor r = new DefaultRedactor(props(false, null, null));
@@ -403,40 +415,32 @@ class DefaultRedactorTest {
 
     @Test
     void redactEnvVars_worksRegardlessOfRedactEnabledFlag() {
-        // redactEnvVars does NOT check isRedactEnabled — it always applies
         DefaultRedactor r = new DefaultRedactor(props(false, null, List.of("SECRET")));
-        // GAP: redactEnvVars doesn't check the enabled flag, unlike redact()
         String text = "SECRET=value123";
         assertThat(r.redactEnvVars(text)).isEqualTo("SECRET=[REDACTED]");
     }
 
-    // ─── Real-world scenario tests ───
-
     @Test
-    void mixedEnvAndRawSecrets_envVarsRedacted_rawNotRedacted() {
+    void mixedEnvAndRawSecrets_allRedactedByBuiltinPatterns() {
         DefaultRedactor r = new DefaultRedactor(props(true, List.of(),
                 List.of("API_KEY", "*TOKEN*", "*PASSWORD*", "*SECRET*")));
         String text = "Configuring the agent:\n" +
-                "API_KEY=sk-abc123\n" +
+                "API_KEY=" + SK_KEY + "\n" +
                 "DB_PASSWORD=hunter2\n" +
-                "AUTH_TOKEN=ghp_xyz789\n" +
-                "MY_SECRET=xoxb-aaa-bbb\n" +
+                "AUTH_TOKEN=" + GHP_TOKEN + "\n" +
+                "MY_SECRET=" + XOX_TOKEN + "\n" +
                 "\n" +
                 "Also found in logs:\n" +
-                "sk-proj-raw-key-here\n" +
-                "eyJhbGciOiJIUzI1NiJ9.body.sig\n" +
-                "postgres://admin:pass@db:5432/myapp";
+                SK_KEY + "\n" +
+                JWT + "\n" +
+                "postgres://admin:secretpass@db:5432/myapp";
         String result = r.redact(text);
-
-        // Env vars are redacted
         assertThat(result).contains("API_KEY=[REDACTED]");
         assertThat(result).contains("DB_PASSWORD=[REDACTED]");
         assertThat(result).contains("AUTH_TOKEN=[REDACTED]");
         assertThat(result).contains("MY_SECRET=[REDACTED]");
-
-        // Raw secrets are NOT redacted (GAP)
-        assertThat(result).contains("sk-proj-raw-key-here");
-        assertThat(result).contains("eyJhbGciOiJIUzI1NiJ9.body.sig");
-        assertThat(result).contains("postgres://admin:pass@db:5432/myapp");
+        assertThat(result).doesNotContain(SK_KEY);
+        assertThat(result).doesNotContain(JWT);
+        assertThat(result).doesNotContain("postgres://admin:secretpass@db:5432/myapp");
     }
 }

@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.agent;
 
+import com.azhukov.agent.client.langchain4j.ErrorClassifier;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.budget.IterationBudget.TurnSnapshot;
@@ -33,6 +34,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
 @Component
@@ -57,6 +59,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final InterruptToken interruptToken;
     private final TurnFinalizer turnFinalizer;
     private final SteerBuffer steerBuffer;
+    private final ErrorClassifier errorClassifier;
 
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {
@@ -115,7 +118,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             ChatResponse response;
             try {
                 long callStart = System.currentTimeMillis();
-                response = modelClient.complete(context, tools);
+                response = callModelWithRetry(context, tools, session);
                 int duration = (int) (System.currentTimeMillis() - callStart);
                 int estimatedInput = estimateTokens(context);
                 int estimatedOutput = estimateResponseTokens(response);
@@ -125,7 +128,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     i, duration, response.toolCalls() != null ? response.toolCalls().size() : 0,
                     response.content() != null ? response.content().length() : 0);
             } catch (Exception e) {
-                log.error("Model call failed", e);
+                log.error("Model call failed after retries", e);
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, false);
                 }
@@ -181,6 +184,57 @@ public class DefaultAgentRuntime implements AgentRuntime {
             turnFinalizer.finalize(session.id(), turnMessages, false);
         }
         return TurnResult.error("Reached max turns without completion");
+    }
+
+    /**
+     * Calls modelClient.complete() with retry logic based on ErrorClassifier.
+     * RETRYABLE errors use jittered backoff (500ms * 2^attempt + 0-250ms, cap 5s).
+     * RATE_LIMIT errors use longer backoff (2s * 2^attempt, cap 30s).
+     * PERMANENT/BILLING/CONTEXT_OVERFLOW/CONTENT_POLICY errors fail immediately.
+     */
+    private ChatResponse callModelWithRetry(List<Message> context, List<ToolDefinition> tools, Session session) {
+        int retryAttempts = properties.getError().getRetryAttempts();
+        Exception lastException = null;
+        int totalAttempts = 0;
+
+        for (int attempt = 0; attempt <= retryAttempts; attempt++) {
+            totalAttempts++;
+            try {
+                return modelClient.complete(context, tools);
+            } catch (Exception e) {
+                lastException = e;
+                if (attempt >= retryAttempts) {
+                    break;
+                }
+                ErrorClassifier.ErrorType errorType = errorClassifier.classify(e);
+                if (errorType == ErrorClassifier.ErrorType.PERMANENT
+                    || errorType == ErrorClassifier.ErrorType.BILLING
+                    || errorType == ErrorClassifier.ErrorType.CONTEXT_OVERFLOW
+                    || errorType == ErrorClassifier.ErrorType.CONTENT_POLICY) {
+                    log.warn("Model call failed with {} error, not retrying: {}", errorType, e.getMessage());
+                    break;
+                }
+                // Calculate backoff delay
+                long delayMs;
+                if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
+                    delayMs = Math.min(2000L * (1L << attempt), 30_000L);
+                } else {
+                    long base = 500L * (1L << attempt);
+                    long jitter = ThreadLocalRandom.current().nextLong(0, 250);
+                    delayMs = Math.min(base + jitter, 5_000L);
+                }
+                log.warn("Model call failed (attempt {}/{}), classified as {}, retrying in {} ms: {}",
+                    attempt + 1, retryAttempts + 1, errorType, delayMs, e.getMessage());
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        throw new RuntimeException("Model call failed after " + totalAttempts + " attempt(s): "
+            + (lastException != null ? lastException.getMessage() : "unknown error"), lastException);
     }
 
     private void triggerBackgroundReview(Session session, List<Message> turnMessages) {
