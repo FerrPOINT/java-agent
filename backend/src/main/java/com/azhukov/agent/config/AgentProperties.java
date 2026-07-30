@@ -48,6 +48,7 @@ public class AgentProperties {
     private final CodingContextProperties codingContext = new CodingContextProperties();
     private final ToolProperties tools = new ToolProperties();
     private final CompressionProperties compression = new CompressionProperties();
+    private final CuratorProperties curator = new CuratorProperties();
 
     @Getter @Setter
     public static class ModelProperties {
@@ -158,6 +159,23 @@ public class AgentProperties {
         private int maxSkillsInPrompt = 20;
         private int maxCharsPerSkill = 4000;
         private final List<String> defaultToolsets = new ArrayList<>(List.of("web", "file", "browser", "terminal", "coding", "memory", "skills", "core", "delegate"));
+        // S6: External skill directories (expanded ~/ and ${VAR})
+        private final List<String> externalDirs = new ArrayList<>();
+        // S6: Disabled skills (global list)
+        private final List<String> disabled = new ArrayList<>();
+        // S6: Per-platform disabled skills: platform name -> list of skill names
+        private final Map<String, List<String>> platformDisabled = new HashMap<>();
+        // S6: Skill config values (skills.config.<key> = value)
+        private final Map<String, Object> config = new HashMap<>();
+        // S2: Template vars substitution enabled
+        private boolean templateVars = true;
+        // S2: Inline shell expansion enabled
+        private boolean inlineShell = false;
+        // S2: Inline shell timeout in seconds
+        private int inlineShellTimeout = 10;
+
+        public void setExternalDirs(List<String> dirs) { this.externalDirs.clear(); this.externalDirs.addAll(dirs); }
+        public void setDisabled(List<String> disabled) { this.disabled.clear(); this.disabled.addAll(disabled); }
     }
 
     @Getter @Setter
@@ -355,5 +373,26 @@ public class AgentProperties {
         private boolean enabled = true;
         private int summaryChunkTokens = 2000;
         private boolean abortOnSummaryFailure = false;
+    }
+
+    // S5: Curator configuration — config-driven interval, idle gating, stale/archive thresholds
+    @Getter @Setter
+    public static class CuratorProperties {
+        /** Whether the curator is enabled (default true). */
+        private boolean enabled = true;
+        /** Interval between curator runs in hours (default 7 days = 168h). */
+        private int intervalHours = 24 * 7;
+        /** Minimum idle hours before curator runs (default 2h). */
+        private double minIdleHours = 2.0;
+        /** Days of inactivity before a skill is marked stale (default 30). */
+        private int staleAfterDays = 30;
+        /** Days of inactivity before a stale skill is archived (default 90). */
+        private int archiveAfterDays = 90;
+        /** Whether the curator may prune bundled built-in skills (default true). */
+        private boolean pruneBuiltins = true;
+        /** Dry-run mode — report only, no mutations (default false). */
+        private boolean dryRun = false;
+        /** Number of backups to keep (default 5). */
+        private int backupKeep = 5;
     }
 }

@@ -41,4 +41,13 @@ public class SkillEntity {
 
     // S12: Trust level
     private String trustLevel;
+
+    // S5: Curator — skill lifecycle state (active/stale/archived)
+    private String lifecycleState;
+
+    // S5: Curator — pinned skills bypass all auto-transitions
+    private boolean pinned;
+
+    // S5: Curator — absorbed_into declaration when consolidated into umbrella
+    private String absorbedInto;
 }

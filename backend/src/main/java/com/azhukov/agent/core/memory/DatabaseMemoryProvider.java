@@ -19,6 +19,11 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     private final MemoryRepository memoryRepository;
 
     @Override
+    public String name() {
+        return "builtin";
+    }
+
+    @Override
     public List<String> recall(String userId, String query, int limit) {
         return memoryRepository.searchByUserId(userId, query, limit).stream()
             .map(e -> "[" + e.getCategory() + "] " + e.getFact())

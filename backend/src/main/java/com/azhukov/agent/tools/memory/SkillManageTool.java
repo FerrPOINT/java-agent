@@ -1,5 +1,6 @@
 package com.azhukov.agent.tools.memory;
 
+import com.azhukov.agent.core.memory.WriteContext;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
@@ -16,6 +17,10 @@ import static com.azhukov.agent.tools.ToolHandler.parseJson;
 
 /**
  * S3: Skill management tool — create, update, delete, patch, write_file, remove_file.
+ * <p>
+ * S3 fix: Uses {@link WriteContext} to determine the {@link WriteOrigin} for all
+ * skill writes. When a review agent calls this tool, the origin is set to
+ * {@code BACKGROUND_REVIEW} instead of {@code FOREGROUND}.
  */
 @AgentTool(name = "skill_manage",
     description = "Create, update, delete, patch a skill, or manage support files (references/, templates/, scripts/). Actions: create, update, delete, patch, write_file, remove_file.",
@@ -30,16 +35,19 @@ public class SkillManageTool implements ToolHandler {
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         SkillManageArgs args = parseJson(arguments, SkillManageArgs.class);
+        // S3: Get the effective write origin from WriteContext (FOREGROUND by default,
+        // BACKGROUND_REVIEW during review)
+        WriteOrigin origin = WriteContext.effectiveOrigin();
         return switch (args.action().toLowerCase()) {
             case "create" -> {
                 validateSkillName(args.name());
                 String content = generateFrontmatterIfNeeded(args.name(), args.content());
-                skillManager.saveSkill(args.name(), content, WriteOrigin.FOREGROUND);
+                skillManager.saveSkill(args.name(), content, origin);
                 yield ToolResult.ok("Skill " + args.name() + " created.");
             }
             case "update" -> {
                 validateSkillName(args.name());
-                skillManager.saveSkill(args.name(), args.content(), WriteOrigin.FOREGROUND);
+                skillManager.saveSkill(args.name(), args.content(), origin);
                 yield ToolResult.ok("Skill " + args.name() + " updated.");
             }
             case "delete" -> {

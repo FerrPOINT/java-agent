@@ -12,6 +12,7 @@ import com.azhukov.agent.core.context.DefaultContextReferenceService;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.MemoryManager;
 import com.azhukov.agent.core.memory.BackgroundReviewService;
+import com.azhukov.agent.core.memory.ReviewSummary;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
@@ -412,6 +413,27 @@ public class DefaultAgentRuntime implements AgentRuntime {
         } catch (Exception e) {
             log.debug("Background review trigger failed: {}", e.getMessage());
         }
+    }
+
+    /**
+     * S3: Check if the background review produced a summary to surface to the user.
+     * Called by the turn finalizer or session-end hook.
+     */
+    public String getReviewSummaryForSurface(UUID sessionId) {
+        if (backgroundReviewService == null) {
+            return null;
+        }
+        if (!backgroundReviewService.hasReviewSummary(sessionId)) {
+            return null;
+        }
+        ReviewSummary summary = backgroundReviewService.getReviewSummary(sessionId);
+        if (summary == null || !summary.hasActions()) {
+            return null;
+        }
+        // Return the formatted summary and clear it so it's only surfaced once
+        String result = summary.formattedSummary();
+        backgroundReviewService.clearFlag(sessionId);
+        return result;
     }
 
     private List<Message> executeToolsInParallel(List<ToolCall> toolCalls, Session session,

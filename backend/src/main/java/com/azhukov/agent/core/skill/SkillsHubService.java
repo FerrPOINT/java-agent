@@ -2,6 +2,8 @@ package com.azhukov.agent.core.skill;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryThreatScanner;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,7 +24,9 @@ import java.util.regex.Pattern;
  * Fetches skill content from a configurable GitHub repo URL and installs locally.
  * Includes path traversal protection and overwrite confirmation.
  * <p>
- * Simplified port of Hermes' skills_hub.py (3888 lines → core functionality only).
+ * S6 FIX: Uses Jackson ObjectMapper for JSON parsing instead of regex-based parsing.
+ * <p>
+ * Simplified port of Hermes' skills_hub.py (core functionality only).
  */
 @Service
 @Slf4j
@@ -36,6 +40,9 @@ public class SkillsHubService {
     private static final Pattern PATH_TRAVERSAL = Pattern.compile("\\.\\.[/\\\\]");
     private static final int MAX_FILE_SIZE = 100_000;
 
+    // S6 FIX: Use Jackson ObjectMapper for JSON parsing
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     /**
      * S11: List available skills from a remote repo.
      * Fetches the repo's contents via GitHub API.
@@ -44,14 +51,27 @@ public class SkillsHubService {
         try {
             String apiUrl = repoUrlToApiUrl(repoUrl);
             String json = fetchUrl(apiUrl);
-            // Simple JSON parsing — look for "name" fields
+            if (json == null || json.isBlank()) {
+                return List.of();
+            }
+
+            // S6 FIX: Parse JSON using Jackson ObjectMapper
             List<RemoteSkillInfo> skills = new ArrayList<>();
-            // Very basic parsing: find "name":"xxx" patterns
-            var matcher = Pattern.compile("\"name\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
-            while (matcher.find()) {
-                String name = matcher.group(1);
-                if (!name.endsWith(".md") && !name.equals("README.md") && !name.equals(".gitignore")) {
-                    skills.add(new RemoteSkillInfo(name, "", ""));
+            JsonNode root = objectMapper.readTree(json);
+            if (root.isArray()) {
+                for (JsonNode item : root) {
+                    JsonNode nameNode = item.get("name");
+                    if (nameNode != null && !nameNode.isNull()) {
+                        String name = nameNode.asText();
+                        if (!name.endsWith(".md") && !name.equals("README.md") && !name.equals(".gitignore")) {
+                            JsonNode typeNode = item.get("type");
+                            String type = typeNode != null ? typeNode.asText() : "";
+                            // Only include directories (type=dir) as skills
+                            if ("dir".equals(type) || type.isEmpty()) {
+                                skills.add(new RemoteSkillInfo(name, "", ""));
+                            }
+                        }
+                    }
                 }
             }
             return skills;
@@ -92,23 +112,28 @@ public class SkillsHubService {
             // S11: Try to fetch support files (references/, templates/, scripts/)
             int supportFiles = 0;
             for (String subdir : List.of("references", "templates", "scripts")) {
-                String dirUrl = repoUrlToRawUrl(repoUrl) + "/" + skillName + "/" + subdir;
+                String dirListingUrl = repoUrlToApiUrl(repoUrl) + "/" + skillName + "/" + subdir;
                 try {
-                    String dirListing = fetchUrl(repoUrlToApiUrl(repoUrl) + "/" + skillName + "/" + subdir);
-                    if (dirListing != null && dirListing.contains("\"name\"")) {
-                        var matcher = Pattern.compile("\"name\"\\s*:\\s*\"([^\"]+)\"").matcher(dirListing);
-                        while (matcher.find()) {
-                            String fileName = matcher.group(1);
-                            if (PATH_TRAVERSAL.matcher(fileName).find()) continue;
-                            String fileUrl = rawUrl.replace("/SKILL.md", "/" + subdir + "/" + fileName);
-                            try {
-                                String fileContent = fetchUrl(fileUrl);
-                                if (fileContent != null && fileContent.length() <= MAX_FILE_SIZE) {
-                                    skillManager.writeSupportFile(skillName, subdir + "/" + fileName, fileContent);
-                                    supportFiles++;
+                    String dirListing = fetchUrl(dirListingUrl);
+                    if (dirListing != null && !dirListing.isBlank()) {
+                        // S6 FIX: Parse JSON using Jackson
+                        JsonNode root = objectMapper.readTree(dirListing);
+                        if (root.isArray()) {
+                            for (JsonNode item : root) {
+                                JsonNode nameNode = item.get("name");
+                                if (nameNode == null || nameNode.isNull()) continue;
+                                String fileName = nameNode.asText();
+                                if (PATH_TRAVERSAL.matcher(fileName).find()) continue;
+                                String fileUrl = rawUrl.replace("/SKILL.md", "/" + subdir + "/" + fileName);
+                                try {
+                                    String fileContent = fetchUrl(fileUrl);
+                                    if (fileContent != null && fileContent.length() <= MAX_FILE_SIZE) {
+                                        skillManager.writeSupportFile(skillName, subdir + "/" + fileName, fileContent);
+                                        supportFiles++;
+                                    }
+                                } catch (Exception e) {
+                                    log.debug("Failed to fetch support file {}/{}: {}", subdir, fileName, e.getMessage());
                                 }
-                            } catch (Exception e) {
-                                log.debug("Failed to fetch support file {}/{}: {}", subdir, fileName, e.getMessage());
                             }
                         }
                     }

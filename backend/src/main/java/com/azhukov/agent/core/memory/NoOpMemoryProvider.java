@@ -5,6 +5,11 @@ import java.util.List;
 public class NoOpMemoryProvider implements MemoryProvider {
 
     @Override
+    public String name() {
+        return "builtin";
+    }
+
+    @Override
     public List<String> recall(String userId, String query, int limit) {
         return List.of();
     }

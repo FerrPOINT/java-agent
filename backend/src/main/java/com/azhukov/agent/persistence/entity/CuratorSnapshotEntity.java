@@ -30,4 +30,8 @@ public class CuratorSnapshotEntity {
 
     @Column(name = "snapshot_data", columnDefinition = "TEXT")
     private String snapshotData;
+
+    // S8: Manifest with metadata (JSON manifest with timestamp, skill count, file list)
+    @Column(name = "manifest", columnDefinition = "TEXT")
+    private String manifest;
 }

@@ -3,25 +3,26 @@ package com.azhukov.agent.core.skill;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.UUID;
+import java.io.File;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * S14: Skill preprocessing — template variable substitution.
+ * S2: Skill preprocessing — template variable substitution and inline shell expansion.
  * <p>
  * Supports:
- * - ${SESSION_ID} template variable in skill content
- * - Inline shell expansion `!command` syntax (for !`command`)
+ * - ${HERMES_SKILL_DIR} / ${HERMES_SESSION_ID} template variables (Hermes convention)
+ * - Backward compat: ${SESSION_ID} → ${HERMES_SESSION_ID}, ${SKILL_DIR} → ${HERMES_SKILL_DIR}
+ * - Inline shell expansion !`command` syntax with CWD set to skill directory
  * <p>
- * Ported from Hermes' skill_preprocessing.py (simplified).
+ * Ported from Hermes' skill_preprocessing.py.
  */
 @Slf4j
 @Component
 public class SkillPreprocessor {
 
-    // S14: Template variable patterns
-    private static final Pattern TEMPLATE_VAR_RE = Pattern.compile("\\$\\{(SESSION_ID|SKILL_DIR)\\}");
+    // S2: Template variable patterns — Hermes convention uses HERMES_ prefix
+    private static final Pattern TEMPLATE_VAR_RE = Pattern.compile("\\$\\{(HERMES_SKILL_DIR|HERMES_SESSION_ID|SESSION_ID|SKILL_DIR)\\}");
     private static final Pattern INLINE_SHELL_RE = Pattern.compile("!`([^`\n]+)`");
 
     // Cap inline shell output
@@ -29,9 +30,11 @@ public class SkillPreprocessor {
     private static final int INLINE_SHELL_TIMEOUT_SECONDS = 10;
 
     private volatile boolean enabled = true;
+    private volatile boolean inlineShellEnabled = false;
+    private volatile int inlineShellTimeout = INLINE_SHELL_TIMEOUT_SECONDS;
 
     /**
-     * S14: Set whether preprocessing is enabled.
+     * S2: Set whether preprocessing is enabled.
      */
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
@@ -41,12 +44,24 @@ public class SkillPreprocessor {
         return enabled;
     }
 
+    public void setInlineShellEnabled(boolean enabled) {
+        this.inlineShellEnabled = enabled;
+    }
+
+    public boolean isInlineShellEnabled() {
+        return inlineShellEnabled;
+    }
+
+    public void setInlineShellTimeout(int timeout) {
+        this.inlineShellTimeout = timeout;
+    }
+
     /**
-     * S14: Preprocess skill content — substitute template variables and inline shell.
+     * S2: Preprocess skill content — substitute template variables and inline shell.
      *
      * @param content   the skill content to preprocess
-     * @param sessionId the current session ID (for ${SESSION_ID} substitution)
-     * @param skillDir  the skill directory path (for ${SKILL_DIR} substitution)
+     * @param sessionId the current session ID (for ${HERMES_SESSION_ID} substitution)
+     * @param skillDir  the skill directory path (for ${HERMES_SKILL_DIR} substitution)
      * @return preprocessed content
      */
     public String preprocess(String content, String sessionId, String skillDir) {
@@ -54,27 +69,30 @@ public class SkillPreprocessor {
             return content;
         }
 
-        // S14: Substitute template variables
+        // S2: Substitute template variables (with backward compat)
         content = substituteTemplateVars(content, sessionId, skillDir);
 
-        // S14: Inline shell expansion
-        content = expandInlineShell(content);
+        // S2: Inline shell expansion (only if enabled)
+        if (inlineShellEnabled) {
+            content = expandInlineShell(content, skillDir);
+        }
 
         return content;
     }
 
     /**
-     * S14: Substitute ${SESSION_ID} and ${SKILL_DIR} template variables.
+     * S2: Substitute ${HERMES_SKILL_DIR} and ${HERMES_SESSION_ID} template variables.
+     * Also supports backward-compatible ${SESSION_ID} and ${SKILL_DIR}.
      * Unresolved tokens are left as-is.
      */
-    private String substituteTemplateVars(String content, String sessionId, String skillDir) {
+    String substituteTemplateVars(String content, String sessionId, String skillDir) {
         Matcher matcher = TEMPLATE_VAR_RE.matcher(content);
         StringBuilder sb = new StringBuilder();
         while (matcher.find()) {
             String token = matcher.group(1);
             String replacement = switch (token) {
-                case "SESSION_ID" -> sessionId != null ? sessionId : matcher.group(0);
-                case "SKILL_DIR" -> skillDir != null ? skillDir : matcher.group(0);
+                case "HERMES_SESSION_ID", "SESSION_ID" -> sessionId != null ? sessionId : matcher.group(0);
+                case "HERMES_SKILL_DIR", "SKILL_DIR" -> skillDir != null ? skillDir : matcher.group(0);
                 default -> matcher.group(0);
             };
             matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
@@ -84,18 +102,22 @@ public class SkillPreprocessor {
     }
 
     /**
-     * S14: Expand inline shell snippets like !`date +%Y-%m-%d`.
+     * S2: Expand inline shell snippets like !`date +%Y-%m-%d`.
      * Failures return a short error marker instead of raising.
+     * The skill directory is used as CWD so relative paths work.
      */
-    private String expandInlineShell(String content) {
+    String expandInlineShell(String content, String skillDir) {
         if (!content.contains("!`")) {
             return content;
         }
         Matcher matcher = INLINE_SHELL_RE.matcher(content);
         StringBuilder sb = new StringBuilder();
         while (matcher.find()) {
-            String command = matcher.group(1);
-            String output = runInlineShell(command);
+            String command = matcher.group(1).trim();
+            if (command.isEmpty()) {
+                continue;
+            }
+            String output = runInlineShell(command, skillDir);
             matcher.appendReplacement(sb, Matcher.quoteReplacement(output));
         }
         matcher.appendTail(sb);
@@ -103,18 +125,24 @@ public class SkillPreprocessor {
     }
 
     /**
-     * S14: Execute a single inline-shell snippet and return its stdout (trimmed).
+     * S2: Execute a single inline-shell snippet and return its stdout (trimmed).
+     * S2 FIX: Sets CWD to skillDir so relative paths in shell snippets work.
      */
-    private String runInlineShell(String command) {
+    String runInlineShell(String command, String skillDir) {
+        int timeout = Math.max(1, inlineShellTimeout);
         try {
             ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
-            pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));
+            pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
             pb.redirectErrorStream(false);
+            // S2 FIX: Set working directory to skill dir so relative paths work
+            if (skillDir != null && !skillDir.isBlank()) {
+                pb.directory(new File(skillDir));
+            }
             Process process = pb.start();
-            boolean finished = process.waitFor(INLINE_SHELL_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+            boolean finished = process.waitFor(timeout, java.util.concurrent.TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
-                return "[inline-shell timeout after " + INLINE_SHELL_TIMEOUT_SECONDS + "s: " + command + "]";
+                return "[inline-shell timeout after " + timeout + "s: " + command + "]";
             }
             String output = new String(process.getInputStream().readAllBytes()).trim();
             if (output.isEmpty()) {
@@ -127,7 +155,7 @@ public class SkillPreprocessor {
             return output;
         } catch (Exception e) {
             if (e instanceof java.util.concurrent.TimeoutException) {
-                return "[inline-shell timeout after " + INLINE_SHELL_TIMEOUT_SECONDS + "s: " + command + "]";
+                return "[inline-shell timeout after " + timeout + "s: " + command + "]";
             }
             return "[inline-shell error: " + e.getMessage() + "]";
         }

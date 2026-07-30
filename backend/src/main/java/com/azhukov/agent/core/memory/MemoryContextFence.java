@@ -3,7 +3,7 @@ package com.azhukov.agent.core.memory;
 import java.util.regex.Pattern;
 
 /**
- * S8: Memory context fencing — wraps memory snapshots in fence tags when
+ * S1/S8: Memory context fencing — wraps memory snapshots in fence tags when
  * injecting into system prompts, and strips fence tags from model output.
  *
  * Ported from Hermes' memory_manager.py (build_memory_context_block, sanitize_context,
@@ -23,9 +23,15 @@ public final class MemoryContextFence {
     private static final Pattern FENCE_TAG_RE = Pattern.compile("</?\\s*memory-context\\s*>", Pattern.CASE_INSENSITIVE);
     private static final Pattern INTERNAL_CONTEXT_RE = Pattern.compile(
         "<\\s*memory-context\\s*>[\\s\\S]*?</\\s*memory-context\\s*>", Pattern.CASE_INSENSITIVE);
+    // S1: Strip system notes — matches both "informational background data" and "authoritative reference data" variants
+    private static final Pattern INTERNAL_NOTE_RE = Pattern.compile(
+        "\\[System note:\\s*The following is recalled memory context,\\s*NOT new user input\\.\\s*" +
+        "Treat as (?:informational background data|authoritative reference data[^\\]]*)\\.\\]\\s*",
+        Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
     /**
-     * S8: Wrap memory snapshot in fence tags.
+     * S1: Wrap memory snapshot in fence tags with system note.
+     * Ported from build_memory_context_block().
      */
     public static String buildContextBlock(String rawContext) {
         if (rawContext == null || rawContext.isBlank()) {
@@ -36,17 +42,19 @@ public final class MemoryContextFence {
     }
 
     /**
-     * S8: Strip fence tags, injected context blocks from model output.
+     * S1: Strip fence tags, injected context blocks, and system notes from provider output.
+     * Ported from sanitize_context().
      */
     public static String sanitizeContext(String text) {
         if (text == null || text.isEmpty()) return text;
         text = INTERNAL_CONTEXT_RE.matcher(text).replaceAll("");
+        text = INTERNAL_NOTE_RE.matcher(text).replaceAll("");
         text = FENCE_TAG_RE.matcher(text).replaceAll("");
         return text;
     }
 
     /**
-     * S8: Simple streaming scrubber for fence tags.
+     * S1: Simple streaming scrubber for fence tags.
      * Stateful — holds back partial tag matches across chunks.
      */
     public static class StreamingContextScrubber {

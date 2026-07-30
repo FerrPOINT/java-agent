@@ -1,5 +1,6 @@
 package com.azhukov.agent.tools.memory;
 
+import com.azhukov.agent.core.memory.WriteContext;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -8,9 +9,21 @@ import com.azhukov.agent.core.memory.WriteApprovalGate;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+
+/**
+ * Memory tool — save durable information to persistent memory.
+ * <p>
+ * S3 fix: Uses {@link WriteContext} to set the correct write origin on the
+ * approval gate. During background review, the origin is "background_review"
+ * instead of "foreground".
+ * S7 fix: Builds provenance metadata from {@link WriteContext} and passes
+ * it to the memory provider on store/replace/remove operations.
+ */
 @AgentTool(
     name = "memory",
     description = """
@@ -42,6 +55,7 @@ import org.springframework.stereotype.Component;
     toolset = "memory"
 )
 @Component
+@Slf4j
 public class MemoryTool implements ToolHandler {
 
     private final MemoryProvider memoryProvider;
@@ -62,24 +76,32 @@ public class MemoryTool implements ToolHandler {
         MemoryArgs args = ToolHandler.parseJson(arguments, MemoryArgs.class);
         String target = args.target() != null && !args.target().isBlank() ? args.target() : "memory";
 
+        // S7: Build provenance metadata from WriteContext (empty for foreground writes)
+        Map<String, String> provenance = WriteContext.buildProvenance();
+        if (!provenance.isEmpty()) {
+            log.debug("Memory write with provenance: {}", provenance);
+        }
+
         return switch (args.action().toLowerCase()) {
-            case "add" -> doAdd(session, target, args);
-            case "replace" -> doReplace(session, target, args);
-            case "remove" -> doRemove(session, target, args);
+            case "add" -> doAdd(session, target, args, provenance);
+            case "replace" -> doReplace(session, target, args, provenance);
+            case "remove" -> doRemove(session, target, args, provenance);
             case "read" -> doRead(session, target, args);
             default -> ToolResult.fail("Unknown action: " + args.action());
         };
     }
 
-    private ToolResult doAdd(Session session, String target, MemoryArgs args) {
+    private ToolResult doAdd(Session session, String target, MemoryArgs args, Map<String, String> provenance) {
         if (args.content() == null || args.content().isBlank()) {
             return ToolResult.fail("content is required for add action");
         }
+        // S3: Use WriteContext to determine origin for approval gate
+        String origin = WriteContext.effectiveExecutionContext();
         if (writeApprovalGate != null && writeApprovalGate.isEnabled()) {
             var id = writeApprovalGate.stageWrite(
                 session.userId(), "add", target, args.content(), null,
                 args.content().length() > 80 ? args.content().substring(0, 80) + "..." : args.content(),
-                "foreground"
+                origin
             );
             return ToolResult.ok("Staged for approval (id: " + id + ")");
         }
@@ -87,18 +109,20 @@ public class MemoryTool implements ToolHandler {
         return ToolResult.ok("Added to " + target + " store.");
     }
 
-    private ToolResult doReplace(Session session, String target, MemoryArgs args) {
+    private ToolResult doReplace(Session session, String target, MemoryArgs args, Map<String, String> provenance) {
         if (args.old_text() == null || args.old_text().isBlank()) {
             return ToolResult.fail("old_text is required for replace action");
         }
         if (args.content() == null || args.content().isBlank()) {
             return ToolResult.fail("content is required for replace action");
         }
+        // S3: Use WriteContext to determine origin for approval gate
+        String origin = WriteContext.effectiveExecutionContext();
         if (writeApprovalGate != null && writeApprovalGate.isEnabled()) {
             var id = writeApprovalGate.stageWrite(
                 session.userId(), "replace", target, args.content(), args.old_text(),
                 "Replace: " + (args.old_text().length() > 60 ? args.old_text().substring(0, 60) + "..." : args.old_text()),
-                "foreground"
+                origin
             );
             return ToolResult.ok("Staged for approval (id: " + id + ")");
         }
@@ -109,15 +133,17 @@ public class MemoryTool implements ToolHandler {
         return ToolResult.ok("Replaced in " + target + " store.");
     }
 
-    private ToolResult doRemove(Session session, String target, MemoryArgs args) {
+    private ToolResult doRemove(Session session, String target, MemoryArgs args, Map<String, String> provenance) {
         if (args.old_text() == null || args.old_text().isBlank()) {
             return ToolResult.fail("old_text is required for remove action");
         }
+        // S3: Use WriteContext to determine origin for approval gate
+        String origin = WriteContext.effectiveExecutionContext();
         if (writeApprovalGate != null && writeApprovalGate.isEnabled()) {
             var id = writeApprovalGate.stageWrite(
                 session.userId(), "remove", target, null, args.old_text(),
                 "Remove: " + (args.old_text().length() > 60 ? args.old_text().substring(0, 60) + "..." : args.old_text()),
-                "foreground"
+                origin
             );
             return ToolResult.ok("Staged for approval (id: " + id + ")");
         }
