@@ -177,9 +177,13 @@ springBoot {
     buildInfo()
 }
 
-// Allow JLine native terminal access without warning on Java 25
+// Allow JLine native terminal access without warning on Java 25.
+// maxHeapSize prevents OOM/SIGKILL when real LLM calls buffer large payloads
+// inside the Gradle daemon JVM (daemon overhead + app heap > available RAM).
+// For production-like runs with real LLM load prefer `java -jar` (no daemon overhead).
 tasks.named('bootRun') {
     jvmArgs '--enable-native-access=ALL-UNNAMED'
+    maxHeapSize = '2g'
 }
 tasks.named('bootJar') {
     manifest {

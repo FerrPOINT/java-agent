@@ -26,66 +26,19 @@ Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-аге
 | MapStruct | 1.6.3 |
 | Testcontainers | 2.0.5 |
 
-## Архитектурные правила
-
-### Lombok
-
-| Правило | Аннотация | Применение |
-|---------|-----------|------------|
-| Spring beans (сервисы, контроллеры, компоненты) | `@RequiredArgsConstructor` + `@Slf4j` | Все классы с final-зависимостями и чистыми конструкторами |
-| JPA entities | `@Entity` + `@Data` | `MessageEntity`, `SessionEntity`, `BotSessionEntity` и др. |
-| Records для DTO и core models | `record` (без Lombok) | `ChatRequest`, `Message`, `ToolCall`, `Session`, `ChatResponse` |
-| Логирование | `@Slf4j` | Заменяет ручной `LoggerFactory.getLogger(...)` |
-
-**Когда НЕ использовать Lombok:**
-- Конструктор с логикой (HttpClient.new, Executors.new, RestClient.builder)
-- Null-checks в конструкторе (`x == null ? "" : x`)
-- `@Qualifier` на параметр конструктора (Lombok не поддерживает)
-- Множественные конструкторы
-- Классы без DI-зависимостей
-
-**@PostConstruct для derived fields:**
-Когда поле вычисляется из injected-зависимости (например `configuredLimit = properties.getWeb().getSearchResults()`), поле делается non-final, а вычисление переносится в `@PostConstruct void init()`. В unit-тестах `init()` вызывается вручную после `new`.
-
-**Inline init для runtime state:**
-Поля, не зависящие от injected-зависимостей (executors, caches, maps), инициализируются inline: `private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(...)`.
-
-### MapStruct
-
-| Маппер | Пакет | Направление |
-|--------|-------|-------------|
-| `MessageMapper` | `persistence.mapper` | `MessageEntity` ↔ `Message` |
-| `SessionEntityMapper` | `persistence.mapper` | `SessionEntity` ↔ `Session` |
-| `DomainDtoMapper` | `api.mapper` | `Session` → `SessionSummaryDto` |
-| `OpenAiMapper` | `api.mapper` | `Message` ↔ `OpenAiMessage`, `ChatResponse` ↔ `OpenAiChatResponse`, `ToolCall` → `OpenAiToolCall` |
-
-**Конфигурация:** `MapStructConfig` — `componentModel = "spring"`, `unmappedTargetPolicy = ERROR`.
-
-**Правила:**
-- Мапперы — Spring beans (`@Mapper(config = MapStructConfig.class)`)
-- В unit-тестах — `Mappers.getMapper(X.class)` (не mock)
-- `@Named` helper methods для non-trivial conversion (enum → string, nested objects)
-- `default` methods для conditional logic
-- `roleToString` → `role.name().toLowerCase()`, `stringToRole` → `Role.valueOf(role.toUpperCase())`
-
-**Когда НЕ использовать MapStruct:**
-- `buildResponse` в сервисах, где DTO собирается из множества источников (Session + TurnResult + UsageTracker + Properties)
-- Streaming chunk creation (DTO specifique to SSE format)
-- Bot layer: entities используются как domain models, mapping не нужен
-
-### Структура проекта
+## Структура проекта
 
 ```
 java-agent/
 ├── backend/                    # Backend: REST API, LLM client, tools, persistence
 │   └── src/main/java/com/azhukov/agent/
-│       ├── api/                # REST controllers + DTO + mappers (OpenAiMapper, DomainDtoMapper)
+│       ├── api/                # REST controllers + DTO + mappers
 │       ├── cli/                # Picocli / JLine REPL
 │       ├── client/             # LLM clients (LangChain4j, NoOp) + MCP client
 │       ├── config/             # AgentProperties, MapStructConfig, beans
 │       ├── core/               # domain layer (AgentRuntime, tools, context, memory, skills, state, security)
 │       ├── gateway/            # Telegram/webhook adapters + routing
-│       ├── persistence/        # JPA entities + repositories + mappers (MessageMapper, SessionEntityMapper) + Flyway
+│       ├── persistence/        # JPA entities + repositories + mappers + Flyway
 │       ├── security/           # SSRF-safe HTTP client, safety validators
 │       ├── service/            # AgentRuntimeService, AgentStreamingService, TTS, transcription
 │       └── tools/              # @AgentTool implementations (file, terminal, web, browser, memory, delegate, etc.)
@@ -98,49 +51,18 @@ java-agent/
 │       ├── commands/           # 56 command handlers + CommandRegistry (10 aliases)
 │       ├── config/             # BotProperties, BotConfig
 │       ├── core/               # BotMessageProcessor, AgentBackendClient
-│       ├── footer/             # Runtime footer
 │       ├── formatting/         # Markdown converter, response filter
 │       ├── group/              # Group message filter
 │       ├── keyboard/           # Inline keyboards (model/provider selection)
 │       ├── lifecycle/          # Bot lifecycle
 │       ├── media/              # Media cache, inbound media, location handler
 │       ├── polling/            # Long polling, reconnect watcher, fallback IP resolver
-│       ├── reaction/           # Reaction manager
 │       ├── session/            # BotSessionEntity, BotSessionStore
-│       ├── sticker/            # Sticker cache
 │       ├── streaming/          # StreamEditor (edit-message streaming)
 │       ├── typing/             # TypingManager
 │       └── webhook/            # Webhook secret validator
 ├── docs/                       # Architecture docs
 └── docker-compose.yml          # Production deployment
-```
-
-## Coverage
-
-| Метрика | Значение |
-|---------|----------|
-| LINE | 80.4% |
-| BRANCH | 66.0% |
-| METHOD | 84.5% |
-| CLASS | 92.7% |
-| Тестов | 1500 (279 test files), 0 failures |
-| @RequiredArgsConstructor | 159 файлов |
-| @Slf4j | 83 файла |
-| @Data (JPA entities) | 16 файлов |
-| MapStruct мапперов | 4 (+ 5 тестов) |
-| Bot команд | 56 (+ 10 алиасов) |
-| Backend endpoints | 50 |
-| MCP файлов | 21 |
-
-## Конкурентность: виртуальные потоки
-
-## Имя агента
-
-Настраивается через `agent.name` (default — `Джава агент`):
-
-```yaml
-agent:
-  name: ${AGENT_NAME:Джава агент}
 ```
 
 ## Профили
@@ -164,8 +86,6 @@ java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
   --spring.datasource.password=project_workflow \
   --server.port=8090
 ```
-
-> ⚠️ Gradle `bootRun` падает с OOM/SIGKILL при реальных LLM-вызовах. Используйте `java -jar`.
 
 ### NoOp (без LLM, без PostgreSQL)
 
@@ -201,10 +121,9 @@ docker compose -f docker-compose.local.yml up --build  # local dev, порты 1
 
 - `docker-compose.yml` — production (порт 8080, PostgreSQL 5432)
 - `docker-compose.local.yml` — local dev (порт 18090, PostgreSQL 18091) — не конфликтует с другими сервисами
-
-- Dockerfile: `eclipse-temurin:25-jre-noble` + Chromium runtime deps.
-- `server.shutdown: immediate` — workaround для graceful shutdown бага Spring Boot 4.1.0.
-- Health readiness включает только `db`, чтобы LLM/CDP-сбои не помечали под неготовой.
+- Dockerfile: `eclipse-temurin:25-jre-noble` + Chromium runtime deps
+- `server.shutdown: immediate` — workaround для graceful shutdown бага Spring Boot 4.1.0
+- Health readiness включает только `db`, чтобы LLM/CDP-сбои не помечали под неготовой
 
 Подробности — `backend/docs/13-production-hardening.md`.
 
@@ -225,8 +144,6 @@ cd backend
 cd ..
 ./scripts/e2e-docker-compose-test.sh  # Docker Compose E2E (noop provider + PostgreSQL)
 ```
-
-Текущий coverage gate: LINE ≥ 80%, per-package целевые пакеты ≥ 75%. Отчёт JaCoCo: `backend/build/reports/jacoco/test/html/index.html`.
 
 ## Переменные окружения
 

@@ -105,6 +105,13 @@ springBoot {
     buildInfo()
 }
 
+// maxHeapSize prevents OOM/SIGKILL when real LLM calls buffer large payloads
+// inside the Gradle daemon JVM. For production-like runs prefer `java -jar`.
+tasks.named('bootRun') {
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    maxHeapSize = '2g'
+}
+
 tasks.named('bootJar') {
     manifest {
         attributes 'Start-Class': 'com.azhukov.agent.bot.BotApplication'

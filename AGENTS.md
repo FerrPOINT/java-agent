@@ -15,6 +15,53 @@ cd /opt/dev/java-agent
 ./gradlew jacocoTestReport     # coverage report
 ```
 
+## Run
+
+### `java -jar` (рекомендуется для реальных LLM-вызовов)
+
+```bash
+cd backend
+./gradlew bootJar
+java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
+  --spring.profiles.active=dev \
+  --server.port=8090
+```
+
+Чистая JVM, нет Gradle daemon overhead, полный контроль памяти.
+
+### `./gradlew bootRun` (для dev-итерации с noop/dev)
+
+```bash
+cd backend
+./gradlew bootRun --args='--spring.profiles.active=noop'
+```
+
+`maxHeapSize = 2g` установлен в `build.gradle` как страховка от OOM.
+Gradle daemon (~500MB–1GB) + app heap разделят одну JVM — при
+больших LLM-payloads памяти может не хватить. Для реальных нагрузок
+используй `java -jar`.
+
+### Profiles
+
+| Профиль | Назначение |
+|---------|------------|
+| `dev` | Ollama Cloud / локальный endpoint, порт 8090, PostgreSQL localhost:5432 |
+| `noop` | LLM-заглушка + H2 in-memory; для тестов и offline-разработки |
+| `cli` | Активирует Picocli REPL |
+| `prod` | Production endpoint (OpenAI / совместимый), INFO-логи |
+
+### Key env vars
+
+| Переменная | Назначение |
+|------------|------------|
+| `AGENT_MODEL_PROVIDER` | `openai-compatible`, `noop` |
+| `AGENT_MODEL_BASE_URL` | URL endpoint |
+| `AGENT_MODEL_API_KEY` | API-ключ |
+| `AGENT_MODEL_NAME` | Название модели |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | PostgreSQL |
+| `AGENT_SERVER_PORT` | Порт (default 8090) |
+| `AGENT_BROWSER_CDP_URL` | URL Chrome DevTools Protocol |
+
 ## Tech Stack
 
 | Component | Version |
