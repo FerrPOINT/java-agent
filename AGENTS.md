@@ -41,6 +41,21 @@ Gradle daemon (~500MB–1GB) + app heap разделят одну JVM — при
 больших LLM-payloads памяти может не хватить. Для реальных нагрузок
 используй `java -jar`.
 
+### CLI (standalone, общается с backend через REST)
+
+```bash
+cd cli
+./gradlew bootJar
+java -jar build/libs/java-agent-cli-0.0.1-SNAPSHOT.jar \
+  --backend.url=http://localhost:8090 \
+  --session.id=$(uuidgen)
+```
+
+CLI — отдельный Spring Boot модуль, не зависит от backend кода.
+47 slash commands: `/new`, `/status`, `/compress`, `/undo`, `/checkpoint`,
+`/rollback`, `/memory`, `/skills`, `/help`, `/exit`, etc.
+SSE streaming для real-time token output. JLine autocomplete.
+
 ### Profiles
 
 | Профиль | Назначение |
@@ -223,31 +238,28 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 
 | Metric | Value |
 |--------|-------|
-| Java files | 634 |
-| Test files | 279 |
-| Total tests | 1500 |
+| Java source files | 359 |
+| Test files | 309 |
 | `@RequiredArgsConstructor` | 159 files |
-| `@Slf4j` | 83 files |
+| `@Slf4j` | 88 files |
 | `@Data` (JPA) | 16 files |
 | MapStruct mappers | 4 |
-| Mapper tests | 5 |
 | Bot commands | 56 (+ 10 aliases) |
-| Backend endpoints | 50 |
-| MCP files | 21 |
-| LINE coverage | 80.4% |
+| CLI slash commands | 47 |
+| Backend endpoints | 53 |
+| Gradle modules | 3 (backend, telegram-bot, cli) |
 
 ## Project Structure
 
 ```
 backend/src/main/java/com/azhukov/agent/
 ├── api/           # REST controllers + DTOs + mappers (OpenAiMapper, DomainDtoMapper)
-├── cli/           # Picocli REPL
 ├── client/        # LLM clients (LangChain4j, NoOp, MCP)
 ├── config/        # AgentProperties, MapStructConfig, beans
 ├── core/          # Domain: AgentRuntime, tools, context, memory, skills, state, security
 ├── gateway/       # Telegram/webhook adapters + routing
 ├── persistence/   # JPA entities + repositories + mappers + Flyway
-├── security/      # SSRF protection, safety validators
+├── security/      # SSRF protection, safety validators, redacting log layout
 ├── service/       # AgentRuntimeService, AgentStreamingService, TTS, transcription
 └── tools/         # @AgentTool implementations
 
@@ -266,6 +278,17 @@ telegram-bot/src/main/java/com/azhukov/agent/bot/
 ├── streaming/     # StreamEditor (edit-message streaming)
 ├── typing/        # TypingManager
 └── webhook/       # Webhook secret validator
+
+cli/src/main/java/com/azhukov/agent/cli/
+├── BackendClient.java         # REST client to backend (22 methods)
+├── CliApplication.java         # Spring Boot main
+├── CliConfig.java             # RestClient + ObjectMapper beans
+├── CliReplRunner.java         # CommandLineRunner entry
+├── ReplLoop.java              # JLine interactive REPL
+├── MarkdownRenderer.java      # ANSI color markdown
+├── SlashCommandRegistry.java  # 47 slash commands
+├── SlashCompleter.java        # JLine autocomplete
+└── SlashAutoSuggest.java      # Inline suggestions
 ```
 
 ## Deployment

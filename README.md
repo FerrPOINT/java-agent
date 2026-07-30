@@ -61,6 +61,12 @@ java-agent/
 │       ├── streaming/          # StreamEditor (edit-message streaming)
 │       ├── typing/             # TypingManager
 │       └── webhook/            # Webhook secret validator
+├── cli/                        # CLI: standalone REPL, REST client to backend
+│   └── src/main/java/com/azhukov/agent/cli/
+│       ├── BackendClient.java  # 22 REST methods to backend
+│       ├── ReplLoop.java       # JLine interactive REPL with SSE streaming
+│       ├── SlashCommandRegistry.java  # 47 slash commands
+│       └── MarkdownRenderer.java # ANSI color markdown
 ├── docs/                       # Architecture docs
 └── docker-compose.yml          # Production deployment
 ```
@@ -111,6 +117,20 @@ curl -s -X POST http://localhost:8090/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"kimi-k2.6","messages":[{"role":"user","content":"hi"}]}' | jq .
 ```
+
+### CLI (standalone, REST client to backend)
+
+```bash
+# Start backend first
+cd backend && ./gradlew bootJar
+java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev &
+
+# Start CLI
+cd ../cli && ./gradlew bootJar
+java -jar build/libs/java-agent-cli-0.0.1-SNAPSHOT.jar --backend.url=http://localhost:8090
+```
+
+47 slash commands (`/help`, `/new`, `/status`, `/compress`, `/undo`, `/checkpoint`, `/memory`, `/skills`, `/exit`), SSE streaming, JLine autocomplete.
 
 ## Production
 
