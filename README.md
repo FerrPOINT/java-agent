@@ -38,11 +38,11 @@ Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-аге
 
 | Метрика | Значение |
 |---------|----------|
-|| LINE | 87.3% |
-|| BRANCH | 74.3% |
-|| METHOD | 85.9% |
-|| CLASS | 98.3% |
-|| Тестов | 1414 unit + 60 slow, 0 failures |
+| LINE | 87.3% |
+| BRANCH | 74.3% |
+| METHOD | 85.9% |
+| CLASS | 98.3% |
+| Тестов | 1414 unit + 60 slow, 0 failures |
 
 ## Имя агента
 
