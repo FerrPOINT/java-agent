@@ -17,10 +17,20 @@ import java.util.Collections;
 @Mapper(config = com.azhukov.agent.config.MapStructConfig.class)
 public interface MessageMapper {
 
-    @Mapping(target = "role", source = "role", qualifiedByName = "stringToRole")
-    @Mapping(target = "toolCall", source = ".", qualifiedByName = "extractToolCall")
-    @Mapping(target = "toolCalls", ignore = true)
-    Message toDomain(MessageEntity entity);
+    default Message toDomain(MessageEntity entity) {
+        if (entity == null) {
+            return null;
+        }
+        Role role = stringToRole(entity.getRole());
+        boolean isTool = role == Role.TOOL;
+        ToolCall toolCall = isTool ? null : extractToolCall(entity);
+        String toolCallId = isTool ? entity.getToolCallId() : null;
+        return new Message(role, entity.getContent(), toolCall, null, toolCallId, entity.getTurnIndex());
+    }
+
+    default boolean isTool(String role) {
+        return "tool".equalsIgnoreCase(role);
+    }
 
     @Mapping(target = "role", source = "role", qualifiedByName = "roleToString")
     @Mapping(target = "sessionId", ignore = true)
@@ -50,7 +60,7 @@ public interface MessageMapper {
 
     @Named("stringToRole")
     default Role stringToRole(String role) {
-        return role == null ? Role.USER : Role.valueOf(role);
+        return role == null ? Role.USER : Role.valueOf(role.toUpperCase());
     }
 
     @Named("roleToString")
@@ -60,7 +70,7 @@ public interface MessageMapper {
 
     @Named("extractToolCall")
     default ToolCall extractToolCall(MessageEntity entity) {
-        if (entity.getToolCallId() == null) {
+        if (entity.getToolCallName() == null && entity.getToolCallId() == null) {
             return null;
         }
         return new ToolCall(
