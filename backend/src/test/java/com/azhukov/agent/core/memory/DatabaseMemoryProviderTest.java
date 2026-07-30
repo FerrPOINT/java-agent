@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.memory;
 
+import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.persistence.entity.MemoryEntity;
 import com.azhukov.agent.persistence.repository.MemoryRepository;
 import org.junit.jupiter.api.Test;
@@ -204,5 +205,31 @@ class DatabaseMemoryProviderTest {
         assertThat(snapshot).containsKeys("memory", "user");
         assertThat(snapshot.get("memory")).contains("[cat] mem fact");
         assertThat(snapshot.get("user")).contains("[info] user fact");
+    }
+
+    // S4: syncTurn no longer writes facts — just logs for audit
+    @Test
+    void syncTurn_doesNotWriteMemoryFacts() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        p.syncTurn("session-1", List.of(Message.user("hello"), Message.assistant("hi", 0)));
+        // S4: Should NOT save any memory entities — just log
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void syncTurn_emptyMessages_doesNothing() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        p.syncTurn("session-1", List.of());
+        verifyNoInteractions(repo);
+    }
+
+    @Test
+    void syncTurn_nullMessages_doesNothing() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        p.syncTurn("session-1", null);
+        verifyNoInteractions(repo);
     }
 }

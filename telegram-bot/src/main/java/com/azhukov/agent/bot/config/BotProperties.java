@@ -36,6 +36,10 @@ public class BotProperties {
     private String homeChatId = ""; // set by /set_home
     private boolean linkPreview = true; // B3.7: include link previews in sent messages
 
+    // B7: When true, streaming edit messages are delivered silently (disable_notification=true).
+    // Only the final message after streaming completes triggers a push notification.
+    private boolean streamingSilent = true;
+
     private final Polling polling = new Polling();
     private final Webhook webhook = new Webhook();
     private final Auth auth = new Auth();
@@ -53,6 +57,8 @@ public class BotProperties {
         private long reconnectDelayMs = 5000;
         private double reconnectBackoffMultiplier = 1.5;
         private long reconnectMaxDelayMs = 60000;
+        /** Max retries on HTTP 409 conflict (another polling instance) before stopping. */
+        private int conflictMaxRetries = 5;
     }
 
     @Getter

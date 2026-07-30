@@ -1,6 +1,5 @@
 package com.azhukov.agent.bot.media;
 
-import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.sticker.StickerCache;
@@ -9,6 +8,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Optional;
 
 /**
@@ -20,14 +23,17 @@ import java.util.Optional;
  * the audio is transcribed to text via the backend and the transcribed text
  * is used as the message content for the LLM.
  *
- * <p>For stickers (B2.1), checks the {@link StickerCache} first.
- * On a cache miss, returns a placeholder description (vision analysis
- * would be done by the backend).
+ * <p>For photos, documents, and stickers, the file is downloaded via the
+ * {@link MediaDownloader} (Telegram getFile API) and saved to
+ * {@code /tmp/agent-media/} so vision tools can analyze it.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class InboundMediaHandler {
+
+    private static final long MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
+    private static final String MEDIA_DIR = "/tmp/agent-media";
 
     private final MediaDownloader mediaDownloader;
     private final StickerCache stickerCache;
@@ -64,13 +70,80 @@ public class InboundMediaHandler {
             // Fallback to placeholder if transcription fails
         }
 
-        // Attempt to download the media (result is cached)
-        Optional<byte[]> downloaded = mediaDownloader.downloadToFileId(fileId);
-        int sizeBytes = downloaded.map(bytes -> bytes.length).orElse(0);
+        // Skip location — it's not a downloadable file
+        if ("location".equals(fileType)) {
+            return Optional.empty();
+        }
 
-        String description = describe(event, fileType, fileId, sizeBytes);
-        log.debug("Handled media: type={}, fileId={}, size={}bytes", fileType, fileId, sizeBytes);
+        // Attempt to download the media
+        Optional<byte[]> downloaded = mediaDownloader.downloadToFileId(fileId);
+
+        if (downloaded.isEmpty()) {
+            log.warn("Failed to download media: type={}, fileId={}", fileType, fileId);
+            String desc = describe(event, fileType, fileId, 0, null);
+            return Optional.of(desc);
+        }
+
+        byte[] data = downloaded.get();
+        int sizeBytes = data.length;
+
+        // Enforce file size limit (20 MB)
+        if (sizeBytes > MAX_FILE_SIZE_BYTES) {
+            log.warn("Media too large ({} bytes > {} max): type={}, fileId={}, skipping download",
+                sizeBytes, MAX_FILE_SIZE_BYTES, fileType, fileId);
+            String desc = describe(event, fileType, fileId, sizeBytes, null);
+            return Optional.of(desc);
+        }
+
+        // Save to /tmp/agent-media/
+        Path savedPath = saveMedia(fileId, fileType, data);
+        String description = describe(event, fileType, fileId, sizeBytes, savedPath);
+        log.debug("Handled media: type={}, fileId={}, size={}bytes, saved={}",
+            fileType, fileId, sizeBytes, savedPath);
         return Optional.of(description);
+    }
+
+    /**
+     * Save downloaded media bytes to /tmp/agent-media/ with a filename derived
+     * from the file_id and a sensible extension.
+     *
+     * @param fileId   Telegram file_id
+     * @param fileType media type (photo, document, sticker, etc.)
+     * @param data     file bytes
+     * @return the path the file was saved to, or null on failure
+     */
+    private Path saveMedia(String fileId, String fileType, byte[] data) {
+        try {
+            Path dir = Paths.get(MEDIA_DIR);
+            Files.createDirectories(dir);
+
+            String ext = extensionFor(fileType);
+            // Sanitize fileId for use as filename (keep only alphanumeric + - _)
+            String safeName = fileId.replaceAll("[^A-Za-z0-9_-]", "_");
+            String fileName = fileType + "_" + safeName + ext;
+            Path path = dir.resolve(fileName);
+
+            Files.write(path, data);
+            log.debug("Saved media to {}", path);
+            return path;
+        } catch (IOException e) {
+            log.warn("Failed to save media to {}: {}", MEDIA_DIR, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Returns a file extension appropriate for the media type.
+     */
+    private String extensionFor(String fileType) {
+        return switch (fileType) {
+            case "photo" -> ".jpg";
+            case "sticker" -> ".webp";
+            case "voice" -> ".ogg";
+            case "animation" -> ".gif";
+            case "document" -> ".bin"; // extension unknown without file metadata
+            default -> ".bin";
+        };
     }
 
     /**
@@ -97,28 +170,29 @@ public class InboundMediaHandler {
         }
     }
 
-    private String describe(UpdateEvent event, String fileType, String fileId, int sizeBytes) {
+    private String describe(UpdateEvent event, String fileType, String fileId, int sizeBytes, Path savedPath) {
         String caption = event.caption();
         String captionPart = (caption != null && !caption.isBlank())
             ? ", caption=\"" + caption + "\""
             : "";
 
+        String pathPart = savedPath != null ? ", path=" + savedPath : "";
+
         return switch (fileType) {
-            case "photo" -> "[Photo received, file_id=" + fileId + ", size=" + sizeBytes + " bytes" + captionPart + "]";
-            case "document" -> "[Document: file_id=" + fileId + ", size=" + sizeBytes + " bytes" + captionPart + "]";
-            case "voice" -> "[Voice message received, file_id=" + fileId + ", size=" + sizeBytes + " bytes" + captionPart + "]";
+            case "photo" -> "[Photo: " + (savedPath != null ? savedPath : "download failed") + captionPart + "]";
+            case "document" -> "[Document: " + (savedPath != null ? savedPath : "download failed") + ", size=" + sizeBytes + " bytes" + captionPart + "]";
+            case "voice" -> "[Voice message: file_id=" + fileId + ", size=" + sizeBytes + " bytes" + captionPart + "]";
             case "sticker" -> {
                 // B2.1: Check sticker cache first
-                String fileUniqueId = event.fileId(); // Using fileId as fileUniqueId proxy
-                Optional<String> cached = stickerCache.get(fileUniqueId);
+                Optional<String> cached = stickerCache.get(fileId);
                 if (cached.isPresent()) {
                     yield "[Sticker: " + cached.get() + "]";
                 }
-                // Cache miss — return placeholder (vision analysis would be done by backend)
-                yield "[Sticker received, file_id=" + fileId + "]";
+                // Cache miss — return description with saved path if available
+                yield "[Sticker: " + (savedPath != null ? savedPath : "file_id=" + fileId) + "]";
             }
-            case "animation" -> "[Animation/GIF received, file_id=" + fileId + "]";
-            default -> "[Media received: type=" + fileType + ", file_id=" + fileId + "]";
+            case "animation" -> "[Animation/GIF: file_id=" + fileId + "]";
+            default -> "[Media: type=" + fileType + ", file_id=" + fileId + pathPart + "]";
         };
     }
 }

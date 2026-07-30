@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.keyboard;
 
+import com.azhukov.agent.bot.auth.AuthorizationService;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
@@ -16,6 +17,10 @@ import java.util.Map;
  * Handles callback_query {@link UpdateEvent}s from inline keyboard presses.
  * Parses callbackData in the format "command:value", routes to the
  * appropriate action, and answers the callback query via TelegramClient.
+ * <p>
+ * B4: Before executing any callback action, checks
+ * {@link AuthorizationService#isAuthorized(long, String, long)}. Unauthorized
+ * users receive a "Not authorized" answer and the attempt is logged at WARN.
  * <p>
  * Supported callbacks:
  * <ul>
@@ -36,6 +41,7 @@ public class CallbackQueryHandler {
     private final InlineKeyboardBuilder inlineKeyboardBuilder;
     private final BotSessionStore sessionStore;
     private final BotProperties properties;
+    private final AuthorizationService authorizationService;
 
     /**
      * Handles a callback_query UpdateEvent.
@@ -54,6 +60,14 @@ public class CallbackQueryHandler {
 
         if (callbackData == null || callbackData.isBlank()) {
             answer(callbackQueryId, "Unknown action", false);
+            return null;
+        }
+
+        // B4: Authorization check — verify the user who clicked the button is authorized
+        if (!authorizationService.isAuthorized(event.userId(), event.username(), chatId)) {
+            log.warn("Unauthorized callback attempt: userId={}, username={}, chatId={}, data={}",
+                event.userId(), event.username(), chatId, callbackData);
+            answer(callbackQueryId, "Not authorized", true);
             return null;
         }
 

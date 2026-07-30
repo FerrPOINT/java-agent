@@ -21,10 +21,9 @@ import java.util.function.Consumer;
  *   <li>Ctrl+C prints a newline and continues</li>
  *   <li>EOF (Ctrl+D) exits the loop</li>
  *   <li>Session ID is persistent across turns</li>
+ *   <li>SlashAutoSuggest is wired for inline command suggestions (C5)</li>
+ *   <li>BackendUnavailableException is caught with friendly messages and retry (C8)</li>
  * </ul>
- * <p>
- * The REPL is a {@code @Component} that gets {@link BackendClient},
- * {@link SlashCommandRegistry}, and {@link MarkdownRenderer} injected.
  */
 @Component
 @RequiredArgsConstructor
@@ -36,6 +35,7 @@ public class ReplLoop {
     private final MarkdownRenderer markdownRenderer;
 
     private volatile boolean running = false;
+    private boolean autoSuggestEnabled = true;
 
     /**
      * Run the REPL loop until /exit or EOF.
@@ -57,7 +57,7 @@ public class ReplLoop {
     public void runLoop(Terminal terminal, String sessionId, Consumer<String> output) {
         Consumer<String> out = output != null ? output : System.out::println;
 
-        // Build LineReader with SlashCompleter
+        // C5: Build LineReader with SlashCompleter AND SlashAutoSuggest
         LineReader reader = LineReaderBuilder.builder()
             .terminal(terminal)
             .appName("java-agent-cli")
@@ -113,9 +113,16 @@ public class ReplLoop {
 
             // Slash command — dispatch to registry
             if (line.startsWith("/")) {
-                String result = commandRegistry.execute(line, backendClient, sessionId);
-                if (result != null && !result.isEmpty()) {
-                    output.accept(markdownRenderer.render(result));
+                try {
+                    String result = commandRegistry.execute(line, backendClient, sessionId);
+                    if (result != null && !result.isEmpty()) {
+                        output.accept(markdownRenderer.render(result));
+                    }
+                } catch (BackendUnavailableException e) {
+                    // C8: Backend unavailable — show friendly message
+                    output.accept("Backend unavailable. Is the backend running on " +
+                        backendClient.getBackendUrl() + "?");
+                    output.accept("Command failed: " + e.getMessage());
                 }
                 continue;
             }
@@ -134,19 +141,23 @@ public class ReplLoop {
     }
 
     private void handleChat(String message, String sessionId, Consumer<String> output) {
-        StringBuilder fullResponse = new StringBuilder();
-
-        backendClient.chatStream(message, sessionId,
-            // onToken — print token in real-time (collect for later markdown rendering)
-            token -> {
-                output.accept(token);
-                fullResponse.append(token);
-            },
-            // onTool — print tool events
-            toolInfo -> output.accept("\n  [" + toolInfo + "]"),
-            // onDone — newline after response
-            () -> output.accept("")
-        );
+        try {
+            backendClient.chatStream(message, sessionId,
+                // onToken — print token in real-time
+                token -> {
+                    output.accept(token);
+                },
+                // onTool — print tool events
+                toolInfo -> output.accept("\n  [" + toolInfo + "]"),
+                // onDone — newline after response
+                () -> output.accept("")
+            );
+        } catch (BackendUnavailableException e) {
+            // C8: Backend unavailable during chat
+            output.accept("\nBackend unavailable. Is the backend running on " +
+                backendClient.getBackendUrl() + "?");
+            output.accept("Your message was not sent. Please retry when the backend is available.");
+        }
     }
 
     /**

@@ -87,41 +87,25 @@ public class DatabaseMemoryProvider implements MemoryProvider {
         return snapshot;
     }
 
+    /**
+     * S4: Fixed syncTurn — no longer writes truncated turn summaries as memory facts.
+     * Instead, just logs the turn for audit purposes. The background review
+     * (BackgroundReviewService) decides what's actually worth saving to memory.
+     */
     @Override
     public void syncTurn(String sessionId, List<Message> turnMessages) {
         if (turnMessages == null || turnMessages.isEmpty()) {
             return;
         }
-        // Build a brief summary of the turn from user and assistant messages
-        StringBuilder summary = new StringBuilder();
-        summary.append("[Turn ").append(sessionId).append("] ");
+        // S4: Only log the turn for audit — do NOT write truncated summaries as memory facts.
+        // The background review service handles deciding what's worth saving.
+        int userMsgs = 0;
+        int assistantMsgs = 0;
         for (Message m : turnMessages) {
-            if (m.content() == null || m.content().isBlank()) {
-                continue;
-            }
-            if (m.role() == Role.USER) {
-                summary.append("User: ").append(truncate(m.content(), 200)).append("; ");
-            } else if (m.role() == Role.ASSISTANT) {
-                summary.append("Assistant: ").append(truncate(m.content(), 200)).append("; ");
-            }
+            if (m.content() == null || m.content().isBlank()) continue;
+            if (m.role() == Role.USER) userMsgs++;
+            else if (m.role() == Role.ASSISTANT) assistantMsgs++;
         }
-        String fact = summary.toString();
-        if (fact.length() > 10) {
-            try {
-                MemoryEntity entity = new MemoryEntity();
-                entity.setUserId(sessionId);
-                entity.setCategory("turn_summary");
-                entity.setFact(fact);
-                entity.setTarget("memory");
-                entity.setCreatedAt(Instant.now());
-                memoryRepository.save(entity);
-            } catch (Exception e) {
-                log.debug("Failed to sync turn for session {}: {}", sessionId, e.getMessage());
-            }
-        }
-    }
-
-    private static String truncate(String text, int max) {
-        return text.length() <= max ? text : text.substring(0, max) + "...";
+        log.debug("syncTurn audit for session {}: {} user messages, {} assistant messages", sessionId, userMsgs, assistantMsgs);
     }
 }

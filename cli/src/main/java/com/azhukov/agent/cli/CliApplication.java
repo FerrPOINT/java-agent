@@ -11,8 +11,9 @@ import java.util.UUID;
  * Accepts command-line args:
  * <ul>
  *   <li>{@code --backend.url=URL} — backend REST API base URL (default: http://localhost:8090)</li>
- *   <li>{@code --session.id=UUID} — session ID (default: random UUID)</li>
+ *   <li>{@code --session.id=UUID} — session ID (default: random UUID or saved session)</li>
  *   <li>{@code --model=NAME} — model override (default: from backend config)</li>
+ *   <li>{@code --new-session} — force a new session instead of loading from ~/.java-agent-cli/session.txt (C4)</li>
  * </ul>
  * These are passed as Spring properties with prefix {@code cli.*} so that
  * {@link BackendProperties} picks them up via @ConfigurationProperties.
@@ -21,10 +22,11 @@ import java.util.UUID;
 public class CliApplication {
 
     public static void main(String[] args) {
-        // Translate --backend.url, --session.id, --model into cli.* properties
+        // Translate --backend.url, --session.id, --model, --new-session into cli.* properties
         String backendUrl = "http://localhost:8090";
-        String sessionId = UUID.randomUUID().toString();
+        String sessionId = "";
         String model = "";
+        boolean newSession = false;
 
         for (String arg : args) {
             if (arg.startsWith("--backend.url=")) {
@@ -33,7 +35,15 @@ public class CliApplication {
                 sessionId = arg.substring("--session.id=".length());
             } else if (arg.startsWith("--model=")) {
                 model = arg.substring("--model=".length());
+            } else if (arg.equals("--new-session") || arg.equals("--new-session=true")) {
+                newSession = true;
             }
+        }
+
+        // If no session ID specified and not forcing new session, leave empty
+        // so CliReplRunner can load from session.txt
+        if (sessionId.isEmpty() && newSession) {
+            sessionId = UUID.randomUUID().toString();
         }
 
         // Inject as Spring properties for @ConfigurationProperties binding
@@ -42,6 +52,7 @@ public class CliApplication {
         if (!model.isBlank()) {
             System.setProperty("cli.model", model);
         }
+        System.setProperty("cli.new-session", String.valueOf(newSession));
 
         SpringApplication.run(CliApplication.class, args);
     }

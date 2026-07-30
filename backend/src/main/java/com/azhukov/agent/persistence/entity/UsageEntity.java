@@ -43,4 +43,11 @@ public class UsageEntity {
 
     @Column(name = "created_at")
     private Instant createdAt;
+
+    // S10: Cache token tracking
+    @Column(name = "cache_read_tokens")
+    private int cacheReadTokens;
+
+    @Column(name = "cache_write_tokens")
+    private int cacheWriteTokens;
 }

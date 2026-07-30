@@ -167,7 +167,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void skillManager_bean() {
-        assertThat(config.skillManager(mock(SkillRepository.class))).isNotNull();
+        assertThat(config.skillManager(mock(SkillRepository.class), new AgentProperties())).isNotNull();
     }
 
     @Test

@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 import java.io.BufferedReader;
@@ -20,6 +21,9 @@ import java.util.function.Consumer;
  * REST client for the agent backend.
  * <p>Uses Spring {@link RestClient} (same pattern as the telegram-bot's AgentBackendClient).
  * All methods call the backend REST API at {@code /api/v1/agent/...}.
+ * <p>
+ * Connection-level failures (backend down, timeout) are wrapped in
+ * {@link BackendUnavailableException} so the REPL can show a friendly message.
  */
 @Component
 @Slf4j
@@ -27,11 +31,43 @@ public class BackendClient {
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
+    private final String backendUrl;
 
     public BackendClient(@Qualifier("backendRestClient") RestClient restClient,
+                         ObjectMapper objectMapper,
+                         BackendProperties properties) {
+        this.restClient = restClient;
+        this.objectMapper = objectMapper;
+        this.backendUrl = properties.getBackendUrl();
+    }
+
+    /**
+     * Constructor for tests that don't need a BackendProperties.
+     */
+    public BackendClient(RestClient restClient,
                          ObjectMapper objectMapper) {
         this.restClient = restClient;
         this.objectMapper = objectMapper;
+        this.backendUrl = "http://localhost:8090";
+    }
+
+    // ------------------------------------------------------------------
+    // Error wrapping
+    // ------------------------------------------------------------------
+
+    /**
+     * Wrap connection-level exceptions into BackendUnavailableException.
+     * Other exceptions are re-thrown as-is.
+     */
+    private RuntimeException wrapConnectionError(Exception e) {
+        if (e instanceof ResourceAccessException
+            || e instanceof java.net.ConnectException
+            || e instanceof java.net.SocketTimeoutException
+            || (e.getCause() instanceof java.net.ConnectException)
+            || (e.getCause() instanceof java.net.SocketTimeoutException)) {
+            return new BackendUnavailableException(backendUrl, e);
+        }
+        return new RuntimeException(e.getMessage(), e);
     }
 
     // ------------------------------------------------------------------
@@ -68,7 +104,12 @@ public class BackendClient {
                 return "Error: missing 'response' field in backend reply";
             }
             return responseField.asText();
+        } catch (BackendUnavailableException e) {
+            throw e;
         } catch (Exception e) {
+            if (isConnectionError(e)) {
+                throw new BackendUnavailableException(backendUrl, e);
+            }
             log.error("Backend chat failed for sessionId={}: {}", sessionId, e.getMessage());
             return "Error: " + e.getMessage();
         }
@@ -169,11 +210,24 @@ public class BackendClient {
                 // Stream ended without explicit "done" event
                 onDone.run();
             }
+        } catch (BackendUnavailableException e) {
+            throw e;
         } catch (Exception e) {
+            if (isConnectionError(e)) {
+                throw new BackendUnavailableException(backendUrl, e);
+            }
             log.error("chatStream failed for sessionId={}: {}", sessionId, e.getMessage());
             onTool.accept("ERROR: " + e.getMessage());
             onDone.run();
         }
+    }
+
+    private boolean isConnectionError(Throwable e) {
+        if (e == null) return false;
+        if (e instanceof ResourceAccessException) return true;
+        if (e instanceof java.net.ConnectException) return true;
+        if (e instanceof java.net.SocketTimeoutException) return true;
+        return isConnectionError(e.getCause());
     }
 
     // ------------------------------------------------------------------
@@ -188,8 +242,7 @@ public class BackendClient {
                 .toBodilessEntity();
             return "Session reset: " + sessionId;
         } catch (Exception e) {
-            log.error("resetSession failed: {}", e.getMessage());
-            return "Error: " + e.getMessage();
+            return handleErr("resetSession", e);
         }
     }
 
@@ -207,8 +260,7 @@ public class BackendClient {
                 .body(String.class);
             return result != null ? result : "Context compressed.";
         } catch (Exception e) {
-            log.error("compressSession failed: {}", e.getMessage());
-            return "Error: " + e.getMessage();
+            return handleErr("compressSession", e);
         }
     }
 
@@ -222,8 +274,7 @@ public class BackendClient {
                 .body(Integer.class);
             return "Undid " + (deleted != null ? deleted : 0) + " messages.";
         } catch (Exception e) {
-            log.error("undoTurns failed: {}", e.getMessage());
-            return "Error: " + e.getMessage();
+            return handleErr("undoTurns", e);
         }
     }
 
@@ -270,7 +321,431 @@ public class BackendClient {
     }
 
     // ------------------------------------------------------------------
-    // Memory & skills
+    // Model switching (C1)
+    // ------------------------------------------------------------------
+
+    /**
+     * Switch the model (and optionally provider) for the current session.
+     *
+     * @param sessionId the session UUID
+     * @param model      the new model name
+     * @param provider   the new provider name (optional, may be null/blank)
+     * @return result message
+     */
+    public String switchModel(String sessionId, String model, String provider) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        body.put("model", model);
+        if (provider != null && !provider.isBlank()) {
+            body.put("provider", provider);
+        }
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/model")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) {
+                return "Model switched to: " + model;
+            }
+            JsonNode node = objectMapper.readTree(json);
+            boolean ok = node.path("ok").asBoolean(false);
+            if (ok) {
+                String m = node.path("model").asText(model);
+                String p = node.path("provider").asText("");
+                return "Model switched to: " + m + (p.isBlank() ? "" : " (provider: " + p + ")");
+            }
+            String error = node.path("error").asText("Model switching failed");
+            return "Model switching failed: " + error;
+        } catch (BackendUnavailableException e) {
+            throw e;
+        } catch (Exception e) {
+            if (isConnectionError(e)) {
+                throw new BackendUnavailableException(backendUrl, e);
+            }
+            log.error("switchModel failed: {}", e.getMessage());
+            return "Error switching model: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Get current model info for a session.
+     */
+    public String getCurrentModel(String sessionId) {
+        try {
+            String json = restClient.get()
+                .uri(uriBuilder -> uriBuilder.path("/api/v1/agent/model")
+                    .queryParam("sessionId", sessionId)
+                    .build())
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "No model info available.";
+            return prettyPrint(objectMapper.readTree(json));
+        } catch (Exception e) {
+            log.error("getCurrentModel failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Background task (C2)
+    // ------------------------------------------------------------------
+
+    public String backgroundTask(String prompt, String sessionId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("prompt", prompt);
+        body.put("sessionId", sessionId);
+        try {
+            String result = restClient.post()
+                .uri("/api/v1/agent/background")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            return "Background task started. Session: " + (result != null ? result : "unknown");
+        } catch (Exception e) {
+            return handleErr("backgroundTask", e);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Branch session (C2)
+    // ------------------------------------------------------------------
+
+    public String branchSession(String sessionId, String name) {
+        try {
+            String result;
+            if (name != null && !name.isBlank()) {
+                result = restClient.post()
+                    .uri(uriBuilder -> uriBuilder.path("/api/v1/agent/session/{id}/branch")
+                        .queryParam("name", name)
+                        .build(sessionId))
+                    .retrieve()
+                    .body(String.class);
+            } else {
+                result = restClient.post()
+                    .uri("/api/v1/agent/session/{id}/branch", sessionId)
+                    .retrieve()
+                    .body(String.class);
+            }
+            return "Session branched: " + (result != null ? result : sessionId);
+        } catch (Exception e) {
+            return handleErr("branchSession", e);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Cron jobs (C2)
+    // ------------------------------------------------------------------
+
+    public String listCronJobs() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/cron")
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "No cron jobs found.";
+            JsonNode array = objectMapper.readTree(json);
+            if (!array.isArray() || array.isEmpty()) return "No cron jobs found.";
+            StringBuilder sb = new StringBuilder("Cron jobs:\n");
+            for (JsonNode node : array) {
+                String id = node.path("id").asText();
+                String jobName = node.path("name").asText();
+                String schedule = node.path("schedule").asText();
+                boolean enabled = node.path("enabled").asBoolean();
+                sb.append(String.format("- %s | %s | %s | %s%n", id, jobName, schedule,
+                    enabled ? "enabled" : "paused"));
+            }
+            return sb.toString().trim();
+        } catch (Exception e) {
+            return handleErr("listCronJobs", e);
+        }
+    }
+
+    public String pauseCronJob(String jobId) {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/cron/{id}/pause", jobId)
+                .retrieve()
+                .toBodilessEntity();
+            return "Cron job paused: " + jobId;
+        } catch (Exception e) {
+            return handleErr("pauseCronJob", e);
+        }
+    }
+
+    public String resumeCronJob(String jobId) {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/cron/{id}/resume", jobId)
+                .retrieve()
+                .toBodilessEntity();
+            return "Cron job resumed: " + jobId;
+        } catch (Exception e) {
+            return handleErr("resumeCronJob", e);
+        }
+    }
+
+    public String deleteCronJob(String jobId) {
+        try {
+            restClient.delete()
+                .uri("/api/v1/agent/cron/{id}", jobId)
+                .retrieve()
+                .toBodilessEntity();
+            return "Cron job deleted: " + jobId;
+        } catch (Exception e) {
+            return handleErr("deleteCronJob", e);
+        }
+    }
+
+    public String createCronJob(String name, String schedule, String prompt, String deliverTo) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("name", name);
+        body.put("schedule", schedule);
+        body.put("prompt", prompt);
+        if (deliverTo != null && !deliverTo.isBlank()) {
+            body.put("deliverTo", deliverTo);
+        }
+        try {
+            String result = restClient.post()
+                .uri("/api/v1/agent/cron")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            return "Cron job created: " + (result != null ? result : name);
+        } catch (Exception e) {
+            return handleErr("createCronJob", e);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Memory management (C2)
+    // ------------------------------------------------------------------
+
+    public String approveMemory(String userId, String entryId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("userId", userId);
+        body.put("id", entryId);
+        try {
+            Boolean result = restClient.post()
+                .uri("/api/v1/agent/memory/approve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(Boolean.class);
+            return (result != null && result) ? "Memory approved: " + entryId : "Memory approval failed: " + entryId;
+        } catch (Exception e) {
+            return handleErr("approveMemory", e);
+        }
+    }
+
+    public String rejectMemory(String userId, String entryId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("userId", userId);
+        body.put("id", entryId);
+        try {
+            Boolean result = restClient.post()
+                .uri("/api/v1/agent/memory/reject")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(Boolean.class);
+            return (result != null && result) ? "Memory rejected: " + entryId : "Memory rejection failed: " + entryId;
+        } catch (Exception e) {
+            return handleErr("rejectMemory", e);
+        }
+    }
+
+    public String deleteMemory(String userId, String entryId) {
+        try {
+            restClient.delete()
+                .uri("/api/v1/agent/memory/{userId}/{entryId}", userId, entryId)
+                .retrieve()
+                .toBodilessEntity();
+            return "Memory deleted: " + entryId;
+        } catch (Exception e) {
+            return handleErr("deleteMemory", e);
+        }
+    }
+
+    public JsonNode listAllMemory(String userId) {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/memory/all/{userId}", userId)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return objectMapper.createArrayNode();
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("listAllMemory failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    public JsonNode listPendingMemory(String userId) {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/memory/pending/{userId}", userId)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return objectMapper.createArrayNode();
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("listPendingMemory failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Approvals (C2)
+    // ------------------------------------------------------------------
+
+    public JsonNode listPendingApprovals() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/approvals/pending")
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return objectMapper.createArrayNode();
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("listPendingApprovals failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    public String approveTool(String sessionId) {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/approvals/{sessionId}/approve", sessionId)
+                .retrieve()
+                .toBodilessEntity();
+            return "Tool approved for session: " + sessionId;
+        } catch (Exception e) {
+            return handleErr("approveTool", e);
+        }
+    }
+
+    public String denyTool(String sessionId) {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/approvals/{sessionId}/deny", sessionId)
+                .retrieve()
+                .toBodilessEntity();
+            return "Tool denied for session: " + sessionId;
+        } catch (Exception e) {
+            return handleErr("denyTool", e);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Bundle install / uninstall (C2)
+    // ------------------------------------------------------------------
+
+    public String installBundle(String name) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("bundleName", name);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/bundles/install")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Bundle installed: " + name;
+            JsonNode node = objectMapper.readTree(json);
+            boolean ok = node.path("ok").asBoolean(false);
+            if (ok) return node.path("message").asText("Bundle installed: " + name);
+            return "Bundle install failed: " + node.path("error").asText("unknown error");
+        } catch (Exception e) {
+            return handleErr("installBundle", e);
+        }
+    }
+
+    public String uninstallBundle(String name) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("bundleName", name);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/bundles/uninstall")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Bundle uninstalled: " + name;
+            JsonNode node = objectMapper.readTree(json);
+            boolean ok = node.path("ok").asBoolean(false);
+            if (ok) return node.path("message").asText("Bundle uninstalled: " + name);
+            return "Bundle uninstall failed: " + node.path("error").asText("unknown error");
+        } catch (Exception e) {
+            return handleErr("uninstallBundle", e);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Delete checkpoint (C2)
+    // ------------------------------------------------------------------
+
+    public String deleteCheckpoint(String checkpointId) {
+        try {
+            restClient.delete()
+                .uri("/api/v1/agent/checkpoint/{id}", checkpointId)
+                .retrieve()
+                .toBodilessEntity();
+            return "Checkpoint deleted: " + checkpointId;
+        } catch (Exception e) {
+            return handleErr("deleteCheckpoint", e);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Stop agent (C3)
+    // ------------------------------------------------------------------
+
+    public String stopAgent(String sessionId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        if (sessionId != null && !sessionId.isBlank()) {
+            body.put("sessionId", sessionId);
+        }
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/stop")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Agent stopped.";
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Agent stopped.");
+        } catch (Exception e) {
+            return handleErr("stopAgent", e);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Skill content (C6)
+    // ------------------------------------------------------------------
+
+    public String getSkillContent(String skillName) {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/skills/{name}", skillName)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Skill not found: " + skillName;
+            JsonNode node = objectMapper.readTree(json);
+            boolean ok = node.path("ok").asBoolean(false);
+            if (!ok) return "Skill not found: " + skillName;
+            return node.path("content").asText("(empty skill)");
+        } catch (Exception e) {
+            return handleErr("getSkillContent", e);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Memory & skills (existing)
     // ------------------------------------------------------------------
 
     public JsonNode getMemory() {
@@ -331,8 +806,7 @@ public class BackendClient {
                 .toBodilessEntity();
             return "Checkpoint created: " + description;
         } catch (Exception e) {
-            log.error("createCheckpoint failed: {}", e.getMessage());
-            return "Error: " + e.getMessage();
+            return handleErr("createCheckpoint", e);
         }
     }
 
@@ -354,8 +828,7 @@ public class BackendClient {
             }
             return sb.toString().trim();
         } catch (Exception e) {
-            log.error("listCheckpoints failed: {}", e.getMessage());
-            return "Error: " + e.getMessage();
+            return handleErr("listCheckpoints", e);
         }
     }
 
@@ -367,8 +840,7 @@ public class BackendClient {
                 .toBodilessEntity();
             return "Checkpoint restored: " + id;
         } catch (Exception e) {
-            log.error("restoreCheckpoint failed: {}", e.getMessage());
-            return "Error: " + e.getMessage();
+            return handleErr("restoreCheckpoint", e);
         }
     }
 
@@ -391,8 +863,7 @@ public class BackendClient {
                 .body(String.class);
             return result != null ? result : "Approved.";
         } catch (Exception e) {
-            log.error("approve failed: {}", e.getMessage());
-            return "Error: " + e.getMessage();
+            return handleErr("approve", e);
         }
     }
 
@@ -408,8 +879,7 @@ public class BackendClient {
                 .body(String.class);
             return result != null ? result : "Denied.";
         } catch (Exception e) {
-            log.error("deny failed: {}", e.getMessage());
-            return "Error: " + e.getMessage();
+            return handleErr("deny", e);
         }
     }
 
@@ -430,8 +900,7 @@ public class BackendClient {
                 .body(String.class);
             return result != null ? result : "Steer sent.";
         } catch (Exception e) {
-            log.error("steer failed: {}", e.getMessage());
-            return "Error: " + e.getMessage();
+            return handleErr("steer", e);
         }
     }
 
@@ -469,8 +938,7 @@ public class BackendClient {
                 .toBodilessEntity();
             return "Agent restarting...";
         } catch (Exception e) {
-            log.error("restart failed: {}", e.getMessage());
-            return "Error: " + e.getMessage();
+            return handleErr("restart", e);
         }
     }
 
@@ -482,8 +950,7 @@ public class BackendClient {
                 .toBodilessEntity();
             return "MCP servers reloaded.";
         } catch (Exception e) {
-            log.error("reloadMcp failed: {}", e.getMessage());
-            return "Error: " + e.getMessage();
+            return handleErr("reloadMcp", e);
         }
     }
 
@@ -495,8 +962,7 @@ public class BackendClient {
                 .toBodilessEntity();
             return "Skills reloaded.";
         } catch (Exception e) {
-            log.error("reloadSkills failed: {}", e.getMessage());
-            return "Error: " + e.getMessage();
+            return handleErr("reloadSkills", e);
         }
     }
 
@@ -542,5 +1008,25 @@ public class BackendClient {
         } catch (Exception e) {
             return node != null ? node.toString() : "null";
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Backend URL (for error messages)
+    // ------------------------------------------------------------------
+
+    public String getBackendUrl() {
+        return backendUrl;
+    }
+
+    // ------------------------------------------------------------------
+    // Error handler helper
+    // ------------------------------------------------------------------
+
+    private String handleErr(String method, Exception e) {
+        if (isConnectionError(e)) {
+            throw new BackendUnavailableException(backendUrl, e);
+        }
+        log.error("{} failed: {}", method, e.getMessage());
+        return "Error: " + e.getMessage();
     }
 }

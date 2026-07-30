@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +15,13 @@ import java.util.TreeMap;
  * <p>
  * Commands are keyed by their name (without the leading '/').
  * The REPL dispatches user input to {@link #execute(String, BackendClient, String)}.
+ * <p>
+ * Supports:
+ * <ul>
+ *   <li>Exact command matching</li>
+ *   <li>Alias resolution (e.g. /q → /sessions, /reset → /new, /fork → /branch)</li>
+ *   <li>Prefix matching: if exactly one command starts with the typed prefix, execute it</li>
+ * </ul>
  */
 @Component
 @Slf4j
@@ -21,6 +29,8 @@ public class SlashCommandRegistry {
 
     private final Map<String, SlashCommand> commands = new LinkedHashMap<>();
     private final Map<String, String> descriptions = new LinkedHashMap<>();
+    private final Map<String, String> aliases = new LinkedHashMap<>();
+    private final List<String> dynamicSkillNames = new ArrayList<>();
 
     public SlashCommandRegistry() {
         registerAll();
@@ -54,20 +64,61 @@ public class SlashCommandRegistry {
             name = trimmed;
         }
 
-        SlashCommand cmd = commands.get(name);
+        // C7: Resolve command via exact → alias → prefix matching
+        String resolvedName = resolveCommand(name);
+        if (resolvedName == null) {
+            return "Unknown command: /" + name + "\nType /help for available commands.";
+        }
+
+        SlashCommand cmd = commands.get(resolvedName);
         if (cmd == null) {
             return "Unknown command: /" + name + "\nType /help for available commands.";
         }
         try {
             return cmd.execute(args, client, sessionId);
         } catch (Exception e) {
-            log.error("Command /{} failed: {}", name, e.getMessage(), e);
-            return "Error executing /" + name + ": " + e.getMessage();
+            log.error("Command /{} failed: {}", resolvedName, e.getMessage(), e);
+            return "Error executing /" + resolvedName + ": " + e.getMessage();
         }
     }
 
     /**
-     * Check if the input is a known slash command.
+     * C7: Resolve a command name via exact match → alias → prefix matching.
+     * <p>
+     * If the name is an exact command, return it.
+     * If it's an alias, resolve to the target command.
+     * If exactly one command starts with the name (prefix match), return it.
+     * If multiple commands match the prefix, return null (ambiguous).
+     *
+     * @param name the typed command name (without '/')
+     * @return the resolved command name, or null if not found/ambiguous
+     */
+    public String resolveCommand(String name) {
+        // 1. Exact match
+        if (commands.containsKey(name)) {
+            return name;
+        }
+        // 2. Alias match
+        String aliased = aliases.get(name);
+        if (aliased != null && commands.containsKey(aliased)) {
+            return aliased;
+        }
+        // 3. Prefix match
+        List<String> matches = new ArrayList<>();
+        for (String cmdName : commands.keySet()) {
+            if (cmdName.startsWith(name)) {
+                matches.add(cmdName);
+            }
+        }
+        if (matches.size() == 1) {
+            return matches.get(0);
+        }
+        // No match or ambiguous
+        return null;
+    }
+
+    /**
+     * C7: Check if input resolves to a known command (exact, alias, or prefix).
      */
     public boolean isSlashCommand(String input) {
         if (input == null || !input.startsWith("/")) {
@@ -76,21 +127,25 @@ public class SlashCommandRegistry {
         String trimmed = input.substring(1).strip();
         int spaceIdx = trimmed.indexOf(' ');
         String name = spaceIdx > 0 ? trimmed.substring(0, spaceIdx) : trimmed;
-        return commands.containsKey(name);
+        return resolveCommand(name) != null;
     }
 
     /**
-     * Get all registered command names.
+     * C7: Get all registered command names (for completion and help).
      */
     public List<String> getCommandNames() {
         return List.copyOf(commands.keySet());
     }
 
     /**
+     * C7: Get all registered aliases (for completion).
+     */
+    public Map<String, String> getAliases() {
+        return Map.copyOf(aliases);
+    }
+
+    /**
      * Get the description for a command by name.
-     *
-     * @param name command name (without leading '/')
-     * @return description string, or empty string if not found
      */
     public String getCommandDescription(String name) {
         return descriptions.getOrDefault(name, "");
@@ -103,9 +158,51 @@ public class SlashCommandRegistry {
         return new TreeMap<>(descriptions);
     }
 
+    /**
+     * C6: Register a dynamic skill command.
+     */
+    public void registerDynamicSkill(String skillName) {
+        if (commands.containsKey(skillName) || aliases.containsKey(skillName)) {
+            return; // Don't overwrite existing commands
+        }
+        dynamicSkillNames.add(skillName);
+        register(skillName, "Skill: " + skillName, (args, client, sessionId) -> {
+            String content = client.getSkillContent(skillName);
+            if (content == null || content.isBlank()) {
+                return "Skill '" + skillName + "' not found or empty.";
+            }
+            return content;
+        });
+    }
+
+    /**
+     * C6: Clear dynamic skill commands (for refresh).
+     */
+    public void clearDynamicSkills() {
+        for (String skillName : dynamicSkillNames) {
+            commands.remove(skillName);
+            descriptions.remove(skillName);
+        }
+        dynamicSkillNames.clear();
+    }
+
+    /**
+     * C6: Get list of dynamic skill names.
+     */
+    public List<String> getDynamicSkillNames() {
+        return List.copyOf(dynamicSkillNames);
+    }
+
     private void register(String name, String description, SlashCommand command) {
         commands.put(name, command);
         descriptions.put(name, description);
+    }
+
+    /**
+     * C7: Register an alias.
+     */
+    private void registerAlias(String alias, String target) {
+        aliases.put(alias, target);
     }
 
     private void registerAll() {
@@ -113,8 +210,7 @@ public class SlashCommandRegistry {
         register("new", "Create a new chat session (use /new <uuid> to specify)", (args, client, sessionId) ->
             "New session started. Session ID: " + sessionId);
 
-        register("reset", "Reset the current session", (args, client, sessionId) ->
-            client.resetSession(sessionId));
+        // "reset" is an alias for "new" (C7) — no separate /reset command
 
         register("sessions", "List all sessions for a user (default: 'default')", (args, client, sessionId) -> {
             String userId = args.isBlank() ? "default" : args;
@@ -219,9 +315,18 @@ public class SlashCommandRegistry {
         register("health", "Check backend health", (args, client, sessionId) ->
             client.health() ? "Backend: UP ✓" : "Backend: DOWN ✗");
 
-        // ── Model ──
-        register("model", "Show or change the current model", (args, client, sessionId) ->
-            "Use backend config to change model. Current CLI does not support model switching via REST.");
+        // ── Model (C1: fixed — now calls backend) ──
+        register("model", "Show or change the current model (e.g. /model gpt-4o [provider])", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                // Show current model info
+                return client.getCurrentModel(sessionId);
+            }
+            // Parse: /model <model-name> [provider-name]
+            String[] parts = args.split("\\s+");
+            String model = parts[0];
+            String provider = parts.length > 1 ? parts[1] : null;
+            return client.switchModel(sessionId, model, provider);
+        });
 
         // ── Version ──
         register("version", "Show CLI version info", (args, client, sessionId) ->
@@ -234,10 +339,17 @@ public class SlashCommandRegistry {
             sb.append("═══════════════════════════════════════════════════\n");
             sb.append("  Available Commands\n");
             sb.append("═══════════════════════════════════════════════════\n");
-            // Sort alphabetically for display
             Map<String, String> sorted = new TreeMap<>(descriptions);
             for (Map.Entry<String, String> entry : sorted.entrySet()) {
                 sb.append(String.format("  /%-16s %s%n", entry.getKey(), entry.getValue()));
+            }
+            if (!aliases.isEmpty()) {
+                sb.append("═══════════════════════════════════════════════════\n");
+                sb.append("  Aliases:\n");
+                Map<String, String> sortedAliases = new TreeMap<>(aliases);
+                for (Map.Entry<String, String> entry : sortedAliases.entrySet()) {
+                    sb.append(String.format("  /%-16s → /%s%n", entry.getKey(), entry.getValue()));
+                }
             }
             sb.append("═══════════════════════════════════════════════════\n");
             sb.append("  Type any text (without /) to send a chat message.\n");
@@ -263,100 +375,184 @@ public class SlashCommandRegistry {
         register("checkpoints", "List all checkpoints", (args, client, sessionId) ->
             client.listCheckpoints());
 
-        // ── Delete checkpoint ──
+        // ── Delete checkpoint (C2: fixed — now calls backend) ──
         register("delete-checkpoint", "Delete a checkpoint by ID", (args, client, sessionId) -> {
             if (args.isBlank()) {
                 return "Usage: /delete-checkpoint <checkpoint-id>";
             }
-            // Backend has a DELETE endpoint, but BackendClient doesn't expose it directly
-            // Fall back to listing for now
-            return "Use the backend REST API directly: DELETE /api/v1/agent/checkpoint/" + args.strip();
+            return client.deleteCheckpoint(args.strip());
         });
 
-        // ── Install bundle ──
+        // ── Install bundle (C2: fixed — now calls backend) ──
         register("install", "Install a bundle by name", (args, client, sessionId) -> {
             if (args.isBlank()) {
                 return "Usage: /install <bundle-name>";
             }
-            return "Use the backend REST API: POST /api/v1/agent/bundles/install with {\"bundleName\":\"" + args.strip() + "\"}";
+            return client.installBundle(args.strip());
         });
 
         register("uninstall", "Uninstall a bundle by name", (args, client, sessionId) -> {
             if (args.isBlank()) {
                 return "Usage: /uninstall <bundle-name>";
             }
-            return "Use the backend REST API: POST /api/v1/agent/bundles/uninstall with {\"bundleName\":\"" + args.strip() + "\"}";
+            return client.uninstallBundle(args.strip());
         });
 
-        // ── Branch session ──
-        register("branch", "Branch the current session (optionally with a name)", (args, client, sessionId) -> {
-            if (args.isBlank()) {
-                return "Usage: /branch <branch-name>";
-            }
-            return "Use the backend REST API: POST /api/v1/agent/session/" + sessionId + "/branch?name=" + args.strip();
-        });
+        // ── Branch session (C2: fixed — now calls backend) ──
+        register("branch", "Branch the current session (optionally with a name)", (args, client, sessionId) ->
+            client.branchSession(sessionId, args.isBlank() ? null : args.strip()));
 
-        // ── Background task ──
+        // ── Background task (C2: fixed — now calls backend) ──
         register("background", "Run a background task with a prompt", (args, client, sessionId) -> {
             if (args.isBlank()) {
                 return "Usage: /background <prompt>";
             }
-            return "Use the backend REST API: POST /api/v1/agent/background with {\"prompt\":\"" + args.strip() + "\",\"sessionId\":\"" + sessionId + "\"}";
+            return client.backgroundTask(args.strip(), sessionId);
         });
 
-        // ── Cron jobs ──
+        // ── Cron jobs (C2: fixed — now calls backend) ──
         register("cron", "List cron jobs", (args, client, sessionId) ->
-            "Use the backend REST API: GET /api/v1/agent/cron");
+            client.listCronJobs());
 
         register("cron-pause", "Pause a cron job by ID", (args, client, sessionId) -> {
             if (args.isBlank()) return "Usage: /cron-pause <job-id>";
-            return "Use the backend REST API: POST /api/v1/agent/cron/" + args.strip() + "/pause";
+            return client.pauseCronJob(args.strip());
         });
 
         register("cron-resume", "Resume a cron job by ID", (args, client, sessionId) -> {
             if (args.isBlank()) return "Usage: /cron-resume <job-id>";
-            return "Use the backend REST API: POST /api/v1/agent/cron/" + args.strip() + "/resume";
+            return client.resumeCronJob(args.strip());
         });
 
         register("cron-delete", "Delete a cron job by ID", (args, client, sessionId) -> {
             if (args.isBlank()) return "Usage: /cron-delete <job-id>";
-            return "Use the backend REST API: DELETE /api/v1/agent/cron/" + args.strip();
+            return client.deleteCronJob(args.strip());
         });
 
-        // ── Memory management ──
-        register("memory-all", "List all memory entries for a user (default: 'default')", (args, client, sessionId) ->
-            "Use the backend REST API: GET /api/v1/agent/memory/all/" + (args.isBlank() ? "default" : args.strip()));
+        register("cron-create", "Create a cron job: /cron-create <name> <schedule> <prompt>", (args, client, sessionId) -> {
+            if (args.isBlank()) return "Usage: /cron-create <name> <schedule> <prompt>";
+            String[] parts = args.split("\\s+", 3);
+            if (parts.length < 3) return "Usage: /cron-create <name> <schedule> <prompt>";
+            return client.createCronJob(parts[0], parts[1], parts[2], null);
+        });
 
-        register("memory-pending", "List pending memory entries for a user (default: 'default')", (args, client, sessionId) ->
-            "Use the backend REST API: GET /api/v1/agent/memory/pending/" + (args.isBlank() ? "default" : args.strip()));
+        // ── Memory management (C2: fixed — now calls backend) ──
+        register("memory-all", "List all memory entries for a user (default: 'default')", (args, client, sessionId) -> {
+            String userId = args.isBlank() ? "default" : args.strip();
+            JsonNode mem = client.listAllMemory(userId);
+            return client.prettyPrint(mem);
+        });
 
-        register("memory-approve", "Approve a pending memory entry", (args, client, sessionId) -> {
+        register("memory-pending", "List pending memory entries for a user (default: 'default')", (args, client, sessionId) -> {
+            String userId = args.isBlank() ? "default" : args.strip();
+            JsonNode mem = client.listPendingMemory(userId);
+            return client.prettyPrint(mem);
+        });
+
+        register("memory-approve", "Approve a pending memory entry: /memory-approve <userId> <entryId>", (args, client, sessionId) -> {
             if (args.isBlank()) return "Usage: /memory-approve <userId> <entryId>";
-            return "Use the backend REST API: POST /api/v1/agent/memory/approve";
+            String[] parts = args.split("\\s+");
+            if (parts.length < 2) return "Usage: /memory-approve <userId> <entryId>";
+            return client.approveMemory(parts[0], parts[1]);
         });
 
-        register("memory-reject", "Reject a pending memory entry", (args, client, sessionId) -> {
+        register("memory-reject", "Reject a pending memory entry: /memory-reject <userId> <entryId>", (args, client, sessionId) -> {
             if (args.isBlank()) return "Usage: /memory-reject <userId> <entryId>";
-            return "Use the backend REST API: POST /api/v1/agent/memory/reject";
+            String[] parts = args.split("\\s+");
+            if (parts.length < 2) return "Usage: /memory-reject <userId> <entryId>";
+            return client.rejectMemory(parts[0], parts[1]);
         });
 
-        register("memory-delete", "Delete a memory entry", (args, client, sessionId) -> {
+        register("memory-delete", "Delete a memory entry: /memory-delete <userId> <entryId>", (args, client, sessionId) -> {
             if (args.isBlank()) return "Usage: /memory-delete <userId> <entryId>";
-            return "Use the backend REST API: DELETE /api/v1/agent/memory/" + args.strip();
+            String[] parts = args.split("\\s+");
+            if (parts.length < 2) return "Usage: /memory-delete <userId> <entryId>";
+            return client.deleteMemory(parts[0], parts[1]);
         });
 
-        // ── Tool approvals ──
-        register("approvals", "List pending tool approvals", (args, client, sessionId) ->
-            "Use the backend REST API: GET /api/v1/agent/approvals/pending");
+        // ── Tool approvals (C2: fixed — now calls backend) ──
+        register("approvals", "List pending tool approvals", (args, client, sessionId) -> {
+            JsonNode approvals = client.listPendingApprovals();
+            return client.prettyPrint(approvals);
+        });
 
         register("approve-tool", "Approve a pending tool for a session", (args, client, sessionId) -> {
             if (args.isBlank()) return "Usage: /approve-tool <sessionId>";
-            return "Use the backend REST API: POST /api/v1/agent/approvals/" + args.strip() + "/approve";
+            return client.approveTool(args.strip());
         });
 
         register("deny-tool", "Deny a pending tool for a session", (args, client, sessionId) -> {
             if (args.isBlank()) return "Usage: /deny-tool <sessionId>";
-            return "Use the backend REST API: POST /api/v1/agent/approvals/" + args.strip() + "/deny";
+            return client.denyTool(args.strip());
+        });
+
+        // ── C3: New commands ──
+
+        register("stop", "Stop the agent's current turn", (args, client, sessionId) ->
+            client.stopAgent(sessionId));
+
+        register("history", "Show conversation history for the current session", (args, client, sessionId) -> {
+            JsonNode ctx = client.getContext(sessionId);
+            if (ctx == null) return "No history available.";
+            // Format context nicely
+            StringBuilder sb = new StringBuilder();
+            int messageCount = ctx.path("messageCount").asInt(0);
+            int tokenEstimate = ctx.path("tokenEstimate").asInt(0);
+            sb.append("Session: ").append(sessionId).append("\n");
+            sb.append("Messages: ").append(messageCount).append("\n");
+            sb.append("Token estimate: ").append(tokenEstimate).append("\n");
+            JsonNode toolsUsed = ctx.path("toolsUsed");
+            if (toolsUsed.isArray() && !toolsUsed.isEmpty()) {
+                sb.append("Tools used: ");
+                for (JsonNode tool : toolsUsed) {
+                    sb.append(tool.asText()).append(" ");
+                }
+                sb.append("\n");
+            }
+            return sb.toString().trim();
+        });
+
+        register("goal", "Set or show the current goal (stored locally)", (args, client, sessionId) -> {
+            // Goal is stored locally — backend doesn't have a goal API yet
+            if (args.isBlank()) {
+                String currentGoal = goalStorage.get(sessionId);
+                return currentGoal == null ? "No goal set. Use /goal <text> to set one." : "Current goal: " + currentGoal;
+            }
+            goalStorage.put(sessionId, args.strip());
+            return "Goal set: " + args.strip();
+        });
+
+        register("resume", "Resume a previous session: /resume <sessionId> or /resume to list sessions", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                JsonNode sessions = client.listSessions("default");
+                if (sessions == null || !sessions.isArray() || sessions.isEmpty()) {
+                    return "No sessions found for user 'default'.\nUsage: /resume <sessionId>";
+                }
+                StringBuilder sb = new StringBuilder("Available sessions:\n");
+                for (JsonNode s : sessions) {
+                    String id = s.path("id").asText(s.path("sessionId").asText("?"));
+                    String title = s.path("title").asText("(no title)");
+                    sb.append("  ").append(id).append(" | ").append(title).append("\n");
+                }
+                sb.append("\nUse /resume <sessionId> to resume a session.");
+                return sb.toString().trim();
+            }
+            // In a real implementation, this would switch the session ID
+            // For now, show instructions
+            return "To resume session " + args.strip() + ", restart CLI with --session.id=" + args.strip();
+        });
+
+        // ── C4: Session persistence ──
+        register("save", "Save current session ID to disk", (args, client, sessionId) -> {
+            try {
+                java.nio.file.Path dir = java.nio.file.Path.of(System.getProperty("user.home"), ".java-agent-cli");
+                java.nio.file.Files.createDirectories(dir);
+                java.nio.file.Path file = dir.resolve("session.txt");
+                java.nio.file.Files.writeString(file, sessionId);
+                return "Session saved: " + sessionId;
+            } catch (Exception e) {
+                return "Error saving session: " + e.getMessage();
+            }
         });
 
         // ── Clear screen ──
@@ -366,6 +562,17 @@ public class SlashCommandRegistry {
             return "";
         });
 
-        log.info("SlashCommandRegistry initialized with {} commands", commands.size());
+        // ── C7: Aliases ──
+        registerAlias("q", "quit");
+        registerAlias("reset", "new");
+        registerAlias("fork", "branch");
+        registerAlias("bg", "background");
+        registerAlias("snap", "checkpoint");
+
+        log.info("SlashCommandRegistry initialized with {} commands, {} aliases",
+            commands.size(), aliases.size());
     }
+
+    // Simple in-memory goal storage for /goal command (C3)
+    private final Map<String, String> goalStorage = new java.util.concurrent.ConcurrentHashMap<>();
 }

@@ -32,8 +32,8 @@ class SlashCommandRegistryTest {
 
         // Core commands
         assertThat(names).contains("help", "exit", "quit");
-        // Session commands
-        assertThat(names).contains("new", "reset", "sessions", "status", "context", "compress", "undo");
+        // Session commands — "reset" is now an alias for "new" (C7)
+        assertThat(names).contains("new", "sessions", "status", "context", "compress", "undo");
         // Checkpoint commands
         assertThat(names).contains("checkpoint", "rollback", "checkpoints");
         // Memory & skills
@@ -91,10 +91,10 @@ class SlashCommandRegistryTest {
     }
 
     @Test
-    void resetCommandCallsBackend() {
-        when(client.resetSession("sid")).thenReturn("Session reset: sid");
+    void resetAliasCallsNewCommand() {
+        // /reset is now an alias for /new (C7)
         String result = registry.execute("/reset", client, "sid");
-        assertThat(result).isEqualTo("Session reset: sid");
+        assertThat(result).contains("New session started");
     }
 
     @Test
@@ -126,6 +126,7 @@ class SlashCommandRegistryTest {
     void isSlashCommandRecognizesKnownCommands() {
         assertThat(registry.isSlashCommand("/help")).isTrue();
         assertThat(registry.isSlashCommand("/exit")).isTrue();
+        // /reset is now an alias for /new, but still resolves
         assertThat(registry.isSlashCommand("/reset")).isTrue();
     }
 

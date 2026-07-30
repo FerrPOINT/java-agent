@@ -253,6 +253,29 @@ public class AgentRuntimeService {
     }
 
     @Transactional
+    public void switchModel(UUID sessionId, String model, String provider) {
+        SessionEntity session = sessionRepository.findById(sessionId)
+            .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));
+        session.setModelName(model);
+        if (provider != null && !provider.isBlank()) {
+            session.setModelProvider(provider);
+        }
+        session.setUpdatedAt(Instant.now());
+        sessionRepository.save(session);
+    }
+
+    @Transactional
+    public void installBundle(String bundleName) {
+        // Defer to SkillBundleService if available; otherwise throw
+        throw new UnsupportedOperationException("Bundle install not yet wired to SkillBundleService in this runtime");
+    }
+
+    @Transactional
+    public void uninstallBundle(String bundleName) {
+        throw new UnsupportedOperationException("Bundle uninstall not yet wired to SkillBundleService in this runtime");
+    }
+
+    @Transactional
     public SessionSummaryDto branchSession(UUID sessionId, String name) {
         // Fork a session: load messages, create new session with copied messages
         SessionEntity source = sessionRepository.findById(sessionId)

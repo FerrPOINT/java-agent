@@ -47,4 +47,31 @@ class DatabaseSkillManagerTest {
         assertThat(new DatabaseSkillManager(repo).deleteSkill("s1")).isTrue();
         verify(repo).delete(e);
     }
+
+    // S2/S7: Test archive and telemetry
+    @Test
+    void archiveSkill_setsArchivedTrue() {
+        SkillRepository repo = mock(SkillRepository.class);
+        SkillEntity e = new SkillEntity();
+        e.setName("stale-skill");
+        when(repo.findByName("stale-skill")).thenReturn(Optional.of(e));
+        DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
+        assertThat(mgr.archiveSkill("stale-skill")).isTrue();
+        assertThat(e.isArchived()).isTrue();
+        verify(repo).save(e);
+    }
+
+    @Test
+    void incrementViewCount_incrementsAndSaves() {
+        SkillRepository repo = mock(SkillRepository.class);
+        SkillEntity e = new SkillEntity();
+        e.setName("test");
+        e.setViewCount(5);
+        when(repo.findByName("test")).thenReturn(Optional.of(e));
+        DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
+        mgr.incrementViewCount("test");
+        assertThat(e.getViewCount()).isEqualTo(6);
+        assertThat(e.getLastActivityAt()).isNotNull();
+        verify(repo).save(e);
+    }
 }

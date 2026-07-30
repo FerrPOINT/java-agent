@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.keyboard;
 
+import com.azhukov.agent.bot.auth.AuthorizationService;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
@@ -24,6 +25,7 @@ class CallbackQueryHandlerTest {
     private InlineKeyboardBuilder inlineKeyboardBuilder;
     private BotSessionStore sessionStore;
     private BotProperties properties;
+    private AuthorizationService authorizationService;
     private CallbackQueryHandler handler;
 
     @BeforeEach
@@ -34,8 +36,11 @@ class CallbackQueryHandlerTest {
         inlineKeyboardBuilder = new InlineKeyboardBuilder(new com.fasterxml.jackson.databind.ObjectMapper());
         sessionStore = mock(BotSessionStore.class);
         properties = new BotProperties();
+        authorizationService = mock(AuthorizationService.class);
+        // By default, allow all users (allow-by-default = true)
+        when(authorizationService.isAuthorized(anyLong(), anyString(), anyLong())).thenReturn(true);
         handler = new CallbackQueryHandler(client, providerKeyboardBuilder, modelKeyboardBuilder,
-            inlineKeyboardBuilder, sessionStore, properties);
+            inlineKeyboardBuilder, sessionStore, properties, authorizationService);
 
         when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean())).thenReturn(true);
         when(client.sendMessage(anyLong(), any())).thenReturn(Optional.of(1L));
@@ -131,6 +136,33 @@ class CallbackQueryHandlerTest {
 
         assertThat(result).isNull();
         verifyNoInteractions(client);
+    }
+
+    // ─── B4: Authorization tests ──────────────────────────────────
+
+    @Test
+    void handle_unauthorizedUser_answersNotAuthorized() {
+        when(authorizationService.isAuthorized(456L, "jdoe", 123L)).thenReturn(false);
+
+        UpdateEvent event = callbackEvent("cq-auth-1", "mp:kimi-k2");
+        String result = handler.handle(event);
+
+        assertThat(result).isNull();
+        verify(client).answerCallbackQuery("cq-auth-1", "Not authorized", true);
+        verifyNoInteractions(sessionStore);
+    }
+
+    @Test
+    void handle_authorizedUser_proceedsNormally() {
+        when(authorizationService.isAuthorized(456L, "jdoe", 123L)).thenReturn(true);
+        BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+
+        UpdateEvent event = callbackEvent("cq-auth-2", "mp:gpt-4");
+        String result = handler.handle(event);
+
+        assertThat(result).isEqualTo("Model set to: gpt-4");
     }
 
     // ─── Helpers ──────────────────────────────────────────────────

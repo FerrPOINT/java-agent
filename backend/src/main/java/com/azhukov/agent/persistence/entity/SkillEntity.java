@@ -27,4 +27,18 @@ public class SkillEntity {
 
     private Instant updatedAt;
     private Instant createdAt;
+
+    // S6: Provenance — who wrote this skill
+    private String writeOrigin;
+
+    // S7: Usage telemetry
+    private int viewCount;
+    private int manageCount;
+    private Instant lastActivityAt;
+
+    // S2: Curator lifecycle
+    private boolean archived;
+
+    // S12: Trust level
+    private String trustLevel;
 }

@@ -6,6 +6,7 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.core.skill.WriteOrigin;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.entity.TodoEntity;
@@ -25,6 +26,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -56,7 +58,6 @@ class MemoryToolsUnitTest {
 
     // ── MemoryTool tests (8 tests) ──
 
-    // 1. MemoryTool adds fact to memory store
     @Test
     void memoryToolAddsFactToMemory() {
         MemoryTool tool = new MemoryTool(memoryProvider);
@@ -69,7 +70,6 @@ class MemoryToolsUnitTest {
         verify(memoryProvider).store(USER_ID, "memory", "auto", "User prefers dark mode");
     }
 
-    // 2. MemoryTool adds fact to user store
     @Test
     void memoryToolAddsFactToUser() {
         MemoryTool tool = new MemoryTool(memoryProvider);
@@ -81,7 +81,6 @@ class MemoryToolsUnitTest {
         verify(memoryProvider).store(USER_ID, "user", "auto", "Name is Alice");
     }
 
-    // 3. MemoryTool replaces fact
     @Test
     void memoryToolReplacesFact() {
         MemoryTool tool = new MemoryTool(memoryProvider);
@@ -94,7 +93,6 @@ class MemoryToolsUnitTest {
         verify(memoryProvider).replace(USER_ID, "memory", "dark mode", "User prefers light mode");
     }
 
-    // 4. MemoryTool removes fact
     @Test
     void memoryToolRemovesFact() {
         MemoryTool tool = new MemoryTool(memoryProvider);
@@ -107,7 +105,6 @@ class MemoryToolsUnitTest {
         verify(memoryProvider).remove(USER_ID, "memory", "dark mode");
     }
 
-    // 5. MemoryTool reads facts
     @Test
     void memoryToolReadsFacts() {
         MemoryTool tool = new MemoryTool(memoryProvider);
@@ -121,7 +118,6 @@ class MemoryToolsUnitTest {
         verify(memoryProvider).read(USER_ID, "memory");
     }
 
-    // 6. MemoryTool stages write when approval gate enabled
     @Test
     void memoryToolStagesWriteWhenGateEnabled() {
         WriteApprovalGate gate = mock(WriteApprovalGate.class);
@@ -138,7 +134,6 @@ class MemoryToolsUnitTest {
         verify(memoryProvider, never()).store(any(), any(), any(), any());
     }
 
-    // 7. MemoryTool rejects unknown action
     @Test
     void memoryToolRejectsUnknownAction() {
         MemoryTool tool = new MemoryTool(memoryProvider);
@@ -150,7 +145,6 @@ class MemoryToolsUnitTest {
         assertThat(result.error()).contains("Unknown action");
     }
 
-    // 8. MemoryTool defaults target to memory
     @Test
     void memoryToolDefaultsTargetToMemory() {
         MemoryTool tool = new MemoryTool(memoryProvider);
@@ -284,24 +278,31 @@ class MemoryToolsUnitTest {
         assertThat(result.error()).isEqualTo("Query is required");
     }
 
-    // ── SkillViewTool tests ──
+    // ── SkillViewTool tests (S9: now with metadata) ──
 
     @Test
     void skillViewToolReturnsSkillContent() {
         SkillViewTool tool = new SkillViewTool(skillManager);
-        when(skillManager.getSkill("testing")).thenReturn("# Testing Guide\nUse JUnit 5.");
+        // S9: getSkillInfo now returns rich metadata
+        when(skillManager.getSkillInfo("testing")).thenReturn(new SkillManager.SkillInfo(
+            "testing", "# Testing Guide\nUse JUnit 5.", "", null, 0, 0, null, false, "AGENT_CREATED"
+        ));
+        when(skillManager.listSupportFiles("testing")).thenReturn(List.of());
         String args = "{\"name\":\"testing\"}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).isEqualTo("# Testing Guide\nUse JUnit 5.");
+        // S9: Content now includes metadata header + original content
+        assertThat(result.content()).contains("# Testing Guide");
+        assertThat(result.content()).contains("Use JUnit 5.");
+        assertThat(result.content()).contains("=== Skill: testing ===");
     }
 
     @Test
     void skillViewToolFailsWhenSkillNotFound() {
         SkillViewTool tool = new SkillViewTool(skillManager);
-        when(skillManager.getSkill("missing")).thenReturn(null);
+        when(skillManager.getSkillInfo("missing")).thenReturn(null);
         String args = "{\"name\":\"missing\"}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
@@ -310,31 +311,40 @@ class MemoryToolsUnitTest {
         assertThat(result.error()).isEqualTo("Skill not found: missing");
     }
 
-    // ── SkillsListTool tests ──
+    // ── SkillsListTool tests (S9: now with metadata) ──
 
     @Test
     void skillsListToolReturnsNames() {
         SkillsListTool tool = new SkillsListTool(skillManager);
-        when(skillManager.listSkillNames()).thenReturn(List.of("testing", "refactoring", "docs"));
+        // S9: listSkills returns SkillInfo objects
+        when(skillManager.listSkills()).thenReturn(List.of(
+            new SkillManager.SkillInfo("testing", "", "", null, 0, 0, null, false, "AGENT_CREATED"),
+            new SkillManager.SkillInfo("refactoring", "", "", null, 0, 0, null, false, "AGENT_CREATED"),
+            new SkillManager.SkillInfo("docs", "", "", null, 0, 0, null, false, "AGENT_CREATED")
+        ));
 
         ToolResult result = tool.execute("{}", LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).isEqualTo("testing\nrefactoring\ndocs");
+        // S9: Content now includes header and metadata
+        assertThat(result.content()).contains("testing");
+        assertThat(result.content()).contains("refactoring");
+        assertThat(result.content()).contains("docs");
+        assertThat(result.content()).contains("Available Skills:");
     }
 
     @Test
     void skillsListToolReturnsEmptyList() {
         SkillsListTool tool = new SkillsListTool(skillManager);
-        when(skillManager.listSkillNames()).thenReturn(List.of());
+        when(skillManager.listSkills()).thenReturn(List.of());
 
         ToolResult result = tool.execute("{}", LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).isEmpty();
+        assertThat(result.content()).contains("No skills available.");
     }
 
-    // ── SkillManageTool tests ──
+    // ── SkillManageTool tests (S3: now with frontmatter + validation) ──
 
     @Test
     void skillManageToolCreatesSkill() {
@@ -344,8 +354,10 @@ class MemoryToolsUnitTest {
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).isEqualTo("Skill testing saved.");
-        verify(skillManager).saveSkill("testing", "# Testing Guide\nUse JUnit 5.");
+        // S3: Create now returns "created" instead of "saved"
+        assertThat(result.content()).contains("created");
+        // S3: Content gets YAML frontmatter prepended, calls 3-arg saveSkill with WriteOrigin
+        verify(skillManager).saveSkill(eq("testing"), contains("# Testing Guide"), eq(WriteOrigin.FOREGROUND));
     }
 
     @Test
@@ -356,8 +368,9 @@ class MemoryToolsUnitTest {
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).isEqualTo("Skill testing saved.");
-        verify(skillManager).saveSkill("testing", "# Testing Guide\nUse AssertJ.");
+        assertThat(result.content()).contains("updated");
+        // S3: Update calls 3-arg saveSkill with WriteOrigin.FOREGROUND
+        verify(skillManager).saveSkill(eq("testing"), eq("# Testing Guide\nUse AssertJ."), eq(WriteOrigin.FOREGROUND));
     }
 
     @Test

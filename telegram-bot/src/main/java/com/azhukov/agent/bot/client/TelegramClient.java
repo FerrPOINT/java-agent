@@ -33,6 +33,9 @@ public class TelegramClient {
     private final ScheduledExecutorService rateLimitScheduler;
     private boolean linkPreviewEnabled = true; // B3.7: default to enabling link previews
 
+    // B3: Track whether the last API call returned HTTP 409 (conflict)
+    private volatile boolean lastCallConflict = false;
+
     public TelegramClient(RestClient restClient, ObjectMapper objectMapper, String botToken, int rateLimitPerSecond) {
         this(restClient, objectMapper, botToken, rateLimitPerSecond, true);
     }
@@ -72,6 +75,17 @@ public class TelegramClient {
         // No-op — release is now scheduled right after acquire for accurate rate limiting
     }
 
+    /**
+     * B3: Returns true if the last callApi returned HTTP 409 (conflict —
+     * another polling instance is active). The flag is cleared at the start
+     * of each callApi invocation.
+     *
+     * @return true if the last API call was a 409 conflict
+     */
+    public boolean isLastCallConflict() {
+        return lastCallConflict;
+    }
+
     // ─── Text messages ────────────────────────────────────────────
 
     public Optional<Long> sendMessage(long chatId, String text) {
@@ -102,11 +116,28 @@ public class TelegramClient {
     }
 
     public boolean editMessageText(long chatId, long messageId, String text, String parseMode) {
+        return editMessageText(chatId, messageId, text, parseMode, false);
+    }
+
+    /**
+     * Edit a message with an optional silent (disable_notification) flag.
+     * B7: When disableNotification is true, the edit is delivered silently
+     * (no push notification). Used during streaming to avoid notification spam.
+     *
+     * @param chatId              target chat id
+     * @param messageId           message id to edit
+     * @param text                 new text
+     * @param parseMode           parse mode (MarkdownV2, HTML, or null)
+     * @param disableNotification when true, delivers silently (no push)
+     * @return true if the edit succeeded
+     */
+    public boolean editMessageText(long chatId, long messageId, String text, String parseMode, boolean disableNotification) {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("chat_id", chatId);
         params.put("message_id", messageId);
         params.put("text", text);
         if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
+        if (disableNotification) params.put("disable_notification", true);
         return callApi("editMessageText", params).isPresent();
     }
 
@@ -270,6 +301,7 @@ public class TelegramClient {
             log.warn("Bot token is empty; cannot call {}", method);
             return Optional.empty();
         }
+        lastCallConflict = false; // B3: clear at start of each call
         acquireRateLimit();
         try {
             TelegramResponse response = restClient.post()
@@ -280,6 +312,12 @@ public class TelegramClient {
                 .retrieve()
                 .body(TelegramResponse.class);
             if (response == null || !response.isSuccess()) {
+                // B3: Detect HTTP 409 conflict (another polling instance)
+                if (response != null && response.errorCode() != null && response.errorCode() == 409) {
+                    lastCallConflict = true;
+                    log.warn("Telegram {} returned 409 Conflict: {}", method, response.errorMessage());
+                    return Optional.empty();
+                }
                 // Check for 429 rate limit from Telegram — retry once after waiting
                 if (response != null && response.errorCode() == 429 && response.parameters() != null
                     && response.parameters().containsKey("retry_after")) {

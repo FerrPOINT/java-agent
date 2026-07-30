@@ -64,6 +64,9 @@ import com.azhukov.agent.persistence.repository.SkillRepository;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.service.TurnUsageCollector;
 import com.azhukov.agent.tools.memory.MemoryTool;
+import com.azhukov.agent.tools.memory.SkillManageTool;
+import com.azhukov.agent.tools.memory.SkillViewTool;
+import com.azhukov.agent.tools.memory.SkillsListTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -252,15 +255,19 @@ public class AgentConfig {
                                                             MemoryProvider memoryProvider,
                                                             WriteApprovalGate writeApprovalGate,
                                                             MemoryTool memoryTool,
+                                                            SkillManageTool skillManageTool,
+                                                            SkillsListTool skillsListTool,
+                                                            SkillViewTool skillViewTool,
                                                             AgentProperties properties) {
-        return new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
+        return new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool,
+                                            skillManageTool, skillsListTool, skillViewTool, properties);
     }
 
     @Bean
     @ConditionalOnProperty(name = "agent.skills.enabled", havingValue = "true", matchIfMissing = true)
     @ConditionalOnMissingBean(SkillManager.class)
-    public SkillManager skillManager(SkillRepository skillRepository) {
-        return new DatabaseSkillManager(skillRepository);
+    public SkillManager skillManager(SkillRepository skillRepository, AgentProperties properties) {
+        return new DatabaseSkillManager(skillRepository, properties);
     }
 
     @Bean

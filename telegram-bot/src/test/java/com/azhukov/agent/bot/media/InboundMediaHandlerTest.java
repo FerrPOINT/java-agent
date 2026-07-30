@@ -27,7 +27,7 @@ class InboundMediaHandlerTest {
     }
 
     @Test
-    void handle_photo_returnsPhotoDescription() {
+    void handle_photo_returnsPhotoDescriptionWithCaption() {
         UpdateEvent event = new UpdateEvent(100L, UpdateEvent.Type.PHOTO, 123L, 456L,
             "jdoe", null, "Check this", "file-photo-1", "photo",
             null, null, null, false, null, null);
@@ -37,8 +37,8 @@ class InboundMediaHandlerTest {
         Optional<String> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        assertThat(result.get()).contains("[Photo received");
-        assertThat(result.get()).contains("file-photo-1");
+        // B1: Should contain the file path, not just file_id
+        assertThat(result.get()).contains("[Photo:");
         assertThat(result.get()).contains("caption=\"Check this\"");
     }
 
@@ -54,7 +54,6 @@ class InboundMediaHandlerTest {
 
         assertThat(result).isPresent();
         assertThat(result.get()).contains("[Document:");
-        assertThat(result.get()).contains("file-doc-1");
         assertThat(result.get()).contains("1024 bytes");
     }
 
@@ -69,7 +68,7 @@ class InboundMediaHandlerTest {
         Optional<String> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        assertThat(result.get()).contains("[Voice message received");
+        assertThat(result.get()).contains("[Voice message:");
         assertThat(result.get()).contains("file-voice-1");
     }
 
@@ -84,8 +83,7 @@ class InboundMediaHandlerTest {
         Optional<String> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        assertThat(result.get()).contains("[Sticker received");
-        assertThat(result.get()).contains("file-sticker-1");
+        assertThat(result.get()).contains("[Sticker:");
     }
 
     @Test
@@ -99,7 +97,7 @@ class InboundMediaHandlerTest {
         Optional<String> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        assertThat(result.get()).contains("[Animation/GIF received");
+        assertThat(result.get()).contains("[Animation/GIF:");
         assertThat(result.get()).contains("file-anim-1");
     }
 
@@ -134,7 +132,7 @@ class InboundMediaHandlerTest {
     }
 
     @Test
-    void handle_downloadFails_stillReturnsDescriptionWithZeroSize() {
+    void handle_downloadFails_returnsDescriptionWithDownloadFailed() {
         UpdateEvent event = new UpdateEvent(107L, UpdateEvent.Type.PHOTO, 123L, 456L,
             "jdoe", null, null, "file-photo-fail", "photo",
             null, null, null, false, null, null);
@@ -144,8 +142,9 @@ class InboundMediaHandlerTest {
         Optional<String> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        assertThat(result.get()).contains("[Photo received");
-        assertThat(result.get()).contains("0 bytes");
+        assertThat(result.get()).contains("[Photo:");
+        // Should indicate download failed
+        assertThat(result.get()).contains("download failed");
     }
 
     @Test
@@ -160,5 +159,38 @@ class InboundMediaHandlerTest {
 
         assertThat(result).isPresent();
         assertThat(result.get()).doesNotContain("caption=");
+    }
+
+    @Test
+    void handle_photo_includesFilePathForVision() {
+        UpdateEvent event = new UpdateEvent(109L, UpdateEvent.Type.PHOTO, 123L, 456L,
+            "jdoe", null, "look at this", "file-photo-path", "photo",
+            null, null, null, false, null, null);
+        when(mediaDownloader.downloadToFileId("file-photo-path"))
+            .thenReturn(Optional.of("image-bytes".getBytes()));
+
+        Optional<String> result = handler.handle(event);
+
+        assertThat(result).isPresent();
+        // B1: The description should include a file path for vision tools to analyze
+        assertThat(result.get()).contains("/tmp/agent-media/");
+    }
+
+    @Test
+    void handle_fileTooLarge_returnsDescriptionWithoutPath() {
+        UpdateEvent event = new UpdateEvent(110L, UpdateEvent.Type.DOCUMENT, 123L, 456L,
+            "jdoe", null, null, "file-big", "document",
+            null, null, null, false, null, null);
+        // 25MB — exceeds the 20MB limit
+        byte[] largeFile = new byte[25 * 1024 * 1024];
+        when(mediaDownloader.downloadToFileId("file-big"))
+            .thenReturn(Optional.of(largeFile));
+
+        Optional<String> result = handler.handle(event);
+
+        assertThat(result).isPresent();
+        assertThat(result.get()).contains("[Document:");
+        // Should NOT contain a file path (was not saved)
+        assertThat(result.get()).doesNotContain("/tmp/agent-media/");
     }
 }

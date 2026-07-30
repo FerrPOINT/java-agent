@@ -198,6 +198,93 @@ public class AgentController {
         return agentRuntimeService.getInsights();
     }
 
+    // ── Model switching ──
+
+    @PostMapping("/agent/model")
+    public java.util.Map<String, Object> switchModel(@RequestBody SwitchModelRequest request) {
+        UUID sessionId = request.sessionId();
+        String model = request.model();
+        String provider = request.provider();
+        if (sessionId == null || model == null || model.isBlank()) {
+            return java.util.Map.of("ok", false, "error", "sessionId and model are required");
+        }
+        try {
+            agentRuntimeService.switchModel(sessionId, model, provider);
+            return java.util.Map.of("ok", true, "model", model,
+                "provider", provider != null ? provider : "",
+                "sessionId", sessionId.toString());
+        } catch (Exception e) {
+            return java.util.Map.of("ok", false, "error", e.getMessage());
+        }
+    }
+
+    @GetMapping("/agent/model")
+    public java.util.Map<String, Object> getCurrentModel(@RequestParam(required = false) UUID sessionId) {
+        if (sessionId != null) {
+            try {
+                var session = agentRuntimeService.getContext(sessionId);
+                return java.util.Map.of(
+                    "sessionId", sessionId.toString(),
+                    "messageCount", session.messageCount(),
+                    "tokenEstimate", session.tokenEstimate()
+                );
+            } catch (Exception e) {
+                return java.util.Map.of("error", e.getMessage());
+            }
+        }
+        return java.util.Map.of("error", "sessionId required");
+    }
+
+    public record SwitchModelRequest(UUID sessionId, String model, String provider) {}
+
+    // ── Stop (interrupt active turn) ──
+
+    @PostMapping("/agent/stop")
+    public java.util.Map<String, Object> stop(@RequestBody(required = false) StopRequest request) {
+        UUID sessionId = request != null ? request.sessionId() : null;
+        if (sessionId != null) {
+            steerBuffer.steer(sessionId, "__INTERRUPT__");
+        }
+        return java.util.Map.of("ok", true, "message", "Agent stopped");
+    }
+
+    public record StopRequest(UUID sessionId) {}
+
+    // ── Skill content ──
+
+    @GetMapping("/agent/skills/{name}")
+    public java.util.Map<String, Object> getSkillContent(@PathVariable String name) {
+        String content = skillManager.getSkill(name);
+        if (content == null) {
+            return java.util.Map.of("ok", false, "error", "Skill not found: " + name);
+        }
+        return java.util.Map.of("ok", true, "name", name, "content", content);
+    }
+
+    // ── Bundle install / uninstall ──
+
+    @PostMapping("/agent/bundles/install")
+    public java.util.Map<String, Object> installBundle(@RequestBody BundleRequest request) {
+        try {
+            agentRuntimeService.installBundle(request.bundleName());
+            return java.util.Map.of("ok", true, "message", "Bundle installed: " + request.bundleName());
+        } catch (Exception e) {
+            return java.util.Map.of("ok", false, "error", e.getMessage());
+        }
+    }
+
+    @PostMapping("/agent/bundles/uninstall")
+    public java.util.Map<String, Object> uninstallBundle(@RequestBody BundleRequest request) {
+        try {
+            agentRuntimeService.uninstallBundle(request.bundleName());
+            return java.util.Map.of("ok", true, "message", "Bundle uninstalled: " + request.bundleName());
+        } catch (Exception e) {
+            return java.util.Map.of("ok", false, "error", e.getMessage());
+        }
+    }
+
+    public record BundleRequest(String bundleName) {}
+
     @PostMapping("/agent/restart")
     public void restart() {
         agentRuntimeService.restart();

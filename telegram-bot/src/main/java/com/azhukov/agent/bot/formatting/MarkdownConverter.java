@@ -14,6 +14,7 @@ import java.util.regex.Pattern;
  *
  * <p>Processing order:
  * <ol>
+ *   <li>Convert GFM pipe tables to Telegram-friendly format (bold header + bullets)</li>
  *   <li>Protect code blocks and inline code (no escaping inside)</li>
  *   <li>Protect links (escape link text, keep URL as-is)</li>
  *   <li>Convert bold {@code **text**} → {@code *escaped_text*}, protect markers</li>
@@ -24,6 +25,137 @@ import java.util.regex.Pattern;
  * </ol>
  */
 public final class MarkdownConverter {
+
+    // ─── Table conversion ──────────────────────────────────────────
+
+    /**
+     * Matches a GFM table delimiter row: optional outer pipes, cells containing
+     * only dashes (with optional leading/trailing colons for alignment) separated
+     * by '|'. Requires at least one internal '|' so lone '---' horizontal rules
+     * are NOT matched.
+     */
+    private static final Pattern TABLE_SEPARATOR_PATTERN =
+        Pattern.compile("^\\s*\\|?\\s*:?-+:?\\s*(?:\\|\\s*:?-+:?\\s*){1,}\\|?\\s*$");
+
+    /**
+     * Convert GFM pipe tables to Telegram-friendly format before the main
+     * MarkdownV2 conversion. A table like:
+     * <pre>
+     * | Name | Value |
+     * |------|-------|
+     * | A    | 1     |
+     * | B    | 2     |
+     * </pre>
+     * becomes:
+     * <pre>
+     * **Name | Value**
+     * • A | 1
+     * • B | 2
+     * </pre>
+     *
+     * @param text the input markdown
+     * @return text with tables converted to bullet-list format
+     */
+    static String convertTables(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        String[] lines = text.split("\n", -1);
+        StringBuilder result = new StringBuilder(text.length() + 64);
+
+        int i = 0;
+        while (i < lines.length) {
+            // Look ahead for a potential table: need at least 3 consecutive lines where
+            // line[i] is a header row (contains |), line[i+1] is a separator, line[i+2+] are data rows
+            if (i + 1 < lines.length && isTableRow(lines[i]) && isTableSeparator(lines[i + 1])) {
+                // Collect the full table block
+                List<String> tableBlock = new ArrayList<>();
+                tableBlock.add(lines[i]);     // header
+                tableBlock.add(lines[i + 1]);  // separator
+                int j = i + 2;
+                while (j < lines.length && isTableRow(lines[j])) {
+                    tableBlock.add(lines[j]);
+                    j++;
+                }
+
+                // Render the table
+                result.append(renderTableBlock(tableBlock));
+
+                // If the table was followed by more content, add a newline separator
+                if (j < lines.length) {
+                    result.append("\n");
+                }
+                i = j;
+            } else {
+                result.append(lines[i]);
+                if (i < lines.length - 1) {
+                    result.append("\n");
+                }
+                i++;
+            }
+        }
+
+        return result.toString();
+    }
+
+    /**
+     * Returns true if a line could plausibly be a table row (non-empty, contains |).
+     */
+    private static boolean isTableRow(String line) {
+        String stripped = line.strip();
+        return !stripped.isEmpty() && stripped.contains("|");
+    }
+
+    /**
+     * Returns true if a line is a GFM table separator row (|---|---|).
+     */
+    private static boolean isTableSeparator(String line) {
+        return TABLE_SEPARATOR_PATTERN.matcher(line).matches();
+    }
+
+    /**
+     * Split a markdown table row into stripped cell values.
+     * Strips leading/trailing pipes and splits on |.
+     */
+    private static List<String> splitTableRow(String line) {
+        String stripped = line.strip();
+        if (stripped.startsWith("|")) stripped = stripped.substring(1);
+        if (stripped.endsWith("|")) stripped = stripped.substring(0, stripped.length() - 1);
+        String[] parts = stripped.split("\\|");
+        List<String> cells = new ArrayList<>(parts.length);
+        for (String p : parts) {
+            cells.add(p.strip());
+        }
+        return cells;
+    }
+
+    /**
+     * Render a GFM table block as Telegram-friendly text.
+     * Header row → bold text, data rows → bullet points.
+     */
+    private static String renderTableBlock(List<String> tableBlock) {
+        if (tableBlock.size() < 3) {
+            return String.join("\n", tableBlock);
+        }
+
+        List<String> headers = splitTableRow(tableBlock.get(0));
+        if (headers.size() < 2) {
+            return String.join("\n", tableBlock);
+        }
+
+        StringBuilder sb = new StringBuilder();
+
+        // Header row → bold: **Header1 | Header2 | ...**
+        sb.append("**").append(String.join(" | ", headers)).append("**");
+
+        // Data rows → bullet points: • val1 | val2 | ...
+        for (int k = 2; k < tableBlock.size(); k++) {
+            List<String> cells = splitTableRow(tableBlock.get(k));
+            sb.append("\n• ").append(String.join(" | ", cells));
+        }
+
+        return sb.toString();
+    }
 
     private MarkdownConverter() {
     }
@@ -69,6 +201,9 @@ public final class MarkdownConverter {
         if (markdown == null || markdown.isEmpty()) {
             return "";
         }
+
+        // 0. Convert GFM pipe tables to Telegram-friendly format (bold header + bullets)
+        markdown = convertTables(markdown);
 
         List<String> protectedSegments = new ArrayList<>();
 

@@ -32,6 +32,10 @@ public class LongPollingService {
     private final AtomicLong lastUpdateId = new AtomicLong(0);
     private final ReconnectWatcher reconnectWatcher;
 
+    // B3: 409 conflict tracking
+    private int conflictRetryCount = 0;
+    private static final long[] CONFLICT_BACKOFF_MS = {15_000, 30_000, 55_000, 55_000, 55_000};
+
     public LongPollingService(TelegramClient telegramClient,
                               BotProperties properties,
                               Consumer<UpdateEvent> updateHandler,
@@ -129,15 +133,51 @@ public class LongPollingService {
         try {
             var result = telegramClient.getUpdates(offset, limit, timeout);
             if (result.isEmpty()) {
+                // Check if this was a 409 conflict
+                if (telegramClient.isLastCallConflict()) {
+                    return handleConflict();
+                }
                 log.warn("getUpdates returned empty — possible network error");
                 return null;
             }
+            // Successful fetch — reset conflict counter
+            conflictRetryCount = 0;
             return result.get();
         } catch (Exception e) {
             if (e instanceof InterruptedException ie) throw ie;
             log.warn("getUpdates failed: {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * B3: Handle HTTP 409 conflict (another polling instance is active).
+     * Applies exponential backoff: 15s, 30s, 55s, 55s, 55s (max configured retries).
+     * After max retries: logs error and stops polling (does not crash).
+     *
+     * @return null to signal the poll loop to exit (reconnect or stop)
+     * @throws InterruptedException if the backoff sleep is interrupted
+     */
+    private List<Map<String, Object>> handleConflict() throws InterruptedException {
+        int maxRetries = properties.getPolling().getConflictMaxRetries();
+        conflictRetryCount++;
+        log.warn("Another polling instance detected (HTTP 409), backing off. Attempt {}/{}",
+            conflictRetryCount, maxRetries);
+
+        if (conflictRetryCount > maxRetries) {
+            log.error("Max conflict retries ({}) exceeded for HTTP 409. Stopping polling to avoid infinite loop.",
+                maxRetries);
+            running.set(false);
+            return null;
+        }
+
+        // Exponential backoff: 15s, 30s, 55s, 55s, 55s...
+        int backoffIndex = Math.min(conflictRetryCount - 1, CONFLICT_BACKOFF_MS.length - 1);
+        long backoffMs = CONFLICT_BACKOFF_MS[backoffIndex];
+        log.info("Backing off for {}ms before retrying getUpdates", backoffMs);
+
+        Thread.sleep(backoffMs);
+        return null; // signal poll loop to return (will be re-launched by reconnectWatcher)
     }
 
     void triggerReconnect() {
