@@ -1,16 +1,8 @@
 package com.azhukov.agent.service;
 
-import com.azhukov.agent.api.dto.ActiveAgentDto;
-import com.azhukov.agent.api.dto.ApproveMemoryRequest;
-import com.azhukov.agent.api.dto.ChatRequest;
-import com.azhukov.agent.api.dto.ChatResponseDto;
-import com.azhukov.agent.api.dto.ContextInfoDto;
-import com.azhukov.agent.api.dto.InsightsDto;
-import com.azhukov.agent.api.dto.MemoryDto;
-import com.azhukov.agent.api.dto.PendingMemoryDto;
-import com.azhukov.agent.api.dto.RejectMemoryRequest;
-import com.azhukov.agent.api.dto.SessionSummaryDto;
-import com.azhukov.agent.api.dto.UsageDto;
+import com.azhukov.agent.api.dto.*;
+import com.azhukov.agent.api.mapper.DomainDtoMapper;
+import com.azhukov.agent.api.mapper.OpenAiMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.memory.MemoryProvider;
@@ -22,6 +14,8 @@ import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.persistence.entity.MemoryEntity;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
+import com.azhukov.agent.persistence.mapper.MessageMapper;
+import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
 import com.azhukov.agent.persistence.repository.MemoryRepository;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
@@ -53,6 +47,9 @@ public class AgentRuntimeService {
     private final UsageTracker usageTracker;
     private final TurnUsageCollector turnUsageCollector;
     private final AgentProperties properties;
+    private final SessionEntityMapper sessionMapper;
+    private final MessageMapper messageMapper;
+    private final DomainDtoMapper domainDtoMapper;
 
     private static final String UNKNOWN_MODEL = "unknown";
 
@@ -134,15 +131,8 @@ public class AgentRuntimeService {
     @Transactional(readOnly = true)
     public List<SessionSummaryDto> listSessions() {
         return sessionRepository.findAllByUserId("user-1").stream()
-            .map(e -> new SessionSummaryDto(
-                e.getId(),
-                e.getUserId(),
-                e.getTitle(),
-                e.getModelProvider(),
-                e.getModelName(),
-                e.getCreatedAt(),
-                e.getUpdatedAt()
-            ))
+            .map(sessionMapper::toDomain)
+            .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
     }
 
@@ -174,15 +164,8 @@ public class AgentRuntimeService {
     @Transactional(readOnly = true)
     public List<SessionSummaryDto> listSessionsByUserId(String userId) {
         return sessionRepository.findAllByUserId(userId).stream()
-            .map(e -> new SessionSummaryDto(
-                e.getId(),
-                e.getUserId(),
-                e.getTitle(),
-                e.getModelProvider(),
-                e.getModelName(),
-                e.getCreatedAt(),
-                e.getUpdatedAt()
-            ))
+            .map(sessionMapper::toDomain)
+            .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
     }
 
@@ -198,14 +181,7 @@ public class AgentRuntimeService {
 
         // Convert to core Message objects
         List<Message> messages = messageEntities.stream()
-            .map(e -> switch (e.getRole()) {
-                case "assistant" -> Message.assistant(e.getContent() != null ? e.getContent() : "",
-                    e.getTurnIndex() != null ? e.getTurnIndex() : 0);
-                case "tool" -> Message.toolResult(e.getToolCallId(),
-                    e.getContent() != null ? e.getContent() : "",
-                    e.getTurnIndex() != null ? e.getTurnIndex() : 0);
-                default -> Message.user(e.getContent() != null ? e.getContent() : "");
-            })
+            .map(messageMapper::toDomain)
             .toList();
 
         // Use ConversationCompressor for LLM-based compression
@@ -220,12 +196,9 @@ public class AgentRuntimeService {
         messageRepository.deleteAll(messageEntities);
         Instant now = Instant.now();
         for (Message m : compressed) {
-            MessageEntity e = new MessageEntity();
+            MessageEntity e = messageMapper.toEntity(m);
             e.setSessionId(sessionId);
-            e.setRole(m.role().name().toLowerCase());
-            e.setContent(m.content());
             e.setCreatedAt(now);
-            e.setTurnIndex(m.turnIndex() != null ? m.turnIndex() : 0);
             messageRepository.save(e);
         }
     }
@@ -285,30 +258,22 @@ public class AgentRuntimeService {
         // Fork a session: load messages, create new session with copied messages
         SessionEntity source = sessionRepository.findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));
-        SessionEntity branch = new SessionEntity();
-        branch.setUserId(source.getUserId());
-        branch.setModelProvider(source.getModelProvider());
-        branch.setModelName(source.getModelName());
-        branch.setTitle(name != null ? name : "Branch of " + source.getTitle());
+        SessionEntity branch = sessionMapper.toEntity(
+            new Session(null, source.getUserId(), name != null ? name : "Branch of " + source.getTitle(),
+                source.getModelProvider(), source.getModelName(), null, java.util.Map.of())
+        );
         branch.setCreatedAt(Instant.now());
         branch.setUpdatedAt(Instant.now());
         SessionEntity saved = sessionRepository.save(branch);
         // Copy messages
         List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
         for (MessageEntity m : messages) {
-            MessageEntity copy = new MessageEntity();
+            MessageEntity copy = messageMapper.toEntity(messageMapper.toDomain(m));
             copy.setSessionId(saved.getId());
-            copy.setRole(m.getRole());
-            copy.setContent(m.getContent());
-            copy.setToolCallId(m.getToolCallId());
-            copy.setToolCallName(m.getToolCallName());
-            copy.setToolCallArguments(m.getToolCallArguments());
             copy.setCreatedAt(m.getCreatedAt());
-            copy.setTurnIndex(m.getTurnIndex());
             messageRepository.save(copy);
         }
-        return new SessionSummaryDto(saved.getId(), saved.getUserId(), saved.getTitle(),
-            saved.getModelProvider(), saved.getModelName(), saved.getCreatedAt(), saved.getUpdatedAt());
+        return domainDtoMapper.toSessionSummaryDto(sessionMapper.toDomain(saved));
     }
 
     @Transactional
@@ -364,43 +329,32 @@ public class AgentRuntimeService {
     }
 
     private Session createSession(String userId, String provider, String modelName) {
-        SessionEntity e = new SessionEntity();
-        e.setUserId(userId);
-        e.setModelProvider(provider);
-        e.setModelName(modelName);
+        SessionEntity e = sessionMapper.toEntity(
+            Session.create(userId, provider, modelName)
+        );
         e.setTitle("New chat");
         e.setCreatedAt(Instant.now());
         e.setUpdatedAt(Instant.now());
         SessionEntity saved = sessionRepository.save(e);
-        return new Session(saved.getId(), saved.getUserId(), saved.getTitle(),
-            saved.getModelProvider(), saved.getModelName(), null, java.util.Map.of());
+        return sessionMapper.toDomain(saved);
     }
 
     private Session loadSession(UUID id) {
         SessionEntity e = sessionRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
-        return new Session(e.getId(), e.getUserId(), e.getTitle(), e.getModelProvider(), e.getModelName(), null, java.util.Map.of());
+        return sessionMapper.toDomain(e);
     }
 
     private void persistMessages(UUID sessionId, List<Message> messages) {
         Instant now = Instant.now();
         for (Message m : messages) {
-            MessageEntity e = new MessageEntity();
+            MessageEntity e = messageMapper.toEntity(m);
             e.setSessionId(sessionId);
-            e.setRole(m.role().name().toLowerCase());
-            e.setContent(m.content());
-            e.setToolCallId(m.toolCallId());
-            if (m.toolCall() != null) {
-                e.setToolCallName(m.toolCall().name());
-                e.setToolCallArguments(m.toolCall().arguments());
-            }
-            if (m.toolCalls() != null && !m.toolCalls().isEmpty()) {
+            e.setCreatedAt(now);
+            if (m.toolCalls() != null && !m.toolCalls().isEmpty() && m.toolCall() == null) {
                 e.setToolCallName(m.toolCalls().get(0).name());
                 e.setToolCallArguments(m.toolCalls().get(0).arguments());
             }
-            e.setCreatedAt(now);
-            Integer turnIndex = m.turnIndex();
-            e.setTurnIndex(turnIndex != null ? turnIndex : 0);
             messageRepository.save(e);
         }
     }

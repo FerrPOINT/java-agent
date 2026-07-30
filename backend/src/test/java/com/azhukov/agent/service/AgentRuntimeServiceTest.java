@@ -20,6 +20,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import com.azhukov.agent.persistence.mapper.MessageMapper;
+import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
+import org.mapstruct.factory.Mappers;
+import com.azhukov.agent.api.mapper.DomainDtoMapper;
+import com.azhukov.agent.api.mapper.OpenAiMapper;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -89,7 +95,10 @@ class AgentRuntimeServiceTest {
             conversationCompressor,
             usageTracker,
             turnUsageCollector,
-            properties
+            properties,
+            Mappers.getMapper(SessionEntityMapper.class),
+            Mappers.getMapper(MessageMapper.class),
+            Mappers.getMapper(DomainDtoMapper.class)
         );
     }
 
