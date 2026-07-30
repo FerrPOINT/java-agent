@@ -7,9 +7,11 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.memory.MemoryTool;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
@@ -61,29 +63,102 @@ class BackgroundReviewServiceTest {
     }
 
     @Test
-    void reviewTurn_noToolCalls_doesNotUpdateMemory() throws Exception {
-        when(modelClient.complete(any(), any())).thenReturn(new ChatResponse("", List.of()));
+    void reviewTurn_nullMessages_doesNothing() {
         var svc = new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
-        UUID sessionId = UUID.randomUUID();
-        svc.reviewTurn(sessionId, List.of(Message.user("hello"), Message.assistant("hi", 0)));
-        Thread.sleep(200);
-        assertThat(svc.wasMemoryUpdated(sessionId)).isFalse();
+        svc.reviewTurn(UUID.randomUUID(), null);
+        verifyNoInteractions(modelClient);
         svc.shutdown();
     }
 
     @Test
-    void reviewTurn_withMemoryToolCall_updatesFlag() throws Exception {
+    void reviewTurn_noToolCalls_doesNotUpdateMemory() {
+        when(modelClient.complete(any(), any())).thenReturn(new ChatResponse("", List.of()));
+        var svc = new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
+        UUID sessionId = UUID.randomUUID();
+        svc.reviewTurn(sessionId, List.of(Message.user("hello"), Message.assistant("hi", 0)));
+
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+            assertThat(svc.wasMemoryUpdated(sessionId)).isFalse()
+        );
+        verify(memoryProvider, never()).store(any(), any(), any());
+        verify(memoryProvider, never()).store(any(), any(), any(), any());
+        svc.shutdown();
+    }
+
+    @Test
+    void reviewTurn_withMemoryToolCall_updatesFlagAndExecutesToolWithCorrectArgs() {
+        String toolArguments = "{\"action\":\"add\",\"content\":\"User prefers Java\"}";
         ChatResponse response = new ChatResponse("", List.of(
-            new ToolCall("call_1", "memory", "{\"action\":\"add\",\"content\":\"User prefers Java\"}")
+            new ToolCall("call_1", "memory", toolArguments)
         ));
         when(modelClient.complete(any(), any())).thenReturn(response);
-        when(memoryTool.execute(any(), any(), any())).thenReturn(ToolResult.ok("Added to memory store."));
+        when(memoryTool.execute(eq(toolArguments), any(), any()))
+            .thenReturn(ToolResult.ok("Added to memory store."));
 
         var svc = new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
         UUID sessionId = UUID.randomUUID();
         svc.reviewTurn(sessionId, List.of(Message.user("I like Java"), Message.assistant("Great!", 0)));
-        Thread.sleep(500);
-        assertThat(svc.wasMemoryUpdated(sessionId)).isTrue();
+
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+            assertThat(svc.wasMemoryUpdated(sessionId)).isTrue()
+        );
+
+        // Verify the memory tool was called with the exact arguments from the tool call
+        verify(memoryTool).execute(eq(toolArguments), isNull(), any());
+        svc.shutdown();
+    }
+
+    @Test
+    void reviewTurn_toolCallFails_doesNotUpdateFlag() {
+        String toolArguments = "{\"action\":\"add\",\"content\":\"failed fact\"}";
+        ChatResponse response = new ChatResponse("", List.of(
+            new ToolCall("call_1", "memory", toolArguments)
+        ));
+        when(modelClient.complete(any(), any())).thenReturn(response);
+        when(memoryTool.execute(any(), any(), any())).thenReturn(ToolResult.fail("store error"));
+
+        var svc = new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
+        UUID sessionId = UUID.randomUUID();
+        svc.reviewTurn(sessionId, List.of(Message.user("test"), Message.assistant("ok", 0)));
+
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+            assertThat(svc.wasMemoryUpdated(sessionId)).isFalse()
+        );
+        svc.shutdown();
+    }
+
+    @Test
+    void reviewTurn_modelCallThrows_doesNotUpdateFlag() {
+        when(modelClient.complete(any(), any())).thenThrow(new RuntimeException("model unavailable"));
+
+        var svc = new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
+        UUID sessionId = UUID.randomUUID();
+        svc.reviewTurn(sessionId, List.of(Message.user("test"), Message.assistant("ok", 0)));
+
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+            assertThat(svc.wasMemoryUpdated(sessionId)).isFalse()
+        );
+        // Memory tool should not be called since model failed
+        verifyNoInteractions(memoryTool);
+        svc.shutdown();
+    }
+
+    @Test
+    void reviewTurn_nonMemoryToolCall_doesNotUpdateFlag() {
+        ChatResponse response = new ChatResponse("", List.of(
+            new ToolCall("call_1", "web_search", "{\"query\":\"test\"}")
+        ));
+        when(modelClient.complete(any(), any())).thenReturn(response);
+
+        var svc = new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool, properties);
+        UUID sessionId = UUID.randomUUID();
+        svc.reviewTurn(sessionId, List.of(Message.user("test"), Message.assistant("ok", 0)));
+
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+            assertThat(svc.wasMemoryUpdated(sessionId)).isFalse()
+        );
+        // Memory tool should not be called for non-memory tool calls
+        verifyNoInteractions(memoryTool);
         svc.shutdown();
     }
 

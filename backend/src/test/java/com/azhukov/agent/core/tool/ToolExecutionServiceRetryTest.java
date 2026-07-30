@@ -5,48 +5,123 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
-import org.junit.jupiter.api.Tag;
+import com.azhukov.agent.security.DefaultToolCallGuardrail;
+import com.azhukov.agent.security.SecretRedactor;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
 
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
-@SpringBootTest
-@ActiveProfiles("noop")
-@Tag("slow")
+/**
+ * Unit tests for ToolExecutionService retry behavior.
+ * Converted from @SpringBootTest to pure unit test with mocks.
+ */
 class ToolExecutionServiceRetryTest {
 
-    @Autowired
-    private ToolExecutionService toolExecutionService;
-
-    @Autowired
     private ToolRegistry toolRegistry;
-
-    @Autowired
     private AgentProperties properties;
+    private ToolExecutionService service;
+
+    @BeforeEach
+    void setUp() {
+        toolRegistry = mock(ToolRegistry.class);
+        when(toolRegistry.getDefinitions(any())).thenReturn(java.util.List.of());
+        when(toolRegistry.getDefinitions()).thenReturn(java.util.List.of());
+        when(toolRegistry.getToolsets()).thenReturn(Set.of());
+
+        properties = new AgentProperties();
+        service = new ToolExecutionService(
+            toolRegistry, properties,
+            new DefaultToolCallGuardrail(properties),
+            new SecretRedactor(properties),
+            new ToolResultClassifier(),
+            new ToolOutputLimiter(properties)
+        );
+    }
 
     @Test
     void retrySucceedsAfterTransientFailures() {
         AtomicInteger counter = new AtomicInteger(0);
-        String toolName = "flaky-test-tool";
-        ToolDefinition def = new ToolDefinition(toolName, "flaky", java.util.Map.of("type","object","properties",java.util.Map.of(),"required",java.util.List.of()));
-        toolRegistry.registerDynamic(toolName, def, (args, lastAssistant, session) -> {
-            int attempt = counter.incrementAndGet();
-            if (attempt < 3) {
-                throw new RuntimeException(" simulated failure attempt " + attempt);
-            }
-            return ToolResult.ok("ok-after-retry");
-        });
+        when(toolRegistry.execute(eq("flaky-tool"), anyString(), anyString(), any(), any()))
+            .thenAnswer(inv -> {
+                int attempt = counter.incrementAndGet();
+                if (attempt < 3) {
+                    throw new RuntimeException("simulated failure attempt " + attempt);
+                }
+                return ToolResult.ok("ok-after-retry");
+            });
 
         Session session = Session.create("test", "noop", "");
-        ToolResult result = toolExecutionService.execute(toolName, "call-1", "{}", null, session);
+        ToolResult result = service.execute("flaky-tool", "call-1", "{}", null, session);
 
         assertThat(result.success()).isTrue();
         assertThat(result.content()).isEqualTo("ok-after-retry");
         assertThat(counter.get()).isEqualTo(3);
+    }
+
+    @Test
+    void maxRetriesExceededReturnsErrorResult() {
+        AtomicInteger counter = new AtomicInteger(0);
+        when(toolRegistry.execute(eq("always-fails"), anyString(), anyString(), any(), any()))
+            .thenAnswer(inv -> {
+                counter.incrementAndGet();
+                throw new RuntimeException("permanent failure");
+            });
+
+        Session session = Session.create("test", "noop", "");
+        ToolResult result = service.execute("always-fails", "call-1", "{}", null, session);
+
+        // After 3 failed attempts, should return a failure result
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("always-fails");
+        assertThat(result.error()).contains("permanent failure");
+        // Verify exactly 3 attempts were made (maxAttempts=3)
+        assertThat(counter.get()).isEqualTo(3);
+    }
+
+    @Test
+    void nonRetryableExceptionIsNotRetried() {
+        // IllegalArgumentException is configured as ignoreExceptions → not retried
+        AtomicInteger counter = new AtomicInteger(0);
+        when(toolRegistry.execute(eq("bad-args"), anyString(), anyString(), any(), any()))
+            .thenAnswer(inv -> {
+                counter.incrementAndGet();
+                throw new IllegalArgumentException("invalid arguments");
+            });
+
+        Session session = Session.create("test", "noop", "");
+        ToolResult result = service.execute("bad-args", "call-1", "{}", null, session);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("bad-args");
+        assertThat(result.error()).contains("invalid arguments");
+        // Should only be attempted once — IllegalArgumentException is non-retryable
+        assertThat(counter.get()).isEqualTo(1);
+    }
+
+    @Test
+    void successfulExecutionOnFirstAttemptDoesNotRetry() {
+        AtomicInteger counter = new AtomicInteger(0);
+        when(toolRegistry.execute(eq("good-tool"), anyString(), anyString(), any(), any()))
+            .thenAnswer(inv -> {
+                counter.incrementAndGet();
+                return ToolResult.ok("immediate success");
+            });
+
+        Session session = Session.create("test", "noop", "");
+        ToolResult result = service.execute("good-tool", "call-1", "{}", null, session);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).isEqualTo("immediate success");
+        assertThat(counter.get()).isEqualTo(1);
     }
 }

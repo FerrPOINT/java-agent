@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -35,32 +36,103 @@ class ExecuteCodeToolUnitTest {
     }
 
     @Test
-    void parsesTimeoutFromString() {
-        // The timeout parsing logic: "30s" → 30
-        // We test this indirectly by running a quick script with a parsed timeout
-        ExecuteCodeTool tool = new ExecuteCodeTool();
-        // Verify that timeout parsing doesn't crash with invalid input
-        ToolResult r = tool.execute("{\"code\":\"print(1)\",\"timeout\":\"abc\"}", null, session);
-        // Should fall back to default 300s and still run
-        // If python3 is not available, it will fail — that's OK, we test the parsing path
-        // The important thing is it doesn't crash on invalid timeout
+    void parsesTimeoutFromStringStripsNonNumericAndUsesParsedValue() throws Exception {
+        ExecuteCodeTool tool = spy(new ExecuteCodeTool());
+
+        long[] capturedTimeout = {-1};
+        doAnswer(inv -> {
+            ExecuteCodeTool.ProcessBuilderLike pbl = mock(ExecuteCodeTool.ProcessBuilderLike.class);
+            Process mockProcess = mock(Process.class);
+            when(pbl.redirectErrorStream(true)).thenReturn(pbl);
+            when(pbl.start()).thenReturn(mockProcess);
+            when(mockProcess.waitFor(anyLong(), any())).thenAnswer(w -> {
+                capturedTimeout[0] = w.getArgument(0);
+                return true;
+            });
+            when(mockProcess.getInputStream()).thenReturn(
+                new ByteArrayInputStream("ok".getBytes()));
+            return pbl;
+        }).when(tool).createProcessBuilder(anyString());
+
+        // "45s" → strip "s" → parseInt("45") → 45 seconds
+        ToolResult r = tool.execute("{\"code\":\"print(1)\",\"timeout\":\"45s\"}", null, session);
+        assertThat(r.success()).isTrue();
+        assertThat(capturedTimeout[0]).isEqualTo(45L);
     }
 
     @Test
-    void parsesNumericTimeout() {
-        ExecuteCodeTool tool = new ExecuteCodeTool();
-        // "45" → 45 seconds
-        ToolResult r = tool.execute("{\"code\":\"print(1)\",\"timeout\":\"45\"}", null, session);
-        // Should not crash during timeout parsing
-        assertThat(r).isNotNull();
+    void parsesNumericTimeoutUsesExactValue() throws Exception {
+        ExecuteCodeTool tool = spy(new ExecuteCodeTool());
+
+        long[] capturedTimeout = {-1};
+        doAnswer(inv -> {
+            ExecuteCodeTool.ProcessBuilderLike pbl = mock(ExecuteCodeTool.ProcessBuilderLike.class);
+            Process mockProcess = mock(Process.class);
+            when(pbl.redirectErrorStream(true)).thenReturn(pbl);
+            when(pbl.start()).thenReturn(mockProcess);
+            when(mockProcess.waitFor(anyLong(), any())).thenAnswer(w -> {
+                capturedTimeout[0] = w.getArgument(0);
+                return true;
+            });
+            when(mockProcess.getInputStream()).thenReturn(
+                new ByteArrayInputStream("ok".getBytes()));
+            return pbl;
+        }).when(tool).createProcessBuilder(anyString());
+
+        // "120" → 120 seconds
+        ToolResult r = tool.execute("{\"code\":\"print(1)\",\"timeout\":\"120\"}", null, session);
+        assertThat(r.success()).isTrue();
+        assertThat(capturedTimeout[0]).isEqualTo(120L);
     }
 
     @Test
-    void timeoutWithNonNumericStringFallsBackToDefault() {
-        ExecuteCodeTool tool = new ExecuteCodeTool();
-        // "abc" → NumberFormatException → fallback to 300
+    void timeoutWithNonNumericStringFallsBackToDefault300() throws Exception {
+        ExecuteCodeTool tool = spy(new ExecuteCodeTool());
+
+        long[] capturedTimeout = {-1};
+        doAnswer(inv -> {
+            ExecuteCodeTool.ProcessBuilderLike pbl = mock(ExecuteCodeTool.ProcessBuilderLike.class);
+            Process mockProcess = mock(Process.class);
+            when(pbl.redirectErrorStream(true)).thenReturn(pbl);
+            when(pbl.start()).thenReturn(mockProcess);
+            when(mockProcess.waitFor(anyLong(), any())).thenAnswer(w -> {
+                capturedTimeout[0] = w.getArgument(0);
+                return true;
+            });
+            when(mockProcess.getInputStream()).thenReturn(
+                new ByteArrayInputStream("ok".getBytes()));
+            return pbl;
+        }).when(tool).createProcessBuilder(anyString());
+
+        // "not-a-number" → replaceAll("[^0-9]", "") → "" → parseInt fails → fallback to 300
         ToolResult r = tool.execute("{\"code\":\"print(1)\",\"timeout\":\"not-a-number\"}", null, session);
-        assertThat(r).isNotNull();
+        assertThat(r.success()).isTrue();
+        assertThat(capturedTimeout[0]).isEqualTo(300L);
+    }
+
+    @Test
+    void timeoutWithMixedStringExtractsDigitsOnly() throws Exception {
+        ExecuteCodeTool tool = spy(new ExecuteCodeTool());
+
+        long[] capturedTimeout = {-1};
+        doAnswer(inv -> {
+            ExecuteCodeTool.ProcessBuilderLike pbl = mock(ExecuteCodeTool.ProcessBuilderLike.class);
+            Process mockProcess = mock(Process.class);
+            when(pbl.redirectErrorStream(true)).thenReturn(pbl);
+            when(pbl.start()).thenReturn(mockProcess);
+            when(mockProcess.waitFor(anyLong(), any())).thenAnswer(w -> {
+                capturedTimeout[0] = w.getArgument(0);
+                return true;
+            });
+            when(mockProcess.getInputStream()).thenReturn(
+                new ByteArrayInputStream("ok".getBytes()));
+            return pbl;
+        }).when(tool).createProcessBuilder(anyString());
+
+        // "abc60xyz" → replaceAll strips letters → "60" → 60 seconds
+        ToolResult r = tool.execute("{\"code\":\"print(1)\",\"timeout\":\"abc60xyz\"}", null, session);
+        assertThat(r.success()).isTrue();
+        assertThat(capturedTimeout[0]).isEqualTo(60L);
     }
 
     @Test
@@ -102,6 +174,8 @@ class ExecuteCodeToolUnitTest {
         ToolResult r = tool.execute("{\"code\":\"import time; time.sleep(99)\",\"timeout\":\"1\"}", null, session);
         assertThat(r.success()).isFalse();
         assertThat(r.error()).contains("timed out");
+        // Verify the error message includes the actual parsed timeout value
+        assertThat(r.error()).contains("1 seconds");
     }
 
     @Test
