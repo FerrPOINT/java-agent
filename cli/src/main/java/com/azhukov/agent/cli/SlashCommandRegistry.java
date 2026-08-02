@@ -784,6 +784,43 @@ public class SlashCommandRegistry {
             }
         });
 
+        // ── Batch C: /kanban, /codex_runtime ──
+        register("kanban", "Kanban board: /kanban [list|add <text>|done <id>|clear]", (args, client, sessionId) -> {
+            String sub = args.strip().toLowerCase();
+            if (sub.isBlank() || "list".equals(sub)) {
+                return client.kanbanList();
+            }
+            String[] parts = args.split("\\s+", 2);
+            switch (parts[0].toLowerCase()) {
+                case "add" -> {
+                    if (parts.length < 2) return "Usage: /kanban add <text>";
+                    return client.kanbanAdd(parts[1].strip());
+                }
+                case "done" -> {
+                    if (parts.length < 2) return "Usage: /kanban done <id>";
+                    return client.kanbanDone(parts[1].strip());
+                }
+                case "clear" -> { return client.kanbanClear(); }
+                default -> { return "Usage: /kanban [list|add <text>|done <id>|clear]"; }
+            }
+        });
+
+        register("codex_runtime", "Codex runtime settings: /codex_runtime [status|model <name>|reset]", (args, client, sessionId) -> {
+            String sub = args.strip().toLowerCase();
+            if (sub.isBlank() || "status".equals(sub)) {
+                return client.codexRuntimeStatus();
+            }
+            String[] parts = args.split("\\s+", 2);
+            switch (parts[0].toLowerCase()) {
+                case "model" -> {
+                    if (parts.length < 2) return "Usage: /codex_runtime model <name>";
+                    return client.codexRuntimeModel(parts[1].strip());
+                }
+                case "reset" -> { return client.codexRuntimeReset(); }
+                default -> { return "Usage: /codex_runtime [status|model <name>|reset]"; }
+            }
+        });
+
         // ── C7: Aliases ──
         registerAlias("q", "queue");
         registerAlias("s", "steer");

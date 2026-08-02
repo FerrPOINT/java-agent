@@ -153,4 +153,12 @@ public class CliRuntimeSettingsService {
         e.getCliState().clear();
         e.setSubgoal(null);
     }
+
+    public void resetAllSessions() {
+        // Reset all CLI runtime state across all sessions
+        sessionRepository.findAll().forEach(e -> {
+            e.getCliState().clear();
+            e.setSubgoal(null);
+        });
+    }
 }

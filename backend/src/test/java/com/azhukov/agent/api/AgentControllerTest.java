@@ -83,6 +83,9 @@ class AgentControllerTest {
     @Mock
     private com.azhukov.agent.service.CliRuntimeSettingsService cliRuntimeSettingsService;
 
+    @Mock
+    private com.azhukov.agent.persistence.repository.TodoRepository todoRepository;
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
@@ -91,7 +94,7 @@ class AgentControllerTest {
             memoryProvider, skillManager, checkpointManager, ttsService, transcriptionService,
             new com.azhukov.agent.core.agent.SteerBuffer(), new com.azhukov.agent.core.security.ApprovalQueue(),
             cliRuntimeSettingsService,
-            agentProperties, domainDtoMapper, curatorService);
+            agentProperties, domainDtoMapper, curatorService, todoRepository);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

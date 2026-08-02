@@ -1178,6 +1178,100 @@ public class BackendClient {
         }
     }
 
+    // ── Kanban ──
+    public String kanbanList() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/kanban")
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Kanban board is empty.";
+            return prettyPrint(objectMapper.readTree(json));
+        } catch (Exception e) {
+            return handleErr("kanbanList", e);
+        }
+    }
+
+    public String kanbanAdd(String text) {
+        try {
+            Map<String, Object> body = Map.of("text", text);
+            restClient.post()
+                .uri("/api/v1/agent/kanban/add")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+            return "Task added: " + text;
+        } catch (Exception e) {
+            return handleErr("kanbanAdd", e);
+        }
+    }
+
+    public String kanbanDone(String id) {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/kanban/done/" + id)
+                .retrieve()
+                .toBodilessEntity();
+            return "Task " + id + " marked done.";
+        } catch (Exception e) {
+            return handleErr("kanbanDone", e);
+        }
+    }
+
+    public String kanbanClear() {
+        try {
+            restClient.delete()
+                .uri("/api/v1/agent/kanban")
+                .retrieve()
+                .toBodilessEntity();
+            return "Kanban board cleared.";
+        } catch (Exception e) {
+            return handleErr("kanbanClear", e);
+        }
+    }
+
+    // ── Codex Runtime ──
+    public String codexRuntimeStatus() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/codex-runtime")
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "No runtime data.";
+            return prettyPrint(objectMapper.readTree(json));
+        } catch (Exception e) {
+            return handleErr("codexRuntimeStatus", e);
+        }
+    }
+
+    public String codexRuntimeModel(String modelName) {
+        try {
+            Map<String, Object> body = Map.of("model", modelName);
+            restClient.post()
+                .uri("/api/v1/agent/codex-runtime/model")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+            return "Codex runtime model set: " + modelName;
+        } catch (Exception e) {
+            return handleErr("codexRuntimeModel", e);
+        }
+    }
+
+    public String codexRuntimeReset() {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/codex-runtime/reset")
+                .retrieve()
+                .toBodilessEntity();
+            return "Codex runtime reset.";
+        } catch (Exception e) {
+            return handleErr("codexRuntimeReset", e);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Agents & insights
     // ------------------------------------------------------------------

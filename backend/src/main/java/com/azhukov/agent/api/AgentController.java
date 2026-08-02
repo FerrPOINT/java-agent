@@ -32,6 +32,7 @@ import com.azhukov.agent.service.CliRuntimeSettingsService;
 import com.azhukov.agent.service.tts.TtsService;
 import com.azhukov.agent.service.transcription.TranscriptionService;
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
+import com.azhukov.agent.persistence.entity.TodoEntity;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
@@ -39,7 +40,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -72,6 +75,7 @@ public class AgentController {
     private final AgentProperties properties;
     private final DomainDtoMapper domainDtoMapper;
     private final com.azhukov.agent.core.skill.CuratorService curatorService;
+    private final com.azhukov.agent.persistence.repository.TodoRepository todoRepository;
 
     @PostMapping("/agent/chat")
     public ChatResponseDto chat(@Valid @RequestBody ChatRequest request) {
@@ -578,6 +582,61 @@ public class AgentController {
     @GetMapping("/agent/credits")
     public JsonNode credits() {
         return agentRuntimeService.getCreditsSummary();
+    }
+
+    // ── Kanban (backed by todos table) ──
+    @GetMapping("/agent/kanban")
+    public List<TodoEntity> kanbanList() {
+        return todoRepository.findByUserId("default");
+    }
+
+    @PostMapping("/agent/kanban/add")
+    public TodoEntity kanbanAdd(@RequestBody Map<String, String> body) {
+        TodoEntity todo = new TodoEntity();
+        todo.setUserId("default");
+        todo.setTitle(body.get("text"));
+        todo.setStatus("pending");
+        todo.setPriority("medium");
+        todo.setCreatedAt(Instant.now());
+        return todoRepository.save(todo);
+    }
+
+    @PostMapping("/agent/kanban/done/{id}")
+    public void kanbanDone(@PathVariable UUID id) {
+        todoRepository.findById(id).ifPresent(todo -> {
+            todo.setStatus("done");
+            todoRepository.save(todo);
+        });
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/agent/kanban")
+    public void kanbanClear() {
+        todoRepository.deleteByUserIdAndStatus("default", "pending");
+    }
+
+    // ── Codex Runtime ──
+    @GetMapping("/agent/codex-runtime")
+    public Map<String, Object> codexRuntimeStatus() {
+        Map<String, Object> status = new LinkedHashMap<>();
+        status.put("model", properties.getModel().getModelName());
+        status.put("provider", properties.getModel().getProvider());
+        status.put("maxRetries", properties.getModel().getMaxRetries());
+        status.put("maxTokens", properties.getModel().getMaxTokens());
+        status.put("timeoutSeconds", properties.getModel().getTimeoutSeconds());
+        return status;
+    }
+
+    @PostMapping("/agent/codex-runtime/model")
+    public void codexRuntimeModel(@RequestBody Map<String, String> body) {
+        String model = body.get("model");
+        if (model != null && !model.isBlank()) {
+            properties.getModel().setModelName(model);
+        }
+    }
+
+    @PostMapping("/agent/codex-runtime/reset")
+    public void codexRuntimeReset() {
+        cliRuntimeSettingsService.resetAllSessions();
     }
 
     @GetMapping("/agent/bundles")
