@@ -1092,20 +1092,19 @@ public class BackendClient {
                 .uri("/api/v1/agent/reload")
                 .retrieve()
                 .toBodilessEntity();
-            return "Skills, MCP servers and configuration reloaded.";
+            return "Skills and MCP servers reloaded.";
         } catch (Exception e) {
             return handleErr("reloadAll", e);
         }
     }
 
-    public String diff(String leftId, String rightId, String scope) {
+    public String diff(String leftId, String rightId) {
         try {
             String json = restClient.get()
                 .uri(uriBuilder -> uriBuilder
                     .path("/api/v1/agent/diff")
                     .queryParam("left", leftId)
                     .queryParam("right", rightId)
-                    .queryParam("scope", scope)
                     .build())
                 .retrieve()
                 .body(String.class);
@@ -1116,6 +1115,12 @@ public class BackendClient {
         }
     }
 
+    /** @deprecated use {@link #diff(String, String)} — scope was never used by backend */
+    @Deprecated(since = "0.0.1", forRemoval = true)
+    public String diff(String leftId, String rightId, String scope) {
+        return diff(leftId, rightId);
+    }
+
     public String getCredits() {
         try {
             String json = restClient.get()
@@ -1123,7 +1128,12 @@ public class BackendClient {
                 .retrieve()
                 .body(String.class);
             if (json == null || json.isBlank()) return "No credits data.";
-            return prettyPrint(objectMapper.readTree(json));
+            JsonNode node = objectMapper.readTree(json);
+            StringBuilder sb = new StringBuilder("Credits summary:\n");
+            sb.append("  Total cost: $").append(node.path("totalCost").asDouble(0)).append("\n");
+            sb.append("  Total tokens: ").append(node.path("totalTokens").asInt(0)).append("\n");
+            sb.append("  Total messages: ").append(node.path("totalMessages").asInt(0));
+            return sb.toString();
         } catch (Exception e) {
             return handleErr("getCredits", e);
         }
@@ -1136,7 +1146,16 @@ public class BackendClient {
                 .retrieve()
                 .body(String.class);
             if (json == null || json.isBlank()) return "No curator status.";
-            return prettyPrint(objectMapper.readTree(json));
+            JsonNode node = objectMapper.readTree(json);
+            StringBuilder sb = new StringBuilder("Curator status:\n");
+            sb.append("  Enabled: ").append(node.path("enabled").asBoolean(false)).append("\n");
+            sb.append("  Paused: ").append(node.path("paused").asBoolean(false)).append("\n");
+            sb.append("  Dry run: ").append(node.path("dryRun").asBoolean(false)).append("\n");
+            sb.append("  Interval (hours): ").append(node.path("intervalHours").asInt(0)).append("\n");
+            sb.append("  Min idle (hours): ").append(node.path("minIdleHours").asInt(0)).append("\n");
+            sb.append("  Stale after (days): ").append(node.path("staleAfterDays").asInt(0)).append("\n");
+            sb.append("  Archive after (days): ").append(node.path("archiveAfterDays").asInt(0));
+            return sb.toString();
         } catch (Exception e) {
             return handleErr("curatorStatus", e);
         }
@@ -1186,7 +1205,19 @@ public class BackendClient {
                 .retrieve()
                 .body(String.class);
             if (json == null || json.isBlank()) return "Kanban board is empty.";
-            return prettyPrint(objectMapper.readTree(json));
+            JsonNode array = objectMapper.readTree(json);
+            if (!array.isArray() || array.isEmpty()) return "Kanban board is empty.";
+            StringBuilder sb = new StringBuilder("Kanban board:\n");
+            for (JsonNode item : array) {
+                String id = item.path("id").asText("?");
+                String title = item.path("title").asText("?");
+                String status = item.path("status").asText("?");
+                String priority = item.path("priority").asText("?");
+                sb.append("  [").append(status).append("] ")
+                    .append(title)
+                    .append(" (").append(priority).append(", id: ").append(id).append(")\n");
+            }
+            return sb.toString().stripTrailing();
         } catch (Exception e) {
             return handleErr("kanbanList", e);
         }
@@ -1195,12 +1226,17 @@ public class BackendClient {
     public String kanbanAdd(String text) {
         try {
             Map<String, Object> body = Map.of("text", text);
-            restClient.post()
+            String json = restClient.post()
                 .uri("/api/v1/agent/kanban/add")
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .body(body)
                 .retrieve()
-                .toBodilessEntity();
+                .body(String.class);
+            if (json != null && !json.isBlank()) {
+                JsonNode node = objectMapper.readTree(json);
+                String id = node.path("id").asText("?");
+                return "Task added: " + text + " (id: " + id + ")";
+            }
             return "Task added: " + text;
         } catch (Exception e) {
             return handleErr("kanbanAdd", e);
@@ -1210,7 +1246,7 @@ public class BackendClient {
     public String kanbanDone(String id) {
         try {
             restClient.post()
-                .uri("/api/v1/agent/kanban/done/" + id)
+                .uri("/api/v1/agent/kanban/done/{id}", id)
                 .retrieve()
                 .toBodilessEntity();
             return "Task " + id + " marked done.";
@@ -1239,7 +1275,18 @@ public class BackendClient {
                 .retrieve()
                 .body(String.class);
             if (json == null || json.isBlank()) return "No runtime data.";
-            return prettyPrint(objectMapper.readTree(json));
+            JsonNode node = objectMapper.readTree(json);
+            StringBuilder sb = new StringBuilder("Codex runtime:\n");
+            sb.append("  Model: ").append(node.path("model").asText("?")).append("\n");
+            sb.append("  Provider: ").append(node.path("provider").asText("?")).append("\n");
+            sb.append("  Max retries: ").append(node.path("maxRetries").asInt(0)).append("\n");
+            sb.append("  Max tokens: ").append(node.path("maxTokens").asInt(0)).append("\n");
+            sb.append("  Timeout (seconds): ").append(node.path("timeoutSeconds").asInt(0));
+            String override = node.path("modelOverride").asText(null);
+            if (override != null) {
+                sb.append("\n  Model override: ").append(override);
+            }
+            return sb.toString();
         } catch (Exception e) {
             return handleErr("codexRuntimeStatus", e);
         }

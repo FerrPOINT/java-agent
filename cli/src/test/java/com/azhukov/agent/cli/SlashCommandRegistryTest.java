@@ -190,4 +190,132 @@ class SlashCommandRegistryTest {
         java.util.Collections.sort(sortedKeys);
         assertThat(keys).isEqualTo(sortedKeys);
     }
+
+    // ── P1 Batch command tests ──
+
+    @Test
+    void registersAllP1BatchCommands() {
+        List<String> names = registry.getCommandNames();
+        assertThat(names).contains("diff", "reload", "credits", "curator", "kanban", "codex_runtime");
+    }
+
+    @Test
+    void diffNoArgsShowsUsage() {
+        String result = registry.execute("/diff", client, "sid");
+        assertThat(result).contains("Usage: /diff");
+    }
+
+    @Test
+    void diffOneArgShowsUsage() {
+        String result = registry.execute("/diff abc", client, "sid");
+        assertThat(result).contains("Usage: /diff");
+    }
+
+    @Test
+    void diffTwoArgsCallsBackend() {
+        when(client.diff("abc", "def")).thenReturn("No differences found.");
+        String result = registry.execute("/diff abc def", client, "sid");
+        assertThat(result).contains("No differences");
+    }
+
+    @Test
+    void reloadCallsBackend() {
+        when(client.reloadAll()).thenReturn("Skills and MCP servers reloaded.");
+        String result = registry.execute("/reload", client, "sid");
+        assertThat(result).contains("reloaded");
+    }
+
+    @Test
+    void creditsCallsBackend() {
+        when(client.getCredits()).thenReturn("Credits summary:\n  Total cost: $0.0");
+        String result = registry.execute("/credits", client, "sid");
+        assertThat(result).contains("Credits summary");
+    }
+
+    @Test
+    void curatorStatusCallsBackend() {
+        when(client.curatorStatus()).thenReturn("Curator status:\n  Enabled: true");
+        String result = registry.execute("/curator", client, "sid");
+        assertThat(result).contains("Curator status");
+    }
+
+    @Test
+    void curatorRunCallsBackend() {
+        when(client.curatorRun()).thenReturn("Curator cycle completed.");
+        String result = registry.execute("/curator run", client, "sid");
+        assertThat(result).contains("completed");
+    }
+
+    @Test
+    void curatorInvalidSubcommandShowsUsage() {
+        String result = registry.execute("/curator bogus", client, "sid");
+        assertThat(result).contains("Usage: /curator");
+    }
+
+    @Test
+    void kanbanListShowsEmptyMessage() {
+        when(client.kanbanList()).thenReturn("Kanban board is empty.");
+        String result = registry.execute("/kanban", client, "sid");
+        assertThat(result).contains("empty");
+    }
+
+    @Test
+    void kanbanAddWithoutTextShowsUsage() {
+        String result = registry.execute("/kanban add", client, "sid");
+        assertThat(result).contains("Usage: /kanban add");
+    }
+
+    @Test
+    void kanbanAddWithTextCallsBackend() {
+        when(client.kanbanAdd("test task")).thenReturn("Task added: test task (id: abc-123)");
+        String result = registry.execute("/kanban add test task", client, "sid");
+        assertThat(result).contains("Task added");
+        assertThat(result).contains("abc-123");
+    }
+
+    @Test
+    void kanbanDoneWithoutIdShowsUsage() {
+        String result = registry.execute("/kanban done", client, "sid");
+        assertThat(result).contains("Usage: /kanban done");
+    }
+
+    @Test
+    void kanbanDoneWithIdCallsBackend() {
+        when(client.kanbanDone("abc-123")).thenReturn("Task abc-123 marked done.");
+        String result = registry.execute("/kanban done abc-123", client, "sid");
+        assertThat(result).contains("marked done");
+    }
+
+    @Test
+    void kanbanClearCallsBackend() {
+        when(client.kanbanClear()).thenReturn("Kanban board cleared.");
+        String result = registry.execute("/kanban clear", client, "sid");
+        assertThat(result).contains("cleared");
+    }
+
+    @Test
+    void kanbanInvalidSubcommandShowsUsage() {
+        String result = registry.execute("/kanban bogus", client, "sid");
+        assertThat(result).contains("Usage: /kanban");
+    }
+
+    @Test
+    void codexRuntimeStatusCallsBackend() {
+        when(client.codexRuntimeStatus()).thenReturn("Codex runtime:\n  Model: gpt-4o");
+        String result = registry.execute("/codex_runtime", client, "sid");
+        assertThat(result).contains("Codex runtime");
+    }
+
+    @Test
+    void codexRuntimeModelWithoutNameShowsUsage() {
+        String result = registry.execute("/codex_runtime model", client, "sid");
+        assertThat(result).contains("Usage: /codex_runtime model");
+    }
+
+    @Test
+    void codexRuntimeResetCallsBackend() {
+        when(client.codexRuntimeReset()).thenReturn("Codex runtime reset.");
+        String result = registry.execute("/codex_runtime reset", client, "sid");
+        assertThat(result).contains("reset");
+    }
 }

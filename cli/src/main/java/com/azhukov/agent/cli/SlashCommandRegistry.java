@@ -756,15 +756,14 @@ public class SlashCommandRegistry {
             return client.addSubgoal(sessionId, args.strip());
         });
 
-        register("reload", "Reload skills, MCP servers and configuration", (args, client, sessionId) ->
+        register("reload", "Reload skills and MCP servers", (args, client, sessionId) ->
             client.reloadAll());
 
-        register("diff", "Compare two checkpoints or sessions: /diff <left-id> <right-id>", (args, client, sessionId) -> {
-            if (args.isBlank()) return "Usage: /diff <left-id> <right-id> [context|messages|tools]";
+        register("diff", "Compare two checkpoints: /diff <left-id> <right-id>", (args, client, sessionId) -> {
+            if (args.isBlank()) return "Usage: /diff <left-id> <right-id>";
             String[] parts = args.split("\\s+");
-            if (parts.length < 2) return "Usage: /diff <left-id> <right-id> [context|messages|tools]";
-            String scope = parts.length >= 3 ? parts[2] : "context";
-            return client.diff(parts[0], parts[1], scope);
+            if (parts.length < 2) return "Usage: /diff <left-id> <right-id>";
+            return client.diff(parts[0], parts[1]);
         });
 
         // ── Batch B: /credits, /curator ──
