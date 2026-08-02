@@ -295,7 +295,9 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             if (properties.getGoalAutoContinue().isEnabled()
                 && GoalCommand.getActiveGoal(session) != null
                 && !busyHandler.isInterrupted(chatId)) {
-                List<String> continuations = goalAutoContinueService.runAutoContinue(session, result.content());
+                final long chatIdForLambda = chatId;
+                List<String> continuations = goalAutoContinueService.runAutoContinue(
+                    session, result.content(), () -> busyHandler.isInterrupted(chatIdForLambda));
                 for (String continuation : continuations) {
                     if (continuation != null && !continuation.isBlank()) {
                         sendFormatted(chatId, continuation, event.messageId());
