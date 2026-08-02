@@ -316,7 +316,7 @@ public class CuratorService {
      * Run a single curator cycle manually (for testing or manual trigger).
      * No @Transactional — the cycle includes LLM calls that can take 10-60+ seconds,
      * and wrapping those in a DB transaction risks connection pool starvation.
-     * Individual skillRepository.save() calls get implicit transactions from Spring Data.
+     * Modified skills are batch-saved via skillRepository.saveAll() after the classification loop.
      */
     public CuratorReport runCycle() {
         return runCuratorCycle();
@@ -350,6 +350,7 @@ public class CuratorService {
             List<String> stale = new ArrayList<>();
             List<String> archived = new ArrayList<>();
             List<ConsolidationSuggestion> suggestions = new ArrayList<>();
+            List<SkillEntity> modifiedSkills = new ArrayList<>();
 
             for (SkillEntity skill : allSkills) {
                 // S5: Pinned skill bypass — skip pinned skills in archival
@@ -373,7 +374,7 @@ public class CuratorService {
                         skill.setArchived(true);
                         skill.setLifecycleState(STATE_ARCHIVED);
                         skill.setUpdatedAt(Instant.now());
-                        skillRepository.save(skill);
+                        modifiedSkills.add(skill);
                     }
                     archived.add(skill.getName());
                     stale.add(skill.getName());
@@ -382,7 +383,7 @@ public class CuratorService {
                     if (!dryRun) {
                         skill.setLifecycleState(STATE_STALE);
                         skill.setUpdatedAt(Instant.now());
-                        skillRepository.save(skill);
+                        modifiedSkills.add(skill);
                     }
                     stale.add(skill.getName());
                     active.add(skill.getName());
@@ -391,12 +392,17 @@ public class CuratorService {
                     if (!dryRun) {
                         skill.setLifecycleState(STATE_ACTIVE);
                         skill.setUpdatedAt(Instant.now());
-                        skillRepository.save(skill);
+                        modifiedSkills.add(skill);
                     }
                     active.add(skill.getName());
                 } else {
                     active.add(skill.getName());
                 }
+            }
+
+            // S5: Batch-save all modified skills in one query instead of per-skill saves (N+1 fix)
+            if (!modifiedSkills.isEmpty()) {
+                skillRepository.saveAll(modifiedSkills);
             }
 
             // S5: LLM-driven consolidation with dry-run support

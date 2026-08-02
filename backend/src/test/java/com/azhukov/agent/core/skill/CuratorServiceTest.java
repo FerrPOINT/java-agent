@@ -177,7 +177,7 @@ class CuratorServiceTest {
         SkillEntity stale = makeSkill("old-skill", Instant.now().minus(100, ChronoUnit.DAYS));
         SkillEntity active = makeSkill("active-skill", Instant.now());
         when(skillRepository.findByArchivedFalse()).thenReturn(List.of(stale, active));
-        when(skillRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
         var report = service.runCycle();
@@ -195,7 +195,7 @@ class CuratorServiceTest {
         SkillEntity staleSkill = makeSkill("stale-skill", Instant.now().minus(45, ChronoUnit.DAYS));
         SkillEntity active = makeSkill("active-skill", Instant.now());
         when(skillRepository.findByArchivedFalse()).thenReturn(List.of(staleSkill, active));
-        lenient().when(skillRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
         var report = service.runCycle();
@@ -212,7 +212,7 @@ class CuratorServiceTest {
         SkillEntity staleSkill = makeSkill("stale-skill", Instant.now());
         staleSkill.setLifecycleState("stale");
         when(skillRepository.findByArchivedFalse()).thenReturn(List.of(staleSkill));
-        lenient().when(skillRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
         var report = service.runCycle();
@@ -225,7 +225,7 @@ class CuratorServiceTest {
     void runCycle_protectedSkillsNotArchived() {
         SkillEntity protectedSkill = makeSkill("hermes-agent", Instant.now().minus(100, ChronoUnit.DAYS));
         when(skillRepository.findByArchivedFalse()).thenReturn(List.of(protectedSkill));
-        lenient().when(skillRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
         var report = service.runCycle();
@@ -241,7 +241,7 @@ class CuratorServiceTest {
         SkillEntity pinned = makeSkill("pinned-skill", Instant.now().minus(100, ChronoUnit.DAYS));
         pinned.setPinned(true);
         when(skillRepository.findByArchivedFalse()).thenReturn(List.of(pinned));
-        lenient().when(skillRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
         var report = service.runCycle();
@@ -259,7 +259,7 @@ class CuratorServiceTest {
         properties.getCurator().setDryRun(true);
         SkillEntity stale = makeSkill("old-skill", Instant.now().minus(100, ChronoUnit.DAYS));
         when(skillRepository.findByArchivedFalse()).thenReturn(List.of(stale));
-        lenient().when(skillRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
         var report = service.runCycle();
@@ -432,7 +432,7 @@ class CuratorServiceTest {
         SkillEntity s2 = makeSkill("browser-click", Instant.now());
         SkillEntity s3 = makeSkill("browser-snapshot", Instant.now());
         when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2, s3));
-        lenient().when(skillRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
         var report = service.runCycle();
@@ -446,7 +446,7 @@ class CuratorServiceTest {
         SkillEntity s1 = makeSkill("browser-navigate", Instant.now());
         SkillEntity s2 = makeSkill("browser-click", Instant.now());
         when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2));
-        lenient().when(skillRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         String llmResponse = """
             ```yaml
@@ -474,7 +474,7 @@ class CuratorServiceTest {
         SkillEntity s1 = makeSkill("browser-navigate", Instant.now());
         SkillEntity s2 = makeSkill("browser-click", Instant.now());
         when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2));
-        lenient().when(skillRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
         when(modelClient.complete(any(), any())).thenThrow(new RuntimeException("LLM unavailable"));
 
         CuratorService service = new CuratorService(skillRepository, properties, modelClient, backupService);
@@ -488,7 +488,7 @@ class CuratorServiceTest {
     void runCycle_createsBackupSnapshot() {
         SkillEntity s1 = makeSkill("test-skill", Instant.now());
         when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1));
-        lenient().when(skillRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
         when(backupService.createSnapshot(any())).thenReturn(
             new CuratorBackupService.CuratorSnapshot(UUID.randomUUID(), "curator-cycle", Instant.now(), 1));
 
@@ -502,7 +502,7 @@ class CuratorServiceTest {
     void runCycle_includesActions() {
         SkillEntity stale = makeSkill("old-skill", Instant.now().minus(100, ChronoUnit.DAYS));
         when(skillRepository.findByArchivedFalse()).thenReturn(List.of(stale));
-        when(skillRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
         var report = service.runCycle();

@@ -179,9 +179,8 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public CreditsDto getCreditsSummary() {
-        var insights = usageTracker.getInsights(null);
-        double totalCost = usageTracker.getTotalCost(null);
-        return new CreditsDto(totalCost, insights.totalTokens(), insights.totalMessages());
+        var credits = usageTracker.getCreditsSummary(null);
+        return new CreditsDto(credits.totalCost(), credits.totalTokens(), credits.totalMessages());
     }
 
     @Transactional(readOnly = true)
@@ -328,12 +327,14 @@ public class AgentRuntimeService {
         SessionEntity saved = sessionRepository.save(branch);
         // Copy messages
         List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        List<MessageEntity> copies = new java.util.ArrayList<>(messages.size());
         for (MessageEntity m : messages) {
             MessageEntity copy = messageMapper.toEntity(messageMapper.toDomain(m));
             copy.setSessionId(saved.getId());
             copy.setCreatedAt(m.getCreatedAt());
-            messageRepository.save(copy);
+            copies.add(copy);
         }
+        messageRepository.saveAll(copies);
         return domainDtoMapper.toSessionSummaryDto(sessionMapper.toDomain(saved));
     }
 

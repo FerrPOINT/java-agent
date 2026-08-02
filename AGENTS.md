@@ -52,8 +52,9 @@ java -jar build/libs/java-agent-cli-0.0.1-SNAPSHOT.jar \
 ```
 
 CLI — отдельный Spring Boot модуль, не зависит от backend кода.
-47 slash commands: `/new`, `/status`, `/compress`, `/undo`, `/checkpoint`,
-`/rollback`, `/memory`, `/skills`, `/help`, `/exit`, etc.
+74 slash commands: `/new`, `/status`, `/compress`, `/undo`, `/checkpoint`,
+`/rollback`, `/memory`, `/skills`, `/help`, `/exit`, `/diff`, `/credits`,
+`/curator`, `/codex_runtime`, etc.
 SSE streaming для real-time token output. JLine autocomplete.
 
 ### Profiles
@@ -213,6 +214,8 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 - File safety: `DefaultFileSafety` проверяет пути against allowed list.
 - URL safety: `DefaultUrlSafety` валидирует URLs.
 - Secret redaction: `DefaultRedactor` маскирует secrets в output.
+- `redact-secrets` config (`agent.security.redact-secrets`): toggle masking of API keys, tokens, passwords in logs/output.
+- `redact-pii` config (`agent.security.redact-pii`): toggle masking of PII (emails, phone numbers, IPs) in logs/output.
 - Approval gate: destructive tools требуют confirmation (`ApprovalGate`).
 - Telegram auth: `agent.gateway.telegram.allowed-user-ids`, `allowed-usernames`, `allow-by-default`.
 
@@ -220,13 +223,18 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 
 - All settings in `application.yml` with env var overrides (`${ENV:default}`).
 - `AgentProperties` (`@ConfigurationProperties`) — backend, `BotProperties` — telegram-bot.
+- `RuntimeConfigService` — allows runtime override of the codex model without restart (via `/codex_runtime` CLI command or REST endpoint).
+- `CreditsDto` — DTO for the `/credits` endpoint, reports token/credit usage per session.
+- Curator config: `agent.curator.*` in `application.yml` controls the auto-curated kanban board (columns, WIP limits, labels).
+- Memory limits: `agent.memory.char-limit` and `agent.user.char-limit` in `application.yml` cap memory and user input sizes.
 - Profiles: `dev` (Ollama Cloud), `noop` (H2 + mock LLM), `cli` (REPL), `prod` (production).
-- Flyway migrations: `backend/src/main/resources/db/migration/`.
+- Flyway migrations: `backend/src/main/resources/db/migration/` — 16 migrations (V1–V16).
 
 ### 9. Bot Architecture
 
 - 56 commands, each `@Component` implementing `CommandHandler` interface.
 - `CommandRegistry` — maps command names to handlers, resolves 10 aliases.
+- `GoalAutoContinueService` — automatically continues goal-driven agent loops until completion or user interrupt.
 - `BotMessageProcessor` — central message dispatch (18 dependencies, `@PostConstruct` for debouncer wiring).
 - Streaming: `StreamEditor` edits messages in-place with rate limiting.
 - Polling: `LongPollingService` + `ReconnectWatcher` (exponential backoff).
@@ -245,8 +253,8 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 | `@Data` (JPA) | 16 files |
 | MapStruct mappers | 4 |
 | Bot commands | 56 (+ 10 aliases) |
-| CLI slash commands | 47 |
-| Backend endpoints | 53 |
+| CLI slash commands | 74 |
+| Backend endpoints | 86 (82 AgentController + 4 McpController) |
 | Gradle modules | 3 (backend, telegram-bot, cli) |
 
 ## Project Structure
@@ -268,7 +276,7 @@ telegram-bot/src/main/java/com/azhukov/agent/bot/
 ├── auth/          # Authorization, pairing
 ├── batch/         # Text/photo batch debouncers
 ├── client/        # TelegramClient, RestClient config
-├── commands/      # 56 command handlers + CommandRegistry
+├── commands/      # 56 command handlers + CommandRegistry (+ GoalAutoContinueService)
 ├── config/        # BotProperties, BotConfig
 ├── core/          # BotMessageProcessor, AgentBackendClient
 ├── formatting/    # Markdown converter, response filter
@@ -280,13 +288,13 @@ telegram-bot/src/main/java/com/azhukov/agent/bot/
 └── webhook/       # Webhook secret validator
 
 cli/src/main/java/com/azhukov/agent/cli/
-├── BackendClient.java         # REST client to backend (22 methods)
+├── BackendClient.java         # REST client to backend
 ├── CliApplication.java         # Spring Boot main
 ├── CliConfig.java             # RestClient + ObjectMapper beans
 ├── CliReplRunner.java         # CommandLineRunner entry
 ├── ReplLoop.java              # JLine interactive REPL
 ├── MarkdownRenderer.java      # ANSI color markdown
-├── SlashCommandRegistry.java  # 47 slash commands
+├── SlashCommandRegistry.java  # 74 slash commands
 ├── SlashCompleter.java        # JLine autocomplete
 └── SlashAutoSuggest.java      # Inline suggestions
 ```

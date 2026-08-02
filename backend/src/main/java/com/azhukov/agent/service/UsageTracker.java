@@ -156,15 +156,30 @@ public class UsageTracker {
     }
 
     /**
+     * Combined credits summary computed from a single {@code findAll()} call.
+     * Avoids the N+1 pattern where {@link #getInsights(String)} and
+     * {@link #getTotalCost(String)} each issue a separate full table scan.
+     */
+    public record CreditsSummary(int totalTokens, int totalMessages, double totalCost) {}
+
+    /**
+     * Get total tokens, total messages, and total cost in a single query.
+     */
+    public CreditsSummary getCreditsSummary(String userId) {
+        List<UsageEntity> allRecords = loadAllRecords(userId);
+        int totalTokens = allRecords.stream().mapToInt(UsageEntity::getTotalTokens).sum();
+        int totalMessages = allRecords.size();
+        double totalCost = allRecords.stream()
+            .mapToDouble(e -> e.getCost() != null ? e.getCost() : 0.0)
+            .sum();
+        return new CreditsSummary(totalTokens, totalMessages, totalCost);
+    }
+
+    /**
      * Get usage insights with per-model cost breakdown.
      */
     public InsightsDto getInsights(String userId) {
-        List<UsageEntity> allRecords = usageRepository.findAll();
-        if (userId != null && !userId.isBlank()) {
-            allRecords = allRecords.stream()
-                .filter(e -> userId.equals(e.getUserId()))
-                .toList();
-        }
+        List<UsageEntity> allRecords = loadAllRecords(userId);
         int totalTokens = allRecords.stream().mapToInt(UsageEntity::getTotalTokens).sum();
         int totalMessages = allRecords.size();
         Map<String, Integer> byModel = new HashMap<>();
@@ -179,12 +194,7 @@ public class UsageTracker {
      * Get cost breakdown per model.
      */
     public Map<String, Double> getCostBreakdown(String userId) {
-        List<UsageEntity> allRecords = usageRepository.findAll();
-        if (userId != null && !userId.isBlank()) {
-            allRecords = allRecords.stream()
-                .filter(e -> userId.equals(e.getUserId()))
-                .toList();
-        }
+        List<UsageEntity> allRecords = loadAllRecords(userId);
         Map<String, Double> costByModel = new HashMap<>();
         for (UsageEntity e : allRecords) {
             String model = e.getModel() != null ? e.getModel() : "unknown";
@@ -199,6 +209,21 @@ public class UsageTracker {
      */
     public double getTotalCost(String userId) {
         return getCostBreakdown(userId).values().stream().mapToDouble(Double::doubleValue).sum();
+    }
+
+    /**
+     * Load all usage records, optionally filtered by userId.
+     * Extracted to a helper so {@link #getInsights}, {@link #getCostBreakdown},
+     * and {@link #getCreditsSummary} all share a single {@code findAll()} call.
+     */
+    private List<UsageEntity> loadAllRecords(String userId) {
+        List<UsageEntity> allRecords = usageRepository.findAll();
+        if (userId != null && !userId.isBlank()) {
+            allRecords = allRecords.stream()
+                .filter(e -> userId.equals(e.getUserId()))
+                .toList();
+        }
+        return allRecords;
     }
 
     /**
