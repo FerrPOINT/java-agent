@@ -546,12 +546,11 @@ class AgentControllerTest {
     }
 
     @Test
-    void kanbanDoneTaskNotFoundReturns400() throws Exception {
+    void kanbanDoneTaskNotFoundReturns404() throws Exception {
         when(todoRepository.findById(SESSION_ID)).thenReturn(Optional.empty());
 
         mockMvc.perform(post("/api/v1/agent/kanban/done/" + SESSION_ID))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.type").value("bad_request"));
+            .andExpect(status().isNotFound());
     }
 
     @Test

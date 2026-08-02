@@ -610,11 +610,13 @@ public class AgentController {
 
     @PostMapping("/agent/kanban/done/{id}")
     public ResponseEntity<Void> kanbanDone(@PathVariable UUID id) {
-        TodoEntity todo = todoRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Task not found: " + id));
-        todo.setStatus("done");
-        todoRepository.save(todo);
-        return ResponseEntity.ok().build();
+        return todoRepository.findById(id)
+            .map(todo -> {
+                todo.setStatus("done");
+                todoRepository.save(todo);
+                return ResponseEntity.ok().<Void>build();
+            })
+            .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     @org.springframework.web.bind.annotation.DeleteMapping("/agent/kanban")
