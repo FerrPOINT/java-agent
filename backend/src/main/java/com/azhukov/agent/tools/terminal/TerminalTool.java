@@ -10,8 +10,8 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.Redactor;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 )
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class TerminalTool implements ToolHandler {
 
     private static final List<String> DEFAULT_BLOCKED_PATTERNS = List.of(
@@ -40,17 +41,6 @@ public class TerminalTool implements ToolHandler {
     private final Redactor redactor;
     private final CheckpointManager checkpointManager;
     private final InterruptToken interruptToken;
-
-    @Autowired
-    public TerminalTool(ProcessTool processTool, AgentProperties properties,
-                        Redactor redactor, CheckpointManager checkpointManager,
-                        InterruptToken interruptToken) {
-        this.processTool = processTool;
-        this.properties = properties;
-        this.redactor = redactor;
-        this.checkpointManager = checkpointManager;
-        this.interruptToken = interruptToken;
-    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

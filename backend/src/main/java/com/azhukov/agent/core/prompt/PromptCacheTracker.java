@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.prompt;
 
 import com.azhukov.agent.config.AgentProperties;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -23,6 +24,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class PromptCacheTracker {
 
     private final AgentProperties properties;
@@ -33,10 +35,6 @@ public class PromptCacheTracker {
 
     /** Cached system prompt per session — built once, only rebuilt on compression */
     private final Map<String, CachedSystemPrompt> cachedSystemPrompts = new ConcurrentHashMap<>();
-
-    public PromptCacheTracker(AgentProperties properties) {
-        this.properties = properties;
-    }
 
     public void markCached(String sessionId, String prefixHash) {
         if (!properties.getPromptCaching().isEnabled()) return;

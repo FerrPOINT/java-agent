@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class CronSuggestionService {
 
     private static final int MAX_PENDING = 5;
@@ -31,10 +32,6 @@ public class CronSuggestionService {
     private final CronJobService cronJobService;
     private final Map<String, SuggestionRecord> suggestions = new ConcurrentHashMap<>();
     private final List<SuggestionRecord> orderedSuggestions = new ArrayList<>();
-
-    public CronSuggestionService(CronJobService cronJobService) {
-        this.cronJobService = cronJobService;
-    }
 
     /**
      * Add a pending suggestion. Returns the record, or null if skipped.

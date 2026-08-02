@@ -13,6 +13,7 @@ import com.azhukov.agent.tools.memory.MemoryTool;
 import com.azhukov.agent.tools.memory.SkillManageTool;
 import com.azhukov.agent.tools.memory.SkillsListTool;
 import com.azhukov.agent.tools.memory.SkillViewTool;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -51,6 +52,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class BackgroundReviewService {
 
     private static final int MAX_REVIEW_TURNS = 5;
@@ -81,24 +83,6 @@ public class BackgroundReviewService {
     private final ConcurrentHashMap<UUID, ReviewSummary> reviewSummaries = new ConcurrentHashMap<>();
     // S7: Track which sessions have been reviewed to prevent stale-action re-processing
     private final ConcurrentHashMap<UUID, StaleActionFilter.PriorToolResults> priorResultsCache = new ConcurrentHashMap<>();
-
-    public BackgroundReviewService(ModelClient modelClient,
-                                    MemoryProvider memoryProvider,
-                                    WriteApprovalGate writeApprovalGate,
-                                    MemoryTool memoryTool,
-                                    SkillManageTool skillManageTool,
-                                    SkillsListTool skillsListTool,
-                                    SkillViewTool skillViewTool,
-                                    AgentProperties properties) {
-        this.modelClient = modelClient;
-        this.memoryProvider = memoryProvider;
-        this.writeApprovalGate = writeApprovalGate;
-        this.memoryTool = memoryTool;
-        this.skillManageTool = skillManageTool;
-        this.skillsListTool = skillsListTool;
-        this.skillViewTool = skillViewTool;
-        this.properties = properties;
-    }
 
     /**
      * Review a turn's conversation and save facts to memory if appropriate.
