@@ -54,6 +54,7 @@ public class AgentRuntimeService {
     private final DomainDtoMapper domainDtoMapper;
     private final SkillBundleService skillBundleService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final RuntimeConfigService runtimeConfigService;
 
     private static final String UNKNOWN_MODEL = "unknown";
 
@@ -127,6 +128,10 @@ public class AgentRuntimeService {
         if (session.modelName() != null && !session.modelName().isBlank()) {
             return session.modelName();
         }
+        String override = runtimeConfigService.getModelOverride();
+        if (override != null && !override.isBlank()) {
+            return override;
+        }
         if (properties != null && properties.getModel() != null
             && properties.getModel().getModelName() != null
             && !properties.getModel().getModelName().isBlank()) {
@@ -169,14 +174,10 @@ public class AgentRuntimeService {
     }
 
     @Transactional(readOnly = true)
-    public JsonNode getCreditsSummary() {
+    public CreditsDto getCreditsSummary() {
         var insights = usageTracker.getInsights(null);
         double totalCost = usageTracker.getTotalCost(null);
-        var node = objectMapper.createObjectNode();
-        node.put("totalCost", totalCost);
-        node.put("totalTokens", insights.totalTokens());
-        node.put("totalMessages", insights.totalMessages());
-        return node;
+        return new CreditsDto(totalCost, insights.totalTokens(), insights.totalMessages());
     }
 
     @Transactional(readOnly = true)

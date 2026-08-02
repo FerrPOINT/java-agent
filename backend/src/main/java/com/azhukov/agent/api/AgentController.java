@@ -10,6 +10,7 @@ import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.DoctorDto;
 import com.azhukov.agent.api.dto.CompressRequest;
+import com.azhukov.agent.api.dto.CreditsDto;
 import com.azhukov.agent.api.dto.ContextInfoDto;
 import com.azhukov.agent.api.dto.DenyRequest;
 import com.azhukov.agent.api.dto.InsightsDto;
@@ -582,7 +583,7 @@ public class AgentController {
 
     // ── Credits / Usage ──
     @GetMapping("/agent/credits")
-    public JsonNode credits() {
+    public CreditsDto credits() {
         return agentRuntimeService.getCreditsSummary();
     }
 
@@ -648,6 +649,7 @@ public class AgentController {
     @PostMapping("/agent/codex-runtime/reset")
     public void codexRuntimeReset() {
         cliRuntimeSettingsService.resetAllSessions();
+        runtimeConfigService.clearModelOverride();
     }
 
     @GetMapping("/agent/bundles")

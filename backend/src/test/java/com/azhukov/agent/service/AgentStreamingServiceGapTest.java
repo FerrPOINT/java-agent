@@ -140,7 +140,8 @@ class AgentStreamingServiceGapTest {
             modelClient, toolRegistry, toolExecutionService, promptBuilder,
             contextEngine, objectMapper, usageTracker, properties,
             sessionRepository, messageRepository, transactionTemplate,
-            iterationBudget, turnStateManager, sessionMapper, messageMapper);
+            iterationBudget, turnStateManager, sessionMapper, messageMapper,
+            new RuntimeConfigService());
     }
 
     // ─── Error event and stream termination ───

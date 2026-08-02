@@ -318,4 +318,25 @@ class SlashCommandRegistryTest {
         String result = registry.execute("/codex_runtime reset", client, "sid");
         assertThat(result).contains("reset");
     }
+
+    @Test
+    void curatorPauseCallsBackend() {
+        when(client.curatorPause()).thenReturn("Curator paused.");
+        String result = registry.execute("/curator pause", client, "sid");
+        assertThat(result).contains("paused");
+    }
+
+    @Test
+    void curatorResumeCallsBackend() {
+        when(client.curatorResume()).thenReturn("Curator resumed.");
+        String result = registry.execute("/curator resume", client, "sid");
+        assertThat(result).contains("resumed");
+    }
+
+    @Test
+    void codexRuntimeModelWithNameCallsBackend() {
+        when(client.codexRuntimeModel("gpt-4o")).thenReturn("Codex runtime model set: gpt-4o");
+        String result = registry.execute("/codex_runtime model gpt-4o", client, "sid");
+        assertThat(result).contains("gpt-4o");
+    }
 }

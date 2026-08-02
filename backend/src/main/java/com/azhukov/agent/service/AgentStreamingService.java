@@ -63,6 +63,7 @@ public class AgentStreamingService {
     private final TurnStateManager turnStateManager;
     private final SessionEntityMapper sessionMapper;
     private final MessageMapper messageMapper;
+    private final RuntimeConfigService runtimeConfigService;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
 
     private static final int MAX_STREAM_RETRIES = 2;
@@ -372,6 +373,10 @@ public class AgentStreamingService {
     private String resolveModelUsed(Session session) {
         if (session.modelName() != null && !session.modelName().isBlank()) {
             return session.modelName();
+        }
+        String override = runtimeConfigService.getModelOverride();
+        if (override != null && !override.isBlank()) {
+            return override;
         }
         if (properties.getModel() != null
             && properties.getModel().getModelName() != null

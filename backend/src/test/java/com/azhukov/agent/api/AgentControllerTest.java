@@ -2,11 +2,13 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.api.dto.CreditsDto;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.persistence.entity.TodoEntity;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
 import com.azhukov.agent.service.CheckpointManager;
@@ -22,10 +24,12 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -463,5 +467,190 @@ class AgentControllerTest {
             .andExpect(status().isInternalServerError())
             .andExpect(jsonPath("$.type").value("internal"))
             .andExpect(jsonPath("$.error").value("Internal error: agent runtime failure"));
+    }
+
+    // ── Kanban ──
+
+    @Test
+    void kanbanListReturnsTodos() throws Exception {
+        TodoEntity todo = new TodoEntity();
+        todo.setId(SESSION_ID);
+        todo.setUserId("default");
+        todo.setTitle("Test todo");
+        todo.setStatus("pending");
+        todo.setPriority("medium");
+        todo.setCreatedAt(FIXED_TIME);
+        when(todoRepository.findByUserId("default")).thenReturn(List.of(todo));
+
+        mockMvc.perform(get("/api/v1/agent/kanban"))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$").isArray())
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].id").value(SESSION_ID.toString()))
+            .andExpect(jsonPath("$[0].title").value("Test todo"))
+            .andExpect(jsonPath("$[0].status").value("pending"));
+    }
+
+    @Test
+    void kanbanListEmptyBoardReturnsEmptyArray() throws Exception {
+        when(todoRepository.findByUserId("default")).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/agent/kanban"))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$").isArray())
+            .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void kanbanAddValidTextReturnsSavedTodo() throws Exception {
+        TodoEntity saved = new TodoEntity();
+        saved.setId(SESSION_ID);
+        saved.setUserId("default");
+        saved.setTitle("new task");
+        saved.setStatus("pending");
+        saved.setPriority("medium");
+        saved.setCreatedAt(FIXED_TIME);
+        when(todoRepository.save(any(TodoEntity.class))).thenReturn(saved);
+
+        String body = """
+            {
+              "text": "new task"
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/agent/kanban/add")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.id").value(SESSION_ID.toString()))
+            .andExpect(jsonPath("$.title").value("new task"))
+            .andExpect(jsonPath("$.status").value("pending"));
+    }
+
+    @Test
+    void kanbanAddBlankTextReturns400() throws Exception {
+        String body = """
+            {
+              "text": "   "
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/agent/kanban/add")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.type").value("bad_request"));
+    }
+
+    @Test
+    void kanbanDoneTaskNotFoundReturns400() throws Exception {
+        when(todoRepository.findById(SESSION_ID)).thenReturn(Optional.empty());
+
+        mockMvc.perform(post("/api/v1/agent/kanban/done/" + SESSION_ID))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.type").value("bad_request"));
+    }
+
+    @Test
+    void kanbanClearReturns200() throws Exception {
+        org.mockito.Mockito.doNothing().when(todoRepository).deleteByUserId("default");
+
+        mockMvc.perform(delete("/api/v1/agent/kanban"))
+            .andExpect(status().isOk());
+    }
+
+    // ── Credits ──
+
+    @Test
+    void creditsReturnsSummary() throws Exception {
+        when(agentRuntimeService.getCreditsSummary())
+            .thenReturn(new CreditsDto(1.23, 4500, 12));
+
+        mockMvc.perform(get("/api/v1/agent/credits"))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.totalCost").value(1.23))
+            .andExpect(jsonPath("$.totalTokens").value(4500))
+            .andExpect(jsonPath("$.totalMessages").value(12));
+    }
+
+    // ── Curator ──
+
+    @Test
+    void curatorStatusReturnsFields() throws Exception {
+        when(curatorService.isEnabled()).thenReturn(true);
+        when(curatorService.isPaused()).thenReturn(false);
+        when(curatorService.isDryRun()).thenReturn(true);
+        when(curatorService.getIntervalHours()).thenReturn(6);
+        when(curatorService.getMinIdleHours()).thenReturn(1.5);
+        when(curatorService.getStaleAfterDays()).thenReturn(14);
+        when(curatorService.getArchiveAfterDays()).thenReturn(30);
+
+        mockMvc.perform(get("/api/v1/agent/curator/status"))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.enabled").value(true))
+            .andExpect(jsonPath("$.paused").value(false))
+            .andExpect(jsonPath("$.dryRun").value(true))
+            .andExpect(jsonPath("$.intervalHours").value(6));
+    }
+
+    // ── Codex Runtime ──
+
+    @Test
+    void codexRuntimeStatusReturnsModelAndProvider() throws Exception {
+        when(agentProperties.getModel()).thenReturn(modelProperties);
+        when(modelProperties.getModelName()).thenReturn("gpt-4o");
+        when(modelProperties.getProvider()).thenReturn("openai");
+        when(modelProperties.getMaxRetries()).thenReturn(3);
+        when(modelProperties.getMaxTokens()).thenReturn(4096);
+        when(modelProperties.getTimeoutSeconds()).thenReturn(600);
+
+        mockMvc.perform(get("/api/v1/agent/codex-runtime"))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.model").value("gpt-4o"))
+            .andExpect(jsonPath("$.provider").value("openai"))
+            .andExpect(jsonPath("$.modelOverride").doesNotExist());
+    }
+
+    @Test
+    void codexRuntimeModelValidReturns200() throws Exception {
+        String body = """
+            {
+              "model": "claude-sonnet-4"
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/agent/codex-runtime/model")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void codexRuntimeModelBlankReturns400() throws Exception {
+        String body = """
+            {
+              "model": ""
+            }
+            """;
+
+        mockMvc.perform(post("/api/v1/agent/codex-runtime/model")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.type").value("bad_request"));
+    }
+
+    @Test
+    void codexRuntimeResetReturns200() throws Exception {
+        org.mockito.Mockito.doNothing().when(cliRuntimeSettingsService).resetAllSessions();
+
+        mockMvc.perform(post("/api/v1/agent/codex-runtime/reset"))
+            .andExpect(status().isOk());
     }
 }

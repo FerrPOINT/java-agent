@@ -9,7 +9,6 @@ import com.azhukov.agent.persistence.repository.SkillRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -315,8 +314,10 @@ public class CuratorService {
 
     /**
      * Run a single curator cycle manually (for testing or manual trigger).
+     * No @Transactional — the cycle includes LLM calls that can take 10-60+ seconds,
+     * and wrapping those in a DB transaction risks connection pool starvation.
+     * Individual skillRepository.save() calls get implicit transactions from Spring Data.
      */
-    @Transactional
     public CuratorReport runCycle() {
         return runCuratorCycle();
     }
