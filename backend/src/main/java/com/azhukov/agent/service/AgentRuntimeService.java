@@ -12,6 +12,7 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.core.skill.SkillBundleService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.azhukov.agent.persistence.entity.MemoryEntity;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
@@ -52,6 +53,7 @@ public class AgentRuntimeService {
     private final MessageMapper messageMapper;
     private final DomainDtoMapper domainDtoMapper;
     private final SkillBundleService skillBundleService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     private static final String UNKNOWN_MODEL = "unknown";
 
@@ -164,6 +166,17 @@ public class AgentRuntimeService {
     @Transactional(readOnly = true)
     public UsageDto getUsage(UUID sessionId) {
         return usageTracker.getSessionUsage(sessionId);
+    }
+
+    @Transactional(readOnly = true)
+    public JsonNode getCreditsSummary() {
+        var insights = usageTracker.getInsights(null);
+        double totalCost = usageTracker.getTotalCost(null);
+        var node = objectMapper.createObjectNode();
+        node.put("totalCost", totalCost);
+        node.put("totalTokens", insights.totalTokens());
+        node.put("totalMessages", insights.totalMessages());
+        return node;
     }
 
     @Transactional(readOnly = true)

@@ -102,7 +102,8 @@ class AgentRuntimeServiceTest {
             Mappers.getMapper(SessionEntityMapper.class),
             Mappers.getMapper(MessageMapper.class),
             Mappers.getMapper(DomainDtoMapper.class),
-            skillBundleService
+            skillBundleService,
+            new com.fasterxml.jackson.databind.ObjectMapper()
         );
     }
 

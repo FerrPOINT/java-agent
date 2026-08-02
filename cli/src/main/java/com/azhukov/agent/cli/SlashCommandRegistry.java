@@ -767,6 +767,23 @@ public class SlashCommandRegistry {
             return client.diff(parts[0], parts[1], scope);
         });
 
+        // ── Batch B: /credits, /curator ──
+        register("credits", "Show credit/cost usage summary", (args, client, sessionId) ->
+            client.getCredits());
+
+        register("curator", "Curator management: /curator [status|run|pause|resume]", (args, client, sessionId) -> {
+            String sub = args.strip().toLowerCase();
+            if (sub.isBlank() || "status".equals(sub)) {
+                return client.curatorStatus();
+            }
+            switch (sub) {
+                case "run" -> { return client.curatorRun(); }
+                case "pause" -> { return client.curatorPause(); }
+                case "resume" -> { return client.curatorResume(); }
+                default -> { return "Usage: /curator [status|run|pause|resume]"; }
+            }
+        });
+
         // ── C7: Aliases ──
         registerAlias("q", "queue");
         registerAlias("s", "steer");

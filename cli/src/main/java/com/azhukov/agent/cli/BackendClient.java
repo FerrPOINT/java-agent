@@ -1116,6 +1116,68 @@ public class BackendClient {
         }
     }
 
+    public String getCredits() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/credits")
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "No credits data.";
+            return prettyPrint(objectMapper.readTree(json));
+        } catch (Exception e) {
+            return handleErr("getCredits", e);
+        }
+    }
+
+    public String curatorStatus() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/curator/status")
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "No curator status.";
+            return prettyPrint(objectMapper.readTree(json));
+        } catch (Exception e) {
+            return handleErr("curatorStatus", e);
+        }
+    }
+
+    public String curatorRun() {
+        try {
+            String result = restClient.post()
+                .uri("/api/v1/agent/curator/run")
+                .retrieve()
+                .body(String.class);
+            return result != null ? result : "Curator cycle completed.";
+        } catch (Exception e) {
+            return handleErr("curatorRun", e);
+        }
+    }
+
+    public String curatorPause() {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/curator/pause")
+                .retrieve()
+                .toBodilessEntity();
+            return "Curator paused.";
+        } catch (Exception e) {
+            return handleErr("curatorPause", e);
+        }
+    }
+
+    public String curatorResume() {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/curator/resume")
+                .retrieve()
+                .toBodilessEntity();
+            return "Curator resumed.";
+        } catch (Exception e) {
+            return handleErr("curatorResume", e);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Agents & insights
     // ------------------------------------------------------------------

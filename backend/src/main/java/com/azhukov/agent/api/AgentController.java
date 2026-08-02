@@ -39,6 +39,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -69,6 +71,7 @@ public class AgentController {
     private final CliRuntimeSettingsService cliRuntimeSettingsService;
     private final AgentProperties properties;
     private final DomainDtoMapper domainDtoMapper;
+    private final com.azhukov.agent.core.skill.CuratorService curatorService;
 
     @PostMapping("/agent/chat")
     public ChatResponseDto chat(@Valid @RequestBody ChatRequest request) {
@@ -539,6 +542,42 @@ public class AgentController {
     public JsonNode diffCheckpoints(@RequestParam UUID left, @RequestParam UUID right,
                                     @RequestParam(defaultValue = "context") String scope) {
         return checkpointManager.diff(left, right, scope);
+    }
+
+    // ── Curator ──
+    @GetMapping("/agent/curator/status")
+    public Map<String, Object> curatorStatus() {
+        Map<String, Object> status = new LinkedHashMap<>();
+        status.put("enabled", curatorService.isEnabled());
+        status.put("paused", curatorService.isPaused());
+        status.put("dryRun", curatorService.isDryRun());
+        status.put("intervalHours", curatorService.getIntervalHours());
+        status.put("minIdleHours", curatorService.getMinIdleHours());
+        status.put("staleAfterDays", curatorService.getStaleAfterDays());
+        status.put("archiveAfterDays", curatorService.getArchiveAfterDays());
+        return status;
+    }
+
+    @PostMapping("/agent/curator/run")
+    public String curatorRun() {
+        var report = curatorService.runCycle();
+        return report != null ? report.toString() : "Curator cycle completed (no report)";
+    }
+
+    @PostMapping("/agent/curator/pause")
+    public void curatorPause() {
+        curatorService.setPaused(true);
+    }
+
+    @PostMapping("/agent/curator/resume")
+    public void curatorResume() {
+        curatorService.setPaused(false);
+    }
+
+    // ── Credits / Usage ──
+    @GetMapping("/agent/credits")
+    public JsonNode credits() {
+        return agentRuntimeService.getCreditsSummary();
     }
 
     @GetMapping("/agent/bundles")
