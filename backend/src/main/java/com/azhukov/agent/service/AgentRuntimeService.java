@@ -338,6 +338,11 @@ public class AgentRuntimeService {
     }
 
     @Transactional(readOnly = true)
+    public boolean isMemoryApprovalEnabled() {
+        return writeApprovalGate.isEnabled();
+    }
+
+    @Transactional(readOnly = true)
     public List<MemoryDto> listAllMemory(String userId) {
         return memoryRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
             .map(e -> new MemoryDto(e.getId(), e.getUserId(), e.getCategory(), e.getFact(),

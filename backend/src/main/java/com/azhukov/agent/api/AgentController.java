@@ -348,6 +348,11 @@ public class AgentController {
         agentRuntimeService.setMemoryApproval(request.enabled());
     }
 
+    @GetMapping("/agent/memory/approval")
+    public boolean getApproval() {
+        return agentRuntimeService.isMemoryApprovalEnabled();
+    }
+
     @GetMapping("/agent/memory/all/{userId}")
     public List<MemoryDto> listAllMemory(@PathVariable String userId) {
         return agentRuntimeService.listAllMemory(userId);

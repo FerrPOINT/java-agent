@@ -96,6 +96,15 @@ class AgentBackendClientTest {
     }
 
     @Test
+    void isMemoryApprovalEnabled_queriesBackend() {
+        when(responseSpec.body(String.class)).thenReturn("true");
+
+        boolean enabled = client.isMemoryApprovalEnabled();
+
+        assertThat(enabled).isTrue();
+    }
+
+    @Test
     void chat_withNullSessionId_omitsSessionId() {
         when(responseSpec.body(String.class))
             .thenReturn("{\"response\":\"OK\"}");

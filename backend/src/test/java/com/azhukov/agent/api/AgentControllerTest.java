@@ -95,6 +95,23 @@ class AgentControllerTest {
     }
 
     @Test
+    void getMemoryApprovalReturnsCurrentState() throws Exception {
+        when(agentRuntimeService.isMemoryApprovalEnabled()).thenReturn(true);
+
+        mockMvc.perform(get("/api/v1/agent/memory/approval"))
+            .andExpect(status().isOk())
+            .andExpect(content().string("true"));
+    }
+
+    @Test
+    void setMemoryApprovalDelegatesToService() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/memory/approval")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\": false}"))
+            .andExpect(status().isOk());
+    }
+
+    @Test
     void chatReturnsChatResponseDtoJson() throws Exception {
         ChatResponseDto response = new ChatResponseDto(
             SESSION_ID,

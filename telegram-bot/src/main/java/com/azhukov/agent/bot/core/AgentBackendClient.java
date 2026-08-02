@@ -896,8 +896,19 @@ public class AgentBackendClient {
     }
 
     public boolean isMemoryApprovalEnabled() {
-        // Query current state — no dedicated endpoint, default false
-        return false;
+        try {
+            String responseJson = restClient.get()
+                .uri("/api/v1/agent/memory/approval")
+                .retrieve()
+                .body(String.class);
+            if (responseJson == null || responseJson.isBlank()) {
+                return false;
+            }
+            return Boolean.parseBoolean(responseJson.trim());
+        } catch (Exception e) {
+            log.error("isMemoryApprovalEnabled failed: {}", e.getMessage());
+            return false;
+        }
     }
 
     public JsonNode listAllMemory(String userId) {
