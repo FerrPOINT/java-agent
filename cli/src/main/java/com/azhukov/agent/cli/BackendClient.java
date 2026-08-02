@@ -1086,6 +1086,36 @@ public class BackendClient {
         }
     }
 
+    public String reloadAll() {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/reload")
+                .retrieve()
+                .toBodilessEntity();
+            return "Skills, MCP servers and configuration reloaded.";
+        } catch (Exception e) {
+            return handleErr("reloadAll", e);
+        }
+    }
+
+    public String diff(String leftId, String rightId, String scope) {
+        try {
+            String json = restClient.get()
+                .uri(uriBuilder -> uriBuilder
+                    .path("/api/v1/agent/diff")
+                    .queryParam("left", leftId)
+                    .queryParam("right", rightId)
+                    .queryParam("scope", scope)
+                    .build())
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "No diff data.";
+            return prettyPrint(objectMapper.readTree(json));
+        } catch (Exception e) {
+            return handleErr("diff", e);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Agents & insights
     // ------------------------------------------------------------------

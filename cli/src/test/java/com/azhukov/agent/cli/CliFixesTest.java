@@ -249,7 +249,11 @@ class CliFixesTest {
     @Test
     void aliasesAreRegistered() {
         var aliases = registry.getAliases();
-        assertThat(aliases).containsEntry("q", "quit");
+        assertThat(aliases).containsEntry("q", "queue");
+        assertThat(aliases).containsEntry("s", "steer");
+        assertThat(aliases).containsEntry("c", "cron");
+        assertThat(aliases).containsEntry("r", "reload");
+        assertThat(aliases).containsEntry("d", "diff");
         assertThat(aliases).containsEntry("reset", "new");
         assertThat(aliases).containsEntry("fork", "branch");
         assertThat(aliases).containsEntry("bg", "background");
@@ -257,8 +261,8 @@ class CliFixesTest {
     }
 
     @Test
-    void aliasQResolvesToQuit() {
-        assertThat(registry.resolveCommand("q")).isEqualTo("quit");
+    void aliasQResolvesToQueue() {
+        assertThat(registry.resolveCommand("q")).isEqualTo("queue");
     }
 
     @Test
@@ -297,8 +301,9 @@ class CliFixesTest {
 
     @Test
     void prefixMatchReturnsNullForAmbiguous() {
-        // "c" matches many commands (clear, checkpoint, checkpoints, compress, context, cron, etc.)
-        assertThat(registry.resolveCommand("c")).isNull();
+        // "c" is now an alias for "cron", so test ambiguity with another prefix
+        // "cr" matches "cron", "cron-pause", "cron-resume", "cron-delete", "cron-create" — ambiguous
+        assertThat(registry.resolveCommand("cr")).isNull();
         // "ver" now matches both "version" and "verbose" — ambiguous
         assertThat(registry.resolveCommand("ver")).isNull();
     }
@@ -424,6 +429,6 @@ class CliFixesTest {
         String result = registry.execute("/help", client, "sid");
         assertThat(result).contains("Aliases");
         assertThat(result).contains("/q");
-        assertThat(result).contains("→ /quit");
+        assertThat(result).contains("→ /queue");
     }
 }

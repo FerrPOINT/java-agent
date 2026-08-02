@@ -756,8 +756,23 @@ public class SlashCommandRegistry {
             return client.addSubgoal(sessionId, args.strip());
         });
 
+        register("reload", "Reload skills, MCP servers and configuration", (args, client, sessionId) ->
+            client.reloadAll());
+
+        register("diff", "Compare two checkpoints or sessions: /diff <left-id> <right-id>", (args, client, sessionId) -> {
+            if (args.isBlank()) return "Usage: /diff <left-id> <right-id> [context|messages|tools]";
+            String[] parts = args.split("\\s+");
+            if (parts.length < 2) return "Usage: /diff <left-id> <right-id> [context|messages|tools]";
+            String scope = parts.length >= 3 ? parts[2] : "context";
+            return client.diff(parts[0], parts[1], scope);
+        });
+
         // ── C7: Aliases ──
-        registerAlias("q", "quit");
+        registerAlias("q", "queue");
+        registerAlias("s", "steer");
+        registerAlias("c", "cron");
+        registerAlias("r", "reload");
+        registerAlias("d", "diff");
         registerAlias("reset", "new");
         registerAlias("fork", "branch");
         registerAlias("bg", "background");

@@ -78,6 +78,31 @@ class CheckpointManagerTest {
     }
 
     @Test
+    void diffComparesTwoCheckpoints() {
+        UUID leftId = UUID.randomUUID();
+        UUID rightId = UUID.randomUUID();
+
+        CheckpointEntity left = new CheckpointEntity();
+        left.setId(leftId);
+        left.setFilesJson("[{\"path\":\"a.txt\",\"hash\":\"abc\"},{\"path\":\"b.txt\",\"hash\":\"def\"}]");
+        left.setFileCount(2);
+
+        CheckpointEntity right = new CheckpointEntity();
+        right.setId(rightId);
+        right.setFilesJson("[{\"path\":\"a.txt\",\"hash\":\"xyz\"},{\"path\":\"c.txt\",\"hash\":\"ghi\"}]");
+        right.setFileCount(2);
+
+        when(checkpointRepository.findById(leftId)).thenReturn(java.util.Optional.of(left));
+        when(checkpointRepository.findById(rightId)).thenReturn(java.util.Optional.of(right));
+
+        var result = manager.diff(leftId, rightId, "context");
+
+        assertThat(result.path("changed")).hasSize(1);
+        assertThat(result.path("added")).hasSize(1);
+        assertThat(result.path("removed")).hasSize(1);
+    }
+
+    @Test
     void isDangerousCommandDetectsRm() {
         assertThat(manager.isDangerousCommand("rm -rf /tmp")).isTrue();
         assertThat(manager.isDangerousCommand("mkfs.ext4 /dev/sda1")).isTrue();

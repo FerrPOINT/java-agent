@@ -32,6 +32,7 @@ import com.azhukov.agent.service.CliRuntimeSettingsService;
 import com.azhukov.agent.service.tts.TtsService;
 import com.azhukov.agent.service.transcription.TranscriptionService;
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -526,6 +527,18 @@ public class AgentController {
     @PostMapping("/agent/reload-skills")
     public void reloadSkills() {
         agentRuntimeService.reloadSkills();
+    }
+
+    @PostMapping("/agent/reload")
+    public void reloadAll() {
+        agentRuntimeService.reloadSkills();
+        agentRuntimeService.reloadMcp();
+    }
+
+    @GetMapping("/agent/diff")
+    public JsonNode diffCheckpoints(@RequestParam UUID left, @RequestParam UUID right,
+                                    @RequestParam(defaultValue = "context") String scope) {
+        return checkpointManager.diff(left, right, scope);
     }
 
     @GetMapping("/agent/bundles")

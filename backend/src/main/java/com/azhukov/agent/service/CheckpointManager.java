@@ -3,6 +3,7 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
 import com.azhukov.agent.persistence.repository.CheckpointRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -16,10 +17,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Stream;
 
 /**
@@ -192,8 +190,67 @@ public class CheckpointManager {
             || path.toString().contains("/node_modules/");
     }
 
+    public JsonNode diff(UUID left, UUID right, String scope) {
+        CheckpointEntity leftCp = checkpointRepository.findById(left)
+            .orElseThrow(() -> new IllegalArgumentException("Checkpoint not found: " + left));
+        CheckpointEntity rightCp = checkpointRepository.findById(right)
+            .orElseThrow(() -> new IllegalArgumentException("Checkpoint not found: " + right));
+
+        ObjectNode result = objectMapper.createObjectNode();
+        result.put("left", left.toString());
+        result.put("right", right.toString());
+        result.put("scope", scope);
+
+        try {
+            ArrayNode leftFiles = (ArrayNode) objectMapper.readTree(leftCp.getFilesJson());
+            ArrayNode rightFiles = (ArrayNode) objectMapper.readTree(rightCp.getFilesJson());
+
+            Map<String, String> leftMap = new HashMap<>();
+            for (JsonNode n : leftFiles) {
+                leftMap.put(n.get("path").asText(), n.get("hash").asText());
+            }
+            Map<String, String> rightMap = new HashMap<>();
+            for (JsonNode n : rightFiles) {
+                rightMap.put(n.get("path").asText(), n.get("hash").asText());
+            }
+
+            Set<String> allPaths = new HashSet<>(leftMap.keySet());
+            allPaths.addAll(rightMap.keySet());
+
+            ArrayNode changed = objectMapper.createArrayNode();
+            ArrayNode added = objectMapper.createArrayNode();
+            ArrayNode removed = objectMapper.createArrayNode();
+
+            for (String path : allPaths) {
+                boolean inLeft = leftMap.containsKey(path);
+                boolean inRight = rightMap.containsKey(path);
+                if (inLeft && inRight) {
+                    if (!leftMap.get(path).equals(rightMap.get(path))) {
+                        ObjectNode item = objectMapper.createObjectNode();
+                        item.put("path", path);
+                        item.put("leftHash", leftMap.get(path));
+                        item.put("rightHash", rightMap.get(path));
+                        changed.add(item);
+                    }
+                } else if (inLeft) {
+                    removed.add(path);
+                } else {
+                    added.add(path);
+                }
+            }
+            result.set("changed", changed);
+            result.set("added", added);
+            result.set("removed", removed);
+            result.put("leftFileCount", leftCp.getFileCount());
+            result.put("rightFileCount", rightCp.getFileCount());
+        } catch (Exception e) {
+            log.error("Failed to diff checkpoints {} {}: {}", left, right, e.getMessage());
+            result.put("error", e.getMessage());
+        }
+        return result;
+    }
+
     public boolean isDangerousCommand(String command) {
-        if (command == null || command.isBlank()) return false;
         String lower = command.toLowerCase().trim();
         return lower.matches(".*\\brm\\s+.*") && (lower.contains("-rf") || lower.contains("-fr") || lower.contains("-r "))
             || lower.contains("mkfs")
