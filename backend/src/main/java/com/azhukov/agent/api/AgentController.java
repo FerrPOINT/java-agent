@@ -29,6 +29,7 @@ import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
 import com.azhukov.agent.service.CheckpointManager;
 import com.azhukov.agent.service.CliRuntimeSettingsService;
+import com.azhukov.agent.service.RuntimeConfigService;
 import com.azhukov.agent.service.tts.TtsService;
 import com.azhukov.agent.service.transcription.TranscriptionService;
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
@@ -76,6 +77,7 @@ public class AgentController {
     private final DomainDtoMapper domainDtoMapper;
     private final com.azhukov.agent.core.skill.CuratorService curatorService;
     private final com.azhukov.agent.persistence.repository.TodoRepository todoRepository;
+    private final RuntimeConfigService runtimeConfigService;
 
     @PostMapping("/agent/chat")
     public ChatResponseDto chat(@Valid @RequestBody ChatRequest request) {
@@ -592,9 +594,13 @@ public class AgentController {
 
     @PostMapping("/agent/kanban/add")
     public TodoEntity kanbanAdd(@RequestBody Map<String, String> body) {
+        String text = body.get("text");
+        if (text == null || text.isBlank()) {
+            throw new IllegalArgumentException("Task text is required");
+        }
         TodoEntity todo = new TodoEntity();
         todo.setUserId("default");
-        todo.setTitle(body.get("text"));
+        todo.setTitle(text);
         todo.setStatus("pending");
         todo.setPriority("medium");
         todo.setCreatedAt(Instant.now());
@@ -602,36 +608,41 @@ public class AgentController {
     }
 
     @PostMapping("/agent/kanban/done/{id}")
-    public void kanbanDone(@PathVariable UUID id) {
-        todoRepository.findById(id).ifPresent(todo -> {
-            todo.setStatus("done");
-            todoRepository.save(todo);
-        });
+    public ResponseEntity<Void> kanbanDone(@PathVariable UUID id) {
+        TodoEntity todo = todoRepository.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("Task not found: " + id));
+        todo.setStatus("done");
+        todoRepository.save(todo);
+        return ResponseEntity.ok().build();
     }
 
     @org.springframework.web.bind.annotation.DeleteMapping("/agent/kanban")
-    public void kanbanClear() {
-        todoRepository.deleteByUserIdAndStatus("default", "pending");
+    public ResponseEntity<Void> kanbanClear() {
+        todoRepository.deleteByUserId("default");
+        return ResponseEntity.ok().build();
     }
 
     // ── Codex Runtime ──
     @GetMapping("/agent/codex-runtime")
     public Map<String, Object> codexRuntimeStatus() {
         Map<String, Object> status = new LinkedHashMap<>();
-        status.put("model", properties.getModel().getModelName());
+        String override = runtimeConfigService.getModelOverride();
+        status.put("model", override != null ? override : properties.getModel().getModelName());
         status.put("provider", properties.getModel().getProvider());
         status.put("maxRetries", properties.getModel().getMaxRetries());
         status.put("maxTokens", properties.getModel().getMaxTokens());
         status.put("timeoutSeconds", properties.getModel().getTimeoutSeconds());
+        status.put("modelOverride", override);
         return status;
     }
 
     @PostMapping("/agent/codex-runtime/model")
     public void codexRuntimeModel(@RequestBody Map<String, String> body) {
         String model = body.get("model");
-        if (model != null && !model.isBlank()) {
-            properties.getModel().setModelName(model);
+        if (model == null || model.isBlank()) {
+            throw new IllegalArgumentException("Model name is required");
         }
+        runtimeConfigService.setModelOverride(model);
     }
 
     @PostMapping("/agent/codex-runtime/reset")

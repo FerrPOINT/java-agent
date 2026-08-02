@@ -9,6 +9,7 @@ import com.azhukov.agent.persistence.repository.SkillRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -315,6 +316,7 @@ public class CuratorService {
     /**
      * Run a single curator cycle manually (for testing or manual trigger).
      */
+    @Transactional
     public CuratorReport runCycle() {
         return runCuratorCycle();
     }

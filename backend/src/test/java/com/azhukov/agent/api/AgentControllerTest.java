@@ -94,7 +94,8 @@ class AgentControllerTest {
             memoryProvider, skillManager, checkpointManager, ttsService, transcriptionService,
             new com.azhukov.agent.core.agent.SteerBuffer(), new com.azhukov.agent.core.security.ApprovalQueue(),
             cliRuntimeSettingsService,
-            agentProperties, domainDtoMapper, curatorService, todoRepository);
+            agentProperties, domainDtoMapper, curatorService, todoRepository,
+            new com.azhukov.agent.service.RuntimeConfigService());
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

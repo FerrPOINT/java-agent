@@ -79,7 +79,8 @@ class AgentControllerPhase2Test {
             new com.azhukov.agent.service.CliRuntimeSettingsService(null, null),
             agentProperties, domainDtoMapper,
             org.mockito.Mockito.mock(com.azhukov.agent.core.skill.CuratorService.class),
-            org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.TodoRepository.class));
+            org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.TodoRepository.class),
+            new com.azhukov.agent.service.RuntimeConfigService());
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

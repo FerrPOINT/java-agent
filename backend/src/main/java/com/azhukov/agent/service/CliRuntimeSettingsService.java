@@ -154,6 +154,7 @@ public class CliRuntimeSettingsService {
         e.setSubgoal(null);
     }
 
+    @Transactional
     public void resetAllSessions() {
         // Reset all CLI runtime state across all sessions
         sessionRepository.findAll().forEach(e -> {

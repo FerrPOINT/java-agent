@@ -15,4 +15,6 @@ public interface TodoRepository extends JpaRepository<TodoEntity, UUID> {
     List<TodoEntity> findByUserIdAndStatus(String userId, String status);
 
     void deleteByUserIdAndStatus(String userId, String status);
+
+    void deleteByUserId(String userId);
 }
