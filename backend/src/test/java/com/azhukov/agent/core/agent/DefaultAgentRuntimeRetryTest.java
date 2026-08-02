@@ -125,7 +125,7 @@ class DefaultAgentRuntimeRetryTest {
     @Test
     @DisplayName("When modelClient.complete() throws transient error (timeout), turn ends with error after retries exhausted")
     void transientTimeoutIsRetriedThenFails() {
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("read timed out"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
@@ -134,13 +134,13 @@ class DefaultAgentRuntimeRetryTest {
         // Timeout is RETRYABLE → retried up to retryAttempts (3) + 1 initial = 4 total calls
         assertThat(result.completed()).isFalse();
         assertThat(result.error()).contains("Model call failed");
-        verify(modelClient, times(4)).complete(any(List.class), any(List.class));
+        verify(modelClient, times(4)).complete(any(List.class), any(List.class), any());
     }
 
     @Test
     @DisplayName("When modelClient.complete() throws rate limit error, turn ends with error after retries exhausted")
     void rateLimitErrorIsRetriedThenFails() {
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("rate limit exceeded (429)"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
@@ -149,13 +149,13 @@ class DefaultAgentRuntimeRetryTest {
         // Rate limit is RATE_LIMIT → retried up to retryAttempts (3) + 1 initial = 4 total calls
         assertThat(result.completed()).isFalse();
         assertThat(result.error()).contains("Model call failed");
-        verify(modelClient, times(4)).complete(any(List.class), any(List.class));
+        verify(modelClient, times(4)).complete(any(List.class), any(List.class), any());
     }
 
     @Test
     @DisplayName("When modelClient.complete() throws connection reset, turn ends with error after retries exhausted")
     void connectionResetIsRetriedThenFails() {
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("connection reset by peer"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
@@ -164,7 +164,7 @@ class DefaultAgentRuntimeRetryTest {
         // Connection reset is RETRYABLE → retried up to retryAttempts (3) + 1 initial = 4 total calls
         assertThat(result.completed()).isFalse();
         assertThat(result.error()).contains("Model call failed");
-        verify(modelClient, times(4)).complete(any(List.class), any(List.class));
+        verify(modelClient, times(4)).complete(any(List.class), any(List.class), any());
     }
 
     // ─── No retry on permanent errors ───
@@ -172,7 +172,7 @@ class DefaultAgentRuntimeRetryTest {
     @Test
     @DisplayName("When modelClient.complete() throws permanent error (invalid key), turn ends immediately with error")
     void permanentErrorNotRetried() {
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("invalid API key"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
@@ -182,13 +182,13 @@ class DefaultAgentRuntimeRetryTest {
         assertThat(result.completed()).isFalse();
         assertThat(result.error()).contains("Model call failed");
         assertThat(result.error()).contains("invalid API key");
-        verify(modelClient, times(1)).complete(any(List.class), any(List.class));
+        verify(modelClient, times(1)).complete(any(List.class), any(List.class), any());
     }
 
     @Test
     @DisplayName("When modelClient.complete() throws billing error, turn ends immediately with error")
     void billingErrorNotRetried() {
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("insufficient credits"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
@@ -197,13 +197,13 @@ class DefaultAgentRuntimeRetryTest {
         // Billing error is PERMANENT → no retry, single call
         assertThat(result.completed()).isFalse();
         assertThat(result.error()).contains("Model call failed");
-        verify(modelClient, times(1)).complete(any(List.class), any(List.class));
+        verify(modelClient, times(1)).complete(any(List.class), any(List.class), any());
     }
 
     @Test
     @DisplayName("When modelClient.complete() throws context overflow error, turn ends immediately with error")
     void contextOverflowErrorNotRetried() {
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("context length exceeded"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
@@ -212,13 +212,13 @@ class DefaultAgentRuntimeRetryTest {
         // Context overflow is PERMANENT → no retry, single call
         assertThat(result.completed()).isFalse();
         assertThat(result.error()).contains("Model call failed");
-        verify(modelClient, times(1)).complete(any(List.class), any(List.class));
+        verify(modelClient, times(1)).complete(any(List.class), any(List.class), any());
     }
 
     @Test
     @DisplayName("When modelClient.complete() throws content policy error, turn ends immediately with error")
     void contentPolicyErrorNotRetried() {
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("content policy violation"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
@@ -227,13 +227,13 @@ class DefaultAgentRuntimeRetryTest {
         // Content policy is PERMANENT → no retry, single call
         assertThat(result.completed()).isFalse();
         assertThat(result.error()).contains("Model call failed");
-        verify(modelClient, times(1)).complete(any(List.class), any(List.class));
+        verify(modelClient, times(1)).complete(any(List.class), any(List.class), any());
     }
 
     @Test
     @DisplayName("When modelClient.complete() throws, TurnFinalizer is called with success=false")
     void modelCallExceptionCallsFinalizerWithFailure() {
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("connection refused"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
@@ -247,7 +247,7 @@ class DefaultAgentRuntimeRetryTest {
     @Test
     @DisplayName("When modelClient.complete() succeeds, turn completes normally")
     void modelCallSucceeds_TurnCompletes() {
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenReturn(ChatResponse.text("Hello! How can I help you?"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
@@ -255,7 +255,7 @@ class DefaultAgentRuntimeRetryTest {
 
         assertThat(result.completed()).isTrue();
         assertThat(result.error()).isNull();
-        verify(modelClient, times(1)).complete(any(List.class), any(List.class));
+        verify(modelClient, times(1)).complete(any(List.class), any(List.class), any());
         verify(turnFinalizer).finalize(any(UUID.class), any(List.class), org.mockito.ArgumentMatchers.eq(true));
     }
 
@@ -265,7 +265,7 @@ class DefaultAgentRuntimeRetryTest {
     @DisplayName("When first call fails with transient error, second call (which succeeds) is attempted")
     void secondCallSucceedsAfterTransientFailure() {
         AtomicInteger callCount = new AtomicInteger(0);
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenAnswer(inv -> {
                 if (callCount.incrementAndGet() == 1) {
                     throw new RuntimeException("transient 503");
@@ -290,7 +290,7 @@ class DefaultAgentRuntimeRetryTest {
         ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"London\"}");
         AtomicInteger modelCallCount = new AtomicInteger(0);
 
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenAnswer(inv -> {
                 if (modelCallCount.incrementAndGet() == 1) {
                     return ChatResponse.toolCalls(List.of(toolCall));
@@ -319,7 +319,7 @@ class DefaultAgentRuntimeRetryTest {
         ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"London\"}");
         AtomicInteger modelCallCount = new AtomicInteger(0);
 
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenAnswer(inv -> {
                 if (modelCallCount.incrementAndGet() == 1) {
                     return ChatResponse.toolCalls(List.of(toolCall));
@@ -349,7 +349,7 @@ class DefaultAgentRuntimeRetryTest {
         ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"London\"}");
         AtomicInteger modelCallCount = new AtomicInteger(0);
 
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenAnswer(inv -> {
                 if (modelCallCount.incrementAndGet() == 1) {
                     return ChatResponse.toolCalls(List.of(toolCall));
@@ -394,7 +394,7 @@ class DefaultAgentRuntimeRetryTest {
         properties.getCore().setMaxTurns(10);
         properties.getError().setRetryAttempts(1);
 
-        when(modelClient.complete(any(List.class), any(List.class)))
+        when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("connection refused"));
 
         PromptBuilder promptBuilder = mock(PromptBuilder.class);
@@ -429,6 +429,6 @@ class DefaultAgentRuntimeRetryTest {
         customRuntime.runTurn(session, "Hello");
 
         // retryAttempts=1 → 1 initial + 1 retry = 2 total calls
-        verify(modelClient, times(2)).complete(any(List.class), any(List.class));
+        verify(modelClient, times(2)).complete(any(List.class), any(List.class), any());
     }
 }

@@ -339,7 +339,7 @@ class AgentRuntimeFullScenariosTest {
         when(iterationBudget.startTurn(session.id())).thenReturn(budget);
         when(iterationBudget.isExhausted(budget)).thenReturn(false);
 
-        ModelClient failingClient = (messages, tools) -> {
+        ModelClient failingClient = (messages, tools, options) -> {
             throw new RuntimeException("provider outage");
         };
         useModelClient(failingClient);

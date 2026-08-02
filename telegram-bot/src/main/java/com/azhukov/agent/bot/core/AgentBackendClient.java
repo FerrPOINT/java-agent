@@ -75,18 +75,16 @@ public class AgentBackendClient {
     }
 
     /**
-     * Send a chat message to the agent backend.
+     * Send a chat message to the agent backend, optionally carrying runtime flags
+     * from a Telegram bot session (fast mode, reasoning effort, voice mode, etc.).
      *
      * @param message   the user's message text
      * @param sessionId the session UUID (may be null — omitted from body when null)
+     * @param runtime   optional runtime state to forward to the backend
      * @return the response content and metadata from the agent, or an error message on failure
      */
-    public ChatResult chat(String message, String sessionId) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("message", message);
-        if (sessionId != null && !sessionId.isBlank()) {
-            body.put("sessionId", sessionId);
-        }
+    public ChatResult chat(String message, String sessionId, com.azhukov.agent.bot.session.BotSessionEntity runtime) {
+        Map<String, Object> body = buildChatBody(message, sessionId, runtime);
 
         try {
             String responseJson = restClient.post()
@@ -126,6 +124,13 @@ public class AgentBackendClient {
             log.error("Backend chat failed for sessionId={}: {}", sessionId, e.getMessage());
             return new ChatResult("Error: " + e.getMessage());
         }
+    }
+
+    /**
+     * Backward-compatible overload without runtime flags.
+     */
+    public ChatResult chat(String message, String sessionId) {
+        return chat(message, sessionId, null);
     }
 
     /**
@@ -299,13 +304,14 @@ public class AgentBackendClient {
 
     /**
      * Send a chat message to the agent backend and stream the response back
-     * via Server-Sent Events.
+     * via Server-Sent Events, optionally carrying runtime flags from a Telegram bot session.
      *
      * <p>This is a <strong>blocking</strong> call — the caller should run it
      * in a separate thread.
      *
      * @param message             the user's message text
      * @param sessionId           the session UUID (may be null)
+     * @param runtime             optional runtime state to forward to the backend
      * @param tokenConsumer       called for each token received
      * @param toolCallConsumer    called for each tool call announcement (tool name)
      * @param toolResultConsumer  called for each tool result (toolName, resultPreview)
@@ -315,16 +321,13 @@ public class AgentBackendClient {
      */
     public ChatResult chatStream(String message,
                                  String sessionId,
+                                 com.azhukov.agent.bot.session.BotSessionEntity runtime,
                                  Consumer<String> tokenConsumer,
                                  Consumer<String> toolCallConsumer,
                                  java.util.function.BiConsumer<String, String> toolResultConsumer,
                                  Consumer<ChatResult> onComplete,
                                  Consumer<Throwable> onError) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("message", message);
-        if (sessionId != null && !sessionId.isBlank()) {
-            body.put("sessionId", sessionId);
-        }
+        Map<String, Object> body = buildChatBody(message, sessionId, runtime);
 
         StringBuilder accumulated = new StringBuilder();
         ChatResult[] metadataHolder = new ChatResult[1];
@@ -978,6 +981,102 @@ public class AgentBackendClient {
         }
     }
 
+    public boolean clearGoal(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return false;
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/goal/clear")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(java.util.Map.of("sessionId", sessionId))
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("clearGoal failed for sessionId={}: {}", sessionId, e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean setGoal(String sessionId, String goal) {
+        if (sessionId == null || sessionId.isBlank()) return false;
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/goal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(java.util.Map.of("sessionId", sessionId, "goal", goal))
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("setGoal failed for sessionId={}: {}", sessionId, e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean pauseGoal(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return false;
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/goal/pause")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(java.util.Map.of("sessionId", sessionId))
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("pauseGoal failed for sessionId={}: {}", sessionId, e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean resumeGoal(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return false;
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/goal/resume")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(java.util.Map.of("sessionId", sessionId))
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("resumeGoal failed for sessionId={}: {}", sessionId, e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean appendSubgoal(String sessionId, String subgoal) {
+        if (sessionId == null || sessionId.isBlank()) return false;
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/subgoal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(java.util.Map.of("sessionId", sessionId, "subgoal", subgoal, "append", "true"))
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("appendSubgoal failed for sessionId={}: {}", sessionId, e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean clearSubgoals(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return false;
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/subgoal/clear")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(java.util.Map.of("sessionId", sessionId))
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("clearSubgoals failed for sessionId={}: {}", sessionId, e.getMessage());
+            return false;
+        }
+    }
+
     /**
      * Expose the base URL (for diagnostics/logging).
      *
@@ -985,5 +1084,51 @@ public class AgentBackendClient {
      */
     public String getBaseUrl() {
         return baseUrl;
+    }
+
+    /**
+     * Build a chat request body, including runtime flags when a Telegram bot session is provided.
+     */
+    private Map<String, Object> buildChatBody(String message, String sessionId,
+                                              com.azhukov.agent.bot.session.BotSessionEntity runtime) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("message", message);
+        if (sessionId != null && !sessionId.isBlank()) {
+            body.put("sessionId", sessionId);
+        }
+        if (runtime == null) {
+            return body;
+        }
+        if (runtime.isFastMode()) {
+            body.put("fastMode", true);
+        }
+        if (runtime.getReasoningLevel() != null && !runtime.getReasoningLevel().isBlank()) {
+            body.put("reasoningEffort", runtime.getReasoningLevel());
+        }
+        if (runtime.isVoiceMode()) {
+            body.put("voiceMode", true);
+        }
+        if (runtime.getMetadata("personality") != null) {
+            body.put("personality", runtime.getMetadata("personality"));
+        }
+        if (runtime.getMetadata("subgoal") != null) {
+            body.put("subgoal", runtime.getMetadata("subgoal"));
+        }
+        return body;
+    }
+
+    /**
+     * Backward-compatible overload of {@link #chatStream(String, String, com.azhukov.agent.bot.session.BotSessionEntity,
+     * Consumer, Consumer, BiConsumer, Consumer, Consumer)} without runtime flags.
+     */
+    public ChatResult chatStream(String message,
+                                 String sessionId,
+                                 Consumer<String> tokenConsumer,
+                                 Consumer<String> toolCallConsumer,
+                                 java.util.function.BiConsumer<String, String> toolResultConsumer,
+                                 Consumer<ChatResult> onComplete,
+                                 Consumer<Throwable> onError) {
+        return chatStream(message, sessionId, null, tokenConsumer, toolCallConsumer,
+            toolResultConsumer, onComplete, onError);
     }
 }

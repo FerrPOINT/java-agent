@@ -113,7 +113,7 @@ class BotMessageProcessorTest {
         AtomicInteger callCount = new AtomicInteger(0);
 
         // Mock streaming — return ChatResult directly (no callback invocation)
-        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 String msg = inv.getArgument(0);
                 int n = callCount.incrementAndGet();
@@ -125,7 +125,7 @@ class BotMessageProcessorTest {
                 }
                 return new AgentBackendClient.ChatResult("reply to: " + msg, null, 100, 1000, false);
             });
-        when(backendClient.chat(anyString(), anyString()))
+        when(backendClient.chat(anyString(), anyString(), any()))
             .thenAnswer(inv -> {
                 String msg = inv.getArgument(0);
                 processedTexts.add(msg);
@@ -147,7 +147,7 @@ class BotMessageProcessorTest {
         List<String> processedTexts = new ArrayList<>();
         AtomicInteger callCount = new AtomicInteger(0);
 
-        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 String msg = inv.getArgument(0);
                 int n = callCount.incrementAndGet();
@@ -160,7 +160,7 @@ class BotMessageProcessorTest {
                 }
                 return new AgentBackendClient.ChatResult("ok", "test-model", 10, 100, true);
             });
-        when(backendClient.chat(anyString(), anyString()))
+        when(backendClient.chat(anyString(), anyString(), any()))
             .thenAnswer(inv -> {
                 String msg = inv.getArgument(0);
                 processedTexts.add(msg);
@@ -182,12 +182,12 @@ class BotMessageProcessorTest {
         long chatId = 700L;
         List<String> callOrder = new java.util.ArrayList<>();
 
-        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 callOrder.add("chatStream");
                 return new AgentBackendClient.ChatResult("reply", null, 100, 1000, false);
             });
-        when(backendClient.chat(anyString(), anyString()))
+        when(backendClient.chat(anyString(), anyString(), any()))
             .thenAnswer(inv -> {
                 callOrder.add("chat");
                 return new AgentBackendClient.ChatResult("reply", "test-model", 100, 1000, false);
@@ -215,7 +215,7 @@ class BotMessageProcessorTest {
         properties.setParseMode("MarkdownV2");
 
         // Backend throws an error with special chars
-        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("Error at C:\\Users\\test_file.java"));
 
         processor.accept(textEvent(1, chatId, "test"));
@@ -231,23 +231,23 @@ class BotMessageProcessorTest {
         long chatId = 500L;
         java.util.List<String> finalizedTexts = new java.util.ArrayList<>();
 
-        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 String msg = inv.getArgument(0);
                 // Simulate: token consumer called with LLM text
-                java.util.function.Consumer<String> tokenConsumer = inv.getArgument(2);
+                java.util.function.Consumer<String> tokenConsumer = inv.getArgument(3);
                 tokenConsumer.accept("Here is the answer");
 
                 // Simulate: tool call consumer
-                java.util.function.Consumer<String> toolCallConsumer = inv.getArgument(3);
+                java.util.function.Consumer<String> toolCallConsumer = inv.getArgument(4);
                 toolCallConsumer.accept("search");
 
                 // Simulate: tool result consumer
-                java.util.function.BiConsumer<String, String> toolResultConsumer = inv.getArgument(4);
+                java.util.function.BiConsumer<String, String> toolResultConsumer = inv.getArgument(5);
                 toolResultConsumer.accept("search", "results found");
 
                 // Simulate: onComplete with result
-                java.util.function.Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(5);
+                java.util.function.Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(6);
                 onComplete.accept(new AgentBackendClient.ChatResult("Here is the answer", "test-model", 100, 1000, true));
                 return new AgentBackendClient.ChatResult("Here is the answer", "test-model", 100, 1000, true);
             });
@@ -276,7 +276,7 @@ class BotMessageProcessorTest {
         AtomicInteger callCount = new AtomicInteger(0);
         List<String> processedTexts = new ArrayList<>();
 
-        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 String msg = inv.getArgument(0);
                 int n = callCount.incrementAndGet();
@@ -289,7 +289,7 @@ class BotMessageProcessorTest {
                 }
                 return new AgentBackendClient.ChatResult("reply to: " + msg, null, 100, 1000, false);
             });
-        when(backendClient.chat(anyString(), anyString()))
+        when(backendClient.chat(anyString(), anyString(), any()))
             .thenAnswer(inv -> {
                 String msg = inv.getArgument(0);
                 processedTexts.add(msg);
@@ -308,14 +308,14 @@ class BotMessageProcessorTest {
         long chatId = 300L;
         AtomicInteger processCount = new AtomicInteger(0);
 
-        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 processCount.incrementAndGet();
                 // Enqueue another message during processing (infinite loop scenario)
                 busyHandler.queueMessage(chatId, textEvent(999, chatId, "loop-msg"));
                 return new AgentBackendClient.ChatResult("ok", "test-model", 10, 100, true);
             });
-        when(backendClient.chat(anyString(), anyString()))
+        when(backendClient.chat(anyString(), anyString(), any()))
             .thenAnswer(inv -> {
                 processCount.incrementAndGet();
                 busyHandler.queueMessage(chatId, textEvent(999, chatId, "loop-msg"));

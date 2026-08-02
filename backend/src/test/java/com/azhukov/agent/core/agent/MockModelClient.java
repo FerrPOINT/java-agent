@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.agent;
 
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ToolCall;
@@ -46,7 +47,7 @@ public class MockModelClient implements ModelClient {
     }
 
     @Override
-    public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools) {
+    public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
         if (calls >= responses.size()) {
             return ChatResponse.text("(no more scripted responses)");
         }

@@ -81,7 +81,6 @@ public class CheckpointManager {
         }
 
         CheckpointEntity entity = new CheckpointEntity();
-        entity.setId(UUID.randomUUID());
         entity.setDescription(description);
         entity.setFileCount(fileCount);
         entity.setTotalSizeBytes(totalSize);

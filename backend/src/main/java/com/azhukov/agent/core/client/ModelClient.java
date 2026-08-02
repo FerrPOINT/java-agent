@@ -9,11 +9,20 @@ import java.util.concurrent.CompletableFuture;
 
 public interface ModelClient {
 
-    ChatResponse complete(List<Message> messages, List<ToolDefinition> tools);
+    default ChatResponse complete(List<Message> messages, List<ToolDefinition> tools) {
+        return complete(messages, tools, ModelRequestOptions.empty());
+    }
+
+    ChatResponse complete(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options);
 
     default void stream(List<Message> messages, List<ToolDefinition> tools, StreamingResponseHandler handler) {
+        stream(messages, tools, ModelRequestOptions.empty(), handler);
+    }
+
+    default void stream(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options,
+                        StreamingResponseHandler handler) {
         try {
-            ChatResponse response = complete(messages, tools);
+            ChatResponse response = complete(messages, tools, options);
             if (response.hasToolCalls()) {
                 handler.onToolCalls(response.toolCalls());
             } else {

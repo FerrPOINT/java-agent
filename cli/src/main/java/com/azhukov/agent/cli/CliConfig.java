@@ -3,6 +3,7 @@ package com.azhukov.agent.cli;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -16,6 +17,7 @@ import java.util.List;
 /**
  * CLI configuration — provides RestClient and ObjectMapper beans.
  */
+@EnableConfigurationProperties(BackendProperties.class)
 @Configuration
 public class CliConfig {
 
@@ -25,6 +27,16 @@ public class CliConfig {
         mapper.registerModule(new JavaTimeModule());
         mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         return mapper;
+    }
+
+    @Bean
+    public MarkdownRenderer markdownRenderer() {
+        return new MarkdownRenderer(true);
+    }
+
+    @Bean
+    public ContextReferenceExpander contextReferenceExpander() {
+        return new ContextReferenceExpander();
     }
 
     @Bean

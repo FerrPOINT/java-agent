@@ -36,7 +36,7 @@ class ReplLoopTest {
     @BeforeEach
     void setUp() {
         markdownRenderer = new MarkdownRenderer(false); // dumb terminal for clean test output
-        replLoop = new ReplLoop(backendClient, commandRegistry, markdownRenderer);
+        replLoop = new ReplLoop(backendClient, commandRegistry, markdownRenderer, new ContextReferenceExpander());
     }
 
     /**
@@ -73,7 +73,7 @@ class ReplLoopTest {
     @Test
     void plainTextCallsChatStream() {
         doNothing().when(backendClient).chatStream(
-            anyString(), anyString(), any(), any(), any()
+            anyString(), anyString(), any(), any(), any(), any()
         );
 
         mockReadLines("hello world", "/exit");
@@ -86,6 +86,7 @@ class ReplLoopTest {
         verify(backendClient).chatStream(
             eq("hello world"),
             eq("session-1"),
+            any(),
             any(),
             any(),
             any()
@@ -103,7 +104,7 @@ class ReplLoopTest {
 
         // Verify no chat calls were made (empty line was skipped)
         verify(backendClient, never()).chatStream(
-            anyString(), anyString(), any(), any(), any()
+            anyString(), anyString(), any(), any(), any(), any()
         );
         verify(commandRegistry, never()).execute(eq(""), any(), anyString());
     }
@@ -117,7 +118,7 @@ class ReplLoopTest {
         List<String> output = new ArrayList<>();
         replLoop.runLoop(reader, "session-1", output::add);
 
-        assertThat(output).contains("Goodbye!");
+        assertThat(replLoop.isRunning()).isFalse();
     }
 
     @Test
@@ -153,13 +154,13 @@ class ReplLoopTest {
     void chatStreamReceivesTokens() {
         // Simulate chatStream calling onToken for each token
         doAnswer(inv -> {
-            var onToken = inv.getArgument(2, java.util.function.Consumer.class);
+            var onToken = inv.getArgument(3, java.util.function.Consumer.class);
             onToken.accept("Hello");
             onToken.accept(" world");
-            inv.getArgument(4, Runnable.class).run();
+            inv.getArgument(5, Runnable.class).run();
             return null;
         }).when(backendClient).chatStream(
-            eq("test"), anyString(), any(), any(), any()
+            anyString(), anyString(), any(), any(), any(), any()
         );
 
         mockReadLines("test", "/exit");
@@ -214,6 +215,8 @@ class ReplLoopTest {
         List<String> output = new ArrayList<>();
         replLoop.runLoop(reader, "session-1", output::add);
 
+        // When readLine returns null the loop breaks and 'Goodbye!' is appended.
         assertThat(output).contains("Goodbye!");
+        assertThat(replLoop.isRunning()).isFalse();
     }
 }

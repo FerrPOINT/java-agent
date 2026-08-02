@@ -3,6 +3,8 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
+import com.azhukov.agent.api.mapper.DomainDtoMapper;
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.service.AgentRuntimeService;
@@ -60,12 +62,33 @@ class AgentControllerTest {
     @Mock
     private com.azhukov.agent.service.transcription.TranscriptionService transcriptionService;
 
+    @Mock
+    private AgentProperties agentProperties;
+
+    @Mock
+    private AgentProperties.ModelProperties modelProperties;
+
+    @Mock
+    private AgentProperties.CoreProperties coreProperties;
+
+    @Mock
+    private AgentProperties.BudgetProperties budgetProperties;
+
+    @Mock
+    private DomainDtoMapper domainDtoMapper;
+
+    @Mock
+    private com.azhukov.agent.service.CliRuntimeSettingsService cliRuntimeSettingsService;
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
 
         AgentController controller = new AgentController(agentRuntimeService, streamingService,
-            memoryProvider, skillManager, checkpointManager, ttsService, transcriptionService, new com.azhukov.agent.core.agent.SteerBuffer(), new com.azhukov.agent.core.security.ApprovalQueue());
+            memoryProvider, skillManager, checkpointManager, ttsService, transcriptionService,
+            new com.azhukov.agent.core.agent.SteerBuffer(), new com.azhukov.agent.core.security.ApprovalQueue(),
+            cliRuntimeSettingsService,
+            agentProperties, domainDtoMapper);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
@@ -154,6 +177,233 @@ class AgentControllerTest {
             .andExpect(jsonPath("$[0].modelName").value(""))
             .andExpect(jsonPath("$[0].createdAt").exists())
             .andExpect(jsonPath("$[0].updatedAt").exists());
+    }
+
+    @Test
+    void createSessionReturns201WithSessionDto() throws Exception {
+        SessionSummaryDto dto = new SessionSummaryDto(
+            SESSION_ID,
+            "user-1",
+            "New chat",
+            "openai-compatible",
+            "kimi-k2.6",
+            FIXED_TIME,
+            FIXED_TIME
+        );
+        when(agentRuntimeService.createSession(any(), any(), any())).thenReturn(
+            new com.azhukov.agent.core.model.Session(SESSION_ID, "user-1", "New chat", "openai-compatible", "kimi-k2.6", null, java.util.Map.of())
+        );
+        when(domainDtoMapper.toSessionSummaryDto(any(com.azhukov.agent.core.model.Session.class))).thenReturn(dto);
+
+        AgentProperties.ModelProperties modelProps = new AgentProperties.ModelProperties();
+        modelProps.setModelName("kimi-k2.6");
+        when(agentProperties.getModel()).thenReturn(modelProps);
+
+        mockMvc.perform(post("/api/v1/agent/session")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+            .andExpect(status().isCreated())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.id").value(SESSION_ID.toString()))
+            .andExpect(jsonPath("$.userId").value("user-1"))
+            .andExpect(jsonPath("$.title").value("New chat"));
+    }
+
+    @Test
+    void setReasoningEffortReturnsOk() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/reasoning")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "effort": "high"
+                    }
+                    """))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void toggleFastModeReturnsNewState() throws Exception {
+        when(cliRuntimeSettingsService.toggleFastMode(any(UUID.class), any(Boolean.class))).thenReturn(true);
+
+        mockMvc.perform(post("/api/v1/agent/fast-mode")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "enabled": "true"
+                    }
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$").value(true));
+    }
+
+    @Test
+    void toggleVoiceModeReturnsNewState() throws Exception {
+        when(cliRuntimeSettingsService.toggleVoiceMode(any(UUID.class), any(Boolean.class))).thenReturn(false);
+
+        mockMvc.perform(post("/api/v1/agent/voice-mode")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "enabled": "false"
+                    }
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$").value(false));
+    }
+
+    @Test
+    void setTitleReturnsOk() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/session/title")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "title": "test-run"
+                    }
+                    """))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void setSubgoalReturnsOk() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/subgoal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "subgoal": "verify cli"
+                    }
+                    """))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void listToolsReturnsToolNames() throws Exception {
+        when(cliRuntimeSettingsService.listToolNames()).thenReturn(List.of("read_file", "write_file"));
+
+        mockMvc.perform(get("/api/v1/agent/tools"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$").isArray())
+            .andExpect(jsonPath("$.length()").value(2))
+            .andExpect(jsonPath("$[0]").value("read_file"))
+            .andExpect(jsonPath("$[1]").value("write_file"));
+    }
+
+    @Test
+    void enableToolReturnsOk() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/tools/enable")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "toolName": "read_file"
+                    }
+                    """))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void disableToolReturnsOk() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/tools/disable")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "toolName": "write_file"
+                    }
+                    """))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void setBrowserCdpReturnsOk() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/browser")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "cdpUrl": "http://localhost:9222"
+                    }
+                    """))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void queuePromptReturnsOk() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/queue")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "queued": "hello"
+                    }
+                    """))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void createSnapshotReturnsOk() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/snapshot")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "description": "check"
+                    }
+                    """))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void configReturnsConfiguration() throws Exception {
+        when(agentProperties.getModel()).thenReturn(modelProperties);
+        when(agentProperties.getCore()).thenReturn(coreProperties);
+        when(agentProperties.getBudget()).thenReturn(budgetProperties);
+        when(agentProperties.getName()).thenReturn("Test Agent");
+        when(modelProperties.getModelName()).thenReturn("test-model");
+        when(modelProperties.getProvider()).thenReturn("test-provider");
+        when(modelProperties.getBaseUrl()).thenReturn("http://localhost:9999");
+        when(modelProperties.getMaxTokens()).thenReturn(4096);
+        when(modelProperties.getTemperature()).thenReturn(0.7);
+        when(modelProperties.getTimeoutSeconds()).thenReturn(600);
+        when(coreProperties.getMaxTurns()).thenReturn(100);
+        when(coreProperties.getDefaultSystemPrompt()).thenReturn("Be concise.");
+        when(coreProperties.getReasoningConfig()).thenReturn("medium");
+        when(budgetProperties.getMaxModelCallsPerTurn()).thenReturn(100);
+
+        mockMvc.perform(get("/api/v1/agent/config"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.name").value("Test Agent"))
+            .andExpect(jsonPath("$.model").value("test-model"))
+            .andExpect(jsonPath("$.provider").value("test-provider"))
+            .andExpect(jsonPath("$.baseUrl").value("http://localhost:9999"))
+            .andExpect(jsonPath("$.maxTurns").value(100))
+            .andExpect(jsonPath("$.maxModelCallsPerTurn").value(100));
+    }
+
+    @Test
+    void doctorReturnsDiagnostics() throws Exception {
+        when(agentProperties.getModel()).thenReturn(modelProperties);
+        when(agentProperties.getCore()).thenReturn(coreProperties);
+        when(agentProperties.getBudget()).thenReturn(budgetProperties);
+        when(agentProperties.getName()).thenReturn("Test Agent");
+        when(modelProperties.getModelName()).thenReturn("test-model");
+        when(modelProperties.getProvider()).thenReturn("test-provider");
+        when(coreProperties.getMaxTurns()).thenReturn(100);
+        when(budgetProperties.getMaxModelCallsPerTurn()).thenReturn(100);
+        when(skillManager.listSkillNames()).thenReturn(List.of("search", "read_file"));
+
+        mockMvc.perform(get("/api/v1/agent/doctor"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("UP"))
+            .andExpect(jsonPath("$.name").value("Test Agent"))
+            .andExpect(jsonPath("$.model").value("test-model"))
+            .andExpect(jsonPath("$.provider").value("test-provider"))
+            .andExpect(jsonPath("$.maxTurns").value(100))
+            .andExpect(jsonPath("$.maxModelCallsPerTurn").value(100))
+            .andExpect(jsonPath("$.skillCount").value(2));
     }
 
     @Test

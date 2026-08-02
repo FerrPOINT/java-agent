@@ -50,9 +50,15 @@ class BusySessionHandlerTest {
         // Thread 2: drain while queueing is in progress
         AtomicInteger totalDrained = new AtomicInteger(0);
         pool.submit(() -> {
-            while (queueDone.getCount() > 0 || handler.hasQueued(chatId)) {
-                List<UpdateEvent> drained = handler.drainQueue(chatId);
-                totalDrained.addAndGet(drained.size());
+            try {
+                // Wait for producer to finish, then drain remaining queue
+                queueDone.await(5, TimeUnit.SECONDS);
+                while (handler.hasQueued(chatId)) {
+                    List<UpdateEvent> drained = handler.drainQueue(chatId);
+                    totalDrained.addAndGet(drained.size());
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
         });
 

@@ -1,6 +1,6 @@
 package com.azhukov.agent.cli;
 
-import lombok.RequiredArgsConstructor;
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
@@ -36,13 +36,24 @@ import java.util.UUID;
  * P1-10: Input history persistence
  */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class CliReplRunner implements CommandLineRunner {
 
     private final BackendClient backendClient;
     private final SlashCommandRegistry commandRegistry;
     private final BackendProperties properties;
+    private final MarkdownRenderer markdownRenderer;
+    private final ContextReferenceExpander contextExpander;
+
+    public CliReplRunner(BackendClient backendClient, SlashCommandRegistry commandRegistry,
+                         BackendProperties properties, MarkdownRenderer markdownRenderer,
+                         ContextReferenceExpander contextExpander) {
+        this.backendClient = backendClient;
+        this.commandRegistry = commandRegistry;
+        this.properties = properties;
+        this.markdownRenderer = markdownRenderer;
+        this.contextExpander = contextExpander;
+    }
 
     private static final Path SESSION_DIR = Path.of(System.getProperty("user.home"), ".java-agent-cli");
     private static final Path SESSION_FILE = SESSION_DIR.resolve("session.txt");
@@ -68,9 +79,16 @@ public class CliReplRunner implements CommandLineRunner {
             }
         }
 
-        // C4: If still no session, generate a new one
+        // C4: If still no session, create one via the backend so runtime settings endpoints work
         if (sessionId == null || sessionId.isBlank()) {
-            sessionId = UUID.randomUUID().toString();
+            try {
+                sessionId = backendClient.createSession();
+                if (sessionId == null || sessionId.isBlank()) {
+                    sessionId = UUID.randomUUID().toString();
+                }
+            } catch (BackendUnavailableException e) {
+                sessionId = UUID.randomUUID().toString();
+            }
         }
 
         // C4: Save session on exit
@@ -112,9 +130,6 @@ public class CliReplRunner implements CommandLineRunner {
 
             // P1-10: Attach file-based history persistence
             InputHistoryManager.attachHistory(reader);
-
-            // P1-7: Context reference expander
-            ContextReferenceExpander contextExpander = new ContextReferenceExpander();
 
             while (true) {
                 String prompt = "agent> ";
@@ -176,15 +191,13 @@ public class CliReplRunner implements CommandLineRunner {
                     try {
                         String result = commandRegistry.execute(line, backendClient, sessionId);
                         if (result != null && !result.isEmpty()) {
-                            // P1-2: Use markdown renderer
-                            System.out.println(new MarkdownRenderer(true).render(result));
+                            System.out.println(markdownRenderer.render(result));
                         }
-                        System.out.println();
                     } catch (BackendUnavailableException e) {
-                        // C8: Backend unavailable
+                        // C8: Backend unavailable — show friendly message
                         System.out.println("Backend unavailable. Is the backend running on " +
-                            properties.getBackendUrl() + "?");
-                        System.out.println();
+                            backendClient.getBackendUrl() + "?");
+                        System.out.println("Command failed: " + e.getMessage());
                     }
                     continue;
                 }
@@ -195,153 +208,111 @@ public class CliReplRunner implements CommandLineRunner {
                 }
 
                 // P1-4: Record last user message for /retry
-                commandRegistry.getCliState().setLastUserMessage(line);
+                CliState cliState = commandRegistry.getCliState();
+                if (cliState != null) {
+                    cliState.setLastUserMessage(line);
+                }
 
                 // P1-5: Record session in local store
-                commandRegistry.getSessionStore().incrementMessages(sessionId);
+                SessionStore sessionStore = commandRegistry.getSessionStore();
+                if (sessionStore != null) {
+                    sessionStore.recordSession(sessionId, null);
+                    sessionStore.incrementMessages(sessionId);
+                }
 
-                // Chat message — stream or blocking
                 if (streaming) {
-                    System.out.println();
-                    StringBuilder fullResponse = new StringBuilder();
-                    try {
-                        // P1-2: Use streaming markdown renderer
-                        MarkdownRenderer mdRenderer = new MarkdownRenderer(true);
-                        MarkdownRenderer.StreamingRenderer streamRenderer =
-                            new MarkdownRenderer.StreamingRenderer(mdRenderer, System.out::print);
-
-                        backendClient.chatStream(line, sessionId,
-                            streamRenderer::accept,
-                            toolInfo -> {
-                                System.out.println("\n  [" + toolInfo + "]");
-                            },
-                            () -> {
-                                streamRenderer.flush();
-                                System.out.println("\n");
-                            }
-                        );
-                    } catch (BackendUnavailableException e) {
-                        // C8: Backend unavailable during chat
-                        System.out.println("\nBackend unavailable. Is the backend running on " +
-                            properties.getBackendUrl() + "?");
-                        System.out.println("Your message was not sent. Please retry when the backend is available.\n");
-                    }
+                    // Plain text — send as chat message via streaming SSE (pass cliState)
+                    handleChatStream(line, sessionId, cliState);
                 } else {
-                    System.out.println();
-                    try {
-                        String response = backendClient.chat(line, sessionId);
-                        System.out.println(new MarkdownRenderer(true).render(response));
-                        System.out.println();
-                    } catch (BackendUnavailableException e) {
-                        System.out.println("Backend unavailable. Is the backend running on " +
-                            properties.getBackendUrl() + "?\n");
-                    }
+                    handleChatNonStream(line, sessionId, cliState);
                 }
             }
-        } catch (IOException e) {
-            log.error("Terminal error: {}", e.getMessage());
-            // Fall back to simple stdin reading
-            System.err.println("JLine terminal unavailable, falling back to basic stdin.");
-            fallbackRepl(sessionId, streaming);
         }
     }
 
-    /**
-     * C6: Load dynamic skill commands from backend.
-     */
+    private void handleChatStream(String message, String sessionId, CliState cliState) {
+        MarkdownRenderer.StreamingRenderer renderer =
+            new MarkdownRenderer.StreamingRenderer(markdownRenderer, System.out::println);
+        try {
+            backendClient.chatStream(message, sessionId, cliState,
+                renderer::accept,
+                toolInfo -> System.out.println("\n  [" + toolInfo + "]"),
+                () -> {
+                    renderer.flush();
+                    System.out.println();
+                }
+            );
+        } catch (BackendUnavailableException e) {
+            System.out.println("\nBackend unavailable. Is the backend running on " +
+                backendClient.getBackendUrl() + "?");
+            System.out.println("Your message was not sent. Please retry when the backend is available.");
+        }
+    }
+
+    private void handleChatNonStream(String message, String sessionId, CliState cliState) {
+        try {
+            String response = backendClient.chat(message, sessionId, cliState);
+            System.out.println(markdownRenderer.render(response));
+        } catch (BackendUnavailableException e) {
+            System.out.println("\nBackend unavailable. Is the backend running on " +
+                backendClient.getBackendUrl() + "?");
+        }
+    }
+
     private void loadDynamicSkills() {
         try {
             var skills = backendClient.getSkills();
-            if (skills != null && skills.isArray()) {
-                commandRegistry.clearDynamicSkills();
-                for (var skillNode : skills) {
-                    String skillName = skillNode.asText();
-                    if (skillName != null && !skillName.isBlank()) {
-                        commandRegistry.registerDynamicSkill(skillName);
-                        log.debug("Registered dynamic skill command: /{}", skillName);
+            if (skills != null) {
+                int added = 0;
+                if (skills.isArray()) {
+                    for (JsonNode skill : skills) {
+                        String name = skill.isTextual() ? skill.asText() : skill.path("name").asText("");
+                        if (!name.isBlank()) {
+                            commandRegistry.registerDynamicSkill(name);
+                            added++;
+                        }
                     }
+                } else {
+                    skills.forEach(s -> {
+                        String name = s.isTextual() ? s.asText() : s.path("name").asText("");
+                        if (!name.isBlank()) {
+                            commandRegistry.registerDynamicSkill(name);
+                        }
+                    });
                 }
-                log.info("Loaded {} dynamic skill commands", skills.size());
+                if (added > 0) {
+                    log.info("Loaded {} dynamic skill commands", added);
+                }
             }
         } catch (Exception e) {
-            log.warn("Failed to load dynamic skills: {}", e.getMessage());
+            // C8: Backend may be unavailable on startup; don't fail entirely
+            log.warn("Failed to load dynamic skills on startup: {}", e.getMessage());
         }
     }
 
-    /**
-     * C4: Load saved session ID from ~/.java-agent-cli/session.txt
-     */
     private String loadSavedSession() {
         try {
             if (Files.exists(SESSION_FILE)) {
                 String saved = Files.readString(SESSION_FILE).strip();
-                if (!saved.isBlank()) {
+                try {
+                    UUID.fromString(saved);
                     return saved;
+                } catch (IllegalArgumentException e) {
+                    log.warn("Ignoring invalid saved session id: {}", saved);
                 }
             }
-        } catch (Exception e) {
-            log.warn("Failed to load saved session: {}", e.getMessage());
+        } catch (IOException e) {
+            log.warn("Failed to load session: {}", e.getMessage());
         }
         return null;
     }
 
-    /**
-     * C4: Save session ID to ~/.java-agent-cli/session.txt
-     */
     private void saveSession(String sessionId) {
         try {
             Files.createDirectories(SESSION_DIR);
             Files.writeString(SESSION_FILE, sessionId);
-        } catch (Exception e) {
+        } catch (IOException e) {
             log.warn("Failed to save session: {}", e.getMessage());
-        }
-    }
-
-    private void fallbackRepl(String sessionId, boolean streaming) {
-        java.util.Scanner scanner = new java.util.Scanner(System.in);
-        while (true) {
-            System.out.print("agent> ");
-            if (!scanner.hasNextLine()) break;
-            String line = scanner.nextLine().strip();
-            if (line.isEmpty()) continue;
-
-            if (line.startsWith("/")) {
-                try {
-                    String result = commandRegistry.execute(line, backendClient, sessionId);
-                    if (result != null && !result.isEmpty()) {
-                        System.out.println(result);
-                    }
-                    System.out.println();
-                    continue;
-                } catch (BackendUnavailableException e) {
-                    System.out.println("Backend unavailable. Is the backend running on " +
-                        properties.getBackendUrl() + "?\n");
-                    continue;
-                }
-            }
-
-            if (streaming) {
-                System.out.println();
-                try {
-                    backendClient.chatStream(line, sessionId,
-                        System.out::print,
-                        toolInfo -> System.out.println("\n  [" + toolInfo + "]"),
-                        () -> System.out.println("\n")
-                    );
-                } catch (BackendUnavailableException e) {
-                    System.out.println("Backend unavailable. Is the backend running on " +
-                        properties.getBackendUrl() + "?\n");
-                }
-            } else {
-                System.out.println();
-                try {
-                    System.out.println(backendClient.chat(line, sessionId));
-                    System.out.println();
-                } catch (BackendUnavailableException e) {
-                    System.out.println("Backend unavailable. Is the backend running on " +
-                        properties.getBackendUrl() + "?\n");
-                }
-            }
         }
     }
 }

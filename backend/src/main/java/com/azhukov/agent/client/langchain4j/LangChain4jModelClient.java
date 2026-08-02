@@ -4,6 +4,7 @@ import com.azhukov.agent.client.credential.CredentialPool;
 import com.azhukov.agent.client.credential.PooledCredential;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
@@ -110,6 +111,11 @@ public class LangChain4jModelClient implements ModelClient {
 
     @Override
     public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools) {
+        return complete(messages, tools, ModelRequestOptions.empty());
+    }
+
+    @Override
+    public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
         List<ChatMessage> chatMessages = messages.stream()
             .map(this::toLangChainMessage)
             .collect(Collectors.toList());
@@ -118,12 +124,13 @@ public class LangChain4jModelClient implements ModelClient {
             ? tools.stream().map(this::toToolSpecification).collect(Collectors.toList())
             : List.of();
 
+        int reasoningEffort = resolveReasoningEffort(options);
+        boolean fastMode = resolveFastMode(options);
+        int maxTokens = resolveMaxTokens(options);
+
         ChatRequest request = ChatRequest.builder()
             .messages(chatMessages)
-            .parameters(OpenAiChatRequestParameters.builder()
-                .modelName(properties.getModel().getModelName())
-                .toolSpecifications(specs)
-                .build())
+            .parameters(buildParameters(specs, reasoningEffort, fastMode, maxTokens))
             .build();
 
         log.debug("Sending {} messages to model {}", chatMessages.size(), request);
@@ -155,6 +162,12 @@ public class LangChain4jModelClient implements ModelClient {
 
     @Override
     public void stream(List<Message> messages, List<ToolDefinition> tools, StreamingResponseHandler handler) {
+        stream(messages, tools, ModelRequestOptions.empty(), handler);
+    }
+
+    @Override
+    public void stream(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options,
+                       StreamingResponseHandler handler) {
         List<ChatMessage> chatMessages = messages.stream()
             .map(this::toLangChainMessage)
             .collect(Collectors.toList());
@@ -163,12 +176,13 @@ public class LangChain4jModelClient implements ModelClient {
             ? tools.stream().map(this::toToolSpecification).collect(Collectors.toList())
             : List.of();
 
+        int reasoningEffort = resolveReasoningEffort(options);
+        boolean fastMode = resolveFastMode(options);
+        int maxTokens = resolveMaxTokens(options);
+
         ChatRequest request = ChatRequest.builder()
             .messages(chatMessages)
-            .parameters(OpenAiChatRequestParameters.builder()
-                .modelName(properties.getModel().getModelName())
-                .toolSpecifications(specs)
-                .build())
+            .parameters(buildParameters(specs, reasoningEffort, fastMode, maxTokens))
             .build();
 
         // OpenAiStreamingChatModel.doChat() is async — block until streaming completes
@@ -234,21 +248,66 @@ public class LangChain4jModelClient implements ModelClient {
         return CompletableFuture.supplyAsync(() -> analyzeImage(base64Image, prompt));
     }
 
+    public CompletableFuture<String> analyzeImageAsync(String base64Image, String prompt, ModelRequestOptions options) {
+        return CompletableFuture.supplyAsync(() -> analyzeImage(base64Image, prompt, options));
+    }
+
     @Override
     public String analyzeImage(String base64Image, String prompt) {
+        return analyzeImage(base64Image, prompt, ModelRequestOptions.empty());
+    }
+
+    public String analyzeImage(String base64Image, String prompt, ModelRequestOptions options) {
         UserMessage message = UserMessage.from(
             dev.langchain4j.data.message.TextContent.from(prompt),
             dev.langchain4j.data.message.ImageContent.from(base64Image, "image/png")
         );
         ChatRequest request = ChatRequest.builder()
             .messages(List.of(message))
-            .parameters(OpenAiChatRequestParameters.builder()
-                .modelName(properties.getModel().getModelName())
-                .build())
+            .parameters(buildParameters(List.of(), resolveReasoningEffort(options), resolveFastMode(options), resolveMaxTokens(options)))
             .build();
         dev.langchain4j.model.chat.response.ChatResponse response = chatModel.chat(request);
         persistUsage(response);
         return response.aiMessage().text();
+    }
+
+    private dev.langchain4j.model.chat.request.ChatRequestParameters buildParameters(List<ToolSpecification> specs,
+                                                                                       int reasoningEffort,
+                                                                                       boolean fastMode,
+                                                                                       int maxTokens) {
+        var builder = OpenAiChatRequestParameters.builder()
+            .modelName(properties.getModel().getModelName())
+            .toolSpecifications(specs)
+            .maxCompletionTokens(fastMode ? Math.min(maxTokens, 2048) : maxTokens);
+        if (reasoningEffort > 0 && !fastMode) {
+            builder.reasoningEffort(String.valueOf(reasoningEffort));
+        }
+        return builder.build();
+    }
+
+    private int resolveReasoningEffort(ModelRequestOptions options) {
+        if (options != null && options.reasoningEffort() != null && !options.reasoningEffort().isBlank()) {
+            try {
+                return Integer.parseInt(options.reasoningEffort());
+            } catch (NumberFormatException e) {
+                log.debug("Ignoring non-numeric reasoningEffort: {}", options.reasoningEffort());
+            }
+        }
+        return properties.getModel().getReasoningEffort();
+    }
+
+    private boolean resolveFastMode(ModelRequestOptions options) {
+        if (options != null && options.fastMode() != null) {
+            return options.fastMode();
+        }
+        return properties.getModel().isFastMode();
+    }
+
+    private int resolveMaxTokens(ModelRequestOptions options) {
+        if (options != null && options.maxCompletionTokens() != null && options.maxCompletionTokens() > 0) {
+            return options.maxCompletionTokens();
+        }
+        return properties.getModel().getMaxTokens();
     }
 
     private ChatMessage toLangChainMessage(Message message) {

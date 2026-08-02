@@ -2,6 +2,8 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.BackgroundRequest;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
+import com.azhukov.agent.api.mapper.DomainDtoMapper;
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.service.AgentRuntimeService;
@@ -61,12 +63,21 @@ class AgentControllerPhase2Test {
     @Mock
     private com.azhukov.agent.service.transcription.TranscriptionService transcriptionService;
 
+    @Mock
+    private AgentProperties agentProperties;
+
+    @Mock
+    private DomainDtoMapper domainDtoMapper;
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
 
         AgentController controller = new AgentController(agentRuntimeService, streamingService,
-            memoryProvider, skillManager, checkpointManager, ttsService, transcriptionService, new com.azhukov.agent.core.agent.SteerBuffer(), new com.azhukov.agent.core.security.ApprovalQueue());
+            memoryProvider, skillManager, checkpointManager, ttsService, transcriptionService,
+            new com.azhukov.agent.core.agent.SteerBuffer(), new com.azhukov.agent.core.security.ApprovalQueue(),
+            new com.azhukov.agent.service.CliRuntimeSettingsService(null, null),
+            agentProperties, domainDtoMapper);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

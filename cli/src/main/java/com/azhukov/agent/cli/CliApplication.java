@@ -41,9 +41,11 @@ public class CliApplication {
         }
 
         // If no session ID specified and not forcing new session, leave empty
-        // so CliReplRunner can load from session.txt
+        // so CliReplRunner can load from session.txt.
+        // When --new-session is set we also leave it empty so CliReplRunner
+        // asks the backend to create a real session.
         if (sessionId.isEmpty() && newSession) {
-            sessionId = UUID.randomUUID().toString();
+            sessionId = "";
         }
 
         // Inject as Spring properties for @ConfigurationProperties binding

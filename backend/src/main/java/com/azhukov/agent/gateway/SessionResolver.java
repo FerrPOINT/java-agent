@@ -31,7 +31,7 @@ public class SessionResolver {
         if (existing != null) {
             sessionRepository.touchUpdatedAt(existing.getId(), Instant.now());
             return new Session(existing.getId(), existing.getUserId(), existing.getTitle(),
-                existing.getModelProvider(), existing.getModelName(), null, null);
+                existing.getModelProvider(), existing.getModelName(), null, java.util.Map.of(), existing.getSubgoal());
         }
         // Don't set id manually — let @GeneratedValue produce it.
         // Setting id manually makes Hibernate think the entity is detached → merge() → StaleObjectStateException.
@@ -45,6 +45,6 @@ public class SessionResolver {
         SessionEntity saved = sessionRepository.save(created);
         log.info("Created new session for userId={} sessionId={}", userId, saved.getId());
         return new Session(saved.getId(), saved.getUserId(), saved.getTitle(),
-            saved.getModelProvider(), saved.getModelName(), null, null);
+            saved.getModelProvider(), saved.getModelName(), null, java.util.Map.of(), saved.getSubgoal());
     }
 }

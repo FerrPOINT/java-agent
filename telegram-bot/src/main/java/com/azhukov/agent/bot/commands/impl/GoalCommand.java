@@ -1,8 +1,10 @@
 package com.azhukov.agent.bot.commands.impl;
 
 import com.azhukov.agent.bot.commands.CommandHandler;
+import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -16,15 +18,20 @@ import java.util.List;
  * /goal resume       — resume goal
  * /goal clear        — clear goal and all subgoals
  *
- * Note: Unlike Hermes, this build does not auto-continue with a judge model.
- * The goal is stored in the session and included in the system prompt context.
+ * <p>Goal state is persisted to the backend session so it is injected into
+ * every subsequent chat turn.  Full Hermes-style auto-continuation with a judge
+ * model is not implemented yet; once set, the user resumes the loop with
+ * /goal resume or by sending a new message.
  */
 @Component
+@RequiredArgsConstructor
 public class GoalCommand implements CommandHandler {
 
     private static final String GOAL_KEY = "_standingGoal";
     private static final String GOAL_PAUSED_KEY = "_standingGoalPaused";
     private static final String SUBGOALS_KEY = "_subgoals";
+
+    private final AgentBackendClient backendClient;
 
     @Override
     public String name() {
@@ -50,20 +57,25 @@ public class GoalCommand implements CommandHandler {
         String[] parts = args.trim().split("\\s+", 2);
         String sub = parts[0].toLowerCase();
 
+        String sessionId = session.getId() != null ? session.getId().toString() : null;
+
         return switch (sub) {
             case "status" -> showStatus(session);
             case "pause" -> {
                 session.setMetadata(GOAL_PAUSED_KEY, "true");
+                if (sessionId != null) backendClient.pauseGoal(sessionId);
                 yield "Goal paused. Use /goal resume to continue.";
             }
             case "resume" -> {
                 session.setMetadata(GOAL_PAUSED_KEY, "false");
+                if (sessionId != null) backendClient.resumeGoal(sessionId);
                 yield "Goal resumed.";
             }
             case "clear" -> {
                 session.setMetadata(GOAL_KEY, null);
                 session.setMetadata(GOAL_PAUSED_KEY, null);
                 session.setMetadata(SUBGOALS_KEY, null);
+                if (sessionId != null) backendClient.clearGoal(sessionId);
                 yield "Goal and all subgoals cleared.";
             }
             default -> {
@@ -73,6 +85,7 @@ public class GoalCommand implements CommandHandler {
                 }
                 session.setMetadata(GOAL_KEY, goalText);
                 session.setMetadata(GOAL_PAUSED_KEY, "false");
+                if (sessionId != null) backendClient.setGoal(sessionId, goalText);
                 yield "Goal set: " + goalText + "\n\nUse /subgoal to add criteria. Use /goal clear to remove.";
             }
         };

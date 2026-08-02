@@ -53,6 +53,7 @@ tasks.named('test') {
 
 tasks.withType(JavaCompile).configureEach {
     options.release = 25
+    options.compilerArgs += ['-parameters']
 }
 
 bootJar {

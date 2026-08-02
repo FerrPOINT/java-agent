@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.agent;
 
+import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
@@ -11,10 +12,14 @@ import java.util.List;
 public interface AgentRuntime {
 
     default TurnResult runTurn(Session session, String userInput) {
-        return runTurn(session, userInput, List.of());
+        return runTurn(session, userInput, List.of(), ModelRequestOptions.empty());
     }
 
-    TurnResult runTurn(Session session, String userInput, List<String> references);
+    default TurnResult runTurn(Session session, String userInput, List<String> references) {
+        return runTurn(session, userInput, references, ModelRequestOptions.empty());
+    }
+
+    TurnResult runTurn(Session session, String userInput, List<String> references, ModelRequestOptions options);
 
     ChatResponse run(List<Message> messages, List<ToolDefinition> tools);
 }

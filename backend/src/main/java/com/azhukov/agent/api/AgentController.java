@@ -5,8 +5,10 @@ import com.azhukov.agent.api.dto.ApproveMemoryRequest;
 import com.azhukov.agent.api.dto.ApprovalRequest;
 import com.azhukov.agent.api.dto.ApproveRequest;
 import com.azhukov.agent.api.dto.BackgroundRequest;
+import com.azhukov.agent.api.dto.AgentConfigDto;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.api.dto.DoctorDto;
 import com.azhukov.agent.api.dto.CompressRequest;
 import com.azhukov.agent.api.dto.ContextInfoDto;
 import com.azhukov.agent.api.dto.DenyRequest;
@@ -16,18 +18,23 @@ import com.azhukov.agent.api.dto.PendingMemoryDto;
 import com.azhukov.agent.api.dto.RejectMemoryRequest;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.UsageDto;
+import com.azhukov.agent.api.mapper.DomainDtoMapper;
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
 import com.azhukov.agent.service.CheckpointManager;
+import com.azhukov.agent.service.CliRuntimeSettingsService;
 import com.azhukov.agent.service.tts.TtsService;
 import com.azhukov.agent.service.transcription.TranscriptionService;
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -41,6 +48,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import lombok.RequiredArgsConstructor;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -57,6 +65,9 @@ public class AgentController {
     private final TranscriptionService transcriptionService;
     private final SteerBuffer steerBuffer;
     private final ApprovalQueue approvalQueue;
+    private final CliRuntimeSettingsService cliRuntimeSettingsService;
+    private final AgentProperties properties;
+    private final DomainDtoMapper domainDtoMapper;
 
     @PostMapping("/agent/chat")
     public ChatResponseDto chat(@Valid @RequestBody ChatRequest request) {
@@ -73,10 +84,222 @@ public class AgentController {
         return agentRuntimeService.runDelegate(request);
     }
 
+    // ── Doctor / diagnostics ──
+
+    @GetMapping("/agent/doctor")
+    public DoctorDto doctor() {
+        return new DoctorDto(
+            properties.getName(),
+            "0.0.1-SNAPSHOT",
+            "UP",
+            properties.getModel().getModelName(),
+            properties.getModel().getProvider(),
+            properties.getCore().getMaxTurns(),
+            properties.getBudget().getMaxModelCallsPerTurn(),
+            memoryProvider != null,
+            ttsService != null,
+            transcriptionService != null,
+            skillManager.listSkillNames().size(),
+            0L
+        );
+    }
+
+    // ── Config ──
+
+    @GetMapping("/agent/config")
+    public AgentConfigDto config() {
+        return new AgentConfigDto(
+            properties.getName(),
+            properties.getModel().getModelName(),
+            properties.getModel().getProvider(),
+            properties.getModel().getBaseUrl(),
+            properties.getCore().getMaxTurns(),
+            properties.getBudget().getMaxModelCallsPerTurn(),
+            properties.getModel().getMaxTokens(),
+            properties.getModel().getTemperature(),
+            properties.getModel().getTimeoutSeconds(),
+            properties.getCore().getDefaultSystemPrompt(),
+            properties.getCore().getReasoningConfig(),
+            Map.of(
+                "memory", memoryProvider != null,
+                "tts", ttsService != null,
+                "transcription", transcriptionService != null,
+                "browser", properties.getBrowser() != null,
+                "cron", properties.getCron() != null && properties.getCron().isEnabled()
+            )
+        );
+    }
+
+    // ── CLI runtime settings endpoints ──
+
+    @PostMapping("/agent/reasoning")
+    public ResponseEntity<Void> setReasoning(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String effort = body.get("effort");
+        cliRuntimeSettingsService.setReasoningEffort(sessionId, effort);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/fast-mode")
+    public ResponseEntity<Boolean> toggleFastMode(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        boolean enabled = Boolean.parseBoolean(body.getOrDefault("enabled", "true"));
+        boolean newState = cliRuntimeSettingsService.toggleFastMode(sessionId, enabled);
+        return ResponseEntity.ok(newState);
+    }
+
+    @PostMapping("/agent/voice-mode")
+    public ResponseEntity<Boolean> toggleVoiceMode(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        boolean enabled = Boolean.parseBoolean(body.getOrDefault("enabled", "true"));
+        boolean newState = cliRuntimeSettingsService.toggleVoiceMode(sessionId, enabled);
+        return ResponseEntity.ok(newState);
+    }
+
+    @GetMapping("/agent/tools")
+    public ResponseEntity<java.util.List<String>> listTools() {
+        return ResponseEntity.ok(cliRuntimeSettingsService.listToolNames());
+    }
+
+    @PostMapping("/agent/tools/enable")
+    public ResponseEntity<Void> enableTool(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String toolName = body.get("toolName");
+        cliRuntimeSettingsService.enableTool(sessionId, toolName);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/tools/disable")
+    public ResponseEntity<Void> disableTool(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String toolName = body.get("toolName");
+        cliRuntimeSettingsService.disableTool(sessionId, toolName);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/personality")
+    public ResponseEntity<Void> setPersonality(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String personality = body.get("personality");
+        cliRuntimeSettingsService.setPersonality(sessionId, personality);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/subgoal")
+    public ResponseEntity<Void> setSubgoal(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String subgoal = body.get("subgoal");
+        String append = body.getOrDefault("append", "false");
+        if (Boolean.parseBoolean(append)) {
+            cliRuntimeSettingsService.appendSubgoal(sessionId, subgoal);
+        } else {
+            cliRuntimeSettingsService.setSubgoal(sessionId, subgoal);
+        }
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/goal")
+    public ResponseEntity<Void> setGoal(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String goal = body.get("goal");
+        if (goal == null || goal.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+        cliRuntimeSettingsService.setGoal(sessionId, goal);
+        cliRuntimeSettingsService.setGoalPaused(sessionId, false);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/goal/pause")
+    public ResponseEntity<Void> pauseGoal(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        cliRuntimeSettingsService.setGoalPaused(sessionId, true);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/goal/resume")
+    public ResponseEntity<Void> resumeGoal(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        cliRuntimeSettingsService.setGoalPaused(sessionId, false);
+        return ResponseEntity.ok().build();
+    }
+
+    @DeleteMapping("/agent/goal")
+    public ResponseEntity<Void> clearGoal(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        cliRuntimeSettingsService.clearGoal(sessionId);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/goal/clear")
+    public ResponseEntity<Void> clearGoalPost(@RequestBody java.util.Map<String, String> body) {
+        return clearGoal(body);
+    }
+
+    @PostMapping("/agent/session/title")
+    public ResponseEntity<Void> setTitle(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String title = body.get("title");
+        cliRuntimeSettingsService.setTitle(sessionId, title);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/snapshot")
+    public ResponseEntity<com.azhukov.agent.api.dto.SessionSummaryDto> createSnapshot(@RequestBody java.util.Map<String, String> body) {
+        String description = body.getOrDefault("description", "");
+        checkpointManager.snapshot(description);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/queue")
+    public ResponseEntity<Void> queuePrompt(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String queued = body.get("queued");
+        cliRuntimeSettingsService.setQueuedPrompt(sessionId, queued);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/browser")
+    public ResponseEntity<Void> setBrowserCdp(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String cdpUrl = body.get("cdpUrl");
+        cliRuntimeSettingsService.setCdpUrl(sessionId, cdpUrl);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/state/reset")
+    public ResponseEntity<Void> resetState(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        cliRuntimeSettingsService.resetSessionState(sessionId);
+        return ResponseEntity.ok().build();
+    }
+
+    @DeleteMapping("/agent/subgoal")
+    public ResponseEntity<Void> clearSubgoals(@RequestBody java.util.Map<String, String> body) {
+        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        cliRuntimeSettingsService.clearSubgoals(sessionId);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/agent/subgoal/clear")
+    public ResponseEntity<Void> clearSubgoalsPost(@RequestBody java.util.Map<String, String> body) {
+        return clearSubgoals(body);
+    }
+
     @GetMapping("/sessions")
     public List<SessionSummaryDto> sessions() {
         return agentRuntimeService.listSessions();
     }
+
+    @PostMapping("/agent/session")
+    public ResponseEntity<SessionSummaryDto> createSession(@RequestBody(required = false) CreateSessionRequest request) {
+        String userId = request != null && request.userId() != null ? request.userId() : "user-1";
+        Session session = agentRuntimeService.createSession(userId, "openai-compatible", properties.getModel().getModelName());
+        SessionSummaryDto dto = domainDtoMapper.toSessionSummaryDto(session);
+        return ResponseEntity.created(java.net.URI.create("/api/v1/agent/session/" + session.id())).body(dto);
+    }
+
+    public record CreateSessionRequest(String userId) {}
 
     @GetMapping("/agent/session/{sessionId}/context")
     public ContextInfoDto getContext(@PathVariable UUID sessionId) {

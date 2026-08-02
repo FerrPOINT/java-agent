@@ -32,7 +32,7 @@ class HealthControllerUnitTest {
         mockMvc.perform(get("/api/v1/health"))
             .andExpect(status().isOk())
             .andExpect(content().contentType(MediaType.APPLICATION_JSON))
-            .andExpect(jsonPath("$.status").value("up"))
+            .andExpect(jsonPath("$.status").value("UP"))
             .andExpect(jsonPath("$.name").value("test-agent"));
     }
 
@@ -40,6 +40,6 @@ class HealthControllerUnitTest {
     void healthReflectsConfiguredName() {
         when(properties.getName()).thenReturn("custom-java-agent");
         var response = new HealthController(properties).health();
-        assertThat(response).containsEntry("status", "up").containsEntry("name", "custom-java-agent");
+        assertThat(response).containsEntry("status", "UP").containsEntry("name", "custom-java-agent");
     }
 }

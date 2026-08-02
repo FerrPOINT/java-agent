@@ -61,6 +61,8 @@ public class AgentProperties {
         private int maxTokens = 4096;
         private double temperature = 0.7;
         private final Map<String, String> headers = new HashMap<>();
+        private int reasoningEffort = 100;
+        private boolean fastMode = false;
     }
 
     @Getter @Setter
@@ -268,7 +270,7 @@ public class AgentProperties {
 
     @Getter @Setter
     public static class CoreProperties {
-        private int maxTurns = 90;
+        private int maxTurns = 100;
         private String toolUseEnforcement = "auto";
         private boolean taskCompletionGuidance = true;
         private boolean parallelToolCallGuidance = true;
@@ -285,7 +287,7 @@ public class AgentProperties {
 
     @Getter @Setter
     public static class BudgetProperties {
-        private int maxModelCallsPerTurn = 5;
+        private int maxModelCallsPerTurn = 100;
         private int maxToolExecutionsPerTurn = 20;
         private int maxTokensPerTurn = 200000;
         private int maxToolDurationMsPerTurn = 600000;

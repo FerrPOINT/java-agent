@@ -5,6 +5,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.budget.IterationBudget.TurnSnapshot;
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.context.ContextCompressor;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.context.ContextReferenceService;
@@ -72,6 +73,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ContextCompressor contextCompressor;
     private final com.azhukov.agent.core.security.ApprovalQueue approvalQueue;
     private final MemoryManager memoryManager;
+    private ModelRequestOptions lastModelOptions = ModelRequestOptions.empty();
 
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {
@@ -82,7 +84,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
     }
 
     @Override
-    public TurnResult runTurn(Session session, String userInput, List<String> references) {
+    public TurnResult runTurn(Session session, String userInput, List<String> references,
+                              ModelRequestOptions options) {
+        this.lastModelOptions = options != null ? options : ModelRequestOptions.empty();
+        return runTurnInternal(session, userInput, references);
+    }
+
+    private TurnResult runTurnInternal(Session session, String userInput, List<String> references) {
         UUID sessionIdUuid = session.id();
         String sessionId = sessionIdUuid.toString();
         guardrail.reset();
@@ -336,7 +344,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         for (int attempt = 0; attempt <= retryAttempts; attempt++) {
             totalAttempts++;
             try {
-                return modelClient.complete(currentContext, tools);
+                return modelClient.complete(currentContext, tools, lastModelOptions);
             } catch (Exception e) {
                 lastException = e;
                 if (attempt >= retryAttempts) {

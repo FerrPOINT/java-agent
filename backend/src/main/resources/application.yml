@@ -55,6 +55,8 @@ agent:
     max-retries: ${AGENT_MODEL_MAX_RETRIES:3}
     max-tokens: ${AGENT_MODEL_MAX_TOKENS:4096}
     temperature: ${AGENT_MODEL_TEMPERATURE:0.7}
+    reasoning-effort: ${AGENT_MODEL_REASONING_EFFORT:100}
+    fast-mode: ${AGENT_MODEL_FAST_MODE:false}
   
   # ─── Auxiliary model ───
   auxiliary:
@@ -216,7 +218,7 @@ agent:
   
   # ─── Core ───
   core:
-    max-turns: ${AGENT_CORE_MAX_TURNS:90}
+    max-turns: ${AGENT_CORE_MAX_TURNS:100}
     tool-use-enforcement: ${AGENT_CORE_TOOL_USE_ENFORCEMENT:auto}
     task-completion-guidance: ${AGENT_CORE_TASK_COMPLETION_GUIDANCE:true}
     parallel-tool-call-guidance: ${AGENT_CORE_PARALLEL_TOOL_CALL_GUIDANCE:true}
@@ -231,7 +233,7 @@ agent:
   # ─── Budget ───
   budget:
     enabled: ${AGENT_BUDGET_ENABLED:true}
-    max-model-calls-per-turn: ${AGENT_BUDGET_MAX_MODEL_CALLS_PER_TURN:5}
+    max-model-calls-per-turn: ${AGENT_BUDGET_MAX_MODEL_CALLS_PER_TURN:100}
     max-tool-executions-per-turn: ${AGENT_BUDGET_MAX_TOOL_EXECUTIONS_PER_TURN:20}
     max-tokens-per-turn: ${AGENT_BUDGET_MAX_TOKENS_PER_TURN:200000}
     max-tool-duration-ms-per-turn: ${AGENT_BUDGET_MAX_TOOL_DURATION_MS_PER_TURN:600000}
@@ -355,6 +357,8 @@ agent:
     max-retries: 2
     max-tokens: 4096
     temperature: 0.7
+    reasoning-effort: 100
+    fast-mode: false
   chromium:
     auto-start: ${AGENT_CHROMIUM_AUTO_START:true}
 

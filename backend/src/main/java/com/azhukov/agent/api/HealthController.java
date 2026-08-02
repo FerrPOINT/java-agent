@@ -19,7 +19,15 @@ public class HealthController {
     @GetMapping("/health")
     public Map<String, String> health() {
         return Map.of(
-            "status", "up",
+            "status", "UP",
+            "name", properties.getName()
+        );
+    }
+
+    @GetMapping("/agent/health")
+    public Map<String, String> agentHealth() {
+        return Map.of(
+            "status", "UP",
             "name", properties.getName()
         );
     }

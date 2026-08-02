@@ -11,6 +11,7 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.TurnResult;
+import com.azhukov.agent.core.skill.SkillBundleService;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MemoryRepository;
@@ -66,6 +67,7 @@ class AgentRuntimeServiceTest {
     private TurnUsageCollector turnUsageCollector;
     private AgentRuntimeService agentRuntimeService;
     private AgentProperties properties;
+    private SkillBundleService skillBundleService;
 
     @BeforeEach
     void setUp() {
@@ -83,6 +85,7 @@ class AgentRuntimeServiceTest {
         AgentProperties.ModelProperties modelProps = mock(AgentProperties.ModelProperties.class);
         when(modelProps.getModelName()).thenReturn(MODEL_NAME);
         when(properties.getModel()).thenReturn(modelProps);
+        skillBundleService = mock(SkillBundleService.class);
 
         agentRuntimeService = new AgentRuntimeService(
             agentRuntime,
@@ -98,7 +101,8 @@ class AgentRuntimeServiceTest {
             properties,
             Mappers.getMapper(SessionEntityMapper.class),
             Mappers.getMapper(MessageMapper.class),
-            Mappers.getMapper(DomainDtoMapper.class)
+            Mappers.getMapper(DomainDtoMapper.class),
+            skillBundleService
         );
     }
 
@@ -114,7 +118,7 @@ class AgentRuntimeServiceTest {
             true,
             null
         );
-        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE))).thenReturn(result);
+        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any())).thenReturn(result);
 
         ChatResponseDto response = agentRuntimeService.runTurn(request);
 
@@ -130,7 +134,7 @@ class AgentRuntimeServiceTest {
         assertThat(created.getModelName()).isEqualTo(MODEL_NAME);
         assertThat(created.getTitle()).isEqualTo("New chat");
 
-        verify(agentRuntime).runTurn(any(Session.class), eq(USER_MESSAGE));
+        verify(agentRuntime).runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any());
         verify(sessionTitleService).maybeUpdateTitle(SESSION_ID, result.messages(), true);
     }
 
@@ -148,7 +152,7 @@ class AgentRuntimeServiceTest {
             true,
             null
         );
-        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE))).thenReturn(result);
+        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any())).thenReturn(result);
 
         ChatResponseDto response = agentRuntimeService.runTurn(request);
 
@@ -156,7 +160,7 @@ class AgentRuntimeServiceTest {
         assertThat(response.content()).isEqualTo(ASSISTANT_REPLY);
 
         verify(sessionRepository, never()).save(any(SessionEntity.class));
-        verify(agentRuntime).runTurn(any(Session.class), eq(USER_MESSAGE));
+        verify(agentRuntime).runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any());
         verify(sessionTitleService).maybeUpdateTitle(EXISTING_SESSION_ID, result.messages(), false);
     }
 
@@ -172,7 +176,7 @@ class AgentRuntimeServiceTest {
             true,
             null
         );
-        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE))).thenReturn(result);
+        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any())).thenReturn(result);
 
         ChatResponseDto response = agentRuntimeService.runDelegate(request);
 
@@ -180,7 +184,7 @@ class AgentRuntimeServiceTest {
         assertThat(response.content()).isEqualTo(ASSISTANT_REPLY);
 
         ArgumentCaptor<Session> sessionCaptor = ArgumentCaptor.forClass(Session.class);
-        verify(agentRuntime).runTurn(sessionCaptor.capture(), eq(USER_MESSAGE));
+        verify(agentRuntime).runTurn(sessionCaptor.capture(), eq(USER_MESSAGE), eq(List.of()), any());
         assertThat(sessionCaptor.getValue().metadata()).containsEntry("delegation_depth", "3");
 
         verify(sessionRepository).save(any(SessionEntity.class));
@@ -208,7 +212,7 @@ class AgentRuntimeServiceTest {
             true,
             null
         );
-        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE))).thenReturn(result);
+        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any())).thenReturn(result);
 
         agentRuntimeService.runTurn(request);
 
@@ -247,14 +251,26 @@ class AgentRuntimeServiceTest {
             true,
             null
         );
-        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE))).thenReturn(result);
+        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any())).thenReturn(result);
 
         ChatResponseDto response = agentRuntimeService.runTurn(request);
 
         assertThat(response.sessionId()).isEqualTo(SESSION_ID);
         assertThat(response.content()).isEqualTo(ASSISTANT_REPLY);
         verify(sessionRepository).save(any(SessionEntity.class));
-        verify(agentRuntime).runTurn(any(Session.class), eq(USER_MESSAGE));
+        verify(agentRuntime).runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any());
+    }
+
+    @Test
+    void installBundleDelegatesToSkillBundleService() {
+        agentRuntimeService.installBundle("my-bundle");
+        verify(skillBundleService).install("my-bundle");
+    }
+
+    @Test
+    void uninstallBundleDelegatesToSkillBundleService() {
+        agentRuntimeService.uninstallBundle("my-bundle");
+        verify(skillBundleService).uninstall("my-bundle");
     }
 
     private SessionEntity newSessionEntity(UUID id, String userId, String title) {

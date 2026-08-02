@@ -1,8 +1,10 @@
 package com.azhukov.agent.bot.commands.impl;
 
 import com.azhukov.agent.bot.commands.CommandHandler;
+import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,10 +16,13 @@ import org.springframework.stereotype.Component;
  * Requires an active /goal.
  */
 @Component
+@RequiredArgsConstructor
 public class SubgoalCommand implements CommandHandler {
 
     private static final String GOAL_KEY = "_standingGoal";
     private static final String SUBGOALS_KEY = "_subgoals";
+
+    private final AgentBackendClient backendClient;
 
     @Override
     public String name() {
@@ -48,19 +53,24 @@ public class SubgoalCommand implements CommandHandler {
         String[] parts = args.trim().split("\\s+", 2);
         String sub = parts[0].toLowerCase();
 
+        String sessionId = session.getId() != null ? session.getId().toString() : null;
+
         return switch (sub) {
             case "list" -> listSubgoals(session);
             case "remove" -> {
                 if (parts.length < 2) yield "Usage: /subgoal remove <N>";
                 try {
                     int n = Integer.parseInt(parts[1].trim());
-                    yield removeSubgoal(session, n);
+                    String removed = removeSubgoal(session, n);
+                    if (sessionId != null) backendClient.appendSubgoal(sessionId, "");
+                    yield removed;
                 } catch (NumberFormatException e) {
                     yield "Invalid index: " + parts[1];
                 }
             }
             case "clear" -> {
                 session.setMetadata(SUBGOALS_KEY, null);
+                if (sessionId != null) backendClient.clearSubgoals(sessionId);
                 yield "All subgoals cleared.";
             }
             default -> {
@@ -73,6 +83,7 @@ public class SubgoalCommand implements CommandHandler {
                     ? subgoalText
                     : existing + "\n" + subgoalText;
                 session.setMetadata(SUBGOALS_KEY, updated);
+                if (sessionId != null) backendClient.appendSubgoal(sessionId, subgoalText);
                 yield "Subgoal added: " + subgoalText;
             }
         };

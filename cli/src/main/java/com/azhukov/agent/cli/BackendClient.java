@@ -3,6 +3,7 @@ package com.azhukov.agent.cli;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -33,6 +34,7 @@ public class BackendClient {
     private final ObjectMapper objectMapper;
     private final String backendUrl;
 
+    @Autowired
     public BackendClient(@Qualifier("backendRestClient") RestClient restClient,
                          ObjectMapper objectMapper,
                          BackendProperties properties) {
@@ -78,11 +80,11 @@ public class BackendClient {
      * Send a chat message to the backend and return the response text.
      */
     public String chat(String message, String sessionId) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("message", message);
-        if (sessionId != null && !sessionId.isBlank()) {
-            body.put("sessionId", sessionId);
-        }
+        return chat(message, sessionId, null);
+    }
+
+    public String chat(String message, String sessionId, CliState state) {
+        Map<String, Object> body = buildChatBody(message, sessionId, state);
         try {
             String responseJson = restClient.post()
                 .uri("/api/v1/agent/chat")
@@ -129,11 +131,14 @@ public class BackendClient {
                            Consumer<String> onToken,
                            Consumer<String> onTool,
                            Runnable onDone) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("message", message);
-        if (sessionId != null && !sessionId.isBlank()) {
-            body.put("sessionId", sessionId);
-        }
+        chatStream(message, sessionId, null, onToken, onTool, onDone);
+    }
+
+    public void chatStream(String message, String sessionId, CliState state,
+                           Consumer<String> onToken,
+                           Consumer<String> onTool,
+                           Runnable onDone) {
+        Map<String, Object> body = buildChatBody(message, sessionId, state);
 
         try {
             InputStream is = restClient.post()
@@ -230,9 +235,64 @@ public class BackendClient {
         return isConnectionError(e.getCause());
     }
 
+    private Map<String, Object> buildChatBody(String message, String sessionId, CliState state) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("message", message);
+        if (sessionId != null && !sessionId.isBlank()) {
+            body.put("sessionId", sessionId);
+        }
+        if (state != null) {
+            body.put("reasoningEffort", state.getReasoningEffort());
+            body.put("fastMode", state.isFastMode());
+            body.put("voiceMode", state.isVoiceMode());
+            if (state.getPersonality() != null && !state.getPersonality().isBlank()) {
+                body.put("personality", state.getPersonality());
+            }
+            java.util.List<String> disabled = state.getToolStates().entrySet().stream()
+                .filter(e -> Boolean.FALSE.equals(e.getValue()))
+                .map(java.util.Map.Entry::getKey)
+                .toList();
+            if (!disabled.isEmpty()) {
+                body.put("disabledTools", disabled);
+            }
+            if (state.getCdpUrl() != null && !state.getCdpUrl().isBlank()) {
+                body.put("cdpUrl", state.getCdpUrl());
+            }
+            if (state.getQueuedPrompt() != null && !state.getQueuedPrompt().isBlank()) {
+                body.put("queuedPrompt", state.getQueuedPrompt());
+            }
+            if (state.getActiveGoal() != null && !state.getActiveGoal().isBlank()) {
+                body.put("subgoal", state.getActiveGoal());
+            }
+        }
+        return body;
+    }
+
     // ------------------------------------------------------------------
     // Session management
     // ------------------------------------------------------------------
+
+    public String createSession() {
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/session")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(java.util.Map.of())
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return null;
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("id").asText(null);
+        } catch (BackendUnavailableException e) {
+            throw e;
+        } catch (Exception e) {
+            if (isConnectionError(e)) {
+                throw new BackendUnavailableException(backendUrl, e);
+            }
+            log.error("createSession failed: {}", e.getMessage());
+            return null;
+        }
+    }
 
     public String resetSession(String sessionId) {
         try {
@@ -927,6 +987,66 @@ public class BackendClient {
         } catch (Exception e) {
             log.warn("Backend health check failed: {}", e.getMessage());
             return false;
+        }
+    }
+
+    public String config() {
+        try {
+            JsonNode node = restClient.get()
+                .uri("/api/v1/agent/config")
+                .retrieve()
+                .body(JsonNode.class);
+            if (node == null) {
+                return "Config: no response from backend.";
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("Agent config:\n");
+            sb.append("  Name: ").append(node.path("name").asText("unknown")).append("\n");
+            sb.append("  Model: ").append(node.path("model").asText("unknown")).append("\n");
+            sb.append("  Provider: ").append(node.path("provider").asText("unknown")).append("\n");
+            sb.append("  Base URL: ").append(node.path("baseUrl").asText("unknown")).append("\n");
+            sb.append("  Max turns: ").append(node.path("maxTurns").asInt(-1)).append("\n");
+            sb.append("  Max model calls/turn: ").append(node.path("maxModelCallsPerTurn").asInt(-1)).append("\n");
+            sb.append("  Max tokens: ").append(node.path("maxTokens").asInt(-1)).append("\n");
+            sb.append("  Temperature: ").append(node.path("temperature").asDouble(-1)).append("\n");
+            sb.append("  Timeout: ").append(node.path("timeoutSeconds").asInt(-1)).append("s\n");
+            sb.append("  Reasoning config: ").append(node.path("reasoningConfig").asText("unknown")).append("\n");
+            sb.append("  Features:\n");
+            JsonNode features = node.path("features");
+            features.fieldNames().forEachRemaining(name ->
+                sb.append("    ").append(name).append(": ")
+                  .append(features.path(name).asBoolean(false) ? "ON" : "OFF").append("\n"));
+            return sb.toString();
+        } catch (Exception e) {
+            return handleErr("config", e);
+        }
+    }
+
+    public String doctor() {
+        try {
+            JsonNode node = restClient.get()
+                .uri("/api/v1/agent/doctor")
+                .retrieve()
+                .body(JsonNode.class);
+            if (node == null) {
+                return "Doctor: no response from backend.";
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("Doctor report:\n");
+            sb.append("  Backend: ").append(node.path("status").asText("unknown")).append("\n");
+            sb.append("  Name: ").append(node.path("name").asText("unknown")).append("\n");
+            sb.append("  Version: ").append(node.path("version").asText("unknown")).append("\n");
+            sb.append("  Model: ").append(node.path("model").asText("unknown")).append("\n");
+            sb.append("  Provider: ").append(node.path("provider").asText("unknown")).append("\n");
+            sb.append("  Max turns: ").append(node.path("maxTurns").asInt(-1)).append("\n");
+            sb.append("  Max model calls/turn: ").append(node.path("maxModelCallsPerTurn").asInt(-1)).append("\n");
+            sb.append("  Memory: ").append(node.path("memoryEnabled").asBoolean(false) ? "ON" : "OFF").append("\n");
+            sb.append("  TTS: ").append(node.path("ttsEnabled").asBoolean(false) ? "ON" : "OFF").append("\n");
+            sb.append("  Transcription: ").append(node.path("transcriptionEnabled").asBoolean(false) ? "ON" : "OFF").append("\n");
+            sb.append("  Skills loaded: ").append(node.path("skillCount").asInt(-1)).append("\n");
+            return sb.toString();
+        } catch (Exception e) {
+            return handleErr("doctor", e);
         }
     }
 

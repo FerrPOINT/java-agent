@@ -83,9 +83,13 @@ public class BusySessionHandler {
      * @return list of queued events (empty if none)
      */
     public List<UpdateEvent> drainQueue(long chatId) {
-        ConcurrentLinkedQueue<UpdateEvent> queued = queues.remove(chatId);
-        if (queued == null) return List.of();
-        List<UpdateEvent> result = new ArrayList<>(queued);
+        List<UpdateEvent> result = new ArrayList<>();
+        queues.compute(chatId, (k, q) -> {
+            if (q != null) {
+                result.addAll(q);
+            }
+            return null;
+        });
         return List.copyOf(result);
     }
 

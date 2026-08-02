@@ -37,6 +37,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
@@ -72,10 +73,58 @@ public class AgentStreamingService {
         return streamTurn(request, new SseEmitter(request.timeoutMs() != null ? request.timeoutMs() : 600_000L));
     }
 
+    /**
+     * Apply CLI runtime settings from the request to the session.
+     */
+    private ChatRequest applyCliState(ChatRequest request) {
+        if (request.sessionId() == null) {
+            return request;
+        }
+        SessionEntity session = sessionRepository.findById(request.sessionId()).orElse(null);
+        if (session == null) {
+            return request;
+        }
+        // Read current state
+        String reasoningEffort = request.reasoningEffort() != null ? request.reasoningEffort() : session.getCliStateValue("reasoningEffort");
+        String personality = request.personality() != null ? request.personality() : session.getCliStateValue("personality");
+        String queuedPrompt = request.queuedPrompt() != null ? request.queuedPrompt() : session.getCliStateValue("queuedPrompt");
+        String subgoal = request.subgoal() != null ? request.subgoal() : session.getSubgoal();
+
+        // Build merged request
+        String finalMessage = buildMergedMessage(request.message(), queuedPrompt, subgoal);
+        return new ChatRequest(
+            request.sessionId(),
+            finalMessage,
+            request.delegationDepth(),
+            request.timeoutMs(),
+            reasoningEffort,
+            request.fastMode(),
+            request.voiceMode(),
+            personality,
+            request.enabledTools(),
+            request.disabledTools(),
+            null, // consumed
+            null,
+            request.cdpUrl()
+        );
+    }
+
+    private String buildMergedMessage(String userMessage, String queuedPrompt, String subgoal) {
+        StringBuilder sb = new StringBuilder();
+        if (subgoal != null && !subgoal.isBlank()) {
+            sb.append("[Goal/Subgoal]\n").append(subgoal).append("\n\n");
+        }
+        if (queuedPrompt != null && !queuedPrompt.isBlank()) {
+            sb.append("[Queued context]\n").append(queuedPrompt).append("\n\n");
+        }
+        sb.append(userMessage);
+        return sb.toString();
+    }
+
     SseEmitter streamTurn(ChatRequest request, SseEmitter emitter) {
         CompletableFuture.runAsync(() -> {
             try {
-                runAgenticLoop(request, emitter);
+                runAgenticLoop(applyCliState(request), emitter);
             } catch (Exception e) {
                 log.error("Streaming failed", e);
                 send(emitter, new StreamEvent("error", null, null, e.getMessage()));
@@ -121,8 +170,7 @@ public class AgentStreamingService {
         turnMessages.add(Message.user(request.message()));
 
         // Tools
-        List<ToolDefinition> tools = toolRegistry.getDefinitions(
-            new HashSet<>(properties.getSkills().getDefaultToolsets()));
+        List<ToolDefinition> tools = selectTools(request);
 
         int maxTurns = properties.getCore().getMaxTurns();
         int turnIndex = 1;
@@ -306,6 +354,21 @@ public class AgentStreamingService {
         }
     }
 
+    private List<ToolDefinition> selectTools(ChatRequest request) {
+        Set<String> defaultToolsets = new HashSet<>(properties.getSkills().getDefaultToolsets());
+        List<ToolDefinition> all = toolRegistry.getDefinitions(defaultToolsets);
+        if (request == null) {
+            return all;
+        }
+        if (request.disabledTools() != null && !request.disabledTools().isEmpty()) {
+            Set<String> disabled = new HashSet<>(request.disabledTools());
+            return all.stream()
+                .filter(d -> !disabled.contains(d.name()))
+                .toList();
+        }
+        return all;
+    }
+
     private String resolveModelUsed(Session session) {
         if (session.modelName() != null && !session.modelName().isBlank()) {
             return session.modelName();
@@ -409,7 +472,16 @@ public class AgentStreamingService {
     private Session loadSession(UUID id) {
         var e = sessionRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
-        return sessionMapper.toDomain(e);
+        Session session = sessionMapper.toDomain(e);
+        if (e.getCliState() != null && !e.getCliState().isEmpty()) {
+            for (var entry : e.getCliState().entrySet()) {
+                session = session.withMetadata(entry.getKey(), entry.getValue());
+            }
+        }
+        if (e.getSubgoal() != null && !e.getSubgoal().isBlank()) {
+            session = session.withMetadata("subgoal", e.getSubgoal());
+        }
+        return session;
     }
 
     private void safeCompleteWithError(SseEmitter emitter, Throwable error) {

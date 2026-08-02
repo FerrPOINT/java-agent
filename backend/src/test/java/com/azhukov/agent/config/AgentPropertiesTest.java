@@ -20,7 +20,7 @@ class AgentPropertiesTest {
 
             assertThat(properties.getName()).isEqualTo("Джава агент");
             assertThat(properties.getModel().getProvider()).isEqualTo("openai-compatible");
-            assertThat(properties.getCore().getMaxTurns()).isEqualTo(90);
+            assertThat(properties.getCore().getMaxTurns()).isEqualTo(100);
             assertThat(properties.getSkills().getDefaultToolsets())
                     .containsExactly("web", "file", "browser", "terminal", "coding", "memory", "skills", "core", "delegate");
         });

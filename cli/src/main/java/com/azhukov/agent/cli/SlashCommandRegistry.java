@@ -337,6 +337,12 @@ public class SlashCommandRegistry {
             return client.switchModel(sessionId, model, provider);
         });
 
+        register("config", "Show backend configuration", (args, client, sessionId) ->
+            client.config());
+
+        register("doctor", "Run backend diagnostics", (args, client, sessionId) ->
+            client.doctor());
+
         // ── Version ──
         register("version", "Show CLI version info", (args, client, sessionId) ->
             "Java Agent CLI v0.0.1-SNAPSHOT\nJava 25, Spring Boot 4.1.0\nBackend: " +

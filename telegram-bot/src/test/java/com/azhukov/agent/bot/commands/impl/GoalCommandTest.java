@@ -3,21 +3,27 @@ package com.azhukov.agent.bot.commands.impl;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.UpdateEvent.Type;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import com.azhukov.agent.bot.core.AgentBackendClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.*;
 
 class GoalCommandTest {
 
     private GoalCommand cmd;
+    private GoalCommand goalCmd;
     private BotSessionEntity session;
+    private AgentBackendClient backendClient;
 
     @BeforeEach
     void setUp() {
-        cmd = new GoalCommand();
+        backendClient = mock(AgentBackendClient.class);
+        cmd = new GoalCommand(backendClient);
+        goalCmd = new GoalCommand(backendClient);
         session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
     }

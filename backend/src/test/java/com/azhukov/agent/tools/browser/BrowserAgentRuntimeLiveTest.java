@@ -7,6 +7,7 @@ import com.azhukov.agent.core.agent.DefaultAgentRuntime;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.budget.DefaultIterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.model.ChatResponse;
@@ -73,7 +74,8 @@ class BrowserAgentRuntimeLiveTest {
         var model = new com.azhukov.agent.core.client.ModelClient() {
             private int calls = 0;
             @Override
-            public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools) {
+            public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools,
+                                         ModelRequestOptions options) {
                 calls++;
                 if (calls == 1) {
                     return ChatResponse.toolCalls(List.of(new ToolCall("call-1", "browser_navigate", "{\"url\":\"http://example.com\"}")));

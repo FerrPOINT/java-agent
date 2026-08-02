@@ -23,7 +23,8 @@ class ModelClientDefaultsTest {
 
         ModelClient client = new ModelClient() {
             @Override
-            public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools) {
+            public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools,
+                                         ModelRequestOptions options) {
                 return ChatResponse.text("hi");
             }
         };
@@ -44,7 +45,8 @@ class ModelClientDefaultsTest {
     void analyzeImageAsyncDefaultUsesBlockingMethod() {
         ModelClient client = new ModelClient() {
             @Override
-            public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools) {
+            public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools,
+                                         ModelRequestOptions options) {
                 return ChatResponse.text("");
             }
 
@@ -61,7 +63,8 @@ class ModelClientDefaultsTest {
     void defaultAnalyzeImageReturnsUnsupportedText() {
         ModelClient client = new ModelClient() {
             @Override
-            public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools) {
+            public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools,
+                                         ModelRequestOptions options) {
                 return ChatResponse.text("");
             }
         };

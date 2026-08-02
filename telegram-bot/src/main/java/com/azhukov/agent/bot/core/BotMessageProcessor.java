@@ -375,7 +375,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                 messageId[0] = initialMsgId.get();
             }
 
-            AgentBackendClient.ChatResult streamResult = backendClient.chatStream(fullMessage, sessionId,
+            AgentBackendClient.ChatResult streamResult = backendClient.chatStream(fullMessage, sessionId, session,
                 // token consumer
                 token -> {
                     accumulated.append(token);
@@ -462,7 +462,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             }
             // If streaming produced no visible tokens but has metadata, prefer the sync fallback to get content
             if (streamResult.modelUsed() != null || streamResult.contextTokens() != null) {
-                return fallbackSyncWithMetadata(fullMessage, sessionId, streamResult);
+                return fallbackSyncWithMetadata(fullMessage, sessionId, session, streamResult);
             }
             // Stream finished but produced no content and no metadata
             return new AgentBackendClient.ChatResult(accumulated.toString(),
@@ -488,8 +488,9 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
     }
 
     private AgentBackendClient.ChatResult fallbackSyncWithMetadata(String messageText, String sessionId,
+                                                                   com.azhukov.agent.bot.session.BotSessionEntity session,
                                                                    AgentBackendClient.ChatResult streamResult) {
-        AgentBackendClient.ChatResult syncResult = backendClient.chat(messageText, sessionId);
+        AgentBackendClient.ChatResult syncResult = backendClient.chat(messageText, sessionId, session);
         return new AgentBackendClient.ChatResult(
             syncResult.content(),
             syncResult.modelUsed() != null ? syncResult.modelUsed() : streamResult.modelUsed(),
