@@ -24,8 +24,12 @@ public class SecretRedactor {
 
     public SecretRedactor(AgentProperties properties) {
         this.enabled = properties.getSecurity() == null || properties.getSecurity().isRedactEnabled();
+        boolean redactSecrets = properties.getSecurity() == null || properties.getSecurity().isRedactSecrets();
         List<String> custom = properties.getSecurity() != null ? properties.getSecurity().getSecretPatterns() : null;
-        this.patterns = new ArrayList<>(DEFAULT_PATTERNS);
+        this.patterns = new ArrayList<>();
+        if (redactSecrets) {
+            patterns.addAll(DEFAULT_PATTERNS);
+        }
         if (custom != null) {
             for (String p : custom) {
                 try {

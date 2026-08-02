@@ -111,7 +111,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
                     }
                     handleTextOrMedia(event);
                 }
-                case DOCUMENT, VOICE, STICKER, ANIMATION -> handleTextOrMedia(event);
+                case DOCUMENT, VOICE, STICKER, ANIMATION, LOCATION -> handleTextOrMedia(event);
                 case UNKNOWN -> log.debug("Ignoring UNKNOWN update: {}", event.updateId());
             }
         } catch (Exception e) {

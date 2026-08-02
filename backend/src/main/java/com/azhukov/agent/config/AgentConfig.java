@@ -239,8 +239,8 @@ public class AgentConfig {
     }
 
     @Bean
-    public MemoryStore memoryStore(MemoryThreatScanner threatScanner) {
-        return new MemoryStore(threatScanner);
+    public MemoryStore memoryStore(MemoryThreatScanner threatScanner, AgentProperties properties) {
+        return new MemoryStore(threatScanner, properties);
     }
 
     @Bean

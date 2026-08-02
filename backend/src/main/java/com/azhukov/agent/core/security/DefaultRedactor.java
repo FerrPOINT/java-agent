@@ -61,9 +61,11 @@ public class DefaultRedactor implements Redactor {
         String result = output;
 
         // 1. Apply built-in vendor patterns first (with substring pre-check optimization)
-        for (BuiltinPattern bp : BUILTIN_PATTERNS) {
-            if (result.contains(bp.hint())) {
-                result = bp.pattern().matcher(result).replaceAll("[REDACTED]");
+        if (properties.getSecurity().isRedactSecrets()) {
+            for (BuiltinPattern bp : BUILTIN_PATTERNS) {
+                if (result.contains(bp.hint())) {
+                    result = bp.pattern().matcher(result).replaceAll("[REDACTED]");
+                }
             }
         }
 

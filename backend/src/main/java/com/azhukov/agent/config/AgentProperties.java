@@ -146,6 +146,10 @@ public class AgentProperties {
         private int maxFactsPerQuery = 10;
         private double similarityThreshold = 0.75;
         private boolean writeApproval = false;
+        /** Maximum total characters for the "memory" store (default 2200). */
+        private int memoryCharLimit = 2200;
+        /** Maximum total characters for the "user" store (default 1375). */
+        private int userCharLimit = 1375;
         private final BackgroundReviewProperties backgroundReview = new BackgroundReviewProperties();
     }
 
@@ -239,6 +243,10 @@ public class AgentProperties {
         private boolean fileSafetyEnabled = true;
         private boolean urlSafetyEnabled = true;
         private boolean redactEnabled = true;
+        /** Whether built-in secret patterns (API keys, tokens, etc.) are redacted (default true). */
+        private boolean redactSecrets = true;
+        /** Whether PII patterns (emails, phone numbers, etc.) are redacted (default false). */
+        private boolean redactPii = false;
         private final List<String> alwaysRequireApprovalTools = new ArrayList<>();
         private final List<String> sensitiveEnvVarPatterns = new ArrayList<>();
         private final List<String> allowedPaths = new ArrayList<>();

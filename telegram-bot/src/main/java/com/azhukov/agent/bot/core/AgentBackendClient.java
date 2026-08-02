@@ -637,6 +637,81 @@ public class AgentBackendClient {
         }
     }
 
+    public String reloadAll() {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/reload")
+                .retrieve()
+                .toBodilessEntity();
+            return "Skills and MCP servers reloaded.";
+        } catch (Exception e) {
+            log.error("reloadAll failed: {}", e.getMessage());
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Kanban CRUD
+    // ------------------------------------------------------------------
+
+    public JsonNode getKanban() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/kanban")
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return objectMapper.createArrayNode();
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("getKanban failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    public JsonNode addKanbanTask(String text) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("text", text);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/kanban/add")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return null;
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("addKanbanTask failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    public boolean doneKanbanTask(String id) {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/kanban/done/{id}", id)
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("doneKanbanTask failed for id={}: {}", id, e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean clearKanban() {
+        try {
+            restClient.delete()
+                .uri("/api/v1/agent/kanban")
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("clearKanban failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
     public String reloadSkills() {
         try {
             restClient.post()
@@ -934,6 +1009,26 @@ public class AgentBackendClient {
             return true;
         } catch (Exception e) {
             log.error("deleteMemory failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean storeMemory(String userId, String text) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("userId", userId != null ? userId : "default");
+        body.put("fact", text);
+        body.put("category", "user");
+        body.put("target", "memory");
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/memory")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.error("storeMemory failed: {}", e.getMessage());
             return false;
         }
     }

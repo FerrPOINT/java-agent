@@ -28,32 +28,74 @@ class KanbanCommandTest {
     @Test
     void nameAndDescription() {
         assertThat(cmd.name()).isEqualTo("kanban");
-        assertThat(cmd.description()).isEqualTo("Show active agents and tasks");
+        assertThat(cmd.description()).isEqualTo("Kanban board: list, add, done, clear");
     }
 
     @Test
     void emptyBoardShowsMessage() {
-        when(backendClient.listActiveAgents()).thenReturn(mapper.createArrayNode());
+        when(backendClient.getKanban()).thenReturn(mapper.createArrayNode());
 
         String result = cmd.handle(textEvent("/kanban", null), null);
 
-        assertThat(result).contains("No active agents");
+        assertThat(result).contains("empty");
     }
 
     @Test
-    void showsActiveAgents() {
-        ArrayNode agents = mapper.createArrayNode();
-        ObjectNode agent = mapper.createObjectNode();
-        agent.put("id", "abc-123");
-        agent.put("status", "running");
-        agent.put("prompt", "Fix tests and run them");
-        agents.add(agent);
-        when(backendClient.listActiveAgents()).thenReturn(agents);
+    void showsPendingAndDoneTasks() {
+        ArrayNode board = mapper.createArrayNode();
+
+        ObjectNode pending = mapper.createObjectNode();
+        pending.put("id", "abc-123-def-456");
+        pending.put("title", "Fix tests and run them");
+        pending.put("status", "pending");
+        board.add(pending);
+
+        ObjectNode done = mapper.createObjectNode();
+        done.put("id", "xyz-789-aaa-000");
+        done.put("title", "Write docs");
+        done.put("status", "done");
+        board.add(done);
+
+        when(backendClient.getKanban()).thenReturn(board);
 
         String result = cmd.handle(textEvent("/kanban", null), null);
 
-        assertThat(result).contains("running");
         assertThat(result).contains("Fix tests");
+        assertThat(result).contains("Write docs");
+        assertThat(result).contains("Pending");
+        assertThat(result).contains("Done");
+    }
+
+    @Test
+    void addTaskCallsBackend() {
+        ObjectNode created = mapper.createObjectNode();
+        created.put("id", "new-task-id");
+        created.put("title", "My new task");
+        created.put("status", "pending");
+        when(backendClient.addKanbanTask("My new task")).thenReturn(created);
+
+        String result = cmd.handle(textEvent("/kanban", "add My new task"), null);
+
+        assertThat(result).contains("Added task");
+        assertThat(result).contains("My new task");
+    }
+
+    @Test
+    void doneTaskCallsBackend() {
+        when(backendClient.doneKanbanTask("some-id")).thenReturn(true);
+
+        String result = cmd.handle(textEvent("/kanban", "done some-id"), null);
+
+        assertThat(result).contains("marked as done");
+    }
+
+    @Test
+    void clearBoardCallsBackend() {
+        when(backendClient.clearKanban()).thenReturn(true);
+
+        String result = cmd.handle(textEvent("/kanban", "clear"), null);
+
+        assertThat(result).contains("cleared");
     }
 
     private UpdateEvent textEvent(String text, String args) {

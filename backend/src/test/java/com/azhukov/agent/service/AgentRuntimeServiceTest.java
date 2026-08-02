@@ -68,6 +68,8 @@ class AgentRuntimeServiceTest {
     private AgentRuntimeService agentRuntimeService;
     private AgentProperties properties;
     private SkillBundleService skillBundleService;
+    private com.azhukov.agent.core.skill.SkillManager skillManager;
+    private com.azhukov.agent.client.mcp.McpLifecycleManager mcpLifecycleManager;
 
     @BeforeEach
     void setUp() {
@@ -86,6 +88,8 @@ class AgentRuntimeServiceTest {
         when(modelProps.getModelName()).thenReturn(MODEL_NAME);
         when(properties.getModel()).thenReturn(modelProps);
         skillBundleService = mock(SkillBundleService.class);
+        skillManager = mock(com.azhukov.agent.core.skill.SkillManager.class);
+        mcpLifecycleManager = mock(com.azhukov.agent.client.mcp.McpLifecycleManager.class);
 
         agentRuntimeService = new AgentRuntimeService(
             agentRuntime,
@@ -103,6 +107,8 @@ class AgentRuntimeServiceTest {
             Mappers.getMapper(MessageMapper.class),
             Mappers.getMapper(DomainDtoMapper.class),
             skillBundleService,
+            skillManager,
+            mcpLifecycleManager,
             new com.fasterxml.jackson.databind.ObjectMapper(),
             new RuntimeConfigService()
         );

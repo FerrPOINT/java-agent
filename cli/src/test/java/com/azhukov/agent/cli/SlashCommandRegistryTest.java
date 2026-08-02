@@ -93,8 +93,10 @@ class SlashCommandRegistryTest {
     @Test
     void resetAliasCallsNewCommand() {
         // /reset is now an alias for /new (C7)
+        when(client.createSession()).thenReturn("new-session-id");
         String result = registry.execute("/reset", client, "sid");
         assertThat(result).contains("New session started");
+        assertThat(result).contains("new-session-id");
     }
 
     @Test
@@ -338,5 +340,113 @@ class SlashCommandRegistryTest {
         when(client.codexRuntimeModel("gpt-4o")).thenReturn("Codex runtime model set: gpt-4o");
         String result = registry.execute("/codex_runtime model gpt-4o", client, "sid");
         assertThat(result).contains("gpt-4o");
+    }
+
+    // ── /new command tests ──
+
+    @Test
+    void newCommandCallsBackendCreateSession() {
+        when(client.createSession()).thenReturn("backend-session-123");
+        String result = registry.execute("/new", client, "old-session");
+        assertThat(result).contains("New session started");
+        assertThat(result).contains("backend-session-123");
+    }
+
+    @Test
+    void newCommandWithExplicitSessionIdUsesIt() {
+        String result = registry.execute("/new my-custom-session", client, "old-session");
+        assertThat(result).contains("New session started");
+        assertThat(result).contains("my-custom-session");
+    }
+
+    @Test
+    void newCommandHandlesBackendFailure() {
+        when(client.createSession()).thenReturn(null);
+        String result = registry.execute("/new", client, "old-session");
+        assertThat(result).contains("Failed to create new session");
+    }
+
+    // ── /goal command tests ──
+
+    @Test
+    void goalSetTextCallsBackendSetGoal() {
+        when(client.setGoal("sid", "build a web app")).thenReturn("Goal set: build a web app");
+        String result = registry.execute("/goal build a web app", client, "sid");
+        assertThat(result).contains("Goal set");
+        assertThat(result).contains("build a web app");
+    }
+
+    @Test
+    void goalPauseCallsBackendPauseGoal() {
+        when(client.pauseGoal("sid")).thenReturn("Goal paused.");
+        String result = registry.execute("/goal pause", client, "sid");
+        assertThat(result).contains("Goal paused");
+    }
+
+    @Test
+    void goalResumeCallsBackendResumeGoal() {
+        when(client.resumeGoal("sid")).thenReturn("Goal resumed.");
+        String result = registry.execute("/goal resume", client, "sid");
+        assertThat(result).contains("Goal resumed");
+    }
+
+    @Test
+    void goalClearCallsBackendClearGoal() {
+        when(client.clearGoal("sid")).thenReturn("Goal cleared.");
+        String result = registry.execute("/goal clear", client, "sid");
+        assertThat(result).contains("Goal cleared");
+    }
+
+    @Test
+    void goalShowCallsBackendGetGoal() {
+        when(client.getGoal("sid")).thenReturn("Current goal: build a web app");
+        String result = registry.execute("/goal", client, "sid");
+        assertThat(result).contains("Current goal");
+    }
+
+    @Test
+    void goalShowNoGoalSet() {
+        when(client.getGoal("sid")).thenReturn("No goal set.");
+        String result = registry.execute("/goal", client, "sid");
+        assertThat(result).contains("No goal set");
+    }
+
+    // ── /resume command tests ──
+
+    @Test
+    void resumeWithSessionIdSwitchesSession() {
+        String result = registry.execute("/resume target-session-id", client, "old-session");
+        assertThat(result).contains("Switched to session");
+        assertThat(result).contains("target-session-id");
+    }
+
+    @Test
+    void resumeWithSessionIdUpdatesCliState() {
+        String result = registry.execute("/resume new-sess-123", client, "old-session");
+        assertThat(result).contains("Switched to session: new-sess-123");
+        assertThat(registry.getCliState().getCurrentSessionId()).isEqualTo("new-sess-123");
+    }
+
+    @Test
+    void resumeWithoutArgsListsSessions() {
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        com.fasterxml.jackson.databind.node.ArrayNode arr = mapper.createArrayNode();
+        com.fasterxml.jackson.databind.node.ObjectNode s1 = mapper.createObjectNode();
+        s1.put("id", "sess-1");
+        s1.put("title", "Test session");
+        arr.add(s1);
+        when(client.listSessions("default")).thenReturn(arr);
+        String result = registry.execute("/resume", client, "sid");
+        assertThat(result).contains("Available sessions");
+        assertThat(result).contains("sess-1");
+        assertThat(result).contains("Test session");
+    }
+
+    @Test
+    void resumeWithoutArgsNoSessions() {
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        when(client.listSessions("default")).thenReturn(mapper.createArrayNode());
+        String result = registry.execute("/resume", client, "sid");
+        assertThat(result).contains("No sessions found");
     }
 }

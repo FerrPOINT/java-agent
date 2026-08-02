@@ -337,6 +337,18 @@ public class AgentController {
         return memoryProvider.recall("default", "", 100);
     }
 
+    @PostMapping("/agent/memory")
+    public void storeMemory(@RequestBody Map<String, String> body) {
+        String userId = body.getOrDefault("userId", "default");
+        String fact = body.get("fact");
+        if (fact == null || fact.isBlank()) {
+            throw new IllegalArgumentException("Fact text is required");
+        }
+        String category = body.getOrDefault("category", "user");
+        String target = body.getOrDefault("target", "memory");
+        memoryProvider.store(userId, target, category, fact);
+    }
+
     // ── Memory management endpoints (Stage 6.1-6.6) ──
 
     @GetMapping("/agent/memory/pending/{userId}")
@@ -399,15 +411,41 @@ public class AgentController {
 
     @PostMapping("/agent/approve")
     public String approve(@RequestBody ApproveRequest request) {
-        boolean all = request.all();
+        if (request.all()) {
+            for (var pending : approvalQueue.getPendingApprovals()) {
+                approvalQueue.approve(pending.sessionId(), "approve", null);
+            }
+            return "Approved all pending approvals";
+        }
         String scope = request.scope();
-        return "Approved" + (all ? " all" : "") + (scope != null ? " (" + scope + ")" : "");
+        if (scope != null && !scope.isBlank()) {
+            try {
+                UUID sessionId = UUID.fromString(scope);
+                var result = approvalQueue.approve(sessionId, "approve", null);
+                if (result == null) return "No pending approval for session: " + scope;
+                return "Approved: " + scope;
+            } catch (IllegalArgumentException e) {
+                return "Invalid session ID: " + scope;
+            }
+        }
+        var pendingList = approvalQueue.getPendingApprovals();
+        if (pendingList.isEmpty()) return "No pending approvals";
+        approvalQueue.approve(pendingList.get(0).sessionId(), "approve", null);
+        return "Approved: " + pendingList.get(0).sessionId();
     }
 
     @PostMapping("/agent/deny")
     public String deny(@RequestBody DenyRequest request) {
-        boolean all = request.all();
-        return "Denied" + (all ? " all" : "");
+        if (request.all()) {
+            for (var pending : approvalQueue.getPendingApprovals()) {
+                approvalQueue.deny(pending.sessionId(), null);
+            }
+            return "Denied all pending approvals";
+        }
+        var pendingList = approvalQueue.getPendingApprovals();
+        if (pendingList.isEmpty()) return "No pending approvals";
+        approvalQueue.deny(pendingList.get(0).sessionId(), null);
+        return "Denied: " + pendingList.get(0).sessionId();
     }
 
     // ── Tool approval endpoints (A12) ──

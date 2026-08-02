@@ -75,6 +75,15 @@ public class ReplLoop {
                     if (result != null && !result.isEmpty()) {
                         output.accept(markdownRenderer.render(result));
                     }
+                    // Check if /new or /resume changed the session ID
+                    CliState cliState = commandRegistry.getCliState();
+                    if (cliState != null) {
+                        String newSessionId = cliState.getCurrentSessionId();
+                        if (newSessionId != null && !newSessionId.isBlank() && !newSessionId.equals(sessionId)) {
+                            sessionId = newSessionId;
+                            output.accept("(Active session: " + sessionId + ")");
+                        }
+                    }
                 } catch (BackendUnavailableException e) {
                     output.accept("Backend unavailable. Is the backend running on " +
                         backendClient.getBackendUrl() + "?");

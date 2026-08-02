@@ -1,6 +1,6 @@
 package com.azhukov.agent.core.memory;
 
-import lombok.RequiredArgsConstructor;
+import com.azhukov.agent.config.AgentProperties;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -10,28 +10,64 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * In-memory two-store model: "memory" (agent notes) and "user" (user profile).
- * Char limits: memory=2200, user=1375. Entry delimiter: §.
+ * Char limits are configurable via agent.memory.memory-char-limit / user-char-limit
+ * (defaults: memory=2200, user=1375). Entry delimiter: §.
  * Snapshot is frozen per session — captured once and stable for the session lifetime.
  */
-@RequiredArgsConstructor
 public class MemoryStore {
 
     public static final String TARGET_MEMORY = "memory";
     public static final String TARGET_USER = "user";
     public static final String DELIMITER = "§";
-    public static final int MEMORY_CHAR_LIMIT = 2200;
-    public static final int USER_CHAR_LIMIT = 1375;
+    /** Default char limit for the "memory" store, used when no config is provided. */
+    public static final int DEFAULT_MEMORY_CHAR_LIMIT = 2200;
+    /** Default char limit for the "user" store, used when no config is provided. */
+    public static final int DEFAULT_USER_CHAR_LIMIT = 1375;
 
     private final List<String> memoryEntries = new ArrayList<>();
     private final List<String> userEntries = new ArrayList<>();
     private final MemoryThreatScanner threatScanner;
+    private final int memoryCharLimit;
+    private final int userCharLimit;
     private final Map<UUID, Map<String, String>> snapshotCache = new ConcurrentHashMap<>();
 
     /**
-     * Creates an empty store without threat scanning.
+     * Creates an empty store without threat scanning and with default char limits.
      */
     public MemoryStore() {
-        this(null);
+        this(null, DEFAULT_MEMORY_CHAR_LIMIT, DEFAULT_USER_CHAR_LIMIT);
+    }
+
+    /**
+     * Creates an empty store without threat scanning, using limits from the given properties.
+     */
+    public MemoryStore(AgentProperties properties) {
+        this(null, properties);
+    }
+
+    /**
+     * Creates a store with the given threat scanner and default char limits.
+     */
+    public MemoryStore(MemoryThreatScanner threatScanner) {
+        this(threatScanner, DEFAULT_MEMORY_CHAR_LIMIT, DEFAULT_USER_CHAR_LIMIT);
+    }
+
+    /**
+     * Creates a store with the given threat scanner and configurable char limits from properties.
+     */
+    public MemoryStore(MemoryThreatScanner threatScanner, AgentProperties properties) {
+        this(threatScanner,
+            properties.getMemory().getMemoryCharLimit(),
+            properties.getMemory().getUserCharLimit());
+    }
+
+    /**
+     * Creates a store with explicit char limits.
+     */
+    public MemoryStore(MemoryThreatScanner threatScanner, int memoryCharLimit, int userCharLimit) {
+        this.threatScanner = threatScanner;
+        this.memoryCharLimit = memoryCharLimit;
+        this.userCharLimit = userCharLimit;
     }
 
     /**
@@ -186,9 +222,9 @@ public class MemoryStore {
 
     private int getCharLimit(String target) {
         if (TARGET_MEMORY.equalsIgnoreCase(target)) {
-            return MEMORY_CHAR_LIMIT;
+            return memoryCharLimit;
         } else if (TARGET_USER.equalsIgnoreCase(target)) {
-            return USER_CHAR_LIMIT;
+            return userCharLimit;
         }
         return 0;
     }

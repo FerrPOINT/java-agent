@@ -78,6 +78,9 @@ public interface SkillManager {
         return false;
     }
 
+    // Reload skills — re-scan filesystem, refresh caches, etc.
+    default void reload() {}
+
     // S9: Skill info record
     record SkillInfo(
         String name,

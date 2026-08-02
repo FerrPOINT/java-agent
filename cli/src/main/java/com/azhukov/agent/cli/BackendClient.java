@@ -1637,6 +1637,125 @@ public class BackendClient {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Goal management
+    // ------------------------------------------------------------------
+
+    /**
+     * Set a goal for the current session.
+     *
+     * @param sessionId the session UUID
+     * @param goal      the goal text
+     * @return result message
+     */
+    public String setGoal(String sessionId, String goal) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        body.put("goal", goal);
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/goal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+            return "Goal set: " + goal;
+        } catch (Exception e) {
+            return handleErr("setGoal", e);
+        }
+    }
+
+    /**
+     * Pause the active goal for the current session.
+     *
+     * @param sessionId the session UUID
+     * @return result message
+     */
+    public String pauseGoal(String sessionId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/goal/pause")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+            return "Goal paused.";
+        } catch (Exception e) {
+            return handleErr("pauseGoal", e);
+        }
+    }
+
+    /**
+     * Resume the paused goal for the current session.
+     *
+     * @param sessionId the session UUID
+     * @return result message
+     */
+    public String resumeGoal(String sessionId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/goal/resume")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+            return "Goal resumed.";
+        } catch (Exception e) {
+            return handleErr("resumeGoal", e);
+        }
+    }
+
+    /**
+     * Clear the active goal for the current session.
+     *
+     * @param sessionId the session UUID
+     * @return result message
+     */
+    public String clearGoal(String sessionId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/goal/clear")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+            return "Goal cleared.";
+        } catch (Exception e) {
+            return handleErr("clearGoal", e);
+        }
+    }
+
+    /**
+     * Get the current goal status for the session.
+     *
+     * @param sessionId the session UUID
+     * @return goal status text
+     */
+    public String getGoal(String sessionId) {
+        try {
+            String json = restClient.get()
+                .uri(uriBuilder -> uriBuilder.path("/api/v1/agent/session/{id}/context")
+                    .queryParam("goal", true)
+                    .build(sessionId))
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "No goal set.";
+            JsonNode node = objectMapper.readTree(json);
+            String goal = node.path("goal").asText(null);
+            boolean paused = node.path("goalPaused").asBoolean(false);
+            if (goal == null || goal.isBlank()) return "No goal set.";
+            return "Current goal: " + goal + (paused ? " (paused)" : "");
+        } catch (Exception e) {
+            return handleErr("getGoal", e);
+        }
+    }
+
     /**
      * Add criteria to active goal (subgoal).
      */

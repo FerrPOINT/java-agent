@@ -113,10 +113,21 @@ class MemoryCommandTest {
     @Test
     void removeText() {
         AgentBackendClient client = mock(AgentBackendClient.class);
+        when(client.deleteMemory("default", "some-id")).thenReturn(true);
         var cmd = new MemoryCommand(client);
-        String result = cmd.handle(makeEvent("remove some fact"), null);
-        assertThat(result).contains("agent");
-        assertThat(result).contains("forget");
+        String result = cmd.handle(makeEvent("remove some-id"), null);
+        assertThat(result).contains("removed");
+        verify(client).deleteMemory("default", "some-id");
+    }
+
+    @Test
+    void addMemoryCallsBackend() {
+        AgentBackendClient client = mock(AgentBackendClient.class);
+        when(client.storeMemory("default", "remember this")).thenReturn(true);
+        var cmd = new MemoryCommand(client);
+        String result = cmd.handle(makeEvent("add remember this"), null);
+        assertThat(result).contains("stored");
+        verify(client).storeMemory("default", "remember this");
     }
 
     private UpdateEvent makeEvent(String args) {

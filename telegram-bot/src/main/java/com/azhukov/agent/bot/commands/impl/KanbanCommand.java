@@ -7,23 +7,21 @@ import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
 
-/**
- * /kanban — Show active agents and background tasks as a simple board.
- * /kanban           — list active agents/tasks
- * /kanban list      — same as above
- *
- * Note: Full multi-profile kanban board is not available in this build.
- * This shows active background agents as a lightweight task board.
- */
 import lombok.RequiredArgsConstructor;
 
+/**
+ * /kanban — Full kanban board backed by the backend todos table.
+ * /kanban           — list all tasks
+ * /kanban list      — same as above
+ * /kanban add <text> — add a new task
+ * /kanban done <id> — mark a task as done
+ * /kanban clear     — remove all tasks
+ */
 @Component
 @RequiredArgsConstructor
 public class KanbanCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
-
-    
 
     @Override
     public String name() {
@@ -32,41 +30,102 @@ public class KanbanCommand implements CommandHandler {
 
     @Override
     public String description() {
-        return "Show active agents and tasks";
+        return "Kanban board: list, add, done, clear";
     }
 
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
         String args = event.commandArgs();
-        if (args != null && !args.isBlank()) {
-            String sub = args.trim().toLowerCase();
-            if (!sub.equals("list")) {
-                return "Subcommands not supported in this build.\nUsage: /kanban — show active agents";
+        if (args == null || args.isBlank() || args.trim().equalsIgnoreCase("list")) {
+            return listBoard();
+        }
+
+        String[] parts = args.trim().split("\\s+", 2);
+        String subcommand = parts[0].toLowerCase();
+
+        return switch (subcommand) {
+            case "add" -> {
+                if (parts.length < 2 || parts[1].isBlank()) {
+                    yield "Usage: /kanban add <text>";
+                }
+                yield addTask(parts[1].trim());
+            }
+            case "done" -> {
+                if (parts.length < 2 || parts[1].isBlank()) {
+                    yield "Usage: /kanban done <id>";
+                }
+                yield doneTask(parts[1].trim());
+            }
+            case "clear" -> clearBoard();
+            default -> "Unknown subcommand: " + subcommand + "\nUsage: /kanban [list|add <text>|done <id>|clear]";
+        };
+    }
+
+    private String listBoard() {
+        JsonNode board = backendClient.getKanban();
+        if (board == null || !board.isArray() || board.isEmpty()) {
+            return "📋 Kanban board is empty.\n\nUsage: /kanban add <text>";
+        }
+
+        StringBuilder sb = new StringBuilder("📋 Kanban board:\n\n");
+        boolean hasPending = false;
+        boolean hasDone = false;
+
+        StringBuilder pending = new StringBuilder();
+        StringBuilder done = new StringBuilder();
+
+        for (JsonNode task : board) {
+            String id = task.path("id").asText("?");
+            String title = task.path("title").asText("(no title)");
+            String status = task.path("status").asText("pending");
+            String shortId = id.length() > 8 ? id.substring(0, 8) : id;
+
+            if ("done".equalsIgnoreCase(status)) {
+                done.append("  ✅ [").append(shortId).append("] ").append(title).append("\n");
+                hasDone = true;
+            } else {
+                pending.append("  📌 [").append(shortId).append("] ").append(title).append("\n");
+                hasPending = true;
             }
         }
 
-        JsonNode agents = backendClient.listActiveAgents();
-        if (agents == null || !agents.isArray() || agents.isEmpty()) {
-            return "No active agents or tasks.\n\nFull kanban board is not available in this build.";
+        if (hasPending) {
+            sb.append("Pending:\n").append(pending);
+        }
+        if (hasDone) {
+            sb.append("Done:\n").append(done);
+        }
+        if (!hasPending && !hasDone) {
+            return "📋 Kanban board is empty.\n\nUsage: /kanban add <text>";
         }
 
-        StringBuilder sb = new StringBuilder("Active agents & tasks:\n");
-        int maxShow = Math.min(agents.size(), 15);
-        for (int i = 0; i < maxShow; i++) {
-            JsonNode agent = agents.get(i);
-            String id = agent.path("id").asText("?");
-            String status = agent.path("status").asText("unknown");
-            String prompt = agent.path("prompt").asText("");
-            if (prompt.length() > 60) prompt = prompt.substring(0, 57) + "...";
-
-            sb.append("  [").append(id, 0, Math.min(id.length(), 8)).append("] ")
-              .append(status).append(" — ").append(prompt).append("\n");
-        }
-        if (agents.size() > maxShow) {
-            sb.append("  ... and ").append(agents.size() - maxShow).append(" more\n");
-        }
-
-        sb.append("\nFull kanban board (create, assign, comment) is not available in this build.");
+        sb.append("\n/kanban add <text> — add task\n");
+        sb.append("/kanban done <id> — mark done\n");
+        sb.append("/kanban clear — remove all");
         return sb.toString().trim();
+    }
+
+    private String addTask(String text) {
+        JsonNode result = backendClient.addKanbanTask(text);
+        if (result == null) {
+            return "❌ Failed to add task.";
+        }
+        String id = result.path("id").asText("?");
+        String shortId = id.length() > 8 ? id.substring(0, 8) : id;
+        return "✅ Added task: [" + shortId + "] " + text;
+    }
+
+    private String doneTask(String id) {
+        boolean success = backendClient.doneKanbanTask(id);
+        return success
+            ? "✅ Task marked as done: " + id
+            : "❌ Failed to mark task as done (not found or invalid id)";
+    }
+
+    private String clearBoard() {
+        boolean success = backendClient.clearKanban();
+        return success
+            ? "🧹 Kanban board cleared."
+            : "❌ Failed to clear kanban board.";
     }
 }

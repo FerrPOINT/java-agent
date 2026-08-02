@@ -19,9 +19,12 @@ import java.util.List;
  * /goal clear        — clear goal and all subgoals
  *
  * <p>Goal state is persisted to the backend session so it is injected into
- * every subsequent chat turn.  Full Hermes-style auto-continuation with a judge
- * model is not implemented yet; once set, the user resumes the loop with
- * /goal resume or by sending a new message.
+ * every subsequent chat turn.  Auto-continuation is implemented via
+ * {@link com.azhukov.agent.bot.goal.GoalAutoContinueService} (enabled with
+ * {@code bot.goal-auto-continue.enabled}); when enabled, the agent
+ * automatically continues working toward the goal after each turn until the
+ * goal is achieved or the max-turns limit is reached.  Use /goal pause to
+ * stop auto-continuation, /goal resume to restart it.
  */
 @Component
 @RequiredArgsConstructor

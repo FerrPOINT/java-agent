@@ -235,6 +235,12 @@ public class DatabaseSkillManager implements SkillManager {
         }).orElse(false);
     }
 
+    @Override
+    public void reload() {
+        // Database is always live — no cache to invalidate, but force a query to verify connectivity
+        log.info("Reloading skills from database: {} active skills", listSkillNames().size());
+    }
+
     private Path getSkillsDir() {
         if (properties != null && properties.getCore() != null) {
             String wd = properties.getCore().getWorkingDirectory();

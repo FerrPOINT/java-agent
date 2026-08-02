@@ -111,12 +111,7 @@ agent:
     default-timeout-seconds: ${AGENT_TERMINAL_DEFAULT_TIMEOUT_SECONDS:300}
     max-timeout-seconds: ${AGENT_TERMINAL_MAX_TIMEOUT_SECONDS:1800}
     docker-enabled: ${AGENT_TERMINAL_DOCKER_ENABLED:false}
-    docker-image: ${AGENT_TERMINAL_DOCKER_IMAGE:ubuntu:25.04}
-    docker-mount-cwd: ${AGENT_TERMINAL_DOCKER_MOUNT_CWD:false}
-    docker-volumes: []
-    inline-shell: ${AGENT_TERMINAL_INLINE_SHELL:true}
-    inline-shell-timeout: ${AGENT_TERMINAL_INLINE_SHELL_TIMEOUT:30}
-  
+
   # ─── File ───
   file:
     read-max-chars: ${AGENT_FILE_READ_MAX_CHARS:100000}
@@ -134,16 +129,14 @@ agent:
     background-review:
       enabled: ${AGENT_MEMORY_BACKGROUND_REVIEW_ENABLED:true}
       delay-ms: ${AGENT_MEMORY_BACKGROUND_REVIEW_DELAY_MS:2000}
-      review-memory: true
-      review-skills: false
   
   # ─── Skills ───
   skills:
     enabled: ${AGENT_SKILLS_ENABLED:true}
     max-skills-in-prompt: ${AGENT_SKILLS_MAX_SKILLS_IN_PROMPT:20}
     max-chars-per-skill: ${AGENT_SKILLS_MAX_CHARS_PER_SKILL:4000}
-    bundles-enabled: ${AGENT_SKILLS_BUNDLES_ENABLED:true}
-    bundles-dir: ${AGENT_SKILLS_BUNDLES_DIR:~/.java-agent/bundles}
+    inline-shell: ${AGENT_SKILLS_INLINE_SHELL:true}
+    inline-shell-timeout: ${AGENT_SKILLS_INLINE_SHELL_TIMEOUT:30}
     default-toolsets:
       - web
       - file
@@ -186,12 +179,10 @@ agent:
     enabled: ${AGENT_DELEGATION_ENABLED:true}
     max-depth: ${AGENT_DELEGATION_MAX_DEPTH:3}
     default-timeout-seconds: ${AGENT_DELEGATION_DEFAULT_TIMEOUT_SECONDS:1800}
-    max-concurrent-children: ${AGENT_DELEGATION_MAX_CONCURRENT_CHILDREN:10}
   
   # ─── MCP ───
   mcp:
     enabled: ${AGENT_MCP_ENABLED:false}
-    oauth-enabled: ${AGENT_MCP_OAUTH_ENABLED:false}
     servers: []
   
   # ─── Gateway ───
@@ -303,6 +294,17 @@ agent:
   # ─── Tool gating ───
   tools:
     managed-gateway-enabled: ${AGENT_TOOLS_MANAGED_GATEWAY_ENABLED:false}
+
+  # ─── Curator ───
+  curator:
+    enabled: ${AGENT_CURATOR_ENABLED:true}
+    interval-hours: ${AGENT_CURATOR_INTERVAL_HOURS:168}
+    min-idle-hours: ${AGENT_CURATOR_MIN_IDLE_HOURS:2.0}
+    stale-after-days: ${AGENT_CURATOR_STALE_AFTER_DAYS:30}
+    archive-after-days: ${AGENT_CURATOR_ARCHIVE_AFTER_DAYS:90}
+    dry-run: ${AGENT_CURATOR_DRY_RUN:false}
+    backup-keep: ${AGENT_CURATOR_BACKUP_KEEP:5}
+    prune-builtins: ${AGENT_CURATOR_PRUNE_BUILTINS:true}
 
 management:
   endpoints:

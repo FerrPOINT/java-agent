@@ -206,12 +206,15 @@ class CliFixesTest {
 
     @Test
     void goalCommandSetsGoal() {
+        when(client.setGoal("sid", "Write tests")).thenReturn("Goal set: Write tests");
         String result = registry.execute("/goal Write tests", client, "sid");
         assertThat(result).contains("Goal set: Write tests");
     }
 
     @Test
     void goalCommandShowsCurrentGoal() {
+        when(client.setGoal("sid", "Write tests")).thenReturn("Goal set: Write tests");
+        when(client.getGoal("sid")).thenReturn("Current goal: Write tests");
         registry.execute("/goal Write tests", client, "sid");
         String result = registry.execute("/goal", client, "sid");
         assertThat(result).contains("Current goal: Write tests");
@@ -219,6 +222,7 @@ class CliFixesTest {
 
     @Test
     void goalCommandWithNoGoalShowsMessage() {
+        when(client.getGoal("fresh-sid")).thenReturn("No goal set");
         String result = registry.execute("/goal", client, "fresh-sid");
         assertThat(result).contains("No goal set");
     }

@@ -29,6 +29,7 @@ public class CliState {
     private volatile String activeGoal = "";
     private final Map<String, Boolean> toolStates = new ConcurrentHashMap<>();
     private volatile String cdpUrl = "";
+    private volatile String currentSessionId = null;
 
     public VerboseMode getVerboseMode() { return verboseMode; }
     public void setVerboseMode(VerboseMode verboseMode) { this.verboseMode = verboseMode; }
@@ -84,6 +85,18 @@ public class CliState {
 
     public String getCdpUrl() { return cdpUrl; }
     public void setCdpUrl(String cdpUrl) { this.cdpUrl = cdpUrl; }
+
+    /**
+     * Get the current session ID (set by /new or /resume commands).
+     * @return the current session ID, or null if not set
+     */
+    public String getCurrentSessionId() { return currentSessionId; }
+
+    /**
+     * Set the current session ID (used by /new and /resume to switch sessions).
+     * @param currentSessionId the new session ID
+     */
+    public void setCurrentSessionId(String currentSessionId) { this.currentSessionId = currentSessionId; }
 
     private static final String[] REASONING_LEVELS = {"none", "minimal", "low", "medium", "high", "xhigh"};
 

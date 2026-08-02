@@ -216,8 +216,22 @@ public class SlashCommandRegistry {
 
     private void registerAll() {
         // ── Session management ──
-        register("new", "Create a new chat session (use /new <uuid> to specify)", (args, client, sessionId) ->
-            "New session started. Session ID: " + sessionId);
+        register("new", "Create a new chat session (use /new <uuid> to specify)", (args, client, sessionId) -> {
+            String newSessionId;
+            if (!args.isBlank()) {
+                // User specified a session ID
+                newSessionId = args.strip();
+            } else {
+                // Ask backend to create a new session
+                newSessionId = client.createSession();
+            }
+            if (newSessionId == null || newSessionId.isBlank()) {
+                return "Failed to create new session (backend unavailable or returned empty ID).";
+            }
+            // Update the current session ID so subsequent commands use the new session
+            cliState.setCurrentSessionId(newSessionId);
+            return "New session started. Session ID: " + newSessionId;
+        });
 
         // "reset" is an alias for "new" (C7) — no separate /reset command
 
@@ -527,14 +541,26 @@ public class SlashCommandRegistry {
             return sb.toString().trim();
         });
 
-        register("goal", "Set or show the current goal (stored locally)", (args, client, sessionId) -> {
-            // Goal is stored locally — backend doesn't have a goal API yet
-            if (args.isBlank()) {
-                String currentGoal = goalStorage.get(sessionId);
-                return currentGoal == null ? "No goal set. Use /goal <text> to set one." : "Current goal: " + currentGoal;
+        register("goal", "Set or show the current goal: /goal [text|pause|resume|clear]", (args, client, sessionId) -> {
+            String sub = args.strip().toLowerCase();
+            if (sub.isBlank()) {
+                // Show current goal from backend
+                return client.getGoal(sessionId);
             }
-            goalStorage.put(sessionId, args.strip());
-            return "Goal set: " + args.strip();
+            switch (sub) {
+                case "pause" -> { return client.pauseGoal(sessionId); }
+                case "resume" -> { return client.resumeGoal(sessionId); }
+                case "clear" -> {
+                    cliState.setActiveGoal("");
+                    return client.clearGoal(sessionId);
+                }
+                default -> {
+                    // Treat the entire args as the goal text
+                    String goalText = args.strip();
+                    cliState.setActiveGoal(goalText);
+                    return client.setGoal(sessionId, goalText);
+                }
+            }
         });
 
         register("resume", "Resume a previous session: /resume <sessionId> or /resume to list sessions", (args, client, sessionId) -> {
@@ -552,9 +578,10 @@ public class SlashCommandRegistry {
                 sb.append("\nUse /resume <sessionId> to resume a session.");
                 return sb.toString().trim();
             }
-            // In a real implementation, this would switch the session ID
-            // For now, show instructions
-            return "To resume session " + args.strip() + ", restart CLI with --session.id=" + args.strip();
+            // Switch the current session to the specified session ID
+            String targetSessionId = args.strip();
+            cliState.setCurrentSessionId(targetSessionId);
+            return "Switched to session: " + targetSessionId;
         });
 
         // ── C4: Session persistence ──
@@ -834,9 +861,6 @@ public class SlashCommandRegistry {
         log.info("SlashCommandRegistry initialized with {} commands, {} aliases",
             commands.size(), aliases.size());
     }
-
-    // Simple in-memory goal storage for /goal command (C3)
-    private final Map<String, String> goalStorage = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * P1-3: Get the destructive command confirmation instance.

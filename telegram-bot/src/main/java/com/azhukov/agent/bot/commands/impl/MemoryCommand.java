@@ -56,7 +56,7 @@ public class MemoryCommand implements CommandHandler {
                 yield addMemory(parts[1].trim());
             }
             case "remove" -> {
-                if (parts.length < 2) yield "Usage: /memory remove <text>";
+                if (parts.length < 2) yield "Usage: /memory remove <id>";
                 yield removeMemory(parts[1].trim());
             }
             default -> "Unknown subcommand: " + subcommand + "\nUsage: /memory [pending|approve|reject|approval|add|remove]";
@@ -121,13 +121,16 @@ public class MemoryCommand implements CommandHandler {
     }
 
     private String addMemory(String text) {
-        // Use the backend chat endpoint to trigger a memory tool call
-        // For simplicity, store directly via the memory add API
-        backendClient.setMemoryApproval(backendClient.isMemoryApprovalEnabled());
-        return "Memory add is handled via the agent. Ask the agent to remember: " + text;
+        boolean success = backendClient.storeMemory("default", text);
+        return success
+            ? "✅ Memory stored: " + text
+            : "❌ Failed to store memory.";
     }
 
-    private String removeMemory(String text) {
-        return "Memory remove is handled via the agent. Ask the agent to forget: " + text;
+    private String removeMemory(String id) {
+        boolean success = backendClient.deleteMemory("default", id);
+        return success
+            ? "✅ Memory removed: " + id
+            : "❌ Failed to remove memory (not found or invalid id)";
     }
 }

@@ -12,6 +12,8 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.core.skill.SkillBundleService;
+import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.azhukov.agent.persistence.entity.MemoryEntity;
 import com.azhukov.agent.persistence.entity.MessageEntity;
@@ -53,6 +55,8 @@ public class AgentRuntimeService {
     private final MessageMapper messageMapper;
     private final DomainDtoMapper domainDtoMapper;
     private final SkillBundleService skillBundleService;
+    private final SkillManager skillManager;
+    private final McpLifecycleManager mcpLifecycleManager;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final RuntimeConfigService runtimeConfigService;
 
@@ -243,7 +247,14 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public List<ActiveAgentDto> listActiveAgents() {
-        return List.of();
+        return sessionRepository.findAllByUserId("user-1").stream()
+            .map(e -> new ActiveAgentDto(
+                e.getId().toString(),
+                "active",
+                e.getCreatedAt() != null ? e.getCreatedAt().toEpochMilli() : 0L,
+                e.getTitle() != null ? e.getTitle() : ""
+            ))
+            .toList();
     }
 
     @Transactional(readOnly = true)
@@ -253,23 +264,33 @@ public class AgentRuntimeService {
 
     @Transactional
     public void restart() {
-        // Drain + restart — just clear all session messages for simplicity
-        // In production this would coordinate with agent runtime
+        log.info("Restarting agent — clearing all session messages for user-1");
+        for (SessionEntity session : sessionRepository.findAllByUserId("user-1")) {
+            messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId()));
+        }
+        log.info("Agent restart complete — all session messages cleared");
     }
 
     @Transactional
     public void reloadMcp() {
-        // No-op stub — MCP reload would happen in McpLifecycleManager
+        log.info("Reloading MCP connections");
+        mcpLifecycleManager.closeAll();
+        mcpLifecycleManager.connectConfiguredServers();
+        log.info("MCP reload complete");
     }
 
     @Transactional
     public void reloadSkills() {
-        // No-op stub — skills reload would happen in SkillManager
+        log.info("Reloading skills");
+        skillManager.reload();
+        log.info("Skills reload complete");
     }
 
     @Transactional(readOnly = true)
     public List<String> listBundles() {
-        return List.of(); // Stub — no bundle system yet
+        return skillBundleService.listBundlesInfo().stream()
+            .map(SkillBundleService.Bundle::name)
+            .toList();
     }
 
     @Transactional
