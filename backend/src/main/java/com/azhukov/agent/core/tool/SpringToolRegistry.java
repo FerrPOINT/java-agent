@@ -38,7 +38,7 @@ public class SpringToolRegistry implements ToolRegistry {
     private final Map<String, ToolEntry> entries = new LinkedHashMap<>();
 
     @PostConstruct
-    private void registerBeans() {
+    void registerBeans() {
         Map<String, Object> beans = context.getBeansWithAnnotation(AgentTool.class);
         for (Object bean : beans.values()) {
             AgentTool annotation = bean.getClass().getAnnotation(AgentTool.class);

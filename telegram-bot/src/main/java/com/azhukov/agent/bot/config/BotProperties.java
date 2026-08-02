@@ -56,6 +56,15 @@ public class BotProperties {
     private final Display display = new Display();
     private final RichMessages richMessages = new RichMessages();
     private final SessionReset sessionReset = new SessionReset();
+    private final GoalAutoContinue goalAutoContinue = new GoalAutoContinue();
+
+    @Getter
+    @Setter
+    public static class GoalAutoContinue {
+        private boolean enabled = false;
+        @Min(0)
+        private int maxTurns = 3;
+    }
 
     @Getter
     @Setter

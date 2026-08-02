@@ -74,6 +74,28 @@ class AgentBackendClientTest {
     }
 
     @Test
+    void chat_forwardsRuntimeFlagsToBackend() {
+        when(responseSpec.body(String.class))
+            .thenReturn("{\"response\":\"OK\"}");
+
+        com.azhukov.agent.bot.session.BotSessionEntity runtime = new com.azhukov.agent.bot.session.BotSessionEntity();
+        runtime.setFastMode(true);
+        runtime.setReasoningLevel("high");
+        runtime.setVoiceMode(true);
+        runtime.setMetadata("personality", "sarcastic");
+
+        client.chat("Hello", "session-123", runtime);
+
+        verify(postSpec).body(argThat((Object body) -> {
+            if (!(body instanceof java.util.Map<?, ?> map)) return false;
+            return Boolean.TRUE.equals(map.get("fastMode"))
+                && "high".equals(map.get("reasoningEffort"))
+                && Boolean.TRUE.equals(map.get("voiceMode"))
+                && "sarcastic".equals(map.get("personality"));
+        }));
+    }
+
+    @Test
     void chat_withNullSessionId_omitsSessionId() {
         when(responseSpec.body(String.class))
             .thenReturn("{\"response\":\"OK\"}");

@@ -9,6 +9,7 @@ import com.azhukov.agent.bot.commands.CommandRegistry;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.footer.RuntimeFooter;
 import com.azhukov.agent.bot.formatting.ResponseFilter;
+import com.azhukov.agent.bot.goal.GoalAutoContinueService;
 import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
@@ -51,6 +52,7 @@ class BotMessageProcessorTest {
     private GroupMessageFilter groupMessageFilter;
     private SlashAccessPolicy slashAccessPolicy;
     private ResponseFilter responseFilter;
+    private GoalAutoContinueService goalAutoContinueService;
 
     private BotMessageProcessor processor;
 
@@ -77,6 +79,7 @@ class BotMessageProcessorTest {
         groupMessageFilter = mock(GroupMessageFilter.class);
         slashAccessPolicy = mock(SlashAccessPolicy.class);
         responseFilter = mock(ResponseFilter.class);
+        goalAutoContinueService = mock(GoalAutoContinueService.class);
 
         when(authorizationService.isAuthorized(any(UpdateEvent.class))).thenReturn(true);
         when(authorizationService.isAuthorized(anyLong(), anyString(), anyLong())).thenReturn(true);
@@ -97,7 +100,7 @@ class BotMessageProcessorTest {
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
             properties, streamEditor, inboundMediaHandler, runtimeFooter,
             reactionManager, textBatchDebouncer, photoBatchDebouncer,
-            groupMessageFilter, slashAccessPolicy, responseFilter);
+            groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService);
     }
 
     private UpdateEvent textEvent(long updateId, long chatId, String text) {

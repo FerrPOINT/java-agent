@@ -7,11 +7,13 @@ import com.azhukov.agent.bot.batch.TextBatchDebouncer;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.commands.CommandRegistry;
+import com.azhukov.agent.bot.commands.impl.GoalCommand;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.footer.RuntimeFooter;
 import com.azhukov.agent.bot.formatting.MarkdownConverter;
 import com.azhukov.agent.bot.formatting.MessageSplitter;
 import com.azhukov.agent.bot.formatting.ResponseFilter;
+import com.azhukov.agent.bot.goal.GoalAutoContinueService;
 import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
@@ -70,7 +72,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
     private final GroupMessageFilter groupMessageFilter;
     private final SlashAccessPolicy slashAccessPolicy;
     private final ResponseFilter responseFilter;
-
+    private final GoalAutoContinueService goalAutoContinueService;
 
     /**
      * B1.3: Called by TextBatchDebouncer when a batch is ready to dispatch.
@@ -287,6 +289,18 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
             // 💾 Memory updated notification (Hermes parity)
             if (result.memoryUpdated()) {
                 sendFormatted(chatId, "💾 Self-improvement review: Memory updated", event.messageId());
+            }
+
+            // P0: Standing goal auto-continuation
+            if (properties.getGoalAutoContinue().isEnabled()
+                && GoalCommand.getActiveGoal(session) != null
+                && !busyHandler.isInterrupted(chatId)) {
+                List<String> continuations = goalAutoContinueService.runAutoContinue(session, result.content());
+                for (String continuation : continuations) {
+                    if (continuation != null && !continuation.isBlank()) {
+                        sendFormatted(chatId, continuation, event.messageId());
+                    }
+                }
             }
 
             // B1.2: Reaction — processing complete (success or cancelled)
