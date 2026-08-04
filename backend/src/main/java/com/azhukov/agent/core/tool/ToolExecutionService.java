@@ -9,6 +9,7 @@ import com.azhukov.agent.security.ToolCallGuardrail;
 import com.azhukov.agent.core.state.TurnState;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import lombok.extern.slf4j.Slf4j;
 
@@ -25,34 +26,22 @@ import java.util.function.Supplier;
 
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class ToolExecutionService {
 
     private final ToolRegistry toolRegistry;
     private final AgentProperties properties;
-    private final ExecutorService executor;
-    private final Retry retry;
     private final ToolCallGuardrail guardrail;
     private final SecretRedactor redactor;
     private final ToolResultClassifier toolResultClassifier;
     private final ToolOutputLimiter toolOutputLimiter;
-
-    public ToolExecutionService(ToolRegistry toolRegistry, AgentProperties properties, ToolCallGuardrail guardrail, SecretRedactor redactor,
-                                ToolResultClassifier toolResultClassifier, ToolOutputLimiter toolOutputLimiter) {
-        this.toolRegistry = toolRegistry;
-        this.properties = properties;
-        this.guardrail = guardrail;
-        this.redactor = redactor;
-        this.toolResultClassifier = toolResultClassifier;
-        this.toolOutputLimiter = toolOutputLimiter;
-        this.executor = Executors.newVirtualThreadPerTaskExecutor();
-        RetryConfig config = RetryConfig.custom()
+    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    private final Retry retry = Retry.of("tool", RetryConfig.custom()
             .maxAttempts(3)
             .waitDuration(Duration.ofMillis(500))
             .retryExceptions(RuntimeException.class)
             .ignoreExceptions(IllegalArgumentException.class)
-            .build();
-        this.retry = Retry.of("tool", config);
-    }
+            .build());
 
     public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session, TurnState turnState) {
         var before = turnState == null ? guardrail.beforeCall(toolName, arguments) : guardrail.beforeCall(toolName, arguments, turnState);

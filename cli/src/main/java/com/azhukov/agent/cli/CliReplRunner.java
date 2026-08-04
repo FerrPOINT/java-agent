@@ -1,6 +1,7 @@
 package com.azhukov.agent.cli;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
@@ -37,6 +38,7 @@ import java.util.UUID;
  */
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class CliReplRunner implements CommandLineRunner {
 
     private final BackendClient backendClient;
@@ -44,16 +46,6 @@ public class CliReplRunner implements CommandLineRunner {
     private final BackendProperties properties;
     private final MarkdownRenderer markdownRenderer;
     private final ContextReferenceExpander contextExpander;
-
-    public CliReplRunner(BackendClient backendClient, SlashCommandRegistry commandRegistry,
-                         BackendProperties properties, MarkdownRenderer markdownRenderer,
-                         ContextReferenceExpander contextExpander) {
-        this.backendClient = backendClient;
-        this.commandRegistry = commandRegistry;
-        this.properties = properties;
-        this.markdownRenderer = markdownRenderer;
-        this.contextExpander = contextExpander;
-    }
 
     private static final Path SESSION_DIR = Path.of(System.getProperty("user.home"), ".java-agent-cli");
     private static final Path SESSION_FILE = SESSION_DIR.resolve("session.txt");

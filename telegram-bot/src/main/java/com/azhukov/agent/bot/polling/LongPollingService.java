@@ -4,6 +4,7 @@ import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.lock.BotLockManager;
 import jakarta.annotation.PreDestroy;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.event.EventListener;
@@ -22,16 +23,25 @@ import java.util.function.Consumer;
 @Component
 @ConditionalOnProperty(name = "bot.mode", havingValue = "polling")
 @Slf4j
+@RequiredArgsConstructor
 public class LongPollingService {
 
     private final TelegramClient telegramClient;
     private final BotProperties properties;
     private final Consumer<UpdateEvent> updateHandler;
-    private final ExecutorService executor;
-    private final ExecutorService processPool;
+    private final ReconnectWatcher reconnectWatcher;
+    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "telegram-polling");
+        t.setDaemon(true);
+        return t;
+    });
+    private final ExecutorService processPool = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r, "telegram-update-" + System.nanoTime());
+        t.setDaemon(true);
+        return t;
+    });
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong lastUpdateId = new AtomicLong(0);
-    private final ReconnectWatcher reconnectWatcher;
 
     // P0: Gateway lock — prevents concurrent instances with the same bot token
     private BotLockManager lockManager;
@@ -39,26 +49,6 @@ public class LongPollingService {
     // B3: 409 conflict tracking
     private int conflictRetryCount = 0;
     private static final long[] CONFLICT_BACKOFF_MS = {15_000, 30_000, 55_000, 55_000, 55_000};
-
-    public LongPollingService(TelegramClient telegramClient,
-                              BotProperties properties,
-                              Consumer<UpdateEvent> updateHandler,
-                              ReconnectWatcher reconnectWatcher) {
-        this.telegramClient = telegramClient;
-        this.properties = properties;
-        this.updateHandler = updateHandler;
-        this.reconnectWatcher = reconnectWatcher;
-        this.executor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "telegram-polling");
-            t.setDaemon(true);
-            return t;
-        });
-        this.processPool = Executors.newFixedThreadPool(4, r -> {
-            Thread t = new Thread(r, "telegram-update-" + System.nanoTime());
-            t.setDaemon(true);
-            return t;
-        });
-    }
 
     public boolean isRunning() {
         return running.get();

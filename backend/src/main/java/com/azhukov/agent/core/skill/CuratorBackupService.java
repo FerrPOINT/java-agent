@@ -5,6 +5,7 @@ import com.azhukov.agent.persistence.entity.SkillEntity;
 import com.azhukov.agent.persistence.repository.CuratorSnapshotRepository;
 import com.azhukov.agent.persistence.repository.SkillRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -39,6 +40,7 @@ import java.util.UUID;
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class CuratorBackupService {
 
     private static final int DEFAULT_KEEP = 5;
@@ -47,13 +49,7 @@ public class CuratorBackupService {
 
     private final SkillRepository skillRepository;
     private final CuratorSnapshotRepository snapshotRepository;
-    private final ObjectMapper objectMapper;
-
-    public CuratorBackupService(SkillRepository skillRepository, CuratorSnapshotRepository snapshotRepository) {
-        this.skillRepository = skillRepository;
-        this.snapshotRepository = snapshotRepository;
-        this.objectMapper = new ObjectMapper();
-    }
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
      * S8: Create a snapshot of the current skills state before a curator mutation.

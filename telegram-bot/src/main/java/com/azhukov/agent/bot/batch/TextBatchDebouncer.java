@@ -2,6 +2,7 @@ package com.azhukov.agent.bot.batch;
 
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -18,22 +19,18 @@ import java.util.concurrent.*;
  */
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class TextBatchDebouncer {
 
     private final BotProperties properties;
-    private final ScheduledExecutorService scheduler;
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1, r -> {
+        Thread t = new Thread(r, "text-batch-debouncer");
+        t.setDaemon(true);
+        return t;
+    });
     private final Map<Long, BatchEntry> buffers = new ConcurrentHashMap<>();
     private final Map<Long, ScheduledFuture<?>> timers = new ConcurrentHashMap<>();
     private final List<java.util.function.Consumer<UpdateEvent>> dispatchers = new CopyOnWriteArrayList<>();
-
-    public TextBatchDebouncer(BotProperties properties) {
-        this.properties = properties;
-        this.scheduler = Executors.newScheduledThreadPool(1, r -> {
-            Thread t = new Thread(r, "text-batch-debouncer");
-            t.setDaemon(true);
-            return t;
-        });
-    }
 
     /**
      * Offer a text event to the debouncer. If this is the first message in a quiet

@@ -4,6 +4,7 @@ import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.formatting.MarkdownConverter;
 import com.azhukov.agent.bot.rich.RichMessageSupport;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -40,6 +41,7 @@ import jakarta.annotation.PostConstruct;
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class StreamEditor {
 
     private final TelegramClient telegramClient;
@@ -66,11 +68,6 @@ public class StreamEditor {
 
     // P1: Rich message support for final delivery
     private RichMessageSupport richMessageSupport;
-
-    public StreamEditor(TelegramClient telegramClient, BotProperties properties) {
-        this.telegramClient = telegramClient;
-        this.properties = properties;
-    }
 
     @PostConstruct
     void init() {

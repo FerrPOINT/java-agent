@@ -17,18 +17,14 @@ public class PhotoBatchDebouncer {
 
     private static final long DEBOUNCE_MS = 500;
 
-    private final ScheduledExecutorService scheduler;
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1, r -> {
+        Thread t = new Thread(r, "photo-batch-debouncer");
+        t.setDaemon(true);
+        return t;
+    });
     private final Map<String, PhotoGroup> groups = new ConcurrentHashMap<>();
     private final Map<String, ScheduledFuture<?>> timers = new ConcurrentHashMap<>();
     private final List<java.util.function.Consumer<UpdateEvent>> dispatchers = new CopyOnWriteArrayList<>();
-
-    public PhotoBatchDebouncer() {
-        this.scheduler = Executors.newScheduledThreadPool(1, r -> {
-            Thread t = new Thread(r, "photo-batch-debouncer");
-            t.setDaemon(true);
-            return t;
-        });
-    }
 
     /**
      * Offer a photo event to the debouncer. If the event has a mediaGroupId,
