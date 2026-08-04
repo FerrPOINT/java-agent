@@ -31,9 +31,8 @@ public class McpServerAutoConfiguration {
     public ServletRegistrationBean<?> mcpSseServletRegistration() {
         AgentProperties.McpProperties.Server config = properties.getMcp().getServer();
         if (!config.isEnabled() || !"sse".equalsIgnoreCase(config.getTransport())) {
-            return new ServletRegistrationBean<>();
+            return null; // No servlet registration when MCP server is disabled or using stdio
         }
-        ServletRegistrationBean<?> registration = mcpServerService.getServletRegistration();
-        return registration != null ? registration : new ServletRegistrationBean<>();
+        return mcpServerService.getServletRegistration();
     }
 }
