@@ -364,7 +364,7 @@ class P1CliFixesTest {
 
     @Test
     void browserCommandConnects() {
-        when(client.connectBrowser("ws://localhost:9222")).thenReturn("Browser connected: ws://localhost:9222");
+        when(client.connectBrowser("sid", "ws://localhost:9222")).thenReturn("Browser connected: ws://localhost:9222");
         String result = registry.execute("/browser ws://localhost:9222", client, "sid");
         assertThat(result).contains("Browser connected");
     }
@@ -372,7 +372,7 @@ class P1CliFixesTest {
     @Test
     void browserCommandShowsCurrentUrl() {
         // First set URL
-        when(client.connectBrowser("ws://localhost:9222")).thenReturn("Browser connected");
+        when(client.connectBrowser("sid", "ws://localhost:9222")).thenReturn("Browser connected");
         registry.execute("/browser ws://localhost:9222", client, "sid");
         // Then query
         String result = registry.execute("/browser", client, "sid");

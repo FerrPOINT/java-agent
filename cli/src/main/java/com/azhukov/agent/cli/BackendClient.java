@@ -1556,31 +1556,30 @@ public class BackendClient {
     /**
      * Connect browser tools to CDP.
      */
-    public String connectBrowser(String cdpUrl) {
+    public String connectBrowser(String sessionId, String cdpUrl) {
         Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
         body.put("cdpUrl", cdpUrl);
         try {
-            String json = restClient.post()
-                .uri("/api/v1/agent/browser/connect")
+            restClient.post()
+                .uri("/api/v1/agent/browser")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)
                 .retrieve()
-                .body(String.class);
-            if (json == null || json.isBlank()) return "Browser connected: " + cdpUrl;
-            JsonNode node = objectMapper.readTree(json);
-            return node.path("message").asText("Browser connected: " + cdpUrl);
+                .toBodilessEntity();
+            return "Browser connected: " + cdpUrl;
         } catch (Exception e) {
             return handleErr("connectBrowser", e);
         }
     }
 
     /**
-     * List installed plugins.
+     * List configured MCP servers (plugins).
      */
     public JsonNode listPlugins() {
         try {
             String json = restClient.get()
-                .uri("/api/v1/agent/plugins")
+                .uri("/api/v1/mcp/servers")
                 .retrieve()
                 .body(String.class);
             if (json == null || json.isBlank()) return objectMapper.createArrayNode();
@@ -1618,20 +1617,15 @@ public class BackendClient {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("sessionId", sessionId);
         body.put("toolName", toolName);
-        body.put("enabled", enabled);
+        String uri = enabled ? "/api/v1/agent/tools/enable" : "/api/v1/agent/tools/disable";
         try {
-            String json = restClient.post()
-                .uri("/api/v1/agent/tools/toggle")
+            restClient.post()
+                .uri(uri)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)
                 .retrieve()
-                .body(String.class);
-            if (json == null || json.isBlank()) {
-                return "Tool " + toolName + ": " + (enabled ? "enabled" : "disabled");
-            }
-            JsonNode node = objectMapper.readTree(json);
-            return node.path("message").asText(
-                "Tool " + toolName + ": " + (enabled ? "enabled" : "disabled"));
+                .toBodilessEntity();
+            return "Tool " + toolName + ": " + (enabled ? "enabled" : "disabled");
         } catch (Exception e) {
             return handleErr("toggleTool", e);
         }

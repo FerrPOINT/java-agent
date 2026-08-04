@@ -697,6 +697,14 @@ public class AgentController {
         return agentRuntimeService.listBundles();
     }
 
+    /**
+     * Alias kept for backward compatibility.
+     */
+    @GetMapping("/agent/skills/bundles")
+    public List<String> bundlesAlias() {
+        return agentRuntimeService.listBundles();
+    }
+
     @PostMapping("/agent/session/{sessionId}/branch")
     public SessionSummaryDto branchSession(@PathVariable UUID sessionId, @RequestParam(required = false) String name) {
         return agentRuntimeService.branchSession(sessionId, name);

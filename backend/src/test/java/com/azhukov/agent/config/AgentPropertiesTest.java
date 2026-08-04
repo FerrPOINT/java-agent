@@ -22,7 +22,7 @@ class AgentPropertiesTest {
             assertThat(properties.getModel().getProvider()).isEqualTo("openai-compatible");
             assertThat(properties.getCore().getMaxTurns()).isEqualTo(100);
             assertThat(properties.getSkills().getDefaultToolsets())
-                    .containsExactly("web", "file", "browser", "terminal", "coding", "memory", "skills", "core", "delegate", "gateway");
+                    .containsExactly("web", "file", "browser", "terminal", "coding", "memory", "core", "delegation", "gateway", "todo");
         });
     }
 

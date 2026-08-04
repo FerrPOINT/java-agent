@@ -285,15 +285,44 @@ public class LangChain4jModelClient implements ModelClient {
         return builder.build();
     }
 
+    /**
+     * Resolve reasoning-effort for the LLM request.
+     *
+     * <p>CLI and Telegram store reasoning as descriptive levels
+     * ({@code none}, {@code minimal}, {@code low}, {@code medium}, {@code high}, {@code xhigh}).
+     * This method maps those levels to numeric percent effort, and also accepts
+     * raw integer strings sent by backend callers. Falls back to the configured
+     * default when no valid value is supplied.
+     */
     private int resolveReasoningEffort(ModelRequestOptions options) {
-        if (options != null && options.reasoningEffort() != null && !options.reasoningEffort().isBlank()) {
-            try {
-                return Integer.parseInt(options.reasoningEffort());
-            } catch (NumberFormatException e) {
-                log.debug("Ignoring non-numeric reasoningEffort: {}", options.reasoningEffort());
-            }
+        String raw = (options != null) ? options.reasoningEffort() : null;
+        if (raw == null || raw.isBlank()) {
+            return properties.getModel().getReasoningEffort();
         }
-        return properties.getModel().getReasoningEffort();
+        return parseReasoningEffort(raw);
+    }
+
+    private int parseReasoningEffort(String raw) {
+        return switch (raw.toLowerCase()) {
+            case "none" -> 0;
+            case "minimal" -> 20;
+            case "low" -> 40;
+            case "medium" -> 70;
+            case "high" -> 90;
+            case "xhigh" -> 100;
+            default -> {
+                try {
+                    int value = Integer.parseInt(raw);
+                    if (value < 0) {
+                        yield 0;
+                    }
+                    yield Math.min(value, 100);
+                } catch (NumberFormatException e) {
+                    log.debug("Ignoring non-numeric reasoningEffort: {}", raw);
+                    yield properties.getModel().getReasoningEffort();
+                }
+            }
+        };
     }
 
     private boolean resolveFastMode(ModelRequestOptions options) {

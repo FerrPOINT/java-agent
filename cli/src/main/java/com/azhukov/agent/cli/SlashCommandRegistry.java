@@ -767,10 +767,10 @@ public class SlashCommandRegistry {
                 return url.isBlank() ? "No CDP URL configured. Use /browser <cdp-url>" : "CDP URL: " + url;
             }
             cliState.setCdpUrl(args.strip());
-            return client.connectBrowser(args.strip());
+            return client.connectBrowser(sessionId, args.strip());
         });
 
-        register("plugins", "List installed plugins", (args, client, sessionId) -> {
+        register("plugins", "List configured MCP servers", (args, client, sessionId) -> {
             JsonNode plugins = client.listPlugins();
             return client.prettyPrint(plugins);
         });

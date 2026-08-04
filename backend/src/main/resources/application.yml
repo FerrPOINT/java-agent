@@ -144,10 +144,10 @@ agent:
       - terminal
       - coding
       - memory
-      - skills
       - core
-      - delegate
+      - delegation
       - gateway
+      - todo
   
   # ─── Session search ───
   session-search:
