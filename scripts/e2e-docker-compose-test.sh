@@ -92,7 +92,7 @@ echo "[e2e] Test 4: PASSED"
 
 # --- Test 5: Session listing ---
 echo "[e2e] Test 5: Session listing..."
-SESSIONS=$(curl -fsS "${AGENT_URL}/api/v1/agent/sessions")
+SESSIONS=$(curl -fsS "${AGENT_URL}/api/v1/sessions")
 if ! echo "${SESSIONS}" | grep -q '\['; then
     echo "[e2e] FAIL: No session list returned"
     exit 1
