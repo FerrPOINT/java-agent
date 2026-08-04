@@ -57,4 +57,10 @@ public class SessionEntity {
         }
         cliState.put(key, value);
     }
+
+    public void removeCliStateValue(String key) {
+        if (cliState != null) {
+            cliState.remove(key);
+        }
+    }
 }

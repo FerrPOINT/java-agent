@@ -332,6 +332,98 @@ class AgentStreamingServiceTest {
         assertThat(capturedTimeout.get()).isEqualTo(42L);
     }
 
+    // ── BUG 2: streaming must inject [Standing Goal] and [Subgoals] into merged message ──
+
+    @Test
+    void streamTurnInjectsGoalAndSubgoalsIntoMergedMessage() throws Exception {
+        // Set goal + subgoals on the session entity that setUp() already wired
+        SessionEntity entity = new SessionEntity();
+        entity.setId(SESSION_ID);
+        entity.setUserId("user-1");
+        entity.setModelProvider("openai-compatible");
+        entity.setModelName("");
+        entity.setTitle("Goal session");
+        entity.setCreatedAt(Instant.now());
+        entity.setUpdatedAt(Instant.now());
+        entity.setCliStateValue("goal", "fix all bugs");
+        entity.setCliStateValue("subgoals", "bug1\nbug2\nbug3");
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
+
+        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+
+        AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
+        doAnswer(invocation -> {
+            capturedMessages.set(invocation.getArgument(0));
+            StreamingResponseHandler handler = invocation.getArgument(2);
+            handler.onToken("ok");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+
+        CollectingEmitter emitter = new CollectingEmitter(500L);
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        assertThat(emitter.error.get()).isNull();
+
+        // The first message in the LLM call should be the user message containing goal blocks
+        List<Message> msgs = capturedMessages.get();
+        assertThat(msgs).isNotNull().isNotEmpty();
+        Message userMsg = msgs.stream()
+            .filter(m -> m.role() == com.azhukov.agent.core.model.Role.USER)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("No user message found"));
+        String content = userMsg.content();
+        assertThat(content).contains("[Standing Goal]");
+        assertThat(content).contains("fix all bugs");
+        assertThat(content).contains("[Subgoals]");
+        assertThat(content).contains("bug1\nbug2\nbug3");
+        // Original user message must still be present
+        assertThat(content).contains(USER_MESSAGE);
+    }
+
+    @Test
+    void streamTurnSkipsGoalWhenGoalPaused() throws Exception {
+        SessionEntity entity = new SessionEntity();
+        entity.setId(SESSION_ID);
+        entity.setUserId("user-1");
+        entity.setModelProvider("openai-compatible");
+        entity.setModelName("");
+        entity.setTitle("Paused goal session");
+        entity.setCreatedAt(Instant.now());
+        entity.setUpdatedAt(Instant.now());
+        entity.setCliStateValue("goal", "fix all bugs");
+        entity.setCliStateValue("goalPaused", "true");
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
+
+        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+
+        AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
+        doAnswer(invocation -> {
+            capturedMessages.set(invocation.getArgument(0));
+            StreamingResponseHandler handler = invocation.getArgument(2);
+            handler.onToken("ok");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+
+        CollectingEmitter emitter = new CollectingEmitter(500L);
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        assertThat(emitter.error.get()).isNull();
+        List<Message> msgs = capturedMessages.get();
+        assertThat(msgs).isNotNull().isNotEmpty();
+        Message userMsg = msgs.stream()
+            .filter(m -> m.role() == com.azhukov.agent.core.model.Role.USER)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("No user message found"));
+        String content = userMsg.content();
+        // Goal is paused → no [Standing Goal] block
+        assertThat(content).doesNotContain("[Standing Goal]");
+        assertThat(content).contains(USER_MESSAGE);
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------

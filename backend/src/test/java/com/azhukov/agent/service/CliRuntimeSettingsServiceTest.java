@@ -162,6 +162,63 @@ class CliRuntimeSettingsServiceTest {
     }
 
     @Test
+    void clearGoalRemovesGoalKeysFromCliState() {
+        SessionEntity e = givenSession();
+        e.setCliStateValue("goal", "fix all bugs");
+        e.setCliStateValue("goalPaused", "true");
+        e.setCliStateValue("subgoals", "bug1\nbug2\nbug3");
+
+        service.clearGoal(SESSION_ID);
+
+        // Keys must be truly absent, not just null-valued
+        assertThat(e.getCliState()).doesNotContainKey("goal");
+        assertThat(e.getCliState()).doesNotContainKey("goalPaused");
+        assertThat(e.getCliState()).doesNotContainKey("subgoals");
+        assertThat(e.getCliStateValue("goal")).isNull();
+        assertThat(e.getCliStateValue("goalPaused")).isNull();
+        assertThat(e.getCliStateValue("subgoals")).isNull();
+    }
+
+    @Test
+    void clearSubgoalsRemovesSubgoalsKeyFromCliState() {
+        SessionEntity e = givenSession();
+        e.setCliStateValue("subgoals", "task A\ntask B");
+
+        service.clearSubgoals(SESSION_ID);
+
+        assertThat(e.getCliState()).doesNotContainKey("subgoals");
+        assertThat(e.getCliStateValue("subgoals")).isNull();
+    }
+
+    @Test
+    void setGoalStoresInCliState() {
+        SessionEntity e = givenSession();
+
+        service.setGoal(SESSION_ID, "ship the release");
+
+        assertThat(e.getCliStateValue("goal")).isEqualTo("ship the release");
+    }
+
+    @Test
+    void setGoalPausedStoresInCliState() {
+        SessionEntity e = givenSession();
+
+        service.setGoalPaused(SESSION_ID, true);
+
+        assertThat(e.getCliStateValue("goalPaused")).isEqualTo("true");
+    }
+
+    @Test
+    void appendSubgoalAccumulatesInCliState() {
+        SessionEntity e = givenSession();
+
+        service.appendSubgoal(SESSION_ID, "first task");
+        service.appendSubgoal(SESSION_ID, "second task");
+
+        assertThat(e.getCliStateValue("subgoals")).isEqualTo("first task\nsecond task");
+    }
+
+    @Test
     void resetSessionStateClearsCliStateAndSubgoal() {
         SessionEntity e = givenSession();
         e.setCliStateValue("personality", "concise");

@@ -164,7 +164,19 @@ public class AgentRuntimeService {
             .filter(name -> name != null && !name.isBlank())
             .distinct()
             .collect(Collectors.toList());
-        return new ContextInfoDto(sessionId, messageCount, tokenEstimate, toolsUsed);
+
+        // Populate goal-related fields from session cliState
+        SessionEntity session = sessionRepository.findById(sessionId).orElse(null);
+        String goal = null;
+        Boolean goalPaused = null;
+        String subgoals = null;
+        if (session != null) {
+            goal = session.getCliStateValue("goal");
+            String pausedStr = session.getCliStateValue("goalPaused");
+            goalPaused = pausedStr != null ? Boolean.valueOf(pausedStr) : null;
+            subgoals = session.getCliStateValue("subgoals");
+        }
+        return new ContextInfoDto(sessionId, messageCount, tokenEstimate, toolsUsed, goal, goalPaused, subgoals);
     }
 
     @Transactional

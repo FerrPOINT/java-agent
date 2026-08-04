@@ -70,9 +70,9 @@ public class CliRuntimeSettingsService {
     @Transactional
     public void clearGoal(UUID sessionId) {
         SessionEntity e = getSession(sessionId);
-        e.setCliStateValue("goal", null);
-        e.setCliStateValue("goalPaused", null);
-        e.setCliStateValue("subgoals", null);
+        e.removeCliStateValue("goal");
+        e.removeCliStateValue("goalPaused");
+        e.removeCliStateValue("subgoals");
     }
 
     @Transactional
@@ -87,7 +87,7 @@ public class CliRuntimeSettingsService {
 
     @Transactional
     public void clearSubgoals(UUID sessionId) {
-        getSession(sessionId).setCliStateValue("subgoals", null);
+        getSession(sessionId).removeCliStateValue("subgoals");
     }
 
     @Transactional

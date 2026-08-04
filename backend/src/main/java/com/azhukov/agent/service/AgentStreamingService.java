@@ -90,9 +90,14 @@ public class AgentStreamingService {
         String personality = request.personality() != null ? request.personality() : session.getCliStateValue("personality");
         String queuedPrompt = request.queuedPrompt() != null ? request.queuedPrompt() : session.getCliStateValue("queuedPrompt");
         String subgoal = request.subgoal() != null ? request.subgoal() : session.getSubgoal();
+        String goal = request.goal() != null ? request.goal() : session.getCliStateValue("goal");
+        if (goal == null || "true".equals(session.getCliStateValue("goalPaused"))) {
+            goal = null;
+        }
+        String subgoals = session.getCliStateValue("subgoals");
 
         // Build merged request
-        String finalMessage = buildMergedMessage(request.message(), queuedPrompt, subgoal);
+        String finalMessage = buildMergedMessage(request.message(), queuedPrompt, goal, subgoals, subgoal);
         return new ChatRequest(
             request.sessionId(),
             finalMessage,
@@ -110,8 +115,14 @@ public class AgentStreamingService {
         );
     }
 
-    private String buildMergedMessage(String userMessage, String queuedPrompt, String subgoal) {
+    private String buildMergedMessage(String userMessage, String queuedPrompt, String goal, String subgoals, String subgoal) {
         StringBuilder sb = new StringBuilder();
+        if (goal != null && !goal.isBlank()) {
+            sb.append("[Standing Goal]\n").append(goal).append("\n\n");
+        }
+        if (subgoals != null && !subgoals.isBlank()) {
+            sb.append("[Subgoals]\n").append(subgoals).append("\n\n");
+        }
         if (subgoal != null && !subgoal.isBlank()) {
             sb.append("[Goal/Subgoal]\n").append(subgoal).append("\n\n");
         }

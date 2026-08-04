@@ -281,6 +281,67 @@ class AgentRuntimeServiceTest {
         verify(skillBundleService).uninstall("my-bundle");
     }
 
+    // ── BUG 1: getContext() must populate goal / goalPaused / subgoals ──
+
+    @Test
+    void getContextReturnsGoalFieldsFromSessionCliState() {
+        SessionEntity entity = newSessionEntity(SESSION_ID, USER_ID, "goal session");
+        entity.setCliStateValue("goal", "fix all bugs");
+        entity.setCliStateValue("goalPaused", "false");
+        entity.setCliStateValue("subgoals", "bug1\nbug2\nbug3");
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID))
+            .thenReturn(List.of());
+
+        com.azhukov.agent.api.dto.ContextInfoDto ctx = agentRuntimeService.getContext(SESSION_ID);
+
+        assertThat(ctx.goal()).isEqualTo("fix all bugs");
+        assertThat(ctx.goalPaused()).isFalse();
+        assertThat(ctx.subgoals()).isEqualTo("bug1\nbug2\nbug3");
+    }
+
+    @Test
+    void getContextReturnsNullGoalFieldsWhenNotSet() {
+        SessionEntity entity = newSessionEntity(SESSION_ID, USER_ID, "no-goal session");
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID))
+            .thenReturn(List.of());
+
+        com.azhukov.agent.api.dto.ContextInfoDto ctx = agentRuntimeService.getContext(SESSION_ID);
+
+        assertThat(ctx.goal()).isNull();
+        assertThat(ctx.goalPaused()).isNull();
+        assertThat(ctx.subgoals()).isNull();
+    }
+
+    @Test
+    void getContextReturnsNullGoalFieldsWhenSessionNotFound() {
+        when(sessionRepository.findById(UNKNOWN_SESSION_ID)).thenReturn(Optional.empty());
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(UNKNOWN_SESSION_ID))
+            .thenReturn(List.of());
+
+        com.azhukov.agent.api.dto.ContextInfoDto ctx = agentRuntimeService.getContext(UNKNOWN_SESSION_ID);
+
+        assertThat(ctx.goal()).isNull();
+        assertThat(ctx.goalPaused()).isNull();
+        assertThat(ctx.subgoals()).isNull();
+    }
+
+    @Test
+    void getContextGoalPausedTrueWhenCliStateSaysTrue() {
+        SessionEntity entity = newSessionEntity(SESSION_ID, USER_ID, "paused goal");
+        entity.setCliStateValue("goal", "fix all bugs");
+        entity.setCliStateValue("goalPaused", "true");
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID))
+            .thenReturn(List.of());
+
+        com.azhukov.agent.api.dto.ContextInfoDto ctx = agentRuntimeService.getContext(SESSION_ID);
+
+        assertThat(ctx.goal()).isEqualTo("fix all bugs");
+        assertThat(ctx.goalPaused()).isTrue();
+    }
+
     private SessionEntity newSessionEntity(UUID id, String userId, String title) {
         SessionEntity entity = new SessionEntity();
         entity.setId(id);

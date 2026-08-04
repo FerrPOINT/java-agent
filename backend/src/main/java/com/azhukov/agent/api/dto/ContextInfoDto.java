@@ -7,5 +7,13 @@ public record ContextInfoDto(
     UUID sessionId,
     int messageCount,
     int tokenEstimate,
-    List<String> toolsUsed
-) {}
+    List<String> toolsUsed,
+    String goal,
+    Boolean goalPaused,
+    String subgoals
+) {
+    /** Backward-compatible constructor for callers that don't supply goal info. */
+    public ContextInfoDto(UUID sessionId, int messageCount, int tokenEstimate, List<String> toolsUsed) {
+        this(sessionId, messageCount, tokenEstimate, toolsUsed, null, null, null);
+    }
+}
