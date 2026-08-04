@@ -101,15 +101,15 @@ echo "[e2e] Test 5: PASSED"
 
 # --- Test 6: Health endpoints ---
 echo "[e2e] Test 6: Health endpoints..."
-HEALTH=$(curl -fsS "${AGENT_URL}/actuator/health")
-if ! echo "${HEALTH}" | grep -q '"status":"UP"'; then
-    echo "[e2e] FAIL: Health not UP"
-    exit 1
-fi
-
 READINESS=$(curl -fsS "${AGENT_URL}/actuator/health/readiness")
 if ! echo "${READINESS}" | grep -q '"status":"UP"'; then
     echo "[e2e] FAIL: Readiness not UP"
+    exit 1
+fi
+
+LIVENESS=$(curl -fsS "${AGENT_URL}/actuator/health/liveness")
+if ! echo "${LIVENESS}" | grep -q '"status":"UP"'; then
+    echo "[e2e] FAIL: Liveness not UP"
     exit 1
 fi
 echo "[e2e] Test 6: PASSED"

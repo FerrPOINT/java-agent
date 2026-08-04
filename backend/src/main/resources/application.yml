@@ -184,6 +184,14 @@ agent:
   mcp:
     enabled: ${AGENT_MCP_ENABLED:false}
     servers: []
+    # MCP server mode: expose agent tools to external MCP clients
+    server:
+      enabled: ${AGENT_MCP_SERVER_ENABLED:false}
+      transport: ${AGENT_MCP_SERVER_TRANSPORT:stdio}
+      sse-endpoint: ${AGENT_MCP_SERVER_SSE_ENDPOINT:/mcp/sse}
+      message-endpoint: ${AGENT_MCP_SERVER_MESSAGE_ENDPOINT:/mcp/message}
+      name: ${AGENT_MCP_SERVER_NAME:java-agent}
+      version: ${AGENT_MCP_SERVER_VERSION:1.0.0}
   
   # ─── Gateway ───
   gateway:

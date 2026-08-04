@@ -224,6 +224,7 @@ public class AgentProperties {
     public static class McpProperties {
         private boolean enabled = false;
         private final List<ServerProperties> servers = new ArrayList<>();
+        private final Server server = new Server();
 
         @Getter @Setter
         public static class ServerProperties {
@@ -234,6 +235,23 @@ public class AgentProperties {
             private final Map<String, String> env = new HashMap<>();
             private String baseUrl = "";
             private int timeoutSeconds = 30;
+        }
+
+        /** MCP server mode: expose the agent's own tools to external MCP clients. */
+        @Getter @Setter
+        public static class Server {
+            /** Whether the MCP server is enabled (default false). */
+            private boolean enabled = false;
+            /** Transport: "stdio" or "sse". */
+            private String transport = "stdio";
+            /** SSE endpoint path (default "/mcp/sse"). */
+            private String sseEndpoint = "/mcp/sse";
+            /** SSE message endpoint path (default "/mcp/message"). */
+            private String messageEndpoint = "/mcp/message";
+            /** Server name reported to MCP clients. */
+            private String name = "java-agent";
+            /** Server version reported to MCP clients. */
+            private String version = "1.0.0";
         }
     }
 
