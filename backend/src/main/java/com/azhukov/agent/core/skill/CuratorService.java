@@ -2,8 +2,16 @@ package com.azhukov.agent.core.skill;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.memory.ReviewToolSchemas;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.Role;
+import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.model.ToolCall;
+import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.tool.ToolExecutionService;
+import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.persistence.entity.SkillEntity;
 import com.azhukov.agent.persistence.repository.SkillRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,6 +62,8 @@ public class CuratorService {
  private final AgentProperties properties;
  private final ModelClient modelClient;
  private final CuratorBackupService backupService;
+ private final ToolExecutionService toolExecutionService;
+ private final ToolRegistry toolRegistry;
  private final ObjectMapper objectMapper;
 
  private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -123,22 +133,41 @@ public class CuratorService {
 
  /** Manual constructor for tests — no LLM, no backup. */
  public CuratorService(SkillRepository skillRepository, AgentProperties properties) {
- this.skillRepository = skillRepository;
- this.properties = properties;
- this.modelClient = null;
- this.backupService = null;
- this.objectMapper = new ObjectMapper();
+     this.skillRepository = skillRepository;
+     this.properties = properties;
+     this.modelClient = null;
+     this.backupService = null;
+     this.toolExecutionService = null;
+     this.toolRegistry = null;
+     this.objectMapper = new ObjectMapper();
  }
 
  /** Full constructor with LLM and backup support. */
  @org.springframework.beans.factory.annotation.Autowired
  public CuratorService(SkillRepository skillRepository, AgentProperties properties,
- ModelClient modelClient, CuratorBackupService backupService) {
- this.skillRepository = skillRepository;
- this.properties = properties;
- this.modelClient = modelClient;
- this.backupService = backupService;
- this.objectMapper = new ObjectMapper();
+         ModelClient modelClient, CuratorBackupService backupService,
+         org.springframework.beans.factory.ObjectProvider<ToolExecutionService> toolExecutionServiceProvider,
+         org.springframework.beans.factory.ObjectProvider<ToolRegistry> toolRegistryProvider) {
+     this.skillRepository = skillRepository;
+     this.properties = properties;
+     this.modelClient = modelClient;
+     this.backupService = backupService;
+     this.toolExecutionService = toolExecutionServiceProvider != null ? toolExecutionServiceProvider.getIfAvailable() : null;
+     this.toolRegistry = toolRegistryProvider != null ? toolRegistryProvider.getIfAvailable() : null;
+     this.objectMapper = new ObjectMapper();
+ }
+
+ /** Test constructor with tool execution support. */
+ public CuratorService(SkillRepository skillRepository, AgentProperties properties,
+         ModelClient modelClient, CuratorBackupService backupService,
+         ToolExecutionService toolExecutionService, ToolRegistry toolRegistry) {
+     this.skillRepository = skillRepository;
+     this.properties = properties;
+     this.modelClient = modelClient;
+     this.backupService = backupService;
+     this.toolExecutionService = toolExecutionService;
+     this.toolRegistry = toolRegistry;
+     this.objectMapper = new ObjectMapper();
  }
 
  // ── S5: State persistence ───────────────────────────────────────────
@@ -497,18 +526,152 @@ public class CuratorService {
  * S5: Uses the detailed ~140-line prompt from the original project's curator.py.
  */
  private List<ConsolidationSuggestion> runLlmConsolidation(List<SkillEntity> skills) {
- try {
- String prompt = buildConsolidationPrompt(skills);
- List<Message> messages = List.of(
- Message.system(CURATOR_REVIEW_PROMPT),
- Message.user(prompt)
- );
- ChatResponse response = modelClient.complete(messages, List.of());
- return parseConsolidationResponse(response.content(), skills);
- } catch (Exception e) {
- log.warn("LLM consolidation failed, falling back to heuristic: {}", e.getMessage());
- return findConsolidationOpportunities(skills);
+     try {
+         // S17: Try agent loop with tool-use first; fall back to single-call if unavailable
+         if (toolExecutionService != null && toolRegistry != null) {
+             ConsolidationLoopResult loopResult = runAgentConsolidationLoop(skills);
+             if (loopResult != null) {
+                 log.info("Curator agent loop completed: {} tool calls, {} iterations",
+                         loopResult.toolCalls().size(), loopResult.iterations());
+                 return parseConsolidationResponse(loopResult.finalSummary(), skills);
+             }
+         }
+         // Fallback: single LLM call without tools
+         return runSingleCallConsolidation(skills);
+     } catch (Exception e) {
+         log.warn("LLM consolidation failed, falling back to heuristic: {}", e.getMessage());
+         return findConsolidationOpportunities(skills);
+     }
  }
+
+ /**
+  * S17: Legacy single-call consolidation (kept as fallback).
+  */
+ private List<ConsolidationSuggestion> runSingleCallConsolidation(List<SkillEntity> skills) {
+     String prompt = buildConsolidationPrompt(skills);
+     List<Message> messages = List.of(
+         Message.system(CURATOR_REVIEW_PROMPT),
+         Message.user(prompt)
+     );
+     ChatResponse response = modelClient.complete(messages, List.of());
+     return parseConsolidationResponse(response.content(), skills);
+ }
+
+ /**
+  * S17: Forked agent loop with iterative tool-use.
+  * <p>
+  * Sends the consolidation prompt to the LLM with tool definitions for
+  * skill_manage, skills_list, skill_view. If the LLM responds with tool
+  * calls, executes them via ToolExecutionService and feeds results back.
+  * Repeats up to maxCuratorIterations. Collects all tool calls for
+  * reconciliation.
+  *
+  * @return ConsolidationLoopResult with final summary and tool call list, or null on failure
+  */
+ ConsolidationLoopResult runAgentConsolidationLoop(List<SkillEntity> skills) {
+     if (modelClient == null) {
+         return null;
+     }
+
+     int maxIterations = properties.getCurator().getMaxCuratorIterations();
+     String prompt = buildConsolidationPrompt(skills);
+
+     // Build messages: system prompt + user prompt
+     List<Message> messages = new ArrayList<>();
+     messages.add(Message.system(CURATOR_REVIEW_PROMPT));
+     messages.add(Message.user(prompt));
+
+     // Get tool definitions — prefer the curated review schemas for consistency
+     List<ToolDefinition> tools = ReviewToolSchemas.build();
+
+     // Create a synthetic session for tool execution context
+     Session curatorSession = Session.create("curator-bot", "openai-compatible",
+             modelClient.getModelName() != null ? modelClient.getModelName() : "curator");
+
+     List<Map<String, Object>> allToolCalls = new ArrayList<>();
+     int iterations = 0;
+     String finalSummary = null;
+
+     log.debug("Starting curator agent loop with max {} iterations", maxIterations);
+
+     for (int iteration = 0; iteration < maxIterations; iteration++) {
+         iterations++;
+         ChatResponse response;
+         try {
+             response = modelClient.complete(messages, tools);
+         } catch (Exception e) {
+             log.warn("Curator agent loop: model call failed at iteration {}: {}", iteration, e.getMessage());
+             if (iteration == 0) {
+                 // First call failed — can't proceed at all
+                 return null;
+             }
+             // Subsequent failure — use what we have so far
+             break;
+         }
+
+         if (!response.hasToolCalls()) {
+             // No tool calls — model is done, extract final summary
+             finalSummary = response.content();
+             log.debug("Curator agent loop completed at iteration {} (no more tool calls)", iteration);
+             break;
+         }
+
+         // Build assistant message with tool calls and add to conversation
+         Message assistantMsg = Message.assistantWithToolCalls(
+             response.content() != null ? response.content() : "",
+             response.toolCalls(),
+             iteration
+         );
+         messages.add(assistantMsg);
+
+         // Execute each tool call and collect results
+         for (ToolCall call : response.toolCalls()) {
+             // Record tool call for reconciliation
+             Map<String, Object> recordedCall = new LinkedHashMap<>();
+             recordedCall.put("name", call.name());
+             recordedCall.put("arguments", call.arguments());
+             recordedCall.put("id", call.id());
+             allToolCalls.add(recordedCall);
+
+             ToolResult result;
+             try {
+                 result = toolExecutionService.execute(
+                     call.name(), call.id(), call.arguments(),
+                     assistantMsg, curatorSession, null
+                 );
+             } catch (Exception e) {
+                 log.warn("Curator agent loop: tool {} execution failed: {}", call.name(), e.getMessage());
+                 result = ToolResult.fail("Tool execution failed: " + e.getMessage());
+             }
+
+             // Add tool result to conversation
+             messages.add(Message.toolResult(call.id(), result.content(), iteration));
+
+             log.debug("Curator agent loop iteration {}: executed tool {} → success={}",
+                     iteration, call.name(), result.success());
+         }
+     }
+
+     // If we hit max iterations without a final summary, use last assistant content
+     if (finalSummary == null && !messages.isEmpty()) {
+         // Find the last assistant message
+         for (int i = messages.size() - 1; i >= 0; i--) {
+             Message m = messages.get(i);
+             if (m.role() == Role.ASSISTANT && m.content() != null && !m.content().isBlank()) {
+                 finalSummary = m.content();
+                 break;
+             }
+         }
+     }
+
+     if (finalSummary == null) {
+         finalSummary = "";
+     }
+
+     log.info("Curator agent loop finished: {} iterations, {} tool calls collected",
+             iterations, allToolCalls.size());
+
+     return new ConsolidationLoopResult(finalSummary, allToolCalls, iterations);
  }
 
  /**
@@ -911,10 +1074,20 @@ public class CuratorService {
  ) {}
 
  /**
- * S5: Reconciliation result — consolidated vs pruned skills.
- */
+  * S5: Reconciliation result — consolidated vs pruned skills.
+  */
  public record ReconciliationResult(
- List<ReconciliationEntry> consolidated,
- List<ReconciliationEntry> pruned
+     List<ReconciliationEntry> consolidated,
+     List<ReconciliationEntry> pruned
  ) {}
-}
+
+ /**
+  * S17: Result of the curator agent consolidation loop.
+  * Contains the final summary text and all tool calls made during the loop.
+  */
+ public record ConsolidationLoopResult(
+     String finalSummary,
+     List<Map<String, Object>> toolCalls,
+     int iterations
+ ) {}
+ }

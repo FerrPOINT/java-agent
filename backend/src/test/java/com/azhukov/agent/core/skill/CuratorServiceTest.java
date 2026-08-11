@@ -4,6 +4,11 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.ToolCall;
+import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.tool.ToolExecutionService;
+import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.persistence.entity.SkillEntity;
 import com.azhukov.agent.persistence.repository.SkillRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +27,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -33,6 +39,8 @@ class CuratorServiceTest {
     @Mock private SkillRepository skillRepository;
     @Mock private ModelClient modelClient;
     @Mock private CuratorBackupService backupService;
+    @Mock private ToolExecutionService toolExecutionService;
+    @Mock private ToolRegistry toolRegistry;
 
     private AgentProperties properties;
 
@@ -462,7 +470,7 @@ class CuratorServiceTest {
             """;
         when(modelClient.complete(any(), any())).thenReturn(ChatResponse.text(llmResponse));
 
-        CuratorService service = new CuratorService(skillRepository, properties, modelClient, backupService);
+        CuratorService service = new CuratorService(skillRepository, properties, modelClient, backupService, (ToolExecutionService) null, (ToolRegistry) null);
         var report = service.runCycle();
 
         assertThat(report.consolidationSuggestions()).hasSize(2);
@@ -477,7 +485,7 @@ class CuratorServiceTest {
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
         when(modelClient.complete(any(), any())).thenThrow(new RuntimeException("LLM unavailable"));
 
-        CuratorService service = new CuratorService(skillRepository, properties, modelClient, backupService);
+        CuratorService service = new CuratorService(skillRepository, properties, modelClient, backupService, (ToolExecutionService) null, (ToolRegistry) null);
         var report = service.runCycle();
 
         assertThat(report.consolidationSuggestions()).hasSize(1);
@@ -492,7 +500,7 @@ class CuratorServiceTest {
         when(backupService.createSnapshot(any())).thenReturn(
             new CuratorBackupService.CuratorSnapshot(UUID.randomUUID(), "curator-cycle", Instant.now(), 1));
 
-        CuratorService service = new CuratorService(skillRepository, properties, modelClient, backupService);
+        CuratorService service = new CuratorService(skillRepository, properties, modelClient, backupService, (ToolExecutionService) null, (ToolRegistry) null);
         service.runCycle();
 
         verify(backupService).createSnapshot("curator-cycle");
@@ -516,7 +524,7 @@ class CuratorServiceTest {
         UUID snapshotId = UUID.randomUUID();
         when(backupService.rollback(snapshotId)).thenReturn(true);
 
-        CuratorService service = new CuratorService(skillRepository, properties, modelClient, backupService);
+        CuratorService service = new CuratorService(skillRepository, properties, modelClient, backupService, (ToolExecutionService) null, (ToolRegistry) null);
         boolean result = service.rollback(snapshotId);
 
         assertThat(result).isTrue();
@@ -541,7 +549,7 @@ class CuratorServiceTest {
         when(backupService.listSnapshots()).thenReturn(List.of(
             new CuratorBackupService.CuratorSnapshot(UUID.randomUUID(), "test", Instant.now(), 5)
         ));
-        CuratorService service = new CuratorService(skillRepository, properties, modelClient, backupService);
+        CuratorService service = new CuratorService(skillRepository, properties, modelClient, backupService, (ToolExecutionService) null, (ToolRegistry) null);
         assertThat(service.listSnapshots()).hasSize(1);
     }
 
@@ -609,6 +617,340 @@ class CuratorServiceTest {
         // and no exception is thrown.
         service.start();
         assertThat(service.isStarted()).isTrue();
+    }
+
+    // ── S17: Agent loop tests ──────────────────────────────────────────
+
+    @Test
+    void agentLoop_withToolCalls_executesAndCollects() {
+        SkillEntity s1 = makeSkill("browser-navigate", Instant.now());
+        SkillEntity s2 = makeSkill("browser-click", Instant.now());
+        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // First LLM response: tool call to skills_list
+        ChatResponse toolCallResponse = new ChatResponse("Let me list skills",
+            List.of(new ToolCall("call-1", "skills_list", "{}")));
+        // Second LLM response: final summary with YAML
+        String yamlSummary = """
+            ```yaml
+            consolidations:
+              - from: browser-navigate
+                into: browser-umbrella
+                reason: Both deal with browser, should be one skill
+              - from: browser-click
+                into: browser-umbrella
+                reason: Click is a navigation action
+            prunings: []
+            ```
+            """;
+        ChatResponse finalResponse = ChatResponse.text(yamlSummary);
+
+        when(modelClient.complete(any(), any()))
+            .thenReturn(toolCallResponse)
+            .thenReturn(finalResponse);
+        when(toolExecutionService.execute(eq("skills_list"), eq("call-1"), any(), any(), any(), any()))
+            .thenReturn(ToolResult.ok("[\"browser-navigate\", \"browser-click\"]"));
+
+        CuratorService service = new CuratorService(skillRepository, properties,
+            modelClient, backupService, toolExecutionService, toolRegistry);
+        var report = service.runCycle();
+
+        assertThat(report.consolidationSuggestions()).hasSize(2);
+        assertThat(report.consolidationSuggestions().get(0).suggestedUmbrellaName()).isEqualTo("browser-umbrella");
+        verify(toolExecutionService, times(1)).execute(eq("skills_list"), eq("call-1"), any(), any(), any(), any());
+    }
+
+    @Test
+    void agentLoop_noToolCalls_immediatelyReturnsSummary() {
+        SkillEntity s1 = makeSkill("test-skill", Instant.now());
+        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        String yamlSummary = """
+            ```yaml
+            consolidations: []
+            prunings: []
+            ```
+            """;
+        when(modelClient.complete(any(), any())).thenReturn(ChatResponse.text(yamlSummary));
+
+        CuratorService service = new CuratorService(skillRepository, properties,
+            modelClient, backupService, toolExecutionService, toolRegistry);
+        var report = service.runCycle();
+
+        assertThat(report.consolidationSuggestions()).isEmpty();
+        verify(toolExecutionService, never()).execute(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void agentLoop_multipleToolCalls_executesAllInOrder() {
+        SkillEntity s1 = makeSkill("skill-a", Instant.now());
+        SkillEntity s2 = makeSkill("skill-b", Instant.now());
+        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // First response: two parallel tool calls
+        ChatResponse firstResponse = new ChatResponse("Analyzing",
+            List.of(
+                new ToolCall("call-1", "skill_view", "{\"name\":\"skill-a\"}"),
+                new ToolCall("call-2", "skill_view", "{\"name\":\"skill-b\"}")
+            ));
+        // Second response: skill_manage patch
+        ChatResponse secondResponse = new ChatResponse("Patching",
+            List.of(new ToolCall("call-3", "skill_manage",
+                "{\"action\":\"patch\",\"name\":\"skill-a\",\"content\":\"updated\"}")));
+        // Third response: final summary
+        ChatResponse finalResponse = ChatResponse.text("""
+            ```yaml
+            consolidations:
+              - from: skill-b
+                into: skill-a
+                reason: Merged B into A
+            prunings: []
+            ```
+            """);
+
+        when(modelClient.complete(any(), any()))
+            .thenReturn(firstResponse)
+            .thenReturn(secondResponse)
+            .thenReturn(finalResponse);
+
+        when(toolExecutionService.execute(eq("skill_view"), eq("call-1"), any(), any(), any(), any()))
+            .thenReturn(ToolResult.ok("Content of skill-a"));
+        when(toolExecutionService.execute(eq("skill_view"), eq("call-2"), any(), any(), any(), any()))
+            .thenReturn(ToolResult.ok("Content of skill-b"));
+        when(toolExecutionService.execute(eq("skill_manage"), eq("call-3"), any(), any(), any(), any()))
+            .thenReturn(ToolResult.ok("Skill patched"));
+
+        CuratorService service = new CuratorService(skillRepository, properties,
+            modelClient, backupService, toolExecutionService, toolRegistry);
+        var report = service.runCycle();
+
+        assertThat(report.consolidationSuggestions()).hasSize(1);
+        assertThat(report.consolidationSuggestions().get(0).suggestedUmbrellaName()).isEqualTo("skill-a");
+        verify(toolExecutionService, times(3)).execute(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void agentLoop_respectsMaxIterations() {
+        properties.getCurator().setMaxCuratorIterations(3);
+        SkillEntity s1 = makeSkill("test-skill", Instant.now());
+        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // Every response returns a tool call — loop should stop at maxIterations
+        ChatResponse alwaysToolCall = new ChatResponse("",
+            List.of(new ToolCall("call-" + System.nanoTime(), "skills_list", "{}")));
+        when(modelClient.complete(any(), any())).thenReturn(alwaysToolCall);
+        when(toolExecutionService.execute(any(), any(), any(), any(), any(), any()))
+            .thenReturn(ToolResult.ok("[]"));
+
+        CuratorService service = new CuratorService(skillRepository, properties,
+            modelClient, backupService, toolExecutionService, toolRegistry);
+        var report = service.runCycle();
+
+        // Should have stopped at 3 iterations, not infinite loop
+        verify(modelClient, atMost(3)).complete(any(), any());
+        verify(toolExecutionService, atMost(3)).execute(any(), any(), any(), any(), any(), any());
+        // Still returns a report (consolidation will fall back to heuristic since no YAML)
+        assertThat(report).isNotNull();
+    }
+
+    @Test
+    void agentLoop_modelFailureOnFirstCall_returnsNullAndFallsBack() {
+        SkillEntity s1 = makeSkill("browser-navigate", Instant.now());
+        SkillEntity s2 = makeSkill("browser-click", Instant.now());
+        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        when(modelClient.complete(any(), any())).thenThrow(new RuntimeException("Model unavailable"));
+
+        CuratorService service = new CuratorService(skillRepository, properties,
+            modelClient, backupService, toolExecutionService, toolRegistry);
+        var report = service.runCycle();
+
+        // Should fall back to heuristic consolidation
+        assertThat(report.consolidationSuggestions()).isNotEmpty();
+        assertThat(report.consolidationSuggestions().get(0).suggestedUmbrellaName()).isEqualTo("browser-umbrella");
+    }
+
+    @Test
+    void agentLoop_toolFailure_continuesLoop() {
+        SkillEntity s1 = makeSkill("test-skill", Instant.now());
+        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // First response: tool call that fails
+        ChatResponse firstResponse = new ChatResponse("",
+            List.of(new ToolCall("call-1", "skill_manage",
+                "{\"action\":\"delete\",\"name\":\"test-skill\"}")));
+        // Second response: final summary despite the failure
+        ChatResponse finalResponse = ChatResponse.text("""
+            ```yaml
+            consolidations: []
+            prunings:
+              - name: test-skill
+                reason: obsolete
+            ```
+            """);
+
+        when(modelClient.complete(any(), any()))
+            .thenReturn(firstResponse)
+            .thenReturn(finalResponse);
+        when(toolExecutionService.execute(eq("skill_manage"), eq("call-1"), any(), any(), any(), any()))
+            .thenReturn(ToolResult.fail("Permission denied"));
+
+        CuratorService service = new CuratorService(skillRepository, properties,
+            modelClient, backupService, toolExecutionService, toolRegistry);
+        var report = service.runCycle();
+
+        // The loop should continue despite tool failure
+        verify(toolExecutionService, times(1)).execute(any(), any(), any(), any(), any(), any());
+        // The parsing should still work on the final summary
+        assertThat(report).isNotNull();
+    }
+
+    @Test
+    void agentLoop_toolExecutionException_continuesLoop() {
+        SkillEntity s1 = makeSkill("test-skill", Instant.now());
+        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        ChatResponse firstResponse = new ChatResponse("",
+            List.of(new ToolCall("call-1", "skills_list", "{}")));
+        ChatResponse finalResponse = ChatResponse.text("""
+            ```yaml
+            consolidations: []
+            prunings: []
+            ```
+            """);
+
+        when(modelClient.complete(any(), any()))
+            .thenReturn(firstResponse)
+            .thenReturn(finalResponse);
+        // Tool execution throws — should be caught and continue
+        when(toolExecutionService.execute(any(), any(), any(), any(), any(), any()))
+            .thenThrow(new RuntimeException("Tool crashed"));
+
+        CuratorService service = new CuratorService(skillRepository, properties,
+            modelClient, backupService, toolExecutionService, toolRegistry);
+        var report = service.runCycle();
+
+        assertThat(report).isNotNull();
+        verify(toolExecutionService, times(1)).execute(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void agentLoop_collectsToolCallsForReconciliation() {
+        SkillEntity s1 = makeSkill("old-skill", Instant.now());
+
+        // First: skill_manage delete with absorbed_into
+        ChatResponse firstResponse = new ChatResponse("",
+            List.of(new ToolCall("call-1", "skill_manage",
+                "{\"action\":\"delete\",\"name\":\"old-skill\",\"absorbed_into\":\"umbrella-skill\"}")));
+        // Final: summary
+        ChatResponse finalResponse = ChatResponse.text("""
+            ```yaml
+            consolidations:
+              - from: old-skill
+                into: umbrella-skill
+                reason: absorbed
+            prunings: []
+            ```
+            """);
+
+        when(modelClient.complete(any(), any()))
+            .thenReturn(firstResponse)
+            .thenReturn(finalResponse);
+        when(toolExecutionService.execute(any(), any(), any(), any(), any(), any()))
+            .thenReturn(ToolResult.ok("Deleted"));
+
+        CuratorService service = new CuratorService(skillRepository, properties,
+            modelClient, backupService, toolExecutionService, toolRegistry);
+
+        // Run the agent loop directly to get the ConsolidationLoopResult
+        var loopResult = service.runAgentConsolidationLoop(List.of(s1));
+
+        assertThat(loopResult).isNotNull();
+        assertThat(loopResult.toolCalls()).hasSize(1);
+        assertThat(loopResult.toolCalls().get(0).get("name")).isEqualTo("skill_manage");
+
+        // Verify the collected tool calls can be used for absorbed_into extraction
+        Map<String, String> absorbed = service.extractAbsorbedIntoDeclarations(loopResult.toolCalls());
+        assertThat(absorbed.get("old-skill")).isEqualTo("umbrella-skill");
+    }
+
+    @Test
+    void agentLoop_withoutToolServices_fallsBackToSingleCall() {
+        SkillEntity s1 = makeSkill("browser-navigate", Instant.now());
+        SkillEntity s2 = makeSkill("browser-click", Instant.now());
+        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        String llmResponse = """
+            ```yaml
+            consolidations:
+              - from: browser-navigate
+                into: browser-umbrella
+                reason: Both deal with browser
+              - from: browser-click
+                into: browser-umbrella
+                reason: Click is navigation
+            prunings: []
+            ```
+            """;
+        when(modelClient.complete(any(), any())).thenReturn(ChatResponse.text(llmResponse));
+
+        // Constructor with null tool services — should fall back to single-call
+        CuratorService service = new CuratorService(skillRepository, properties,
+            modelClient, backupService, (ToolExecutionService) null, (ToolRegistry) null);
+        var report = service.runCycle();
+
+        assertThat(report.consolidationSuggestions()).hasSize(2);
+        verify(toolExecutionService, never()).execute(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void agentLoop_modelFailureOnSecondCall_usesPartialResult() {
+        SkillEntity s1 = makeSkill("test-skill", Instant.now());
+        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1));
+        lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // First response: tool call succeeds
+        ChatResponse firstResponse = new ChatResponse("Let me list",
+            List.of(new ToolCall("call-1", "skills_list", "{}")));
+        // Second response: model fails
+        when(modelClient.complete(any(), any()))
+            .thenReturn(firstResponse)
+            .thenThrow(new RuntimeException("Model crashed on second call"));
+        when(toolExecutionService.execute(any(), any(), any(), any(), any(), any()))
+            .thenReturn(ToolResult.ok("[]"));
+
+        CuratorService service = new CuratorService(skillRepository, properties,
+            modelClient, backupService, toolExecutionService, toolRegistry);
+
+        // Should not throw — fall back to heuristic
+        var report = service.runCycle();
+        assertThat(report).isNotNull();
+    }
+
+    @Test
+    void maxCuratorIterations_defaultIs10() {
+        assertThat(properties.getCurator().getMaxCuratorIterations()).isEqualTo(10);
+    }
+
+    @Test
+    void maxCuratorIterations_canBeConfigured() {
+        properties.getCurator().setMaxCuratorIterations(5);
+        assertThat(properties.getCurator().getMaxCuratorIterations()).isEqualTo(5);
+    }
+
+    @Test
+    void runAgentConsolidationLoop_returnsNullWhenNoModelClient() {
+        CuratorService service = new CuratorService(skillRepository, properties);
+        var result = service.runAgentConsolidationLoop(List.of());
+        assertThat(result).isNull();
     }
 
     private SkillEntity makeSkill(String name, Instant lastActivity) {

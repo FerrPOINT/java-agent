@@ -448,5 +448,7 @@ public class AgentProperties {
         private boolean dryRun = false;
         /** Number of backups to keep (default 5). */
         private int backupKeep = 5;
+        /** Maximum iterations for the curator agent loop (default 10). */
+        private int maxCuratorIterations = 10;
     }
 }
