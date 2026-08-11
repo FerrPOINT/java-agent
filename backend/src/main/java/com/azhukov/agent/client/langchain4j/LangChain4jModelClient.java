@@ -288,9 +288,21 @@ public class LangChain4jModelClient implements ModelClient {
             .toolSpecifications(specs)
             .maxCompletionTokens(fastMode ? Math.min(maxTokens, 2048) : maxTokens);
         if (reasoningEffort > 0 && !fastMode) {
-            builder.reasoningEffort(String.valueOf(reasoningEffort));
+            builder.reasoningEffort(effortToString(reasoningEffort));
         }
         return builder.build();
+    }
+
+    /**
+     * Map numeric reasoning effort (0-100) back to API string values.
+     * Ollama Cloud / kimi expects: none, low, medium, high, max.
+     */
+    private String effortToString(int effort) {
+        if (effort <= 0) return "none";
+        if (effort <= 40) return "low";
+        if (effort <= 70) return "medium";
+        if (effort <= 90) return "high";
+        return "max";
     }
 
     /**

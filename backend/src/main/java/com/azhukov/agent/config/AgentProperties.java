@@ -61,7 +61,7 @@ public class AgentProperties {
         private int maxTokens = 4096;
         private double temperature = 0.7;
         private final Map<String, String> headers = new HashMap<>();
-        private int reasoningEffort = 100;
+        private int reasoningEffort = 70;
         private boolean fastMode = false;
     }
 
