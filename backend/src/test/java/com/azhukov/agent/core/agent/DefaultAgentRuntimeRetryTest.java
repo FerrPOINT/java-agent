@@ -16,7 +16,6 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.core.prompt.PromptBuilder;
-import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
@@ -239,7 +238,7 @@ class DefaultAgentRuntimeRetryTest {
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         runtime.runTurn(session, "Hello");
 
-        verify(turnFinalizer).finalize(any(UUID.class), any(List.class), org.mockito.ArgumentMatchers.eq(false));
+        verify(turnFinalizer).finalize(any(UUID.class), any(List.class), org.mockito.ArgumentMatchers.eq(false), any(TurnExitReason.class));
     }
 
     // ─── Successful path works normally ───
@@ -256,7 +255,7 @@ class DefaultAgentRuntimeRetryTest {
         assertThat(result.completed()).isTrue();
         assertThat(result.error()).isNull();
         verify(modelClient, times(1)).complete(any(List.class), any(List.class), any());
-        verify(turnFinalizer).finalize(any(UUID.class), any(List.class), org.mockito.ArgumentMatchers.eq(true));
+        verify(turnFinalizer).finalize(any(UUID.class), any(List.class), org.mockito.ArgumentMatchers.eq(true), any(TurnExitReason.class));
     }
 
     // ─── Retry succeeds on second call ───

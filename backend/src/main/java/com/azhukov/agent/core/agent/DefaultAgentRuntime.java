@@ -185,7 +185,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             if (guardrail.isHalted()) {
                 turnMessages.add(Message.assistant("Turn halted by guardrails.", turnIndex));
                 if (turnFinalizer != null) {
-                    turnFinalizer.finalize(session.id(), turnMessages, false);
+                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.GUARDRAIL_HALTED);
                 }
                 return new TurnResult(turnMessages, true, null);
             }
@@ -194,7 +194,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     session.id(), budget.modelCalls(), budget.toolExecutions());
                 turnMessages.add(Message.assistant("Iteration budget exhausted. Stopping to avoid runaway loop.", turnIndex));
                 if (turnFinalizer != null) {
-                    turnFinalizer.finalize(session.id(), turnMessages, false);
+                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.BUDGET_EXHAUSTED);
                 }
                 return new TurnResult(turnMessages, true, null);
             }
@@ -215,7 +215,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             } catch (Exception e) {
                 log.error("Model call failed after retries", e);
                 if (turnFinalizer != null) {
-                    turnFinalizer.finalize(session.id(), turnMessages, false);
+                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.MODEL_CALL_FAILED);
                 }
                 return TurnResult.error("Model call failed: " + e.getMessage());
             }
@@ -224,8 +224,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
                 log.debug("Turn {} completed without tool calls", i);
                 triggerBackgroundReview(session, turnMessages);
+                TurnExitReason reason = (response.content() == null || response.content().isBlank())
+                    ? TurnExitReason.EMPTY_RESPONSE : TurnExitReason.COMPLETED;
                 if (turnFinalizer != null) {
-                    turnFinalizer.finalize(session.id(), turnMessages, true);
+                    turnFinalizer.finalize(session.id(), turnMessages, true, reason);
                 }
                 return new TurnResult(turnMessages, true, null);
             }
@@ -244,7 +246,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     log.info("Turn cancelled by interrupt for session {}", session.id());
                     turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
                     if (turnFinalizer != null) {
-                        turnFinalizer.finalize(session.id(), turnMessages, false);
+                        turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
                     }
                     return new TurnResult(turnMessages, true, null);
                 }
@@ -291,7 +293,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     log.info("Turn cancelled by interrupt for session {}", session.id());
                     turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
                     if (turnFinalizer != null) {
-                        turnFinalizer.finalize(session.id(), turnMessages, false);
+                        turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
                     }
                     return new TurnResult(turnMessages, true, null);
                 }
@@ -303,7 +305,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     log.info("Turn cancelled by interrupt after parallel tool execution for session {}", session.id());
                     turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
                     if (turnFinalizer != null) {
-                        turnFinalizer.finalize(session.id(), turnMessages, false);
+                        turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
                     }
                     return new TurnResult(turnMessages, true, null);
                 }
@@ -322,7 +324,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         }
 
         if (turnFinalizer != null) {
-            turnFinalizer.finalize(session.id(), turnMessages, false);
+            turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.MAX_TURNS_REACHED);
         }
         return TurnResult.error("Reached max turns without completion");
     }

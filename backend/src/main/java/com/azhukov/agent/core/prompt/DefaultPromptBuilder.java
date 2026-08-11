@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Builds the system prompt in three tiers for cache-friendliness:
@@ -37,6 +38,56 @@ public class DefaultPromptBuilder implements PromptBuilder {
      * a {@link Role#DEVELOPER} message instead of {@link Role#SYSTEM}.
      */
     static final Set<String> DEVELOPER_ROLE_MODELS = Set.of("gpt-5", "codex");
+
+    // ── Model family detection prefixes (Fix 9: per-model operational guidance) ──
+
+    /** Model name prefixes indicating OpenAI family (GPT, o1/o3 reasoning, Codex). */
+    static final Set<String> OPENAI_FAMILY_PREFIXES = Set.of("gpt", "o1", "o3", "codex");
+
+    /** Model name prefixes indicating Google family (Gemini, Gemma). */
+    static final Set<String> GOOGLE_FAMILY_PREFIXES = Set.of("gemini", "gemma");
+
+    /** Placeholder used when prompt injection is detected in context file content. */
+    static final String INJECTION_PLACEHOLDER = "[content removed: potential prompt injection]";
+
+    /**
+     * Common prompt-injection patterns found in context files (AGENTS.md, .cursorrules, SOUL.md).
+     * Matches are case-insensitive. Used by {@link #scanContextContent}.
+     */
+    static final List<Pattern> THREAT_PATTERNS = List.of(
+        Pattern.compile("(?i)ignore\\s+(all\\s+)?previous\\s+instructions"),
+        Pattern.compile("(?i)system\\s*prompt\\s*[:)]"),
+        Pattern.compile("(?i)you\\s+are\\s+now\\s"),
+        Pattern.compile("(?i)</\\s*system\\s*>"),
+        Pattern.compile("(?i)disregard\\s+(all\\s+)?(previous\\s+)?(instructions|rules)"),
+        Pattern.compile("(?i)forget\\s+(everything|all\\s+(previous\\s+)?instructions)"),
+        Pattern.compile("(?i)new\\s+instructions?\\s*[:)]"),
+        Pattern.compile("(?i)override\\s+(system|previous|all)\\s+(instructions?|rules|prompts?)")
+    );
+
+    /**
+     * Operational guidance for OpenAI models (GPT, o1/o3, Codex).
+     * Injected into the system prompt when the configured model belongs to the OpenAI family.
+     */
+    static final String OPENAI_MODEL_GUIDANCE = """
+        ## Model-Specific Guidance (OpenAI)
+        - **Tool persistence**: Once you start using a tool, continue using tools until the task is complete. Do not fall back to narration.
+        - **Act, don't ask**: When you have enough context to act, call tools immediately. Do not ask for permission to use tools that are already available.
+        - **Prerequisite checks**: Before calling a tool, verify its preconditions (e.g., file exists, dependencies installed). Use other tools to check first.
+        - **Verification before claiming done**: After performing actions, verify the results by reading output, running tests, or checking state. Never claim a task is complete without verification.
+        - **Missing context**: If you lack information needed to proceed, use tools to gather it rather than asking the user. Only ask when tool-based discovery is impossible.""";
+
+    /**
+     * Operational guidance for Google models (Gemini, Gemma).
+     * Injected into the system prompt when the configured model belongs to the Google family.
+     */
+    static final String GOOGLE_MODEL_GUIDANCE = """
+        ## Model-Specific Guidance (Google)
+        - **Absolute paths**: Always use absolute file paths in tool calls. Relative paths may not resolve correctly.
+        - **Verify first**: Before making changes, verify the current state by reading files or checking existing output. Do not assume state from prior context.
+        - **Dependency checks**: Before running builds, tests, or scripts, verify required dependencies are installed and available.
+        - **Conciseness**: Keep responses concise. Avoid restating the task or summarizing what you will do — just do it.
+        - **Parallel tool calls**: When multiple independent tool calls are needed, batch them in a single turn for efficiency.""";
 
     private final AgentProperties properties;
     private final ToolRegistry toolRegistry;
@@ -134,6 +185,69 @@ public class DefaultPromptBuilder implements PromptBuilder {
     }
 
     /**
+     * Detect the model family from the configured model name.
+     *
+     * @return "openai" for GPT/o1/o3/Codex models, "google" for Gemini/Gemma models,
+     *         or null for unrecognized families.
+     */
+    String detectModelFamily() {
+        String modelName = properties.getModel().getModelName();
+        if (modelName == null || modelName.isBlank()) {
+            return null;
+        }
+        String lower = modelName.toLowerCase();
+        if (OPENAI_FAMILY_PREFIXES.stream().anyMatch(lower::startsWith)) {
+            return "openai";
+        }
+        if (GOOGLE_FAMILY_PREFIXES.stream().anyMatch(lower::startsWith)) {
+            return "google";
+        }
+        return null;
+    }
+
+    /**
+     * Get the operational guidance text for the configured model family,
+     * or empty string if the family is unrecognized.
+     */
+    String getModelGuidance() {
+        String family = detectModelFamily();
+        if (family == null) {
+            return "";
+        }
+        return switch (family) {
+            case "openai" -> OPENAI_MODEL_GUIDANCE;
+            case "google" -> GOOGLE_MODEL_GUIDANCE;
+            default -> "";
+        };
+    }
+
+    /**
+     * Scan context file content for prompt injection patterns.
+     * If detected, the offending content is replaced with a placeholder and a warning is logged.
+     *
+     * @param content  the raw content of the context file (e.g. AGENTS.md, .cursorrules, SOUL.md)
+     * @param fileName the file name for logging purposes
+     * @return the content with prompt injection patterns replaced by a placeholder
+     */
+    String scanContextContent(String content, String fileName) {
+        if (content == null || content.isBlank()) {
+            return content;
+        }
+        String result = content;
+        boolean detected = false;
+        for (Pattern pattern : THREAT_PATTERNS) {
+            if (pattern.matcher(result).find()) {
+                result = pattern.matcher(result).replaceAll(INJECTION_PLACEHOLDER);
+                detected = true;
+            }
+        }
+        if (detected) {
+            log.warn("Potential prompt injection detected in context file '{}'; offending content replaced with placeholder", fileName);
+        }
+        return result;
+    }
+
+    /**
      * Build a memory prefix that is prepended to the system prompt.
      * The three-tier prompt is cached separately via {@link PromptCacheTracker} and
      * remains byte-stable; this prefix is fetched fresh each turn and prepended after
@@ -177,10 +291,18 @@ public class DefaultPromptBuilder implements PromptBuilder {
         stable.append("10. **Parallel tool calls** — when multiple independent tools can run in parallel, call them together.\n");
         stable.append("11. **Error handling** — if a tool fails, try an alternative approach. Never fabricate results.\n");
 
+        // ── Model-specific operational guidance (Fix 9) ──
+        String modelGuidance = getModelGuidance();
+        if (!modelGuidance.isEmpty()) {
+            stable.append("\n").append(modelGuidance);
+        }
+
         // ── Context tier (changes on session events only) ──
         StringBuilder contextTier = new StringBuilder();
         if (systemMessageOverride != null && !systemMessageOverride.isBlank()) {
-            contextTier.append(systemMessageOverride).append("\n\n");
+            // Fix 10: Scan context file content for prompt injection before injection
+            String scanned = scanContextContent(systemMessageOverride, "systemMessageOverride");
+            contextTier.append(scanned).append("\n\n");
         }
 
         // Available toolsets and tools

@@ -161,6 +161,7 @@ class MemoryToolsUnitTest {
     @Test
     void todoToolCreatesTodo() {
         TodoTool tool = new TodoTool(todoRepository);
+        when(todoRepository.findByUserId(USER_ID)).thenReturn(List.of());
         String args = "{\"action\":\"create\",\"title\":\"Write tests\",\"priority\":\"high\",\"limit\":10}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
