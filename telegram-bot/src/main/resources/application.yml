@@ -18,7 +18,11 @@ spring:
     show-sql: false
 
   flyway:
-    enabled: false
+    enabled: true
+    locations: classpath:db/bot-migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    table: flyway_bot_schema_history
 
   threads:
     virtual:
