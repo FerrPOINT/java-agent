@@ -188,4 +188,86 @@ class CronJobServiceTest {
         verify(agentRuntimeService).runBackground("Do something plain", null);
         verifyNoInteractions(skillManager);
     }
+
+    // ── Human-readable interval tests ──
+
+    @Test
+    void createWithHumanReadableInterval_5m() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        CronJobEntity job = service.create("interval-job", "5m", "Run task", null);
+        assertThat(job.getSchedule()).isEqualTo("5m");
+        assertThat(job.isEnabled()).isTrue();
+    }
+
+    @Test
+    void createWithHumanReadableInterval_every2h() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        CronJobEntity job = service.create("interval-job", "every 2h", "Run task", null);
+        assertThat(job.getSchedule()).isEqualTo("every 2h");
+    }
+
+    @Test
+    void createWithHumanReadableInterval_30s() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        CronJobEntity job = service.create("interval-job", "30s", "Run task", null);
+        assertThat(job.getSchedule()).isEqualTo("30s");
+    }
+
+    @Test
+    void createWithHumanReadableInterval_1d() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        CronJobEntity job = service.create("interval-job", "1d", "Run task", null);
+        assertThat(job.getSchedule()).isEqualTo("1d");
+    }
+
+    @Test
+    void createWithInvalidSchedule_throwsException() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.create("bad-job", "not-a-schedule", "Run task", null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid");
+    }
+
+    @Test
+    void createWithNullSchedule_throwsException() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.create("null-schedule", null, "Run task", null))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void createWithBlankSchedule_throwsException() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.create("blank-schedule", "  ", "Run task", null))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void updateWithHumanReadableInterval() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("old-name");
+        job.setSchedule("0 * * * *");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        CronJobEntity updated = service.update(id, "new-name", "10m", "New prompt", null, true);
+        assertThat(updated.getSchedule()).isEqualTo("10m");
+    }
 }

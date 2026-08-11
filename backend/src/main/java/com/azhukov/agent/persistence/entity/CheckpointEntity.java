@@ -1,5 +1,6 @@
 package com.azhukov.agent.persistence.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -36,9 +37,11 @@ public class CheckpointEntity {
     @Column(name = "created_at")
     private Instant createdAt;
 
+    @JsonIgnore
     @Column(name = "files_json", columnDefinition = "TEXT")
     private String filesJson;
 
+    @JsonIgnore
     @OneToMany(mappedBy = "checkpoint", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<CheckpointFileEntity> files = new ArrayList<>();
 }

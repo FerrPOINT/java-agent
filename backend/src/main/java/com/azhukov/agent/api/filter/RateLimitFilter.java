@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class RateLimitFilter implements Filter {
 
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
-    private final int capacity = 60;
+    private final int capacity = 200;
     private final Duration period = Duration.ofMinutes(1);
     private final boolean skipHealthChecks = true;
 

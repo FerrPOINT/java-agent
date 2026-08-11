@@ -254,6 +254,12 @@ public class CronJobService {
     }
 
     private long calculateDelaySeconds(String cronExpression) {
+        // Try human-readable interval first
+        try {
+            return Math.max(1, parseIntervalSeconds(cronExpression));
+        } catch (Exception ignored) {
+            // Not a human-readable interval, try cron expression
+        }
         try {
             Cron cron = cronParser.parse(cronExpression);
             ExecutionTime executionTime = ExecutionTime.forCron(cron);
@@ -271,10 +277,51 @@ public class CronJobService {
     }
 
     private void validateCronExpression(String schedule) {
+        if (schedule == null || schedule.isBlank()) {
+            throw new IllegalArgumentException("Schedule cannot be null or blank");
+        }
+        // Try human-readable interval first (e.g. "every 5m", "every 2h", "30m", "1h")
+        if (tryParseInterval(schedule)) return;
+        // Fall back to standard cron expression
         try {
             cronParser.parse(schedule);
         } catch (Exception e) {
             throw new IllegalArgumentException("Invalid cron expression: " + schedule + " — " + e.getMessage());
         }
+    }
+
+    /**
+     * Try to parse a human-readable interval like "every 5m", "every 2h", "30m", "1h".
+     * @return true if parsed successfully, false otherwise
+     */
+    private boolean tryParseInterval(String schedule) {
+        try {
+            parseIntervalSeconds(schedule);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Parse a human-readable interval string into seconds.
+     * Supports: "every 5m", "every 2h", "every 30s", "5m", "2h", "30s", "1d".
+     * @return interval in seconds
+     */
+    private long parseIntervalSeconds(String schedule) {
+        String normalized = schedule.trim().toLowerCase().replaceAll("^every\\s+", "");
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("^(\\d+)\\s*([smhd])$").matcher(normalized);
+        if (!m.matches()) {
+            throw new IllegalArgumentException("Unrecognized interval format: " + schedule);
+        }
+        long value = Long.parseLong(m.group(1));
+        return switch (m.group(2)) {
+            case "s" -> value;
+            case "m" -> value * 60;
+            case "h" -> value * 3600;
+            case "d" -> value * 86400;
+            default -> throw new IllegalArgumentException("Unknown time unit: " + m.group(2));
+        };
     }
 }

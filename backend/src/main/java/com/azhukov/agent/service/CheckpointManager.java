@@ -205,6 +205,7 @@ public class CheckpointManager {
         }
     }
 
+    @Transactional
     public int prune(int maxSnapshots) {
         List<CheckpointEntity> all = checkpointRepository.findAll().stream()
             .sorted(Comparator.comparing(CheckpointEntity::getCreatedAt).reversed())
@@ -223,6 +224,7 @@ public class CheckpointManager {
         return toRemove;
     }
 
+    @Transactional
     public void remove(UUID id) {
         checkpointFileRepository.deleteByCheckpointId(id);
         checkpointRepository.deleteById(id);
