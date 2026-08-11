@@ -2,6 +2,9 @@ package com.azhukov.agent.bot.hooks;
 
 import lombok.extern.slf4j.Slf4j;
 
+import groovy.lang.Binding;
+import groovy.lang.GroovyShell;
+
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
@@ -78,28 +81,27 @@ public class EventHookRegistry {
         try {
             // Load manifest JSON
             String manifestContent = Files.readString(manifestPath);
-            // Simple JSON parse — we use Jackson if available, but this is lightweight
-            // For now, just parse with a minimal approach
             LoadedHook hook = parseManifest(hookDir, manifestContent);
             if (hook == null) {
                 return;
             }
 
-            // Note: in a real implementation, we'd dynamically load and execute
-            // the handler script. For the Java port, hooks are registered as
-            // BiConsumers programmatically. The discovery mechanism loads
-            // metadata and would need a script engine (Groovy) to execute handlers.
-            // For now, we store the metadata and log that the handler was found.
+            // Load the Groovy handler script source once at discovery time
+            String scriptSource = Files.readString(handlerPath);
+
             loadedHooks.add(hook);
             log.info("[hooks] Loaded hook '{}' for events: {}", hook.name(), hook.events());
 
-            // Register a handler that loads and executes the script
-            // In production this would use Groovy scripting engine
+            // Register a handler that executes the Groovy script for each event
             for (String event : hook.events()) {
                 register(event, (eventType, context) -> {
                     try {
-                        // Placeholder: in a full implementation, the handler.groovy
-                        // script would be loaded and executed here
+                        Binding binding = new Binding();
+                        binding.setVariable("eventType", eventType);
+                        binding.setVariable("context", context != null ? context : Map.of());
+                        binding.setVariable("hookName", hook.name());
+                        GroovyShell shell = new GroovyShell(binding);
+                        shell.evaluate(scriptSource);
                         log.debug("[hooks] Hook '{}' fired for event '{}'", hook.name(), eventType);
                     } catch (Exception e) {
                         log.warn("[hooks] Error in handler '{}' for '{}': {}", hook.name(), eventType, e.getMessage());

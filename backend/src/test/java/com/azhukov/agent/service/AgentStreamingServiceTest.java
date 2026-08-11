@@ -8,6 +8,8 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.budget.IterationBudget;
+import com.azhukov.agent.core.agent.InterruptToken;
+import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
@@ -144,7 +146,7 @@ class AgentStreamingServiceTest {
             contextEngine, objectMapper, usageTracker, properties,
             sessionRepository, messageRepository, transactionTemplate,
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
-            new RuntimeConfigService());
+            new RuntimeConfigService(), new InterruptToken(), new SteerBuffer());
     }
 
     @Test

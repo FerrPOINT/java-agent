@@ -28,9 +28,9 @@ import static org.mockito.Mockito.*;
 /**
  * Tests for {@link DefaultContextEngine} memory-related behavior.
  * <p>
- * After the three-tier prompt refactoring, memory is injected as a user message prefix
- * via {@link com.azhukov.agent.core.prompt.DefaultPromptBuilder#buildMemoryPrefix}, not
- * in the system prompt. These tests verify that DefaultContextEngine does NOT call
+ * After the three-tier prompt refactoring, memory is injected as a prefix to the
+ * system prompt via {@link com.azhukov.agent.core.prompt.DefaultPromptBuilder#buildMemoryPrefix},
+ * not by DefaultContextEngine. These tests verify that DefaultContextEngine does NOT call
  * memoryProvider during prepareContext, and that the system message is preserved as-is
  * (with only skills appended).
  */

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AgentPropertiesFullCoverageTest {
@@ -229,11 +230,25 @@ class AgentPropertiesFullCoverageTest {
         var p = new AgentProperties.DelegationProperties();
         p.setEnabled(false);
         p.setMaxDepth(5);
+        p.setMaxSpawnDepth(4);
+        p.setMaxConcurrentChildren(10);
         p.setDefaultTimeoutSeconds(600);
+        p.setChildTimeoutSeconds(120);
+        p.setOrchestratorEnabled(false);
+        p.setBlockedTools(List.of("custom_blocked_tool"));
 
         assertFalse(p.isEnabled());
         assertEquals(5, p.getMaxDepth());
+        assertEquals(4, p.getMaxSpawnDepth());
+        assertEquals(10, p.getMaxConcurrentChildren());
         assertEquals(600, p.getDefaultTimeoutSeconds());
+        assertEquals(120, p.getChildTimeoutSeconds());
+        assertFalse(p.isOrchestratorEnabled());
+        assertThat(p.getBlockedTools()).containsExactly("custom_blocked_tool");
+
+        // Default blocked tools include delegate_task, clarify, send_message
+        var defaults = new AgentProperties.DelegationProperties();
+        assertThat(defaults.getBlockedTools()).contains("delegate_task", "clarify", "send_message");
     }
 
     @Test

@@ -20,7 +20,7 @@ import java.util.List;
  *   <li><b>stable</b> — identity, rules, tool guidance (never changes per session)</li>
  *   <li><b>context</b> — session info, skills index, coding context (changes on session events only)</li>
  *   <li><b>volatile</b> — timestamp, dynamic context (changes per turn — but NOT memory,
- *       which is moved to user message prefix to preserve cache)</li>
+ *       which is prepended fresh each turn via {@link #buildMemoryPrefix(Session)})</li>
  * </ul>
  * The system prompt is built once per session and cached via {@link PromptCacheTracker}.
  * Only context compression triggers a rebuild.
@@ -69,8 +69,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
 
     /**
      * Build the system message with three-tier composition and session-level caching.
-     * Memory is NOT injected into the system prompt — it's available as a user message prefix
-     * via {@link #buildMemoryPrefix(Session)} to preserve prompt cache stability.
+     * <p>
+     * Memory is injected as a prefix to the system prompt (not the user message) so that
+     * the model always has persistent facts in context. The three-tier prompt itself is
+     * cached via {@link PromptCacheTracker} and remains byte-stable; the memory prefix
+     * is fetched fresh each turn and prepended after the cache lookup, so the cache is
+     * preserved when memory is unchanged and only invalidated when it actually changes.
      */
     public Message buildSystemMessage(Session session, String systemMessageOverride) {
         String sessionId = session != null && session.id() != null ? String.valueOf(session.id()) : "default";
@@ -83,6 +87,14 @@ public class DefaultPromptBuilder implements PromptBuilder {
         }
 
         String text = cached.fullPrompt();
+
+        // Prepend memory prefix to the system prompt (not the user message) so that
+        // persistent facts are always in context. The three-tier prompt cached above
+        // remains byte-stable; only the memory prefix is fetched fresh per turn.
+        String memoryPrefix = buildMemoryPrefix(session);
+        if (!memoryPrefix.isEmpty()) {
+            text = memoryPrefix + "\n\n" + text;
+        }
 
         // Track system prompt hash for cache validation
         if (cacheTracker != null && session != null && session.id() != null) {
@@ -98,8 +110,10 @@ public class DefaultPromptBuilder implements PromptBuilder {
     }
 
     /**
-     * Build a memory prefix that should be prepended to the user message, not the system prompt.
-     * This preserves the prompt cache by keeping the system prompt byte-stable.
+     * Build a memory prefix that is prepended to the system prompt.
+     * The three-tier prompt is cached separately via {@link PromptCacheTracker} and
+     * remains byte-stable; this prefix is fetched fresh each turn and prepended after
+     * the cache lookup, so prompt cache is preserved when memory content is unchanged.
      */
     public String buildMemoryPrefix(Session session) {
         if (session == null || session.id() == null || memoryProvider == null) {

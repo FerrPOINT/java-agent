@@ -29,7 +29,7 @@ public record UpdateEvent(
 ) {
 
     public enum Type {
-        TEXT, COMMAND, CALLBACK_QUERY, PHOTO, DOCUMENT, VOICE, STICKER, ANIMATION, LOCATION, UNKNOWN
+        TEXT, COMMAND, CALLBACK_QUERY, PHOTO, DOCUMENT, VOICE, STICKER, ANIMATION, LOCATION, CHANNEL_POST, UNKNOWN
     }
 
     /** Compact constructor — defaults messageId=0, mediaGroupId=null for backward compatibility. */
@@ -70,6 +70,21 @@ public record UpdateEvent(
         if (message == null) {
             // edited_message fallback
             message = (Map<String, Object>) update.get("edited_message");
+        }
+        // P2-20: channel_post — parse like a regular message but mark as CHANNEL_POST type
+        boolean isChannelPost = false;
+        if (message == null) {
+            message = (Map<String, Object>) update.get("channel_post");
+            if (message != null) {
+                isChannelPost = true;
+            }
+        }
+        // P2-20: edited_channel_post fallback
+        if (message == null) {
+            message = (Map<String, Object>) update.get("edited_channel_post");
+            if (message != null) {
+                isChannelPost = true;
+            }
         }
         if (message == null) {
             return new UpdateEvent(updateId, Type.UNKNOWN, 0, 0, "", null, null, null, null,
@@ -127,10 +142,14 @@ public record UpdateEvent(
 
         // Check for media
         Type type = Type.UNKNOWN;
+        // P2-20: If this is a channel_post, override the type
+        if (isChannelPost) {
+            type = Type.CHANNEL_POST;
+        }
         String fileId = null;
         String fileType = null;
         if (text != null) {
-            type = isCommand ? Type.COMMAND : Type.TEXT;
+            type = isChannelPost ? Type.CHANNEL_POST : (isCommand ? Type.COMMAND : Type.TEXT);
         } else if (message.containsKey("photo")) {
             type = Type.PHOTO;
             fileType = "photo";

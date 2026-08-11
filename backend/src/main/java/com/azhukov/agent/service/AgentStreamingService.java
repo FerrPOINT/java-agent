@@ -13,7 +13,8 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
-import com.azhukov.agent.core.model.TurnResult;
+import com.azhukov.agent.core.agent.InterruptToken;
+import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
@@ -64,6 +65,8 @@ public class AgentStreamingService {
     private final SessionEntityMapper sessionMapper;
     private final MessageMapper messageMapper;
     private final RuntimeConfigService runtimeConfigService;
+    private final InterruptToken interruptToken;
+    private final SteerBuffer steerBuffer;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
 
     private static final int MAX_STREAM_RETRIES = 2;
@@ -190,6 +193,15 @@ public class AgentStreamingService {
         turnStateManager.clear(session.id());
 
         for (int i = 0; i < maxTurns; i++) {
+            // Check for interrupt at the top of each agentic-loop iteration
+            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                log.info("Streaming turn cancelled by interrupt for session {}", session.id());
+                send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."));
+                send(emitter, new StreamEvent("done", null, null, null));
+                emitter.complete();
+                persistTurn(session, turnMessages, isNew);
+                return;
+            }
             if (iterationBudget.isExhausted(budget)) {
                 log.warn("Iteration budget exhausted for session {} after {} model calls",
                     session.id(), budget.modelCalls());
@@ -207,6 +219,7 @@ public class AgentStreamingService {
             int streamRetries = 0;
             int continuationAttempts = 0;
             ChatResponse response;
+            final UUID sessionId = session.id();
             while (true) {
                 final StringBuilder contentBuilder = new StringBuilder();
                 final List<ToolCall> collectedToolCalls = new ArrayList<>();
@@ -216,6 +229,11 @@ public class AgentStreamingService {
                     modelClient.stream(context, tools, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
+                            // Check interrupt before emitting each token/chunk
+                            if (interruptToken != null && interruptToken.isCancelled(sessionId)) {
+                                log.info("Streaming interrupted mid-token for session {}", sessionId);
+                                return;
+                            }
                             String scrubbed = scrubber.scrub(token);
                             if (!scrubbed.isEmpty()) {
                                 send(emitter, new StreamEvent("token", scrubbed, null, null));
@@ -298,6 +316,17 @@ public class AgentStreamingService {
                 break;
             }
 
+            // Check for interrupt after model response (covers mid-stream cancel)
+            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                log.info("Streaming turn cancelled by interrupt after model response for session {}", session.id());
+                turnMessages.add(Message.assistant(response.content(), turnIndex));
+                send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."));
+                send(emitter, new StreamEvent("done", null, null, null));
+                emitter.complete();
+                persistTurn(session, turnMessages, isNew);
+                return;
+            }
+
             // No tool calls → turn is complete
             if (!response.hasToolCalls()) {
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
@@ -311,8 +340,28 @@ public class AgentStreamingService {
             // Tool calls → execute each, emit tool_result events
             turnMessages.add(Message.assistantToolCalls(response.toolCalls(), turnIndex));
 
+            // Check interrupt before executing tools
+            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                log.info("Streaming turn cancelled by interrupt before tool execution for session {}", session.id());
+                send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."));
+                send(emitter, new StreamEvent("done", null, null, null));
+                emitter.complete();
+                persistTurn(session, turnMessages, isNew);
+                return;
+            }
+
             TurnState turnState = turnStateManager.getOrStart(session.id(), 1);
             for (ToolCall call : response.toolCalls()) {
+                // Check interrupt before each tool execution
+                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                    log.info("Streaming turn cancelled by interrupt before tool {} for session {}",
+                        call.name(), session.id());
+                    send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."));
+                    send(emitter, new StreamEvent("done", null, null, null));
+                    emitter.complete();
+                    persistTurn(session, turnMessages, isNew);
+                    return;
+                }
                 send(emitter, new StreamEvent("tool_start", null, null, null,
                     null, null, null, call.name(), null));
 
@@ -327,7 +376,16 @@ public class AgentStreamingService {
                 send(emitter, new StreamEvent("tool_result", null, null, null,
                     null, null, null, call.name(), resultPreview));
 
-                turnMessages.add(Message.toolResult(call.id(), formatResult(result), turnIndex));
+                String toolResultContent = formatResult(result);
+                // Inject pending steer note into the tool result
+                if (steerBuffer != null) {
+                    String steerText = steerBuffer.consume(session.id());
+                    if (steerText != null) {
+                        toolResultContent = toolResultContent + "\n\n[STEER NOTE] " + steerText;
+                        log.info("Injected steer note for session {}", session.id());
+                    }
+                }
+                turnMessages.add(Message.toolResult(call.id(), toolResultContent, turnIndex));
             }
 
             turnIndex++;

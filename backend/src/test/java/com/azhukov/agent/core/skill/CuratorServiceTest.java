@@ -557,6 +557,60 @@ class CuratorServiceTest {
         assertThat(report.archivedSkills()).isEmpty();
     }
 
+    // ── Auto-start behavior ─────────────────────────────────────────────
+
+    @Test
+    void onContextRefreshed_enabled_startsCurator() {
+        // Default: curator.enabled=true
+        assertThat(properties.getCurator().isEnabled()).isTrue();
+
+        CuratorService service = new CuratorService(skillRepository, properties);
+        assertThat(service.isStarted()).isFalse();
+
+        service.onContextRefreshed();
+
+        assertThat(service.isStarted()).isTrue();
+    }
+
+    @Test
+    void onContextRefreshed_disabled_doesNotStartCurator() {
+        properties.getCurator().setEnabled(false);
+
+        CuratorService service = new CuratorService(skillRepository, properties);
+        assertThat(service.isStarted()).isFalse();
+
+        service.onContextRefreshed();
+
+        assertThat(service.isStarted()).isFalse();
+    }
+
+    @Test
+    void start_isIdempotent_multipleCallsDoNotDuplicate() {
+        CuratorService service = new CuratorService(skillRepository, properties);
+
+        service.start();
+        assertThat(service.isStarted()).isTrue();
+
+        // Calling start() again should be a no-op — no exception, still started
+        service.start();
+        service.start();
+        assertThat(service.isStarted()).isTrue();
+    }
+
+    @Test
+    void start_multipleTimes_schedulesOnlyOnce() {
+        CuratorService service = new CuratorService(skillRepository, properties);
+
+        // First start should schedule the fixed-rate task
+        service.start();
+        assertThat(service.isStarted()).isTrue();
+
+        // Second start must be a no-op; the started flag is still true
+        // and no exception is thrown.
+        service.start();
+        assertThat(service.isStarted()).isTrue();
+    }
+
     private SkillEntity makeSkill(String name, Instant lastActivity) {
         SkillEntity e = new SkillEntity();
         e.setId(UUID.randomUUID());

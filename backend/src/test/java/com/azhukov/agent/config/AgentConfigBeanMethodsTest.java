@@ -97,7 +97,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void promptBuilder_bean() {
-        assertThat(config.promptBuilder(properties, mock(ToolRegistry.class), mock(AgentConstants.class), mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.CodingContextDetector.class))).isNotNull();
+        assertThat(config.promptBuilder(properties, mock(ToolRegistry.class), mock(AgentConstants.class), mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.CodingContextDetector.class), mock(MemoryProvider.class))).isNotNull();
     }
 
     @Test
@@ -122,7 +122,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void urlSafetyHandler_bean() {
-        assertThat(config.urlSafetyHandler(properties)).isNotNull();
+        assertThat(config.urlSafetyHandler(properties, new DefaultUrlSafety(properties))).isNotNull();
     }
 
     @Test

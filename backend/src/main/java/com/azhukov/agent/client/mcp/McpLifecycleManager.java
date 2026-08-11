@@ -12,13 +12,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
+import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.client.transport.ServerParameters;
 import io.modelcontextprotocol.client.transport.StdioClientTransport;
-import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -27,7 +28,13 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -39,6 +46,46 @@ public class McpLifecycleManager {
     private final ObjectMapper objectMapper;
     private final ApplicationContext applicationContext;
     private final Map<String, McpServerState> clients = new ConcurrentHashMap<>();
+
+    // ── Reconnection with exponential backoff ────────────────────────────
+    private static final int MAX_RECONNECT_RETRIES = 5;
+    private static final int MAX_INITIAL_CONNECT_RETRIES = 3;
+    private static final long MAX_BACKOFF_SECONDS = 60;
+
+    // ── Dynamic tool refresh interval ────────────────────────────────────
+    private static final long TOOL_REFRESH_INTERVAL_SECONDS = 300;
+
+    // ── Env var filtering for stdio subprocesses ─────────────────────────
+    private static final Set<String> SAFE_ENV_KEYS = Set.of(
+        "PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR"
+    );
+
+    // ── Credential stripping in error messages ───────────────────────────
+    private static final Pattern CREDENTIAL_PATTERN = Pattern.compile(
+        "(?:"
+        + "ghp_[A-Za-z0-9_]{1,255}"           // GitHub PAT
+        + "|sk-[A-Za-z0-9_]{1,255}"           // OpenAI-style key
+        + "|Bearer\\s+\\S+"                    // Bearer token
+        + "|token=[^\\s&,;\"']{1,255}"         // token=...
+        + "|key=[^\\s&,;\"']{1,255}"           // key=...
+        + "|API_KEY=[^\\s&,;\"']{1,255}"       // API_KEY=...
+        + "|password=[^\\s&,;\"']{1,255}"      // password=...
+        + "|secret=[^\\s&,;\"']{1,255}"        // secret=...
+        + ")",
+        Pattern.CASE_INSENSITIVE
+    );
+
+    private final ScheduledExecutorService reconnectExecutor = Executors.newScheduledThreadPool(1, r -> {
+        Thread t = new Thread(r, "mcp-reconnect");
+        t.setDaemon(true);
+        return t;
+    });
+
+    private final ScheduledExecutorService toolRefreshExecutor = Executors.newScheduledThreadPool(1, r -> {
+        Thread t = new Thread(r, "mcp-tool-refresh");
+        t.setDaemon(true);
+        return t;
+    });
 
     private ToolRegistry toolRegistry() {
         return applicationContext.getBean(ToolRegistry.class);
@@ -64,27 +111,186 @@ public class McpLifecycleManager {
             return;
         }
         try {
-            McpSyncClient client;
-            if ("stdio".equalsIgnoreCase(server.getTransport())) {
-                ServerParameters params = ServerParameters.builder(server.getCommand())
-                    .args(server.getArgs())
-                    .build();
-                StdioClientTransport transport = new StdioClientTransport(params, new JacksonMcpJsonMapper(objectMapper));
-                client = McpClient.sync(transport).build();
-            } else if ("sse".equalsIgnoreCase(server.getTransport()) || !server.getBaseUrl().isBlank()) {
-                var transport = HttpClientSseClientTransport.builder(server.getBaseUrl()).build();
-                client = McpClient.sync(transport).build();
-            } else {
-                log.warn("MCP server {} has no transport configured", server.getName());
-                return;
-            }
+            McpSyncClient client = createClient(server);
             client.initialize();
             var tools = client.listTools().tools();
             clients.put(server.getName(), new McpServerState(server, client, tools));
             registerTools(server.getName(), tools);
+            scheduleToolRefresh(server.getName());
             log.info("Connected to MCP server {} ({}) with {} tools", server.getName(), server.getTransport(), tools.size());
         } catch (Exception e) {
             log.warn("Failed to connect to MCP server {}: {}", server.getName(), e.getMessage());
+            scheduleReconnect(server, 0, true);
+        }
+    }
+
+    private McpSyncClient createClient(AgentProperties.McpProperties.ServerProperties server) {
+        String transport = server.getTransport() == null ? "stdio" : server.getTransport().toLowerCase();
+
+        return switch (transport) {
+            case "stdio" -> createStdioClient(server);
+            case "sse" -> createSseClient(server);
+            case "http", "streamable", "streamablehttp" -> createStreamableHttpClient(server);
+            default -> {
+                if (!server.getBaseUrl().isBlank()) {
+                    yield createStreamableHttpClient(server);
+                }
+                throw new IllegalArgumentException("MCP server " + server.getName() + " has no transport configured");
+            }
+        };
+    }
+
+    private McpSyncClient createStdioClient(AgentProperties.McpProperties.ServerProperties server) {
+        ServerParameters.Builder paramsBuilder = ServerParameters.builder(server.getCommand())
+            .args(server.getArgs());
+        // Build filtered environment for stdio subprocess
+        Map<String, String> filteredEnv = buildSafeEnv(server.getEnv());
+        if (!filteredEnv.isEmpty()) {
+            paramsBuilder.env(filteredEnv);
+        }
+        ServerParameters params = paramsBuilder.build();
+        StdioClientTransport transport = new StdioClientTransport(params, new JacksonMcpJsonMapper(objectMapper));
+        return McpClient.sync(transport).build();
+    }
+
+    private McpSyncClient createSseClient(AgentProperties.McpProperties.ServerProperties server) {
+        var transport = HttpClientSseClientTransport.builder(server.getBaseUrl()).build();
+        return McpClient.sync(transport).build();
+    }
+
+    private McpSyncClient createStreamableHttpClient(AgentProperties.McpProperties.ServerProperties server) {
+        var transport = HttpClientStreamableHttpTransport.builder(server.getBaseUrl())
+            .build();
+        return McpClient.sync(transport).build();
+    }
+
+    // ── Env var filtering for stdio subprocesses ─────────────────────────
+    static Map<String, String> buildSafeEnv(Map<String, String> userEnv) {
+        Map<String, String> env = new LinkedHashMap<>();
+        // Only pass through safe baseline variables from the current process
+        for (Map.Entry<String, String> entry : System.getenv().entrySet()) {
+            String key = entry.getKey();
+            if (SAFE_ENV_KEYS.contains(key) || key.startsWith("XDG_")) {
+                env.put(key, entry.getValue());
+            }
+        }
+        // Explicitly user-specified env vars override / extend the safe set
+        if (userEnv != null) {
+            env.putAll(userEnv);
+        }
+        return env;
+    }
+
+    // ── Credential stripping in error messages ───────────────────────────
+    static String sanitizeError(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        return CREDENTIAL_PATTERN.matcher(text).replaceAll("[REDACTED]");
+    }
+
+    // ── Reconnection with exponential backoff ────────────────────────────
+    private void scheduleReconnect(AgentProperties.McpProperties.ServerProperties server, int attempt, boolean initial) {
+        int maxRetries = initial ? MAX_INITIAL_CONNECT_RETRIES : MAX_RECONNECT_RETRIES;
+        if (attempt >= maxRetries) {
+            log.warn("MCP server {} failed after {} {} attempts, giving up",
+                server.getName(), maxRetries, initial ? "initial connect" : "reconnect");
+            return;
+        }
+        long backoffSeconds = Math.min((long) (1L << attempt), MAX_BACKOFF_SECONDS);
+        log.info("MCP server {} {} attempt {}/{} in {}s",
+            server.getName(), initial ? "initial connect" : "reconnect", attempt + 1, maxRetries, backoffSeconds);
+        reconnectExecutor.schedule(() -> {
+            if (shutdownRequested.get()) {
+                return;
+            }
+            try {
+                McpSyncClient client = createClient(server);
+                client.initialize();
+                var tools = client.listTools().tools();
+                clients.put(server.getName(), new McpServerState(server, client, tools));
+                registerTools(server.getName(), tools);
+                scheduleToolRefresh(server.getName());
+                log.info("Reconnected to MCP server {} with {} tools", server.getName(), tools.size());
+            } catch (Exception e) {
+                log.warn("MCP server {} {} attempt {}/{} failed: {}",
+                    server.getName(), initial ? "initial connect" : "reconnect", attempt + 1, maxRetries, e.getMessage());
+                scheduleReconnect(server, attempt + 1, initial);
+            }
+        }, backoffSeconds, TimeUnit.SECONDS);
+    }
+
+    public void reconnect(String serverName) {
+        AgentProperties.McpProperties.ServerProperties serverProps = properties.getMcp().getServers().stream()
+            .filter(s -> s.getName().equals(serverName))
+            .findFirst()
+            .orElse(null);
+        if (serverProps == null) {
+            log.warn("Cannot reconnect unknown MCP server: {}", serverName);
+            return;
+        }
+        // Close existing connection if any
+        var existing = clients.remove(serverName);
+        if (existing != null) {
+            try {
+                existing.client().close();
+            } catch (Exception ignored) {
+            }
+        }
+        scheduleReconnect(serverProps, 0, false);
+    }
+
+    // ── Dynamic tool refresh ─────────────────────────────────────────────
+    private void scheduleToolRefresh(String serverName) {
+        toolRefreshExecutor.scheduleWithFixedDelay(() -> {
+            try {
+                refreshTools(serverName);
+            } catch (Exception e) {
+                log.debug("Tool refresh for MCP server {} failed: {}", serverName, e.getMessage());
+            }
+        }, TOOL_REFRESH_INTERVAL_SECONDS, TOOL_REFRESH_INTERVAL_SECONDS, TimeUnit.SECONDS);
+    }
+
+    public void refreshTools(String serverName) {
+        var state = clients.get(serverName);
+        if (state == null) {
+            return;
+        }
+        try {
+            var freshTools = state.client().listTools().tools();
+            // Detect changes
+            Set<String> oldNames = state.tools().stream().map(McpSchema.Tool::name).collect(Collectors.toSet());
+            Set<String> newNames = freshTools.stream().map(McpSchema.Tool::name).collect(Collectors.toSet());
+            if (oldNames.equals(newNames)) {
+                return; // No changes detected
+            }
+            log.info("MCP server {} tool list changed: {} -> {} tools", serverName, oldNames.size(), newNames.size());
+            // Deregister stale tools
+            for (String oldName : oldNames) {
+                if (!newNames.contains(oldName)) {
+                    String fullName = serverName + "__" + oldName;
+                    toolRegistry().deregisterDynamic(fullName);
+                    log.info("Deregistered stale MCP tool: {}", fullName);
+                }
+            }
+            // Register new/updated tools
+            for (McpSchema.Tool tool : freshTools) {
+                String fullName = serverName + "__" + tool.name();
+                ToolDefinition definition = convertToolDefinition(fullName, tool);
+                toolRegistry().registerDynamic(fullName, definition, new McpToolHandler(serverName, tool.name()));
+            }
+            // Update state in-place
+            clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools));
+            Set<String> added = newNames.stream().filter(n -> !oldNames.contains(n)).collect(Collectors.toSet());
+            Set<String> removed = oldNames.stream().filter(n -> !newNames.contains(n)).collect(Collectors.toSet());
+            if (!added.isEmpty()) {
+                log.info("MCP server {} added tools: {}", serverName, added);
+            }
+            if (!removed.isEmpty()) {
+                log.info("MCP server {} removed tools: {}", serverName, removed);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to refresh tools from MCP server {}: {}", serverName, e.getMessage());
         }
     }
 
@@ -130,7 +336,7 @@ public class McpLifecycleManager {
                 .map(Object::toString)
                 .collect(Collectors.joining("\n"));
         } catch (Exception e) {
-            throw new RuntimeException("MCP read resource failed: " + e.getMessage(), e);
+            throw new RuntimeException("MCP read resource failed: " + sanitizeError(e.getMessage()), e);
         }
     }
 
@@ -143,12 +349,17 @@ public class McpLifecycleManager {
             Map<String, Object> args = objectMapper.readValue(argumentsJson, new TypeReference<>() {});
             return state.client().callTool(new McpSchema.CallToolRequest(toolName, args));
         } catch (Exception e) {
-            throw new RuntimeException("MCP tool call failed: " + e.getMessage(), e);
+            throw new RuntimeException("MCP tool call failed: " + sanitizeError(e.getMessage()), e);
         }
     }
 
-    @org.springframework.context.event.EventListener(org.springframework.context.event.ContextClosedEvent.class)
+    private final AtomicBoolean shutdownRequested = new AtomicBoolean(false);
+
+    @EventListener(ContextClosedEvent.class)
     public void closeAll() {
+        shutdownRequested.set(true);
+        reconnectExecutor.shutdownNow();
+        toolRefreshExecutor.shutdownNow();
         for (var state : clients.values()) {
             try {
                 state.client().close();
@@ -214,7 +425,7 @@ public class McpLifecycleManager {
                     .collect(Collectors.joining("\n"));
                 return ToolResult.ok(text);
             } catch (Exception e) {
-                return ToolResult.fail("MCP tool failed: " + e.getMessage());
+                return ToolResult.fail("MCP tool failed: " + sanitizeError(e.getMessage()));
             }
         }
     }

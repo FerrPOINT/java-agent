@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 @Slf4j
@@ -20,6 +21,19 @@ public class DatabaseSkillManager implements SkillManager {
 
     private final SkillRepository skillRepository;
     private final AgentProperties properties;
+
+    // ─── Validation constants (ported from Hermes skill_manager_tool.py) ───
+
+    private static final int MAX_NAME_LENGTH = 64;
+    private static final int MAX_DESCRIPTION_LENGTH = 1024;
+    private static final int MAX_SKILL_CONTENT_CHARS = 100_000;  // ~36k tokens
+    private static final int MAX_SUPPORT_FILE_BYTES = 1_048_576; // 1 MiB
+
+    /** Filesystem-safe, URL-friendly skill name pattern. */
+    private static final Pattern VALID_NAME_RE = Pattern.compile("^[a-z0-9][a-z0-9._-]*$");
+
+    /** Subdirectories allowed for writeSupportFile/removeSupportFile. */
+    private static final List<String> ALLOWED_SUBDIRS = List.of("references", "templates", "scripts", "assets");
 
     public DatabaseSkillManager(SkillRepository skillRepository) {
         this.skillRepository = skillRepository;
@@ -48,6 +62,32 @@ public class DatabaseSkillManager implements SkillManager {
 
     @Override
     public void saveSkill(String name, String content, WriteOrigin origin) {
+        // P1-9: Validate skill name
+        String nameError = validateName(name);
+        if (nameError != null) {
+            throw new IllegalArgumentException(nameError);
+        }
+
+        // P1-9: Validate content size
+        String sizeError = validateContentSize(content);
+        if (sizeError != null) {
+            throw new IllegalArgumentException(sizeError);
+        }
+
+        // P1-9: Validate frontmatter structure
+        String frontmatterError = validateFrontmatter(content);
+        if (frontmatterError != null) {
+            throw new IllegalArgumentException(frontmatterError);
+        }
+
+        // P1-9: Security scan — block dangerous content for agent-created skills
+        TrustLevel trustLevel = determineTrustLevelForSave(name);
+        String scanError = SkillSecurityScanner.scanAndGuard(name, content, trustLevel);
+        if (scanError != null) {
+            log.warn("Security scan blocked skill save '{}': {}", name, scanError);
+            throw new SecurityException(scanError);
+        }
+
         SkillEntity e = skillRepository.findByName(name).orElse(new SkillEntity());
         e.setName(name);
         e.setContent(content);
@@ -70,6 +110,15 @@ public class DatabaseSkillManager implements SkillManager {
     @Override
     public boolean deleteSkill(String name) {
         return skillRepository.findByName(name).map(e -> {
+            // P1-9: Pinned-skill guard — prevent deletion of pinned skills
+            if (e.isPinned()) {
+                log.warn("Skill '{}' is pinned and cannot be deleted by skill manager. " +
+                    "Ask the user to unpin it first.", name);
+                throw new IllegalStateException(
+                    "Skill '" + name + "' is pinned and cannot be deleted. " +
+                    "Ask the user to unpin it first."
+                );
+            }
             skillRepository.delete(e);
             return true;
         }).orElse(false);
@@ -155,6 +204,12 @@ public class DatabaseSkillManager implements SkillManager {
     @Override
     public void writeSupportFile(String skillName, String filePath, String content) {
         validateSupportFilePath(filePath);
+        // P1-9: Validate support file content size
+        if (content != null && content.getBytes().length > MAX_SUPPORT_FILE_BYTES) {
+            throw new IllegalArgumentException(
+                "Support file content exceeds " + MAX_SUPPORT_FILE_BYTES + " bytes (limit: 1 MiB)."
+            );
+        }
         Path dir = getSkillsDir().resolve(skillName);
         Path target = dir.resolve(filePath);
         try {
@@ -197,7 +252,7 @@ public class DatabaseSkillManager implements SkillManager {
         Path dir = getSkillsDir().resolve(skillName);
         if (!Files.isDirectory(dir)) return List.of();
         List<String> result = new ArrayList<>();
-        for (String subdir : List.of("references", "templates", "scripts")) {
+        for (String subdir : ALLOWED_SUBDIRS) {
             Path sub = dir.resolve(subdir);
             if (Files.isDirectory(sub)) {
                 try (Stream<Path> stream = Files.walk(sub, 3)) {
@@ -251,7 +306,97 @@ public class DatabaseSkillManager implements SkillManager {
         return Path.of("skills");
     }
 
-    // S3: Validate file path — only references/, templates/, scripts/
+    // ─── P1-9: Validation helpers (ported from Hermes skill_manager_tool.py) ───
+
+    /**
+     * Validate a skill name. Returns error message or {@code null} if valid.
+     */
+    private static String validateName(String name) {
+        if (name == null || name.isBlank()) {
+            return "Skill name is required.";
+        }
+        if (name.length() > MAX_NAME_LENGTH) {
+            return "Skill name exceeds " + MAX_NAME_LENGTH + " characters.";
+        }
+        if (!VALID_NAME_RE.matcher(name).matches()) {
+            return "Invalid skill name '" + name + "'. Use lowercase letters, numbers, " +
+                "hyphens, dots, and underscores. Must start with a letter or digit.";
+        }
+        return null;
+    }
+
+    /**
+     * Validate that SKILL.md content has proper YAML frontmatter with required fields.
+     * Returns error message or {@code null} if valid.
+     */
+    private static String validateFrontmatter(String content) {
+        if (content == null || content.isBlank()) {
+            return "Content cannot be empty.";
+        }
+        if (!content.startsWith("---")) {
+            return "SKILL.md must start with YAML frontmatter (---). See existing skills for format.";
+        }
+        // Find closing ---
+        int endIdx = content.indexOf("\n---", 3);
+        if (endIdx < 0) {
+            // Try without newline (content might be just "---\n---")
+            return "SKILL.md frontmatter is not closed. Ensure you have a closing '---' line.";
+        }
+        String yamlContent = content.substring(3, endIdx).trim();
+
+        // Check for required 'name' field
+        if (!yamlContent.contains("name:")) {
+            return "Frontmatter must include 'name' field.";
+        }
+        // Check for required 'description' field
+        if (!yamlContent.contains("description:")) {
+            return "Frontmatter must include 'description' field.";
+        }
+
+        // Check body after frontmatter
+        int bodyStart = endIdx + 4; // skip "\n---"
+        if (bodyStart < content.length()) {
+            String body = content.substring(bodyStart).strip();
+            if (body.isEmpty()) {
+                return "SKILL.md must have content after the frontmatter (instructions, procedures, etc.).";
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Check that content doesn't exceed the character limit for agent writes.
+     */
+    private static String validateContentSize(String content) {
+        if (content == null) return "Content cannot be null.";
+        if (content.length() > MAX_SKILL_CONTENT_CHARS) {
+            return "SKILL.md content is " + content.length() + " characters " +
+                "(limit: " + MAX_SKILL_CONTENT_CHARS + "). " +
+                "Consider splitting into a smaller SKILL.md with supporting files " +
+                "in references/ or templates/.";
+        }
+        return null;
+    }
+
+    /**
+     * Determine the trust level for a skill being saved.
+     * Existing skills keep their trust level; new skills default to AGENT_CREATED.
+     */
+    private TrustLevel determineTrustLevelForSave(String name) {
+        return skillRepository.findByName(name)
+            .map(e -> {
+                String tl = e.getTrustLevel();
+                if (tl != null) {
+                    try { return TrustLevel.valueOf(tl); }
+                    catch (IllegalArgumentException ignored) {}
+                }
+                return TrustLevel.AGENT_CREATED;
+            })
+            .orElse(TrustLevel.AGENT_CREATED);
+    }
+
+    // S3: Validate file path — only references/, templates/, scripts/, assets/
     private void validateSupportFilePath(String filePath) {
         if (filePath == null || filePath.isBlank()) {
             throw new IllegalArgumentException("File path must not be blank");
@@ -260,11 +405,12 @@ public class DatabaseSkillManager implements SkillManager {
         if (normalized.contains("..")) {
             throw new IllegalArgumentException("Path traversal not allowed: " + filePath);
         }
-        boolean valid = normalized.startsWith("references/") ||
-                        normalized.startsWith("templates/") ||
-                        normalized.startsWith("scripts/");
+        boolean valid = ALLOWED_SUBDIRS.stream().anyMatch(normalized::startsWith);
         if (!valid) {
-            throw new IllegalArgumentException("Support file must be under references/, templates/, or scripts/: " + filePath);
+            throw new IllegalArgumentException(
+                "Support file must be under one of: " + String.join(", ", ALLOWED_SUBDIRS) +
+                ". Got: '" + filePath + "'"
+            );
         }
     }
 }

@@ -33,4 +33,9 @@ public class NoOpModelClient implements ModelClient {
     public String analyzeImage(String base64Image, String prompt) {
         return "NoOp vision: image length=" + (base64Image != null ? base64Image.length() : 0) + ", prompt=" + prompt;
     }
+
+    @Override
+    public String getModelName() {
+        return "noop";
+    }
 }

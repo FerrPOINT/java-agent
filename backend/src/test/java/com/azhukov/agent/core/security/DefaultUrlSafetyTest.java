@@ -11,26 +11,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Comprehensive tests for {@link DefaultUrlSafety}.
  *
- * <p>Current implementation only checks:
+ * <p>The implementation now provides full SSRF protection:
  * <ul>
  *   <li>Scheme is http or https</li>
  *   <li>Host is present and non-blank</li>
  *   <li>Host is not in the configured blockedUrlHosts list (exact or suffix match)</li>
- * </ul>
- *
- * <p>It does NOT have:
- * <ul>
  *   <li>Private IP range detection (10.x, 172.16-31.x, 192.168.x)</li>
- *   <li>Loopback address detection (127.0.0.1, ::1)</li>
- *   <li>Link-local / metadata endpoint detection (169.254.169.254)</li>
+ *   <li>Loopback address detection (127.0.0.0/8, ::1)</li>
+ *   <li>Link-local / metadata endpoint detection (169.254.x.x)</li>
  *   <li>localhost blocking by default</li>
- *   <li>IPv6 address handling</li>
- *   <li>Port-based blocking</li>
- *   <li>IDN homograph attack detection</li>
- *   <li>URL credential stripping/blocking</li>
- *   <li>DNS rebinding protection</li>
+ *   <li>IPv6 private/loopback/link-local/ULA detection</li>
+ *   <li>0.0.0.0 / unspecified address blocking</li>
+ *   <li>URL with embedded credentials blocked</li>
+ *   <li>Encoded IP detection (decimal, octal, hex)</li>
+ *   <li>Cloud metadata endpoint blocking (AWS, GCP)</li>
  * </ul>
- * Tests below verify current behavior and document gaps via test names.
  */
 class DefaultUrlSafetyTest {
 
@@ -42,7 +37,8 @@ class DefaultUrlSafetyTest {
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
         assertThat(safety.isUrlAllowed("https://example.com/path")).isTrue();
-        assertThat(safety.isUrlAllowed("http://localhost:8080")).isTrue();
+        // localhost is now blocked by default
+        assertThat(safety.isUrlAllowed("http://localhost:8080")).isFalse();
     }
 
     @Test
@@ -75,25 +71,24 @@ class DefaultUrlSafetyTest {
         assertThat(safety.isUrlAllowed("ftp://anything")).isTrue();
     }
 
-    // ─── SSRF: Loopback addresses (GAP: not blocked by default) ───
+    // ─── SSRF: Loopback addresses (now blocked) ───
 
     @Test
-    void ssrf_127_0_0_1_currentlyAllowed_noPrivateIpBlocking() {
+    void ssrf_127_0_0_1_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // GAP: 127.0.0.1 is not in default blockedHosts — SSRF to localhost is possible
-        assertThat(safety.isUrlAllowed("http://127.0.0.1/")).isTrue();
+        assertThat(safety.isUrlAllowed("http://127.0.0.1/")).isFalse();
     }
 
     @Test
-    void ssrf_127_0_0_1_altPort_currentlyAllowed_noPrivateIpBlocking() {
+    void ssrf_127_0_0_1_altPort_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        assertThat(safety.isUrlAllowed("http://127.0.0.1:8080/admin")).isTrue();
+        assertThat(safety.isUrlAllowed("http://127.0.0.1:8080/admin")).isFalse();
     }
 
     @Test
@@ -103,19 +98,18 @@ class DefaultUrlSafetyTest {
         properties.getSecurity().setBlockedUrlHosts(List.of("127.0.0.1"));
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // When explicitly configured, it IS blocked
         assertThat(safety.isUrlAllowed("http://127.0.0.1/")).isFalse();
     }
 
     @Test
-    void ssrf_localhost_currentlyAllowed_notBlockedByDefault() {
+    void ssrf_localhost_nowBlockedByDefault() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // GAP: localhost is not blocked by default
-        assertThat(safety.isUrlAllowed("http://localhost/")).isTrue();
-        assertThat(safety.isUrlAllowed("http://localhost:3000/")).isTrue();
+        // localhost is now blocked by default
+        assertThat(safety.isUrlAllowed("http://localhost/")).isFalse();
+        assertThat(safety.isUrlAllowed("http://localhost:3000/")).isFalse();
     }
 
     @Test
@@ -129,59 +123,61 @@ class DefaultUrlSafetyTest {
     }
 
     @Test
-    void ssrf_127_1_1_1_currentlyAllowed_noPrivateIpBlocking() {
+    void ssrf_127_1_2_3_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // 127.0.0.0/8 range — all are loopback but not blocked
-        assertThat(safety.isUrlAllowed("http://127.1.2.3/")).isTrue();
-        assertThat(safety.isUrlAllowed("http://127.255.255.255/")).isTrue();
+        // 127.0.0.0/8 range — all are loopback, now blocked
+        assertThat(safety.isUrlAllowed("http://127.1.2.3/")).isFalse();
+        assertThat(safety.isUrlAllowed("http://127.255.255.255/")).isFalse();
     }
 
-    // ─── SSRF: Private IP ranges (GAP: not blocked by default) ───
+    // ─── SSRF: Private IP ranges (now blocked) ───
 
     @Test
-    void ssrf_10_0_0_1_currentlyAllowed_noPrivateIpRangeBlocking() {
+    void ssrf_10_0_0_1_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // 10.0.0.0/8 — private network, not blocked
-        assertThat(safety.isUrlAllowed("http://10.0.0.1/")).isTrue();
-        assertThat(safety.isUrlAllowed("http://10.255.255.255/")).isTrue();
-    }
-
-    @Test
-    void ssrf_172_16_0_1_currentlyAllowed_noPrivateIpRangeBlocking() {
-        AgentProperties properties = new AgentProperties();
-        properties.getSecurity().setUrlSafetyEnabled(true);
-        DefaultUrlSafety safety = new DefaultUrlSafety(properties);
-
-        // 172.16.0.0/12 — private network, not blocked
-        assertThat(safety.isUrlAllowed("http://172.16.0.1/")).isTrue();
-        assertThat(safety.isUrlAllowed("http://172.31.255.255/")).isTrue();
+        // 10.0.0.0/8 — private network, now blocked
+        assertThat(safety.isUrlAllowed("http://10.0.0.1/")).isFalse();
+        assertThat(safety.isUrlAllowed("http://10.255.255.255/")).isFalse();
     }
 
     @Test
-    void ssrf_172_15_0_1_currentlyAllowed_isPublicRangeButAlsoNotBlocked() {
+    void ssrf_172_16_0_1_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // 172.15.x.x is actually public, so allowing it is fine
+        // 172.16.0.0/12 — private network, now blocked
+        assertThat(safety.isUrlAllowed("http://172.16.0.1/")).isFalse();
+        assertThat(safety.isUrlAllowed("http://172.31.255.255/")).isFalse();
+    }
+
+    @Test
+    void ssrf_172_15_0_1_isPublicRange_allowed() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setUrlSafetyEnabled(true);
+        DefaultUrlSafety safety = new DefaultUrlSafety(properties);
+
+        // 172.15.x.x is actually public, so allowing it is correct
+        // Note: InetAddress.getByName may attempt DNS resolution in test env,
+        // but 172.15.0.1 is a valid IP literal and should be allowed
         assertThat(safety.isUrlAllowed("http://172.15.0.1/")).isTrue();
     }
 
     @Test
-    void ssrf_192_168_0_1_currentlyAllowed_noPrivateIpRangeBlocking() {
+    void ssrf_192_168_0_1_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // 192.168.0.0/16 — private network, not blocked
-        assertThat(safety.isUrlAllowed("http://192.168.0.1/")).isTrue();
-        assertThat(safety.isUrlAllowed("http://192.168.1.100:8080/")).isTrue();
+        // 192.168.0.0/16 — private network, now blocked
+        assertThat(safety.isUrlAllowed("http://192.168.0.1/")).isFalse();
+        assertThat(safety.isUrlAllowed("http://192.168.1.100:8080/")).isFalse();
     }
 
     @Test
@@ -196,26 +192,25 @@ class DefaultUrlSafetyTest {
         assertThat(safety.isUrlAllowed("http://192.168.0.1/")).isFalse();
     }
 
-    // ─── SSRF: AWS metadata endpoint (GAP: not blocked by default) ───
+    // ─── SSRF: AWS metadata endpoint (now blocked) ───
 
     @Test
-    void ssrf_awsMetadata_169_254_169_254_currentlyAllowed_notBlocked() {
+    void ssrf_awsMetadata_169_254_169_254_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // 169.254.169.254 — AWS/GCP/Azure metadata endpoint, not blocked
-        // This is a critical SSRF vector
-        assertThat(safety.isUrlAllowed("http://169.254.169.254/latest/meta-data/")).isTrue();
+        // 169.254.169.254 — AWS/GCP/Azure metadata endpoint, now blocked
+        assertThat(safety.isUrlAllowed("http://169.254.169.254/latest/meta-data/")).isFalse();
     }
 
     @Test
-    void ssrf_awsMetadata_imdsv2_tokenEndpoint_currentlyAllowed() {
+    void ssrf_awsMetadata_imdsv2_tokenEndpoint_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        assertThat(safety.isUrlAllowed("http://169.254.169.254/latest/api/token")).isTrue();
+        assertThat(safety.isUrlAllowed("http://169.254.169.254/latest/api/token")).isFalse();
     }
 
     @Test
@@ -229,80 +224,79 @@ class DefaultUrlSafetyTest {
     }
 
     @Test
-    void ssrf_gcpMetadata_currentlyAllowed_notBlocked() {
+    void ssrf_gcpMetadata_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // GCP metadata endpoint
-        assertThat(safety.isUrlAllowed("http://metadata.google.internal/computeMetadata/v1/")).isTrue();
+        // GCP metadata endpoint — now blocked by name
+        assertThat(safety.isUrlAllowed("http://metadata.google.internal/computeMetadata/v1/")).isFalse();
     }
 
-    // ─── SSRF: Link-local addresses (GAP: not blocked by default) ───
+    // ─── SSRF: Link-local addresses (now blocked) ───
 
     @Test
-    void ssrf_linkLocal_169_254_0_0_currentlyAllowed() {
+    void ssrf_linkLocal_169_254_0_0_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // 169.254.0.0/16 — link-local, not blocked
-        assertThat(safety.isUrlAllowed("http://169.254.1.1/")).isTrue();
+        // 169.254.0.0/16 — link-local, now blocked
+        assertThat(safety.isUrlAllowed("http://169.254.1.1/")).isFalse();
     }
 
-    // ─── IPv6 tests (GAP: no IPv6-specific handling) ───
+    // ─── IPv6 tests (now handled) ───
 
     @Test
-    void ipv6_loopback_currentlyAllowed_notBlocked() {
+    void ipv6_loopback_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // [::1] is IPv6 loopback — should be blocked but currently isn't
-        // GAP: no IPv6 loopback detection
+        // [::1] is IPv6 loopback — now blocked
         assertThat(safety.isUrlAllowed("http://[::1]/"))
-                .as("IPv6 loopback [::1] currently allowed — no IPv6 blocking")
-                .isTrue();
+                .as("IPv6 loopback [::1] now blocked")
+                .isFalse();
     }
 
     @Test
-    void ipv6_unspecified_currentlyAllowed_notBlocked() {
+    void ipv6_unspecified_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // [::] is IPv6 unspecified — should be blocked but currently isn't
+        // [::] is IPv6 unspecified (0.0.0.0 equivalent) — now blocked
         assertThat(safety.isUrlAllowed("http://[::]/"))
-                .as("IPv6 unspecified [::] currently allowed — no IPv6 blocking")
-                .isTrue();
+                .as("IPv6 unspecified [::] now blocked")
+                .isFalse();
     }
 
     @Test
-    void ipv6_linkLocal_currentlyAllowed() {
+    void ipv6_linkLocal_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // fe80:: — IPv6 link-local
+        // fe80:: — IPv6 link-local — now blocked
         assertThat(safety.isUrlAllowed("http://[fe80::1]/"))
-                .as("IPv6 link-local currently allowed — no IPv6 blocking")
-                .isTrue();
+                .as("IPv6 link-local now blocked")
+                .isFalse();
     }
 
     @Test
-    void ipv6_uniqueLocal_currentlyAllowed() {
+    void ipv6_uniqueLocal_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // fc00:: — IPv6 unique local (private)
+        // fc00:: — IPv6 unique local (private) — now blocked
         assertThat(safety.isUrlAllowed("http://[fc00::1]/"))
-                .as("IPv6 unique local currently allowed — no IPv6 blocking")
-                .isTrue();
+                .as("IPv6 unique local now blocked")
+                .isFalse();
     }
 
     @Test
-    void ipv6_normalAddress_currentlyAllowed() {
+    void ipv6_normalAddress_nowAllowed() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
@@ -313,36 +307,7 @@ class DefaultUrlSafetyTest {
                 .isTrue();
     }
 
-    // ─── Port-based blocking tests (GAP: no port checking) ───
-
-    @Test
-    void portBasedBlocking_port22_currentlyAllowed_noPortCheck() {
-        AgentProperties properties = new AgentProperties();
-        properties.getSecurity().setUrlSafetyEnabled(true);
-        DefaultUrlSafety safety = new DefaultUrlSafety(properties);
-
-        // GAP: no port-based blocking
-        assertThat(safety.isUrlAllowed("http://example.com:22/")).isTrue();
-    }
-
-    @Test
-    void portBasedBlocking_port25_currentlyAllowed_noPortCheck() {
-        AgentProperties properties = new AgentProperties();
-        properties.getSecurity().setUrlSafetyEnabled(true);
-        DefaultUrlSafety safety = new DefaultUrlSafety(properties);
-
-        assertThat(safety.isUrlAllowed("http://example.com:25/")).isTrue();
-    }
-
-    @Test
-    void portBasedBlocking_port6379_redis_currentlyAllowed() {
-        AgentProperties properties = new AgentProperties();
-        properties.getSecurity().setUrlSafetyEnabled(true);
-        DefaultUrlSafety safety = new DefaultUrlSafety(properties);
-
-        // Redis port — common SSRF target
-        assertThat(safety.isUrlAllowed("http://internal.example.com:6379/")).isTrue();
-    }
+    // ─── Port-based tests (standard ports allowed) ───
 
     @Test
     void portBasedBlocking_standardPorts_currentlyAllowed() {
@@ -355,7 +320,7 @@ class DefaultUrlSafetyTest {
         assertThat(safety.isUrlAllowed("http://example.com:8080/")).isTrue();
     }
 
-    // ─── IDN homograph attack tests (GAP: no IDN handling) ───
+    // ─── IDN homograph attack tests ───
 
     @Test
     void idnHomograph_lookalikeDomain_currentlyAllowed_noIdnCheck() {
@@ -364,7 +329,7 @@ class DefaultUrlSafetyTest {
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
         // Homograph: "examp1e.com" (with digit 1 instead of letter l)
-        // GAP: no IDN/punycode normalization or homograph detection
+        // No IDN/punycode normalization or homograph detection — but this is not an SSRF risk
         assertThat(safety.isUrlAllowed("https://examp1e.com/")).isTrue();
     }
 
@@ -375,7 +340,7 @@ class DefaultUrlSafetyTest {
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
         // Punycode domain (IDN) — could be used for homograph attacks
-        // GAP: no punycode normalization
+        // No punycode normalization — but this is not an SSRF risk
         assertThat(safety.isUrlAllowed("https://xn--exmple-cta.com/")).isTrue();
     }
 
@@ -387,12 +352,9 @@ class DefaultUrlSafetyTest {
 
         // Cyrillic 'а' (U+0430) instead of Latin 'a' in "example"
         // This would look identical to "example.com" but resolve differently
-        // GAP: no homograph detection
-        // Note: Java URI may or may not parse this — test documents current behavior
+        // No homograph detection — but this is not an SSRF risk
         String url = "https://ex\u0430mple.com/";
         boolean allowed = safety.isUrlAllowed(url);
-        // Either it's allowed (if parsed) or blocked (if URI parsing fails)
-        // Document the behavior either way
         if (allowed) {
             assertThat(allowed).as("Cyrillic homograph domain currently allowed — no IDN check").isTrue();
         } else {
@@ -400,25 +362,26 @@ class DefaultUrlSafetyTest {
         }
     }
 
-    // ─── URL with embedded credentials (GAP: not checked) ───
+    // ─── URL with embedded credentials (now blocked) ───
 
     @Test
-    void urlWithCredentials_currentlyAllowed_noCredentialCheck() {
+    void urlWithCredentials_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // URL with embedded credentials — should be flagged but isn't
-        assertThat(safety.isUrlAllowed("https://admin:password@internal.example.com/")).isTrue();
+        // URL with embedded credentials — now blocked
+        assertThat(safety.isUrlAllowed("https://admin:password@internal.example.com/")).isFalse();
     }
 
     @Test
-    void urlWithCredentials_localhost_currentlyAllowed() {
+    void urlWithCredentials_localhost_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        assertThat(safety.isUrlAllowed("http://user:pass@localhost:8080/admin")).isTrue();
+        // Both credentials and localhost — now blocked
+        assertThat(safety.isUrlAllowed("http://user:pass@localhost:8080/admin")).isFalse();
     }
 
     // ─── Scheme edge cases ───
@@ -534,12 +497,10 @@ class DefaultUrlSafetyTest {
 
     @Test
     void hostBlocking_nullBlockedHosts_returnsFalse() {
-        // Default is empty ArrayList — simulate by not setting anything
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // isHostBlocked checks if blockedHosts is null — default is empty list, not null
         assertThat(safety.isHostBlocked("any.host.com")).isFalse();
     }
 
@@ -558,15 +519,13 @@ class DefaultUrlSafetyTest {
     }
 
     @Test
-    void nullUrl_currentlyThrowsNpe_noNullCheck() {
+    void nullUrl_returnsFalse() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // GAP: no null check on URL input — new URI(null) throws NPE
-        // The method doesn't catch NullPointerException, only URISyntaxException
-        assertThatThrownBy(() -> safety.isUrlAllowed(null))
-                .isInstanceOf(NullPointerException.class);
+        // Null input now returns false (null/blank check added)
+        assertThat(safety.isUrlAllowed(null)).isFalse();
     }
 
     @Test
@@ -612,84 +571,97 @@ class DefaultUrlSafetyTest {
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
         // isHostBlocked does NOT check urlSafetyEnabled — it always checks the list
-        // This is different from isUrlAllowed which checks the flag first
         assertThat(safety.isHostBlocked("evil.com")).isTrue();
     }
 
-    // ─── Decimal IP encoding (SSRF bypass technique) ───
+    // ─── Decimal IP encoding (SSRF bypass technique) — now blocked ───
 
     @Test
-    void ssrf_decimalIp_2130706433_currentlyAllowed() {
+    void ssrf_decimalIp_2130706433_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // 2130706433 = 127.0.0.1 in decimal notation — SSRF bypass technique
-        // GAP: no decimal IP detection
-        // Note: Java URI may parse this as a hostname, not an IP
+        // 2130706433 = 127.0.0.1 in decimal notation — now blocked by InetAddress resolution
         assertThat(safety.isUrlAllowed("http://2130706433/"))
-                .as("Decimal IP encoding of 127.0.0.1 — currently allowed, no IP normalization")
-                .isTrue();
+                .as("Decimal IP encoding of 127.0.0.1 — now blocked by IP resolution")
+                .isFalse();
     }
 
     @Test
-    void ssrf_octalIp_0177_0_0_1_currentlyAllowed() {
+    void ssrf_octalIp_0177_0_0_1_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // 0177.0.0.1 = 127.0.0.1 in octal — SSRF bypass technique
-        // GAP: no octal IP detection
-        // Note: Java URI may parse "0177" as a hostname
+        // 0177.0.0.1 = 127.0.0.1 in octal — now blocked by encoded IP detection
         boolean allowed = safety.isUrlAllowed("http://0177.0.0.1/");
-        // Document the behavior
         assertThat(allowed)
-                .as("Octal IP encoding of 127.0.0.1 — behavior depends on URI parsing")
-                .isTrue();
+                .as("Octal IP encoding of 127.0.0.1 — now blocked")
+                .isFalse();
     }
 
     @Test
-    void ssrf_hexIp_0x7f000001_currentlyAllowed() {
+    void ssrf_hexIp_0x7f000001_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // 0x7f000001 = 127.0.0.1 in hex — SSRF bypass technique
-        // GAP: no hex IP detection
+        // 0x7f000001 = 127.0.0.1 in hex — now blocked by encoded IP detection
         boolean allowed = safety.isUrlAllowed("http://0x7f000001/");
         assertThat(allowed)
-                .as("Hex IP encoding of 127.0.0.1 — behavior depends on URI parsing")
-                .isTrue();
+                .as("Hex IP encoding of 127.0.0.1 — now blocked")
+                .isFalse();
     }
 
-    // ─── 0.0.0.0 (all interfaces) ───
+    // ─── 0.0.0.0 (all interfaces) — now blocked ───
 
     @Test
-    void ssrf_0_0_0_0_currentlyAllowed_notBlocked() {
+    void ssrf_0_0_0_0_nowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // 0.0.0.0 — on some systems routes to localhost
-        // GAP: not blocked
-        assertThat(safety.isUrlAllowed("http://0.0.0.0/")).isTrue();
+        // 0.0.0.0 — on some systems routes to localhost — now blocked
+        assertThat(safety.isUrlAllowed("http://0.0.0.0/")).isFalse();
     }
 
-    // ─── Real-world SSRF scenario ───
+    // ─── Real-world SSRF scenario — now blocked ───
 
     @Test
-    void ssrf_realWorldScenario_allCurrentlyAllowed() {
+    void ssrf_realWorldScenario_allNowBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
         DefaultUrlSafety safety = new DefaultUrlSafety(properties);
 
-        // Simulate an attacker trying to access internal services
-        // All of these should be blocked but currently aren't
-        assertThat(safety.isUrlAllowed("http://127.0.0.1:6379/")).isTrue();           // Redis
-        assertThat(safety.isUrlAllowed("http://127.0.0.1:11211/")).isTrue();          // Memcached
-        assertThat(safety.isUrlAllowed("http://169.254.169.254/latest/meta-data/iam/security-credentials/")).isTrue(); // AWS creds
-        assertThat(safety.isUrlAllowed("http://10.0.0.1:9200/_search")).isTrue();     // Elasticsearch
-        assertThat(safety.isUrlAllowed("http://192.168.1.1/admin")).isTrue();          // Router admin
-        assertThat(safety.isUrlAllowed("http://localhost:5432/")).isTrue();            // PostgreSQL
+        // All SSRF vectors are now blocked
+        assertThat(safety.isUrlAllowed("http://127.0.0.1:6379/")).isFalse();           // Redis
+        assertThat(safety.isUrlAllowed("http://127.0.0.1:11211/")).isFalse();          // Memcached
+        assertThat(safety.isUrlAllowed("http://169.254.169.254/latest/meta-data/iam/security-credentials/")).isFalse(); // AWS creds
+        assertThat(safety.isUrlAllowed("http://10.0.0.1:9200/_search")).isFalse();     // Elasticsearch
+        assertThat(safety.isUrlAllowed("http://192.168.1.1/admin")).isFalse();          // Router admin
+        assertThat(safety.isUrlAllowed("http://localhost:5432/")).isFalse();            // PostgreSQL
+    }
+
+    // ─── checkUrl default method ───
+
+    @Test
+    void checkUrl_returnsNullForAllowedUrl() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setUrlSafetyEnabled(true);
+        DefaultUrlSafety safety = new DefaultUrlSafety(properties);
+
+        assertThat(safety.checkUrl("https://example.com")).isNull();
+    }
+
+    @Test
+    void checkUrl_returnsReasonForBlockedUrl() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setUrlSafetyEnabled(true);
+        DefaultUrlSafety safety = new DefaultUrlSafety(properties);
+
+        assertThat(safety.checkUrl("http://127.0.0.1/")).isNotNull();
+        assertThat(safety.checkUrl("")).isEqualTo("URL is empty");
+        assertThat(safety.checkUrl(null)).isEqualTo("URL is empty");
     }
 }

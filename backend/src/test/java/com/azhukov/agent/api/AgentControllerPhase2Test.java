@@ -75,7 +75,8 @@ class AgentControllerPhase2Test {
 
         AgentController controller = new AgentController(agentRuntimeService, streamingService,
             memoryProvider, skillManager, checkpointManager, ttsService, transcriptionService,
-            new com.azhukov.agent.core.agent.SteerBuffer(), new com.azhukov.agent.core.security.ApprovalQueue(),
+            new com.azhukov.agent.core.agent.SteerBuffer(), new com.azhukov.agent.core.agent.InterruptToken(),
+            new com.azhukov.agent.core.security.ApprovalQueue(),
             new com.azhukov.agent.service.CliRuntimeSettingsService(null, null),
             agentProperties, domainDtoMapper,
             org.mockito.Mockito.mock(com.azhukov.agent.core.skill.CuratorService.class),

@@ -71,4 +71,24 @@ class ModelClientDefaultsTest {
         assertThat(client.analyzeImage("img", "prompt"))
             .isEqualTo("Vision analysis is not supported by this model client.");
     }
+
+    // ─── P2-18: getModelName() default ──────────────────────────────
+
+    @Test
+    void defaultGetModelNameReturnsUnknown() {
+        ModelClient client = new ModelClient() {
+            @Override
+            public ChatResponse complete(List<Message> messages, List<ToolDefinition> tools,
+                                         ModelRequestOptions options) {
+                return ChatResponse.text("");
+            }
+        };
+        assertThat(client.getModelName()).isEqualTo("unknown");
+    }
+
+    @Test
+    void noOpModelClientGetModelNameReturnsNoop() {
+        com.azhukov.agent.client.NoOpModelClient client = new com.azhukov.agent.client.NoOpModelClient();
+        assertThat(client.getModelName()).isEqualTo("noop");
+    }
 }

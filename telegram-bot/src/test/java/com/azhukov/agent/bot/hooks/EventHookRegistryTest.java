@@ -141,6 +141,50 @@ class EventHookRegistryTest {
     }
 
     @Test
+    void discoverAndLoad_executesGroovyScript_onEmit() throws Exception {
+        // Create a temp file that the Groovy script will write to
+        Path tempDir = Files.createTempDirectory("hooktest-exec");
+        Path hookDir = tempDir.resolve("write-hook");
+        Files.createDirectories(hookDir);
+        Path markerFile = tempDir.resolve("marker.txt");
+
+        Files.writeString(hookDir.resolve("HOOK.json"), """
+            {"name": "write-hook", "description": "Writes a marker file", "events": ["agent:start"]}
+            """);
+        Files.writeString(hookDir.resolve("handler.groovy"),
+            "new File('" + markerFile.toString().replace("\\", "\\\\") + "').text = 'fired:' + eventType");
+
+        registry = new EventHookRegistry(tempDir);
+        registry.discoverAndLoad();
+
+        // Emit the event — should execute the Groovy script
+        registry.emit(EventHookRegistry.AGENT_START, Map.of("session_id", "test"));
+
+        // Verify the script was actually executed
+        assertThat(Files.exists(markerFile)).isTrue();
+        assertThat(Files.readString(markerFile)).isEqualTo("fired:agent:start");
+    }
+
+    @Test
+    void discoverAndLoad_groovyScriptError_doesNotBlockEmit() throws Exception {
+        Path tempDir = Files.createTempDirectory("hooktest-err");
+        Path hookDir = tempDir.resolve("error-hook");
+        Files.createDirectories(hookDir);
+
+        Files.writeString(hookDir.resolve("HOOK.json"), """
+            {"name": "error-hook", "description": "Always throws", "events": ["agent:start"]}
+            """);
+        Files.writeString(hookDir.resolve("handler.groovy"), "throw new RuntimeException('boom')");
+
+        registry = new EventHookRegistry(tempDir);
+        registry.discoverAndLoad();
+
+        // Should not throw — errors are caught and logged
+        registry.emit(EventHookRegistry.AGENT_START);
+        // No exception propagated = test passes
+    }
+
+    @Test
     void allEventTypes_defined() {
         assertThat(EventHookRegistry.GATEWAY_STARTUP).isEqualTo("gateway:startup");
         assertThat(EventHookRegistry.SESSION_START).isEqualTo("session:start");

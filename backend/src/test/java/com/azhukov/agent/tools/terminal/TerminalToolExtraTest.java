@@ -41,7 +41,7 @@ class TerminalToolExtraTest {
         TerminalTool tool = new TerminalTool(null, props, redactor, mockCheckpointManager(), interruptToken());
         ToolResult r = tool.execute("{\"command\":\"rm -rf /\"}", null, Session.create("u","noop",""));
         assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Blocked dangerous command pattern");
+        assertThat(r.error()).contains("Blocked");
     }
 
     @Test

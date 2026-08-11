@@ -95,6 +95,32 @@ public class CuratorService {
     // S5: State file path (curator state persistence)
     private volatile Path stateFile;
 
+    /**
+     * S5: Auto-start the curator when the Spring context is fully refreshed
+     * and {@code agent.curator.enabled=true}. Mirrors the
+     * {@code McpServerService} pattern (init on {@link ContextRefreshedEvent}
+     * rather than {@code @PostConstruct} so that all beans are wired first).
+     * <p>
+     * {@link #start()} is idempotent — safe to call multiple times.
+     */
+    @org.springframework.context.event.EventListener(
+        org.springframework.context.event.ContextRefreshedEvent.class)
+    public void onContextRefreshed() {
+        if (isEnabled()) {
+            start();
+        } else {
+            log.info("Curator disabled — skipping auto-start");
+        }
+    }
+
+    /**
+     * S5: Check whether the curator's periodic scheduler has been started.
+     * Primarily for testing and health checks.
+     */
+    public boolean isStarted() {
+        return started;
+    }
+
     /** Manual constructor for tests — no LLM, no backup. */
     public CuratorService(SkillRepository skillRepository, AgentProperties properties) {
         this.skillRepository = skillRepository;

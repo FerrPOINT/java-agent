@@ -2,6 +2,8 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
+import com.azhukov.agent.persistence.entity.CheckpointFileEntity;
+import com.azhukov.agent.persistence.repository.CheckpointFileRepository;
 import com.azhukov.agent.persistence.repository.CheckpointRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,8 +13,10 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 
@@ -24,6 +28,7 @@ import static org.mockito.Mockito.*;
 class CheckpointManagerTest {
 
     @Mock private CheckpointRepository checkpointRepository;
+    @Mock private CheckpointFileRepository checkpointFileRepository;
     private AgentProperties properties;
     private CheckpointManager manager;
 
@@ -35,12 +40,13 @@ class CheckpointManagerTest {
         properties = new AgentProperties();
         properties.getCore().setWorkingDirectory(tempDir.toString());
         properties.getCheckpoints().setEnabled(true);
-        manager = new CheckpointManager(checkpointRepository, properties, new ObjectMapper());
+        manager = new CheckpointManager(checkpointRepository, checkpointFileRepository, properties, new ObjectMapper());
     }
 
     @Test
     void snapshotCreatesEntity() {
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(checkpointRepository.findAll()).thenReturn(List.of());
         CheckpointEntity entity = manager.snapshot("test snapshot");
         assertThat(entity.getDescription()).isEqualTo("test snapshot");
         assertThat(entity.getFileCount()).isGreaterThanOrEqualTo(0);
@@ -67,6 +73,7 @@ class CheckpointManagerTest {
         entity.setDescription("test");
         entity.setFilesJson("[]");
         when(checkpointRepository.findById(id)).thenReturn(java.util.Optional.of(entity));
+        when(checkpointFileRepository.findByCheckpointId(id)).thenReturn(List.of());
         manager.restore(id);
         verify(checkpointRepository).findById(id);
     }
@@ -75,6 +82,7 @@ class CheckpointManagerTest {
     void removeDeletesEntity() {
         UUID id = UUID.randomUUID();
         manager.remove(id);
+        verify(checkpointFileRepository).deleteByCheckpointId(id);
         verify(checkpointRepository).deleteById(id);
     }
 
@@ -116,6 +124,7 @@ class CheckpointManagerTest {
 
         int removed = manager.prune(1);
         assertThat(removed).isEqualTo(1);
+        verify(checkpointFileRepository).deleteByCheckpointId(e1.getId());
         verify(checkpointRepository).delete(e1);
     }
 
@@ -150,6 +159,7 @@ class CheckpointManagerTest {
         entity.setFilesJson("[{\"path\":\"hello.txt\",\"hash\":\"" + hash + "\"}]");
         entity.setFileCount(1);
         when(checkpointRepository.findById(id)).thenReturn(java.util.Optional.of(entity));
+        when(checkpointFileRepository.findByCheckpointId(id)).thenReturn(List.of());
 
         // Should not throw — file exists and hash matches
         manager.restore(id);
@@ -165,8 +175,9 @@ class CheckpointManagerTest {
         entity.setFilesJson("[{\"path\":\"nonexistent.txt\",\"hash\":\"abc\"}]");
         entity.setFileCount(1);
         when(checkpointRepository.findById(id)).thenReturn(java.util.Optional.of(entity));
+        when(checkpointFileRepository.findByCheckpointId(id)).thenReturn(List.of());
 
-        // Missing file → logged but no exception
+        // Missing file, no stored content → logged but no exception
         manager.restore(id);
         verify(checkpointRepository).findById(id);
     }
@@ -183,8 +194,9 @@ class CheckpointManagerTest {
         entity.setFilesJson("[{\"path\":\"changed.txt\",\"hash\":\"0000000000000000\"}]");
         entity.setFileCount(1);
         when(checkpointRepository.findById(id)).thenReturn(java.util.Optional.of(entity));
+        when(checkpointFileRepository.findByCheckpointId(id)).thenReturn(List.of());
 
-        // Hash won't match → logged but no exception
+        // Hash won't match, no stored content → logged but no exception
         manager.restore(id);
         verify(checkpointRepository).findById(id);
     }
@@ -201,6 +213,213 @@ class CheckpointManagerTest {
         assertThat(entity.getFileCount()).isEqualTo(2);
         assertThat(entity.getTotalSizeBytes()).isGreaterThan(0);
         assertThat(entity.getFilesJson()).contains("a.txt").contains("b.txt");
+    }
+
+    // ─── New tests: actual file restoration ───
+
+    @Test
+    void restoreActuallyRestoresChangedFileContent() throws Exception {
+        UUID id = UUID.randomUUID();
+        Path testFile = tempDir.resolve("doc.txt");
+        String originalContent = "original content";
+        String modifiedContent = "modified content";
+
+        // Write the original content and compute its hash
+        Files.writeString(testFile, originalContent);
+        String originalHash = sha256Short(testFile);
+
+        // Now modify the file
+        Files.writeString(testFile, modifiedContent);
+        assertThat(Files.readString(testFile)).isEqualTo(modifiedContent);
+
+        // Set up checkpoint with stored content
+        CheckpointEntity entity = new CheckpointEntity();
+        entity.setId(id);
+        entity.setDescription("test restore");
+        entity.setFilesJson("[{\"path\":\"doc.txt\",\"hash\":\"" + originalHash + "\"}]");
+        entity.setFileCount(1);
+
+        CheckpointFileEntity fileEntity = new CheckpointFileEntity();
+        fileEntity.setId(UUID.randomUUID());
+        fileEntity.setCheckpoint(entity);
+        fileEntity.setFilePath("doc.txt");
+        fileEntity.setFileHash(originalHash);
+        fileEntity.setFileSize(originalContent.length());
+        fileEntity.setContentBase64(Base64.getEncoder().encodeToString(originalContent.getBytes(StandardCharsets.UTF_8)));
+
+        when(checkpointRepository.findById(id)).thenReturn(java.util.Optional.of(entity));
+        when(checkpointFileRepository.findByCheckpointId(id)).thenReturn(List.of(fileEntity));
+
+        // Restore
+        manager.restore(id);
+
+        // File should be restored to original content
+        assertThat(Files.readString(testFile)).isEqualTo(originalContent);
+    }
+
+    @Test
+    void restoreActuallyRestoresMissingFileContent() throws Exception {
+        UUID id = UUID.randomUUID();
+        Path testFile = tempDir.resolve("recreated.txt");
+        String originalContent = "I was deleted but now I'm back";
+
+        // File does not exist at this point
+        assertThat(Files.exists(testFile)).isFalse();
+
+        // Compute hash for the original content
+        String originalHash = sha256ShortBytes(originalContent.getBytes(StandardCharsets.UTF_8));
+
+        CheckpointEntity entity = new CheckpointEntity();
+        entity.setId(id);
+        entity.setDescription("test restore missing");
+        entity.setFilesJson("[{\"path\":\"recreated.txt\",\"hash\":\"" + originalHash + "\"}]");
+        entity.setFileCount(1);
+
+        CheckpointFileEntity fileEntity = new CheckpointFileEntity();
+        fileEntity.setId(UUID.randomUUID());
+        fileEntity.setCheckpoint(entity);
+        fileEntity.setFilePath("recreated.txt");
+        fileEntity.setFileHash(originalHash);
+        fileEntity.setFileSize(originalContent.length());
+        fileEntity.setContentBase64(Base64.getEncoder().encodeToString(originalContent.getBytes(StandardCharsets.UTF_8)));
+
+        when(checkpointRepository.findById(id)).thenReturn(java.util.Optional.of(entity));
+        when(checkpointFileRepository.findByCheckpointId(id)).thenReturn(List.of(fileEntity));
+
+        // Restore
+        manager.restore(id);
+
+        // File should be recreated with original content
+        assertThat(Files.exists(testFile)).isTrue();
+        assertThat(Files.readString(testFile)).isEqualTo(originalContent);
+    }
+
+    @Test
+    void restoreActuallyRestoresMultipleFiles() throws Exception {
+        UUID id = UUID.randomUUID();
+
+        // Create three files with known content
+        Path file1 = tempDir.resolve("file1.txt");
+        Path file2 = tempDir.resolve("subdir/file2.txt");
+        Path file3 = tempDir.resolve("file3.txt");
+
+        String content1 = "content one";
+        String content2 = "content two";
+        String content3 = "content three";
+
+        Files.writeString(file1, content1);
+        Files.createDirectories(file2.getParent());
+        Files.writeString(file2, content2);
+        Files.writeString(file3, content3);
+
+        String hash1 = sha256Short(file1);
+        String hash2 = sha256Short(file2);
+        String hash3 = sha256Short(file3);
+
+        // Modify all three files
+        Files.writeString(file1, "MODIFIED1");
+        Files.writeString(file2, "MODIFIED2");
+        Files.delete(file3); // delete file3
+
+        // Build checkpoint entities
+        CheckpointEntity entity = new CheckpointEntity();
+        entity.setId(id);
+        entity.setDescription("multi-file restore");
+        entity.setFilesJson("[{\"path\":\"file1.txt\",\"hash\":\"" + hash1 + "\"}," +
+            "{\"path\":\"subdir/file2.txt\",\"hash\":\"" + hash2 + "\"}," +
+            "{\"path\":\"file3.txt\",\"hash\":\"" + hash3 + "\"}]");
+        entity.setFileCount(3);
+
+        CheckpointFileEntity fe1 = new CheckpointFileEntity();
+        fe1.setId(UUID.randomUUID());
+        fe1.setCheckpoint(entity);
+        fe1.setFilePath("file1.txt");
+        fe1.setFileHash(hash1);
+        fe1.setFileSize(content1.length());
+        fe1.setContentBase64(Base64.getEncoder().encodeToString(content1.getBytes(StandardCharsets.UTF_8)));
+
+        CheckpointFileEntity fe2 = new CheckpointFileEntity();
+        fe2.setId(UUID.randomUUID());
+        fe2.setCheckpoint(entity);
+        fe2.setFilePath("subdir/file2.txt");
+        fe2.setFileHash(hash2);
+        fe2.setFileSize(content2.length());
+        fe2.setContentBase64(Base64.getEncoder().encodeToString(content2.getBytes(StandardCharsets.UTF_8)));
+
+        CheckpointFileEntity fe3 = new CheckpointFileEntity();
+        fe3.setId(UUID.randomUUID());
+        fe3.setCheckpoint(entity);
+        fe3.setFilePath("file3.txt");
+        fe3.setFileHash(hash3);
+        fe3.setFileSize(content3.length());
+        fe3.setContentBase64(Base64.getEncoder().encodeToString(content3.getBytes(StandardCharsets.UTF_8)));
+
+        when(checkpointRepository.findById(id)).thenReturn(java.util.Optional.of(entity));
+        when(checkpointFileRepository.findByCheckpointId(id)).thenReturn(List.of(fe1, fe2, fe3));
+
+        // Restore
+        manager.restore(id);
+
+        // All three files should have original content
+        assertThat(Files.readString(file1)).isEqualTo(content1);
+        assertThat(Files.readString(file2)).isEqualTo(content2);
+        assertThat(Files.exists(file3)).isTrue();
+        assertThat(Files.readString(file3)).isEqualTo(content3);
+    }
+
+    @Test
+    void restoreDoesNotModifyUnchangedFiles() throws Exception {
+        UUID id = UUID.randomUUID();
+        Path testFile = tempDir.resolve("unchanged.txt");
+        String content = "untouched content";
+        Files.writeString(testFile, content);
+        String hash = sha256Short(testFile);
+
+        CheckpointEntity entity = new CheckpointEntity();
+        entity.setId(id);
+        entity.setDescription("test");
+        entity.setFilesJson("[{\"path\":\"unchanged.txt\",\"hash\":\"" + hash + "\"}]");
+        entity.setFileCount(1);
+
+        CheckpointFileEntity fileEntity = new CheckpointFileEntity();
+        fileEntity.setId(UUID.randomUUID());
+        fileEntity.setCheckpoint(entity);
+        fileEntity.setFilePath("unchanged.txt");
+        fileEntity.setFileHash(hash);
+        fileEntity.setFileSize(content.length());
+        fileEntity.setContentBase64(Base64.getEncoder().encodeToString(content.getBytes(StandardCharsets.UTF_8)));
+
+        when(checkpointRepository.findById(id)).thenReturn(java.util.Optional.of(entity));
+        when(checkpointFileRepository.findByCheckpointId(id)).thenReturn(List.of(fileEntity));
+
+        manager.restore(id);
+
+        // File should remain unchanged
+        assertThat(Files.readString(testFile)).isEqualTo(content);
+    }
+
+    @Test
+    void snapshotStoresFileContent() throws Exception {
+        Files.writeString(tempDir.resolve("stored.txt"), "store me");
+
+        when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> {
+            CheckpointEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        when(checkpointRepository.findAll()).thenReturn(List.of());
+
+        CheckpointEntity entity = manager.snapshot("store content");
+
+        assertThat(entity.getFiles()).hasSize(1);
+        CheckpointFileEntity fe = entity.getFiles().get(0);
+        assertThat(fe.getFilePath()).isEqualTo("stored.txt");
+        assertThat(fe.getContentBase64()).isNotNull();
+        assertThat(fe.getContentBase64()).isNotEmpty();
+
+        // Decode and verify
+        byte[] decoded = Base64.getDecoder().decode(fe.getContentBase64());
+        assertThat(new String(decoded, StandardCharsets.UTF_8)).isEqualTo("store me");
     }
 
     @Test
@@ -261,6 +480,16 @@ class CheckpointManagerTest {
     private static String sha256Short(java.nio.file.Path file) throws Exception {
         java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
         byte[] hash = md.digest(Files.readAllBytes(file));
+        StringBuilder sb = new StringBuilder();
+        for (byte b : hash) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString().substring(0, 16);
+    }
+
+    private static String sha256ShortBytes(byte[] data) throws Exception {
+        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+        byte[] hash = md.digest(data);
         StringBuilder sb = new StringBuilder();
         for (byte b : hash) {
             sb.append(String.format("%02x", b));

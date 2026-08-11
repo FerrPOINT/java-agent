@@ -129,6 +129,8 @@ public class AgentProperties {
         private boolean dockerEnabled = false;
         private final List<String> blockedCommands = new ArrayList<>();
         private final List<String> requireApprovalCommands = new ArrayList<>();
+        /** Whether to block 'sudo' commands by default (default true). */
+        private boolean blockSudo = true;
     }
 
     @Getter @Setter
@@ -216,8 +218,26 @@ public class AgentProperties {
     @Getter @Setter
     public static class DelegationProperties {
         private boolean enabled = true;
+        /** Maximum delegation spawn depth (0 = parent, 1 = first child). Default 3. */
         private int maxDepth = 3;
+        /** Maximum spawn depth — agents at depths 0..maxSpawnDepth-1 can spawn; maxSpawnDepth is the leaf floor. Default 3 (matches maxDepth). */
+        private int maxSpawnDepth = 3;
+        /** Maximum number of concurrent child subagents. Default 3. */
+        private int maxConcurrentChildren = 3;
+        /** Default timeout in seconds for a single child subagent. Default 300. */
         private int defaultTimeoutSeconds = 300;
+        /** Hard wall-clock cap in seconds for a single child (0 or negative = disabled). Default 0 (disabled). */
+        private int childTimeoutSeconds = 0;
+        /** Global kill switch for the orchestrator role. When false, role='orchestrator' is forced to 'leaf'. Default true. */
+        private boolean orchestratorEnabled = true;
+        /** Tools that children must never have access to (always stripped from child toolsets). */
+        private final List<String> blockedTools = new ArrayList<>(java.util.List.of(
+            "delegate_task",   // no recursive delegation (leaf children)
+            "clarify",          // no user interaction
+            "send_message"      // no cross-platform side effects
+        ));
+
+        public void setBlockedTools(List<String> tools) { this.blockedTools.clear(); this.blockedTools.addAll(tools); }
     }
 
     @Getter @Setter
@@ -235,6 +255,12 @@ public class AgentProperties {
             private final Map<String, String> env = new HashMap<>();
             private String baseUrl = "";
             private int timeoutSeconds = 30;
+            // OAuth configuration for remote MCP servers
+            private String oauthTokenUrl = "";
+            private String oauthClientId = "";
+            private String oauthClientSecret = "";
+            /** OAuth scopes (space-separated), empty = use server defaults */
+            private String oauthScopes = "";
         }
 
         /** MCP server mode: expose the agent's own tools to external MCP clients. */

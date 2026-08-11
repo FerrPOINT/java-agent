@@ -7,10 +7,24 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Component
 public class DefaultMessageSanitizer implements MessageSanitizer {
+
+    /**
+     * Lone surrogate code points are invalid in UTF-8 and crash JSON serialization
+     * inside the OpenAI SDK. Replace them with U+FFFD (replacement character).
+     * Mirrors Hermes' agent/message_sanitization.py (_SURROGATE_RE).
+     */
+    private static final Pattern SURROGATE_PATTERN = Pattern.compile("[\\ud800-\\udfff]");
+
+    /**
+     * Control characters (except newline, carriage return, tab) that should be
+     * stripped from message content to prevent downstream API rejections.
+     */
+    private static final Pattern CONTROL_CHARS = Pattern.compile("[\\p{Cntrl}&&[^\\n\\r\\t]]");
 
     private final ToolCallArgumentRepair argumentRepair = new ToolCallArgumentRepair();
 
@@ -24,7 +38,7 @@ public class DefaultMessageSanitizer implements MessageSanitizer {
 
         // 1. System message only at index 0
         if (messages.get(0).role() == Role.SYSTEM) {
-            cleaned.add(messages.get(0));
+            cleaned.add(sanitizeMessageContent(messages.get(0)));
         }
 
         // 2. Ensure first non-system is user
@@ -37,13 +51,20 @@ public class DefaultMessageSanitizer implements MessageSanitizer {
                     cleaned.add(Message.user("(context)"));
                 }
             }
+
+            // Sanitize content (surrogates, control chars)
+            m = sanitizeMessageContent(m);
+
             // Repair tool-call arguments if present
             if (m.toolCalls() != null && !m.toolCalls().isEmpty()) {
                 List<com.azhukov.agent.core.model.ToolCall> repairedCalls = new ArrayList<>();
                 for (var tc : m.toolCalls()) {
                     String repairedArgs = argumentRepair.repair(tc.arguments(), tc.name());
+                    // Also strip surrogates from tool call fields
+                    String repairedId = stripSurrogates(tc.id());
+                    String repairedName = stripSurrogates(tc.name());
                     repairedCalls.add(new com.azhukov.agent.core.model.ToolCall(
-                        tc.id(), tc.name(), repairedArgs
+                        repairedId, repairedName, repairedArgs
                     ));
                 }
                 m = Message.assistantWithToolCalls(m.content(), repairedCalls, m.turnIndex());
@@ -60,7 +81,18 @@ public class DefaultMessageSanitizer implements MessageSanitizer {
             }
             Message last = collapsed.get(collapsed.size() - 1);
             if (last.role() == m.role() && m.role() != Role.TOOL) {
-                String merged = last.content() + "\n\n" + m.content();
+                // Merge content, handling null content safely
+                String lastContent = last.content() != null ? last.content() : "";
+                String currentContent = m.content() != null ? m.content() : "";
+                // If both are empty (e.g., assistant with tool calls), skip merging
+                if (lastContent.isEmpty() && currentContent.isEmpty()) {
+                    // Keep the one that has tool calls (if any)
+                    if (m.toolCalls() != null && !m.toolCalls().isEmpty()) {
+                        collapsed.set(collapsed.size() - 1, m);
+                    }
+                    continue;
+                }
+                String merged = lastContent + "\n\n" + currentContent;
                 collapsed.set(collapsed.size() - 1, Message.withContent(last, merged));
             } else {
                 collapsed.add(m);
@@ -79,5 +111,44 @@ public class DefaultMessageSanitizer implements MessageSanitizer {
         }
 
         return List.copyOf(collapsed);
+    }
+
+    /**
+     * Sanitizes message content by removing lone surrogates and control characters.
+     * Handles null content safely (e.g., assistant messages with only tool calls).
+     * Mirrors Hermes' _sanitize_surrogates and _sanitize_messages_surrogates.
+     */
+    private Message sanitizeMessageContent(Message m) {
+        String content = m.content();
+        if (content == null) {
+            return m; // Nothing to sanitize (e.g., assistant with only tool calls)
+        }
+        boolean changed = false;
+        String result = content;
+
+        // Remove lone surrogates (replace with U+FFFD)
+        if (SURROGATE_PATTERN.matcher(result).find()) {
+            result = SURROGATE_PATTERN.matcher(result).replaceAll("\ufffd");
+            changed = true;
+        }
+
+        // Remove control characters (except \n, \r, \t)
+        if (CONTROL_CHARS.matcher(result).find()) {
+            result = CONTROL_CHARS.matcher(result).replaceAll("");
+            changed = true;
+        }
+
+        return changed ? Message.withContent(m, result) : m;
+    }
+
+    /**
+     * Strips lone surrogate code points from a string, replacing with U+FFFD.
+     */
+    private String stripSurrogates(String s) {
+        if (s == null) return null;
+        if (SURROGATE_PATTERN.matcher(s).find()) {
+            return SURROGATE_PATTERN.matcher(s).replaceAll("\ufffd");
+        }
+        return s;
     }
 }

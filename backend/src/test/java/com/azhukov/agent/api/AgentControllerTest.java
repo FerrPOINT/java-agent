@@ -96,7 +96,8 @@ class AgentControllerTest {
 
         AgentController controller = new AgentController(agentRuntimeService, streamingService,
             memoryProvider, skillManager, checkpointManager, ttsService, transcriptionService,
-            new com.azhukov.agent.core.agent.SteerBuffer(), new com.azhukov.agent.core.security.ApprovalQueue(),
+            new com.azhukov.agent.core.agent.SteerBuffer(), new com.azhukov.agent.core.agent.InterruptToken(),
+            new com.azhukov.agent.core.security.ApprovalQueue(),
             cliRuntimeSettingsService,
             agentProperties, domainDtoMapper, curatorService, todoRepository,
             new com.azhukov.agent.service.RuntimeConfigService());

@@ -101,15 +101,15 @@ class GroupMessageFilterTest {
     void shouldProcess_ignoredThread_returnsFalse() {
         // Group chat with require-mention off, but thread is in ignored list
         properties.getGroup().getIgnoredThreads().add(42L);
-        UpdateEvent event = makeEvent(-100123L, "Hello", 42L);
+        UpdateEvent event = makeEventWithThread(-100123L, "Hello", 200L, 42L);
         assertThat(filter.shouldProcess(event)).isFalse();
     }
 
     @Test
     void shouldProcess_ignoredThread_notIgnoredId_returnsTrue() {
-        // messageId=0 should not trigger ignored-thread check (guard: messageId > 0)
+        // messageThreadId=0 should not trigger ignored-thread check (guard: messageThreadId > 0)
         properties.getGroup().getIgnoredThreads().add(42L);
-        UpdateEvent event = makeEvent(-100123L, "Hello", 0L);
+        UpdateEvent event = makeEvent(-100123L, "Hello", 200L);
         assertThat(filter.shouldProcess(event)).isTrue();
     }
 
@@ -182,11 +182,118 @@ class GroupMessageFilterTest {
         assertThat(filter.shouldProcess(event)).isTrue();
     }
 
+    // ─── B2.10 / P2-20: Channel post detection ─────────────────────
+
+    @Test
+    void isChannelPost_channelPostType_returnsTrue() {
+        UpdateEvent event = new UpdateEvent(1L, UpdateEvent.Type.CHANNEL_POST, -100123L, 0L,
+            "", "Channel post text", null, null, null,
+            null, null, null, false, null, null, 0L, null, 0L);
+        assertThat(filter.isChannelPost(event)).isTrue();
+    }
+
+    @Test
+    void isChannelPost_channelPostTypeInPrivateChat_returnsTrue() {
+        // Even in a private chat, CHANNEL_POST type should be detected
+        UpdateEvent event = new UpdateEvent(1L, UpdateEvent.Type.CHANNEL_POST, 123L, 0L,
+            "", "Channel post", null, null, null,
+            null, null, null, false, null, null);
+        assertThat(filter.isChannelPost(event)).isTrue();
+    }
+
+    @Test
+    void shouldProcess_channelPost_returnsFalse() {
+        // Channel posts should be observed but not trigger a response
+        UpdateEvent event = new UpdateEvent(1L, UpdateEvent.Type.CHANNEL_POST, -100123L, 0L,
+            "", "Channel announcement", null, null, null,
+            null, null, null, false, null, null, 0L, null, 0L);
+        assertThat(filter.shouldProcess(event)).isFalse();
+    }
+
+    @Test
+    void isChannelPost_heuristicFallback_groupChatUserIdZero_returnsTrue() {
+        // Fallback heuristic: group chat with userId=0 and text
+        UpdateEvent event = new UpdateEvent(1L, UpdateEvent.Type.TEXT, -100123L, 0L,
+            "", "Heuristic channel post", null, null, null,
+            null, null, null, false, null, null, 0L, null, 0L);
+        assertThat(filter.isChannelPost(event)).isTrue();
+    }
+
+    @Test
+    void isChannelPost_heuristicFallback_groupChatUserIdZeroWithCaption_returnsTrue() {
+        // Fallback heuristic: group chat with userId=0 and caption (no text)
+        UpdateEvent event = new UpdateEvent(1L, UpdateEvent.Type.UNKNOWN, -100123L, 0L,
+            "", null, "Caption text", null, null,
+            null, null, null, false, null, null, 0L, null, 0L);
+        assertThat(filter.isChannelPost(event)).isTrue();
+    }
+
+    @Test
+    void isChannelPost_normalGroupMessage_returnsFalse() {
+        UpdateEvent event = makeEvent(-100123L, "Hello @mybot", 0L);
+        assertThat(filter.isChannelPost(event)).isFalse();
+    }
+
+    @Test
+    void isChannelPost_nullEvent_returnsFalse() {
+        assertThat(filter.isChannelPost(null)).isFalse();
+    }
+
+    @Test
+    void updateEvent_fromParsesChannelPost() {
+        // Verify that UpdateEvent.from() properly parses channel_post updates
+        java.util.Map<String, Object> update = new java.util.HashMap<>();
+        update.put("update_id", 42L);
+
+        java.util.Map<String, Object> channelPost = new java.util.HashMap<>();
+        java.util.Map<String, Object> chat = new java.util.HashMap<>();
+        chat.put("id", -100123L);
+        chat.put("type", "channel");
+        channelPost.put("chat", chat);
+        channelPost.put("text", "Channel message");
+        channelPost.put("message_id", 99L);
+
+        update.put("channel_post", channelPost);
+
+        UpdateEvent event = UpdateEvent.from(update);
+        assertThat(event.type()).isEqualTo(UpdateEvent.Type.CHANNEL_POST);
+        assertThat(event.chatId()).isEqualTo(-100123L);
+        assertThat(event.text()).isEqualTo("Channel message");
+        assertThat(event.messageId()).isEqualTo(99L);
+    }
+
+    @Test
+    void updateEvent_fromParsesEditedChannelPost() {
+        java.util.Map<String, Object> update = new java.util.HashMap<>();
+        update.put("update_id", 43L);
+
+        java.util.Map<String, Object> editedChannelPost = new java.util.HashMap<>();
+        java.util.Map<String, Object> chat = new java.util.HashMap<>();
+        chat.put("id", -100456L);
+        chat.put("type", "channel");
+        editedChannelPost.put("chat", chat);
+        editedChannelPost.put("text", "Edited channel message");
+        editedChannelPost.put("message_id", 100L);
+
+        update.put("edited_channel_post", editedChannelPost);
+
+        UpdateEvent event = UpdateEvent.from(update);
+        assertThat(event.type()).isEqualTo(UpdateEvent.Type.CHANNEL_POST);
+        assertThat(event.chatId()).isEqualTo(-100456L);
+        assertThat(event.text()).isEqualTo("Edited channel message");
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────
 
     private UpdateEvent makeEvent(long chatId, String text, long messageId) {
         return new UpdateEvent(1L, UpdateEvent.Type.TEXT, chatId, 200L,
             "jdoe", text, null, null, null,
             null, null, null, false, null, null, messageId, null, 0L);
+    }
+
+    private UpdateEvent makeEventWithThread(long chatId, String text, long messageId, long threadId) {
+        return new UpdateEvent(1L, UpdateEvent.Type.TEXT, chatId, 200L,
+            "jdoe", text, null, null, null,
+            null, null, null, false, null, null, messageId, null, threadId);
     }
 }

@@ -111,6 +111,8 @@ agent:
     default-timeout-seconds: ${AGENT_TERMINAL_DEFAULT_TIMEOUT_SECONDS:300}
     max-timeout-seconds: ${AGENT_TERMINAL_MAX_TIMEOUT_SECONDS:1800}
     docker-enabled: ${AGENT_TERMINAL_DOCKER_ENABLED:false}
+    # Block 'sudo' as a leading command token (default true)
+    block-sudo: ${AGENT_TERMINAL_BLOCK_SUDO:true}
 
   # ─── File ───
   file:
@@ -178,7 +180,12 @@ agent:
   delegation:
     enabled: ${AGENT_DELEGATION_ENABLED:true}
     max-depth: ${AGENT_DELEGATION_MAX_DEPTH:3}
-    default-timeout-seconds: ${AGENT_DELEGATION_DEFAULT_TIMEOUT_SECONDS:1800}
+    max-spawn-depth: ${AGENT_DELEGATION_MAX_SPAWN_DEPTH:3}
+    max-concurrent-children: ${AGENT_DELEGATION_MAX_CONCURRENT_CHILDREN:3}
+    default-timeout-seconds: ${AGENT_DELEGATION_DEFAULT_TIMEOUT_SECONDS:300}
+    child-timeout-seconds: ${AGENT_DELEGATION_CHILD_TIMEOUT_SECONDS:0}
+    orchestrator-enabled: ${AGENT_DELEGATION_ORCHESTRATOR_ENABLED:true}
+    blocked-tools: ${AGENT_DELEGATION_BLOCKED_TOOLS:}
   
   # ─── MCP ───
   mcp:
@@ -215,6 +222,8 @@ agent:
     redact-enabled: ${AGENT_SECURITY_REDACT_ENABLED:true}
     redact-secrets: ${AGENT_SECURITY_REDACT_SECRETS:true}
     redact-pii: ${AGENT_SECURITY_REDACT_PII:false}
+    # Additional regex patterns for blocked terminal commands (built-in defaults always apply)
+    blocked-commands: ${AGENT_SECURITY_BLOCKED_COMMANDS:}
   
   # ─── Core ───
   core:

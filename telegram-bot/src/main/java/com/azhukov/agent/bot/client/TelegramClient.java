@@ -132,12 +132,32 @@ public class TelegramClient {
      * @return true if the edit succeeded
      */
     public boolean editMessageText(long chatId, long messageId, String text, String parseMode, boolean disableNotification) {
+        return editMessageText(chatId, messageId, text, parseMode, disableNotification, null);
+    }
+
+    /**
+     * Edit a message with an optional reply_markup (e.g. to remove inline buttons
+     * by passing an empty keyboard JSON or null to clear).
+     *
+     * @param chatId              target chat id
+     * @param messageId           message id to edit
+     * @param text                 new text
+     * @param parseMode           parse mode (MarkdownV2, HTML, or null)
+     * @param disableNotification when true, delivers silently (no push)
+     * @param replyMarkup         inline keyboard JSON or null to remove buttons
+     * @return true if the edit succeeded
+     */
+    public boolean editMessageText(long chatId, long messageId, String text, String parseMode,
+                                   boolean disableNotification, String replyMarkup) {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("chat_id", chatId);
         params.put("message_id", messageId);
         params.put("text", text);
         if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
         if (disableNotification) params.put("disable_notification", true);
+        if (replyMarkup != null) {
+            params.put("reply_markup", replyMarkup);
+        }
         return callApi("editMessageText", params).isPresent();
     }
 

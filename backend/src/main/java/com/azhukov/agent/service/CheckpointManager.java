@@ -2,6 +2,8 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
+import com.azhukov.agent.persistence.entity.CheckpointFileEntity;
+import com.azhukov.agent.persistence.repository.CheckpointFileRepository;
 import com.azhukov.agent.persistence.repository.CheckpointRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,8 +12,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -21,7 +25,8 @@ import java.util.*;
 import java.util.stream.Stream;
 
 /**
- * Filesystem checkpoint manager — takes lightweight snapshots (file list + hashes, not file contents).
+ * Filesystem checkpoint manager — takes snapshots storing file hashes and content,
+ * enabling actual file restoration on rollback.
  * Supports snapshot, list, restore, and prune operations.
  */
 @Component
@@ -30,12 +35,19 @@ import java.util.stream.Stream;
 public class CheckpointManager {
 
     private final CheckpointRepository checkpointRepository;
+    private final CheckpointFileRepository checkpointFileRepository;
     private final AgentProperties properties;
     private final ObjectMapper objectMapper;
 
     private static final int MAX_FILES = 10000;
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB per file
+    /**
+     * Maximum file size for storing content in the DB.
+     * Files larger than this are tracked by hash only and cannot be restored.
+     */
+    private static final long MAX_STORED_CONTENT_SIZE = 512 * 1024; // 512KB
 
+    @Transactional
     public CheckpointEntity snapshot(String description) {
         String workingDir = properties.getCore().getWorkingDirectory();
         Path root = Paths.get(workingDir);
@@ -44,6 +56,10 @@ public class CheckpointManager {
         ArrayNode filesArray = objectMapper.createArrayNode();
         int fileCount = 0;
         long totalSize = 0;
+
+        CheckpointEntity entity = new CheckpointEntity();
+        entity.setDescription(description);
+        entity.setCreatedAt(Instant.now());
 
         try (Stream<Path> paths = Files.walk(root)) {
             List<Path> fileList = paths
@@ -68,6 +84,22 @@ public class CheckpointManager {
                     fileNode.put("size", size);
                     filesArray.add(fileNode);
 
+                    // Store file content for restoration
+                    CheckpointFileEntity fileEntity = new CheckpointFileEntity();
+                    fileEntity.setCheckpoint(entity);
+                    fileEntity.setFilePath(relativePath);
+                    fileEntity.setFileHash(hash);
+                    fileEntity.setFileSize(size);
+
+                    if (size <= MAX_STORED_CONTENT_SIZE) {
+                        byte[] content = Files.readAllBytes(p);
+                        fileEntity.setContentBase64(Base64.getEncoder().encodeToString(content));
+                    } else {
+                        log.debug("File {} ({} bytes) exceeds content storage limit, storing hash only", relativePath, size);
+                    }
+
+                    entity.getFiles().add(fileEntity);
+
                     fileCount++;
                     totalSize += size;
                 } catch (Exception e) {
@@ -78,11 +110,8 @@ public class CheckpointManager {
             log.error("Failed to walk directory {}: {}", workingDir, e.getMessage());
         }
 
-        CheckpointEntity entity = new CheckpointEntity();
-        entity.setDescription(description);
         entity.setFileCount(fileCount);
         entity.setTotalSizeBytes(totalSize);
-        entity.setCreatedAt(Instant.now());
         try {
             entity.setFilesJson(objectMapper.writeValueAsString(filesArray));
         } catch (Exception e) {
@@ -104,42 +133,72 @@ public class CheckpointManager {
             .toList();
     }
 
+    @Transactional
     public void restore(UUID id) {
         CheckpointEntity checkpoint = checkpointRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Checkpoint not found: " + id));
         log.info("Restoring checkpoint {} — {} ({} files)", id, checkpoint.getDescription(), checkpoint.getFileCount());
 
-        // For lightweight checkpoints, restore means re-verify files against hashes.
-        // This logs discrepancies but doesn't restore content (we only store hashes).
         try {
+            String workingDir = properties.getCore().getWorkingDirectory();
+            Path root = Paths.get(workingDir);
+
+            // Load stored file content entries
+            List<CheckpointFileEntity> storedFiles = checkpointFileRepository.findByCheckpointId(id);
+            Map<String, CheckpointFileEntity> contentByPath = new HashMap<>();
+            for (CheckpointFileEntity fe : storedFiles) {
+                contentByPath.put(fe.getFilePath(), fe);
+            }
+
+            // Parse the lightweight file list (hashes) for verification
             ArrayNode files = (ArrayNode) objectMapper.readTree(checkpoint.getFilesJson());
+            int restored = 0;
             int verified = 0;
             int changed = 0;
             int missing = 0;
-
-            String workingDir = properties.getCore().getWorkingDirectory();
-            Path root = Paths.get(workingDir);
+            int skippedNoContent = 0;
 
             for (var node : files) {
                 String path = node.get("path").asText();
                 String expectedHash = node.get("hash").asText();
                 Path filePath = root.resolve(path);
 
+                CheckpointFileEntity storedFile = contentByPath.get(path);
+
                 if (!Files.exists(filePath)) {
-                    log.warn("Missing file: {}", path);
-                    missing++;
+                    // File is missing on disk — try to restore from checkpoint content
+                    if (storedFile != null && storedFile.getContentBase64() != null) {
+                        Files.createDirectories(filePath.getParent());
+                        Files.write(filePath, Base64.getDecoder().decode(storedFile.getContentBase64()));
+                        log.info("Restored missing file: {}", path);
+                        restored++;
+                    } else {
+                        log.warn("Missing file, no stored content to restore: {}", path);
+                        missing++;
+                    }
                     continue;
                 }
+
                 String actualHash = hashFile(filePath);
                 if (actualHash.equals(expectedHash)) {
                     verified++;
                 } else {
-                    log.warn("Changed file: {} (expected: {}, actual: {})", path, expectedHash, actualHash);
-                    changed++;
+                    // File changed — restore from checkpoint content
+                    if (storedFile != null && storedFile.getContentBase64() != null) {
+                        Files.write(filePath, Base64.getDecoder().decode(storedFile.getContentBase64()));
+                        log.info("Restored changed file: {}", path);
+                        restored++;
+                    } else {
+                        log.warn("Changed file, no stored content to restore: {} (expected: {}, actual: {})",
+                            path, expectedHash, actualHash);
+                        changed++;
+                        skippedNoContent++;
+                    }
                 }
             }
 
-            log.info("Restore verification: {} verified, {} changed, {} missing", verified, changed, missing);
+            log.info("Restore complete: {} restored, {} verified, {} changed (no content), {} missing (no content)",
+                restored, verified, skippedNoContent, missing);
         } catch (Exception e) {
             log.error("Failed to restore checkpoint {}: {}", id, e.getMessage());
             throw new RuntimeException("Restore failed: " + e.getMessage(), e);
@@ -156,6 +215,7 @@ public class CheckpointManager {
         int toRemove = all.size() - maxSnapshots;
         List<CheckpointEntity> toDelete = all.subList(maxSnapshots, all.size());
         for (CheckpointEntity e : toDelete) {
+            checkpointFileRepository.deleteByCheckpointId(e.getId());
             checkpointRepository.delete(e);
             log.debug("Pruned checkpoint: {}", e.getId());
         }
@@ -164,6 +224,7 @@ public class CheckpointManager {
     }
 
     public void remove(UUID id) {
+        checkpointFileRepository.deleteByCheckpointId(id);
         checkpointRepository.deleteById(id);
         log.info("Removed checkpoint: {}", id);
     }

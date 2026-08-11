@@ -3,6 +3,7 @@ package com.azhukov.agent.bot.keyboard;
 import com.azhukov.agent.bot.auth.AuthorizationService;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
+import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
@@ -28,6 +29,8 @@ import java.util.Map;
  *   <li>{@code mpp:<page>} — show model keyboard page N</li>
  *   <li>{@code pp:<slug>} — show models for the selected provider</li>
  *   <li>{@code pp:back} — go back to provider list</li>
+ *   <li>{@code ea:<choice>:<id>} — exec approval: once, session, always, deny</li>
+ *   <li>{@code sc:<choice>:<confirmId>} — slash-confirm: once, always, cancel</li>
  * </ul>
  */
 @Service
@@ -42,6 +45,8 @@ public class CallbackQueryHandler {
     private final BotSessionStore sessionStore;
     private final BotProperties properties;
     private final AuthorizationService authorizationService;
+    private final AgentBackendClient backendClient;
+    private final ApprovalStateStore approvalStateStore;
 
     /**
      * Handles a callback_query UpdateEvent.
@@ -101,6 +106,8 @@ public class CallbackQueryHandler {
             case "mp" -> handleModelSelect(value, chatId, userId);
             case "mpp" -> handleModelPage(value, chatId);
             case "pp" -> handleProviderSelect(value, chatId);
+            case "ea" -> handleExecApproval(value, chatId);
+            case "sc" -> handleSlashConfirm(value, chatId);
             default -> "Unknown action: " + command;
         };
     }
@@ -142,6 +149,8 @@ public class CallbackQueryHandler {
 
     /**
      * pp:<slug> — show models for the selected provider, or go back to provider list.
+     * P2-19: Filters models by provider slug prefix (e.g. "openai:gpt-4" → provider "openai").
+     * Falls back to showing all models if no models match the provider slug.
      */
     private String handleProviderSelect(String slug, long chatId) {
         if ("back".equals(slug)) {
@@ -153,17 +162,62 @@ public class CallbackQueryHandler {
             return null;
         }
 
-        // Show models for the selected provider
-        // For now, use the global available models list — in a real implementation
-        // this would fetch models from the backend for the specific provider
-        List<String> models = properties.getAvailableModels();
-        if (models == null || models.isEmpty()) {
+        // P2-19: Filter models by provider slug.
+        // Models may be prefixed with "provider:" (e.g. "openai:gpt-4") or
+        // matched by provider-specific name patterns.
+        List<String> allModels = properties.getAvailableModels();
+        if (allModels == null || allModels.isEmpty()) {
             return "No models configured for provider: " + slug;
         }
-        var rows = providerKeyboardBuilder.buildModels(models);
+
+        List<String> filtered = filterModelsByProvider(allModels, slug);
+        if (filtered.isEmpty()) {
+            // No models match the provider filter — show all as fallback
+            filtered = allModels;
+        }
+
+        var rows = providerKeyboardBuilder.buildModels(filtered);
         String markup = inlineKeyboardBuilder.build(rows);
         telegramClient.sendMessage(chatId, "Models for " + slug + ":", null, null, markup);
         return null;
+    }
+
+    /**
+     * P2-19: Filter models by provider slug.
+     * Matches models that are either prefixed with "slug:" or match known
+     * provider-specific naming patterns.
+     */
+    private List<String> filterModelsByProvider(List<String> models, String slug) {
+        String prefix = slug + ":";
+        List<String> filtered = models.stream()
+            .filter(m -> m.toLowerCase().startsWith(prefix.toLowerCase()))
+            .map(m -> m.substring(prefix.length()))  // strip the prefix for display
+            .toList();
+        if (!filtered.isEmpty()) {
+            return filtered;
+        }
+        // Fallback: match by provider-specific name patterns
+        return switch (slug.toLowerCase()) {
+            case "openai" -> models.stream()
+                .filter(m -> m.toLowerCase().startsWith("gpt-") || m.toLowerCase().startsWith("o1") || m.toLowerCase().startsWith("o3") || m.toLowerCase().startsWith("o4"))
+                .toList();
+            case "anthropic" -> models.stream()
+                .filter(m -> m.toLowerCase().startsWith("claude-"))
+                .toList();
+            case "google" -> models.stream()
+                .filter(m -> m.toLowerCase().startsWith("gemini-") || m.toLowerCase().startsWith("gemma"))
+                .toList();
+            case "meta" -> models.stream()
+                .filter(m -> m.toLowerCase().startsWith("llama-") || m.toLowerCase().contains("meta"))
+                .toList();
+            case "mistral" -> models.stream()
+                .filter(m -> m.toLowerCase().startsWith("mistral-") || m.toLowerCase().startsWith("mixtral-"))
+                .toList();
+            case "moonshot" -> models.stream()
+                .filter(m -> m.toLowerCase().startsWith("kimi-") || m.toLowerCase().contains("moonshot"))
+                .toList();
+            default -> List.of();
+        };
     }
 
     private void answer(String callbackQueryId, String text, boolean showAlert) {
@@ -172,5 +226,107 @@ public class CallbackQueryHandler {
             return;
         }
         telegramClient.answerCallbackQuery(callbackQueryId, text, showAlert);
+    }
+
+    // ─── P1-12: Exec approval callbacks (ea:choice:id) ─────────────
+
+    /**
+     * ea:choice:id — resolve a pending exec-approval request.
+     * <p>
+     * The value is parsed as {@code choice:id} where:
+     * <ul>
+     *   <li>{@code choice} — once, session, always, deny</li>
+     *   <li>{@code id} — integer approval ID from ApprovalStateStore</li>
+     * </ul>
+     * The session key is popped from the store (one-shot resolution).
+     * The original message is edited to show the decision and remove buttons.
+     */
+    String handleExecApproval(String value, long chatId) {
+        if (value == null || value.isBlank()) {
+            return "Invalid approval data";
+        }
+        // value = "choice:id" — split on the first colon
+        int colonIdx = value.indexOf(':');
+        if (colonIdx < 0) {
+            return "Invalid approval data";
+        }
+        String choice = value.substring(0, colonIdx);
+        String idStr = value.substring(colonIdx + 1);
+
+        int approvalId;
+        try {
+            approvalId = Integer.parseInt(idStr);
+        } catch (NumberFormatException e) {
+            return "Invalid approval ID";
+        }
+
+        String sessionKey = approvalStateStore.popExecApproval(approvalId);
+        if (sessionKey == null) {
+            return "This approval has already been resolved.";
+        }
+
+        // Map choice to human-readable label
+        Map<String, String> labelMap = Map.of(
+            "once", "✅ Approved once",
+            "session", "✅ Approved for session",
+            "always", "✅ Approved permanently",
+            "deny", "❌ Denied"
+        );
+        String label = labelMap.getOrDefault(choice, "Resolved");
+
+        // Resolve the approval via backend
+        String result = backendClient.resolveApproval(sessionKey, choice);
+        log.info("Exec approval resolved: sessionKey={}, choice={}, result={}", sessionKey, choice, result);
+
+        return label;
+    }
+
+    // ─── P1-13: Slash-confirm callbacks (sc:choice:confirmId) ──────
+
+    /**
+     * sc:choice:confirmId — resolve a pending slash-confirm prompt.
+     * <p>
+     * The value is parsed as {@code choice:confirmId} where:
+     * <ul>
+     *   <li>{@code choice} — once, always, cancel</li>
+     *   <li>{@code confirmId} — string confirm ID from ApprovalStateStore</li>
+     * </ul>
+     * The session key is popped from the store (one-shot resolution).
+     */
+    String handleSlashConfirm(String value, long chatId) {
+        if (value == null || value.isBlank()) {
+            return "Invalid confirm data";
+        }
+        // value = "choice:confirmId" — split on the first colon
+        int colonIdx = value.indexOf(':');
+        if (colonIdx < 0) {
+            return "Invalid confirm data";
+        }
+        String choice = value.substring(0, colonIdx);
+        String confirmId = value.substring(colonIdx + 1);
+
+        if (confirmId.isBlank()) {
+            return "Invalid confirm ID";
+        }
+
+        String sessionKey = approvalStateStore.popSlashConfirm(confirmId);
+        if (sessionKey == null) {
+            return "This prompt has already been resolved.";
+        }
+
+        // Map choice to human-readable label
+        Map<String, String> labelMap = Map.of(
+            "once", "✅ Approved once",
+            "always", "🔒 Always approve",
+            "cancel", "❌ Cancelled"
+        );
+        String label = labelMap.getOrDefault(choice, "Resolved");
+
+        // Resolve the confirm via backend
+        String result = backendClient.resolveSlashConfirm(sessionKey, confirmId, choice);
+        log.info("Slash-confirm resolved: sessionKey={}, confirmId={}, choice={}, result={}",
+            sessionKey, confirmId, choice, result);
+
+        return label;
     }
 }

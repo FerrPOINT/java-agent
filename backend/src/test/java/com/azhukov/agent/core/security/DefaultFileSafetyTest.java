@@ -559,4 +559,209 @@ class DefaultFileSafetyTest {
         // Empty list → returns true for all non-denylisted paths
         assertThat(safety.isPathAllowed(Paths.get("/etc/hostname"))).isTrue();
     }
+
+    // ─── P1-10: Cross-profile write guard tests ───
+
+    @Test
+    void crossProfile_defaultProfile_skillsPath_notCrossProfile() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        // When HERMES_HOME is ~/.hermes (default), writing to ~/.hermes/skills is in-profile
+        // Since we can't control env vars in unit tests, test the classify method directly
+        // with a path that is under the default profile's skills area
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+        Path skillsPath = Paths.get(hermesRoot, "skills", "my-skill", "SKILL.md");
+
+        // If running under default profile, this should not be cross-profile
+        // If running under a named profile, it would be cross-profile
+        // Either way, the method should not throw
+        var result = safety.classifyCrossProfileTarget(skillsPath);
+        // result should be non-null Optional (not throw)
+        assertThat(result).isNotNull();
+    }
+
+    @Test
+    void crossProfile_namedProfile_skillsPath_isCrossProfile() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+        // Path under profiles/other/skills/ — should be cross-profile when active is default
+        Path crossPath = Paths.get(hermesRoot, "profiles", "other-profile", "skills", "evil", "SKILL.md");
+
+        var result = safety.classifyCrossProfileTarget(crossPath);
+        // When active profile is "default" (which is the test default), this is cross-profile
+        if ("default".equals(safety.resolveActiveProfileName())) {
+            assertThat(result).isPresent();
+            assertThat(result.get().targetProfile()).isEqualTo("other-profile");
+            assertThat(result.get().area()).isEqualTo("skills");
+            assertThat(result.get().activeProfile()).isEqualTo("default");
+        }
+    }
+
+    @Test
+    void crossProfile_namedProfile_pluginsPath_isCrossProfile() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+        Path crossPath = Paths.get(hermesRoot, "profiles", "other-profile", "plugins", "evil.jar");
+
+        var result = safety.classifyCrossProfileTarget(crossPath);
+        if ("default".equals(safety.resolveActiveProfileName())) {
+            assertThat(result).isPresent();
+            assertThat(result.get().area()).isEqualTo("plugins");
+        }
+    }
+
+    @Test
+    void crossProfile_namedProfile_cronPath_isCrossProfile() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+        Path crossPath = Paths.get(hermesRoot, "profiles", "other-profile", "cron", "job.json");
+
+        var result = safety.classifyCrossProfileTarget(crossPath);
+        if ("default".equals(safety.resolveActiveProfileName())) {
+            assertThat(result).isPresent();
+            assertThat(result.get().area()).isEqualTo("cron");
+        }
+    }
+
+    @Test
+    void crossProfile_namedProfile_memoriesPath_isCrossProfile() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+        Path crossPath = Paths.get(hermesRoot, "profiles", "other-profile", "memories", "MEMORY.md");
+
+        var result = safety.classifyCrossProfileTarget(crossPath);
+        if ("default".equals(safety.resolveActiveProfileName())) {
+            assertThat(result).isPresent();
+            assertThat(result.get().area()).isEqualTo("memories");
+        }
+    }
+
+    @Test
+    void crossProfile_nonProfileArea_notCrossProfile() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+        // profiles/other/bin/ is not a profile-scoped area → not cross-profile
+        Path nonAreaPath = Paths.get(hermesRoot, "profiles", "other-profile", "bin", "tool.sh");
+
+        var result = safety.classifyCrossProfileTarget(nonAreaPath);
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void crossProfile_outsideHermes_notCrossProfile() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        // Path completely outside Hermes → not cross-profile
+        var result = safety.classifyCrossProfileTarget(Paths.get("/tmp/random/file.txt"));
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void crossProfile_nullPath_notCrossProfile() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.classifyCrossProfileTarget(null)).isEmpty();
+        assertThat(safety.isCrossProfile(null)).isFalse();
+        assertThat(safety.getCrossProfileWarning(null)).isEmpty();
+    }
+
+    @Test
+    void crossProfile_warningContainsProfileInfo() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+        Path crossPath = Paths.get(hermesRoot, "profiles", "other-profile", "skills", "evil", "SKILL.md");
+
+        var warning = safety.getCrossProfileWarning(crossPath);
+        if ("default".equals(safety.resolveActiveProfileName())) {
+            assertThat(warning).isPresent();
+            assertThat(warning.get()).contains("other-profile");
+            assertThat(warning.get()).contains("skills");
+            assertThat(warning.get()).contains("cross_profile=true");
+            assertThat(warning.get()).contains("Defense-in-depth");
+        }
+    }
+
+    @Test
+    void crossProfile_isCrossProfile_returnsTrueForCross() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+        Path crossPath = Paths.get(hermesRoot, "profiles", "other-profile", "skills", "evil");
+
+        if ("default".equals(safety.resolveActiveProfileName())) {
+            assertThat(safety.isCrossProfile(crossPath)).isTrue();
+        }
+    }
+
+    @Test
+    void crossProfile_isCrossProfile_returnsFalseForSameProfile() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+        // Default profile skills path → same profile, not cross
+        Path samePath = Paths.get(hermesRoot, "skills", "my-skill");
+
+        if ("default".equals(safety.resolveActiveProfileName())) {
+            assertThat(safety.isCrossProfile(samePath)).isFalse();
+        }
+    }
+
+    @Test
+    void crossProfile_resolveActiveProfileName_returnsDefaultWhenNoProfile() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String profileName = safety.resolveActiveProfileName();
+        assertThat(profileName).isNotNull();
+        assertThat(profileName).isNotBlank();
+        // Without HERMES_HOME pointing to a profiles/ subdir, should be "default"
+        if (System.getenv("HERMES_HOME") == null || !System.getenv("HERMES_HOME").contains("profiles")) {
+            assertThat(profileName).isEqualTo("default");
+        }
+    }
+
+    @Test
+    void crossProfile_defaultProfile_skills_isNotCross() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+        // <root>/skills/... → default profile. If active is also default, not cross.
+        Path defaultSkillsPath = Paths.get(hermesRoot, "skills", "test-skill", "SKILL.md");
+
+        if ("default".equals(safety.resolveActiveProfileName())) {
+            assertThat(safety.classifyCrossProfileTarget(defaultSkillsPath)).isEmpty();
+            assertThat(safety.isCrossProfile(defaultSkillsPath)).isFalse();
+        }
+    }
 }

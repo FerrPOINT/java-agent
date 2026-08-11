@@ -257,6 +257,14 @@ public class LangChain4jModelClient implements ModelClient {
         return analyzeImage(base64Image, prompt, ModelRequestOptions.empty());
     }
 
+    /**
+     * P2-18: Return the model name used by this client.
+     */
+    @Override
+    public String getModelName() {
+        return properties.getModel().getModelName();
+    }
+
     public String analyzeImage(String base64Image, String prompt, ModelRequestOptions options) {
         UserMessage message = UserMessage.from(
             dev.langchain4j.data.message.TextContent.from(prompt),

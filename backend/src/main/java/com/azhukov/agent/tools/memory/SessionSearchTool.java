@@ -11,22 +11,24 @@ import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 @AgentTool(
     name = "session_search",
-    description = "Search past conversation sessions by title or message content. Returns session IDs, titles, last updated timestamps and a short snippet.",
+    description = "Search past conversation sessions by title or message content using full-text search. Returns session IDs, titles, last updated timestamps and a short snippet.",
     toolset = "memory"
 )
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class SessionSearchTool implements ToolHandler {
 
     private final SessionRepository sessionRepository;
@@ -39,31 +41,42 @@ public class SessionSearchTool implements ToolHandler {
             return ToolResult.fail("Query is required");
         }
         int limit = args.limit() != null && args.limit() > 0 ? Math.min(args.limit(), 20) : 5;
-        String q = args.query().toLowerCase();
+        String q = args.query();
 
-        Set<UUID> matchedIds = new java.util.HashSet<>();
-        List<SessionMatch> matches = new ArrayList<>();
+        // Use a LinkedHashMap to deduplicate by session ID while preserving insertion order
+        LinkedHashMap<UUID, SessionMatch> matches = new LinkedHashMap<>();
 
-        for (SessionEntity s : sessionRepository.findAll()) {
-            if (s.getTitle() != null && s.getTitle().toLowerCase().contains(q)) {
-                matchedIds.add(s.getId());
-                matches.add(new SessionMatch(s.getId(), s.getTitle(), s.getUpdatedAt(), "title match"));
-            }
+        // P2-15: Try FTS first, fall back to LIKE if FTS fails (e.g. H2 or missing tsvector column)
+        List<SessionEntity> titleMatches = searchByTitleFts(q);
+        if (titleMatches == null || titleMatches.isEmpty()) {
+            titleMatches = sessionRepository.findByTitleContainingIgnoreCase(q);
+        }
+        for (SessionEntity s : titleMatches) {
+            matches.putIfAbsent(s.getId(), new SessionMatch(s.getId(), s.getTitle(), s.getUpdatedAt(), "title match"));
         }
 
-        for (MessageEntity m : messageRepository.findAll()) {
+        // P2-15: Try FTS on message content, fall back to LIKE
+        List<MessageEntity> messageMatches = searchByContentFts(q);
+        if (messageMatches == null || messageMatches.isEmpty()) {
+            messageMatches = messageRepository.findByContentContainingIgnoreCase(q);
+        }
+        for (MessageEntity m : messageMatches) {
+            UUID sessionId = m.getSessionId();
+            if (matches.containsKey(sessionId)) {
+                continue; // already matched via title — skip
+            }
+            SessionEntity s = sessionRepository.findById(sessionId).orElse(null);
+            String title = s != null ? s.getTitle() : null;
+            java.time.Instant updated = s != null ? s.getUpdatedAt() : m.getCreatedAt();
             String content = m.getContent();
-            if (content != null && content.toLowerCase().contains(q) && matchedIds.add(m.getSessionId())) {
-                SessionEntity s = sessionRepository.findById(m.getSessionId()).orElse(null);
-                String title = s != null ? s.getTitle() : null;
-                java.time.Instant updated = s != null ? s.getUpdatedAt() : m.getCreatedAt();
-                String snippet = content.length() > 120 ? content.substring(0, 120) + "..." : content;
-                matches.add(new SessionMatch(m.getSessionId(), title, updated, "snippet: " + snippet.replace("\n", " ")));
-            }
+            String snippet = content != null && content.length() > 120 ? content.substring(0, 120) + "..." : content;
+            String snippetText = snippet != null ? snippet.replace("\n", " ") : "";
+            matches.put(sessionId, new SessionMatch(sessionId, title, updated, "snippet: " + snippetText));
         }
 
-        matches.sort(Comparator.comparing(SessionMatch::updated).reversed());
-        List<SessionMatch> result = matches.stream().limit(limit).toList();
+        List<SessionMatch> sorted = new ArrayList<>(matches.values());
+        sorted.sort(Comparator.comparing(SessionMatch::updated, Comparator.nullsLast(Comparator.reverseOrder())));
+        List<SessionMatch> result = sorted.stream().limit(limit).toList();
 
         if (result.isEmpty()) {
             return ToolResult.ok("No sessions found for: " + args.query());
@@ -78,6 +91,33 @@ public class SessionSearchTool implements ToolHandler {
             .collect(Collectors.joining("\n"));
 
         return ToolResult.ok(text);
+    }
+
+    /**
+     * P2-15: Attempt full-text search on session titles.
+     * Returns null if FTS is unavailable (non-PostgreSQL or missing tsvector column),
+     * signaling the caller to fall back to LIKE.
+     */
+    private List<SessionEntity> searchByTitleFts(String query) {
+        try {
+            return sessionRepository.searchByTitleFts(query);
+        } catch (Exception e) {
+            log.debug("FTS title search unavailable, falling back to LIKE: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * P2-15: Attempt full-text search on message content.
+     * Returns null if FTS is unavailable, signaling the caller to fall back to LIKE.
+     */
+    private List<MessageEntity> searchByContentFts(String query) {
+        try {
+            return messageRepository.searchByContentFts(query);
+        } catch (Exception e) {
+            log.debug("FTS content search unavailable, falling back to LIKE: {}", e.getMessage());
+            return null;
+        }
     }
 
     public record SearchArgs(

@@ -20,4 +20,6 @@ public interface ToolRegistry {
     Set<String> getToolsets();
 
     void registerDynamic(String toolName, ToolDefinition definition, ToolHandler handler);
+
+    void deregisterDynamic(String toolName);
 }

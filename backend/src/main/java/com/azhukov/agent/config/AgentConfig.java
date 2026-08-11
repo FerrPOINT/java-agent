@@ -151,8 +151,8 @@ public class AgentConfig {
     }
 
     @Bean
-    public PromptBuilder promptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants agentConstants, com.azhukov.agent.core.prompt.PromptCacheTracker cacheTracker, com.azhukov.agent.core.context.CodingContextDetector codingContextDetector) {
-        return new DefaultPromptBuilder(properties, toolRegistry, agentConstants, cacheTracker, codingContextDetector);
+    public PromptBuilder promptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants agentConstants, com.azhukov.agent.core.prompt.PromptCacheTracker cacheTracker, com.azhukov.agent.core.context.CodingContextDetector codingContextDetector, MemoryProvider memoryProvider) {
+        return new DefaultPromptBuilder(properties, toolRegistry, agentConstants, cacheTracker, codingContextDetector, memoryProvider);
     }
 
     @Bean
@@ -176,8 +176,8 @@ public class AgentConfig {
     }
 
     @Bean
-    public UrlSafetyHandler urlSafetyHandler(AgentProperties properties) {
-        return new UrlSafetyHandler(properties);
+    public UrlSafetyHandler urlSafetyHandler(AgentProperties properties, UrlSafety urlSafety) {
+        return new UrlSafetyHandler(properties, urlSafety);
     }
 
     @Bean

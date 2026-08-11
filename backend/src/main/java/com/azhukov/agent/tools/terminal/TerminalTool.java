@@ -24,17 +24,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 @AgentTool(
     name = "terminal",
-    description = "Run a shell command locally and return stdout/stderr. For long-lived processes use background=true to get a session_id, then manage it with the process tool. Blocked command patterns are configurable; default blocks rm -rf /, mkfs, dd if=/dev/zero, fork bombs.",
+    description = "Run a shell command locally and return stdout/stderr. For long-lived processes use background=true to get a session_id, then manage it with the process tool. Dangerous commands (rm -rf /, mkfs, dd, sudo, fork bombs, etc.) are blocked using regex patterns; the blocked list is configurable via agent.security.blocked-commands and agent.terminal.block-sudo.",
     toolset = "terminal"
 )
 @Component
 @Slf4j
 @RequiredArgsConstructor
 public class TerminalTool implements ToolHandler {
-
-    private static final List<String> DEFAULT_BLOCKED_PATTERNS = List.of(
-        "rm -rf /", "rm -rf /*", "mkfs", "dd if=/dev/zero", ":(){ :|:& };:"
-    );
 
     private final ProcessTool processTool;
     private final AgentProperties properties;
@@ -62,13 +58,11 @@ public class TerminalTool implements ToolHandler {
         }
 
         List<String> blockedPatterns = properties.getSecurity().getBlockedCommands();
-        if (blockedPatterns == null || blockedPatterns.isEmpty()) {
-            blockedPatterns = DEFAULT_BLOCKED_PATTERNS;
-        }
-        for (String pattern : blockedPatterns) {
-            if (command.contains(pattern)) {
-                return ToolResult.fail("Blocked dangerous command pattern: " + pattern);
-            }
+        boolean blockSudo = properties.getTerminal().isBlockSudo();
+        CommandGuard guard = new CommandGuard(blockedPatterns, blockSudo);
+        String blockReason = guard.check(command);
+        if (blockReason != null) {
+            return ToolResult.fail(blockReason);
         }
 
         int timeout = args.timeout() > 0 ? args.timeout() : properties.getTerminal().getDefaultTimeoutSeconds();

@@ -41,4 +41,12 @@ public interface ModelClient {
     default String analyzeImage(String base64Image, String prompt) {
         return "Vision analysis is not supported by this model client.";
     }
+
+    /**
+     * P2-18: Return the model name used by this client.
+     * Default returns "unknown" — implementations should override.
+     */
+    default String getModelName() {
+        return "unknown";
+    }
 }

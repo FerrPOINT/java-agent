@@ -3,11 +3,16 @@ package com.azhukov.agent.core.security;
 import com.azhukov.agent.config.AgentProperties;
 import org.springframework.stereotype.Component;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class DefaultRedactor implements Redactor {
@@ -46,6 +51,40 @@ public class DefaultRedactor implements Redactor {
         new BuiltinPattern("xox", Pattern.compile("xox[baprs]-[a-zA-Z0-9-]+")),
     };
 
+    // ─── PII patterns ───
+
+    private static final Pattern EMAIL_PATTERN =
+            Pattern.compile("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}");
+    private static final Pattern PHONE_PATTERN =
+            Pattern.compile("(?<!\\d)(?:\\+?\\d{1,3}[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}(?!\\d)");
+    private static final Pattern IPV4_PATTERN =
+            Pattern.compile("\\b(?!0\\.0\\.0\\.0|255\\.255\\.255\\.255)(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})\\b");
+    private static final Pattern CREDIT_CARD_PATTERN =
+            Pattern.compile("\\b(?:\\d[ -]*?){13,19}\\b");
+
+    // ─── Sensitive query/form parameter names ───
+
+    private static final Set<String> SENSITIVE_PARAMS = Set.of(
+            "password", "passwd", "pwd", "secret", "token", "access_token",
+            "refresh_token", "api_key", "apikey", "key", "authorization",
+            "auth", "credential", "client_secret", "private_key", "session",
+            "sessionid", "session_id", "csrf", "csrf_token", "ssn", "sin"
+    );
+
+    private static final Pattern SENSITIVE_QUERY_PARAM_PATTERN = Pattern.compile(
+            "([?&](" + String.join("|", SENSITIVE_PARAMS) + ")=)([^&\\s#]*)",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    private static final Pattern SENSITIVE_FORM_FIELD_PATTERN = Pattern.compile(
+            "\\b(" + String.join("|", SENSITIVE_PARAMS) + ")=([^&\\s]*)",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    private static final Pattern URL_USERINFO_PATTERN = Pattern.compile(
+            "(https?://)([^:\\s]+):([^@\\s]+)@"
+    );
+
     @Override
     public String redact(String output) {
         if (output == null) {
@@ -60,7 +99,13 @@ public class DefaultRedactor implements Redactor {
 
         String result = output;
 
-        // 1. Apply built-in vendor patterns first (with substring pre-check optimization)
+        // 1. Redact URL userinfo (credentials in URLs)
+        result = redactUrlUserinfoInternal(result);
+
+        // 2. Redact URL query parameters
+        result = redactUrlQueryInternal(result);
+
+        // 3. Apply built-in vendor patterns (with substring pre-check optimization)
         if (properties.getSecurity().isRedactSecrets()) {
             for (BuiltinPattern bp : BUILTIN_PATTERNS) {
                 if (result.contains(bp.hint())) {
@@ -69,7 +114,7 @@ public class DefaultRedactor implements Redactor {
             }
         }
 
-        // 2. Apply config patterns
+        // 4. Apply config patterns
         List<String> patterns = properties.getSecurity().getSecretPatterns();
         if (patterns != null) {
             for (String regex : patterns) {
@@ -81,7 +126,12 @@ public class DefaultRedactor implements Redactor {
             }
         }
 
-        // 3. Apply env var redaction
+        // 5. Apply PII redaction
+        if (properties.getSecurity().isRedactPii()) {
+            result = redactPii(result);
+        }
+
+        // 6. Apply env var redaction
         result = redactEnvVars(result);
         return result;
     }
@@ -109,6 +159,59 @@ public class DefaultRedactor implements Redactor {
         }
         matcher.appendTail(sb);
         return sb.toString();
+    }
+
+    @Override
+    public String redactPii(String output) {
+        if (output == null || output.isEmpty()) {
+            return output;
+        }
+        String result = output;
+        result = EMAIL_PATTERN.matcher(result).replaceAll("[REDACTED:email]");
+        result = PHONE_PATTERN.matcher(result).replaceAll("[REDACTED:phone]");
+        result = IPV4_PATTERN.matcher(result).replaceAll("[REDACTED:ip]");
+        result = CREDIT_CARD_PATTERN.matcher(result).replaceAll("[REDACTED:cc]");
+        return result;
+    }
+
+    @Override
+    public String redactUrlQuery(String url) {
+        if (url == null || url.isEmpty()) {
+            return url;
+        }
+        return redactUrlQueryInternal(url);
+    }
+
+    @Override
+    public String redactFormBody(String body) {
+        if (body == null || body.isEmpty()) {
+            return body;
+        }
+        return SENSITIVE_FORM_FIELD_PATTERN.matcher(body).replaceAll("$1=[REDACTED]");
+    }
+
+    @Override
+    public String redactUrlUserinfo(String url) {
+        if (url == null || url.isEmpty()) {
+            return url;
+        }
+        return redactUrlUserinfoInternal(url);
+    }
+
+    // ─── Internal helpers ───
+
+    private String redactUrlQueryInternal(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        return SENSITIVE_QUERY_PARAM_PATTERN.matcher(text).replaceAll("$1[REDACTED]");
+    }
+
+    private String redactUrlUserinfoInternal(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        return URL_USERINFO_PATTERN.matcher(text).replaceAll("$1[REDACTED]@");
     }
 
     private boolean matches(String name, String pattern) {

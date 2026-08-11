@@ -1,21 +1,22 @@
 package com.azhukov.agent.security;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UrlSafety;
 import org.springframework.stereotype.Component;
 
-import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.net.UnknownHostException;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class UrlSafetyHandler {
 
     private final AgentProperties properties;
-
+    private final UrlSafety urlSafety;
 
     public String checkUrl(String url) {
         if (url == null || url.isBlank()) {
@@ -34,37 +35,25 @@ public class UrlSafetyHandler {
         if (uri.getHost() == null) {
             return "URL host is missing";
         }
+        // Block URLs with embedded credentials
+        if (uri.getUserInfo() != null && !uri.getUserInfo().isBlank()) {
+            return "URL with embedded credentials is not allowed: " + uri.getHost();
+        }
         if (!properties.getSecurity().isUrlSafetyEnabled()) {
             return null;
         }
-        if (isBlockedHost(uri.getHost())) {
-            return "Host is blocked: " + uri.getHost();
+        // Delegate to UrlSafety for comprehensive checks (IP resolution, private ranges, etc.)
+        if (!urlSafety.isUrlAllowed(url)) {
+            return "URL blocked by safety policy: " + uri.getHost();
         }
+        // Check web.blockedDomains (separate from security.blockedUrlHosts)
         if (properties.getWeb().getBlockedDomains().contains(uri.getHost())) {
             return "Domain is blocked: " + uri.getHost();
         }
-        try {
-            InetAddress address = InetAddress.getByName(uri.getHost());
-            if (address.isLoopbackAddress() || address.isSiteLocalAddress() || address.isLinkLocalAddress() || address.isMulticastAddress()) {
-                return "Private/loopback URL not allowed: " + uri.getHost();
-            }
-        } catch (UnknownHostException e) {
-            // allow unresolvable host; downstream HTTP client will handle
-        }
+        // Enforce HTTPS only when safety is enabled
         if (!"https".equalsIgnoreCase(scheme)) {
             return "Insecure transport (http) not allowed";
         }
         return null;
-    }
-
-    private boolean isBlockedHost(String host) {
-        List<String> blocked = properties.getSecurity().getBlockedUrlHosts();
-        String lower = host.toLowerCase();
-        for (String b : blocked) {
-            if (lower.equals(b.toLowerCase()) || lower.endsWith("." + b.toLowerCase())) {
-                return true;
-            }
-        }
-        return false;
     }
 }

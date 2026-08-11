@@ -67,7 +67,7 @@ public class GroupMessageFilter {
         }
 
         // B3.3: Check ignored threads
-        if (event.messageId() > 0 && isIgnoredThread(event.messageId())) {
+        if (event.messageThreadId() > 0 && isIgnoredThread(event.messageThreadId())) {
             return false;
         }
 
@@ -171,15 +171,18 @@ public class GroupMessageFilter {
     }
 
     /**
-     * B2.10: Check if the event is a channel post (from a connected channel).
-     * Channel posts have sender_chat set and are forwarded from channels.
+     * B2.10 / P2-20: Check if the event is a channel post (from a connected channel).
+     * Channel posts are now properly detected via the CHANNEL_POST event type
+     * set by UpdateEvent.from() when parsing channel_post / edited_channel_post updates.
+     * Falls back to heuristic detection for backward compatibility.
      */
     boolean isChannelPost(UpdateEvent event) {
-        // Channel posts are detected by having no userId (0) or by the type being UNKNOWN
-        // with text content in a group chat. In practice, the UpdateEvent.from() parser
-        // would need to handle channel_post updates, but for now we detect by heuristics:
-        // - In a group chat (chatId < 0) with text but userId == 0
         if (event == null) return false;
+        // P2-20: Direct type check — the most reliable detection
+        if (event.type() == UpdateEvent.Type.CHANNEL_POST) {
+            return true;
+        }
+        // Fallback heuristic: in a group chat (chatId < 0) with text but userId == 0
         if (event.chatId() >= 0) return false;
         return event.userId() == 0 && (event.text() != null || event.caption() != null);
     }

@@ -2,8 +2,10 @@ package com.azhukov.agent.tools.mcp;
 
 import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.azhukov.agent.client.mcp.McpOAuthManager;
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.persistence.repository.McpOAuthRepository;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;

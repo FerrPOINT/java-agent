@@ -153,4 +153,9 @@ public class SpringToolRegistry implements ToolRegistry {
     public void registerDynamic(String toolName, ToolDefinition definition, ToolHandler handler) {
         entries.put(toolName, new ToolEntry(null, handler, definition));
     }
+
+    @Override
+    public void deregisterDynamic(String toolName) {
+        entries.remove(toolName);
+    }
 }

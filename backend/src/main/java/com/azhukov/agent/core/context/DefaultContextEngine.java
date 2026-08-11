@@ -97,7 +97,7 @@ public class DefaultContextEngine implements ContextEngine {
 
         StringBuilder systemExtra = new StringBuilder();
         appendSkills(systemExtra);
-        // Memory is now injected as user message prefix, not system prompt, to preserve cache
+        // Memory is injected into the system prompt by DefaultPromptBuilder, not here
 
         // Compose system message first if present
         if (!messages.isEmpty() && messages.get(0).role() == Role.SYSTEM) {
@@ -164,6 +164,7 @@ public class DefaultContextEngine implements ContextEngine {
     /**
      * Get the current status for display/logging.
      */
+    @Override
     public Map<String, Object> getStatus() {
         double usagePercent = contextLength > 0
             ? Math.min(100.0, (double) lastPromptTokens / contextLength * 100)
@@ -185,6 +186,7 @@ public class DefaultContextEngine implements ContextEngine {
     /**
      * Update model and recalculate context length from model metadata.
      */
+    @Override
     public void updateModel(String model) {
         if (modelMetadataService != null && model != null && !model.isBlank()) {
             this.contextLength = modelMetadataService.detectContextLength(model);

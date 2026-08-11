@@ -5,6 +5,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.TokenUsage;
 
 import java.util.List;
+import java.util.Map;
 
 public interface ContextEngine {
 
@@ -25,5 +26,24 @@ public interface ContextEngine {
      * Replaces the chars/4 estimate with real usage data for accurate budget tracking.
      */
     default void updateFromResponse(TokenUsage usage) {
+    }
+
+    /**
+     * P2-16: Get the current context engine status for display/logging.
+     * Returns a map of status fields (token counts, compression count, usage percentage, etc.).
+     * Default returns an empty map.
+     */
+    default Map<String, Object> getStatus() {
+        return Map.of();
+    }
+
+    /**
+     * P2-16: Update the model and recalculate context length from model metadata.
+     * Called when the model override changes for a session.
+     * Default is a no-op.
+     *
+     * @param model the new model name
+     */
+    default void updateModel(String model) {
     }
 }

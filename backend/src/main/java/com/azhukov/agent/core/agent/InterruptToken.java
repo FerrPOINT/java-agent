@@ -23,6 +23,7 @@ public class InterruptToken {
      * Returns {@code true} if a cancel has been requested for the given session.
      */
     public boolean isCancelled(UUID sessionId) {
+        if (sessionId == null) return false;
         AtomicBoolean flag = tokens.get(sessionId);
         return flag != null && flag.get();
     }
@@ -32,6 +33,7 @@ public class InterruptToken {
      * cancellation callback for that session.
      */
     public void cancel(UUID sessionId) {
+        if (sessionId == null) return;
         tokens.computeIfAbsent(sessionId, k -> new AtomicBoolean(false)).set(true);
         Runnable cb = callbacks.get(sessionId);
         if (cb != null) {
@@ -47,6 +49,7 @@ public class InterruptToken {
      * Clears the cancellation flag for the given session so a new turn can proceed.
      */
     public void reset(UUID sessionId) {
+        if (sessionId == null) return;
         AtomicBoolean flag = tokens.get(sessionId);
         if (flag != null) {
             flag.set(false);

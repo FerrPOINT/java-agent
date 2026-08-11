@@ -21,6 +21,7 @@ import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.model.Session;
@@ -72,6 +73,7 @@ public class AgentController {
     private final TtsService ttsService;
     private final TranscriptionService transcriptionService;
     private final SteerBuffer steerBuffer;
+    private final InterruptToken interruptToken;
     private final ApprovalQueue approvalQueue;
     private final CliRuntimeSettingsService cliRuntimeSettingsService;
     private final AgentProperties properties;
@@ -520,7 +522,7 @@ public class AgentController {
     public java.util.Map<String, Object> stop(@RequestBody(required = false) StopRequest request) {
         UUID sessionId = request != null ? request.sessionId() : null;
         if (sessionId != null) {
-            steerBuffer.steer(sessionId, "__INTERRUPT__");
+            interruptToken.cancel(sessionId);
         }
         return java.util.Map.of("ok", true, "message", "Agent stopped");
     }

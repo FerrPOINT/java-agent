@@ -443,4 +443,213 @@ class DefaultRedactorTest {
         assertThat(result).doesNotContain(JWT);
         assertThat(result).doesNotContain("postgres://admin:secretpass@db:5432/myapp");
     }
+
+    // ─── PII redaction tests ───
+
+    @Test
+    void redactPii_emails_redacted() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String text = "Contact john.doe@example.com or admin@company.org";
+        String result = r.redactPii(text);
+        assertThat(result).contains("[REDACTED:email]");
+        assertThat(result).doesNotContain("john.doe@example.com");
+        assertThat(result).doesNotContain("admin@company.org");
+    }
+
+    @Test
+    void redactPii_phoneNumbers_redacted() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String text = "Call 555-123-4567 or (555) 987-6543";
+        String result = r.redactPii(text);
+        assertThat(result).contains("[REDACTED:phone]");
+        assertThat(result).doesNotContain("555-123-4567");
+        assertThat(result).doesNotContain("(555) 987-6543");
+    }
+
+    @Test
+    void redactPii_ipv4Addresses_redacted() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String text = "Server at 203.0.113.42 and 198.51.100.1";
+        String result = r.redactPii(text);
+        assertThat(result).contains("[REDACTED:ip]");
+        assertThat(result).doesNotContain("203.0.113.42");
+        assertThat(result).doesNotContain("198.51.100.1");
+    }
+
+    @Test
+    void redactPii_creditCard_redacted() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String text = "Card: 4111 1111 1111 1111";
+        String result = r.redactPii(text);
+        assertThat(result).contains("[REDACTED:cc]");
+        assertThat(result).doesNotContain("4111 1111 1111 1111");
+    }
+
+    @Test
+    void redactPii_nullInput_returnsNull() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        assertThat(r.redactPii(null)).isNull();
+    }
+
+    @Test
+    void redactPii_emptyInput_returnsEmpty() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        assertThat(r.redactPii("")).isEqualTo("");
+    }
+
+    @Test
+    void redactPii_noPii_returnsUnchanged() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String text = "No PII here, just normal text.";
+        assertThat(r.redactPii(text)).isEqualTo(text);
+    }
+
+    @Test
+    void redact_appliesPiiWhenEnabled() {
+        AgentProperties p = props(true, List.of(), null);
+        p.getSecurity().setRedactPii(true);
+        DefaultRedactor r = new DefaultRedactor(p);
+        String text = "Email: user@example.com, key: " + SK_KEY;
+        String result = r.redact(text);
+        assertThat(result).contains("[REDACTED:email]");
+        assertThat(result).contains("[REDACTED]");
+        assertThat(result).doesNotContain("user@example.com");
+        assertThat(result).doesNotContain(SK_KEY);
+    }
+
+    @Test
+    void redact_doesNotApplyPiiWhenDisabled() {
+        AgentProperties p = props(true, List.of(), null);
+        p.getSecurity().setRedactPii(false);
+        DefaultRedactor r = new DefaultRedactor(p);
+        String text = "Email: user@example.com";
+        String result = r.redact(text);
+        // PII not redacted when redactPii=false (default)
+        assertThat(result).contains("user@example.com");
+    }
+
+    // ─── URL query parameter redaction tests ───
+
+    @Test
+    void redactUrlQuery_sensitiveParams_redacted() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String url = "https://api.example.com/v1?token=secret123&count=5&password=hunter2";
+        String result = r.redactUrlQuery(url);
+        assertThat(result).contains("token=[REDACTED]");
+        assertThat(result).contains("password=[REDACTED]");
+        assertThat(result).contains("count=5");
+        assertThat(result).doesNotContain("secret123");
+        assertThat(result).doesNotContain("hunter2");
+    }
+
+    @Test
+    void redactUrlQuery_apiKey_redacted() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String url = "https://api.example.com?api_key=mysecretkey";
+        String result = r.redactUrlQuery(url);
+        assertThat(result).contains("api_key=[REDACTED]");
+        assertThat(result).doesNotContain("mysecretkey");
+    }
+
+    @Test
+    void redactUrlQuery_noSensitiveParams_unchanged() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String url = "https://example.com?q=hello&page=1";
+        String result = r.redactUrlQuery(url);
+        assertThat(result).isEqualTo(url);
+    }
+
+    @Test
+    void redactUrlQuery_nullInput_returnsNull() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        assertThat(r.redactUrlQuery(null)).isNull();
+    }
+
+    @Test
+    void redactUrlQuery_emptyInput_returnsEmpty() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        assertThat(r.redactUrlQuery("")).isEqualTo("");
+    }
+
+    // ─── Form body redaction tests ───
+
+    @Test
+    void redactFormBody_sensitiveFields_redacted() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String body = "username=john&password=secret&token=abc123&remember=true";
+        String result = r.redactFormBody(body);
+        assertThat(result).contains("password=[REDACTED]");
+        assertThat(result).contains("token=[REDACTED]");
+        assertThat(result).contains("username=john");
+        assertThat(result).contains("remember=true");
+        assertThat(result).doesNotContain("secret");
+        assertThat(result).doesNotContain("abc123");
+    }
+
+    @Test
+    void redactFormBody_nullInput_returnsNull() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        assertThat(r.redactFormBody(null)).isNull();
+    }
+
+    @Test
+    void redactFormBody_emptyInput_returnsEmpty() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        assertThat(r.redactFormBody("")).isEqualTo("");
+    }
+
+    @Test
+    void redactFormBody_noSensitiveFields_unchanged() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String body = "name=John&age=30";
+        String result = r.redactFormBody(body);
+        assertThat(result).isEqualTo(body);
+    }
+
+    // ─── URL userinfo redaction tests ───
+
+    @Test
+    void redactUrlUserinfo_credentials_redacted() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String url = "https://admin:secret123@example.com/api";
+        String result = r.redactUrlUserinfo(url);
+        assertThat(result).contains("[REDACTED]@");
+        assertThat(result).doesNotContain("admin:secret123");
+        assertThat(result).contains("example.com/api");
+    }
+
+    @Test
+    void redactUrlUserinfo_noCredentials_unchanged() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String url = "https://example.com/api";
+        String result = r.redactUrlUserinfo(url);
+        assertThat(result).isEqualTo(url);
+    }
+
+    @Test
+    void redactUrlUserinfo_nullInput_returnsNull() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        assertThat(r.redactUrlUserinfo(null)).isNull();
+    }
+
+    // ─── Integration: redact() applies URL query + userinfo redaction ───
+
+    @Test
+    void redact_appliesUrlQueryRedactionInFullRedact() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String text = "Visit https://api.example.com?token=secret123&name=ok";
+        String result = r.redact(text);
+        assertThat(result).contains("token=[REDACTED]");
+        assertThat(result).contains("name=ok");
+        assertThat(result).doesNotContain("secret123");
+    }
+
+    @Test
+    void redact_appliesUrlUserinfoRedactionInFullRedact() {
+        DefaultRedactor r = new DefaultRedactor(props(true, List.of(), null));
+        String text = "URL: https://admin:pass123@example.com/api";
+        String result = r.redact(text);
+        assertThat(result).contains("[REDACTED]@");
+        assertThat(result).doesNotContain("admin:pass123");
+    }
 }

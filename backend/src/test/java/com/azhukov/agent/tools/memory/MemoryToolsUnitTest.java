@@ -219,8 +219,11 @@ class MemoryToolsUnitTest {
         s.setId(UUID.fromString("22222222-2222-2222-2222-222222222222"));
         s.setTitle("Deployment planning");
         s.setUpdatedAt(Instant.parse("2026-07-25T10:00:00Z"));
-        when(sessionRepository.findAll()).thenReturn(List.of(s));
-        when(messageRepository.findAll()).thenReturn(List.of());
+        // P2-15: FTS methods throw on mock → fallback to LIKE methods
+        when(sessionRepository.findByTitleContainingIgnoreCase("deployment"))
+            .thenReturn(List.of(s));
+        when(messageRepository.findByContentContainingIgnoreCase("deployment"))
+            .thenReturn(List.of());
         String args = "{\"query\":\"deployment\",\"limit\":5}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
@@ -242,8 +245,10 @@ class MemoryToolsUnitTest {
         m.setSessionId(sessionId);
         m.setContent("We need to fix the memory search bug.");
         m.setCreatedAt(Instant.parse("2026-07-25T11:00:00Z"));
-        when(sessionRepository.findAll()).thenReturn(List.of());
-        when(messageRepository.findAll()).thenReturn(List.of(m));
+        when(sessionRepository.findByTitleContainingIgnoreCase("memory search"))
+            .thenReturn(List.of());
+        when(messageRepository.findByContentContainingIgnoreCase("memory search"))
+            .thenReturn(List.of(m));
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(s));
         String args = "{\"query\":\"memory search\",\"limit\":5}";
 
@@ -257,8 +262,10 @@ class MemoryToolsUnitTest {
     @Test
     void sessionSearchToolReturnsEmptyResult() {
         SessionSearchTool tool = new SessionSearchTool(sessionRepository, messageRepository);
-        when(sessionRepository.findAll()).thenReturn(List.of());
-        when(messageRepository.findAll()).thenReturn(List.of());
+        when(sessionRepository.findByTitleContainingIgnoreCase("xyz"))
+            .thenReturn(List.of());
+        when(messageRepository.findByContentContainingIgnoreCase("xyz"))
+            .thenReturn(List.of());
         String args = "{\"query\":\"xyz\",\"limit\":5}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
