@@ -653,4 +653,142 @@ class AgentControllerTest {
         mockMvc.perform(post("/api/v1/agent/codex-runtime/reset"))
             .andExpect(status().isOk());
     }
+
+    // ── Bug 1: tools/disable without sessionId returns 400 (not 500) ──
+
+    @Test
+    void disableToolWithoutSessionIdReturns400() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/tools/disable")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "toolName": "image_generate"
+                    }
+                    """))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void disableToolWithoutToolNameReturns400() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/tools/disable")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000"
+                    }
+                    """))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void disableToolWithValidBodyReturns200() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/tools/disable")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "toolName": "image_generate"
+                    }
+                    """))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void enableToolWithoutSessionIdReturns400() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/tools/enable")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "toolName": "image_generate"
+                    }
+                    """))
+            .andExpect(status().isBadRequest());
+    }
+
+    // ── Bug 2: goal POST without sessionId returns 400 (not 500) ──
+
+    @Test
+    void setGoalWithoutSessionIdReturns400() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/goal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "goal": "Test"
+                    }
+                    """))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void setGoalWithValidBodyReturns200() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/goal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "goal": "Test goal"
+                    }
+                    """))
+            .andExpect(status().isOk());
+    }
+
+    // ── Bug 3: goal GET returns current goal ──
+
+    @Test
+    void getGoalReturnsCurrentGoal() throws Exception {
+        when(cliRuntimeSettingsService.getGoal(SESSION_ID)).thenReturn("My goal");
+        when(cliRuntimeSettingsService.isGoalPaused(SESSION_ID)).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/agent/goal")
+                .param("sessionId", SESSION_ID.toString()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.goal").value("My goal"))
+            .andExpect(jsonPath("$.paused").value(false));
+    }
+
+    @Test
+    void getGoalReturnsEmptyWhenNoGoalSet() throws Exception {
+        when(cliRuntimeSettingsService.getGoal(SESSION_ID)).thenReturn(null);
+        when(cliRuntimeSettingsService.isGoalPaused(SESSION_ID)).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/agent/goal")
+                .param("sessionId", SESSION_ID.toString()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.goal").value(""))
+            .andExpect(jsonPath("$.paused").value(false));
+    }
+
+    // ── Bug 5: compress/undo POST endpoints without sessionId path variable ──
+
+    @Test
+    void compressEndpointReturns200() throws Exception {
+        org.mockito.Mockito.doNothing().when(agentRuntimeService)
+            .compressSession(any(UUID.class), any(), any());
+
+        mockMvc.perform(post("/api/v1/agent/compress")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "focusTopic": "main topic"
+                    }
+                    """))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void undoEndpointReturns200() throws Exception {
+        when(agentRuntimeService.undoTurns(any(UUID.class), any(Integer.class))).thenReturn(3);
+
+        mockMvc.perform(post("/api/v1/agent/undo")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+                      "turns": 3
+                    }
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(content().string("3"));
+    }
 }

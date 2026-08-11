@@ -18,6 +18,7 @@ import com.azhukov.agent.api.dto.MemoryDto;
 import com.azhukov.agent.api.dto.PendingMemoryDto;
 import com.azhukov.agent.api.dto.RejectMemoryRequest;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
+import com.azhukov.agent.api.dto.UndoRequest;
 import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
@@ -176,16 +177,30 @@ public class AgentController {
 
     @PostMapping("/agent/tools/enable")
     public ResponseEntity<Void> enableTool(@RequestBody java.util.Map<String, String> body) {
-        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String sessionIdStr = body.get("sessionId");
+        if (sessionIdStr == null || sessionIdStr.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+        UUID sessionId = UUID.fromString(sessionIdStr);
         String toolName = body.get("toolName");
+        if (toolName == null || toolName.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
         cliRuntimeSettingsService.enableTool(sessionId, toolName);
         return ResponseEntity.ok().build();
     }
 
     @PostMapping("/agent/tools/disable")
     public ResponseEntity<Void> disableTool(@RequestBody java.util.Map<String, String> body) {
-        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String sessionIdStr = body.get("sessionId");
+        if (sessionIdStr == null || sessionIdStr.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+        UUID sessionId = UUID.fromString(sessionIdStr);
         String toolName = body.get("toolName");
+        if (toolName == null || toolName.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
         cliRuntimeSettingsService.disableTool(sessionId, toolName);
         return ResponseEntity.ok().build();
     }
@@ -213,7 +228,11 @@ public class AgentController {
 
     @PostMapping("/agent/goal")
     public ResponseEntity<Void> setGoal(@RequestBody java.util.Map<String, String> body) {
-        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String sessionIdStr = body.get("sessionId");
+        if (sessionIdStr == null || sessionIdStr.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+        UUID sessionId = UUID.fromString(sessionIdStr);
         String goal = body.get("goal");
         if (goal == null || goal.isBlank()) {
             return ResponseEntity.badRequest().build();
@@ -223,16 +242,34 @@ public class AgentController {
         return ResponseEntity.ok().build();
     }
 
+    @GetMapping("/agent/goal")
+    public ResponseEntity<java.util.Map<String, Object>> getGoal(@RequestParam UUID sessionId) {
+        String goal = cliRuntimeSettingsService.getGoal(sessionId);
+        boolean paused = cliRuntimeSettingsService.isGoalPaused(sessionId);
+        return ResponseEntity.ok(java.util.Map.of(
+            "goal", goal != null ? goal : "",
+            "paused", paused
+        ));
+    }
+
     @PostMapping("/agent/goal/pause")
     public ResponseEntity<Void> pauseGoal(@RequestBody java.util.Map<String, String> body) {
-        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String sessionIdStr = body.get("sessionId");
+        if (sessionIdStr == null || sessionIdStr.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+        UUID sessionId = UUID.fromString(sessionIdStr);
         cliRuntimeSettingsService.setGoalPaused(sessionId, true);
         return ResponseEntity.ok().build();
     }
 
     @PostMapping("/agent/goal/resume")
     public ResponseEntity<Void> resumeGoal(@RequestBody java.util.Map<String, String> body) {
-        UUID sessionId = UUID.fromString(body.get("sessionId"));
+        String sessionIdStr = body.get("sessionId");
+        if (sessionIdStr == null || sessionIdStr.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+        UUID sessionId = UUID.fromString(sessionIdStr);
         cliRuntimeSettingsService.setGoalPaused(sessionId, false);
         return ResponseEntity.ok().build();
     }
@@ -408,6 +445,31 @@ public class AgentController {
 
     @PostMapping("/agent/session/{sessionId}/undo")
     public int undoTurns(@PathVariable UUID sessionId, @RequestParam(defaultValue = "1") int turns) {
+        return agentRuntimeService.undoTurns(sessionId, turns);
+    }
+
+    // Convenience endpoints without sessionId path variable (for E2E / CLI usage)
+
+    @PostMapping("/agent/compress")
+    public String compressSessionBody(@RequestBody(required = false) CompressRequest request) {
+        UUID sessionId = request != null ? request.sessionId() : null;
+        if (sessionId == null) {
+            throw new IllegalArgumentException("sessionId is required");
+        }
+        String focusTopic = request.focusTopic();
+        if (focusTopic == null) {
+            focusTopic = request.focus();
+        }
+        Integer keepLastN = request.keepLastN();
+        agentRuntimeService.compressSession(sessionId, focusTopic, keepLastN);
+        return "Context compressed." + (focusTopic != null ? " Focus: " + focusTopic : "")
+            + (keepLastN != null ? " Kept last " + keepLastN : "");
+    }
+
+    @PostMapping("/agent/undo")
+    public int undoTurnsBody(@RequestBody UndoRequest request) {
+        UUID sessionId = request.sessionId();
+        int turns = request.turns() > 0 ? request.turns() : 1;
         return agentRuntimeService.undoTurns(sessionId, turns);
     }
 

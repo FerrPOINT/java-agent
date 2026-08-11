@@ -67,6 +67,16 @@ public class CliRuntimeSettingsService {
         getSession(sessionId).setCliStateValue("goalPaused", String.valueOf(paused));
     }
 
+    @Transactional(readOnly = true)
+    public String getGoal(UUID sessionId) {
+        return getSession(sessionId).getCliStateValue("goal");
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isGoalPaused(UUID sessionId) {
+        return Boolean.parseBoolean(getSession(sessionId).getCliStateValue("goalPaused"));
+    }
+
     @Transactional
     public void clearGoal(UUID sessionId) {
         SessionEntity e = getSession(sessionId);
