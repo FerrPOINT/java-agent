@@ -1,103 +1,354 @@
 # Design Patterns Catalog
 
-> **Project:** java-agent · **Java** 25 · **Spring Boot** 4.1
-> **Source base:** `backend/src/main/java/com/azhukov/agent/` (unless otherwise noted)
-
-This document catalogues every design pattern identified in the codebase, grouped by
-category (GoF — Gang of Four, GRASP — General Responsibility Assignment Software Patterns).
-Each entry lists the pattern name, category, where it is used (file + class/interface),
-and the rationale for choosing it.
+> Patterns used throughout the Java Agent codebase.
+> Practical — not ceremonial. Each pattern solves a real problem.
 
 ---
 
-## GoF Patterns
+## 1. Strategy Pattern — ToolRegistry
 
-| # | Pattern | Category | Where (file · class / interface) | Why chosen |
-|---|---------|----------|----------------------------------|------------|
-| 1 | **Strategy** | GoF — Behavioural | `core/client/ModelClient.java` · `ModelClient` → `NoOpModelClient`, `LangChain4jModelClient` | Swappable LLM backends (no-op for tests, LangChain4j for real calls); selected via `@ConditionalOnProperty` in `config/AgentConfig.java` |
-| 2 | **Strategy** | GoF — Behavioural | `core/memory/MemoryProvider.java` · `MemoryProvider` → `DatabaseMemoryProvider`, `NoOpMemoryProvider` | Decouples persistence from memory logic; NoOp for offline/no-DB profiles |
-| 3 | **Strategy** | GoF — Behavioural | `core/skill/SkillManager.java` · `SkillManager` → `DatabaseSkillManager`, `NoOpSkillManager` | Skill storage strategy — database or in-memory no-op for testing |
-| 4 | **Strategy** | GoF — Behavioural | `service/tts/TtsProvider.java` · `TtsProvider` → `EdgeTtsProvider`, `OpenAiTtsProvider` | Multiple TTS engines behind a common interface; runtime selection |
-| 5 | **Strategy** | GoF — Behavioural | `service/imagegen/ImageGenProvider.java` · `ImageGenProvider` → `OpenAiImageGenProvider` | Extensible image-generation interface; only OpenAI impl currently |
-| 6 | **Strategy** | GoF — Behavioural | `service/transcription/TranscriptionProvider.java` · `TranscriptionProvider` → `OpenAiTranscriptionProvider` | Extensible transcription interface; only OpenAI impl currently |
-| 7 | **Strategy** | GoF — Behavioural | `core/context/ContextEngine.java` · `ContextEngine` → `DefaultContextEngine` | Context-assembly strategy; single default impl but interface allows alternatives |
-| 8 | **Strategy** | GoF — Behavioural | `core/context/ContextCompressor.java` · `ContextCompressor` → `DefaultContextCompressor` | Context-compression strategy; interface for future alternative algorithms |
-| 9 | **Strategy** | GoF — Behavioural | `core/context/ContextReferenceService.java` · `ContextReferenceService` → `DefaultContextReferenceService` | Reference-resolution strategy |
-| 10 | **Strategy** | GoF — Behavioural | `core/prompt/PromptBuilder.java` · `PromptBuilder` → `DefaultPromptBuilder` | System-prompt construction strategy; `DefaultPromptBuilder` builds the system message from session metadata |
-| 11 | **Strategy** | GoF — Behavioural | `core/security/FileSafety.java` · `FileSafety` → `DefaultFileSafety` | File-path validation strategy; default checks against allowed-list |
-| 12 | **Strategy** | GoF — Behavioural | `core/security/Redactor.java` · `Redactor` → `DefaultRedactor` | Secret-redaction strategy; default uses vendor patterns |
-| 13 | **Strategy** | GoF — Behavioural | `core/security/UrlSafety.java` · `UrlSafety` → `DefaultUrlSafety` | URL-validation strategy |
-| 14 | **Strategy** | GoF — Behavioural | `core/security/ToolGuardrails.java` · `ToolGuardrails` → `DefaultToolGuardrails` | Tool-call guardrail strategy (before/after hooks) |
-| 15 | **Strategy** | GoF — Behavioural | `core/agent/AgentRuntime.java` · `AgentRuntime` → `DefaultAgentRuntime` | Agent-turn orchestration strategy |
-| 16 | **Strategy** | GoF — Behavioural | `core/budget/IterationBudget.java` · `IterationBudget` → `DefaultIterationBudget` | Iteration-limit strategy for agent loops |
-| 17 | **Strategy** | GoF — Behavioural | `core/state/AgentState.java` · `AgentState` → `DefaultAgentState` | Agent state-management strategy |
-| 18 | **Strategy** | GoF — Behavioural | `core/state/AgentConstants.java` · `AgentConstants` → `DefaultAgentConstants` | Agent configuration constants strategy |
-| 19 | **Strategy** | GoF — Behavioural | `core/tool/ToolRegistry.java` · `ToolRegistry` → `SpringToolRegistry` | Tool-discovery/registration strategy |
-| 20 | **Factory** | GoF — Creational | `core/tool/SpringToolRegistry.java` · `SpringToolRegistry.registerBeans()` / `buildDefinition()` | Creates `ToolDefinition` objects from `@AgentTool` annotations and `ToolHandler` beans via reflection at startup; decouples tool definition from handler implementation |
-| 21 | **Proxy** | GoF — Structural | `core/tool/ManagedToolGateway.java` · `ManagedToolGateway` | Wraps tool execution with a managed-gateway check (`isEnabled`, registered predicates); controls access without modifying the real tool handlers |
-| 22 | **Adapter** | GoF — Structural | `gateway/telegram/TelegramAdapter.java` · `TelegramAdapter implements BasePlatformAdapter` | Adapts Telegram Bot API calls to the platform-agnostic `BasePlatformAdapter` interface |
-| 23 | **Adapter** | GoF — Structural | `api/mapper/OpenAiMapper.java` · `OpenAiMapper` (MapStruct) | Adapts domain models (`Message`, `ToolDefinition`, `ToolCall`) to OpenAI-compatible DTOs (`OpenAiChatRequest`, `OpenAiChatResponse`, `OpenAiStreamChunk`) and back |
-| 24 | **Template Method** | GoF — Behavioural | `gateway/BasePlatformAdapter.java` (interface) · `TelegramAdapter` overrides | `BasePlatformAdapter` defines the platform-adapter contract (`connect`, `send`, `sendImage`, `setMessageHandler`); `TelegramAdapter` provides concrete implementations |
-| 25 | **Observer** | GoF — Behavioural | `core/agent/InterruptToken.java` · `InterruptToken` | Session-level cancellation event: `cancel()` sets a flag and fires registered `Runnable` callbacks; consumers (`TerminalTool`, `DefaultAgentRuntime`) observe the interrupt |
-| 26 | **Observer** | GoF — Behavioural | `core/agent/SteerBuffer.java` · `SteerBuffer` | Session-level steer event: `steer()` deposits text, `consume()` retrieves it on next tool result; the agent loop observes pending steers |
-| 27 | **Builder** | GoF — Creational | `core/model/Message.java` · `Message` record factory methods | Static factory methods (`user()`, `system()`, `assistant()`, `assistantWithToolCalls()`, `toolResult()`, `withContent()`) build immutable `Message` instances with sensible defaults |
-| 28 | **Builder** | GoF — Creational | `core/prompt/DefaultPromptBuilder.java` · `DefaultPromptBuilder.buildSystemMessage()` | Builds the system-prompt `Message` from session metadata, skills, and configuration |
-| 29 | **Chain of Responsibility** | GoF — Behavioural | `client/langchain4j/ErrorClassifier.java` · `ErrorClassifier.classify()` | Classifies exceptions through a chain of pattern-matching checks (billing → context-overflow → content-policy → rate-limit → retryable → permanent); first match wins |
-| 30 | **State** | GoF — Behavioural | `core/state/TurnState.java` · `TurnState` + `core/state/TurnStateManager.java` · `TurnStateManager` | Tracks per-turn state (tool executions, failure counts, repeat-call counts, halted flag); `TurnStateManager` creates and manages `TurnState` instances per session/turn |
-| 31 | **Decorator** | GoF — Structural | `core/security/RedactingLayout.java` · `RedactingLayout extends PatternLayout` | Wraps Logback `PatternLayout.doLayout()`, decorating output with `DefaultRedactor.redact()` before returning — secrets never appear in logs |
-| 32 | **Command** | GoF — Behavioural | `cli/src/main/java/…/cli/SlashCommandRegistry.java` · `SlashCommandRegistry` + `SlashCommand` | 47 slash commands registered as function objects (`SlashCommand` lambdas); `SlashCommandRegistry.execute()` dispatches by name |
-| 33 | **Command** | GoF — Behavioural | `telegram-bot/src/main/java/…/bot/commands/CommandRegistry.java` · `CommandRegistry` + `CommandHandler` | 56 bot commands + 10 aliases as `CommandHandler` beans; `CommandRegistry` dispatches by name with alias resolution |
-| 34 | **Composite** | GoF — Structural | `core/tool/ToolExecutionService.java` · `ToolExecutionService.execute()` | Composes multiple tool results into agent-turn messages; executes tools in parallel via virtual threads, aggregates results, and feeds them back as composite `Message` objects to the LLM |
+**Problem:** Tools need to be discovered, registered, and dispatched dynamically without hardcoding each tool.
+
+**Solution:** `ToolRegistry` interface with `SpringToolRegistry` implementation. Spring auto-discovers `@AgentTool` beans at startup.
+
+```java
+public interface ToolRegistry {
+    List<ToolDefinition> getDefinitions();
+    List<ToolDefinition> getDefinitions(Set<String> toolsets);
+    ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session);
+    void registerDynamic(String toolName, ToolDefinition definition, ToolHandler handler);
+    void deregisterDynamic(String toolName);
+}
+```
+
+**How:** Each tool is a `@Component` implementing `ToolHandler`. `SpringToolRegistry` collects all `ToolHandler` beans via constructor injection (`List<ToolHandler> handlers`). The registry maps tool names to handlers and supports toolset-based filtering.
+
+**Where:** `core/tool/ToolRegistry.java`, `core/tool/SpringToolRegistry.java`, `tools/*`
 
 ---
 
-## GRASP Patterns
+## 2. Strategy Pattern — ModelClient
 
-| # | Pattern | Category | Where (file · class / package) | Why chosen |
-|---|---------|----------|--------------------------------|------------|
-| 1 | **Controller** | GRASP | `api/AgentController.java` · `AgentController` | Handles all `/api/v1/agent/*` REST requests; delegates to services, never touches entities directly |
-| 2 | **Controller** | GRASP | `api/ChatCompletionsController.java` · `ChatCompletionsController` | Handles OpenAI-compatible `/v1/chat/completions` endpoint; delegates to `AgentRuntime`, `PromptBuilder`, `OpenAiMapper` |
-| 3 | **Controller** | GRASP | `api/CronJobController.java` · `CronJobController` | Handles cron-job management endpoints |
-| 4 | **Controller** | GRASP | `api/VisionController.java` · `VisionController` | Handles vision/image-analysis endpoints |
-| 5 | **Controller** | GRASP | `api/HealthController.java` · `HealthController` | Handles health-check endpoints |
-| 6 | **Controller** | GRASP | `api/McpController.java` · `McpController` | Handles MCP (Model Context Protocol) management endpoints |
-| 7 | **Creator** | GRASP | `config/AgentConfig.java` · `AgentConfig` (`@Configuration` with `@Bean` methods) | Spring `@Bean` factory methods create and wire all core beans (`ModelClient`, `MemoryProvider`, `SkillManager`, `ContextEngine`, `AgentRuntime`, security beans, etc.) with `@ConditionalOnProperty` / `@ConditionalOnMissingBean` for profile-based selection |
-| 8 | **High Cohesion** | GRASP | Package structure: `api/`, `core/`, `persistence/`, `security/`, `tools/`, `service/`, `gateway/`, `config/` | Each package has a single, well-defined responsibility — controllers only handle HTTP, core contains domain logic, persistence handles JPA, security handles guardrails/sanitisation |
-| 9 | **Low Coupling** | GRASP | Inter-module communication | The three Gradle modules (`backend`, `telegram-bot`, `cli`) communicate exclusively via REST APIs; no direct code-level dependencies between modules |
-| 10 | **Polymorphism** | GRASP | All Strategy interfaces (see GoF #1–#19) | Every interface with multiple implementations enables polymorphic dispatch — `AgentRuntime` receives a `ModelClient`, `MemoryProvider`, `ContextEngine`, etc. without knowing the concrete class |
-| 11 | **Pure Fabrication** | GRASP | `persistence/mapper/MessageMapper.java`, `SessionEntityMapper.java`; `api/mapper/DomainDtoMapper.java`, `OpenAiMapper.java` (MapStruct) | Mapper classes do not represent domain concepts — they exist purely to convert between layers (entity ↔ domain, domain ↔ DTO). MapStruct generates the implementations at compile time |
-| 12 | **Information Expert** | GRASP | `tools/ToolHandler.java` · `ToolHandler` implementations (e.g. `TerminalTool`, `WebSearchTool`, `BrowserNavigateTool`, `MemoryTool`, … — 45 tool classes) | Each `ToolHandler` implementation is the information expert for its specific tool: it knows its own arguments, execution logic, and result formatting. The runtime delegates execution without needing tool-specific knowledge |
+**Problem:** Support multiple LLM providers (OpenAI, Ollama, NoOp) without coupling the runtime to any specific one.
+
+**Solution:** `ModelClient` interface with multiple implementations.
+
+```java
+public interface ModelClient {
+    ChatResponse complete(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options);
+}
+```
+
+| Implementation | Profile | Purpose |
+|---------------|---------|---------|
+| `LangChain4jModelClient` | dev, prod | Real LLM calls via LangChain4j |
+| `NoOpModelClient` | noop | Stub for tests and offline dev |
+
+**Where:** `core/client/ModelClient.java`, `client/langchain4j/LangChain4jModelClient.java`, `client/NoOpModelClient.java`
 
 ---
 
-## Summary
+## 3. Template Method — AgentRuntime Turn Loop
 
-| Category | Count |
-|----------|-------|
-| GoF patterns | 34 occurrences (14 distinct pattern types) |
-| GRASP patterns | 12 occurrences (7 distinct pattern types) |
-| **Total** | **46 pattern instances** |
+**Problem:** The turn loop has a fixed structure (prepare → call model → execute tools → repeat) but individual steps need to be overrideable.
 
-### Pattern frequency
+**Solution:** `AgentRuntime` interface with `DefaultAgentRuntime` implementing the full turn loop. The loop is a single `runTurnLoop` method with well-defined extension points (guardrails, budget, interrupt, approval, steer).
 
-| Pattern | Occurrences |
-|---------|------------|
-| Strategy (GoF) | 19 |
-| Controller (GRASP) | 6 |
-| Command (GoF) | 2 |
-| Adapter (GoF) | 2 |
-| Observer (GoF) | 2 |
-| Builder (GoF) | 2 |
-| Factory (GoF) | 1 |
-| Proxy (GoF) | 1 |
-| Template Method (GoF) | 1 |
-| Chain of Responsibility (GoF) | 1 |
-| State (GoF) | 1 |
-| Decorator (GoF) | 1 |
-| Composite (GoF) | 1 |
-| Creator (GRASP) | 1 |
-| High Cohesion (GRASP) | 1 |
-| Low Coupling (GRASP) | 1 |
-| Polymorphism (GRASP) | 1 |
-| Pure Fabrication (GRASP) | 1 |
-| Information Expert (GRASP) | 1 |
+```java
+for (int i = 0; i < maxTurns; i++) {
+    if (guardrail.isHalted()) return;        // Extension: guardrails
+    if (budget.isExhausted(budget)) return;  // Extension: iteration budget
+    response = callModelWithRetry(...);      // Extension: retry + compression
+    if (!response.hasToolCalls()) return;     // Exit condition
+    toolResults = executeTools(...);          // Extension: parallel/sequential
+    // Extension: steer buffer injection
+}
+```
+
+**Where:** `core/agent/DefaultAgentRuntime.java`
+
+---
+
+## 4. Registry Pattern — CommandRegistry (Bot & CLI)
+
+**Problem:** Bot commands (56+) and CLI commands (74+) need to be looked up by name with alias support.
+
+**Solution:** Both modules use a registry that auto-collects handlers via Spring DI.
+
+```java
+// Bot: CommandRegistry collects all CommandHandler beans
+public CommandRegistry(List<CommandHandler> handlers) {
+    for (CommandHandler handler : handlers) {
+        this.handlers.put(handler.name(), handler);
+    }
+}
+// CLI: SlashCommandRegistry collects all SlashCommand beans
+```
+
+**Alias resolution:** Bot `CommandRegistry` has a static `ALIASES` map (10 aliases: `sethome→set_home`, `fork→branch`, etc.).
+
+**Where:** `bot/commands/CommandRegistry.java`, `cli/SlashCommandRegistry.java`
+
+---
+
+## 5. ObjectProvider — Circular Dependency Resolution
+
+**Problem:** Some Spring beans have circular dependencies that prevent constructor injection.
+
+**Solution:** Use `ObjectProvider<T>` (lazy resolution) instead of direct constructor injection. Spring resolves the bean on first access, breaking the cycle.
+
+```java
+@RequiredArgsConstructor
+public class SomeService {
+    private final ObjectProvider<OtherService> otherProvider;
+
+    void doWork() {
+        OtherService other = otherProvider.getObject(); // resolved lazily
+    }
+}
+```
+
+**Where:** Used in services where runtime references are circular (e.g., `AgentRuntimeService` ↔ `AgentStreamingService`).
+
+---
+
+## 6. @PostConstruct — Derived Fields
+
+**Problem:** Some fields are derived from injected properties but can't be computed in the constructor (Lombok `@RequiredArgsConstructor` generates the constructor).
+
+**Solution:** Use `@PostConstruct` to compute derived values after dependency injection.
+
+```java
+@RequiredArgsConstructor
+public class WebSearchTool {
+    private final AgentProperties agentProperties;  // injected by Lombok constructor
+    private int configuredLimit;                      // derived → non-final
+
+    @PostConstruct
+    void init() {
+        configuredLimit = agentProperties.getWeb().getSearchResults();
+    }
+}
+```
+
+**Testing convention:** `new WebSearchTool(props); tool.init();` — call `init()` after construction in unit tests.
+
+**Where:** Throughout `tools/` and `service/` — any bean with derived configuration.
+
+---
+
+## 7. Virtual Threads — Lightweight Parallelism
+
+**Problem:** Parallel tool execution needs a thread per tool call, but platform threads are expensive.
+
+**Solution:** Java 25 virtual threads via `Executors.newVirtualThreadPerTaskExecutor()`.
+
+```java
+try (ExecutorService parallelExecutor = Executors.newVirtualThreadPerTaskExecutor()) {
+    for (ToolCall call : toolCalls) {
+        futures.add(CompletableFuture.supplyAsync(() ->
+            toolExecutionService.execute(call.name(), ...), parallelExecutor));
+    }
+    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+}
+```
+
+**Where:**
+- `DefaultAgentRuntime.executeToolsInParallel()` — parallel tool execution
+- `DefaultAgentRuntime.runTurnInternal()` — async memory sync via virtual thread
+- `ToolExecutionService` — dedicated virtual thread executor for tools
+
+---
+
+## 8. Programmatic Transactions — TransactionTemplate
+
+**Problem:** `@Transactional` doesn't work via self-invocation (Spring proxy bypass). Streaming code calls transactional methods from the same class.
+
+**Solution:** Use `TransactionTemplate` for programmatic transactions instead of annotation-based `@Transactional`.
+
+```java
+@RequiredArgsConstructor
+public class AgentStreamingService {
+    private final TransactionTemplate transactionTemplate;
+
+    void saveMessages(List<Message> messages) {
+        transactionTemplate.execute(status -> {
+            messageRepository.saveAll(entities);
+            return null;
+        });
+    }
+}
+```
+
+**Where:** `AgentStreamingService`, any service that needs transactions in self-invoked methods.
+
+---
+
+## 9. Observer / Hook — Turn Lifecycle
+
+**Problem:** Multiple subsystems need to react to turn events (start, complete, fail) without coupling.
+
+**Solution:** `TurnFinalizer` acts as a lifecycle hook, invoked at every turn exit point with the reason (`COMPLETED`, `BUDGET_EXHAUSTED`, `MODEL_CALL_FAILED`, `GUARDRAIL_HALTED`, `INTERRUPTED`, `MAX_TURNS_REACHED`).
+
+```java
+turnFinalizer.finalize(session.id(), turnMessages, success, TurnExitReason.COMPLETED);
+```
+
+**Where:** `core/agent/TurnFinalizer.java`, `core/agent/TurnExitReason.java`
+
+---
+
+## 10. Bounded Retry with Error Classification
+
+**Problem:** LLM API calls fail for different reasons (rate limit, network, context overflow, billing). Blind retry wastes resources on non-retryable errors.
+
+**Solution:** `ErrorClassifier` categorises errors; `callModelWithRetry` applies different backoff strategies per error type.
+
+| Error Type | Action |
+|------------|--------|
+| `RETRYABLE` | Backoff: 500ms × 2^attempt + jitter, cap 5s |
+| `RATE_LIMIT` | Longer backoff: 2s × 2^attempt, cap 30s |
+| `CONTEXT_OVERFLOW` | Compress context, retry without consuming attempt |
+| `PERMANENT` / `BILLING` / `CONTENT_POLICY` | Fail immediately |
+
+**Where:** `client/langchain4j/ErrorClassifier.java`, `DefaultAgentRuntime.callModelWithRetry()`
+
+---
+
+## 11. Builder Pattern — Message Factory Methods
+
+**Problem:** `Message` is a record with 7 fields; most construction only needs a few.
+
+**Solution:** Static factory methods on the record, each filling defaults for the rest.
+
+```java
+public static Message user(String content)              { ... }
+public static Message system(String content)            { ... }
+public static Message assistant(String content, int ti) { ... }
+public static Message assistantToolCalls(List<ToolCall> toolCalls, int ti) { ... }
+public static Message toolResult(String toolCallId, String content, int ti) { ... }
+```
+
+**Where:** `core/model/Message.java`
+
+---
+
+## 12. Decorator — Security Layers
+
+**Problem:** Tool execution, HTTP calls, and output need security wrapping (SSRF, file safety, redaction) without modifying core logic.
+
+**Solution:** Security components wrap core services as cross-cutting concerns:
+
+| Decorator | Wraps | Purpose |
+|-----------|-------|---------|
+| `SsrfSafeHttpClient` | HTTP client | Blocks private/local IPs |
+| `DefaultFileSafety` | File tool operations | Validates paths against allowed list |
+| `DefaultUrlSafety` | URL operations | Validates URLs |
+| `DefaultRedactor` | Output/logs | Masks API keys, tokens, PII |
+| `ToolCallGuardrail` | Tool execution | Halts on suspicious tool patterns |
+| `MessageSanitizer` | Message processing | Sanitises messages before model calls |
+
+**Where:** `security/` package
+
+---
+
+## 13. Callback / Handler — Streaming
+
+**Problem:** LLM streaming responses arrive incrementally; the consumer needs to handle each chunk without blocking.
+
+**Solution:** `StreamingResponseHandler` callback interface. The model client invokes callbacks for each token chunk, tool call, and completion.
+
+```java
+handler.onContent(chunk);      // token arrived
+handler.onToolCalls(toolCalls); // model requests tools
+handler.onComplete(usage);      // stream finished
+handler.onError(exception);     // stream failed
+```
+
+**Where:** `core/client/StreamingResponseHandler.java`, `client/langchain4j/LangChain4jModelClient.java`
+
+---
+
+## 14. Interrupt Token — Cooperative Cancellation
+
+**Problem:** Long-running turns (100 max iterations) need user-initiated cancellation without killing threads.
+
+**Solution:** `InterruptToken` — a `ConcurrentHashMap<UUID, Boolean>` checked at each iteration of the turn loop.
+
+```java
+// Set by user (REST endpoint or bot command)
+interruptToken.cancel(sessionId);
+
+// Checked in the turn loop
+if (interruptToken.isCancelled(session.id())) {
+    return new TurnResult(messages, true, "cancelled");
+}
+```
+
+**Where:** `core/agent/InterruptToken.java`
+
+---
+
+## 15. Steer Buffer — Mid-Turn Injection
+
+**Problem:** User wants to inject guidance mid-turn (e.g., "use a different approach") without interrupting.
+
+**Solution:** `SteerBuffer` — a `ConcurrentHashMap<UUID, String>`. The turn loop checks and consumes the steer note after tool execution, injecting it into the last tool result.
+
+```java
+String steerText = steerBuffer.consume(session.id());
+if (steerText != null) {
+    String enhanced = lastToolResult.content() + "\n\n[STEER NOTE] " + steerText;
+    toolResults.set(lastIndex, Message.toolResult(id, enhanced, turnIndex));
+}
+```
+
+**Where:** `core/agent/SteerBuffer.java`, `DefaultAgentRuntime.runTurnLoop()`
+
+---
+
+## 16. Configured Properties — Type-Safe Configuration
+
+**Problem:** 30+ configuration sections with nested properties, env var overrides, and validation.
+
+**Solution:** `@ConfigurationProperties` with nested static classes, validated by `@Validated`.
+
+```java
+@Validated
+@ConfigurationProperties(prefix = "agent")
+public class AgentProperties {
+    private final ModelProperties model = new ModelProperties();
+    private final SecurityProperties security = new SecurityProperties();
+    // ... 30+ nested property classes
+}
+```
+
+All settings in `application.yml` with env var overrides (`${ENV:default}`).
+
+**Where:** `config/AgentProperties.java`, `bot/config/BotProperties.java`
+
+---
+
+## 17. Event-Driven Polling — Telegram Long Polling
+
+**Problem:** Telegram bot needs to receive updates without a public webhook endpoint.
+
+**Solution:** `LongPollingService` with `ReconnectWatcher` (exponential backoff). The polling loop runs on a daemon `ScheduledExecutorService`.
+
+```
+getUpdates → process → getUpdates → ...
+    ↓ on error
+ReconnectWatcher → exponential backoff → reconnect
+```
+
+**Where:** `bot/polling/LongPollingService.java`, `bot/polling/ReconnectWatcher`
+
+---
+
+## 18. Batch Debouncer — Message Aggregation
+
+**Problem:** Users send multiple rapid messages (text or photos); each should be processed as one combined input.
+
+**Solution:** `TextBatchDebouncer` and `PhotoBatchDebouncer` collect messages within a time window, then dispatch as a single `UpdateEvent`.
+
+**Where:** `bot/batch/TextBatchDebouncer.java`, `bot/batch/PhotoBatchDebouncer.java`

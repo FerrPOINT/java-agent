@@ -1,170 +1,242 @@
 # Entity-Relationship Diagram
 
-Database schema for the Java Agent platform, covering all 12 core tables defined in the migration DDL.
+> Derived from JPA entities (`persistence/entity/`) and Flyway migrations (V1–V18).
+> Mermaid ER diagram syntax.
 
 ---
 
-## ERD
+## Core Schema
 
 ```mermaid
 erDiagram
     sessions {
-        BIGINT id PK
-        VARCHAR user_id
-        VARCHAR title
-        VARCHAR model_provider
-        VARCHAR model_name
+        UUID id PK
+        TEXT user_id
+        TEXT title
+        TEXT model_provider
+        TEXT model_name
         TEXT system_prompt
-        TIMESTAMP created_at
-        TIMESTAMP updated_at
+        TEXT subgoal
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
 
     messages {
-        BIGINT id PK
-        BIGINT session_id FK
+        UUID id PK
+        UUID session_id FK
         INTEGER turn_index
-        VARCHAR role
+        TEXT role
         TEXT content
-        VARCHAR tool_call_id
-        VARCHAR tool_call_name
+        TEXT tool_call_id
+        TEXT tool_call_name
         TEXT tool_call_arguments
-        TIMESTAMP created_at
+        TIMESTAMPTZ created_at
     }
 
     memory {
-        BIGINT id PK
-        VARCHAR user_id
-        VARCHAR category
+        UUID id PK
+        TEXT user_id
+        TEXT category
         TEXT fact
-        VARCHAR target
-        TIMESTAMP created_at
-        TIMESTAMP updated_at
+        TEXT target "default: memory"
+        TIMESTAMPTZ created_at
     }
 
     memory_pending {
-        BIGINT id PK
-        VARCHAR user_id
-        VARCHAR action
-        VARCHAR target
+        UUID id PK
+        TEXT user_id
+        TEXT action
+        TEXT target
         TEXT content
         TEXT old_text
         TEXT summary
-        VARCHAR origin
-        VARCHAR status
-        TIMESTAMP created_at
-        TIMESTAMP resolved_at
+        TEXT origin
+        TEXT status "default: pending"
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ resolved_at
     }
 
     todos {
-        BIGINT id PK
-        BIGINT session_id FK
-        VARCHAR user_id
-        VARCHAR title
-        VARCHAR priority
-        VARCHAR status
-        TIMESTAMP created_at
-        TIMESTAMP updated_at
+        UUID id PK
+        UUID session_id FK
+        TEXT user_id
+        TEXT title
+        TEXT status "default: pending"
+        TEXT priority
+        TIMESTAMPTZ created_at
     }
 
     skills {
-        BIGINT id PK
-        VARCHAR name
-        VARCHAR category
-        TEXT description
+        UUID id PK
+        TEXT name UK
+        TEXT category
         TEXT content
-        INTEGER version
-        TIMESTAMP created_at
-        TIMESTAMP updated_at
+        TEXT description
+        TEXT version
+        TEXT write_origin
+        INTEGER view_count
+        INTEGER manage_count
+        BOOLEAN archived
+        TEXT trust_level
+        TEXT lifecycle_state
+        BOOLEAN pinned
+        TEXT absorbed_into
+        TIMESTAMPTZ last_activity_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
 
-    compression_locks {
-        BIGINT id PK
-        BIGINT session_id FK
-        TIMESTAMP locked_at
+    session_cli_state {
+        UUID session_id FK
+        TEXT state_key PK
+        TEXT state_value
     }
 
-    checkpoints {
-        BIGINT id PK
-        VARCHAR description
-        INTEGER file_count
-        BIGINT total_size_bytes
-        TIMESTAMP created_at
-        JSON files_json
-    }
-
-    cron_jobs {
-        BIGINT id PK
-        VARCHAR name
-        VARCHAR schedule
-        TEXT prompt
-        BOOLEAN enabled
-        VARCHAR deliver_to
-        TIMESTAMP created_at
-        TIMESTAMP last_run_at
-        TIMESTAMP next_run_at
-    }
-
-    usage_log {
-        BIGINT id PK
-        BIGINT session_id
-        VARCHAR user_id
-        VARCHAR model
-        INTEGER prompt_tokens
-        INTEGER completion_tokens
-        INTEGER total_tokens
-        DECIMAL cost
-        TIMESTAMP created_at
-    }
-
-    mcp_oauth_tokens {
-        BIGINT id PK
-        VARCHAR server_name
-        TEXT access_token
-        TEXT refresh_token
-        TIMESTAMP expires_at
-        TIMESTAMP created_at
-        TIMESTAMP updated_at
-    }
-
-    audit_log {
-        BIGINT id PK
-        BIGINT session_id
-        VARCHAR actor
-        VARCHAR action
-        VARCHAR resource
-        JSON details
-        TIMESTAMP created_at
-    }
-
-    sessions ||--o{ messages : "has"
-    sessions ||--o{ todos : "has"
-    sessions ||--o{ compression_locks : "has"
-    sessions ||--o{ usage_log : "tracks"
+    sessions ||--o{ messages : "session_id"
+    sessions ||--o{ todos : "session_id"
+    sessions ||--o{ session_cli_state : "session_id"
 ```
 
 ---
 
-## Relationship Summary
+## Checkpoint & Usage
 
-| Parent | Child | Cardinality | Description |
-|---|---|---|---|
-| sessions | messages | one-to-many | A session contains many conversation messages |
-| sessions | todos | one-to-many | A session tracks many todo items |
-| sessions | compression_locks | one-to-many | A session may hold compression locks per generation |
-| sessions | usage_log | one-to-many | A session accumulates per-call usage/cost entries |
+```mermaid
+erDiagram
+    checkpoints {
+        UUID id PK
+        TEXT description
+        INTEGER file_count
+        BIGINT total_size_bytes
+        TEXT files_json
+        TIMESTAMPTZ created_at
+    }
+
+    checkpoint_files {
+        UUID id PK
+        UUID checkpoint_id FK
+        TEXT file_path
+        TEXT file_hash
+        BIGINT file_size
+        TEXT content_base64
+    }
+
+    usage_log {
+        UUID id PK
+        UUID session_id
+        TEXT user_id
+        TEXT model
+        INTEGER prompt_tokens
+        INTEGER completion_tokens
+        INTEGER total_tokens
+        DOUBLE cost
+        INTEGER cache_read_tokens
+        INTEGER cache_write_tokens
+        TIMESTAMPTZ created_at
+    }
+
+    compression_locks {
+        UUID id PK
+        UUID session_id UK
+        TIMESTAMPTZ locked_at
+    }
+
+    checkpoints ||--o{ checkpoint_files : "checkpoint_id"
+```
 
 ---
 
-## Standalone Tables (No FK Relationships)
+## MCP, Cron & Curator
 
-These tables are keyed by `user_id` or `server_name` rather than `session_id` and have no foreign-key relationship to `sessions`:
+```mermaid
+erDiagram
+    mcp_oauth_tokens {
+        UUID id PK
+        TEXT server_name
+        TEXT access_token
+        TEXT refresh_token
+        TIMESTAMPTZ expires_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
 
-| Table | Keyed By | Purpose |
-|---|---|---|
-| memory | user_id | Persistent user-level memory facts |
-| memory_pending | user_id | Staged memory changes awaiting reconciliation |
-| skills | name (unique) | Skill definitions (prompts/workflows) |
-| checkpoints | id | System-state snapshots for rollback |
-| cron_jobs | name (unique) | Scheduled agent prompts |
-| mcp_oauth_tokens | server_name | OAuth credentials for MCP tool servers |
-| audit_log | session_id (nullable) | Compliance/security audit trail |
+    cron_jobs {
+        UUID id PK
+        TEXT name
+        TEXT schedule
+        TEXT prompt
+        BOOLEAN enabled "default: true"
+        TEXT deliver_to
+        TEXT skills
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ last_run_at
+        TIMESTAMPTZ next_run_at
+    }
+
+    curator_snapshots {
+        UUID id PK
+        TEXT reason
+        INTEGER skill_count
+        TEXT snapshot_data
+        TEXT manifest
+        TIMESTAMPTZ created_at
+    }
+
+    audit_log {
+        BIGINT id PK
+        TEXT session_id
+        TEXT actor
+        TEXT action
+        TEXT resource
+        TEXT details
+        TIMESTAMPTZ created_at
+    }
+```
+
+---
+
+## Migration History
+
+| Migration | Description |
+|-----------|-------------|
+| V1 | Baseline (placeholder) |
+| V2 | Agent schema: sessions, messages, memory, todos, skills, context_references, compression_locks, approvals, gateway_routing, session_model_usage |
+| V3 | Todos: add title, priority columns |
+| V4 | Todos: drop content column |
+| V5 | Memory: add target column |
+| V6 | Memory: pending memory table |
+| V7 | Cron jobs table |
+| V8 | Checkpoints table |
+| V9 | Usage log table |
+| V10 | MCP OAuth tokens |
+| V11 | Audit log |
+| V12 | Skill provenance & telemetry (write_origin, view_count, manage_count, last_activity_at) |
+| V13 | Curator snapshots |
+| V14 | Cron jobs: add skills column |
+| V15 | Curator lifecycle fields (lifecycle_state, pinned, absorbed_into) |
+| V16 | Session CLI state (ElementCollection → session_cli_state table) |
+| V17 | Checkpoint files table |
+| V18 | Session search FTS |
+
+---
+
+## Entity Count
+
+| Entity | Table | Migrations |
+|--------|-------|------------|
+| `SessionEntity` | `sessions` | V2, V16 |
+| `MessageEntity` | `messages` | V2 |
+| `MemoryEntity` | `memory` | V2, V5 |
+| `PendingMemoryEntity` | `memory_pending` | V6 |
+| `TodoEntity` | `todos` | V2, V3, V4 |
+| `SkillEntity` | `skills` | V2, V12, V15 |
+| `CheckpointEntity` | `checkpoints` | V8, V17 |
+| `CheckpointFileEntity` | `checkpoint_files` | V17 |
+| `UsageEntity` | `usage_log` | V9 |
+| `CronJobEntity` | `cron_jobs` | V7, V14 |
+| `McpOAuthEntity` | `mcp_oauth_tokens` | V10 |
+| `AuditLogEntity` | `audit_log` | V11 |
+| `CuratorSnapshotEntity` | `curator_snapshots` | V13 |
+| `CompressionLockEntity` | `compression_locks` | V2 |
+
+Total: **14 JPA entities**, **18 Flyway migrations**.

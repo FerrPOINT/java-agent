@@ -1,0 +1,159 @@
+# Production docker-compose — backend + telegram-bot + PostgreSQL 16
+# Usage: docker compose -f docker-compose.prod.yml up -d --build
+#
+# Required env vars (can be placed in .env):
+#   DB_PASSWORD              — PostgreSQL password
+#   AGENT_MODEL_API_KEY      — LLM API key
+#   TELEGRAM_BOT_TOKEN       — Telegram bot token
+#
+# Optional env vars (defaults shown):
+#   AGENT_MODEL_PROVIDER=openai-compatible
+#   AGENT_MODEL_BASE_URL=https://ollama.com/v1
+#   AGENT_MODEL_NAME=kimi-k2.6
+
+services:
+  # ── PostgreSQL 16 ──
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: project_workflow
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: java_agent
+    volumes:
+      - java_agent_prod_pg:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U project_workflow -d java_agent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+        reservations:
+          memory: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # ── Backend (Java Agent) ──
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: java_agent
+      DB_USER: project_workflow
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      AGENT_SERVER_PORT: "8080"
+      AGENT_MODEL_PROVIDER: ${AGENT_MODEL_PROVIDER:-openai-compatible}
+      AGENT_MODEL_BASE_URL: ${AGENT_MODEL_BASE_URL:-https://ollama.com/v1}
+      AGENT_MODEL_API_KEY: ${AGENT_MODEL_API_KEY:-}
+      AGENT_MODEL_NAME: ${AGENT_MODEL_NAME:-kimi-k2.6}
+      AGENT_CHROMIUM_AUTO_START: "true"
+      AGENT_CHROMIUM_AUTO_INSTALL: "true"
+      AGENT_BROWSER_CDP_URL: "http://localhost:9222"
+      AGENT_MEMORY_ENABLED: ${AGENT_MEMORY_ENABLED:-true}
+      AGENT_SKILLS_ENABLED: ${AGENT_SKILLS_ENABLED:-true}
+      AGENT_GATEWAY_TELEGRAM_LONG_POLLING_ENABLED: "false"
+      AGENT_GATEWAY_TELEGRAM_WEBHOOK_ENABLED: "false"
+    ports:
+      - "${AGENT_PORT:-8080}:8080"
+    volumes:
+      - agent_prod_chromium:/home/agent/.azhukov-agent
+      - ${AGENT_WORK_DIR:-./work}:/workspace
+    networks:
+      - frontend
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
+        reservations:
+          memory: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/readiness >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    restart: unless-stopped
+
+  # ── Telegram Bot ──
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: telegram-bot/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      agent:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: java_agent
+      DB_USER: project_workflow
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      BOT_SERVER_PORT: "8091"
+      BOT_MODE: ${BOT_MODE:-polling}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      BOT_BACKEND_URL: http://agent:8080
+      BOT_AGENT_NAME: ${BOT_AGENT_NAME:-Java Agent}
+      BOT_ALLOWED_USER_IDS: ${BOT_ALLOWED_USER_IDS:-}
+      BOT_ALLOWED_USERNAMES: ${BOT_ALLOWED_USERNAMES:-}
+      BOT_ALLOW_BY_DEFAULT: ${BOT_ALLOW_BY_DEFAULT:-false}
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+        reservations:
+          memory: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8091/actuator/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+networks:
+  # Frontend — exposed to host, for API access
+  frontend:
+    driver: bridge
+  # Backend — internal only, DB + inter-service communication
+  backend:
+    driver: bridge
+    internal: true
+
+volumes:
+  java_agent_prod_pg:
+  agent_prod_chromium:

@@ -1,277 +1,290 @@
-# C4 Model — Java Agent Architecture
+# C4 Model — Java Agent
 
-This document describes the Java Agent system using the C4 model (Context, Container, Component) with Mermaid diagrams renderable in GitLab/GitHub markdown.
+> Architecture described using the [C4 model](https://c4model.com/).
+> All diagrams are Mermaid — render inline in GitLab/GitHub.
 
 ---
 
-## Level 1: System Context
+## Level 1 — System Context
 
-The System Context diagram shows the Java Agent as a whole, its users, and the external systems it interacts with.
+The Java Agent is an autonomous LLM-powered assistant accessible via REST API,
+Telegram bot, and interactive CLI. It integrates with LLM providers (OpenAI-compatible),
+external tools (filesystem, browser, terminal), and MCP servers.
 
 ```mermaid
-C4Context
-title Java Agent — System Context
+graph TB
+    User([Human User])
 
-Person(user, "User", "Interacts with the agent via Telegram or CLI")
-System(system_alias, "Java Agent", "AI agent with LLM integration, tool execution, memory, and multi-channel delivery (Telegram bot + CLI)")
+    subgraph "Java Agent System"
+        JA[Java Agent]
+    end
 
-System_Ext(llm, "LLM Provider", "Ollama / OpenAI-compatible API for model inference")
-System_Ext(postgres, "PostgreSQL", "Persistent storage for sessions, messages, memory, checkpoints")
-System_Ext(chromium, "Chromium CDP", "Headless browser for web automation tools")
-System_Ext(telegram_api, "Telegram Bot API", "Telegram platform for bot message delivery")
+    LLM[LLM Provider<br/>OpenAI / Ollama / compatible]
+    TG[Telegram Bot API]
+    PG[(PostgreSQL 16)]
+    MCP[External MCP Servers]
+    CHR[Chromium / CDP]
+    FS[Local Filesystem]
 
-Rel(user, system_alias, "Sends messages, receives streamed responses")
-Rel(system_alias, llm, "Sends prompts, receives streamed completions")
-Rel(system_alias, postgres, "Reads/writes sessions, messages, memory")
-Rel(system_alias, chromium, "Controls browser via Chrome DevTools Protocol")
-Rel(system_alias, telegram_api, "Polls updates, sends messages/media")
+    User -->|Chat / Commands| JA
+    JA -->|LLM calls| LLM
+    JA -->|Bot polling / webhooks| TG
+    TG -->|Updates / callbacks| JA
+    JA -->|Persists sessions, messages,<br/>memory, skills, usage| PG
+    JA -->|Tool calls via MCP protocol| MCP
+    JA -->|Browser automation| CHR
+    JA -->|File read/write tools| FS
 
-UpdateRelStyle(user, system_alias, $offsetX="-40", $offsetY="-10")
-UpdateRelStyle(system_alias, llm, $offsetX="-20", $offsetY="0")
-UpdateRelStyle(system_alias, postgres, $offsetX="-30", $offsetY="0")
-UpdateRelStyle(system_alias, chromium, $offsetX="-20", $offsetY="10")
-UpdateRelStyle(system_alias, telegram_api, $offsetX="-40", $offsetY="10")
+    style JA fill:#2d6a9f,color:#fff
+    style PG fill:#e6a23c
 ```
 
-### Description
+### External Dependencies
 
-| Element | Description |
-|---------|-------------|
-| **User** | A human who interacts with the agent through Telegram (bot) or a local terminal (CLI). |
-| **Java Agent** | The complete system — a Spring Boot application suite providing AI agent capabilities: LLM orchestration, tool execution (45 tools), persistent memory, session management, and multi-channel delivery. |
-| **LLM Provider** | External model inference API. Supports Ollama (local/cloud) and OpenAI-compatible endpoints. Used for generating responses, context compression, and tool-call decisions. |
-| **PostgreSQL** | Primary datastore. Stores sessions, messages, memory entries, checkpoints, and agent metadata. Flyway manages migrations. |
-| **Chromium CDP** | Headless Chromium browser controlled via Chrome DevTools Protocol. Used by browser automation tools (navigation, scraping, screenshots). |
-| **Telegram Bot API** | Telegram's platform API. The bot polls for updates and sends messages, media, and inline keyboards back to users. |
+| Dependency | Protocol | Purpose |
+|------------|----------|---------|
+| LLM Provider | HTTP (OpenAI-compatible API) | Chat completions, streaming, tool-calling |
+| Telegram Bot API | HTTPS long-polling / webhook | Bot message delivery |
+| PostgreSQL 16 | TCP (JDBC) | Persistence: sessions, messages, memory, skills, usage, cron jobs |
+| External MCP Servers | stdio / SSE | External tool integration |
+| Chromium | CDP (WebSocket) | Browser automation tool |
 
 ---
 
-## Level 2: Container
+## Level 2 — Containers
 
-The Container diagram shows the deployable units within the Java Agent system and how they communicate.
+Three independently deployable Gradle modules sharing a PostgreSQL database.
 
 ```mermaid
 graph TB
     subgraph "Java Agent System"
-        BACKEND["<b>backend</b><br/>Spring Boot 4.1 · Java 25<br/>Port 8090 (dev) / 8080<br/><br/>REST API (53 endpoints)<br/>SSE Streaming<br/>LLM Client (LangChain4j)<br/>45 Tool Implementations<br/>JPA Persistence (12 entities)<br/>Security Layer<br/>Memory Provider<br/>Context Engine<br/>Agent Runtime"]
-        BOT["<b>telegram-bot</b><br/>Spring Boot 4.1 · Java 25<br/><br/>56 Commands<br/>Long Polling<br/>SSE Stream Consumer<br/>Media Handling<br/>Inline Keyboards<br/>Typing Indicators<br/>RestClient → Backend"]
-        CLI["<b>cli</b><br/>Spring Boot 4.1 · Java 25<br/>Non-web<br/><br/>JLine REPL<br/>47 Slash Commands<br/>SSE Stream Consumer<br/>Autocomplete<br/>Session Management<br/>RestClient → Backend"]
+        BE[Backend<br/>Spring Boot 4.1<br/>REST API + Agent Runtime<br/>Port 8090]
+        BOT[Telegram Bot<br/>Spring Boot app<br/>56 commands + streaming<br/>Shared PostgreSQL]
+        CLI[CLI<br/>Spring Boot (non-web)<br/>JLine REPL<br/>74 slash commands]
     end
 
-    POSTGRES[("PostgreSQL 16<br/>Sessions<br/>Messages<br/>Memory<br/>Checkpoints")]
-    LLM_API["LLM Provider<br/>Ollama / OpenAI-compatible<br/>Inference API"]
-    CHROMIUM["Chromium CDP<br/>Headless Browser<br/>Chrome DevTools Protocol"]
-    TELEGRAM_API["Telegram Bot API<br/>Updates polling<br/>Message delivery"]
-    USER_TG["Telegram User"]
-    USER_CLI["CLI User (Terminal)"]
+    PG[(PostgreSQL 16<br/>Shared database)]
+    LLM[LLM Provider]
+    TG[Telegram Bot API]
 
-    USER_TG -->|"Messages / media"| TELEGRAM_API
-    TELEGRAM_API -->|"Updates (long poll)"| BOT
-    BOT -->|"Messages / inline keyboards"| TELEGRAM_API
-    TELEGRAM_API -->|"Delivery"| USER_TG
+    User -->|REST / SSE| CLI
+    User -->|Telegram| TG
+    TG -->|Updates| BOT
+    User -->|REST / SSE| BE
 
-    USER_CLI -->|"Text input / slash commands"| CLI
-    CLI -->|"Streamed output"| USER_CLI
+    CLI -->|REST + SSE streaming| BE
+    BOT -->|REST + SSE streaming| BE
+    BE -->|LLM calls| LLM
+    BE -->|JPA / Flyway| PG
+    BOT -->|JPA (bot schema)| PG
 
-    BOT -->|"REST API (53 endpoints)<br/>SSE streaming"| BACKEND
-    CLI -->|"REST API (53 endpoints)<br/>SSE streaming"| BACKEND
-
-    BACKEND -->|"JDBC / JPA<br/>Flyway migrations"| POSTGRES
-    BACKEND -->|"HTTP prompts<br/>Streamed completions"| LLM_API
-    BACKEND -->|"CDP commands<br/>JSON-over-WS"| CHROMIUM
-
-    classDef container fill:#1168bd,stroke:#0b4884,color:#ffffff,stroke-width:2px
-    classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff,stroke-width:2px
-    classDef db fill:#f5a623,stroke:#d4880b,color:#ffffff,stroke-width:2px
-    classDef user fill:#08427b,stroke:#052e56,color:#ffffff,stroke-width:2px
-
-    class BACKEND,BOT,CLI container
-    class POSTGRES db
-    class LLM_API,CHROMIUM,TELEGRAM_API external
-    class USER_TG,USER_CLI user
+    style BE fill:#2d6a9f,color:#fff
+    style BOT fill:#67c23a,color:#fff
+    style CLI fill:#e6a23c,color:#fff
+    style PG fill:#f56c6c,color:#fff
 ```
 
 ### Container Descriptions
 
-| Container | Technology | Responsibility |
-|----------|------------|----------------|
-| **backend** | Spring Boot 4.1, Java 25, port 8090/8080 | Core agent engine. REST API (7 controllers, 53 endpoints). SSE streaming. LLM client (LangChain4j 1.18). 45 `@AgentTool` implementations. JPA persistence (12 entities, 12 repositories, 4 MapStruct mappers). Security layer (FileSafety, Redactor, UrlSafety, ToolGuardrails, ApprovalGate). Memory provider. Context engine. Agent runtime. |
-| **telegram-bot** | Spring Boot 4.1, Java 25 | Telegram delivery channel. 56 commands. Long polling for updates. SSE stream consumer (real-time token output). Media handling (photos, voice, documents). Inline keyboards, typing indicators. Communicates with backend exclusively via REST. |
-| **cli** | Spring Boot 4.1, Java 25, non-web | Local terminal interface. JLine REPL with autocomplete. 47 slash commands (`/new`, `/status`, `/compress`, `/undo`, `/checkpoint`, `/rollback`, `/memory`, `/skills`, `/help`, `/exit`). SSE stream consumer. Session management. Communicates with backend exclusively via REST. |
-
-### External Systems
-
-| System | Protocol | Purpose |
-|--------|----------|---------|
-| **PostgreSQL 16** | JDBC (port 5432) | Primary datastore. Flyway manages schema migrations. |
-| **LLM Provider** | HTTP (Ollama / OpenAI-compatible) | Model inference. Streamed completions via SSE. Retries with jittered backoff. |
-| **Chromium CDP** | WebSocket (Chrome DevTools Protocol) | Headless browser automation. Page navigation, DOM interaction, screenshots. |
-| **Telegram Bot API** | HTTPS (long polling) | Message delivery and update polling. No webhook required. |
-
-### Communication Patterns
-
-- **Bot ↔ Backend**: REST over HTTP. Bot calls backend's 53 endpoints. SSE for streaming responses. Bot is a pure HTTP client — no shared code with backend.
-- **CLI ↔ Backend**: REST over HTTP. Identical API usage as bot. SSE for streaming. CLI is a standalone JAR (`java -jar`).
-- **Backend ↔ LLM**: HTTP with SSE streaming. LangChain4j client. Retry with jittered exponential backoff. Supports Ollama and OpenAI-compatible providers.
-- **Backend ↔ PostgreSQL**: JDBC via Spring Data JPA / Hibernate. Flyway migrations. H2 in PostgreSQL mode for tests.
-- **Backend ↔ Chromium**: WebSocket CDP. `SsrfSafeHttpClient` ensures only approved CDP endpoints are used.
+| Container | Type | Tech | Description |
+|-----------|------|------|-------------|
+| **Backend** | Spring Boot web app | Java 25, Spring Boot 4.1, LangChain4j 1.18, MCP SDK 2.0 | Core agent runtime: LLM orchestration, tool execution, context management, memory, skills, compression, streaming, 86 REST endpoints |
+| **Telegram Bot** | Spring Boot app | Java 25, Spring Boot 4.1, Telegram API | 56 commands, long-polling + webhook, SSE streaming from backend, media handling, session management, shared PostgreSQL |
+| **CLI** | Spring Boot (non-web) | Java 25, Spring Boot 4.1, JLine 3 | Interactive REPL with 74 slash commands, SSE streaming from backend, JLine autocomplete, ANSI markdown rendering |
 
 ---
 
-## Level 3: Component (Backend)
+## Level 3 — Components (Backend)
 
-The Component diagram shows the internal structure of the `backend` container.
+The backend module broken into its internal component packages.
 
 ```mermaid
 graph TB
-    subgraph "backend (Spring Boot · port 8090/8080)"
-        subgraph "API Layer"
-            API["<b>api/</b><br/>7 Controllers<br/>53 Endpoints<br/><br/>SessionController<br/>MessageController<br/>ToolController<br/>MemoryController<br/>CheckpointController<br/>SkillController<br/>SystemController"]
-            API_MAPPER["<b>api.mapper/</b><br/>DomainDtoMapper<br/>Domain ↔ DTO conversion"]
-        end
-
-        subgraph "Core Layer"
-            RUNTIME["<b>AgentRuntime</b><br/>Orchestrates agent turns<br/>Tool dispatch<br/>LLM interaction loop"]
-            CONTEXT["<b>ContextEngine</b><br/>Message assembly<br/>Context compression<br/>Token management"]
-            MEMORY["<b>MemoryProvider</b><br/>Memory prefetch<br/>Async sync_turn<br/>Memory retrieval"]
-            TOOL_EXEC["<b>ToolExecutionService</b><br/>Virtual thread executor<br/>Parallel tool calls<br/>45 @AgentTool implementations"]
-        end
-
-        subgraph "Service Layer"
-            AGENT_SVC["<b>AgentRuntimeService</b><br/>Turn lifecycle<br/>Session management<br/>TransactionTemplate"]
-            STREAM_SVC["<b>AgentStreamingService</b><br/>SSE streaming<br/>Token-by-token output<br/>Interrupt / steer handling"]
-            TTS_SVC["<b>TTS Service</b><br/>Text-to-speech<br/>Voice message generation"]
-            IMG_SVC["<b>ImageGen Service</b><br/>Image generation<br/>DALL-E / compatible"]
-            TRANSCRIBE_SVC["<b>Transcription Service</b><br/>Audio transcription<br/>Voice → text"]
-        end
-
-        subgraph "Persistence Layer"
-            ENTITIES["<b>persistence.entity/</b><br/>12 JPA Entities<br/>Session, Message, Memory,<br/>Checkpoint, Skill, etc."]
-            REPOS["<b>persistence.repository/</b><br/>12 Spring Data Repositories<br/>JPA queries, custom queries"]
-            PERSIST_MAPPER["<b>persistence.mapper/</b><br/>4 MapStruct Mappers<br/>MessageMapper<br/>SessionEntityMapper<br/>OpenAiMapper<br/>DomainDtoMapper"]
-        end
-
-        subgraph "Tools Layer"
-            TOOLS["<b>tools/</b><br/>45 @AgentTool implementations<br/><br/>WebSearch, FileRead,<br/>FileWrite, ShellExec,<br/>BrowserNav, Screenshot,<br/>CodeRun, HttpRequest,<br/>Memory tools, etc."]
-        end
-
-        subgraph "Gateway Layer"
-            GATEWAY["<b>gateway/</b><br/>Telegram adapter<br/>Webhook handler<br/>Bot message routing"]
-        end
-
-        subgraph "Security Layer"
-            FILE_SAFETY["<b>FileSafety</b><br/>Write denylist<br/>Read blocking<br/>Sensitive path protection"]
-            REDACTOR["<b>Redactor</b><br/>Secret masking<br/>API key / token redaction"]
-            URL_SAFETY["<b>UrlSafety</b><br/>URL validation<br/>SSRF prevention"]
-            GUARDRAILS["<b>ToolGuardrails</b><br/>Tool access control<br/>Per-session tool enablement"]
-            APPROVAL["<b>ApprovalGate</b><br/>Destructive tool confirmation<br/>User approval flow"]
-        end
+    subgraph "Backend Module"
+        API[api/<br/>Controllers + DTOs<br/>86 REST endpoints]
+        SVC[service/<br/>RuntimeService,<br/>StreamingService,<br/>CheckpointManager,<br/>UsageTracker, CronService]
+        CORE[core/<br/>AgentRuntime, ToolRegistry,<br/>ContextEngine, Memory,<br/>Skills, State, Budget]
+        CLIENT[client/<br/>LangChain4j client,<br/>NoOp client, MCP client]
+        TOOLS[tools/<br/>@AgentTool implementations<br/>web, file, browser,<br/>terminal, coding, etc.]
+        PERSIST[persistence/<br/>JPA entities, repositories,<br/>MapStruct mappers, Flyway]
+        CONFIG[config/<br/>AgentProperties,<br/>MapStructConfig, beans]
+        SEC[security/<br/>SSRF guard, file/URL safety,<br/>redactor, sanitizers]
+        GW[gateway/<br/>Telegram webhook adapter,<br/>routing]
     end
 
-    LLM_API_EXT["LLM Provider<br/>Ollama / OpenAI"]
-    POSTGRES_EXT[("PostgreSQL")]
-    CDP_EXT["Chromium CDP"]
+    API -->|MapStruct DTO mappers| SVC
+    SVC -->|domain calls| CORE
+    CORE -->|ModelClient interface| CLIENT
+    CORE -->|ToolRegistry interface| TOOLS
+    SVC -->|entity ↔ domain mappers| PERSIST
+    CORE -->|entity ↔ domain mappers| PERSIST
+    TOOLS -->|security checks| SEC
+    GW -->|delegates to| SVC
+    CONFIG -.->|injects properties| API
+    CONFIG -.->|injects properties| CORE
+    CONFIG -.->|injects properties| TOOLS
 
-    API -->|"DTO ↔ Domain"| API_MAPPER
-    API_MAPPER -->|"Domain objects"| AGENT_SVC
-    AGENT_SVC -->|"orchestrate"| RUNTIME
-    RUNTIME -->|"assemble context"| CONTEXT
-    RUNTIME -->|"execute tools"| TOOL_EXEC
-    RUNTIME -->|"persist / recall"| MEMORY
-    RUNTIME -->|"stream output"| STREAM_SVC
-    TOOL_EXEC -->|"dispatch"| TOOLS
-    TOOLS -->|"file ops"| FILE_SAFETY
-    TOOLS -->|"HTTP requests"| URL_SAFETY
-    TOOLS -->|"output"| REDACTOR
-    TOOLS -->|"destructive ops"| APPROVAL
-    TOOLS -->|"destructive ops"| GUARDRAILS
-    AGENT_SVC -->|"entity ↔ domain"| PERSIST_MAPPER
-    PERSIST_MAPPER -->|"JPA entities"| ENTITIES
-    ENTITIES -->|"CRUD"| REPOS
-    REPOS -->|"JDBC"| POSTGRES_EXT
-    RUNTIME -->|"LLM calls"| LLM_API_EXT
-    TOOLS -->|"browser automation"| CDP_EXT
-    GATEWAY -->|"route messages"| AGENT_SVC
-    TTS_SVC -->|"audio output"| STREAM_SVC
-    IMG_SVC -->|"image output"| STREAM_SVC
-    TRANSCRIBE_SVC -->|"transcribed text"| AGENT_SVC
-
-    classDef apilayer fill:#438dd5,stroke:#2e6295,color:#ffffff,stroke-width:2px
-    classDef corelayer fill:#1168bd,stroke:#0b4884,color:#ffffff,stroke-width:2px
-    classDef servicelayer fill:#2e6da4,stroke:#1f4f7a,color:#ffffff,stroke-width:2px
-    classDef persistlayer fill:#f5a623,stroke:#d4880b,color:#ffffff,stroke-width:2px
-    classDef toolslayer fill:#8e44ad,stroke:#6c3483,color:#ffffff,stroke-width:2px
-    classDef gatewaylayer fill:#16a085,stroke:#0e6655,color:#ffffff,stroke-width:2px
-    classDef securitylayer fill:#e74c3c,stroke:#a93226,color:#ffffff,stroke-width:2px
-    classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff,stroke-width:2px
-    classDef db fill:#f5a623,stroke:#d4880b,color:#ffffff,stroke-width:2px
-
-    class API,API_MAPPER apilayer
-    class RUNTIME,CONTEXT,MEMORY,TOOL_EXEC corelayer
-    class AGENT_SVC,STREAM_SVC,TTS_SVC,IMG_SVC,TRANSCRIBE_SVC servicelayer
-    class ENTITIES,REPOS,PERSIST_MAPPER persistlayer
-    class TOOLS toolslayer
-    class GATEWAY gatewaylayer
-    class FILE_SAFETY,REDACTOR,URL_SAFETY,GUARDRAILS,APPROVAL securitylayer
-    class LLM_API_EXT,CDP_EXT external
-    class POSTGRES_EXT db
+    style API fill:#2d6a9f,color:#fff
+    style SVC fill:#67c23a,color:#fff
+    style CORE fill:#e6a23c,color:#fff
+    style CLIENT fill:#f56c6c,color:#fff
+    style TOOLS fill:#909399,color:#fff
+    style PERSIST fill:#a06535,color:#fff
 ```
 
-### Component Descriptions
+### Component Responsibilities
 
-#### API Layer (`api/`)
+| Package | Responsibility |
+|----------|---------------|
+| `api/` | REST controllers (`AgentController`, `McpController`), request/response DTOs, `DomainDtoMapper`, `OpenAiMapper` |
+| `service/` | `AgentRuntimeService` (orchestrates turns), `AgentStreamingService` (SSE), `CheckpointManager`, `UsageTracker`, `CronJobService`, `ConversationCompressor`, TTS/transcription providers |
+| `core/` | `AgentRuntime` (turn loop), `ToolRegistry`, `ToolExecutionService`, `ContextEngine`, `ContextCompressor`, `MemoryProvider`/`MemoryManager`, `SkillManager`, `CuratorService`, `TurnStateManager`, `IterationBudget`, `PromptBuilder` |
+| `client/` | `LangChain4jModelClient`, `NoOpModelClient`, MCP lifecycle/OAuth, auxiliary model backend, `ErrorClassifier`, `RateLimitTracker` |
+| `tools/` | `@AgentTool` implementations: web search, file ops, browser, terminal, coding, image gen, delegation, memory, etc. |
+| `persistence/` | 14 JPA entities, Spring Data repositories, 4 MapStruct mappers, Flyway migrations V1–V18 |
+| `config/` | `AgentProperties` (@ConfigurationProperties), `MapStructConfig`, Spring bean definitions |
+| `security/` | `SsrfSafeHttpClient`, `DefaultFileSafety`, `DefaultUrlSafety`, `DefaultRedactor`, `MessageSanitizer`, `UserInputSanitizer`, `ToolCallGuardrail` |
+| `gateway/` | Telegram webhook adapter, routing metadata |
 
-| Component | Description |
-|-----------|-------------|
-| **Controllers (7)** | `SessionController`, `MessageController`, `ToolController`, `MemoryController`, `CheckpointController`, `SkillController`, `SystemController`. Expose 53 REST endpoints. Return DTOs (records), never entities. |
-| **`api.mapper/`** | `DomainDtoMapper` converts domain models to/from DTOs using MapStruct (`unmappedTargetPolicy = ERROR`). |
+---
 
-#### Core Layer (`core/`)
+## Level 4 — Code (Key Classes)
 
-| Component | Description |
-|-------------|-------------|
-| **`AgentRuntime`** | The agent loop: receives user message → assembles context → calls LLM → dispatches tool calls → streams response → persists. Orchestrates the entire turn lifecycle. |
-| **`ContextEngine`** | Assembles the prompt: system instructions + memory + conversation history + tool definitions. Manages context window limits. Performs context compression (with anti-injection prefix) when token limits are approached. |
-| **`MemoryProvider`** | Manages long-term memory. Prefetches relevant memories before a turn (reduces latency). Persists new memories asynchronously via `sync_turn` on a background daemon thread. |
-| **`ToolExecutionService`** | Executes `@AgentTool`-annotated methods in parallel using `Executors.newVirtualThreadPerTaskExecutor()`. Handles tool result aggregation, timeouts, and error isolation. |
+The agent runtime loop — the core of the system.
 
-#### Service Layer (`service/`)
+```mermaid
+classDiagram
+    class AgentRuntime {
+        <<interface>>
+        +run(messages, tools) ChatResponse
+        +runTurn(session, input, references, options) TurnResult
+    }
 
-| Component | Description |
-|-------------|-------------|
-| **`AgentRuntimeService`** | Turn lifecycle management. Session state transitions. Uses `TransactionTemplate` for programmatic transactions in streaming contexts (avoids `@Transactional` self-invocation pitfall). |
-| **`AgentStreamingService`** | SSE token streaming. Manages `SseEmitter` lifecycle. Handles interrupts (user cancellation) and steer (mid-turn message injection) via `ConcurrentHashMap`-backed session state. |
-| **TTS Service** | Text-to-speech generation. Produces audio for voice messages (Telegram). |
-| **ImageGen Service** | Image generation via DALL-E or compatible API. |
-| **Transcription Service** | Audio transcription (voice → text). Feeds transcribed text into the agent runtime. |
+    class DefaultAgentRuntime {
+        -ModelClient modelClient
+        -ToolRegistry toolRegistry
+        -ToolExecutionService toolExecutionService
+        -ContextEngine contextEngine
+        -MemoryProvider memoryProvider
+        -SkillManager skillManager
+        -IterationBudget iterationBudget
+        -ToolCallGuardrail guardrail
+        -InterruptToken interruptToken
+        -SteerBuffer steerBuffer
+        -ErrorClassifier errorClassifier
+        -ContextCompressor contextCompressor
+        -ApprovalQueue approvalQueue
+        -MemoryManager memoryManager
+        +runTurn(session, input, references, options) TurnResult
+        -runTurnLoop(session, messages, tools, maxTurns, ...) TurnResult
+        -callModelWithRetry(context, tools, session) ChatResponse
+        -executeToolsInParallel(toolCalls, session, ...) List~Message~
+    }
 
-#### Persistence Layer (`persistence/`)
+    class ModelClient {
+        <<interface>>
+        +complete(messages, tools, options) ChatResponse
+    }
 
-| Component | Description |
-|-------------|-------------|
-| **Entities (12)** | `Session`, `Message`, `Memory`, `Checkpoint`, `Skill`, and 7 others. JPA entities annotated with `@Entity` + Lombok `@Data`. |
-| **Repositories (12)** | Spring Data JPA repositories. Custom queries where needed. |
-| **Mappers (4)** | `MessageMapper` (MessageEntity ↔ Message), `SessionEntityMapper` (SessionEntity ↔ Session), `OpenAiMapper` (Domain ↔ OpenAI DTOs), `DomainDtoMapper` (Session → SessionSummaryDto). MapStruct-generated, Spring-managed, `unmappedTargetPolicy = ERROR`. |
+    class LangChain4jModelClient
+    class NoOpModelClient
 
-#### Tools Layer (`tools/`)
+    class ToolRegistry {
+        <<interface>>
+        +getDefinitions() List~ToolDefinition~
+        +getDefinitions(toolsets) List~ToolDefinition~
+        +execute(name, id, args, msg, session) ToolResult
+        +registerDynamic(name, def, handler) void
+    }
 
-| Component | Description |
-|-------------|-------------|
-| **45 `@AgentTool` implementations** | Web search, file read/write, shell execution, browser navigation, screenshots, code execution, HTTP requests, memory tools, and more. Each annotated with `@AgentTool`, discovered at startup, and registered with `ToolExecutionService`. |
+    class SpringToolRegistry
+    class ToolExecutionService
 
-#### Gateway Layer (`gateway/`)
+    class ContextEngine {
+        <<interface>>
+        +prepareContext(session, messages) List~Message~
+    }
 
-| Component | Description |
-|-------------|-------------|
-| **Telegram adapter** | Routes incoming Telegram updates to the appropriate agent service. Handles media (photos, voice, documents). Manages bot-specific formatting (Markdown → Telegram HTML). |
-| **Webhook handler** | Optional webhook endpoint (long polling is the default). |
+    class IterationBudget {
+        +startTurn(sessionId) TurnSnapshot
+        +recordModelCall(snapshot, input, output) TurnSnapshot
+        +recordToolExecution(snapshot, name, duration) TurnSnapshot
+        +isExhausted(snapshot) boolean
+    }
 
-#### Security Layer (`security/`)
+    class TurnStateManager {
+        +getOrStart(sessionId, turnIndex) TurnState
+        +clear(sessionId) void
+    }
 
-| Component | Description |
-|-------------|-------------|
-| **`FileSafety`** | Write denylist: blocks writes to sensitive paths (`/etc/`, `~/.ssh/`, `.env`). Read blocking: prevents reading secrets/credentials. |
-| **`Redactor`** | Masks API keys, tokens, and secrets in tool output before sending to the LLM. |
-| **`UrlSafety`** | Validates URLs to prevent SSRF. Blocks private/local IP ranges. Used by `SsrfSafeHttpClient`. |
-| **`ToolGuardrails`** | Per-session tool enablement. Controls which tools are available in a given context. |
-| **`ApprovalGate`** | Destructive tools (file delete, shell command) require explicit user confirmation before execution. |
+    class TurnFinalizer {
+        +finalize(sessionId, messages, success, reason) void
+    }
+
+    AgentRuntime <|.. DefaultAgentRuntime
+    ModelClient <|.. LangChain4jModelClient
+    ModelClient <|.. NoOpModelClient
+    ToolRegistry <|.. SpringToolRegistry
+    DefaultAgentRuntime --> ModelClient
+    DefaultAgentRuntime --> ToolRegistry
+    DefaultAgentRuntime --> ToolExecutionService
+    DefaultAgentRuntime --> ContextEngine
+    DefaultAgentRuntime --> IterationBudget
+    DefaultAgentRuntime --> TurnStateManager
+    DefaultAgentRuntime --> TurnFinalizer
+```
+
+### Domain Model (records)
+
+```mermaid
+classDiagram
+    class Session {
+        +UUID id
+        +String userId
+        +String title
+        +String modelProvider
+        +String modelName
+        +String systemPrompt
+        +Map metadata
+        +String subgoal
+    }
+    class Message {
+        +Role role
+        +String content
+        +ToolCall toolCall
+        +List~ToolCall~ toolCalls
+        +String toolCallId
+        +Integer turnIndex
+        +Integer imageCount
+    }
+    class ToolCall {
+        +String id
+        +String name
+        +String arguments
+    }
+    class ToolResult {
+        +boolean success
+        +String content
+        +String error
+    }
+    class ToolDefinition {
+        +String name
+        +String description
+        +String parameters
+        +String toolset
+    }
+    class ChatResponse {
+        +String content
+        +List~ToolCall~ toolCalls
+        +TokenUsage usage
+    }
+    class TurnResult {
+        +List~Message~ messages
+        +boolean completed
+        +String error
+    }
+
+    Message --> ToolCall
+    ChatResponse --> ToolCall
+    TurnResult --> Message
+```

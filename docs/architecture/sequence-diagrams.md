@@ -1,158 +1,370 @@
 # Sequence Diagrams
 
-Key runtime flows for the Java Agent platform, rendered as Mermaid sequence diagrams.
+> Key runtime flows in the Java Agent.
+> All diagrams use Mermaid syntax.
 
 ---
 
-## 1. Conversation Loop (One Turn)
+## 1. Chat Turn (Non-Streaming)
+
+A complete agent turn: user sends a message → model processes → tools execute → response returned.
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant Runtime as DefaultAgentRuntime
-    participant Context as ContextEngine
-    participant Model as ModelClient
-    participant Tools as ToolExecutionService
-    participant Memory as MemoryProvider
+    actor Client
+    participant AC as AgentController
+    participant ARS as AgentRuntimeService
+    participant DAR as DefaultAgentRuntime
+    participant CE as ContextEngine
+    participant MC as ModelClient
+    participant TE as ToolExecutionService
+    participant IB as IterationBudget
+    participant MM as MemoryManager
 
-    U->>Runtime: runTurn(session, input, refs)
-    Runtime->>Memory: prefetch(input, sessionId)
-    Runtime->>Context: prepareContext(session, messages)
-    Context-->>Runtime: prepared messages
-    loop tool calls
-        Runtime->>Model: complete(context, tools)
-        Model-->>Runtime: ChatResponse (toolCalls)
-        Runtime->>Tools: execute(toolCall) [parallel via virtual threads]
-        Tools-->>Runtime: ToolResult[]
+    Client->>AC: POST /api/v1/agent/chat {ChatRequest}
+    AC->>ARS: runTurn(request)
+    ARS->>DAR: runTurn(session, input, references, options)
+
+    DAR->>DAR: inputSanitizer.sanitize(input)
+    DAR->>IB: startTurn(sessionId) → TurnSnapshot
+    DAR->>MM: onTurnStart(sessionId, safeInput)
+    DAR->>CE: prepareContext(session, messages)
+    DAR->>MC: complete(context, tools, options)
+
+    loop Tool Loop (max 100 turns)
+        MC-->>DAR: ChatResponse {content?, toolCalls?}
+
+        alt No tool calls
+            DAR->>DAR: triggerBackgroundReview(session, messages)
+            DAR-->>ARS: TurnResult {messages, completed=true}
+        else Has tool calls
+            DAR->>DAR: guardrail.check()
+            DAR->>IB: recordModelCall(snapshot)
+            alt Single tool call
+                DAR->>TE: execute(name, id, args, session)
+                TE-->>DAR: ToolResult
+            else Multiple tool calls (parallel)
+                DAR->>DAR: executeToolsInParallel (virtual threads)
+                DAR-->>DAR: List<ToolResult>
+            end
+            DAR->>IB: recordToolExecution(snapshot)
+            DAR->>CE: prepareContext(session, messages)
+            DAR->>MC: complete(context, tools, options)
+        end
     end
-    Runtime->>Model: complete(context + toolResults, tools)
-    Model-->>Runtime: ChatResponse (final text)
-    Runtime->>Memory: syncTurn(sessionId, messages) [async virtual thread]
-    Runtime-->>U: TurnResult
+
+    DAR->>MM: syncAll(sessionId, messages)
+    ARS-->>AC: ChatResponseDto
+    AC-->>Client: JSON response
 ```
 
 ---
 
-## 2. SSE Streaming
+## 2. Streaming Chat (SSE)
+
+Real-time token-by-token output via Server-Sent Events.
 
 ```mermaid
 sequenceDiagram
-    participant Client
-    participant Controller as AgentController
-    participant Stream as AgentStreamingService
-    participant Model as ModelClient
-    participant Tools as ToolExecutionService
+    actor Client
+    participant AC as AgentController
+    participant ASS as AgentStreamingService
+    participant MC as ModelClient
+    participant TE as ToolExecutionService
+    participant DB as PostgreSQL
 
-    Client->>Controller: POST /agent/chat/stream
-    Controller->>Stream: streamChat(message, sessionId, emitter)
-    Stream->>Model: stream(context, tools)
-    loop token chunks
-        Model-->>Stream: delta (token)
-        Stream-->>Client: SSE: data:{type:"token",content:...}
+    Client->>AC: POST /api/v1/agent/chat/stream {ChatRequest}
+    AC->>ASS: streamTurn(request)
+    ASS-->>AC: SseEmitter (600s timeout)
+    AC-->>Client: SSE stream opened
+
+    ASS->>ASS: Load/create session via SessionRepository
+    ASS->>MC: stream(messages, tools, handler)
+
+    loop Token streaming
+        MC-->>ASS: StreamEvent {type=CONTENT, text}
+        ASS-->>Client: SSE: event=content, data="..."
     end
-    alt has tool calls
-        Stream-->>Client: SSE: data:{type:"tool_start",...}
-        Stream->>Tools: execute(toolCall)
-        Tools-->>Stream: ToolResult
-        Stream-->>Client: SSE: data:{type:"tool_result",...}
-        Stream->>Model: continue with tool results
+
+    alt Model requests tool calls
+        MC-->>ASS: StreamEvent {type=TOOL_CALLS}
+        ASS->>TE: execute(toolName, args, session)
+        TE-->>ASS: ToolResult
+        ASS-->>Client: SSE: event=tool_result, data="..."
+        ASS->>MC: stream(continue with tool results)
     end
-    Stream-->>Client: SSE: data:{type:"done"}
+
+    MC-->>ASS: Stream complete
+    ASS->>DB: Save messages (TransactionTemplate)
+    ASS-->>Client: SSE: event=done, data=usage
+    ASS->>ASS: SseEmitter.complete()
 ```
 
 ---
 
-## 3. Context Compression
+## 3. Tool Execution with Approval Gate
+
+Destructive tools require user approval before execution.
 
 ```mermaid
 sequenceDiagram
-    participant Runtime as AgentRuntime
-    participant Engine as ContextEngine
-    participant Compressor as DefaultContextCompressor
-    participant Model as ModelClient
-    participant Lock as CompressionLockRepository
+    actor User
+    participant DAR as DefaultAgentRuntime
+    participant AQ as ApprovalQueue
+    participant TE as ToolExecutionService
+    participant TH as ToolHandler
 
-    Runtime->>Engine: prepareContext(session, messages)
-    Engine->>Compressor: compress(messages, targetChars)
-    Compressor->>Lock: isLocked(sessionId, generation)?
-    Lock-->>Compressor: false
-    Compressor->>Compressor: split: protect head (N=3) + tail (N=6)
-    Compressor->>Compressor: prune tool outputs (500 char cap)
-    Compressor->>Model: summarize(middle messages)
-    Model-->>Compressor: summary text
-    Compressor->>Compressor: build: [REFERENCE ONLY prefix] + summary + tail
-    Compressor->>Lock: lock(sessionId, generation)
-    Compressor-->>Engine: compressed messages
-```
+    DAR->>DAR: Model returns tool call
+    DAR->>AQ: requestApproval(sessionId, toolName, args)
+    AQ-->>User: Pending approval notification
 
----
+    loop Poll for approval (200ms interval, 5min timeout)
+        DAR->>AQ: isPending(sessionId)
 
-## 4. Model API Call Retry
+        alt User approves
+            User->>AQ: approve(sessionId, decision)
+            AQ-->>DAR: approved
+        else User denies
+            User->>AQ: deny(sessionId, note)
+            AQ-->>DAR: denied
+        else Timeout
+            DAR->>DAR: Break after 5 min
+        end
 
-```mermaid
-sequenceDiagram
-    participant Runtime as AgentRuntime
-    participant Classifier as ErrorClassifier
-    participant Model as ModelClient
+        alt Interrupted
+            DAR->>DAR: interruptToken.isCancelled(sessionId)
+            DAR-->>DAR: Turn cancelled
+        end
+    end
 
-    Runtime->>Model: complete(context, tools)
-    Model-->>Runtime: exception
-    Runtime->>Classifier: classify(exception)
-    alt RETRYABLE
-        Runtime->>Runtime: wait (500ms * 2^attempt + jitter, cap 5s)
-        Runtime->>Model: complete(context, tools) [retry]
-    else RATE_LIMIT
-        Runtime->>Runtime: wait (2s * 2^attempt, cap 30s)
-        Runtime->>Model: complete(context, tools) [retry]
-    else CONTEXT_OVERFLOW
-        Runtime->>Runtime: trigger compression
-        Runtime->>Model: complete(compressed, tools) [retry, no attempt consumed]
-    else PERMANENT / BILLING / CONTENT_POLICY
-        Runtime-->>Runtime: TurnResult.error()
+    alt Approved
+        DAR->>TE: execute(toolName, toolCallId, args, session)
+        TE->>TH: handle(args, context)
+        TH-->>TE: ToolResult
+        TE-->>DAR: ToolResult
+    else Denied
+        DAR->>DAR: ToolResult.fail("denied by user")
     end
 ```
 
 ---
 
-## 5. Tool Loop Detection
+## 4. Context Compression
+
+When context exceeds token limits, the compressor summarises older messages.
 
 ```mermaid
 sequenceDiagram
-    participant Runtime as AgentRuntime
-    participant Guard as ToolGuardrails
-    participant Tools as ToolExecutionService
+    participant DAR as DefaultAgentRuntime
+    participant EC as ErrorClassifier
+    participant CC as ContextCompressor
+    participant MC as ModelClient
 
-    loop tool calls in turn
-        Runtime->>Guard: recordToolCall(name, args, success)
-        alt 5+ identical calls (idempotent) or 7+ (mutating)
-            Guard->>Guard: set halted = true
-            Guard-->>Runtime: isHalted() = true
-            Runtime-->>Runtime: TurnResult("Halted by guardrails")
-        else 3+ consecutive failures
-            Guard->>Guard: set halted = true
-        else 10+ total calls
-            Guard-->>Runtime: log warning
+    DAR->>MC: complete(context, tools)
+    MC-->>DAR: Exception: context overflow
+
+    DAR->>EC: classify(exception)
+    EC-->>DAR: ErrorType.CONTEXT_OVERFLOW
+
+    DAR->>CC: compress(context, targetChars)
+
+    alt Compression reduces context
+        CC-->>DAR: compressed messages (fewer/smaller)
+        DAR->>DAR: compressionAttempted = true
+        DAR->>MC: complete(compressedContext, tools)
+        MC-->>DAR: ChatResponse
+    else Compression cannot reduce
+        CC-->>DAR: same or larger context
+        DAR-->>DAR: Fail with context overflow error
+    end
+```
+
+### Compression Strategy
+
+```mermaid
+flowchart TB
+    Start[Context exceeds limit] --> CheckProtect{protectFirstN + protectLastN}
+    CheckProtect --> Split[Split messages into<br/>protected + compressible]
+    Split --> Summarise[Summarise compressible chunk<br/>via LLM call]
+    Summarise --> Reassemble[Reassemble: protected + summary]
+    Reassemble --> Retry[Retry model call with compressed context]
+
+    style Summarise fill:#e6a23c,color:#fff
+    style Retry fill:#67c23a,color:#fff
+```
+
+---
+
+## 5. Curator Cycle
+
+The curator runs periodically to maintain skill health (stale detection, archiving, backups).
+
+```mermaid
+sequenceDiagram
+    participant Timer as ScheduledExecutor
+    participant CS as CuratorService
+    participant SM as SkillManager
+    participant DB as PostgreSQL
+    participant FS as Filesystem
+
+    Timer->>CS: Trigger (interval = 168h default)
+    CS->>CS: Check minIdleHours gate
+
+    alt System idle ≥ minIdleHours
+        CS->>SM: listAllSkills()
+        SM->>DB: SELECT * FROM skills
+        DB-->>SM: List<SkillEntity>
+        SM-->>CS: all skills
+
+        CS->>CS: Classify: active / stale / archived
+        loop For each skill
+            alt Last activity > staleAfterDays (30)
+                CS->>DB: UPDATE skill SET lifecycleState='stale'
+            end
+            alt Stale > archiveAfterDays (90)
+                CS->>DB: UPDATE skill SET lifecycleState='archived', archived=true
+            end
+        end
+
+        CS->>FS: Create backup snapshot
+        FS-->>CS: Backup path
+
+        CS->>DB: INSERT curator_snapshot (reason, skillCount, manifest)
+        CS-->>Timer: Cycle complete
+    else System active
+        CS-->>Timer: Skipped (not idle enough)
+    end
+```
+
+---
+
+## 6. Telegram Message Processing
+
+From Telegram update to agent response delivery.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant TG as Telegram API
+    participant LP as LongPollingService
+    participant BMP as BotMessageProcessor
+    participant AUTH as AuthorizationService
+    participant CR as CommandRegistry
+    participant BSS as BotSessionStore
+    participant ABC as AgentBackendClient
+    participant SE as StreamEditor
+    participant TYP as TypingManager
+
+    TG-->>LP: getUpdates (long poll)
+    LP-->>BMP: UpdateEvent
+
+    BMP->>AUTH: isAuthorized(userId, username)
+
+    alt Not authorized
+        BMP-->>User: "Unauthorized" message
+    else Authorized
+        alt Callback query
+            BMP->>BMP: Route to CallbackQueryHandler
+        else Slash command
+            BMP->>CR: get(commandName)
+            CR-->>BMP: CommandHandler
+            BMP->>BMP: Execute handler
+        else Text / media message
+            BMP->>BSS: resolveSession(chatId)
+            BSS-->>BMP: BotSessionEntity
+
+            alt Session busy
+                BMP->>BMP: Queue via BusySessionHandler
+            else Session free
+                BMP->>BSS: markBusy(chatId)
+                BMP->>TYP: startTyping(chatId)
+
+                BMP->>ABC: streamChat(sessionId, text)
+                ABC-->>BMP: SSE stream
+
+                loop Stream tokens
+                    BMP->>SE: editMessage(chatId, messageId, partialText)
+                    SE->>TG: editMessageText (rate-limited 1.5s)
+                end
+
+                BMP->>TYP: stopTyping(chatId)
+                BMP->>BSS: markFree(chatId)
+                BMP->>SE: finalEdit(chatId, fullResponse)
+            end
         end
     end
 ```
 
 ---
 
-## 6. Approval Flow
+## 7. Memory Sync & Background Review
+
+Memory is synced asynchronously after each turn; background review runs with a delay.
 
 ```mermaid
 sequenceDiagram
-    participant Runtime as AgentRuntime
-    participant Guard as ToolGuardrails
-    participant Queue as ApprovalQueue
-    participant User as User (via API)
+    participant DAR as DefaultAgentRuntime
+    participant MM as MemoryManager
+    participant MP as MemoryProvider
+    participant BRS as BackgroundReviewService
+    participant VT as VirtualThreadExecutor
+    participant LLM as LLM Provider
 
-    Runtime->>Guard: requiresApproval(toolCall)?
-    Guard-->>Runtime: true
-    Runtime->>Queue: requestApproval(toolName, args)
-    Queue-->>Runtime: approvalId (pending)
-    Queue->>User: GET /agent/approvals/pending
-    User->>Queue: POST /agent/approvals/{id}/approve
-    Queue-->>Runtime: isApproved = true
-    Runtime->>Runtime: proceed with tool execution
+    DAR->>MP: prefetch(safeInput, sessionId)
+
+    Note over DAR: ... turn executes ...
+
+    DAR->>MM: syncAll(sessionId, messages)
+    MM->>VT: submit(() → memoryProvider.syncTurn)
+    VT->>MP: syncTurn(sessionId, messages)
+    MM->>VT: submit(() → queuePrefetchAll)
+    VT->>MP: queuePrefetchAll(input, sessionId)
+
+    DAR->>BRS: reviewTurn(sessionId, messages)
+    BRS->>BRS: Schedule with delayMs (2000ms)
+
+    Note over BRS: After delay...
+    BRS->>LLM: Summarise turn for actions/insights
+    LLM-->>BRS: ReviewSummary
+
+    alt Summary has actions
+        BRS->>BRS: storeReviewSummary(sessionId)
+        Note over BRS: Surfaced on next turn
+    else No actions
+        BRS->>BRS: clearFlag(sessionId)
+    end
+```
+
+---
+
+## 8. Model Call Retry with Error Classification
+
+```mermaid
+sequenceDiagram
+    participant DAR as DefaultAgentRuntime
+    participant MC as ModelClient
+    participant EC as ErrorClassifier
+    participant CC as ContextCompressor
+
+    loop Retry attempts (max 3)
+        DAR->>MC: complete(context, tools, options)
+        MC-->>DAR: Exception
+
+        DAR->>EC: classify(exception)
+        EC-->>DAR: ErrorType
+
+        alt PERMANENT / BILLING / CONTENT_POLICY
+            DAR-->>DAR: Fail immediately
+        else RATE_LIMIT
+            DAR->>DAR: Backoff: 2s × 2^attempt, cap 30s
+        else CONTEXT_OVERFLOW
+            DAR->>CC: compress(context, targetChars)
+            CC-->>DAR: compressed context
+            DAR->>DAR: Retry without consuming attempt
+        else RETRYABLE
+            DAR->>DAR: Backoff: 500ms × 2^attempt + jitter, cap 5s
+        end
+    end
+
+    DAR-->>DAR: Throw RuntimeException after max attempts
 ```

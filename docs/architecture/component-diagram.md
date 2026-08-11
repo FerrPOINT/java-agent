@@ -1,112 +1,134 @@
 # Component Diagram
 
-> **Project:** java-agent · **Java** 25 · **Spring Boot** 4.1
-> **Modules:** `backend`, `telegram-bot`, `cli` (Gradle multi-project)
-
-This document shows the three modules of the java-agent system, their internal components,
-inter-module dependencies, and connections to external systems.
+> Module-level dependencies across the three Gradle modules.
+> Mermaid renders inline in GitLab/GitHub.
 
 ---
 
-## Diagram
+## Module Overview
 
 ```mermaid
 graph TB
-    subgraph "Backend (port 8090/8080)"
-        Controllers["7 REST Controllers<br/>53 endpoints"]
-        Services["AgentRuntimeService<br/>AgentStreamingService<br/>CronJobService<br/>TTS, ImageGen, Transcription"]
-        Core["AgentRuntime<br/>ContextEngine<br/>MemoryProvider<br/>ToolExecutionService<br/>45 Tools"]
-        Security["FileSafety<br/>Redactor<br/>UrlSafety<br/>ToolGuardrails<br/>ApprovalGate"]
-        Persistence["12 JPA Entities<br/>12 Repositories<br/>4 MapStruct Mappers<br/>Flyway"]
-        Gateway["Telegram Adapter<br/>Webhook Controller"]
+    subgraph "Gradle Multi-Project"
+        subgraph backend["backend module"]
+            AC[AgentController<br/>McpController<br/>86 REST endpoints]
+            ARS[AgentRuntimeService<br/>AgentStreamingService]
+            DAR[DefaultAgentRuntime<br/>Turn loop, retry, tool dispatch]
+            TE[ToolExecutionService<br/>Virtual thread executor]
+            TR[SpringToolRegistry<br/>Tool discovery]
+            CE[ContextEngine<br/>ContextCompressor]
+            MM[MemoryProvider<br/>MemoryManager<br/>BackgroundReviewService]
+            SM[SkillManager<br/>CuratorService]
+            MC[ModelClient<br/>LangChain4j / NoOp]
+            MCP[MCP Client<br/>Lifecycle / OAuth]
+            SEC[Security<br/>SSRF, FileSafety,<br/>Redactor, Guardrail]
+            PERS[JPA Entities<br/>Repositories<br/>4 MapStruct mappers]
+            FW[Flyway<br/>V1–V18]
+            CP[CheckpointManager]
+            CR[CronJobService]
+            UT[UsageTracker]
+        end
+
+        subgraph telegram-bot["telegram-bot module"]
+            BMP[BotMessageProcessor<br/>Central dispatcher]
+            CR2[CommandRegistry<br/>56 commands + 10 aliases]
+            LP[LongPollingService<br/>ReconnectWatcher]
+            SE[StreamEditor<br/>Edit-message streaming]
+            ABC[AgentBackendClient<br/>REST + SSE to backend]
+            TYP[TypingManager]
+            MED[MediaCache<br/>InboundMediaHandler]
+            BSS[BotSessionStore]
+            GAC[GoalAutoContinueService]
+            AUTH[AuthorizationService]
+            TGC[TelegramClient]
+        end
+
+        subgraph cli["cli module"]
+            REPL[ReplLoop<br/>JLine interactive]
+            SCR[SlashCommandRegistry<br/>74 commands]
+            BC[BackendClient<br/>REST + SSE to backend]
+            MD[MarkdownRenderer<br/>ANSI]
+            SC[SlashCompleter<br/>SlashAutoSuggest]
+        end
     end
 
-    subgraph "Telegram Bot"
-        BotCommands["56 Commands + 10 Aliases"]
-        BotProcessor["BotMessageProcessor"]
-        BotClient["AgentBackendClient → REST to Backend"]
-        Streaming["StreamEditor"]
-        Polling["LongPollingService + ReconnectWatcher"]
-        Media["MediaCache + InboundMediaHandler"]
-    end
+    DB[(PostgreSQL 16)]
+    LLM[LLM Provider]
+    TG[Telegram Bot API]
 
-    subgraph "CLI"
-        CliRepl["ReplLoop + JLine"]
-        CliCommands["47 Slash Commands"]
-        CliClient["BackendClient → REST to Backend"]
-        CliMarkdown["MarkdownRenderer + Autocomplete"]
-    end
+    AC --> ARS
+    ARS --> DAR
+    ARS --> CP
+    ARS --> CR
+    ARS --> UT
+    DAR --> MC
+    DAR --> TR
+    DAR --> TE
+    DAR --> CE
+    DAR --> MM
+    DAR --> SM
+    DAR --> SEC
+    TR --> TE
+    MC --> MCP
+    PERS --> FW
+    ARS --> PERS
 
-    subgraph "External"
-        LLM["LLM Provider<br/>Ollama / OpenAI"]
-        DB[("PostgreSQL 16")]
-        Chromium["Chromium CDP"]
-        TelegramAPI["Telegram Bot API"]
-    end
+    BMP --> CR2
+    BMP --> ABC
+    BMP --> SE
+    BMP --> TYP
+    BMP --> MED
+    BMP --> BSS
+    BMP --> GAC
+    BMP --> AUTH
+    LP --> TGC
+    ABC -->|REST + SSE| AC
 
-    BotClient -->|"REST /api/v1/agent/*"| Controllers
-    CliClient -->|"REST /api/v1/agent/*"| Controllers
-    Core -->|"LLM API"| LLM
-    Persistence -->|"JDBC"| DB
-    Core -->|"CDP WebSocket"| Chromium
-    Polling -->|"getUpdates"| TelegramAPI
-    BotCommands --> BotProcessor
-    BotProcessor --> BotClient
-    CliRepl --> CliCommands
-    CliCommands --> CliClient
+    REPL --> SCR
+    REPL --> BC
+    REPL --> MD
+    SCR --> SC
+    BC -->|REST + SSE| AC
+
+    MC -->|HTTP| LLM
+    TGC -->|HTTPS| TG
+
+    PERS -->|JDBC| DB
+    BSS -->|JDBC| DB
+
+    style backend fill:#e8f4f8,stroke:#2d6a9f
+    style telegram-bot fill:#e8f7e8,stroke:#67c23a
+    style cli fill:#fff8e8,stroke:#e6a23c
+    style DB fill:#f56c6c,color:#fff
 ```
 
 ---
 
-## Module Dependency Table
+## Backend Internal Dependencies
 
-| Module | Depends on | Communication |
-|--------|------------|---------------|
-| **backend** | PostgreSQL, LLM API, Chromium CDP, Telegram Bot API (webhook mode) | REST + JDBC + WebSocket (CDP) |
-| **telegram-bot** | backend (REST), Telegram Bot API | HTTP REST (long-polling or webhook) |
-| **cli** | backend (REST) | HTTP REST |
+```mermaid
+graph LR
+    subgraph "Layered Architecture"
+        API["api/<br/>Controllers + DTOs"]
+        SVC["service/<br/>Runtime + Streaming"]
+        CORE["core/<br/>Agent + Tools + Context"]
+        PERS["persistence/<br/>Entities + Repos + Mappers"]
+    end
 
----
+    API -->|MapStruct DTO mappers| SVC
+    SVC -->|domain calls| CORE
+    CORE -->|entity ↔ domain| PERS
+    SVC -->|entity ↔ domain| PERS
 
-## Internal Component Breakdown
+    style API fill:#2d6a9f,color:#fff
+    style SVC fill:#67c23a,color:#fff
+    style CORE fill:#e6a23c,color:#fff
+    style PERS fill:#a06535,color:#fff
+```
 
-### Backend (`/opt/dev/java-agent/backend`)
+### Layering Rules
 
-| Component | Key classes | Role |
-|----------|------------|------|
-| **Controllers** | `AgentController`, `ChatCompletionsController`, `CronJobController`, `VisionController`, `HealthController`, `McpController`, `GlobalExceptionHandler` | 7 REST controllers exposing 53 endpoints; handle request validation, SSE streaming, error mapping |
-| **Services** | `AgentRuntimeService`, `AgentStreamingService`, `CronJobService`, `TtsService`, `ImageGenProvider`, `TranscriptionService` | Application-service layer; orchestrate agent turns, streaming, cron jobs, TTS/image-gen/transcription |
-| **Core** | `DefaultAgentRuntime`, `DefaultContextEngine`, `DatabaseMemoryProvider`, `ToolExecutionService`, 45 `ToolHandler` implementations | Domain core: agent loop, context management, memory, tool execution (virtual-thread parallel) |
-| **Security** | `DefaultFileSafety`, `DefaultRedactor`, `DefaultUrlSafety`, `DefaultToolGuardrails`, `ApprovalGate`, `SsrfSafeHttpClient` | Guardrails, secret redaction, SSRF protection, file/URL validation, approval workflow |
-| **Persistence** | 12 JPA entities, 12 Spring Data repositories, 4 MapStruct mappers (`MessageMapper`, `SessionEntityMapper`, `DomainDtoMapper`, `OpenAiMapper`), Flyway migrations | Database layer; entities ↔ domain mapping, schema migration |
-| **Gateway** | `TelegramAdapter`, `TelegramWebhookController`, `TelegramBotApiClient`, `TelegramLongPollingService` | Telegram platform adapter; webhook + long-polling modes |
-
-### Telegram Bot (`/opt/dev/java-agent/telegram-bot`)
-
-| Component | Key classes | Role |
-|----------|------------|------|
-| **Bot Commands** | `CommandRegistry`, 56 `CommandHandler` implementations (e.g. `StartCommand`, `StatusCommand`, `MemoryCommand`, `CompressCommand`, …) + 10 aliases | Slash-command handlers for Telegram chats |
-| **BotMessageProcessor** | `BotMessageProcessor`, `AgentBackendClient` | Core message-processing pipeline; forwards user text to backend via REST, streams responses back |
-| **Streaming** | `StreamEditor` | Edits streamed messages in-place (Telegram message updates) |
-| **Polling** | `LongPollingService`, `ReconnectWatcher` | Telegram getUpdates long-polling with auto-reconnect |
-| **Media** | `MediaCache`, `InboundMediaHandler`, `MediaDownloader` | Caches and downloads inbound media (photos, voice, documents) |
-
-### CLI (`/opt/dev/java-agent/cli`)
-
-| Component | Key classes | Role |
-|----------|------------|------|
-| **ReplLoop** | `ReplLoop`, `CliReplRunner` (JLine `LineReader`) | Interactive REPL; dispatches `/`-prefixed lines to `SlashCommandRegistry`, plain text to `BackendClient.chatStream()` |
-| **Slash Commands** | `SlashCommandRegistry`, 47 `SlashCommand` entries | Command processing (`/new`, `/status`, `/compress`, `/undo`, `/checkpoint`, `/rollback`, `/memory`, `/skills`, `/help`, `/exit`, etc.) |
-| **BackendClient** | `BackendClient`, `BackendProperties` | REST client to backend; SSE streaming for real-time token output |
-| **MarkdownRenderer** | `MarkdownRenderer`, `SlashAutoSuggest`, `SlashCompleter` | Terminal markdown rendering and slash-command autocomplete |
-
----
-
-## External System Dependencies
-
-| External system | Protocol | Used by | Purpose |
-|----------------|----------|---------|---------|
-| **LLM Provider** (Ollama / OpenAI-compatible) | HTTP REST (SSE) | `backend` → `ModelClient` → `LangChain4jModelClient` | Chat completions, streaming, tool-calling |
-| **PostgreSQL 16** | JDBC | `backend` → persistence layer | Session, message, memory, skill, cron-job, audit-log storage; Flyway migrations |
-| **Chromium** (headless) | CDP WebSocket | `backend` → `BrowserService` → `CdpClient` | Browser automation tools (navigate, click, type, snapshot, scroll, vision) |
-| **Telegram Bot API** | HTTP REST (long-polling or webhook) | `telegram-bot` → `LongPollingService` / `WebhookController`; `backend` → `TelegramBotApiClient` (webhook mode) | Send/receive messages, media, inline keyboards, reactions |
+1. **Controllers** never touch JPA entities directly — MapStruct mappers convert between domain ↔ DTO.
+2. **Domain models** (`core.model`) are Java `record`s, not JPA entities.
+3. **Bot layer** is an exception: entities are used as domain models (no separate mapping layer).
+4. **MapStruct** config: `componentModel = "spring"`, `unmappedTargetPolicy = ERROR` — ensures no silent mapping gaps.
