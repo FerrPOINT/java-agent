@@ -41,7 +41,8 @@ public class ConversationCompressor {
         Message systemMessage = null;
         List<Message> conversationMessages = new ArrayList<>();
         for (Message m : messages) {
-            if (m.role() == com.azhukov.agent.core.model.Role.SYSTEM) {
+            if (m.role() == com.azhukov.agent.core.model.Role.SYSTEM
+                    || m.role() == com.azhukov.agent.core.model.Role.DEVELOPER) {
                 systemMessage = m;
             } else {
                 conversationMessages.add(m);
@@ -57,9 +58,10 @@ public class ConversationCompressor {
 
         List<Message> result = new ArrayList<>();
         if (systemMessage != null) {
-            // Append summary to system message
+            // Append summary to system/developer message, preserving original role
             String combined = systemMessage.content() + "\n\n[Conversation Summary]\n" + summary;
-            result.add(Message.system(combined));
+            result.add(systemMessage.role() == com.azhukov.agent.core.model.Role.DEVELOPER
+                ? Message.developer(combined) : Message.system(combined));
         } else {
             result.add(Message.system("[Conversation Summary]\n" + summary));
         }
@@ -91,7 +93,8 @@ public class ConversationCompressor {
         Message systemMessage = null;
         List<Message> conversationMessages = new ArrayList<>();
         for (Message m : messages) {
-            if (m.role() == com.azhukov.agent.core.model.Role.SYSTEM) {
+            if (m.role() == com.azhukov.agent.core.model.Role.SYSTEM
+                    || m.role() == com.azhukov.agent.core.model.Role.DEVELOPER) {
                 systemMessage = m;
             } else {
                 conversationMessages.add(m);
@@ -112,7 +115,8 @@ public class ConversationCompressor {
         List<Message> result = new ArrayList<>();
         if (systemMessage != null) {
             String combined = systemMessage.content() + "\n\n[Earlier Conversation Summary]\n" + summary;
-            result.add(Message.system(combined));
+            result.add(systemMessage.role() == com.azhukov.agent.core.model.Role.DEVELOPER
+                ? Message.developer(combined) : Message.system(combined));
         } else {
             result.add(Message.system("[Earlier Conversation Summary]\n" + summary));
         }

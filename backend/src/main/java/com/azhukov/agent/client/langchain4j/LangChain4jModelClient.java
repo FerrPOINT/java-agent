@@ -349,7 +349,7 @@ public class LangChain4jModelClient implements ModelClient {
 
     private ChatMessage toLangChainMessage(Message message) {
         return switch (message.role()) {
-            case SYSTEM -> SystemMessage.from(message.content());
+            case SYSTEM, DEVELOPER -> SystemMessage.from(message.content());
             case USER -> UserMessage.from(message.content());
             case ASSISTANT -> {
                 if (message.toolCalls() != null && !message.toolCalls().isEmpty()) {

@@ -106,6 +106,7 @@ public class MessageSanitizer {
             case USER -> Role.ASSISTANT;
             case ASSISTANT -> Role.USER;
             case SYSTEM -> Role.USER;
+            case DEVELOPER -> Role.USER;
             case TOOL -> Role.ASSISTANT;
         };
     }

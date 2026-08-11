@@ -23,6 +23,10 @@ public record Message(
         return new Message(Role.SYSTEM, content, null, null, null, 0);
     }
 
+    public static Message developer(String content) {
+        return new Message(Role.DEVELOPER, content, null, null, null, 0);
+    }
+
     public static Message assistant(String content, int turnIndex) {
         return new Message(Role.ASSISTANT, content, null, null, null, turnIndex);
     }

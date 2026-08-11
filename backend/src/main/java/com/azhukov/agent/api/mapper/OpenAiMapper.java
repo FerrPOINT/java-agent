@@ -94,6 +94,7 @@ public interface OpenAiMapper {
         String role = m.role() != null ? m.role() : "user";
         return switch (role) {
             case "system" -> Message.system(m.content());
+            case "developer" -> Message.developer(m.content());
             case "assistant" -> Message.assistant(m.content(), 0);
             case "tool" -> Message.toolResult(m.toolCallId(), m.content(), 0);
             default -> Message.user(m.content());

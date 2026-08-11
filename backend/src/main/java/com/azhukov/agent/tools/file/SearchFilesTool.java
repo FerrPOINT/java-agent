@@ -22,7 +22,8 @@ import java.util.stream.Stream;
     name = "search_files",
     description = "Search file contents or find files by name. Use this instead of grep/rg/find/ls in terminal. " +
         "Content search (target='content'): regex search inside files. " +
-        "File search (target='files'): find files by glob pattern (e.g. '*.java', '*config*').",
+        "File search (target='files'): find files by glob pattern (e.g. '*.java', '*config*'). " +
+        "Count mode (target='content', output_mode='count'): returns match counts per file.",
     toolset = "file"
 )
 @Component
@@ -41,6 +42,10 @@ public class SearchFilesTool implements ToolHandler {
         try {
             if ("files".equals(target)) {
                 return findFiles(base, args.pattern(), args.limit(), args.offset());
+            }
+            String outputMode = args.outputMode() == null ? "content" : args.outputMode().toLowerCase();
+            if ("count".equals(outputMode)) {
+                return countMatches(base, args.pattern(), args.fileGlob());
             }
             return searchContent(base, args.pattern(), args.fileGlob(), args.limit(), args.offset(), args.context());
         } catch (PatternSyntaxException e) {
@@ -111,6 +116,37 @@ public class SearchFilesTool implements ToolHandler {
         return ToolResult.ok(result);
     }
 
+    private ToolResult countMatches(Path base, String pattern, String fileGlob) throws IOException {
+        if (pattern == null || pattern.isBlank()) {
+            return ToolResult.fail("pattern is required for count search");
+        }
+        Pattern regex = Pattern.compile(pattern);
+        List<String> counts = new ArrayList<>();
+
+        try (Stream<Path> stream = Files.walk(base)) {
+            Iterable<Path> files = () -> stream.filter(p -> Files.isRegularFile(p)
+                && (fileGlob == null || fileGlob.isBlank() || p.getFileName().toString().matches(globToRegex(fileGlob))))
+                .iterator();
+            for (Path file : files) {
+                List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+                int matchCount = 0;
+                for (String line : lines) {
+                    if (regex.matcher(line).find()) {
+                        matchCount++;
+                    }
+                }
+                if (matchCount > 0) {
+                    counts.add(base.relativize(file).toString() + ": " + matchCount);
+                }
+            }
+        }
+
+        if (counts.isEmpty()) {
+            return ToolResult.ok("No matches found.");
+        }
+        return ToolResult.ok(String.join("\n", counts));
+    }
+
     private String globToRegex(String glob) {
         StringBuilder sb = new StringBuilder();
         for (char c : glob.toCharArray()) {
@@ -129,6 +165,7 @@ public class SearchFilesTool implements ToolHandler {
         @ToolParam(description = "regex pattern for content search or glob for file search") String pattern,
         @ToolParam(description = "directory to search in", required = false) String path,
         @ToolParam(description = "glob filter for content search files", required = false) String fileGlob,
+        @ToolParam(description = "output mode: 'content' (default), 'files_only' (file paths), or 'count' (match counts per file)", required = false) @com.fasterxml.jackson.annotation.JsonProperty("output_mode") String outputMode,
         @ToolParam(description = "max results", required = false) int limit,
         @ToolParam(description = "skip first N results", required = false) int offset,
         @ToolParam(description = "context lines around match", required = false) int context

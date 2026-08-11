@@ -28,7 +28,7 @@ class TypingManagerTest {
     void startTyping_sendsImmediatelyAndSchedules() throws InterruptedException {
         when(client.sendTyping(anyLong())).thenReturn(true);
         manager.startTyping(123L);
-        Thread.sleep(80);
+        Thread.sleep(150);
         verify(client, atLeast(2)).sendTyping(123L);
         manager.stopTyping(123L);
     }

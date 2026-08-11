@@ -37,6 +37,24 @@ public class MemoryManager {
     private static final long SYNC_DRAIN_TIMEOUT_S = 5L;
     private static final String BUILTIN_PROVIDER_NAME = "builtin";
 
+    /**
+     * Reserved core tool names — provider tools that shadow these names are
+     * rejected at registration (core tools always win). Ported from Hermes'
+     * {@code _HERMES_CORE_TOOLS} (toolsets.py) per memory_manager.py lines 366-390.
+     */
+    private static final Set<String> CORE_TOOL_NAMES = Set.of(
+        "clarify", "delegate_task", "memory", "send_message", "todo",
+        "session_search", "skill_manage", "cronjob", "execute_code",
+        "read_file", "write_file", "patch", "search_files", "terminal",
+        "web_search", "web_extract",
+        "browser_navigate", "browser_snapshot", "browser_click",
+        "browser_type", "browser_scroll", "browser_back", "browser_press",
+        "browser_vision", "browser_console", "browser_get_images",
+        "browser_cdp", "browser_dialog",
+        "vision_analyze", "delete_file", "process",
+        "skills_list", "skill_view"
+    );
+
     private final List<MemoryProvider> providers = new ArrayList<>();
     private final Map<String, MemoryProvider> toolToProvider = new ConcurrentHashMap<>();
     private volatile boolean hasExternal = false;
@@ -126,9 +144,23 @@ public class MemoryManager {
         try {
             for (ToolDefinition schema : provider.getToolSchemas()) {
                 String toolName = schema.name();
-                if (toolName != null && !toolName.isEmpty() && !toolToProvider.containsKey(toolName)) {
-                    toolToProvider.put(toolName, provider);
+                if (toolName == null || toolName.isEmpty()) {
+                    continue;
                 }
+                // Gap 1: Reject provider tools that shadow reserved core tool names
+                if (CORE_TOOL_NAMES.contains(toolName)) {
+                    log.warn("Memory provider '{}' tool '{}' shadows a reserved core tool name; " +
+                        "registration ignored. Core tools always win — rename the provider's tool " +
+                        "to something unique.", name, toolName);
+                    continue;
+                }
+                // Gap 3: Warn on duplicate tool name instead of silent skip
+                if (toolToProvider.containsKey(toolName)) {
+                    log.warn("Memory tool name conflict: '{}' already registered by '{}', " +
+                        "ignoring from '{}'", toolName, toolToProvider.get(toolName).name(), name);
+                    continue;
+                }
+                toolToProvider.put(toolName, provider);
             }
         } catch (Exception e) {
             log.debug("Failed to index tools for provider '{}': {}", name, e.getMessage());
@@ -358,12 +390,16 @@ public class MemoryManager {
     /**
      * S4: Called before context compression to preserve memory state.
      * Forwards to all providers' onPreCompress() and returns combined text.
+     *
+     * @param sessionId the session being compressed
+     * @param messages  the actual messages about to be compressed (not empty list)
+     * @return combined pre-compression text from all providers
      */
-    public String onPreCompress(String sessionId) {
+    public String onPreCompress(String sessionId, List<Message> messages) {
         List<String> parts = new ArrayList<>();
         for (MemoryProvider provider : providers) {
             try {
-                String result = provider.onPreCompress(sessionId, List.of());
+                String result = provider.onPreCompress(sessionId, messages);
                 if (result != null && !result.isBlank()) {
                     parts.add(result);
                 }

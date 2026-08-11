@@ -36,8 +36,8 @@ public class DefaultMessageSanitizer implements MessageSanitizer {
 
         List<Message> cleaned = new ArrayList<>();
 
-        // 1. System message only at index 0
-        if (messages.get(0).role() == Role.SYSTEM) {
+        // 1. System/developer message only at index 0
+        if (messages.get(0).role() == Role.SYSTEM || messages.get(0).role() == Role.DEVELOPER) {
             cleaned.add(sanitizeMessageContent(messages.get(0)));
         }
 
@@ -45,7 +45,8 @@ public class DefaultMessageSanitizer implements MessageSanitizer {
         int start = cleaned.isEmpty() ? 0 : 1;
         for (int i = start; i < messages.size(); i++) {
             Message m = messages.get(i);
-            if (cleaned.isEmpty() || cleaned.get(cleaned.size() - 1).role() == Role.SYSTEM) {
+            if (cleaned.isEmpty() || cleaned.get(cleaned.size() - 1).role() == Role.SYSTEM
+                    || cleaned.get(cleaned.size() - 1).role() == Role.DEVELOPER) {
                 if (m.role() != Role.USER) {
                     log.debug("Inserting placeholder user message before {}", m.role());
                     cleaned.add(Message.user("(context)"));

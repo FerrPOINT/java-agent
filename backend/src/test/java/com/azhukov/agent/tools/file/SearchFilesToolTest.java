@@ -50,4 +50,50 @@ class SearchFilesToolTest {
         ToolResult r = tool.execute("{\"path\":\"" + dir + "\",\"pattern\":\"[invalid\",\"target\":\"content\"}", null, session);
         assertThat(r.success()).isFalse();
     }
+
+    // ── Count mode tests ──────────────────────────────────────────────
+
+    @Test
+    void countModeReturnsMatchCountsPerFile(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("a.txt"), "hello world\nhello again\nfoo bar");
+        Files.writeString(dir.resolve("b.txt"), "hello once\nbar baz");
+        Files.writeString(dir.resolve("c.txt"), "nothing here");
+        ToolResult r = tool.execute(
+            "{\"path\":\"" + dir + "\",\"pattern\":\"hello\",\"target\":\"content\",\"output_mode\":\"count\"}",
+            null, session);
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("a.txt: 2");
+        assertThat(r.content()).contains("b.txt: 1");
+        assertThat(r.content()).doesNotContain("c.txt");
+    }
+
+    @Test
+    void countModeReturnsNoMatchesMessage(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("a.txt"), "hello world");
+        ToolResult r = tool.execute(
+            "{\"path\":\"" + dir + "\",\"pattern\":\"nonexistent\",\"target\":\"content\",\"output_mode\":\"count\"}",
+            null, session);
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("No matches found");
+    }
+
+    @Test
+    void countModeRespectsFileGlobFilter(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("a.java"), "hello\nhello");
+        Files.writeString(dir.resolve("b.txt"), "hello");
+        ToolResult r = tool.execute(
+            "{\"path\":\"" + dir + "\",\"pattern\":\"hello\",\"target\":\"content\",\"output_mode\":\"count\",\"fileGlob\":\"*.java\"}",
+            null, session);
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("a.java: 2");
+        assertThat(r.content()).doesNotContain("b.txt: 1");
+    }
+
+    @Test
+    void countModeFailsOnEmptyPattern(@TempDir Path dir) {
+        ToolResult r = tool.execute(
+            "{\"path\":\"" + dir + "\",\"target\":\"content\",\"output_mode\":\"count\"}",
+            null, session);
+        assertThat(r.success()).isFalse();
+    }
 }

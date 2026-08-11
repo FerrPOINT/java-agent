@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Component
@@ -49,6 +50,9 @@ public class DefaultContextCompressor implements ContextCompressor {
 
     /** Marker that identifies a previously-generated summary system message. */
     private static final String SUMMARY_MARKER = "Earlier conversation (summarized):";
+
+    /** Strips MEDIA:/path directives from summarizer input so file-path artifacts don't pollute the summary. */
+    private static final Pattern MEDIA_DIRECTIVE_RE = Pattern.compile("MEDIA:[^\\s]+");
 
     private final ModelClient modelClient;
     private final CompressionLockRepository lockRepository;
@@ -119,6 +123,9 @@ public class DefaultContextCompressor implements ContextCompressor {
                 content = detail.toString();
             }
             if (content != null && !content.isBlank()) {
+                content = MEDIA_DIRECTIVE_RE.matcher(content).replaceAll("").strip();
+            }
+            if (content != null && !content.isBlank()) {
                 summaryInput.append(m.role()).append(": ").append(content).append("\n\n");
             }
         }
@@ -156,6 +163,9 @@ public class DefaultContextCompressor implements ContextCompressor {
             return lockRepository.findBySessionId(UUID.fromString(sessionId)).isPresent();
         } catch (IllegalArgumentException e) {
             return false;
+        } catch (RuntimeException e) {
+            log.warn("Compression lock subsystem failed for session {}; failing open (assuming unlocked)", sessionId, e);
+            return false;
         }
     }
 
@@ -174,6 +184,8 @@ public class DefaultContextCompressor implements ContextCompressor {
             }
         } catch (IllegalArgumentException e) {
             log.debug("Cannot persist compression lock for non-uuid session {}", sessionId);
+        } catch (RuntimeException e) {
+            log.warn("Compression lock subsystem failed while locking session {}; failing open (in-memory lock still set)", sessionId, e);
         }
     }
 
@@ -184,7 +196,7 @@ public class DefaultContextCompressor implements ContextCompressor {
      */
     private String extractPreviousSummary(List<Message> middleMessages) {
         for (Message m : middleMessages) {
-            if (m.role() == Role.SYSTEM && m.content() != null) {
+            if ((m.role() == Role.SYSTEM || m.role() == Role.DEVELOPER) && m.content() != null) {
                 String content = m.content();
                 if (content.contains(SUMMARY_MARKER)) {
                     // Extract the summary body after the marker

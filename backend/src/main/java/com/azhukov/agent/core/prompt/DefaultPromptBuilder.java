@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * Builds the system prompt in three tiers for cache-friendliness:
@@ -28,6 +29,14 @@ import java.util.List;
 @Slf4j
 @Component
 public class DefaultPromptBuilder implements PromptBuilder {
+
+    /**
+     * Models that use the OpenAI 'developer' role instead of 'system' for the
+     * system prompt message (e.g. GPT-5, Codex). When the configured model name
+     * starts with any of these prefixes, {@link #buildSystemMessage} will emit
+     * a {@link Role#DEVELOPER} message instead of {@link Role#SYSTEM}.
+     */
+    static final Set<String> DEVELOPER_ROLE_MODELS = Set.of("gpt-5", "codex");
 
     private final AgentProperties properties;
     private final ToolRegistry toolRegistry;
@@ -106,7 +115,22 @@ public class DefaultPromptBuilder implements PromptBuilder {
             }
         }
 
-        return Message.system(text);
+        return usesDeveloperRole()
+            ? Message.developer(text)
+            : Message.system(text);
+    }
+
+    /**
+     * Check whether the configured model expects the OpenAI 'developer' role
+     * instead of 'system' (e.g. GPT-5, Codex).
+     */
+    private boolean usesDeveloperRole() {
+        String modelName = properties.getModel().getModelName();
+        if (modelName == null || modelName.isBlank()) {
+            return false;
+        }
+        String lower = modelName.toLowerCase();
+        return DEVELOPER_ROLE_MODELS.stream().anyMatch(lower::startsWith);
     }
 
     /**

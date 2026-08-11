@@ -175,4 +175,103 @@ class DefaultPromptBuilderTest {
         assertThat(prefix).contains("Fact A");
         verify(memoryProvider).recall(eq("user-42"), anyString(), eq(20));
     }
+
+    // ── Developer role tests (GPT-5 / Codex) ─────────────────────────────
+
+    @Test
+    void usesDeveloperRoleForGpt5Model() {
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getModel().setModelName("gpt-5-2025");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        DefaultAgentConstants constants = new DefaultAgentConstants();
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, constants);
+        Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+
+        assertThat(msg.role()).isEqualTo(Role.DEVELOPER);
+        assertThat(msg.content()).contains("You are Agent");
+    }
+
+    @Test
+    void usesDeveloperRoleForCodexModel() {
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getModel().setModelName("codex-1");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        DefaultAgentConstants constants = new DefaultAgentConstants();
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, constants);
+        Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+
+        assertThat(msg.role()).isEqualTo(Role.DEVELOPER);
+    }
+
+    @Test
+    void usesSystemRoleForNonDeveloperModel() {
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getModel().setModelName("gpt-4o");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        DefaultAgentConstants constants = new DefaultAgentConstants();
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, constants);
+        Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+
+        assertThat(msg.role()).isEqualTo(Role.SYSTEM);
+    }
+
+    @Test
+    void usesSystemRoleForBlankModelName() {
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        // modelName defaults to ""
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        DefaultAgentConstants constants = new DefaultAgentConstants();
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, constants);
+        Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+
+        assertThat(msg.role()).isEqualTo(Role.SYSTEM);
+    }
+
+    @Test
+    void usesSystemRoleForNullModelName() {
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getModel().setModelName(null);
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        DefaultAgentConstants constants = new DefaultAgentConstants();
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, constants);
+        Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+
+        assertThat(msg.role()).isEqualTo(Role.SYSTEM);
+    }
+
+    @Test
+    void developerRoleCheckIsCaseInsensitive() {
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getModel().setModelName("GPT-5-mini");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        DefaultAgentConstants constants = new DefaultAgentConstants();
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, constants);
+        Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+
+        assertThat(msg.role()).isEqualTo(Role.DEVELOPER);
+    }
 }

@@ -491,8 +491,9 @@ public class AgentStreamingService {
             transactionTemplate.execute(status -> {
                 Instant now = Instant.now();
                 for (Message m : turnMessages) {
-                    // Skip system message — it's regenerated each turn
-                    if (m.role() == com.azhukov.agent.core.model.Role.SYSTEM) continue;
+                    // Skip system/developer message — it's regenerated each turn
+                    if (m.role() == com.azhukov.agent.core.model.Role.SYSTEM
+                            || m.role() == com.azhukov.agent.core.model.Role.DEVELOPER) continue;
                     var e = messageMapper.toEntity(m);
                     e.setSessionId(session.id());
                     e.setCreatedAt(now);

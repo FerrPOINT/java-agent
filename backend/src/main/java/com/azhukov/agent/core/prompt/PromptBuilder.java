@@ -9,7 +9,8 @@ public interface PromptBuilder {
     Message buildSystemMessage(Session session);
 
     default List<Message> prependSystem(List<Message> messages, Session session) {
-        if (messages.isEmpty() || messages.get(0).role() == com.azhukov.agent.core.model.Role.SYSTEM) {
+        if (messages.isEmpty() || messages.get(0).role() == com.azhukov.agent.core.model.Role.SYSTEM
+                || messages.get(0).role() == com.azhukov.agent.core.model.Role.DEVELOPER) {
             return messages;
         }
         List<Message> result = new java.util.ArrayList<>(messages.size() + 1);

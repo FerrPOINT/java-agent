@@ -183,8 +183,9 @@ public class PromptCacheTracker {
         Map<String, Object> marker = buildCacheMarker(cacheTtl);
         int breakpointsUsed = 0;
 
-        // Breakpoint 1: after system prompt
-        if (!messages.isEmpty() && "system".equals(messages.get(0).get("role"))) {
+        // Breakpoint 1: after system/developer prompt
+        if (!messages.isEmpty() && ("system".equals(messages.get(0).get("role"))
+                || "developer".equals(messages.get(0).get("role")))) {
             applyCacheMarker(messages.get(0), marker);
             breakpointsUsed++;
         }
@@ -206,7 +207,8 @@ public class PromptCacheTracker {
         int remaining = 4 - breakpointsUsed;
         List<Integer> nonSysIndices = new ArrayList<>();
         for (int i = 0; i < messages.size(); i++) {
-            if (!"system".equals(messages.get(i).get("role"))) {
+            String role = (String) messages.get(i).get("role");
+            if (!"system".equals(role) && !"developer".equals(role)) {
                 nonSysIndices.add(i);
             }
         }

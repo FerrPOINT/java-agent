@@ -99,21 +99,24 @@ public class DefaultContextEngine implements ContextEngine {
         appendSkills(systemExtra);
         // Memory is injected into the system prompt by DefaultPromptBuilder, not here
 
-        // Compose system message first if present
-        if (!messages.isEmpty() && messages.get(0).role() == Role.SYSTEM) {
+        // Compose system/developer message first if present
+        if (!messages.isEmpty() && (messages.get(0).role() == Role.SYSTEM
+                || messages.get(0).role() == Role.DEVELOPER)) {
             Message base = messages.get(0);
             String systemText = base.content();
             if (!systemExtra.isEmpty()) {
                 systemText = systemText + "\n\n" + systemExtra;
             }
-            context.add(Message.system(systemText));
+            context.add(base.role() == Role.DEVELOPER
+                ? Message.developer(systemText) : Message.system(systemText));
         }
 
         // Then add recent history (excluding the current turn messages to avoid duplication)
         appendRecentHistory(session, context);
 
-        // Add remaining incoming messages after system
-        int start = (!messages.isEmpty() && messages.get(0).role() == Role.SYSTEM) ? 1 : 0;
+        // Add remaining incoming messages after system/developer
+        int start = (!messages.isEmpty() && (messages.get(0).role() == Role.SYSTEM
+                || messages.get(0).role() == Role.DEVELOPER)) ? 1 : 0;
         context.addAll(messages.subList(start, messages.size()));
 
         List<Message> trimmed = trimToFit(context);

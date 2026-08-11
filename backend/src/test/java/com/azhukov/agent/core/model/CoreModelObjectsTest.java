@@ -29,6 +29,7 @@ class CoreModelObjectsTest {
         void containsAllExpectedValues() {
             assertThat(Role.values()).containsExactly(
                 Role.SYSTEM,
+                Role.DEVELOPER,
                 Role.USER,
                 Role.ASSISTANT,
                 Role.TOOL

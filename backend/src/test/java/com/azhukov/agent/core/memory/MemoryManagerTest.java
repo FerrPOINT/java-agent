@@ -219,8 +219,36 @@ class MemoryManagerTest {
         when(provider.name()).thenReturn("builtin");
         when(provider.onPreCompress(any(), any())).thenReturn("extract from p1");
         manager.addBuiltinProvider(provider);
-        String result = manager.onPreCompress("session-1");
+        List<Message> messages = List.of(Message.user("hello"), Message.assistant("hi", 0));
+        String result = manager.onPreCompress("session-1", messages);
         assertThat(result).contains("extract from p1");
+    }
+
+    // ── Gap 2: onPreCompress passes real messages, not List.of() ────────
+
+    @Test
+    void onPreCompress_passesActualMessagesToProvider() {
+        MemoryProvider provider = mock(MemoryProvider.class);
+        when(provider.name()).thenReturn("builtin");
+        when(provider.onPreCompress(any(), any())).thenReturn("summary");
+        manager.addBuiltinProvider(provider);
+        List<Message> messages = List.of(
+            Message.user("important user input"),
+            Message.assistant("important reply", 0)
+        );
+        manager.onPreCompress("session-1", messages);
+        // Verify the real messages are passed through, not an empty list
+        verify(provider).onPreCompress("session-1", messages);
+    }
+
+    @Test
+    void onPreCompress_emptyMessages_doesNotThrow() {
+        MemoryProvider provider = mock(MemoryProvider.class);
+        when(provider.name()).thenReturn("builtin");
+        when(provider.onPreCompress(any(), any())).thenReturn("");
+        manager.addBuiltinProvider(provider);
+        String result = manager.onPreCompress("session-1", List.of());
+        assertThat(result).isEmpty();
     }
 
     @Test
@@ -419,6 +447,70 @@ class MemoryManagerTest {
         when(provider.getToolSchemas()).thenReturn(List.of(td1, td2));
         manager.addProvider(provider, "ext");
         assertThat(manager.getAllToolNames()).contains("tool_a", "tool_b");
+    }
+
+    // ── Gap 1: Core tool name reservation ──────────────────────────────
+
+    @Test
+    void addProvider_coreToolName_isRejected() {
+        MemoryProvider provider = mock(MemoryProvider.class);
+        when(provider.name()).thenReturn("ext");
+        ToolDefinition coreTool = new ToolDefinition("clarify", "Core tool clone", Map.of());
+        ToolDefinition normalTool = new ToolDefinition("memory_search", "Search memory", Map.of());
+        when(provider.getToolSchemas()).thenReturn(List.of(coreTool, normalTool));
+        manager.addProvider(provider, "ext");
+        // The core tool name should NOT be in the routing table
+        assertThat(manager.hasTool("clarify")).isFalse();
+        // The normal tool should still be registered
+        assertThat(manager.hasTool("memory_search")).isTrue();
+    }
+
+    @Test
+    void addProvider_multipleCoreToolNames_allRejected() {
+        MemoryProvider provider = mock(MemoryProvider.class);
+        when(provider.name()).thenReturn("ext");
+        ToolDefinition td1 = new ToolDefinition("terminal", "Clone", Map.of());
+        ToolDefinition td2 = new ToolDefinition("read_file", "Clone", Map.of());
+        ToolDefinition td3 = new ToolDefinition("web_search", "Clone", Map.of());
+        when(provider.getToolSchemas()).thenReturn(List.of(td1, td2, td3));
+        manager.addProvider(provider, "ext");
+        assertThat(manager.hasTool("terminal")).isFalse();
+        assertThat(manager.hasTool("read_file")).isFalse();
+        assertThat(manager.hasTool("web_search")).isFalse();
+    }
+
+    @Test
+    void addProvider_nonCoreName_isRegistered() {
+        MemoryProvider provider = mock(MemoryProvider.class);
+        when(provider.name()).thenReturn("ext");
+        ToolDefinition td = new ToolDefinition("custom_memory_tool", "Custom", Map.of());
+        when(provider.getToolSchemas()).thenReturn(List.of(td));
+        manager.addProvider(provider, "ext");
+        assertThat(manager.hasTool("custom_memory_tool")).isTrue();
+    }
+
+    // ── Gap 3: Duplicate tool name conflict warning ────────────────────
+
+    @Test
+    void addProvider_duplicateToolName_secondProviderNotIndexed() {
+        MemoryProvider first = mock(MemoryProvider.class);
+        when(first.name()).thenReturn("first");
+        ToolDefinition td = new ToolDefinition("shared_tool", "Shared", Map.of());
+        when(first.getToolSchemas()).thenReturn(List.of(td));
+        manager.addProvider(first, "first");
+
+        MemoryProvider second = mock(MemoryProvider.class);
+        when(second.name()).thenReturn("second");
+        ToolDefinition tdDup = new ToolDefinition("shared_tool", "Shared dup", Map.of());
+        when(second.getToolSchemas()).thenReturn(List.of(tdDup));
+        manager.addProvider(second, "second");
+
+        // The tool should route to the first provider, not the second
+        assertThat(manager.hasTool("shared_tool")).isTrue();
+        // Verify that handleToolCall routes to the first provider
+        when(first.handleToolCall("shared_tool", Map.of())).thenReturn("{\"ok\":\"first\"}");
+        String result = manager.handleToolCall("shared_tool", Map.of());
+        assertThat(result).contains("first");
     }
 
     // ── S1: initializeAll and flushPending ─────────────────────────────
