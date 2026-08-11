@@ -5,6 +5,9 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Converts standard Markdown to Telegram MarkdownV2.
  *
@@ -16,6 +19,8 @@ import java.util.regex.Pattern;
  * <ol>
  *   <li>Convert GFM pipe tables to Telegram-friendly format (bold header + bullets)</li>
  *   <li>Protect code blocks and inline code (no escaping inside)</li>
+ *   <li>Convert headings {@code # Heading} → {@code **Heading**} (then handled by bold conversion)</li>
+ *   <li>Convert lists {@code - item}/{@code * item}/{@code + item} → {@code • item}</li>
  *   <li>Protect links (escape link text, keep URL as-is)</li>
  *   <li>Convert bold {@code **text**} → {@code *escaped_text*}, protect markers</li>
  *   <li>Convert strikethrough {@code ~~text~~} → {@code ~escaped_text~}, protect markers</li>
@@ -25,6 +30,8 @@ import java.util.regex.Pattern;
  * </ol>
  */
 public final class MarkdownConverter {
+
+    private static final Logger log = LoggerFactory.getLogger(MarkdownConverter.class);
 
     // ─── Table conversion ──────────────────────────────────────────
 
@@ -163,9 +170,17 @@ public final class MarkdownConverter {
     /** Characters that must be escaped with backslash in MarkdownV2 plain text. */
     private static final String SPECIAL_CHARS = "_*[]()~`>#+-=|{}.!";
 
-    // Fenced code block: ```lang\n...```
+    // Headings: # Heading → **Heading** (processed before escaping, then converted to bold)
+    private static final Pattern HEADING_PATTERN =
+        Pattern.compile("(?m)^#{1,6}\\s+(.+)$");
+
+    // Lists: - item, * item, + item → • item (processed before escaping)
+    private static final Pattern LIST_PATTERN =
+        Pattern.compile("(?m)^[-*+]\\s+(.+)$");
+
+    // Fenced code block: ```lang\n...``` (lang supports c++, objective-c, etc.)
     private static final Pattern CODE_BLOCK_PATTERN =
-        Pattern.compile("```(\\w*)\\n?(.*?)```", Pattern.DOTALL);
+        Pattern.compile("```([^\\n]*)\\n(.*?)```", Pattern.DOTALL);
 
     // Inline code: `code`
     private static final Pattern INLINE_CODE_PATTERN =
@@ -183,9 +198,9 @@ public final class MarkdownConverter {
     private static final Pattern STRIKE_PATTERN =
         Pattern.compile("~~(.+?)~~");
 
-    // Italic: *text* (not preceded/followed by another *)
+    // Italic: *text* (not preceded/followed by another *, and not preceded by a word char)
     private static final Pattern ITALIC_PATTERN =
-        Pattern.compile("(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)");
+        Pattern.compile("(?<!\\*)(?<!\\w)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)");
 
     /** Placeholder prefix for protected segments (code blocks, inline code, links, formatting). */
     private static final String PROTECT_PREFIX = "\u0000P";
@@ -201,7 +216,15 @@ public final class MarkdownConverter {
         if (markdown == null || markdown.isEmpty()) {
             return "";
         }
+        try {
+            return doConvert(markdown);
+        } catch (Exception e) {
+            log.warn("Failed to convert markdown to MarkdownV2, returning minimally escaped text", e);
+            return escapeMarkdownV2(markdown);
+        }
+    }
 
+    private static String doConvert(String markdown) {
         // 0. Convert GFM pipe tables to Telegram-friendly format (bold header + bullets)
         markdown = convertTables(markdown);
 
@@ -213,22 +236,28 @@ public final class MarkdownConverter {
         // 2. Extract and protect inline code (`code`)
         text = protectInlineCode(text, protectedSegments);
 
-        // 3. Extract and protect links [text](url)
+        // 3. Convert headings # Heading → **Heading** (then handled by bold conversion)
+        text = convertHeadings(text);
+
+        // 4. Convert lists -/*/+ item → • item (before escaping, before italic)
+        text = convertLists(text);
+
+        // 5. Extract and protect links [text](url)
         text = protectLinks(text, protectedSegments);
 
-        // 4. Convert bold **text** → *escaped(text)*, protect result
+        // 6. Convert bold **text** → *escaped(text)*, protect result
         text = convertBold(text, protectedSegments);
 
-        // 5. Convert strikethrough ~~text~~ → ~escaped(text)~, protect result
+        // 7. Convert strikethrough ~~text~~ → ~escaped(text)~, protect result
         text = convertStrikethrough(text, protectedSegments);
 
-        // 6. Convert italic *text* → _escaped(text)_, protect result
+        // 8. Convert italic *text* → _escaped(text)_, protect result
         text = convertItalic(text, protectedSegments);
 
-        // 7. Escape special characters in remaining plain text
+        // 9. Escape special characters in remaining plain text
         text = escapePlain(text);
 
-        // 8. Restore all protected segments
+        // 10. Restore all protected segments
         text = restoreProtected(text, protectedSegments);
 
         return text;
@@ -264,6 +293,28 @@ public final class MarkdownConverter {
             String placeholder = makePlaceholder(protectedSegments.size());
             protectedSegments.add(replacement);
             matcher.appendReplacement(sb, Matcher.quoteReplacement(placeholder));
+        }
+        matcher.appendTail(sb);
+        return sb.toString();
+    }
+
+    private static String convertHeadings(String text) {
+        Matcher matcher = HEADING_PATTERN.matcher(text);
+        StringBuffer sb = new StringBuffer();
+        while (matcher.find()) {
+            String heading = matcher.group(1);
+            matcher.appendReplacement(sb, "**" + Matcher.quoteReplacement(heading) + "**");
+        }
+        matcher.appendTail(sb);
+        return sb.toString();
+    }
+
+    private static String convertLists(String text) {
+        Matcher matcher = LIST_PATTERN.matcher(text);
+        StringBuffer sb = new StringBuffer();
+        while (matcher.find()) {
+            String item = matcher.group(1);
+            matcher.appendReplacement(sb, "• " + Matcher.quoteReplacement(item));
         }
         matcher.appendTail(sb);
         return sb.toString();
@@ -346,6 +397,18 @@ public final class MarkdownConverter {
      * @return escaped text
      */
     private static String escapePlain(String text) {
+        return escapeMarkdownV2(text);
+    }
+
+    /**
+     * Escape special MarkdownV2 characters in plain text.
+     * This is the public version used by {@link MessageSplitter} to escape
+     * continuation indicators like {@code (1/N)}.
+     *
+     * @param text the plain text to escape
+     * @return escaped text safe for Telegram MarkdownV2
+     */
+    public static String escapeMarkdownV2(String text) {
         if (text == null || text.isEmpty()) {
             return "";
         }

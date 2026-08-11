@@ -34,6 +34,7 @@ class RetryCommandTest {
         UpdateEvent event = makeEvent("");
         String result = cmd.handle(event, session);
         assertThat(result).isEqualTo("Hi again");
+        verify(client).undoTurns(sessionId.toString(), 1);
     }
 
     @Test
@@ -47,6 +48,7 @@ class RetryCommandTest {
         UpdateEvent event = makeEvent("");
         String result = cmd.handle(event, session);
         assertThat(result).contains("No previous user message");
+        verifyNoInteractions(client);
     }
 
     @Test
@@ -61,6 +63,24 @@ class RetryCommandTest {
         var cmd = new RetryCommand(mock(BotMessageRepository.class), mock(AgentBackendClient.class));
         assertThat(cmd.name()).isEqualTo("retry");
         assertThat(cmd.description()).isEqualTo("Retry last message");
+    }
+
+    @Test
+    void undoTurnsCalledBeforeChat() {
+        BotMessageRepository repo = mock(BotMessageRepository.class);
+        AgentBackendClient client = mock(AgentBackendClient.class);
+        UUID sessionId = UUID.randomUUID();
+        BotMessageEntity userMsg = new BotMessageEntity();
+        userMsg.setRole("user");
+        userMsg.setContent("Test message");
+        when(repo.findBySessionIdOrderByCreatedAtDesc(sessionId)).thenReturn(List.of(userMsg));
+        when(client.chat(anyString(), anyString())).thenReturn(new AgentBackendClient.ChatResult("Response"));
+        var cmd = new RetryCommand(repo, client);
+        BotSessionEntity session = newSession(sessionId);
+        cmd.handle(makeEvent(""), session);
+        // Verify undoTurns was called with the session ID and 1 turn
+        verify(client).undoTurns(sessionId.toString(), 1);
+        verify(client).chat("Test message", sessionId.toString());
     }
 
     private BotSessionEntity newSession(UUID id) {

@@ -44,7 +44,9 @@ public final class MessageSplitter {
 
         List<String> chunks = doSplit(text, maxLength);
 
-        // Add "(1/N)" continuation indicator when splitting into multiple chunks
+        // Add "(1/N)" continuation indicator when splitting into multiple chunks.
+        // The indicator is NOT escaped here — callers using MarkdownV2 should use
+        // splitAndFormat() or escape the prefix themselves.
         if (chunks.size() > 1) {
             int total = chunks.size();
             List<String> indexed = new ArrayList<>(total);
@@ -55,6 +57,57 @@ public final class MessageSplitter {
         }
 
         return chunks;
+    }
+
+    /**
+     * Split text and format each chunk for the given parse mode.
+     *
+     * <p>For MarkdownV2, this splits the raw (unformatted) text first, then converts
+     * each chunk via {@link MarkdownConverter#convert(String)}, then prepends the
+     * {@code (1/N)} continuation indicator — escaped for MarkdownV2 so that
+     * special characters like {@code (}, {@code )}, {@code /} are properly escaped.
+     *
+     * <p>For non-MarkdownV2 parse modes (HTML, null), this falls back to
+     * {@link #split(String, int)} with the standard unescaped indicator.
+     *
+     * @param text      the raw (unformatted) text to split and format
+     * @param parseMode the Telegram parse mode ("MarkdownV2", "HTML", or null)
+     * @return list of formatted chunks with continuation indicators
+     */
+    public static List<String> splitAndFormat(String text, String parseMode) {
+        if (text == null || text.isEmpty()) {
+            return List.of("");
+        }
+
+        boolean isMarkdownV2 = "MarkdownV2".equalsIgnoreCase(parseMode);
+        if (!isMarkdownV2) {
+            // For HTML or plain text, use the standard split (indicator is not escaped)
+            return split(text);
+        }
+
+        // For MarkdownV2: split raw text first, then format each chunk, then add escaped indicator
+        if (utf16Length(text) <= TELEGRAM_MAX_LENGTH) {
+            // Single chunk — format and return without indicator
+            return List.of(MarkdownConverter.convert(text));
+        }
+
+        List<String> rawChunks = doSplit(text, TELEGRAM_MAX_LENGTH);
+        int total = rawChunks.size();
+        List<String> result = new ArrayList<>(total);
+
+        for (int i = 0; i < total; i++) {
+            String formatted = MarkdownConverter.convert(rawChunks.get(i));
+            if (total > 1) {
+                // Build the indicator and escape it for MarkdownV2
+                String indicator = "(" + (i + 1) + "/" + total + ") ";
+                String escapedIndicator = MarkdownConverter.escapeMarkdownV2(indicator);
+                result.add(escapedIndicator + formatted);
+            } else {
+                result.add(formatted);
+            }
+        }
+
+        return result;
     }
 
     private static List<String> doSplit(String text, int maxLength) {

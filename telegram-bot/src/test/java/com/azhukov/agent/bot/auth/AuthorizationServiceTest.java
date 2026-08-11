@@ -13,11 +13,12 @@ class AuthorizationServiceTest {
 
     private BotProperties properties;
     private AuthorizationService service;
+    private PairingService pairingService;
 
     @BeforeEach
     void setUp() {
         properties = new BotProperties();
-        PairingService pairingService = mock(PairingService.class);
+        pairingService = mock(PairingService.class);
         service = new AuthorizationService(properties, pairingService);
     }
 
@@ -48,6 +49,7 @@ class AuthorizationServiceTest {
     @Test
     void noMatch_denies() {
         properties.getAuth().getAllowedUserIds().add("999");
+        when(pairingService.hasApprovedPairing("123")).thenReturn(false);
         assertThat(service.isAuthorized(123, "jdoe", 456)).isFalse();
     }
 
@@ -65,12 +67,14 @@ class AuthorizationServiceTest {
 
     @Test
     void emptyConfig_deniesFailClosed() {
+        when(pairingService.hasApprovedPairing("123")).thenReturn(false);
         assertThat(service.isAuthorized(123, "jdoe", 456)).isFalse();
     }
 
     @Test
     void nullUsername_deniesIfNotInList() {
         properties.getAuth().getAllowedUsernames().add("jdoe");
+        when(pairingService.hasApprovedPairing("123")).thenReturn(false);
         assertThat(service.isAuthorized(123, null, 456)).isFalse();
     }
 
@@ -80,5 +84,26 @@ class AuthorizationServiceTest {
         UpdateEvent event = new UpdateEvent(1, Type.TEXT, 123, 456, "jdoe",
             "hi", null, null, null, null, null, null, false, null, null);
         assertThat(service.isAuthorized(event)).isTrue();
+    }
+
+    // ─── Pairing check tests ──────────────────────────────────────
+
+    @Test
+    void approvedPairing_allowsAccess() {
+        when(pairingService.hasApprovedPairing("123")).thenReturn(true);
+        assertThat(service.isAuthorized(123, "jdoe", 456)).isTrue();
+    }
+
+    @Test
+    void noApprovedPairing_deniesAccess() {
+        when(pairingService.hasApprovedPairing("123")).thenReturn(false);
+        assertThat(service.isAuthorized(123, "jdoe", 456)).isFalse();
+    }
+
+    @Test
+    void approvedPairing_checkedAfterOtherMethodsFail() {
+        // User not in allowlist, but has approved pairing
+        when(pairingService.hasApprovedPairing("999")).thenReturn(true);
+        assertThat(service.isAuthorized(999, "unknown", -1)).isTrue();
     }
 }

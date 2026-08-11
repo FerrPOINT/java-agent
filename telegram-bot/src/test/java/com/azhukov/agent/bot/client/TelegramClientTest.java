@@ -23,10 +23,10 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -34,6 +34,12 @@ import static org.mockito.Mockito.*;
  * <p>
  * Covers all public API methods, error handling, retry logic, rate limiting,
  * byte array resource handling, and request building paths.
+ *
+ * <p>Note: since the error-classification refactor, {@link TelegramClient#callApi}
+ * throws {@link TelegramApiException} on non-ok responses instead of returning
+ * Optional.empty(). High-level wrappers (sendMessage, editMessageText, etc.)
+ * catch non-429 exceptions internally and collapse them to empty/false.
+ * editMessageText rethrows 429 so StreamEditor can apply adaptive backoff.
  */
 @ExtendWith(MockitoExtension.class)
 class TelegramClientTest {
@@ -167,10 +173,34 @@ class TelegramClientTest {
         }
 
         @Test
-        @DisplayName("sendMessage with all optional params")
+        @DisplayName("sendMessage with all optional params (5-arg overload)")
         void sendMessageWithAllParams() {
             stubPostChain(successResponseWithMessageId(200L));
             Optional<Long> result = client.sendMessage(456L, "text", "MarkdownV2", 99L, "[{\"button\":\"ok\"}]");
+            assertThat(result).contains(200L);
+        }
+
+        @Test
+        @DisplayName("sendMessage with messageThreadId (6-arg overload)")
+        void sendMessageWithMessageThreadId() {
+            stubPostChain(successResponseWithMessageId(200L));
+            Optional<Long> result = client.sendMessage(456L, "text", "MarkdownV2", 99L, 5, false);
+            assertThat(result).contains(200L);
+        }
+
+        @Test
+        @DisplayName("sendMessage with messageThreadId=null does not add thread id")
+        void sendMessageWithNullMessageThreadId() {
+            stubPostChain(successResponseWithMessageId(200L));
+            Optional<Long> result = client.sendMessage(456L, "text", "MarkdownV2", 99L, null, false);
+            assertThat(result).contains(200L);
+        }
+
+        @Test
+        @DisplayName("sendMessage with disableNotification=true")
+        void sendMessageWithDisableNotification() {
+            stubPostChain(successResponseWithMessageId(200L));
+            Optional<Long> result = client.sendMessage(456L, "text", "MarkdownV2", 99L, 5, true);
             assertThat(result).contains(200L);
         }
 
@@ -200,22 +230,58 @@ class TelegramClientTest {
         }
 
         @Test
-        @DisplayName("sendMessage fails and retries without replyToMessageId")
-        void sendMessageRetryWithoutReplyTo() {
-            // First call returns empty (failure), second call succeeds
+        @DisplayName("sendMessage retries without replyTo on 'Message thread not found'")
+        void sendMessageRetryOnThreadNotFound() {
             when(restClient.post()).thenReturn(postUriSpec);
             when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
             when(bodySpec.accept(any(MediaType.class))).thenReturn(bodySpec);
             when(bodySpec.contentType(any(MediaType.class))).thenReturn(bodySpec);
             when(bodySpec.body(anyMap())).thenReturn(bodySpec);
             when(bodySpec.retrieve()).thenReturn(responseSpec);
-            // First call: failed response (not success)
+            // First call: error "Message thread not found"
+            // Second call (retry without reply_to): success
             when(responseSpec.body(TelegramResponse.class))
                     .thenReturn(errorResponse(400, "Message thread not found"))
                     .thenReturn(successResponseWithMessageId(55L));
 
             Optional<Long> result = client.sendMessage(1L, "text", null, 77L, null);
             assertThat(result).contains(55L);
+        }
+
+        @Test
+        @DisplayName("sendMessage retries without replyTo on 'Reply message not found'")
+        void sendMessageRetryOnReplyNotFound() {
+            when(restClient.post()).thenReturn(postUriSpec);
+            when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
+            when(bodySpec.accept(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.contentType(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.body(anyMap())).thenReturn(bodySpec);
+            when(bodySpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.body(TelegramResponse.class))
+                    .thenReturn(errorResponse(400, "reply message not found"))
+                    .thenReturn(successResponseWithMessageId(55L));
+
+            Optional<Long> result = client.sendMessage(1L, "text", null, 77L, null);
+            assertThat(result).contains(55L);
+        }
+
+        @Test
+        @DisplayName("sendMessage does NOT retry on 'chat not found' error")
+        void sendMessageNoRetryOnChatNotFound() {
+            stubPostChain(errorResponse(400, "chat not found"));
+            Optional<Long> result = client.sendMessage(1L, "text", null, 77L, null);
+            assertThat(result).isEmpty();
+            // Should only call post() once (no retry)
+            verify(restClient, times(1)).post();
+        }
+
+        @Test
+        @DisplayName("sendMessage does NOT retry on 'bot was blocked by the user' error")
+        void sendMessageNoRetryOnBlocked() {
+            stubPostChain(errorResponse(403, "bot was blocked by the user"));
+            Optional<Long> result = client.sendMessage(1L, "text", null, 77L, null);
+            assertThat(result).isEmpty();
+            verify(restClient, times(1)).post();
         }
 
         @Test
@@ -336,6 +402,39 @@ class TelegramClientTest {
             boolean result = client.editMessageText(1L, 10L, "new text", "HTML");
             assertThat(result).isFalse();
         }
+
+        @Test
+        @DisplayName("editMessageText 429 throws TelegramApiException (for StreamEditor)")
+        void editMessageText429Throws() {
+            TelegramResponse error429 = errorResponseWithParams(429, "Too Many Requests",
+                    Map.of("retry_after", IntNode.valueOf(1)));
+            stubPostChain(error429);
+
+            assertThatThrownBy(() -> client.editMessageText(1L, 10L, "text", "HTML"))
+                .isInstanceOf(TelegramApiException.class)
+                .satisfies(ex -> {
+                    TelegramApiException tae = (TelegramApiException) ex;
+                    assertThat(tae.getErrorCode()).isEqualTo(429);
+                    assertThat(tae.isRateLimit()).isTrue();
+                    assertThat(tae.getRetryAfter()).isEqualTo(1);
+                });
+        }
+
+        @Test
+        @DisplayName("editMessageText with messageThreadId overload")
+        void editMessageTextWithMessageThreadId() {
+            stubPostChain(successResponseWithResult(Map.of("message_id", 1)));
+            boolean result = client.editMessageText(1L, 10L, "new text", "HTML", false, null, 5);
+            assertThat(result).isTrue();
+        }
+
+        @Test
+        @DisplayName("editMessageText with messageThreadId=null does not add thread id")
+        void editMessageTextWithNullMessageThreadId() {
+            stubPostChain(successResponseWithResult(Map.of("message_id", 1)));
+            boolean result = client.editMessageText(1L, 10L, "new text", "HTML", false, null, null);
+            assertThat(result).isTrue();
+        }
     }
 
     // ─── deleteMessage tests ──────────────────────────────────────
@@ -358,6 +457,62 @@ class TelegramClientTest {
             stubPostChain(errorResponse(400, "Bad request"));
             boolean result = client.deleteMessage(1L, 10L);
             assertThat(result).isFalse();
+        }
+    }
+
+    // ─── getMe tests ──────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("getMe")
+    class GetMeTest {
+
+        @Test
+        @DisplayName("getMe success returns bot info map")
+        void getMeSuccess() {
+            Map<String, Object> botInfo = Map.of("id", 123456L, "username", "mybot", "first_name", "My Bot");
+            stubPostChain(successResponseWithResult(botInfo));
+            Optional<Map<String, Object>> result = client.getMe();
+            assertThat(result).isPresent();
+            assertThat(result.get().get("username")).isEqualTo("mybot");
+        }
+
+        @Test
+        @DisplayName("getMe failure returns empty")
+        void getMeFailure() {
+            stubPostChain(errorResponse(400, "Bad request"));
+            Optional<Map<String, Object>> result = client.getMe();
+            assertThat(result).isEmpty();
+        }
+    }
+
+    // ─── editMessageReplyMarkup tests ─────────────────────────────
+
+    @Nested
+    @DisplayName("editMessageReplyMarkup")
+    class EditMessageReplyMarkupTest {
+
+        @Test
+        @DisplayName("editMessageReplyMarkup success returns true")
+        void editMessageReplyMarkupSuccess() {
+            stubPostChain(successResponseWithResult(true));
+            boolean result = client.editMessageReplyMarkup(1L, 10L, null);
+            assertThat(result).isTrue();
+        }
+
+        @Test
+        @DisplayName("editMessageReplyMarkup failure returns false")
+        void editMessageReplyMarkupFailure() {
+            stubPostChain(errorResponse(400, "Bad request"));
+            boolean result = client.editMessageReplyMarkup(1L, 10L, null);
+            assertThat(result).isFalse();
+        }
+
+        @Test
+        @DisplayName("editMessageReplyMarkup with custom markup returns true")
+        void editMessageReplyMarkupWithMarkup() {
+            stubPostChain(successResponseWithResult(true));
+            boolean result = client.editMessageReplyMarkup(1L, 10L, "{\"inline_keyboard\":[]}");
+            assertThat(result).isTrue();
         }
     }
 
@@ -412,6 +567,22 @@ class TelegramClientTest {
             stubPostChain(errorResponse(400, "Bad request"));
             boolean result = client.setMessageReaction(1L, 10L, "👍");
             assertThat(result).isFalse();
+        }
+
+        @Test
+        @DisplayName("setMessageReaction with empty string clears reactions")
+        void clearReactionWithEmptyString() {
+            stubPostChain(successResponseWithResult(true));
+            boolean result = client.setMessageReaction(1L, 10L, "");
+            assertThat(result).isTrue();
+        }
+
+        @Test
+        @DisplayName("setMessageReaction with null clears reactions")
+        void clearReactionWithNull() {
+            stubPostChain(successResponseWithResult(true));
+            boolean result = client.setMessageReaction(1L, 10L, null);
+            assertThat(result).isTrue();
         }
     }
 
@@ -901,11 +1072,12 @@ class TelegramClientTest {
         }
 
         @Test
-        @DisplayName("HTTP 409 conflict sets lastCallConflict=true")
+        @DisplayName("HTTP 409 conflict sets lastCallConflict=true and throws")
         void conflict409() {
             stubPostChain(errorResponse(409, "Conflict: another polling instance"));
-            Optional<TelegramResponse> result = client.callApi("getUpdates", Map.of());
-            assertThat(result).isEmpty();
+            assertThatThrownBy(() -> client.callApi("getUpdates", Map.of()))
+                .isInstanceOf(TelegramApiException.class)
+                .satisfies(ex -> assertThat(((TelegramApiException) ex).getErrorCode()).isEqualTo(409));
             assertThat(client.isLastCallConflict()).isTrue();
         }
 
@@ -914,7 +1086,8 @@ class TelegramClientTest {
         void conflictResetOnSuccess() {
             // First set conflict by doing a 409 call
             stubPostChain(errorResponse(409, "Conflict"));
-            client.callApi("getUpdates", Map.of());
+            assertThatThrownBy(() -> client.callApi("getUpdates", Map.of()))
+                .isInstanceOf(TelegramApiException.class);
             assertThat(client.isLastCallConflict()).isTrue();
 
             // Now a successful call should reset
@@ -934,13 +1107,57 @@ class TelegramClientTest {
         }
 
         @Test
-        @DisplayName("HTTP 429 rate limit with retry_after triggers retry")
-        void rateLimit429WithRetry() throws Exception {
-            ObjectNode retryParam = objectMapper.createObjectNode();
-            retryParam.set("retry_after", IntNode.valueOf(0)); // 0 seconds to keep test fast
-
+        @DisplayName("HTTP 429 rate limit throws TelegramApiException with retryAfter")
+        void rateLimit429Throws() {
             TelegramResponse error429 = errorResponseWithParams(429, "Too Many Requests",
-                    Map.of("retry_after", retryParam));
+                    Map.of("retry_after", IntNode.valueOf(3)));
+
+            stubPostChain(error429);
+
+            assertThatThrownBy(() -> client.callApi("sendMessage", Map.of("chat_id", 1)))
+                .isInstanceOf(TelegramApiException.class)
+                .satisfies(ex -> {
+                    TelegramApiException tae = (TelegramApiException) ex;
+                    assertThat(tae.getErrorCode()).isEqualTo(429);
+                    assertThat(tae.isRateLimit()).isTrue();
+                    assertThat(tae.getRetryAfter()).isEqualTo(3);
+                });
+        }
+
+        @Test
+        @DisplayName("HTTP 429 without retry_after parameter has retryAfter=-1")
+        void rateLimit429NoRetryParam() {
+            TelegramResponse error429 = errorResponse(429, "Too Many Requests");
+            stubPostChain(error429);
+
+            assertThatThrownBy(() -> client.callApi("sendMessage", Map.of("chat_id", 1)))
+                .isInstanceOf(TelegramApiException.class)
+                .satisfies(ex -> {
+                    TelegramApiException tae = (TelegramApiException) ex;
+                    assertThat(tae.getErrorCode()).isEqualTo(429);
+                    assertThat(tae.getRetryAfter()).isEqualTo(-1);
+                });
+        }
+
+        @Test
+        @DisplayName("HTTP 429 with null parameters has retryAfter=-1")
+        void rateLimit429NullParameters() {
+            TelegramResponse error429 = new TelegramResponse(false, 429, "Too Many Requests", null, null);
+            stubPostChain(error429);
+
+            assertThatThrownBy(() -> client.callApi("sendMessage", Map.of("chat_id", 1)))
+                .isInstanceOf(TelegramApiException.class)
+                .satisfies(ex -> {
+                    TelegramApiException tae = (TelegramApiException) ex;
+                    assertThat(tae.getRetryAfter()).isEqualTo(-1);
+                });
+        }
+
+        @Test
+        @DisplayName("sendMessage 429 with retry_after triggers blocking retry")
+        void sendMessage429Retry() throws Exception {
+            TelegramResponse error429 = errorResponseWithParams(429, "Too Many Requests",
+                    Map.of("retry_after", IntNode.valueOf(0))); // 0 seconds to keep test fast
 
             when(restClient.post()).thenReturn(postUriSpec);
             when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
@@ -951,20 +1168,17 @@ class TelegramClientTest {
             // First call returns 429, second call (retry) returns success
             when(responseSpec.body(TelegramResponse.class))
                     .thenReturn(error429)
-                    .thenReturn(successResponseWithResult(true));
+                    .thenReturn(successResponseWithResult(Map.of("message_id", 42)));
 
-            Optional<TelegramResponse> result = client.callApi("sendMessage", Map.of("chat_id", 1));
-            assertThat(result).isPresent();
+            Optional<Long> result = client.sendMessage(1L, "text");
+            assertThat(result).contains(42L);
         }
 
         @Test
-        @DisplayName("HTTP 429 rate limit retry also fails returns empty")
-        void rateLimit429RetryFails() throws Exception {
-            ObjectNode retryParam = objectMapper.createObjectNode();
-            retryParam.set("retry_after", IntNode.valueOf(0));
-
+        @DisplayName("sendMessage 429 retry also fails returns empty")
+        void sendMessage429RetryFails() throws Exception {
             TelegramResponse error429 = errorResponseWithParams(429, "Too Many Requests",
-                    Map.of("retry_after", retryParam));
+                    Map.of("retry_after", IntNode.valueOf(0)));
 
             when(restClient.post()).thenReturn(postUriSpec);
             when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
@@ -977,34 +1191,12 @@ class TelegramClientTest {
                     .thenReturn(error429)
                     .thenReturn(error429);
 
-            Optional<TelegramResponse> result = client.callApi("sendMessage", Map.of("chat_id", 1));
+            Optional<Long> result = client.sendMessage(1L, "text");
             assertThat(result).isEmpty();
         }
 
         @Test
-        @DisplayName("HTTP 429 without retry_after parameter does not retry")
-        void rateLimit429NoRetryParam() {
-            TelegramResponse error429 = errorResponse(429, "Too Many Requests");
-
-            stubPostChain(error429);
-
-            Optional<TelegramResponse> result = client.callApi("sendMessage", Map.of("chat_id", 1));
-            assertThat(result).isEmpty();
-        }
-
-        @Test
-        @DisplayName("HTTP 429 with null parameters does not retry")
-        void rateLimit429NullParameters() {
-            TelegramResponse error429 = new TelegramResponse(false, 429, "Too Many Requests", null, null);
-
-            stubPostChain(error429);
-
-            Optional<TelegramResponse> result = client.callApi("sendMessage", Map.of("chat_id", 1));
-            assertThat(result).isEmpty();
-        }
-
-        @Test
-        @DisplayName("null response returns empty")
+        @DisplayName("null response returns empty (not exception)")
         void nullResponse() {
             stubPostChain(null);
             Optional<TelegramResponse> result = client.callApi("sendMessage", Map.of("chat_id", 1));
@@ -1012,20 +1204,22 @@ class TelegramClientTest {
         }
 
         @Test
-        @DisplayName("exception during call returns empty")
+        @DisplayName("exception during call throws TelegramApiException")
         void callApiException() {
             when(restClient.post()).thenThrow(new RuntimeException("Connection refused"));
-            Optional<TelegramResponse> result = client.callApi("sendMessage", Map.of("chat_id", 1));
-            assertThat(result).isEmpty();
+            assertThatThrownBy(() -> client.callApi("sendMessage", Map.of("chat_id", 1)))
+                .isInstanceOf(TelegramApiException.class)
+                .satisfies(ex -> assertThat(((TelegramApiException) ex).getErrorCode()).isEqualTo(-1));
         }
 
         @Test
-        @DisplayName("non-success response with null error code returns empty")
+        @DisplayName("non-success response with null error code throws with code=0")
         void nonSuccessNullErrorCode() {
             TelegramResponse resp = new TelegramResponse(false, null, "some error", null, null);
             stubPostChain(resp);
-            Optional<TelegramResponse> result = client.callApi("sendMessage", Map.of("chat_id", 1));
-            assertThat(result).isEmpty();
+            assertThatThrownBy(() -> client.callApi("sendMessage", Map.of("chat_id", 1)))
+                .isInstanceOf(TelegramApiException.class)
+                .satisfies(ex -> assertThat(((TelegramApiException) ex).getErrorCode()).isEqualTo(0));
         }
     }
 
@@ -1056,12 +1250,39 @@ class TelegramClientTest {
         }
 
         @Test
-        @DisplayName("exception returns empty")
+        @DisplayName("exception throws TelegramApiException")
         void multipartException() {
             when(restClient.post()).thenThrow(new RuntimeException("error"));
-            Optional<TelegramResponse> result = client.callMultipartApi("sendPhoto",
-                    new org.springframework.util.LinkedMultiValueMap<>());
-            assertThat(result).isEmpty();
+            assertThatThrownBy(() -> client.callMultipartApi("sendPhoto",
+                    new org.springframework.util.LinkedMultiValueMap<>()))
+                .isInstanceOf(TelegramApiException.class);
+        }
+
+        @Test
+        @DisplayName("429 rate limit throws TelegramApiException with retryAfter")
+        void multipart429Throws() {
+            TelegramResponse error429 = errorResponseWithParams(429, "Too Many Requests",
+                    Map.of("retry_after", IntNode.valueOf(2)));
+            stubMultipartChain(error429);
+
+            assertThatThrownBy(() -> client.callMultipartApi("sendPhoto",
+                    new org.springframework.util.LinkedMultiValueMap<>()))
+                .isInstanceOf(TelegramApiException.class)
+                .satisfies(ex -> {
+                    TelegramApiException tae = (TelegramApiException) ex;
+                    assertThat(tae.getErrorCode()).isEqualTo(429);
+                    assertThat(tae.getRetryAfter()).isEqualTo(2);
+                });
+        }
+
+        @Test
+        @DisplayName("non-429 error throws TelegramApiException with error code")
+        void multipart400Throws() {
+            stubMultipartChain(errorResponse(400, "Bad request"));
+            assertThatThrownBy(() -> client.callMultipartApi("sendPhoto",
+                    new org.springframework.util.LinkedMultiValueMap<>()))
+                .isInstanceOf(TelegramApiException.class)
+                .satisfies(ex -> assertThat(((TelegramApiException) ex).getErrorCode()).isEqualTo(400));
         }
     }
 
@@ -1088,6 +1309,25 @@ class TelegramClientTest {
             boolean result = client.sendChatAction(1L, "typing");
             assertThat(result).isTrue();
         }
+
+        @Test
+        @DisplayName("rate limiter releases permit after call completes (finally block)")
+        void rateLimiterReleasesAfterCall() {
+            // With rateLimitPerSecond=1, we should be able to make 2 sequential
+            // calls because the permit is released in the finally block after
+            // the first call completes.
+            client = new TelegramClient(restClient, objectMapper, "token", 1);
+            // First call: success
+            stubPostChain(successResponseWithResult(true));
+            boolean result1 = client.sendChatAction(1L, "typing");
+            assertThat(result1).isTrue();
+
+            // Second call should also succeed because the permit was released
+            // in the finally block (not on a 1s timer)
+            when(responseSpec.body(TelegramResponse.class)).thenReturn(successResponseWithResult(true));
+            boolean result2 = client.sendChatAction(1L, "typing");
+            assertThat(result2).isTrue();
+        }
     }
 
     // ─── isLastCallConflict tests ─────────────────────────────────
@@ -1106,7 +1346,8 @@ class TelegramClientTest {
         @DisplayName("true after 409 response")
         void trueAfter409() {
             stubPostChain(errorResponse(409, "Conflict"));
-            client.callApi("getUpdates", Map.of());
+            assertThatThrownBy(() -> client.callApi("getUpdates", Map.of()))
+                .isInstanceOf(TelegramApiException.class);
             assertThat(client.isLastCallConflict()).isTrue();
         }
 
@@ -1114,8 +1355,44 @@ class TelegramClientTest {
         @DisplayName("false after non-409 error")
         void falseAfterNon409Error() {
             stubPostChain(errorResponse(400, "Bad request"));
-            client.callApi("sendMessage", Map.of("chat_id", 1));
+            assertThatThrownBy(() -> client.callApi("sendMessage", Map.of("chat_id", 1)))
+                .isInstanceOf(TelegramApiException.class);
             assertThat(client.isLastCallConflict()).isFalse();
+        }
+    }
+
+    // ─── TelegramApiException tests ──────────────────────────────
+
+    @Nested
+    @DisplayName("TelegramApiException")
+    class TelegramApiExceptionTest {
+
+        @Test
+        @DisplayName("constructor with retryAfter")
+        void constructorWithRetryAfter() {
+            TelegramApiException ex = new TelegramApiException(429, "Too Many Requests", 5);
+            assertThat(ex.getErrorCode()).isEqualTo(429);
+            assertThat(ex.getErrorDescription()).isEqualTo("Too Many Requests");
+            assertThat(ex.getRetryAfter()).isEqualTo(5);
+            assertThat(ex.isRateLimit()).isTrue();
+            assertThat(ex.getMessage()).contains("429").contains("Too Many Requests");
+        }
+
+        @Test
+        @DisplayName("constructor without retryAfter defaults to -1")
+        void constructorWithoutRetryAfter() {
+            TelegramApiException ex = new TelegramApiException(400, "Bad request");
+            assertThat(ex.getErrorCode()).isEqualTo(400);
+            assertThat(ex.getRetryAfter()).isEqualTo(-1);
+            assertThat(ex.isRateLimit()).isFalse();
+        }
+
+        @Test
+        @DisplayName("constructor with null description")
+        void constructorWithNullDescription() {
+            TelegramApiException ex = new TelegramApiException(500, null);
+            assertThat(ex.getErrorDescription()).isNull();
+            assertThat(ex.getMessage()).contains("500");
         }
     }
 }

@@ -90,4 +90,102 @@ class MessageSplitterTest {
         }
         return count;
     }
+
+    // ─── splitAndFormat tests ──────────────────────────────────────
+
+    @Test
+    void splitAndFormat_shortTextMarkdownV2_singleChunk() {
+        String text = "Hello **bold** text";
+        List<String> chunks = MessageSplitter.splitAndFormat(text, "MarkdownV2");
+        assertThat(chunks).hasSize(1);
+        // Single chunk: no indicator, just formatted
+        assertThat(chunks.get(0)).doesNotStartWith("(");
+        // Should be formatted (bold markers ** converted to * for Telegram MarkdownV2)
+        assertThat(chunks.get(0)).contains("*bold*");
+    }
+
+    @Test
+    void splitAndFormat_multiChunkMarkdownV2_escapedIndicator() {
+        // Create text > 4096 chars
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 10; i++) {
+            sb.append("Paragraph ").append(i).append(" with some text. ".repeat(100));
+            sb.append("\n\n");
+        }
+        List<String> chunks = MessageSplitter.splitAndFormat(sb.toString(), "MarkdownV2");
+        assertThat(chunks.size()).isGreaterThan(1);
+
+        // The indicator should be escaped for MarkdownV2: ( → \(, ) → \)
+        // / is NOT a special char in MarkdownV2, so it stays unescaped
+        String firstChunk = chunks.get(0);
+        // The indicator "(1/N) " should have parens escaped: "\(1/N\) "
+        assertThat(firstChunk).startsWith("\\(1/");
+        // Verify all chunks have escaped indicator at the start
+        for (String chunk : chunks) {
+            // Each chunk should start with escaped indicator \( not unescaped (
+            assertThat(chunk).startsWith("\\(");
+            // Should contain escaped version with \( and \)
+            assertThat(chunk).contains("\\(");
+            assertThat(chunk).contains("\\)");
+        }
+    }
+
+    @Test
+    void splitAndFormat_multiChunkHTML_unescapedIndicator() {
+        // Create text > 4096 chars
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 10; i++) {
+            sb.append("Paragraph ").append(i).append(" with some text. ".repeat(100));
+            sb.append("\n\n");
+        }
+        List<String> chunks = MessageSplitter.splitAndFormat(sb.toString(), "HTML");
+        assertThat(chunks.size()).isGreaterThan(1);
+        // For HTML, the indicator should NOT be escaped
+        assertThat(chunks.get(0)).startsWith("(1/");
+    }
+
+    @Test
+    void splitAndFormat_multiChunkNullParseMode_unescapedIndicator() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 10; i++) {
+            sb.append("Paragraph ").append(i).append(" with some text. ".repeat(100));
+            sb.append("\n\n");
+        }
+        List<String> chunks = MessageSplitter.splitAndFormat(sb.toString(), null);
+        assertThat(chunks.size()).isGreaterThan(1);
+        // For null parse mode, the indicator should NOT be escaped
+        assertThat(chunks.get(0)).startsWith("(1/");
+    }
+
+    @Test
+    void splitAndFormat_emptyText() {
+        List<String> chunks = MessageSplitter.splitAndFormat("", "MarkdownV2");
+        assertThat(chunks).hasSize(1);
+        assertThat(chunks.get(0)).isEmpty();
+    }
+
+    @Test
+    void splitAndFormat_nullText() {
+        List<String> chunks = MessageSplitter.splitAndFormat(null, "MarkdownV2");
+        assertThat(chunks).hasSize(1);
+        assertThat(chunks.get(0)).isEmpty();
+    }
+
+    @Test
+    void splitAndFormat_markdownV2EscapesParenthesesInIndicator() {
+        // Verify that the (1/N) indicator has escaped parens for MarkdownV2
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 10; i++) {
+            sb.append("Paragraph ").append(i).append(" with some text. ".repeat(100));
+            sb.append("\n\n");
+        }
+        List<String> chunks = MessageSplitter.splitAndFormat(sb.toString(), "MarkdownV2");
+        assertThat(chunks.size()).isGreaterThan(1);
+
+        // Check that the ( character in the indicator is escaped
+        String first = chunks.get(0);
+        assertThat(first).contains("\\(");
+        assertThat(first).contains("\\)");
+        // / is NOT a special char in MarkdownV2 so it is not escaped
+    }
 }

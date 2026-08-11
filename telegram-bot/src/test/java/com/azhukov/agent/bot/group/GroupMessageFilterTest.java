@@ -1,22 +1,30 @@
 package com.azhukov.agent.bot.group;
 
+import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+import java.util.Optional;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.*;
 
 class GroupMessageFilterTest {
 
     private BotProperties properties;
     private GroupMessageFilter filter;
+    private TelegramClient telegramClient;
 
     @BeforeEach
     void setUp() {
         properties = new BotProperties();
-        filter = new GroupMessageFilter(properties);
-        filter.setBotUsername("mybot");
+        telegramClient = mock(TelegramClient.class);
+        when(telegramClient.getMe()).thenReturn(Optional.of(Map.of("username", "mybot")));
+        filter = new GroupMessageFilter(properties, telegramClient);
+        filter.initBotUsername();
     }
 
     @Test
@@ -281,6 +289,31 @@ class GroupMessageFilterTest {
         assertThat(event.type()).isEqualTo(UpdateEvent.Type.CHANNEL_POST);
         assertThat(event.chatId()).isEqualTo(-100456L);
         assertThat(event.text()).isEqualTo("Edited channel message");
+    }
+
+    // ─── initBotUsername ─────────────────────────────────────────
+
+    @Test
+    void initBotUsername_fetchesUsernameFromGetMe() {
+        assertThat(filter.isBotMentioned("Hello @mybot")).isTrue();
+        verify(telegramClient).getMe();
+    }
+
+    @Test
+    void initBotUsername_emptyUsername_doesNotCrash() {
+        when(telegramClient.getMe()).thenReturn(Optional.of(Map.of()));
+        GroupMessageFilter f = new GroupMessageFilter(properties, telegramClient);
+        f.initBotUsername();
+        // No username set, so mention should not match
+        assertThat(f.isBotMentioned("Hello @mybot")).isFalse();
+    }
+
+    @Test
+    void initBotUsername_getMeFails_doesNotCrash() {
+        when(telegramClient.getMe()).thenReturn(Optional.empty());
+        GroupMessageFilter f = new GroupMessageFilter(properties, telegramClient);
+        f.initBotUsername();
+        assertThat(f.isBotMentioned("Hello @mybot")).isFalse();
     }
 
     // ─── Helpers ─────────────────────────────────────────────────

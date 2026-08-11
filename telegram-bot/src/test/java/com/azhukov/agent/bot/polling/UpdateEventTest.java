@@ -134,6 +134,132 @@ class UpdateEventTest {
         assertThat(event.type()).isEqualTo(UpdateEvent.Type.UNKNOWN);
     }
 
+    // ─── Edited message ────────────────────────────────────────────
+
+    @Test
+    void fromEditedMessageIsEditedMessageType() {
+        Map<String, Object> update = baseUpdate(200L);
+        update.put("edited_message", messageWithText(123L, 456L, "jdoe", "Edited text"));
+        UpdateEvent event = UpdateEvent.from(update);
+
+        assertThat(event.type()).isEqualTo(UpdateEvent.Type.EDITED_MESSAGE);
+        assertThat(event.text()).isEqualTo("Edited text");
+        assertThat(event.chatId()).isEqualTo(123L);
+        assertThat(event.userId()).isEqualTo(456L);
+        assertThat(event.username()).isEqualTo("jdoe");
+        assertThat(event.isCommand()).isFalse();
+    }
+
+    @Test
+    void fromEditedCommandMessageIsStillEditedMessageType() {
+        Map<String, Object> update = baseUpdate(201L);
+        update.put("edited_message", messageWithText(123L, 456L, "jdoe", "/new"));
+        UpdateEvent event = UpdateEvent.from(update);
+
+        // Edited messages are never commands — type stays EDITED_MESSAGE
+        assertThat(event.type()).isEqualTo(UpdateEvent.Type.EDITED_MESSAGE);
+        assertThat(event.isCommand()).isFalse();
+        assertThat(event.commandName()).isNull();
+    }
+
+    @Test
+    void fromEditedPhotoMessageIsEditedMessageType() {
+        Map<String, Object> update = baseUpdate(202L);
+        Map<String, Object> msg = messageBase(123L, 456L, "jdoe");
+        msg.put("photo", List.of(
+            Map.of("file_id", "small", "file_size", 100),
+            Map.of("file_id", "large", "file_size", 5000)
+        ));
+        msg.put("caption", "Edited caption");
+        update.put("edited_message", msg);
+        UpdateEvent event = UpdateEvent.from(update);
+
+        assertThat(event.type()).isEqualTo(UpdateEvent.Type.EDITED_MESSAGE);
+    }
+
+    // ─── Forwarded messages ────────────────────────────────────────
+
+    @Test
+    void fromForwardedMessageWithForwardFromPrefixesText() {
+        Map<String, Object> update = baseUpdate(210L);
+        Map<String, Object> msg = messageWithText(123L, 456L, "jdoe", "Hello from forward");
+        Map<String, Object> forwardFrom = new LinkedHashMap<>();
+        forwardFrom.put("id", 789);
+        forwardFrom.put("username", "original_sender");
+        msg.put("forward_from", forwardFrom);
+        update.put("message", msg);
+
+        UpdateEvent event = UpdateEvent.from(update);
+
+        assertThat(event.forwardedFrom()).isEqualTo("original_sender");
+        assertThat(event.text()).contains("[Forwarded from @original_sender]:");
+        assertThat(event.text()).contains("Hello from forward");
+    }
+
+    @Test
+    void fromForwardedMessageWithForwardOriginUserPrefixesText() {
+        Map<String, Object> update = baseUpdate(211L);
+        Map<String, Object> msg = messageWithText(123L, 456L, "jdoe", "Forwarded via origin");
+        Map<String, Object> forwardOrigin = new LinkedHashMap<>();
+        forwardOrigin.put("type", "user");
+        Map<String, Object> senderUser = new LinkedHashMap<>();
+        senderUser.put("id", 999);
+        senderUser.put("username", "origin_user");
+        forwardOrigin.put("sender_user", senderUser);
+        msg.put("forward_origin", forwardOrigin);
+        update.put("message", msg);
+
+        UpdateEvent event = UpdateEvent.from(update);
+
+        assertThat(event.forwardedFrom()).isEqualTo("origin_user");
+        assertThat(event.text()).startsWith("[Forwarded from @origin_user]:");
+    }
+
+    @Test
+    void fromForwardedMessageWithForwardOriginHiddenUserUsesName() {
+        Map<String, Object> update = baseUpdate(212L);
+        Map<String, Object> msg = messageWithText(123L, 456L, "jdoe", "Hidden forward");
+        Map<String, Object> forwardOrigin = new LinkedHashMap<>();
+        forwardOrigin.put("type", "hidden_user");
+        forwardOrigin.put("sender_user_name", "Hidden Person");
+        msg.put("forward_origin", forwardOrigin);
+        update.put("message", msg);
+
+        UpdateEvent event = UpdateEvent.from(update);
+
+        assertThat(event.forwardedFrom()).isEqualTo("Hidden Person");
+        assertThat(event.text()).startsWith("[Forwarded from @Hidden Person]:");
+    }
+
+    @Test
+    void fromForwardedMessageWithForwardOriginChatUsesChatTitle() {
+        Map<String, Object> update = baseUpdate(213L);
+        Map<String, Object> msg = messageWithText(123L, 456L, "jdoe", "Channel forward");
+        Map<String, Object> forwardOrigin = new LinkedHashMap<>();
+        forwardOrigin.put("type", "chat");
+        Map<String, Object> senderChat = new LinkedHashMap<>();
+        senderChat.put("id", -100123);
+        senderChat.put("title", "My Channel");
+        forwardOrigin.put("sender_chat", senderChat);
+        msg.put("forward_origin", forwardOrigin);
+        update.put("message", msg);
+
+        UpdateEvent event = UpdateEvent.from(update);
+
+        assertThat(event.forwardedFrom()).isEqualTo("My Channel");
+        assertThat(event.text()).startsWith("[Forwarded from @My Channel]:");
+    }
+
+    @Test
+    void fromNonForwardedMessageHasNullForwardedFrom() {
+        Map<String, Object> update = baseUpdate(214L);
+        update.put("message", messageWithText(123L, 456L, "jdoe", "Regular message"));
+        UpdateEvent event = UpdateEvent.from(update);
+
+        assertThat(event.forwardedFrom()).isNull();
+        assertThat(event.text()).isEqualTo("Regular message");
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────
 
     private Map<String, Object> baseUpdate(long updateId) {

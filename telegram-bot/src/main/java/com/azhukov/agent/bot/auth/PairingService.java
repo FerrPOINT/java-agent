@@ -129,6 +129,20 @@ public class PairingService {
     }
 
     /**
+     * Check whether a user has at least one approved pairing code.
+     *
+     * @param userId the Telegram user ID (as a string)
+     * @return {@code true} if there is at least one pairing code with status "approved" for this user
+     */
+    @Transactional(readOnly = true)
+    public boolean hasApprovedPairing(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return false;
+        }
+        return !repository.findByUserIdAndStatus(userId, "approved").isEmpty();
+    }
+
+    /**
      * Generate a random 8-char code from the unambiguous alphabet.
      */
     private String generateCode() {

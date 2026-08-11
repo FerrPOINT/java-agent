@@ -193,4 +193,80 @@ class InboundMediaHandlerTest {
         // Should NOT contain a file path (was not saved)
         assertThat(result.get()).doesNotContain("/tmp/agent-media/");
     }
+
+    // ─── Photo album: comma-separated file IDs ─────────────────────
+
+    @Test
+    void handle_commaSeparatedFileIdsProcessesEachPhoto() {
+        UpdateEvent event = new UpdateEvent(111L, UpdateEvent.Type.PHOTO, 123L, 456L,
+            "jdoe", null, "Album caption", "photo-1,photo-2,photo-3", "photo",
+            null, null, null, false, null, null);
+
+        when(mediaDownloader.downloadToFileId("photo-1"))
+            .thenReturn(Optional.of("img1".getBytes()));
+        when(mediaDownloader.downloadToFileId("photo-2"))
+            .thenReturn(Optional.of("img2".getBytes()));
+        when(mediaDownloader.downloadToFileId("photo-3"))
+            .thenReturn(Optional.of("img3".getBytes()));
+
+        Optional<String> result = handler.handle(event);
+
+        assertThat(result).isPresent();
+        // Should contain three photo descriptions
+        assertThat(result.get()).contains("[Photo:");
+        // Should mention /tmp/agent-media/ for each saved photo
+        long photoCount = result.get().lines().filter(l -> l.contains("[Photo:")).count();
+        assertThat(photoCount).isEqualTo(3);
+    }
+
+    @Test
+    void handle_commaSeparatedFileIdsWithSpacesProcessesEachPhoto() {
+        UpdateEvent event = new UpdateEvent(112L, UpdateEvent.Type.PHOTO, 123L, 456L,
+            "jdoe", null, null, "photo-a, photo-b", "photo",
+            null, null, null, false, null, null);
+
+        when(mediaDownloader.downloadToFileId("photo-a"))
+            .thenReturn(Optional.of("imgA".getBytes()));
+        when(mediaDownloader.downloadToFileId("photo-b"))
+            .thenReturn(Optional.of("imgB".getBytes()));
+
+        Optional<String> result = handler.handle(event);
+
+        assertThat(result).isPresent();
+        long photoCount = result.get().lines().filter(l -> l.contains("[Photo:")).count();
+        assertThat(photoCount).isEqualTo(2);
+    }
+
+    @Test
+    void handle_singleFileIdWithoutCommaStillWorks() {
+        UpdateEvent event = new UpdateEvent(113L, UpdateEvent.Type.PHOTO, 123L, 456L,
+            "jdoe", null, null, "single-photo", "photo",
+            null, null, null, false, null, null);
+        when(mediaDownloader.downloadToFileId("single-photo"))
+            .thenReturn(Optional.of("data".getBytes()));
+
+        Optional<String> result = handler.handle(event);
+
+        assertThat(result).isPresent();
+        long photoCount = result.get().lines().filter(l -> l.contains("[Photo:")).count();
+        assertThat(photoCount).isEqualTo(1);
+    }
+
+    @Test
+    void handle_commaSeparatedWithEmptyEntriesSkipsEmpty() {
+        UpdateEvent event = new UpdateEvent(114L, UpdateEvent.Type.PHOTO, 123L, 456L,
+            "jdoe", null, null, "photo-x,,photo-y", "photo",
+            null, null, null, false, null, null);
+
+        when(mediaDownloader.downloadToFileId("photo-x"))
+            .thenReturn(Optional.of("imgX".getBytes()));
+        when(mediaDownloader.downloadToFileId("photo-y"))
+            .thenReturn(Optional.of("imgY".getBytes()));
+
+        Optional<String> result = handler.handle(event);
+
+        assertThat(result).isPresent();
+        long photoCount = result.get().lines().filter(l -> l.contains("[Photo:")).count();
+        assertThat(photoCount).isEqualTo(2);
+    }
 }

@@ -1,11 +1,12 @@
 package com.azhukov.agent.bot.session;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-import jakarta.persistence.Transient;
 import lombok.Data;
 
 import java.time.Instant;
@@ -37,18 +38,19 @@ public class BotSessionEntity {
     private Instant createdAt;
     private Instant updatedAt;
 
-    // P0: Session lifecycle states — suspend / resume-pending
-    @Transient
+    // P0: Session lifecycle states — suspend / resume-pending (persisted)
+    @Column(name = "suspended")
     private boolean suspended = false;
-    @Transient
+    @Column(name = "resume_pending")
     private boolean resumePending = false;
 
     /**
-     * In-memory metadata storage (not persisted).
-     * Used for transient session state like standing goals, subgoals, etc.
+     * Metadata storage persisted as JSON in the {@code metadata} column.
+     * Used for session state like standing goals, subgoals, etc.
      */
-    @Transient
-    private final Map<String, String> metadata = new ConcurrentHashMap<>();
+    @Column(name = "metadata", columnDefinition = "TEXT")
+    @Convert(converter = MetadataConverter.class)
+    private ConcurrentHashMap<String, String> metadata = new ConcurrentHashMap<>();
 
     public String getMetadata(String key) {
         return metadata.get(key);

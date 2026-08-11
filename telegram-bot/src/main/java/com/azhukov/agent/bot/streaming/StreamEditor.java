@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.streaming;
 
+import com.azhukov.agent.bot.client.TelegramApiException;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.formatting.MarkdownConverter;
@@ -11,8 +12,14 @@ import org.springframework.stereotype.Service;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 
 /**
  * Manages edit-message streaming: sends an initial message, then edits it
@@ -24,7 +31,7 @@ import jakarta.annotation.PostConstruct;
  * edits (×0.9, min 1500ms). After 5 consecutive floods, streaming edits are
  * stopped and all content is buffered for the final send.
  *
- * <p>B6: Think-block filtering — {@code <think>...</think>} tags (and variants
+ * <p>B6: Think-block filtering — {@code <think>} tags (and variants
  * like {@code <thinking>}, {@code <reasoning>}) are stripped from streamed
  * output before sending to Telegram. Handles split chunks where the opening
  * or closing tag spans multiple stream deltas.
@@ -38,6 +45,33 @@ import jakarta.annotation.PostConstruct;
  * Bot API 10.1 {@code sendRichMessage} via {@link RichMessageSupport} for
  * richer rendering (tables, task lists, etc.). Falls back to MarkdownV2
  * when rich is not available or fails.
+ *
+ * <p>Streaming cursor: appends {@code ▉} (configurable) to the end of text
+ * during editStream to give visual feedback. Stripped on finalizeStream.
+ *
+ * <p>Heartbeat: during long tool calls, if no tokens arrive within
+ * {@code heartbeatIntervalSeconds}, edits the message to show
+ * {@code ⏳ Working — Nm} (elapsed minutes).
+ *
+ * <p>Fresh-final: if streaming exceeds {@code freshFinalTimeoutMs}, the old
+ * streaming message is deleted and a new one is sent with the final content,
+ * so the message gets a fresh timestamp.
+ *
+ * <p>Split during streaming: if formatted text exceeds
+ * {@code streamingMaxChars}, the current message is edited with the first
+ * portion and remaining text is sent as new messages (threaded as replies).
+ *
+ * <p>400 vs 429: distinguishes "message too long" (400) from rate limit (429).
+ * 400 does NOT increment flood strikes — just truncates and retries.
+ *
+ * <p>Per-chat adaptive rate limit: the edit interval is tracked per-chat in
+ * a {@code ConcurrentHashMap<Long, AtomicLong>}, not a single shared field.
+ *
+ * <p>finalizeStream fallback: if editMessageText returns false, tries
+ * sendMessage as a new message.
+ *
+ * <p>ThinkScrubber: stores partial closing tags across chunks and prepends
+ * to the next chunk. Supports {@code <reasoning_scratchpad>} tags.
  */
 @Service
 @Slf4j
@@ -47,7 +81,8 @@ public class StreamEditor {
     private final TelegramClient telegramClient;
     private final BotProperties properties;
     private String parseMode;
-    private long editIntervalMs;
+    private final Map<Long, AtomicLong> editIntervalMap = new ConcurrentHashMap<>();
+    private long minIntervalMs; // Configured minimum interval (from streamEditInterval)
     private final Map<Long, Long> lastEditTime = new ConcurrentHashMap<>();
 
     // B5: Adaptive rate limiting state
@@ -56,7 +91,6 @@ public class StreamEditor {
     private static final double SUCCESS_DIVISOR = 0.9;
     private static final int MAX_FLOOD_STRIKES = 5;
     private static final int FLOOD_WARN_THRESHOLD = 3;
-    private long minIntervalMs; // Configured minimum interval (from streamEditInterval)
     private final Map<Long, Integer> floodStrikes = new ConcurrentHashMap<>();
     private final Map<Long, Boolean> streamingDisabled = new ConcurrentHashMap<>();
 
@@ -69,15 +103,45 @@ public class StreamEditor {
     // P1: Rich message support for final delivery
     private RichMessageSupport richMessageSupport;
 
+    // Streaming cursor config
+    private String streamCursor;
+
+    // Heartbeat
+    private int heartbeatIntervalSeconds;
+    private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "stream-heartbeat");
+        t.setDaemon(true);
+        return t;
+    });
+    // Per-chat heartbeat state: start time, last token time, heartbeat future
+    private final Map<Long, Long> streamStartTime = new ConcurrentHashMap<>();
+    private final Map<Long, Long> lastTokenTime = new ConcurrentHashMap<>();
+    private final Map<Long, ScheduledFuture<?>> heartbeatFutures = new ConcurrentHashMap<>();
+
+    // Fresh-final
+    private long freshFinalTimeoutMs;
+
+    // Split during streaming: track current message id per chat
+    private final Map<Long, AtomicLong> currentMessageId = new ConcurrentHashMap<>();
+    private int streamingMaxChars;
+
     @PostConstruct
     void init() {
         parseMode = properties.getParseMode();
-        editIntervalMs = properties.getStreamEditInterval().toMillis();
-        minIntervalMs = editIntervalMs; // B5: use configured interval as the floor
+        minIntervalMs = properties.getStreamEditInterval().toMillis();
         streamingSilent = properties.isStreamingSilent();
+        streamCursor = properties.getStreamCursor();
+        heartbeatIntervalSeconds = properties.getHeartbeatIntervalSeconds();
+        freshFinalTimeoutMs = properties.getFreshFinalTimeoutMs();
+        streamingMaxChars = properties.getStreamingMaxChars();
         // P1: Initialize rich message support
         this.richMessageSupport = new RichMessageSupport(telegramClient);
         this.richMessageSupport.setRichMessagesEnabled(properties.getRichMessages().isEnabled());
+    }
+
+    @PreDestroy
+    void destroy() {
+        heartbeatExecutor.shutdownNow();
     }
 
     /**
@@ -93,6 +157,10 @@ public class StreamEditor {
         // B5: Reset flood state
         floodStrikes.remove(chatId);
         streamingDisabled.remove(chatId);
+        // Reset per-chat interval
+        editIntervalMap.remove(chatId);
+        // Reset current message id
+        currentMessageId.remove(chatId);
 
         String scrubbed = scrubThink(chatId, initialText);
         String formatted = formatForTelegram(scrubbed);
@@ -100,6 +168,13 @@ public class StreamEditor {
         Optional<Long> messageId = sendMessageWithNotification(chatId, formatted, false);
         if (messageId.isPresent()) {
             lastEditTime.put(chatId, System.currentTimeMillis());
+            // Record start time for heartbeat and fresh-final
+            long now = System.currentTimeMillis();
+            streamStartTime.put(chatId, now);
+            lastTokenTime.put(chatId, now);
+            currentMessageId.put(chatId, new AtomicLong(messageId.get()));
+            // Start heartbeat
+            startHeartbeat(chatId);
             log.debug("Started stream for chat {}, messageId={}", chatId, messageId.get());
         } else {
             log.warn("Failed to start stream for chat {}", chatId);
@@ -109,12 +184,19 @@ public class StreamEditor {
 
     /**
      * Edits the streaming message with updated text. Throttled to
-     * {@code editIntervalMs} — calls made too soon after the last edit
+     * the per-chat edit interval — calls made too soon after the last edit
      * are silently skipped.
      *
      * <p>B5: On 429 flood error, increases the interval exponentially.
      * After 5 consecutive floods, streaming edits are disabled and content
      * is buffered for the final send.
+     *
+     * <p>Streaming cursor: appends the configured cursor character to the
+     * end of the text to give visual feedback that streaming is active.
+     *
+     * <p>Split: if formatted text exceeds streamingMaxChars, edits the
+     * current message with the first portion and sends remaining as new
+     * messages (threaded as replies).
      *
      * @param chatId    target chat id
      * @param messageId the message id returned by {@link #startStream}
@@ -122,6 +204,9 @@ public class StreamEditor {
      * @return {@code true} if the edit was sent, {@code false} if throttled or failed
      */
     public boolean editStream(long chatId, long messageId, String text) {
+        // Update last token time (token arrived)
+        lastTokenTime.put(chatId, System.currentTimeMillis());
+
         // B5: Check if streaming has been disabled due to flood limits
         if (Boolean.TRUE.equals(streamingDisabled.get(chatId))) {
             log.debug("Streaming edits disabled for chat {} due to flood limits, buffering", chatId);
@@ -142,9 +227,29 @@ public class StreamEditor {
         String scrubbed = scrubThink(chatId, text);
         String formatted = formatForTelegram(scrubbed);
 
+        // Append streaming cursor
+        String withCursor = formatted + streamCursor;
+
+        // Split if text exceeds max chars
+        if (streamingMaxChars > 0 && withCursor.length() > streamingMaxChars) {
+            return editStreamSplit(chatId, messageId, withCursor);
+        }
+
         // B7: Silent notification during streaming
         boolean disableNotification = streamingSilent;
-        boolean success = telegramClient.editMessageText(chatId, messageId, formatted, parseMode, disableNotification);
+        boolean success;
+        try {
+            success = telegramClient.editMessageText(chatId, messageId, withCursor, parseMode, disableNotification);
+        } catch (TelegramApiException e) {
+            if (e.isRateLimit()) {
+                // 429 from editMessageText — apply adaptive flood handling.
+                // callApi already set lastApiErrorCode=429 before throwing,
+                // so handleEditFailure will see the correct error code.
+                success = handleEditFailure(chatId, messageId, formatted);
+            } else {
+                throw e;
+            }
+        }
 
         if (success) {
             lastEditTime.put(chatId, now);
@@ -153,10 +258,66 @@ public class StreamEditor {
             // Reset flood strikes on success
             floodStrikes.remove(chatId);
         } else {
-            // B5: Edit failed — could be a 429 flood. Increase interval.
-            handleEditFailure(chatId);
+            // B5: Edit failed — check error code. handleEditFailure may
+            // do a truncated retry for 400 errors; if the retry succeeds,
+            // treat the overall editStream as successful.
+            success = handleEditFailure(chatId, messageId, formatted);
         }
         return success;
+    }
+
+    /**
+     * Handle splitting during streaming: edit current message with first
+     * portion, send remaining as new messages (threaded as replies).
+     */
+    private boolean editStreamSplit(long chatId, long messageId, String withCursor) {
+        // First portion: first streamingMaxChars chars (minus cursor space)
+        int firstLen = streamingMaxChars - streamCursor.length();
+        if (firstLen <= 0) firstLen = streamingMaxChars;
+        String firstPart = withCursor.substring(0, Math.min(firstLen, withCursor.length()));
+        String remainder = withCursor.length() > firstLen ? withCursor.substring(firstLen) : "";
+
+        boolean disableNotification = streamingSilent;
+        boolean success;
+        try {
+            success = telegramClient.editMessageText(chatId, messageId, firstPart, parseMode, disableNotification);
+        } catch (TelegramApiException e) {
+            if (e.isRateLimit()) {
+                success = handleEditFailure(chatId, messageId, firstPart);
+                return false;
+            } else {
+                throw e;
+            }
+        }
+
+        if (success) {
+            lastEditTime.put(chatId, System.currentTimeMillis());
+            decreaseInterval(chatId);
+            floodStrikes.remove(chatId);
+        } else {
+            handleEditFailure(chatId, messageId, firstPart);
+            return false;
+        }
+
+        // Send remainder as new messages, threaded as replies to previous
+        long prevMsgId = messageId;
+        if (!remainder.isEmpty()) {
+            // Split remainder further if needed
+            int pos = 0;
+            while (pos < remainder.length()) {
+                int end = Math.min(pos + streamingMaxChars, remainder.length());
+                String chunk = remainder.substring(pos, end);
+                Optional<Long> newMsgId = telegramClient.sendMessage(
+                    chatId, chunk, parseMode, prevMsgId, null);
+                if (newMsgId.isPresent()) {
+                    prevMsgId = newMsgId.get();
+                    currentMessageId.put(chatId, new AtomicLong(prevMsgId));
+                }
+                pos = end;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -169,14 +330,55 @@ public class StreamEditor {
      * <p>P1 Rich Messages: Attempts rich message delivery first, falling back
      * to the MarkdownV2 edit path when rich is unavailable or fails.
      *
+     * <p>Fresh-final: if (now - startTime) > freshFinalTimeoutMs, deletes the
+     * old streaming message and sends a NEW one with the final content
+     * (fresh timestamp).
+     *
+     * <p>Fallback: if editMessageText returns false, tries sendMessage.
+     *
      * @param chatId    target chat id
      * @param messageId the message id returned by {@link #startStream}
      * @param finalText the complete final text
      * @return {@code true} if the edit succeeded
      */
     public boolean finalizeStream(long chatId, long messageId, String finalText) {
+        // Stop heartbeat
+        stopHeartbeat(chatId);
+
         // B6: Final scrub — also flush any remaining think-block state
         String scrubbed = scrubThinkFinal(chatId, finalText);
+
+        // Check fresh-final: if streaming exceeded timeout, delete old message
+        // and send a new one
+        Long startTime = streamStartTime.get(chatId);
+        boolean freshFinal = startTime != null
+            && (System.currentTimeMillis() - startTime) > freshFinalTimeoutMs;
+
+        if (freshFinal) {
+            log.debug("Fresh-final for chat {} (stream exceeded {}ms), deleting old msg {} and sending new",
+                chatId, freshFinalTimeoutMs, messageId);
+            // P1: Try rich message delivery first
+            if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
+                Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null, null);
+                if (richMsgId.isPresent()) {
+                    telegramClient.deleteMessage(chatId, messageId);
+                    cleanupStream(chatId);
+                    return true;
+                }
+            }
+            // Delete old message and send new one
+            telegramClient.deleteMessage(chatId, messageId);
+            String formatted = formatForTelegram(scrubbed);
+            Optional<Long> newMsgId = sendMessageWithNotification(chatId, formatted, false);
+            cleanupStream(chatId);
+            if (newMsgId.isPresent()) {
+                log.debug("Fresh-final sent for chat {}, new messageId={}", chatId, newMsgId.get());
+                return true;
+            } else {
+                log.warn("Fresh-final sendMessage failed for chat {}", chatId);
+                return false;
+            }
+        }
 
         // P1: Try rich message delivery first (uses raw markdown, not formatted)
         if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
@@ -194,7 +396,32 @@ public class StreamEditor {
 
         String formatted = formatForTelegram(scrubbed);
         // B7: Final message — NOT silent (push notification enabled)
-        boolean success = telegramClient.editMessageText(chatId, messageId, formatted, parseMode, false);
+        boolean success;
+        try {
+            success = telegramClient.editMessageText(chatId, messageId, formatted, parseMode, false);
+        } catch (TelegramApiException e) {
+            if (e.isRateLimit()) {
+                // 429 on final edit — fall through to sendMessage fallback
+                log.warn("Final edit 429 rate limited for chat {}, trying sendMessage fallback", chatId);
+                success = false;
+            } else {
+                throw e;
+            }
+        }
+
+        // Fallback: if edit failed, try sendMessage as a new message
+        if (!success) {
+            log.warn("Final edit failed for chat {}, messageId={}, trying sendMessage fallback", chatId, messageId);
+            Optional<Long> fallbackMsgId = sendMessageWithNotification(chatId, formatted, false);
+            if (fallbackMsgId.isPresent()) {
+                // Optionally delete the old stale message
+                telegramClient.deleteMessage(chatId, messageId);
+                cleanupStream(chatId);
+                log.debug("Finalize fallback succeeded for chat {}, new messageId={}", chatId, fallbackMsgId.get());
+                return true;
+            }
+        }
+
         cleanupStream(chatId);
         if (success) {
             log.debug("Finalized stream for chat {}, messageId={}", chatId, messageId);
@@ -210,6 +437,11 @@ public class StreamEditor {
         floodStrikes.remove(chatId);
         streamingDisabled.remove(chatId);
         thinkScrubbers.remove(chatId);
+        editIntervalMap.remove(chatId);
+        streamStartTime.remove(chatId);
+        lastTokenTime.remove(chatId);
+        currentMessageId.remove(chatId);
+        stopHeartbeat(chatId);
     }
 
     /**
@@ -222,43 +454,153 @@ public class StreamEditor {
         floodStrikes.remove(chatId);
         streamingDisabled.remove(chatId);
         thinkScrubbers.remove(chatId);
+        editIntervalMap.remove(chatId);
+        streamStartTime.remove(chatId);
+        lastTokenTime.remove(chatId);
+        currentMessageId.remove(chatId);
+        stopHeartbeat(chatId);
+    }
+
+    // ─── Heartbeat ───────────────────────────────────────────────
+
+    private void startHeartbeat(long chatId) {
+        stopHeartbeat(chatId); // Cancel any existing
+        int interval = heartbeatIntervalSeconds > 0 ? heartbeatIntervalSeconds : 60;
+        ScheduledFuture<?> future = heartbeatExecutor.scheduleAtFixedRate(() -> {
+            try {
+                checkHeartbeat(chatId);
+            } catch (Exception e) {
+                log.warn("Heartbeat error for chat {}: {}", chatId, e.getMessage());
+            }
+        }, interval, interval, TimeUnit.SECONDS);
+        heartbeatFutures.put(chatId, future);
+    }
+
+    private void stopHeartbeat(long chatId) {
+        ScheduledFuture<?> future = heartbeatFutures.remove(chatId);
+        if (future != null) {
+            future.cancel(false);
+        }
+    }
+
+    private void checkHeartbeat(long chatId) {
+        Long startTime = streamStartTime.get(chatId);
+        Long lastToken = lastTokenTime.get(chatId);
+        AtomicLong msgIdRef = currentMessageId.get(chatId);
+        if (startTime == null || lastToken == null || msgIdRef == null) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        long intervalMs = heartbeatIntervalSeconds > 0 ? heartbeatIntervalSeconds * 1000L : 60000L;
+
+        // Check if no tokens arrived recently (within the heartbeat interval)
+        if ((now - lastToken) < intervalMs) {
+            return; // Tokens are arriving, no need for heartbeat
+        }
+
+        long elapsedMinutes = (now - startTime) / 60000;
+        if (elapsedMinutes < 1) {
+            return; // Less than 1 minute, don't show heartbeat yet
+        }
+
+        long msgId = msgIdRef.get();
+        String heartbeatText = "⏳ Working — " + elapsedMinutes + "m";
+        boolean disableNotification = streamingSilent;
+        log.debug("Heartbeat for chat {}: {}", chatId, heartbeatText);
+        try {
+            telegramClient.editMessageText(chatId, msgId, heartbeatText, parseMode, disableNotification);
+        } catch (TelegramApiException e) {
+            if (e.isRateLimit()) {
+                log.debug("Heartbeat edit 429 rate limited for chat {}, skipping", chatId);
+            } else {
+                throw e;
+            }
+        }
     }
 
     // ─── B5: Adaptive rate limiting ──────────────────────────────
 
     private long getEffectiveInterval(long chatId) {
-        // Use the current editIntervalMs (which may have been adjusted)
-        return editIntervalMs;
+        AtomicLong interval = editIntervalMap.get(chatId);
+        if (interval == null) {
+            return minIntervalMs;
+        }
+        return interval.get();
     }
 
     private void increaseInterval(long chatId) {
-        long newInterval = Math.min((long) (editIntervalMs * FLOOD_MULTIPLIER), MAX_INTERVAL_MS);
-        if (newInterval != editIntervalMs) {
+        AtomicLong interval = editIntervalMap.computeIfAbsent(chatId, k -> new AtomicLong(minIntervalMs));
+        long current = interval.get();
+        long newInterval = Math.min((long) (current * FLOOD_MULTIPLIER), MAX_INTERVAL_MS);
+        if (newInterval != current) {
             log.info("Increasing edit interval from {}ms to {}ms due to flood (chat {})",
-                editIntervalMs, newInterval, chatId);
+                current, newInterval, chatId);
+            interval.set(newInterval);
         }
-        editIntervalMs = newInterval;
     }
 
     private void decreaseInterval(long chatId) {
-        long newInterval = Math.max((long) (editIntervalMs * SUCCESS_DIVISOR), minIntervalMs);
-        if (newInterval != editIntervalMs) {
+        AtomicLong interval = editIntervalMap.computeIfAbsent(chatId, k -> new AtomicLong(minIntervalMs));
+        long current = interval.get();
+        long newInterval = Math.max((long) (current * SUCCESS_DIVISOR), minIntervalMs);
+        if (newInterval != current) {
             log.debug("Decreasing edit interval from {}ms to {}ms after successful edit (chat {})",
-                editIntervalMs, newInterval, chatId);
+                current, newInterval, chatId);
+            interval.set(newInterval);
         }
-        editIntervalMs = newInterval;
     }
 
-    private void handleEditFailure(long chatId) {
-        int strikes = floodStrikes.merge(chatId, 1, Integer::sum);
-        log.debug("Edit failure for chat {}, flood strikes: {}", chatId, strikes);
+    /**
+     * Handle edit failure. Distinguishes 400 (message too long) from 429 (flood).
+     * - 400: don't increment flood strikes, just truncate and retry.
+     *   Returns true if the truncated retry succeeds, false otherwise.
+     * - 429: increment flood strikes, increase interval, possibly disable.
+     *   Returns false.
+     * - Other: treat as generic failure (increment flood strikes conservatively).
+     *   Returns false.
+     *
+     * @return true if the failure was handled successfully (e.g. truncated retry
+     *         succeeded), false otherwise
+     */
+    private boolean handleEditFailure(long chatId, long messageId, String formatted) {
+        int errorCode = telegramClient.getLastApiErrorCode();
 
-        // Increase interval on every failure
+        if (errorCode == 400) {
+            // Message too long — don't increment flood strikes, just truncate and retry
+            log.debug("Edit failed with 400 (message too long) for chat {}, truncating and retrying", chatId);
+            // Truncate to a safe length and retry
+            String truncated = formatted.length() > 4000 ? formatted.substring(0, 4000) : formatted;
+            boolean disableNotification = streamingSilent;
+            boolean retried;
+            try {
+                retried = telegramClient.editMessageText(chatId, messageId, truncated, parseMode, disableNotification);
+            } catch (TelegramApiException retryEx) {
+                if (retryEx.isRateLimit()) {
+                    // Truncated retry also got 429 — treat as flood
+                    log.debug("Truncated retry got 429 for chat {}", chatId);
+                    return false;
+                }
+                throw retryEx;
+            }
+            if (retried) {
+                lastEditTime.put(chatId, System.currentTimeMillis());
+                decreaseInterval(chatId);
+                floodStrikes.remove(chatId);
+            }
+            return retried;
+        }
+
+        // 429 or other failure — increment flood strikes
+        int strikes = floodStrikes.merge(chatId, 1, Integer::sum);
+        log.debug("Edit failure (errorCode={}) for chat {}, flood strikes: {}", errorCode, chatId, strikes);
+
+        // Increase interval on flood
         increaseInterval(chatId);
 
         if (strikes >= FLOOD_WARN_THRESHOLD) {
             log.warn("Flood strike threshold ({}) reached for chat {}, current interval: {}ms",
-                strikes, chatId, editIntervalMs);
+                strikes, chatId, getEffectiveInterval(chatId));
         }
 
         if (strikes >= MAX_FLOOD_STRIKES) {
@@ -266,18 +608,31 @@ public class StreamEditor {
                 MAX_FLOOD_STRIKES, chatId);
             streamingDisabled.put(chatId, true);
         }
+        return false;
     }
 
     // ─── B6: Think-block filtering ───────────────────────────────
 
     /**
-     * Stateful scrubber for {@code <think>...</think>} blocks.
+     * Stateful scrubber for {@code <think>} blocks.
      * Handles split chunks where the opening or closing tag spans
      * multiple stream deltas.
+     *
+     * <p>Also supports {@code <reasoning_scratchpad>} tags.
+     *
+     * <p>Partial closing tags are stored in a field and prepended to the
+     * next chunk to handle split closing tags across stream deltas.
      */
     static class ThinkScrubber {
         private boolean insideThinkBlock = false;
         private StringBuilder pendingTag = new StringBuilder();
+        private String pendingClosingTag = null; // Partial closing tag stored across chunks
+
+        // Tag lists — include REASONING_SCRATCHPAD
+        private static final String[] OPENING_TAGS = {"<think", "<thinking", "<reasoning", "<thought", "<reasoning_scratchpad"};
+        private static final String[] CLOSING_TAGS = {"</think>", "</thinking>", "</reasoning>", "</thought>", "</reasoning_scratchpad>"};
+        private static final String[] CLOSING_TAG_PREFIXES = {"</think", "</thinking", "</reasoning", "</thought", "</reasoning_scratchpad"};
+        private static final String[] OPENING_TAG_PREFIXES = {"<think", "<thinking", "<reasoning", "<thought", "<reasoning_scratchpad"};
 
         /**
          * Process a text chunk, removing any think-block content.
@@ -290,6 +645,13 @@ public class StreamEditor {
         String scrub(String input) {
             if (input == null || input.isEmpty()) {
                 return "";
+            }
+
+            // If we have a pending partial closing tag from the previous chunk,
+            // prepend it to this chunk
+            if (pendingClosingTag != null) {
+                input = pendingClosingTag + input;
+                pendingClosingTag = null;
             }
 
             // If we're inside a think block, look for the closing tag
@@ -364,13 +726,13 @@ public class StreamEditor {
         String flush() {
             insideThinkBlock = false;
             pendingTag.setLength(0);
+            pendingClosingTag = null;
             return "";
         }
 
         private int findOpeningTag(String text, int from) {
-            String[] tags = {"<think", "<thinking", "<reasoning", "<thought"};
             int earliest = -1;
-            for (String tag : tags) {
+            for (String tag : OPENING_TAGS) {
                 int idx = findIgnoreCase(text, tag, from);
                 if (idx >= 0 && (earliest < 0 || idx < earliest)) {
                     earliest = idx;
@@ -384,9 +746,8 @@ public class StreamEditor {
         }
 
         private int findClosingTag(String text, int from) {
-            String[] tags = {"</think>", "</thinking>", "</reasoning>", "</thought>"};
             int earliest = -1;
-            for (String tag : tags) {
+            for (String tag : CLOSING_TAGS) {
                 int idx = findIgnoreCase(text, tag, from);
                 if (idx >= 0 && (earliest < 0 || idx < earliest)) {
                     earliest = idx;
@@ -401,13 +762,17 @@ public class StreamEditor {
             return gt >= 0 ? gt + 1 : text.length();
         }
 
+        /**
+         * Check if the end of text contains a partial closing tag like "</thin".
+         * If found, store it in pendingClosingTag so it can be prepended to the
+         * next chunk.
+         */
         private void checkPartialClosingTag(String text) {
-            // Check if the end of text contains a partial closing tag like "</thin"
-            String[] tags = {"</think", "</thinking", "</reasoning", "</thought"};
-            for (String tag : tags) {
+            for (String tag : CLOSING_TAG_PREFIXES) {
                 for (int len = Math.min(tag.length() - 1, text.length()); len >= 2; len--) {
                     if (text.endsWith(tag.substring(0, len))) {
-                        // Partial closing tag at end — don't suppress it, let next chunk complete it
+                        // Partial closing tag at end — store it for the next chunk
+                        pendingClosingTag = tag.substring(0, len);
                         return;
                     }
                 }
@@ -419,8 +784,7 @@ public class StreamEditor {
          * Returns [safe_text, pending_tag_or_null].
          */
         private String[] splitPartialOpeningTag(String text) {
-            String[] tags = {"<think", "<thinking", "<reasoning", "<thought"};
-            for (String tag : tags) {
+            for (String tag : OPENING_TAG_PREFIXES) {
                 for (int len = Math.min(tag.length() - 1, text.length()); len >= 1; len--) {
                     String suffix = tag.substring(0, len);
                     if (text.endsWith(suffix)) {

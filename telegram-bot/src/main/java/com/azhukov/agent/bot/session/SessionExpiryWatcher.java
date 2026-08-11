@@ -2,6 +2,8 @@ package com.azhukov.agent.bot.session;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PreDestroy;
@@ -35,6 +37,15 @@ public class SessionExpiryWatcher {
     });
 
     private volatile boolean started = false;
+
+    /**
+     * Auto-start the watcher when the application is ready.
+     * Uses a default check interval of 1 hour (3600 seconds).
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void autoStart() {
+        start(3600L);
+    }
 
     /**
      * Start the background watcher. Idempotent — safe to call multiple times.

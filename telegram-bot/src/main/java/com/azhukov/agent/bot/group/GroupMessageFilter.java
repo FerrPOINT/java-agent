@@ -1,12 +1,16 @@
 package com.azhukov.agent.bot.group;
 
+import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /**
  * Filters messages in group chats based on @mention requirements and guest mode.
@@ -19,7 +23,31 @@ import java.util.List;
 public class GroupMessageFilter {
 
     private final BotProperties properties;
+    private final TelegramClient telegramClient;
     private String botUsername = "";
+
+    /**
+     * Initialize {@code botUsername} from the Telegram API getMe call.
+     * Logs a warning if require-mention is enabled but botUsername is empty.
+     */
+    @PostConstruct
+    void initBotUsername() {
+        try {
+            Optional<Map<String, Object>> me = telegramClient.getMe();
+            if (me.isPresent()) {
+                Object username = me.get().get("username");
+                if (username != null) {
+                    setBotUsername(username.toString());
+                    log.info("GroupMessageFilter initialized bot username: @{}", botUsername);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to fetch bot username via getMe: {}", e.getMessage());
+        }
+        if (properties.getGroup().isRequireMention() && botUsername.isBlank()) {
+            log.warn("require-mention is enabled but botUsername is empty — @mention matching will not work");
+        }
+    }
 
     /**
      * Set the bot's username (without @) for mention matching.
@@ -89,12 +117,6 @@ public class GroupMessageFilter {
         }
 
         if (mentioned) {
-            return true;
-        }
-
-        // Guest mode: allow if @botname present (already checked above) — but only
-        // matters for unauthorized chats. If guest mode is on and mentioned, allow.
-        if (group.isGuestMode() && mentioned) {
             return true;
         }
 

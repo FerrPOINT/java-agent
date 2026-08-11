@@ -30,6 +30,7 @@ import org.mockito.ArgumentCaptor;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -1108,6 +1109,7 @@ class BotMessageProcessorTest {
     void mediaPatternSendsPhoto(@TempDir Path tempDir) throws Exception {
         Path mediaFile = tempDir.resolve("test.jpg");
         Files.write(mediaFile, new byte[]{1, 2, 3});
+        properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
         when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), anyString()))
@@ -1119,15 +1121,18 @@ class BotMessageProcessorTest {
 
     @Test
     void mediaPatternFileNotFoundSendsErrorMessage() {
-        stubStreamingResult("MEDIA:/nonexistent/path/to/file.jpg", false);
+        // Path is within working dir but file doesn't exist
+        properties.setWorkingDirectory("/tmp");
+        stubStreamingResult("MEDIA:/tmp/nonexistent_path_to_file.jpg", false);
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendMessage(eq(100L), contains("Media file not found"));
+        verify(telegramClient).sendMessage(eq(100L), contains("Media file not found"), anyString(), any(), any());
     }
 
     @Test
     void mediaPatternWithRemainingTextSendsBoth(@TempDir Path tempDir) throws Exception {
         Path mediaFile = tempDir.resolve("test.jpg");
         Files.write(mediaFile, new byte[]{1, 2, 3});
+        properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("Here is the photo\nMEDIA:" + mediaFile.toString(), false);
         when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), anyString()))
@@ -1142,23 +1147,25 @@ class BotMessageProcessorTest {
     void mediaPatternFileNotAFileSendsError(@TempDir Path tempDir) throws Exception {
         Path dir = tempDir.resolve("notfile");
         Files.createDirectories(dir);
+        properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("MEDIA:" + dir.toString(), false);
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendMessage(eq(100L), contains("Media file not found"));
+        verify(telegramClient).sendMessage(eq(100L), contains("Media file not found"), anyString(), any(), any());
     }
 
     @Test
     void mediaPatternSendPhotoThrowsExceptionSendsError(@TempDir Path tempDir) throws Exception {
         Path mediaFile = tempDir.resolve("test.jpg");
         Files.write(mediaFile, new byte[]{1, 2, 3});
+        properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
         when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), anyString()))
             .thenThrow(new RuntimeException("send failed"));
 
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendMessage(eq(100L), contains("Failed to send media"));
+        verify(telegramClient).sendMessage(eq(100L), contains("Failed to send media"), anyString(), any(), any());
     }
 
     // ─── sendFormatted — reply modes ────────────────────────────
@@ -1682,6 +1689,7 @@ class BotMessageProcessorTest {
         properties.setParseMode("MarkdownV2");
         Path mediaFile = tempDir.resolve("test.jpg");
         Files.write(mediaFile, new byte[]{1, 2, 3});
+        properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
         when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), anyString()))
@@ -1755,5 +1763,152 @@ class BotMessageProcessorTest {
         processor.accept(textEvent(1, 100L, "hello"));
         // Only non-blank chunks should be sent
         verify(telegramClient, atLeast(1)).sendMessage(eq(100L), argThat(s -> s != null && !s.isBlank()), anyString(), any(), any());
+    }
+
+    // ─── Edited message handling ──────────────────────────────────
+
+    @Test
+    void editedMessageSendsEditedNotice() {
+        UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.EDITED_MESSAGE, 100L, 200L,
+            "testuser", "edited text", null, null, null,
+            null, null, null, false, null, null, 101L, null, 0, null);
+        processor.accept(event);
+        verify(telegramClient).sendMessage(eq(100L), contains("Message edited"), anyString(), any(), any());
+    }
+
+    @Test
+    void editedMessageDoesNotCallBackend() {
+        UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.EDITED_MESSAGE, 100L, 200L,
+            "testuser", "edited text", null, null, null,
+            null, null, null, false, null, null, 101L, null, 0, null);
+        processor.accept(event);
+        verify(backendClient, never()).chatStream(anyString(), anyString(), any(), any(), any(), any(), any(), any());
+    }
+
+    // ─── MEDIA: path traversal protection ──────────────────────────
+
+    @Test
+    void mediaPathTraversalAttackSkipsFile(@TempDir Path tempDir) throws Exception {
+        // Create a file inside tempDir, then try to access it via a path traversal
+        Path mediaFile = tempDir.resolve("test.jpg");
+        Files.write(mediaFile, new byte[]{1, 2, 3});
+
+        // Set working directory to something else so tempDir is not allowed
+        properties.setWorkingDirectory("/opt/dev/java-agent");
+
+        stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
+        processor.accept(textEvent(1, 100L, "hello"));
+        // The file should NOT be sent because the path is outside allowed dirs
+        verify(telegramClient, never()).sendPhoto(anyLong(), any(byte[].class), any(), anyString());
+    }
+
+    @Test
+    void mediaPathWithinWorkingDirectorySendsFile(@TempDir Path tempDir) throws Exception {
+        Path mediaFile = tempDir.resolve("test.jpg");
+        Files.write(mediaFile, new byte[]{1, 2, 3});
+
+        // Set working directory to tempDir so the file is within allowed bounds
+        properties.setWorkingDirectory(tempDir.toString());
+
+        stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
+        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), anyString()))
+            .thenReturn(Optional.of(1L));
+        processor.accept(textEvent(1, 100L, "hello"));
+        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), anyString());
+    }
+
+    @Test
+    void mediaPathWithinAgentMediaDirSendsFile() throws Exception {
+        // The /tmp/agent-media/ directory is always allowed
+        Path mediaDir = Paths.get("/tmp/agent-media/");
+        Files.createDirectories(mediaDir);
+        Path mediaFile = mediaDir.resolve("traversal-test.jpg");
+        try {
+            Files.write(mediaFile, new byte[]{1, 2, 3});
+            properties.setWorkingDirectory("/some/other/dir");
+
+            stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
+            when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), anyString()))
+                .thenReturn(Optional.of(1L));
+            processor.accept(textEvent(1, 100L, "hello"));
+            verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), anyString());
+        } finally {
+            Files.deleteIfExists(mediaFile);
+        }
+    }
+
+    @Test
+    void mediaPathTraversalWithRelativePathSkipsFile(@TempDir Path tempDir) throws Exception {
+        Path mediaFile = tempDir.resolve("test.jpg");
+        Files.write(mediaFile, new byte[]{1, 2, 3});
+
+        properties.setWorkingDirectory("/opt/dev/java-agent");
+
+        // Try a path with .. traversal
+        String traversalPath = tempDir.resolve("test.jpg").toString();
+        stubStreamingResult("MEDIA:" + traversalPath, false);
+        processor.accept(textEvent(1, 100L, "hello"));
+        verify(telegramClient, never()).sendPhoto(anyLong(), any(byte[].class), any(), anyString());
+    }
+
+    // ─── message_thread_id pass-through ────────────────────────────
+
+    @Test
+    void threadIdPassedToStreamChatAndSendFormatted() {
+        stubStreamingResult("response", false);
+        UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.TEXT, 100L, 200L,
+            "testuser", "hello", null, null, null,
+            null, null, null, false, null, null, 101L, null, 42L);
+        processor.accept(event);
+        // Verify sendMessage was called with threadId=42
+        verify(telegramClient).sendMessage(eq(100L), anyString(), anyString(), any(), eq(42), anyBoolean());
+    }
+
+    @Test
+    void threadIdPassedToEditedMessageResponse() {
+        UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.EDITED_MESSAGE, 100L, 200L,
+            "testuser", "edited", null, null, null,
+            null, null, null, false, null, null, 101L, null, 55L);
+        processor.accept(event);
+        verify(telegramClient).sendMessage(eq(100L), anyString(), anyString(), any(), eq(55), anyBoolean());
+    }
+
+    // ─── Race condition: per-chat lock ────────────────────────────
+
+    @Test
+    void perChatLockSerializesConcurrentMessages() throws Exception {
+        long chatId = 100L;
+
+        // Simulate concurrent processing — the lock should serialize them
+        int numThreads = 3;
+        java.util.concurrent.ExecutorService exec = java.util.concurrent.Executors.newFixedThreadPool(numThreads);
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(numThreads);
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(numThreads);
+        java.util.concurrent.atomic.AtomicInteger concurrent = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger maxConcurrent = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        when(backendClient.chatStream(anyString(), anyString(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                int cur = concurrent.incrementAndGet();
+                maxConcurrent.set(Math.max(maxConcurrent.get(), cur));
+                Thread.sleep(50); // simulate work
+                concurrent.decrementAndGet();
+                return new AgentBackendClient.ChatResult("response", "test-model", 100, 1000, true, false);
+            });
+
+        for (int i = 0; i < numThreads; i++) {
+            final int idx = i;
+            exec.submit(() -> {
+                start.countDown();
+                try { start.await(); } catch (InterruptedException e) { return; }
+                processor.accept(textEvent(idx + 1, chatId, "msg " + idx));
+                done.countDown();
+            });
+        }
+        done.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        exec.shutdown();
+
+        // The per-chat lock should ensure only 1 concurrent processing for this chat
+        assertThat(maxConcurrent.get()).isEqualTo(1);
     }
 }

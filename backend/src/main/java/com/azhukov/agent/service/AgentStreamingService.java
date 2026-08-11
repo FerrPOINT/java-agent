@@ -42,6 +42,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.TimeoutException;
 import lombok.RequiredArgsConstructor;
 
 @Slf4j
@@ -71,6 +72,14 @@ public class AgentStreamingService {
 
     private static final int MAX_STREAM_RETRIES = 2;
     private static final int MAX_CONTINUATION_ATTEMPTS = 1;
+
+    /**
+     * Volatile flag shared between the streaming thread and SseEmitter lifecycle
+     * callbacks (which fire on the servlet container thread).  When the client
+     * disconnects (timeout, error, or completion), this is set to true so that
+     * {@link #send(SseEmitter, StreamEvent)} can skip further writes.
+     */
+    private volatile boolean clientDisconnected = false;
 
 
     public SseEmitter streamTurn(ChatRequest request) {
@@ -137,13 +146,42 @@ public class AgentStreamingService {
     }
 
     SseEmitter streamTurn(ChatRequest request, SseEmitter emitter) {
+        // Reset disconnect flag for a new stream
+        clientDisconnected = false;
+
+        // Register SseEmitter lifecycle callbacks for cleanup and interrupt
+        UUID callbackSessionId = request.sessionId();
+        emitter.onTimeout(() -> {
+            clientDisconnected = true;
+            if (callbackSessionId != null) {
+                interruptToken.cancel(callbackSessionId);
+            }
+            safeCompleteWithError(emitter, new TimeoutException("Stream timed out"));
+        });
+        emitter.onError(ex -> {
+            clientDisconnected = true;
+            if (callbackSessionId != null) {
+                interruptToken.cancel(callbackSessionId);
+            }
+            log.warn("Stream error: {}", ex.getMessage());
+        });
+        emitter.onCompletion(() -> {
+            clientDisconnected = true;
+            if (callbackSessionId != null) {
+                interruptToken.cancel(callbackSessionId);
+            }
+        });
+
         CompletableFuture.runAsync(() -> {
             try {
                 runAgenticLoop(applyCliState(request), emitter);
             } catch (Exception e) {
                 log.error("Streaming failed", e);
                 send(emitter, new StreamEvent("error", null, null, e.getMessage()));
-                emitter.completeWithError(e);
+                safeCompleteWithError(emitter, e);
+            } finally {
+                // Safety net: clear ThreadLocal if runAgenticLoop didn't
+                InterruptToken.clearCurrentSessionId();
             }
         });
         return emitter;
@@ -170,6 +208,11 @@ public class AgentStreamingService {
                 session = createSession("user-1", "openai-compatible", properties.getModel().getModelName());
             }
         }
+
+        // Set the ThreadLocal session ID so LangChain4jModelClient can check cancellation
+        InterruptToken.setCurrentSessionId(session.id());
+
+        try {
 
         // Build messages with full session context (system + history + user)
         List<Message> turnMessages = new ArrayList<>();
@@ -396,6 +439,11 @@ public class AgentStreamingService {
         send(emitter, new StreamEvent("done", null, null, null));
         emitter.complete();
         persistTurn(session, turnMessages, isNew);
+        } finally {
+            // Clean up interrupt token map entry and ThreadLocal after stream completion
+            interruptToken.remove(session.id());
+            InterruptToken.clearCurrentSessionId();
+        }
     }
 
     private String formatResult(ToolResult result) {
@@ -568,6 +616,7 @@ public class AgentStreamingService {
     }
 
     private void send(SseEmitter emitter, StreamEvent event) {
+        if (clientDisconnected) return;
         try {
             emitter.send(SseEmitter.event()
                 .id(UUID.randomUUID().toString())
@@ -577,6 +626,7 @@ public class AgentStreamingService {
             // Emitter already completed — ignore, don't log
         } catch (IOException e) {
             log.warn("Failed to send SSE event: {}", e.getMessage());
+            clientDisconnected = true;
         }
     }
 }

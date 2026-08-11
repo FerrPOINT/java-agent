@@ -32,11 +32,14 @@ public class RetryCommand implements CommandHandler {
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
         if (session == null || session.getId() == null) return "No active session.";
+        String sessionId = session.getId().toString();
         List<BotMessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtDesc(session.getId());
         for (BotMessageEntity msg : messages) {
             if ("user".equalsIgnoreCase(msg.getRole()) && msg.getContent() != null && !msg.getContent().isBlank()) {
                 String lastMessage = msg.getContent();
-                AgentBackendClient.ChatResult result = backendClient.chat(lastMessage, session.getId().toString());
+                // Remove the previous turn from backend context before retrying
+                backendClient.undoTurns(sessionId, 1);
+                AgentBackendClient.ChatResult result = backendClient.chat(lastMessage, sessionId);
                 return result.content();
             }
         }

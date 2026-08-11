@@ -46,6 +46,17 @@ public class BotProperties {
     // Only the final message after streaming completes triggers a push notification.
     private boolean streamingSilent = true;
 
+    // Streaming cursor: appended to text during editStream, stripped on finalize.
+    private String streamCursor = " ▉";
+    // Heartbeat interval: seconds between heartbeat checks during streaming.
+    private int heartbeatIntervalSeconds = 60;
+    // Fresh-final timeout: if streaming exceeds this (ms), delete old msg and send a new one.
+    private long freshFinalTimeoutMs = 60000;
+    // Initial streaming text shown before the first token arrives.
+    private String initialStreamText = "…";
+    // Threshold (chars) to split streaming text into a new message during editStream.
+    private int streamingMaxChars = 4000;
+
     private final Polling polling = new Polling();
     private final Webhook webhook = new Webhook();
     private final Auth auth = new Auth();

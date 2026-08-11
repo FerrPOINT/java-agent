@@ -89,7 +89,7 @@ public class CallbackQueryHandler {
             value = "";
         }
 
-        String response = route(command, value, chatId, event.userId());
+        String response = route(command, value, chatId, event.userId(), event.messageId());
 
         String answerText = response != null ? response : "OK";
         answer(callbackQueryId, answerText, false);
@@ -97,7 +97,7 @@ public class CallbackQueryHandler {
         return response;
     }
 
-    private String route(String command, String value, long chatId, long userId) {
+    private String route(String command, String value, long chatId, long userId, long messageId) {
         if (command == null || command.isBlank()) {
             return "Unknown command";
         }
@@ -106,7 +106,7 @@ public class CallbackQueryHandler {
             case "mp" -> handleModelSelect(value, chatId, userId);
             case "mpp" -> handleModelPage(value, chatId);
             case "pp" -> handleProviderSelect(value, chatId);
-            case "ea" -> handleExecApproval(value, chatId);
+            case "ea" -> handleExecApproval(value, chatId, messageId);
             case "sc" -> handleSlashConfirm(value, chatId);
             default -> "Unknown action: " + command;
         };
@@ -241,7 +241,7 @@ public class CallbackQueryHandler {
      * The session key is popped from the store (one-shot resolution).
      * The original message is edited to show the decision and remove buttons.
      */
-    String handleExecApproval(String value, long chatId) {
+    String handleExecApproval(String value, long chatId, long messageId) {
         if (value == null || value.isBlank()) {
             return "Invalid approval data";
         }
@@ -277,6 +277,11 @@ public class CallbackQueryHandler {
         // Resolve the approval via backend
         String result = backendClient.resolveApproval(sessionKey, choice);
         log.info("Exec approval resolved: sessionKey={}, choice={}, result={}", sessionKey, choice, result);
+
+        // Remove the inline keyboard from the original message
+        if (messageId > 0) {
+            telegramClient.editMessageReplyMarkup(chatId, messageId, null);
+        }
 
         return label;
     }

@@ -3,6 +3,8 @@ package com.azhukov.agent.client.langchain4j;
 import com.azhukov.agent.client.credential.CredentialPool;
 import com.azhukov.agent.client.credential.PooledCredential;
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.agent.InterruptToken;
+import com.azhukov.agent.core.agent.TurnInterruptedException;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
@@ -188,12 +190,19 @@ public class LangChain4jModelClient implements ModelClient {
         // OpenAiStreamingChatModel.doChat() is async — block until streaming completes
         java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
         final java.util.concurrent.atomic.AtomicReference<Throwable> errorRef = new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicBoolean interrupted = new java.util.concurrent.atomic.AtomicBoolean(false);
 
         streamingChatModel.doChat(request, new StreamingChatResponseHandler() {
             private final StringBuilder content = new StringBuilder();
 
             @Override
             public void onPartialResponse(String partialResponse) {
+                // If the turn was cancelled, throw to stop the stream early.
+                // This will cause the onError callback to fire, releasing the latch.
+                if (InterruptToken.isCancelledGlobally()) {
+                    interrupted.set(true);
+                    throw new TurnInterruptedException();
+                }
                 content.append(partialResponse);
                 handler.onToken(partialResponse);
             }
@@ -218,12 +227,17 @@ public class LangChain4jModelClient implements ModelClient {
             @Override
             public void onError(Throwable error) {
                 try {
-                    ErrorClassifier.ErrorType errorType = errorClassifier != null
-                        ? errorClassifier.classify(error instanceof Exception e ? e : new RuntimeException(error))
-                        : ErrorClassifier.ErrorType.RETRYABLE;
-                    log.warn("Model stream() error — errorType={}: {}", errorType, error.getMessage());
-                    errorRef.set(error);
-                    handler.onError(error);
+                    if (interrupted.get() || error instanceof TurnInterruptedException) {
+                        log.info("Model stream interrupted by user cancellation");
+                        handler.onComplete();
+                    } else {
+                        ErrorClassifier.ErrorType errorType = errorClassifier != null
+                            ? errorClassifier.classify(error instanceof Exception e ? e : new RuntimeException(error))
+                            : ErrorClassifier.ErrorType.RETRYABLE;
+                        log.warn("Model stream() error — errorType={}: {}", errorType, error.getMessage());
+                        errorRef.set(error);
+                        handler.onError(error);
+                    }
                 } finally {
                     latch.countDown();
                 }

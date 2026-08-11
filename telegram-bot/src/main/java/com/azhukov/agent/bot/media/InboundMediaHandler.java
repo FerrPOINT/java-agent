@@ -46,6 +46,11 @@ public class InboundMediaHandler {
      * Handles an UpdateEvent that contains media. If the event does not
      * contain media, returns an empty Optional.
      *
+     * <p>When the {@code fileId} contains a comma-separated list of IDs
+     * (produced by {@link com.azhukov.agent.bot.batch.PhotoBatchDebouncer}
+     * when merging a photo album), each ID is processed in turn and the
+     * resulting descriptions are concatenated with newlines.
+     *
      * @param event the UpdateEvent to process
      * @return Optional with a description string for LLM context, or empty
      *         if the event has no media
@@ -59,6 +64,31 @@ public class InboundMediaHandler {
         if (fileType == null || fileId == null) {
             return Optional.empty();
         }
+
+        // Photo album fix: PhotoBatchDebouncer may merge multiple file IDs
+        // into a single comma-separated string. Split and process each.
+        if (fileId.contains(",")) {
+            String[] ids = fileId.split(",");
+            StringBuilder combined = new StringBuilder();
+            for (String id : ids) {
+                String trimmed = id.trim();
+                if (trimmed.isEmpty()) continue;
+                Optional<String> desc = handleSingle(event, fileType, trimmed);
+                if (desc.isPresent()) {
+                    if (combined.length() > 0) combined.append("\n");
+                    combined.append(desc.get());
+                }
+            }
+            return combined.length() > 0 ? Optional.of(combined.toString()) : Optional.empty();
+        }
+
+        return handleSingle(event, fileType, fileId);
+    }
+
+    /**
+     * Handle a single (non-comma-separated) file ID.
+     */
+    private Optional<String> handleSingle(UpdateEvent event, String fileType, String fileId) {
 
         // For voice messages with transcription enabled, transcribe and return the text
         if ("voice".equals(fileType) && transcriptionEnabled) {

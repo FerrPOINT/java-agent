@@ -31,6 +31,9 @@ public class ResetCommand implements CommandHandler {
         if (session == null || session.getUserId() == null) {
             return "No active session.";
         }
+        if (session.getId() != null) {
+            backendClient.resetSession(session.getId().toString());
+        }
         int count = store.deactivateAll(session.getUserId());
         return "All sessions reset (" + count + " deactivated). Send a message to start fresh.";
     }

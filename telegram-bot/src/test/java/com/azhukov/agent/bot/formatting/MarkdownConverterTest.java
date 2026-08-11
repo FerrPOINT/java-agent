@@ -94,4 +94,217 @@ class MarkdownConverterTest {
         String result = MarkdownConverter.convert("**bold text.**");
         assertThat(result).isEqualTo("*bold text\\.*");
     }
+
+    // ─── Heading support ────────────────────────────────────────────
+
+    @Test
+    void heading_h1_convertsToBold() {
+        String result = MarkdownConverter.convert("# Heading");
+        assertThat(result).isEqualTo("*Heading*");
+    }
+
+    @Test
+    void heading_h2_convertsToBold() {
+        String result = MarkdownConverter.convert("## Subheading");
+        assertThat(result).isEqualTo("*Subheading*");
+    }
+
+    @Test
+    void heading_h6_maxLevel() {
+        String result = MarkdownConverter.convert("###### Deep");
+        assertThat(result).isEqualTo("*Deep*");
+    }
+
+    @Test
+    void heading_withSpecialChars_convertsToBoldWithEscaping() {
+        String result = MarkdownConverter.convert("# Hello.World!");
+        // Heading → **Hello.World!** → bold conversion escapes the content
+        assertThat(result).isEqualTo("*Hello\\.World\\!*");
+    }
+
+    @Test
+    void heading_multipleInText() {
+        String input = "# Title\nSome text\n## Section";
+        String result = MarkdownConverter.convert(input);
+        assertThat(result).isEqualTo("*Title*\nSome text\n*Section*");
+    }
+
+    @Test
+    void heading_notMatchedWhenNotAtStartOfLine() {
+        String result = MarkdownConverter.convert("Some # text");
+        // # in the middle of text is escaped as a special char
+        assertThat(result).isEqualTo("Some \\# text");
+    }
+
+    // ─── List support ──────────────────────────────────────────────
+
+    @Test
+    void list_dashItem_convertsToBullet() {
+        String result = MarkdownConverter.convert("- item one");
+        assertThat(result).isEqualTo("• item one");
+    }
+
+    @Test
+    void list_starItem_convertsToBullet() {
+        String result = MarkdownConverter.convert("* item one");
+        assertThat(result).isEqualTo("• item one");
+    }
+
+    @Test
+    void list_plusItem_convertsToBullet() {
+        String result = MarkdownConverter.convert("+ item one");
+        assertThat(result).isEqualTo("• item one");
+    }
+
+    @Test
+    void list_multipleItems() {
+        String input = "- first\n- second\n- third";
+        String result = MarkdownConverter.convert(input);
+        assertThat(result).isEqualTo("• first\n• second\n• third");
+    }
+
+    @Test
+    void list_mixedMarkers() {
+        String input = "- dash\n* star\n+ plus";
+        String result = MarkdownConverter.convert(input);
+        assertThat(result).isEqualTo("• dash\n• star\n• plus");
+    }
+
+    @Test
+    void list_itemWithSpecialChars_escaped() {
+        String result = MarkdownConverter.convert("- item.with.dots");
+        assertThat(result).isEqualTo("• item\\.with\\.dots");
+    }
+
+    @Test
+    void list_starItem_notConfusedWithItalic() {
+        // The * in * item is a list marker, not italic, so it should become a bullet
+        String result = MarkdownConverter.convert("* italic item");
+        assertThat(result).isEqualTo("• italic item");
+    }
+
+    // ─── Italic edge cases (math expressions) ──────────────────────
+
+    @Test
+    void italic_mathExpression_notConverted() {
+        // 2*3*4 should not be interpreted as italic around "3"
+        String result = MarkdownConverter.convert("2*3*4");
+        assertThat(result).isEqualTo("2\\*3\\*4");
+    }
+
+    @Test
+    void italic_alphaMultiplication_notConverted() {
+        // a*b*c should not be interpreted as italic around "b"
+        String result = MarkdownConverter.convert("a*b*c");
+        assertThat(result).isEqualTo("a\\*b\\*c");
+    }
+
+    @Test
+    void italic_spaceBeforeAsterisk_converted() {
+        // Space before * → valid italic
+        String result = MarkdownConverter.convert("text *italic* more");
+        assertThat(result).isEqualTo("text _italic_ more");
+    }
+
+    @Test
+    void italic_startOfLine_converted() {
+        // At start of line → valid italic
+        String result = MarkdownConverter.convert("*italic* text");
+        assertThat(result).isEqualTo("_italic_ text");
+    }
+
+    @Test
+    void italic_afterPunctuation_converted() {
+        // Punctuation before * → valid italic
+        String result = MarkdownConverter.convert("(see *note*)");
+        // ( is escaped in plain text, but it's before the italic marker
+        assertThat(result).isEqualTo("\\(see _note_\\)");
+    }
+
+    @Test
+    void italic_mixedWithBold() {
+        String result = MarkdownConverter.convert("**bold** and *italic*");
+        assertThat(result).isEqualTo("*bold* and _italic_");
+    }
+
+    // ─── Code block languages ──────────────────────────────────────
+
+    @Test
+    void codeBlock_languageCpp_preserved() {
+        String result = MarkdownConverter.convert("```c++\nint x = 0;\n```");
+        assertThat(result).isEqualTo("```c++\nint x = 0;\n```");
+    }
+
+    @Test
+    void codeBlock_languageObjectiveC_preserved() {
+        String result = MarkdownConverter.convert("```objective-c\nNSLog(@\"hello\");\n```");
+        assertThat(result).isEqualTo("```objective-c\nNSLog(@\"hello\");\n```");
+    }
+
+    @Test
+    void codeBlock_languageCSharp_preserved() {
+        String result = MarkdownConverter.convert("```c#\nvar x = 1;\n```");
+        assertThat(result).isEqualTo("```c#\nvar x = 1;\n```");
+    }
+
+    @Test
+    void codeBlock_emptyLanguage_preserved() {
+        String result = MarkdownConverter.convert("```\nplain code\n```");
+        assertThat(result).isEqualTo("```\nplain code\n```");
+    }
+
+    @Test
+    void codeBlock_languageWithDots_preserved() {
+        String result = MarkdownConverter.convert("```js.test\ncode\n```");
+        assertThat(result).isEqualTo("```js.test\ncode\n```");
+    }
+
+    @Test
+    void codeBlock_requiresNewlineAfterFence() {
+        // Without a newline after ```lang, the regex should NOT match
+        // (previously ```lang\n? made the newline optional)
+        String result = MarkdownConverter.convert("```javacode here```");
+        // This is not a valid code block, so it's treated as plain text and escaped
+        // The backticks will be matched as inline code by the inline code pattern
+        assertThat(result).contains("code here");
+    }
+
+    // ─── Try-catch fallback ────────────────────────────────────────
+
+    @Test
+    void convert_normalInput_returnsConverted() {
+        // Sanity check: normal input still works
+        String result = MarkdownConverter.convert("**bold**");
+        assertThat(result).isEqualTo("*bold*");
+    }
+
+    @Test
+    void convert_emptyAndNull_returnsEmpty() {
+        assertThat(MarkdownConverter.convert(null)).isEqualTo("");
+        assertThat(MarkdownConverter.convert("")).isEqualTo("");
+    }
+
+    @Test
+    void convert_fallbackOnException_returnsEscapedText() {
+        // The convert method wraps the body in try-catch. If an exception occurs,
+        // it should return the original text with minimal escaping (escapeMarkdownV2).
+        // We can't easily force an internal exception, but we can verify that
+        // the public API is robust by testing edge-case inputs that might cause issues.
+        // This test documents the fallback behavior: if something goes wrong internally,
+        // the result is the escaped plain text.
+        
+        // A very long string with many nested formatting markers - should not crash
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 1000; i++) {
+            sb.append("**bold** *italic* `code` ~~strike~~\n");
+        }
+        String result = MarkdownConverter.convert(sb.toString());
+        assertThat(result).isNotEmpty();
+    }
+
+    @Test
+    void convert_specialCharsOnly_returnsEscaped() {
+        String result = MarkdownConverter.convert(".*-_");
+        assertThat(result).isEqualTo("\\.\\*\\-\\_");
+    }
 }

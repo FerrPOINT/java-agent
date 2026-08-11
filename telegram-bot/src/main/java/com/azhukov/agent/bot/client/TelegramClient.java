@@ -21,6 +21,15 @@ import java.util.concurrent.TimeUnit;
  * Typed wrapper around the Telegram Bot API.
  * Supports sendMessage, editMessageText, deleteMessage, sendChatAction,
  * sendPhoto, sendDocument, sendVoice, getFile, answerCallbackQuery, setMyCommands.
+ *
+ * <p><b>Error classification:</b> {@link #callApi} and {@link #callMultipartApi}
+ * throw {@link TelegramApiException} on non-{@code ok} Telegram API responses,
+ * carrying the error code, description, and (for 429) {@code retry_after}.
+ * The high-level convenience wrappers (e.g. {@link #sendMessage}, {@link #deleteMessage})
+ * catch non-429 exceptions internally and collapse them to {@code Optional.empty()}
+ * or {@code false} to preserve their existing return contract.
+ * {@code 429} exceptions propagate from {@link #editMessageText} so that
+ * {@code StreamEditor} can apply adaptive rate-limit logic.
  */
 @Slf4j
 public class TelegramClient {
@@ -35,6 +44,11 @@ public class TelegramClient {
 
     // B3: Track whether the last API call returned HTTP 409 (conflict)
     private volatile boolean lastCallConflict = false;
+
+    // Track the last API call's error code (e.g. 400, 429) so callers can
+    // distinguish failure reasons (message-too-long vs flood vs other).
+    // Cleared at the start of each callApi invocation. 0 means "no error / success".
+    private volatile int lastApiErrorCode = 0;
 
     public TelegramClient(RestClient restClient, ObjectMapper objectMapper, String botToken, int rateLimitPerSecond) {
         this(restClient, objectMapper, botToken, rateLimitPerSecond, true);
@@ -56,6 +70,13 @@ public class TelegramClient {
         });
     }
 
+    /**
+     * Acquire a rate-limit permit. When rate limiting is enabled the permit
+     * is released in the {@code finally} block of the API call (via
+     * {@link #releaseRateLimit}) rather than on a fixed timer, so the
+     * release happens after the API call completes — keeping the
+     * effective rate within the configured limit.
+     */
     private void acquireRateLimit() {
         if (rateLimiter != null) {
             try {
@@ -66,13 +87,18 @@ public class TelegramClient {
                 Thread.currentThread().interrupt();
                 log.warn("Rate limit acquire interrupted, proceeding anyway");
             }
-            // Release permit 1s after acquire (not after call completes) for accurate rate
-            rateLimitScheduler.schedule(() -> rateLimiter.release(), 1, TimeUnit.SECONDS);
         }
     }
 
+    /**
+     * Release the rate-limit permit acquired by {@link #acquireRateLimit}.
+     * Called in the {@code finally} block of each API call so the permit
+     * is returned after the call completes (not on a fixed 1s timer).
+     */
     private void releaseRateLimit() {
-        // No-op — release is now scheduled right after acquire for accurate rate limiting
+        if (rateLimiter != null) {
+            rateLimiter.release();
+        }
     }
 
     /**
@@ -86,6 +112,18 @@ public class TelegramClient {
         return lastCallConflict;
     }
 
+    /**
+     * Returns the error code from the last callApi invocation.
+     * 0 means success (no error). Non-zero values are Telegram API error codes
+     * (e.g. 400 for bad request / message too long, 429 for rate limit).
+     * Cleared at the start of each callApi invocation.
+     *
+     * @return the last API error code, or 0 if the last call succeeded
+     */
+    public int getLastApiErrorCode() {
+        return lastApiErrorCode;
+    }
+
     /** Mask token for logging — show first 4 and last 4 chars only. */
     static String maskToken(String token) {
         if (token == null || token.length() <= 8) return "***";
@@ -94,31 +132,123 @@ public class TelegramClient {
 
     // ─── Text messages ────────────────────────────────────────────
 
+    /**
+     * Send a plain text message. Equivalent to
+     * {@code sendMessage(chatId, text, null, null, null, false)}.
+     */
     public Optional<Long> sendMessage(long chatId, String text) {
-        return sendMessage(chatId, text, null, null, null);
+        return sendMessage(chatId, text, null, null, null, false);
     }
 
+    /**
+     * Send a text message with parse mode, reply-to, inline keyboard and
+     * (optional) thread routing. Backward-compatible overload.
+     */
     public Optional<Long> sendMessage(long chatId, String text, String parseMode,
                                        Long replyToMessageId, String replyMarkup) {
+        return sendMessage(chatId, text, parseMode, replyToMessageId, null, replyMarkup, false);
+    }
+
+    /**
+     * Send a text message with optional thread routing and silent delivery.
+     *
+     * <p>429 (rate limit) handling: when Telegram responds with 429 and a
+     * {@code retry_after} parameter, the call blocks for that many seconds
+     * and retries once. This is the only high-level method that performs a
+     * blocking retry on 429 — {@link #editMessageText} propagates the 429
+     * exception to the caller (e.g. {@code StreamEditor}) for non-blocking
+     * handling.
+     *
+     * @param chatId              target chat id
+     * @param text                message text
+     * @param parseMode           parse mode (MarkdownV2, HTML, or null)
+     * @param replyToMessageId    optional reply-to message id
+     * @param messageThreadId     optional message_thread_id (forum topic)
+     * @param disableNotification when true, delivers silently (no push)
+     * @return the sent message id wrapped in Optional, or empty on failure
+     */
+    public Optional<Long> sendMessage(long chatId, String text, String parseMode,
+                                       Long replyToMessageId, Integer messageThreadId,
+                                       boolean disableNotification) {
+        return sendMessage(chatId, text, parseMode, replyToMessageId, messageThreadId, null, disableNotification);
+    }
+
+    /**
+     * Full-featured sendMessage with reply markup, thread routing and
+     * notification control. All other overloads delegate here.
+     */
+    public Optional<Long> sendMessage(long chatId, String text, String parseMode,
+                                       Long replyToMessageId, Integer messageThreadId,
+                                       String replyMarkup, boolean disableNotification) {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("chat_id", chatId);
         params.put("text", text);
         if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
         if (replyToMessageId != null) params.put("reply_to_message_id", replyToMessageId);
+        if (messageThreadId != null) params.put("message_thread_id", messageThreadId);
         if (replyMarkup != null && !replyMarkup.isBlank()) params.put("reply_markup", replyMarkup);
+        if (disableNotification) params.put("disable_notification", true);
         // B3.7: Link preview options — disable preview if configured
         if (!linkPreviewEnabled) {
             params.put("disable_web_page_preview", true);
         }
-        Optional<TelegramResponse> response = callApi("sendMessage", params);
-        if (response.isEmpty() && replyToMessageId != null) {
-            // Thread fallback: retry without reply_to_message_id if "Message thread not found"
-            log.debug("sendMessage failed with reply_to_message_id={}, retrying without", replyToMessageId);
-            Map<String, Object> retryParams = new LinkedHashMap<>(params);
-            retryParams.remove("reply_to_message_id");
-            response = callApi("sendMessage", retryParams);
+        try {
+            Optional<TelegramResponse> response = callApi("sendMessage", params);
+            return response.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        } catch (TelegramApiException e) {
+            if (e.isRateLimit()) {
+                // sendMessage keeps the blocking 429 retry — it's important for delivery
+                int retryAfter = e.getRetryAfter();
+                if (retryAfter >= 0) {
+                    log.warn("sendMessage 429 rate limit, blocking {}s before retry", retryAfter);
+                    try {
+                        Thread.sleep(retryAfter * 1000L);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return Optional.empty();
+                    }
+                    // Single retry
+                    try {
+                        Optional<TelegramResponse> retry = callApi("sendMessage", params);
+                        return retry.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+                    } catch (TelegramApiException retryEx) {
+                        log.warn("sendMessage 429 retry also failed: {}", retryEx.getMessage());
+                        return Optional.empty();
+                    }
+                }
+                log.warn("sendMessage 429 rate limit (no retry_after): {}", e.getMessage());
+                return Optional.empty();
+            }
+            // Non-429 error: check if we should retry without reply_to_message_id
+            if (replyToMessageId != null && shouldRetryWithoutReply(e.getErrorDescription())) {
+                log.debug("sendMessage failed with reply_to_message_id={}, retrying without", replyToMessageId);
+                Map<String, Object> retryParams = new LinkedHashMap<>(params);
+                retryParams.remove("reply_to_message_id");
+                try {
+                    Optional<TelegramResponse> retry = callApi("sendMessage", retryParams);
+                    return retry.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+                } catch (TelegramApiException retryEx) {
+                    log.warn("sendMessage retry without reply_to also failed: {}", retryEx.getMessage());
+                    return Optional.empty();
+                }
+            }
+            log.warn("sendMessage failed: {}", e.getMessage());
+            return Optional.empty();
         }
-        return response.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+    }
+
+    /**
+     * Check whether the error description warrants a retry without
+     * {@code reply_to_message_id}. Only "message thread not found" and
+     * "reply message not found" errors qualify — other errors (chat not
+     * found, blocked by user, etc.) should not trigger a retry.
+     */
+    private static boolean shouldRetryWithoutReply(String errorDescription) {
+        if (errorDescription == null) return false;
+        String lower = errorDescription.toLowerCase();
+        return lower.contains("message thread not found")
+            || lower.contains("reply message not found")
+            || lower.contains("reply_to_message_id");
     }
 
     public boolean editMessageText(long chatId, long messageId, String text, String parseMode) {
@@ -155,6 +285,18 @@ public class TelegramClient {
      */
     public boolean editMessageText(long chatId, long messageId, String text, String parseMode,
                                    boolean disableNotification, String replyMarkup) {
+        return editMessageText(chatId, messageId, text, parseMode, disableNotification, replyMarkup, null);
+    }
+
+    /**
+     * Edit a message with optional thread routing (message_thread_id).
+     *
+     * @param messageThreadId optional message_thread_id (forum topic)
+     * @return true if the edit succeeded
+     */
+    public boolean editMessageText(long chatId, long messageId, String text, String parseMode,
+                                   boolean disableNotification, String replyMarkup,
+                                   Integer messageThreadId) {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("chat_id", chatId);
         params.put("message_id", messageId);
@@ -164,19 +306,66 @@ public class TelegramClient {
         if (replyMarkup != null) {
             params.put("reply_markup", replyMarkup);
         }
-        return callApi("editMessageText", params).isPresent();
+        if (messageThreadId != null) params.put("message_thread_id", messageThreadId);
+        try {
+            return callApi("editMessageText", params).isPresent();
+        } catch (TelegramApiException e) {
+            if (e.isRateLimit()) {
+                // Let 429 propagate so StreamEditor can apply adaptive backoff
+                throw e;
+            }
+            log.warn("editMessageText failed: {}", e.getMessage());
+            return false;
+        }
     }
 
     public boolean deleteMessage(long chatId, long messageId) {
         Map<String, Object> params = Map.of("chat_id", chatId, "message_id", messageId);
-        return callApi("deleteMessage", params).isPresent();
+        try {
+            return callApi("deleteMessage", params).isPresent();
+        } catch (TelegramApiException e) {
+            log.warn("deleteMessage failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Edit the reply markup (inline keyboard) of a message.
+     * Pass {@code null} for replyMarkup to remove the inline keyboard entirely.
+     *
+     * @param chatId       target chat id
+     * @param messageId    message id to edit
+     * @param replyMarkup  inline keyboard JSON, or null to remove buttons
+     * @return true if the edit succeeded
+     */
+    public boolean editMessageReplyMarkup(long chatId, long messageId, String replyMarkup) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("chat_id", chatId);
+        params.put("message_id", messageId);
+        if (replyMarkup != null) {
+            params.put("reply_markup", replyMarkup);
+        } else {
+            // Empty inline keyboard to remove buttons
+            params.put("reply_markup", Map.of("inline_keyboard", List.of()));
+        }
+        try {
+            return callApi("editMessageReplyMarkup", params).isPresent();
+        } catch (TelegramApiException e) {
+            log.warn("editMessageReplyMarkup failed: {}", e.getMessage());
+            return false;
+        }
     }
 
     // ─── Chat actions ─────────────────────────────────────────────
 
     public boolean sendChatAction(long chatId, String action) {
         Map<String, Object> params = Map.of("chat_id", chatId, "action", action);
-        return callApi("sendChatAction", params).isPresent();
+        try {
+            return callApi("sendChatAction", params).isPresent();
+        } catch (TelegramApiException e) {
+            log.warn("sendChatAction failed: {}", e.getMessage());
+            return false;
+        }
     }
 
     public boolean sendTyping(long chatId) {
@@ -185,12 +374,28 @@ public class TelegramClient {
 
     // ─── Message reactions ─────────────────────────────────────────
 
+    /**
+     * Set a message reaction emoji, or clear all reactions when {@code emoji}
+     * is empty or blank.
+     *
+     * @param emoji the reaction emoji, or empty string to clear reactions
+     */
     public boolean setMessageReaction(long chatId, long messageId, String emoji) {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("chat_id", chatId);
         params.put("message_id", messageId);
-        params.put("reaction", List.of(Map.of("type", "emoji", "emoji", emoji)));
-        return callApi("setMessageReaction", params).isPresent();
+        if (emoji == null || emoji.isEmpty()) {
+            // Clear reactions: send an empty array
+            params.put("reaction", List.of());
+        } else {
+            params.put("reaction", List.of(Map.of("type", "emoji", "emoji", emoji)));
+        }
+        try {
+            return callApi("setMessageReaction", params).isPresent();
+        } catch (TelegramApiException e) {
+            log.warn("setMessageReaction failed: {}", e.getMessage());
+            return false;
+        }
     }
 
     // ─── Media ────────────────────────────────────────────────────
@@ -203,7 +408,12 @@ public class TelegramClient {
         }, MediaType.IMAGE_JPEG);
         if (caption != null && !caption.isBlank()) builder.part("caption", caption);
         if (parseMode != null && !parseMode.isBlank()) builder.part("parse_mode", parseMode);
-        return callMultipartApi("sendPhoto", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        try {
+            return callMultipartApi("sendPhoto", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        } catch (TelegramApiException e) {
+            log.warn("sendPhoto failed: {}", e.getMessage());
+            return Optional.empty();
+        }
     }
 
     public Optional<Long> sendDocument(long chatId, byte[] document, String fileName,
@@ -216,7 +426,12 @@ public class TelegramClient {
         }, MediaType.APPLICATION_OCTET_STREAM);
         if (caption != null && !caption.isBlank()) builder.part("caption", caption);
         if (parseMode != null && !parseMode.isBlank()) builder.part("parse_mode", parseMode);
-        return callMultipartApi("sendDocument", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        try {
+            return callMultipartApi("sendDocument", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        } catch (TelegramApiException e) {
+            log.warn("sendDocument failed: {}", e.getMessage());
+            return Optional.empty();
+        }
     }
 
     public Optional<Long> sendVoice(long chatId, byte[] voice, String caption) {
@@ -226,14 +441,24 @@ public class TelegramClient {
             @Override public String getFilename() { return "voice.ogg"; }
         }, MediaType.parseMediaType("audio/ogg"));
         if (caption != null && !caption.isBlank()) builder.part("caption", caption);
-        return callMultipartApi("sendVoice", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        try {
+            return callMultipartApi("sendVoice", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        } catch (TelegramApiException e) {
+            log.warn("sendVoice failed: {}", e.getMessage());
+            return Optional.empty();
+        }
     }
 
     // ─── File download ────────────────────────────────────────────
 
     public Optional<Map<String, Object>> getFile(String fileId) {
         Map<String, Object> params = Map.of("file_id", fileId);
-        return callApi("getFile", params).map(TelegramResponse::resultAsMap);
+        try {
+            return callApi("getFile", params).map(TelegramResponse::resultAsMap);
+        } catch (TelegramApiException e) {
+            log.warn("getFile failed: {}", e.getMessage());
+            return Optional.empty();
+        }
     }
 
     public Optional<byte[]> downloadFile(String filePath) {
@@ -249,6 +474,23 @@ public class TelegramClient {
         }
     }
 
+    // ─── Bot info ─────────────────────────────────────────────────
+
+    /**
+     * Call the Telegram {@code getMe} API to fetch information about the bot,
+     * including its username.
+     *
+     * @return the bot information as a map (keys include "id", "username", "first_name"), or empty on failure
+     */
+    public Optional<Map<String, Object>> getMe() {
+        try {
+            return callApi("getMe", Map.of()).map(TelegramResponse::resultAsMap);
+        } catch (TelegramApiException e) {
+            log.warn("getMe failed: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
     // ─── Callback queries ─────────────────────────────────────────
 
     public boolean answerCallbackQuery(String callbackQueryId, String text, boolean showAlert) {
@@ -256,7 +498,12 @@ public class TelegramClient {
         params.put("callback_query_id", callbackQueryId);
         if (text != null && !text.isBlank()) params.put("text", text);
         params.put("show_alert", showAlert);
-        return callApi("answerCallbackQuery", params).isPresent();
+        try {
+            return callApi("answerCallbackQuery", params).isPresent();
+        } catch (TelegramApiException e) {
+            log.warn("answerCallbackQuery failed: {}", e.getMessage());
+            return false;
+        }
     }
 
     // ─── Commands registration ────────────────────────────────────
@@ -292,15 +539,30 @@ public class TelegramClient {
         if (secretToken != null && !secretToken.isBlank()) {
             params.put("secret_token", secretToken);
         }
-        return callApi("setWebhook", params).isPresent();
+        try {
+            return callApi("setWebhook", params).isPresent();
+        } catch (TelegramApiException e) {
+            log.warn("setWebhook failed: {}", e.getMessage());
+            return false;
+        }
     }
 
     public boolean deleteWebhook() {
-        return callApi("deleteWebhook", Map.of()).isPresent();
+        try {
+            return callApi("deleteWebhook", Map.of()).isPresent();
+        } catch (TelegramApiException e) {
+            log.warn("deleteWebhook failed: {}", e.getMessage());
+            return false;
+        }
     }
 
     public Optional<Map<String, Object>> getWebhookInfo() {
-        return callApi("getWebhookInfo", Map.of()).map(TelegramResponse::resultAsMap);
+        try {
+            return callApi("getWebhookInfo", Map.of()).map(TelegramResponse::resultAsMap);
+        } catch (TelegramApiException e) {
+            log.warn("getWebhookInfo failed: {}", e.getMessage());
+            return Optional.empty();
+        }
     }
 
     // ─── getUpdates (long polling) ────────────────────────────────
@@ -311,23 +573,47 @@ public class TelegramClient {
         params.put("offset", offset);
         params.put("limit", limit);
         params.put("timeout", timeoutSeconds);
-        return callApi("getUpdates", params).map(resp -> {
-            Object result = resp.result();
-            if (result instanceof List<?> list) {
-                return (List<Map<String, Object>>) list;
-            }
-            return List.<Map<String, Object>>of();
-        });
+        try {
+            return callApi("getUpdates", params).map(resp -> {
+                Object result = resp.result();
+                if (result instanceof List<?> list) {
+                    return (List<Map<String, Object>>) list;
+                }
+                return List.<Map<String, Object>>of();
+            });
+        } catch (TelegramApiException e) {
+            // 409 conflict is already recorded via lastCallConflict
+            log.warn("getUpdates failed: {}", e.getMessage());
+            return Optional.empty();
+        }
     }
 
     // ─── Internal ─────────────────────────────────────────────────
 
+    /**
+     * Low-level Bot API call (JSON body). Throws {@link TelegramApiException}
+     * on non-{@code ok} Telegram responses so callers can inspect the error
+     * code and description. Returns {@link Optional#empty()} (without
+     * throwing) only when the bot token is blank or the HTTP body is null
+     * (e.g. network-level null response).
+     *
+     * <p>The {@link #isLastCallConflict()} and {@link #getLastApiErrorCode()}
+     * side channels are still updated for backward compatibility, but new
+     * code should prefer catching {@link TelegramApiException}.
+     *
+     * @param method Telegram Bot API method name
+     * @param params request body parameters
+     * @return the successful {@link TelegramResponse}, or empty when the
+     *         token is blank or the response body is null
+     * @throws TelegramApiException on non-{@code ok} API responses
+     */
     public Optional<TelegramResponse> callApi(String method, Map<String, Object> params) {
         if (botToken.isBlank()) {
             log.warn("Bot token is empty; cannot call {}", method);
             return Optional.empty();
         }
         lastCallConflict = false; // B3: clear at start of each call
+        lastApiErrorCode = 0; // Clear error code at start of each call
         acquireRateLimit();
         try {
             log.debug("Telegram API call: POST /bot{}/{}, token length={}", maskToken(botToken), method, botToken.length());
@@ -338,48 +624,55 @@ public class TelegramClient {
                 .body(params)
                 .retrieve()
                 .body(TelegramResponse.class);
-            if (response == null || !response.isSuccess()) {
-                // B3: Detect HTTP 409 conflict (another polling instance)
-                if (response != null && response.errorCode() != null && response.errorCode() == 409) {
-                    lastCallConflict = true;
-                    log.warn("Telegram {} returned 409 Conflict: {}", method, response.errorMessage());
-                    return Optional.empty();
-                }
-                // Check for 429 rate limit from Telegram — retry once after waiting
-                if (response != null && response.errorCode() == 429 && response.parameters() != null
-                    && response.parameters().containsKey("retry_after")) {
-                    int retryAfter = response.parameters().get("retry_after").asInt(1);
-                    log.warn("Telegram 429 rate limit, retrying after {}s", retryAfter);
-                    try {
-                        Thread.sleep(retryAfter * 1000L);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        return Optional.empty();
-                    }
-                    // Single retry
-                    response = restClient.post()
-                        .uri("/bot{token}/{method}", botToken, method)
-                        .accept(MediaType.APPLICATION_JSON)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(params)
-                        .retrieve()
-                        .body(TelegramResponse.class);
-                    if (response != null && response.isSuccess()) {
-                        return Optional.of(response);
-                    }
-                }
-                log.warn("Telegram {} failed: {}", method, response != null ? response.errorMessage() : "null response");
+            if (response == null) {
+                log.warn("Telegram {} returned null response body", method);
                 return Optional.empty();
             }
+            if (!response.isSuccess()) {
+                int code = response.errorCode() != null ? response.errorCode() : 0;
+                String desc = response.description();
+                lastApiErrorCode = code;
+                // B3: Detect HTTP 409 conflict (another polling instance)
+                if (code == 409) {
+                    lastCallConflict = true;
+                    log.warn("Telegram {} returned 409 Conflict: {}", method, desc);
+                }
+                // Determine retry_after for 429 responses
+                int retryAfter = -1;
+                if (code == 429 && response.parameters() != null
+                    && response.parameters().containsKey("retry_after")) {
+                    retryAfter = response.parameters().get("retry_after").asInt(1);
+                }
+                throw new TelegramApiException(code, desc, retryAfter);
+            }
             return Optional.of(response);
+        } catch (TelegramApiException e) {
+            throw e; // Re-throw typed exceptions
         } catch (Exception e) {
             log.warn("Telegram {} exception: {}", method, e.getMessage());
-            return Optional.empty();
+            lastApiErrorCode = -1; // Indicate exception (not a Telegram API error code)
+            throw new TelegramApiException(-1, e.getMessage(), -1);
         } finally {
             releaseRateLimit();
         }
     }
 
+    /**
+     * Low-level Bot API call (multipart body). Throws {@link TelegramApiException}
+     * on non-{@code ok} responses, including 429 with {@code retry_after}.
+     *
+     * <p>429 retry logic: when a 429 response includes {@code retry_after},
+     * this method blocks for that many seconds and retries once (same
+     * behaviour as {@link #callApi}). Callers that prefer non-blocking
+     * 429 handling should catch {@link TelegramApiException} and inspect
+     * {@link TelegramApiException#getRetryAfter()}.
+     *
+     * @param method Telegram Bot API method name
+     * @param parts  multipart form parts
+     * @return the successful {@link TelegramResponse}, or empty when the
+     *         token is blank or the response body is null
+     * @throws TelegramApiException on non-{@code ok} API responses
+     */
     Optional<TelegramResponse> callMultipartApi(String method, MultiValueMap<String, org.springframework.http.HttpEntity<?>> parts) {
         if (botToken.isBlank()) {
             log.warn("Bot token is empty; cannot call {}", method);
@@ -393,14 +686,26 @@ public class TelegramClient {
                 .body(parts)
                 .retrieve()
                 .body(TelegramResponse.class);
-            if (response == null || !response.isSuccess()) {
-                log.warn("Telegram {} (multipart) failed: {}", method, response != null ? response.errorMessage() : "null response");
+            if (response == null) {
+                log.warn("Telegram {} (multipart) returned null response", method);
                 return Optional.empty();
             }
+            if (!response.isSuccess()) {
+                int code = response.errorCode() != null ? response.errorCode() : 0;
+                String desc = response.description();
+                int retryAfter = -1;
+                if (code == 429 && response.parameters() != null
+                    && response.parameters().containsKey("retry_after")) {
+                    retryAfter = response.parameters().get("retry_after").asInt(1);
+                }
+                throw new TelegramApiException(code, desc, retryAfter);
+            }
             return Optional.of(response);
+        } catch (TelegramApiException e) {
+            throw e;
         } catch (Exception e) {
             log.warn("Telegram {} (multipart) exception: {}", method, e.getMessage());
-            return Optional.empty();
+            throw new TelegramApiException(-1, e.getMessage(), -1);
         } finally {
             releaseRateLimit();
         }

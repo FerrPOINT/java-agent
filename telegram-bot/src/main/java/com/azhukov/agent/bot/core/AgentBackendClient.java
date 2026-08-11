@@ -10,11 +10,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import jakarta.annotation.PostConstruct;
 
@@ -31,6 +36,8 @@ import jakarta.annotation.PostConstruct;
 @Service
 @Slf4j
 public class AgentBackendClient {
+
+ private static final long STREAM_IDLE_TIMEOUT_MS = 120_000; // 2 minutes of no data
 
  private final RestClient restClient;
  private final ObjectMapper objectMapper;
@@ -348,8 +355,32 @@ public class AgentBackendClient {
 
  try (BufferedReader reader = new BufferedReader(
  new InputStreamReader(is, StandardCharsets.UTF_8))) {
+
+ // Idle-timeout watchdog: if no data arrives for STREAM_IDLE_TIMEOUT_MS,
+ // close the reader to unblock readLine() and abort the stream.
+ final long[] lastDataTime = {System.currentTimeMillis()};
+ ScheduledExecutorService watchdog =
+ Executors.newSingleThreadScheduledExecutor(r -> {
+ Thread t = new Thread(r, "sse-idle-watchdog");
+ t.setDaemon(true);
+ return t;
+ });
+ final IOException[] timeoutSignal = new IOException[1];
+ ScheduledFuture<?> watchdogTask = watchdog.scheduleAtFixedRate(() -> {
+ if (System.currentTimeMillis() - lastDataTime[0] > STREAM_IDLE_TIMEOUT_MS) {
+ timeoutSignal[0] = new IOException("SSE stream idle timeout: no data for "
+ + STREAM_IDLE_TIMEOUT_MS + "ms");
+ try {
+ reader.close(); // unblocks readLine()
+ } catch (IOException ignored) {
+ }
+ }
+ }, STREAM_IDLE_TIMEOUT_MS, 10_000, TimeUnit.MILLISECONDS);
+
+ try {
  String line;
  while ((line = reader.readLine()) != null) {
+ lastDataTime[0] = System.currentTimeMillis();
  if (line.startsWith("data:")) {
  String data = line.substring(5).strip();
  if (!data.isEmpty()) {
@@ -395,7 +426,7 @@ public class AgentBackendClient {
  continue;
  }
  JsonNode tokenNode = event.get("token");
- if (tokenNode != null && !tokenNode.isNull()) {
+ if (tokenNode != null && !tokenNode.isNull() && tokenNode.isTextual()) {
  String token = tokenNode.asText();
  accumulated.append(token);
  tokenConsumer.accept(token);
@@ -403,7 +434,8 @@ public class AgentBackendClient {
  if ("done".equalsIgnoreCase(type)) {
  ChatResult result = metadataHolder[0] != null
  ? new ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
- metadataHolder[0].contextTokens(), metadataHolder[0].contextLength())
+ metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(),
+ metadataHolder[0].streamFinalized(), metadataHolder[0].memoryUpdated())
  : new ChatResult(accumulated.toString());
  onComplete.accept(result);
  return result;
@@ -413,6 +445,14 @@ public class AgentBackendClient {
  }
  }
  }
+ }
+ // If the watchdog closed the reader, throw to signal timeout
+ if (timeoutSignal[0] != null) {
+ throw timeoutSignal[0];
+ }
+ } finally {
+ watchdogTask.cancel(false);
+ watchdog.shutdownNow();
  }
  // Stream ended without explicit "done" event
  ChatResult result = metadataHolder[0] != null
@@ -435,7 +475,8 @@ public class AgentBackendClient {
  Integer contextTokens = event.has("contextTokens") ? event.get("contextTokens").asInt(0) : null;
  Integer contextLength = event.has("contextLength") ? event.get("contextLength").asInt(0) : null;
  boolean memoryUpdated = event.has("memoryUpdated") && event.get("memoryUpdated").asBoolean(false);
- return new ChatResult(null, modelUsed, contextTokens, contextLength, false, memoryUpdated);
+ boolean streamFinalized = event.has("streamFinalized") && event.get("streamFinalized").asBoolean(false);
+ return new ChatResult(null, modelUsed, contextTokens, contextLength, streamFinalized, memoryUpdated);
  }
 
  // ------------------------------------------------------------------
@@ -1280,7 +1321,12 @@ public class AgentBackendClient {
  }
 
  /**
- * Build a chat request body, including runtime flags when a Telegram bot session is provided.
+ * Build a chat request body, including runtime flags and routing IDs when a
+ * Telegram bot session is provided.
+ * <p>
+ * When the session carries a {@code chatId} (Telegram chat ID) or a
+ * {@code threadId} (forum topic / message thread ID) in its metadata, these
+ * are forwarded to the backend so it can use them for routing and context.
  */
  private Map<String, Object> buildChatBody(String message, String sessionId,
  com.azhukov.agent.bot.session.BotSessionEntity runtime) {
@@ -1291,6 +1337,14 @@ public class AgentBackendClient {
  }
  if (runtime == null) {
  return body;
+ }
+ // Forward Telegram routing IDs to the backend
+ if (runtime.getChatId() != null && !runtime.getChatId().isBlank()) {
+ body.put("chatId", runtime.getChatId());
+ }
+ String threadId = runtime.getMetadata("threadId");
+ if (threadId != null && !threadId.isBlank()) {
+ body.put("threadId", threadId);
  }
  if (runtime.isFastMode()) {
  body.put("fastMode", true);

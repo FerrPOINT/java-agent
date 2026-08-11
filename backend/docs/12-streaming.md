@@ -24,14 +24,20 @@ Accept: `text/event-stream`
 }
 ```
 
-События:
+### События (9 типов)
 
 | Event | Описание |
 |---|---|
-| `token` | Очередная порция текста |
-| `tool_calls` | Модель вызвала инструменты |
-| `done` | Генерация завершена |
+| `token` | Очередная порция текста от модели |
+| `tool_calls` | Модель вызвала один или несколько инструментов |
+| `tool_start` | Начало выполнения конкретного инструмента |
+| `tool_result` | Результат выполнения инструмента (превью) |
+| `metadata` | Метаданные об использованной модели и контексте |
+| `done` | Генерация завершена (финальное событие) |
 | `error` | Ошибка |
+| `interrupted` | Поток прерван пользователем |
+| `retry` | Повторная попытка после ошибки |
+| `continuation` | Отправлен continuation prompt при пустом ответе |
 
 ### OpenAI-compatible
 
@@ -59,7 +65,11 @@ data: [DONE]
 
 - `ModelClient#stream(..., StreamingResponseHandler)` — абстракция для всех клиентов.
 - `LangChain4jModelClient` использует `OpenAiStreamingChatModel` + `StreamingChatResponseHandler`.
-- `AgentStreamingService` и `ChatCompletionsController` транслируют токены в `SseEmitter`.
+- При отмене (`InterruptToken.isCancelled()`) клиент выбрасывает `TurnInterruptedException`, что приводит к досрочному освобождению latch и остановке модельного стрима.
+- `AgentStreamingService` транслирует токены в `SseEmitter` и запускает полный agentic loop (tool loop).
+- `SseEmitter` lifecycle callbacks (`onTimeout`, `onError`, `onCompletion`) регистрируются для отмены стрима через `InterruptToken.cancel()`.
+- Флаг `clientDisconnected` отслеживает отключение клиента; `send()` пропускает запись если клиент отключился.
+- `InterruptToken.remove(sessionId)` вызывается после завершения стрима для освобождения map entries.
 - Нет `Flux`, `Mono`, `Publisher` в прикладном коде.
 
 ## Пример клиента на curl
@@ -70,7 +80,16 @@ curl -N -X POST http://localhost:8090/api/v1/agent/chat/stream \
   -d '{"message":"Привет"}'
 ```
 
-## Ограничения
+## Tool loop
 
-- Стриминг не запускает tool loop: если модель запрашивает инструменты, они возвращаются как событие `tool_calls`, и клиент должен сам продолжить диалог с результатами.
-- Для полного цикла с инструментами используйте синхронный `/api/v1/agent/chat`.
+Стриминг **запускает полный agentic loop**: если модель запрашивает инструменты,
+`AgentStreamingService` выполняет их и отправляет результаты обратно в модель,
+продолжая цикл до завершения ответа или достижения лимита итераций (`agent.core.max-turns`).
+
+События в порядке для типичного цикла с инструментами:
+
+```
+token → tool_calls → tool_start → tool_result → token → ... → metadata → done
+```
+
+Для полного цикла без стриминга (синхронный) используйте `/api/v1/agent/chat`.

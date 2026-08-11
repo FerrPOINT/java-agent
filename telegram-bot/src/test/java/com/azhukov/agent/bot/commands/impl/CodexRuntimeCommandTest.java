@@ -4,6 +4,7 @@ import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.UpdateEvent.Type;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import com.azhukov.agent.bot.session.BotSessionStore;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 
@@ -11,19 +12,22 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.*;
 
 class CodexRuntimeCommandTest {
 
     private BotProperties properties;
     private CodexRuntimeCommand cmd;
     private BotSessionEntity session;
+    private BotSessionStore store;
 
     @BeforeEach
     void setUp() {
         properties = new BotProperties();
         properties.setDefaultModel("kimi-k2.6");
         properties.getAvailableModels().addAll(List.of("kimi-k2.6", "gpt-4o", "claude-3.5"));
-        cmd = new CodexRuntimeCommand(properties);
+        store = mock(BotSessionStore.class);
+        cmd = new CodexRuntimeCommand(properties, store);
         session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
     }
@@ -54,14 +58,15 @@ class CodexRuntimeCommandTest {
     void switchModel() {
         String result = cmd.handle(textEvent("/codex_runtime", "gpt-4o"), session);
         assertThat(result).contains("gpt-4o");
-        assertThat(session.getModelOverride()).isEqualTo("gpt-4o");
+        // Verify the change was persisted via store, not just set on the session
+        verify(store).setModelOverride(session.getId(), "gpt-4o");
     }
 
     @Test
     void invalidModelRejected() {
         String result = cmd.handle(textEvent("/codex_runtime", "nonexistent"), session);
         assertThat(result).contains("not in available models");
-        assertThat(session.getModelOverride()).isNull();
+        verifyNoInteractions(store);
     }
 
     @Test
@@ -69,7 +74,7 @@ class CodexRuntimeCommandTest {
         session.setModelOverride("gpt-4o");
         String result = cmd.handle(textEvent("/codex_runtime", "reset"), session);
         assertThat(result).contains("reset");
-        assertThat(session.getModelOverride()).isNull();
+        verify(store).setModelOverride(session.getId(), null);
     }
 
     private UpdateEvent textEvent(String text, String args) {

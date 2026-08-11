@@ -51,6 +51,7 @@ class CallbackQueryHandlerTest {
         when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean())).thenReturn(true);
         when(client.sendMessage(anyLong(), any())).thenReturn(Optional.of(1L));
         when(client.sendMessage(anyLong(), any(), any(), any(), any())).thenReturn(Optional.of(1L));
+        when(client.editMessageReplyMarkup(anyLong(), anyLong(), any())).thenReturn(true);
     }
 
     @Test
@@ -226,9 +227,11 @@ class CallbackQueryHandlerTest {
     // ─── Helpers ──────────────────────────────────────────────────
 
     private UpdateEvent callbackEvent(String callbackQueryId, String callbackData) {
+        // Use 17-arg constructor with messageId=456L (same as userId for test simplicity)
         return new UpdateEvent(100L, UpdateEvent.Type.CALLBACK_QUERY, 123L, 456L,
             "jdoe", null, null, null, null,
-            callbackQueryId, callbackData, null, false, null, null);
+            callbackQueryId, callbackData, null, false, null, null,
+            456L, null, 0L);
     }
 
     // ─── P1-12: Exec approval (ea:) callback tests ──────────────────
@@ -243,6 +246,7 @@ class CallbackQueryHandlerTest {
 
         assertThat(result).isEqualTo("✅ Approved once");
         verify(backendClient).resolveApproval("session-abc", "once");
+        verify(client).editMessageReplyMarkup(eq(123L), eq(456L), eq(null));
     }
 
     @Test
@@ -255,6 +259,7 @@ class CallbackQueryHandlerTest {
 
         assertThat(result).isEqualTo("❌ Denied");
         verify(backendClient).resolveApproval("session-xyz", "deny");
+        verify(client).editMessageReplyMarkup(eq(123L), eq(456L), eq(null));
     }
 
     @Test
@@ -268,6 +273,8 @@ class CallbackQueryHandlerTest {
 
         assertThat(result).isEqualTo("This approval has already been resolved.");
         verifyNoInteractions(backendClient);
+        // Should not edit message reply markup for already-resolved
+        verify(client, never()).editMessageReplyMarkup(anyLong(), anyLong(), any());
     }
 
     @Test
@@ -277,6 +284,7 @@ class CallbackQueryHandlerTest {
 
         assertThat(result).isEqualTo("Invalid approval ID");
         verifyNoInteractions(backendClient);
+        verify(client, never()).editMessageReplyMarkup(anyLong(), anyLong(), any());
     }
 
     @Test
@@ -286,6 +294,7 @@ class CallbackQueryHandlerTest {
 
         assertThat(result).isEqualTo("Invalid approval data");
         verifyNoInteractions(backendClient);
+        verify(client, never()).editMessageReplyMarkup(anyLong(), anyLong(), any());
     }
 
     @Test
@@ -298,6 +307,7 @@ class CallbackQueryHandlerTest {
 
         assertThat(result).isEqualTo("✅ Approved for session");
         verify(backendClient).resolveApproval("session-789", "session");
+        verify(client).editMessageReplyMarkup(eq(123L), eq(456L), eq(null));
     }
 
     @Test
@@ -310,6 +320,7 @@ class CallbackQueryHandlerTest {
 
         assertThat(result).isEqualTo("✅ Approved permanently");
         verify(backendClient).resolveApproval("session-perm", "always");
+        verify(client).editMessageReplyMarkup(eq(123L), eq(456L), eq(null));
     }
 
     // ─── P1-13: Slash-confirm (sc:) callback tests ──────────────────

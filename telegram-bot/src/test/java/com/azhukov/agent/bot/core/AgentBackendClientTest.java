@@ -345,9 +345,9 @@ class AgentBackendClientTest {
         AgentBackendClient.ChatResult result = client.chatStream("Hi", "s1",
             t -> {}, t -> {}, (n, r) -> {}, completed::set, e -> {});
 
-        // When done event is received, metadata memoryUpdated is NOT propagated
-        // (done path creates ChatResult with 4-arg constructor, memoryUpdated defaults to false)
-        assertThat(result.memoryUpdated()).isFalse();
+        // After the fix, the done path uses the 6-arg constructor which
+        // propagates memoryUpdated from the metadata event.
+        assertThat(result.memoryUpdated()).isTrue();
     }
 
     @Test
@@ -602,6 +602,241 @@ class AgentBackendClientTest {
             received::append, t -> {}, (n, r) -> {}, r -> {}, e -> {});
 
         assertThat(result.content()).isEqualTo("no-type");
+    }
+
+    // ─── Fix #3: non-textual token node is skipped ──────────────────
+
+    @Test
+    void chatStream_nonTextualTokenNode_skipped() {
+        when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
+            "data:{\"type\":\"token\",\"token\":12345}",
+            "data:{\"type\":\"token\",\"token\":\"OK\"}",
+            "data:{\"type\":\"done\"}"
+        ));
+
+        StringBuilder received = new StringBuilder();
+
+        AgentBackendClient.ChatResult result = client.chatStream("Hi", "s1",
+            received::append, t -> {}, (n, r) -> {}, r -> {}, e -> {});
+
+        // The numeric token should be skipped, only "OK" accepted
+        assertThat(result.content()).isEqualTo("OK");
+    }
+
+    @Test
+    void chatStream_booleanTokenNode_skipped() {
+        when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
+            "data:{\"type\":\"token\",\"token\":true}",
+            "data:{\"type\":\"token\",\"token\":\"text\"}",
+            "data:{\"type\":\"done\"}"
+        ));
+
+        StringBuilder received = new StringBuilder();
+
+        AgentBackendClient.ChatResult result = client.chatStream("Hi", "s1",
+            received::append, t -> {}, (n, r) -> {}, r -> {}, e -> {});
+
+        assertThat(result.content()).isEqualTo("text");
+    }
+
+    @Test
+    void chatStream_objectTokenNode_skipped() {
+        when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
+            "data:{\"type\":\"token\",\"token\":{\"nested\":\"value\"}}",
+            "data:{\"type\":\"token\",\"token\":\"text\"}",
+            "data:{\"type\":\"done\"}"
+        ));
+
+        StringBuilder received = new StringBuilder();
+
+        AgentBackendClient.ChatResult result = client.chatStream("Hi", "s1",
+            received::append, t -> {}, (n, r) -> {}, r -> {}, e -> {});
+
+        assertThat(result.content()).isEqualTo("text");
+    }
+
+    // ─── Fix #1: memoryUpdated propagated through done event ─────────
+
+    @Test
+    void chatStream_doneWithMetadata_propagatesMemoryUpdated() {
+        when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
+            "data:{\"type\":\"metadata\",\"modelUsed\":\"m1\",\"contextTokens\":10,\"contextLength\":100,\"memoryUpdated\":true}",
+            "data:{\"type\":\"token\",\"token\":\"answer\"}",
+            "data:{\"type\":\"done\"}"
+        ));
+
+        AtomicReference<AgentBackendClient.ChatResult> completed = new AtomicReference<>();
+
+        AgentBackendClient.ChatResult result = client.chatStream("Hi", "s1",
+            t -> {}, t -> {}, (n, r) -> {}, completed::set, e -> {});
+
+        assertThat(result.memoryUpdated()).isTrue();
+        assertThat(completed.get().memoryUpdated()).isTrue();
+    }
+
+    @Test
+    void chatStream_doneWithMetadata_memoryUpdatedFalse() {
+        when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
+            "data:{\"type\":\"metadata\",\"modelUsed\":\"m1\",\"contextTokens\":10,\"contextLength\":100,\"memoryUpdated\":false}",
+            "data:{\"type\":\"done\"}"
+        ));
+
+        AtomicReference<AgentBackendClient.ChatResult> completed = new AtomicReference<>();
+
+        AgentBackendClient.ChatResult result = client.chatStream("Hi", "s1",
+            t -> {}, t -> {}, (n, r) -> {}, completed::set, e -> {});
+
+        assertThat(result.memoryUpdated()).isFalse();
+        assertThat(completed.get().memoryUpdated()).isFalse();
+    }
+
+    @Test
+    void chatStream_doneWithMetadata_propagatesStreamFinalized() {
+        when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
+            "data:{\"type\":\"metadata\",\"modelUsed\":\"m1\",\"contextTokens\":10,\"contextLength\":100,\"streamFinalized\":true}",
+            "data:{\"type\":\"done\"}"
+        ));
+
+        AtomicReference<AgentBackendClient.ChatResult> completed = new AtomicReference<>();
+
+        AgentBackendClient.ChatResult result = client.chatStream("Hi", "s1",
+            t -> {}, t -> {}, (n, r) -> {}, completed::set, e -> {});
+
+        // streamFinalized from metadata should be propagated through done path
+        assertThat(result.streamFinalized()).isTrue();
+    }
+
+    // ─── Fix #4: chatId and threadId passed to backend ───────────────
+
+    @Test
+    void chat_forwardsChatIdAndThreadIdToBackend() {
+        when(responseSpec.body(String.class))
+            .thenReturn("{\"response\":\"OK\"}");
+
+        BotSessionEntity runtime = new BotSessionEntity();
+        runtime.setChatId("123456");
+        runtime.setMetadata("threadId", "42");
+
+        client.chat("Hello", "session-123", runtime);
+
+        verify(postSpec).body(argThat((Object body) -> {
+            if (!(body instanceof java.util.Map<?, ?> map)) return false;
+            return "123456".equals(map.get("chatId"))
+                && "42".equals(map.get("threadId"));
+        }));
+    }
+
+    @Test
+    void chat_withNullChatId_omitsChatId() {
+        when(responseSpec.body(String.class))
+            .thenReturn("{\"response\":\"OK\"}");
+
+        BotSessionEntity runtime = new BotSessionEntity();
+        runtime.setChatId(null);
+        runtime.setMetadata("threadId", "42");
+
+        client.chat("Hello", "session-123", runtime);
+
+        verify(postSpec).body(argThat((Object body) -> {
+            if (!(body instanceof java.util.Map<?, ?> map)) return false;
+            return !map.containsKey("chatId")
+                && "42".equals(map.get("threadId"));
+        }));
+    }
+
+    @Test
+    void chat_withBlankChatId_omitsChatId() {
+        when(responseSpec.body(String.class))
+            .thenReturn("{\"response\":\"OK\"}");
+
+        BotSessionEntity runtime = new BotSessionEntity();
+        runtime.setChatId("  ");
+
+        client.chat("Hello", "session-123", runtime);
+
+        verify(postSpec).body(argThat((Object body) -> {
+            if (!(body instanceof java.util.Map<?, ?> map)) return false;
+            return !map.containsKey("chatId");
+        }));
+    }
+
+    @Test
+    void chat_withNullThreadId_omitsThreadId() {
+        when(responseSpec.body(String.class))
+            .thenReturn("{\"response\":\"OK\"}");
+
+        BotSessionEntity runtime = new BotSessionEntity();
+        runtime.setChatId("123456");
+
+        client.chat("Hello", "session-123", runtime);
+
+        verify(postSpec).body(argThat((Object body) -> {
+            if (!(body instanceof java.util.Map<?, ?> map)) return false;
+            return "123456".equals(map.get("chatId"))
+                && !map.containsKey("threadId");
+        }));
+    }
+
+    @Test
+    void chat_withBlankThreadId_omitsThreadId() {
+        when(responseSpec.body(String.class))
+            .thenReturn("{\"response\":\"OK\"}");
+
+        BotSessionEntity runtime = new BotSessionEntity();
+        runtime.setChatId("123456");
+        runtime.setMetadata("threadId", "  ");
+
+        client.chat("Hello", "session-123", runtime);
+
+        verify(postSpec).body(argThat((Object body) -> {
+            if (!(body instanceof java.util.Map<?, ?> map)) return false;
+            return "123456".equals(map.get("chatId"))
+                && !map.containsKey("threadId");
+        }));
+    }
+
+    @Test
+    void chatStream_forwardsChatIdAndThreadIdToBackend() {
+        when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
+            "data:{\"type\":\"done\"}"
+        ));
+
+        BotSessionEntity runtime = new BotSessionEntity();
+        runtime.setChatId("999");
+        runtime.setMetadata("threadId", "7");
+
+        client.chatStream("Hi", "s1", runtime,
+            t -> {}, t -> {}, (n, r) -> {}, r -> {}, e -> {});
+
+        verify(postSpec).body(argThat((Object body) -> {
+            if (!(body instanceof java.util.Map<?, ?> map)) return false;
+            return "999".equals(map.get("chatId"))
+                && "7".equals(map.get("threadId"));
+        }));
+    }
+
+    @Test
+    void chatStream_withRuntimeFlags_includesChatIdAndThreadId() {
+        when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
+            "data:{\"type\":\"done\"}"
+        ));
+
+        BotSessionEntity runtime = new BotSessionEntity();
+        runtime.setFastMode(true);
+        runtime.setReasoningLevel("high");
+        runtime.setChatId("555");
+        runtime.setMetadata("threadId", "3");
+
+        client.chatStream("Hi", "s1", runtime,
+            t -> {}, t -> {}, (n, r) -> {}, r -> {}, e -> {});
+
+        verify(postSpec).body(argThat((Object body) -> {
+            if (!(body instanceof java.util.Map<?, ?> map)) return false;
+            return Boolean.TRUE.equals(map.get("fastMode"))
+                && "high".equals(map.get("reasoningEffort"))
+                && "555".equals(map.get("chatId"))
+                && "3".equals(map.get("threadId"));
+        }));
     }
 
     @Test

@@ -30,8 +30,12 @@ import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
 import jakarta.annotation.PostConstruct;
@@ -75,6 +79,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  private final GoalAutoContinueService goalAutoContinueService;
 
  /**
+  * Per-chat locks to prevent concurrent processing of messages within the same chat.
+  * Keyed by chatId. Used in {@link #handleTextOrMediaInternal} to serialize work per chat.
+  */
+ private final ConcurrentHashMap<Long, ReentrantLock> locks = new ConcurrentHashMap<>();
+
+ /**
  * B1.3: Called by TextBatchDebouncer when a batch is ready to dispatch.
  */
  private void dispatchTextBatch(UpdateEvent mergedEvent) {
@@ -112,6 +122,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  handleTextOrMedia(event);
  }
  case DOCUMENT, VOICE, STICKER, ANIMATION, LOCATION -> handleTextOrMedia(event);
+ case EDITED_MESSAGE -> handleEditedMessage(event);
  case UNKNOWN -> log.debug("Ignoring UNKNOWN update: {}", event.updateId());
  }
  } catch (Exception e) {
@@ -174,6 +185,35 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  }
  }
 
+ // ─── Edited message ───────────────────────────────────────────
+
+ /**
+  * Handle an edited message from Telegram. Telegram sends {@code edited_message}
+  * updates whenever a user edits a previously-sent message.
+  *
+  * <p>To avoid regenerating responses for every edit (which would be expensive
+  * and surprising), we simply acknowledge the edit and tell the user to use
+  * {@code /retry} if they want a fresh response.
+  *
+  * <p>The message is routed to the correct forum thread via
+  * {@code message_thread_id} when present.
+  */
+ private void handleEditedMessage(UpdateEvent event) {
+     long chatId = event.chatId();
+     Integer threadId = event.messageThreadId() > 0 ? (int) event.messageThreadId() : null;
+     log.debug("Edited message from chat {} (updateId={}) — acknowledging, not regenerating",
+         chatId, event.updateId());
+     if (threadId != null) {
+         telegramClient.sendMessage(chatId,
+             "Message edited — use /retry to regenerate",
+             properties.getParseMode(), null, threadId, false);
+     } else {
+         telegramClient.sendMessage(chatId,
+             "Message edited — use /retry to regenerate",
+             properties.getParseMode(), null, null);
+     }
+ }
+
  // ─── Text / Media ──────────────────────────────────────────────
 
  private void handleTextOrMedia(UpdateEvent event) {
@@ -183,6 +223,17 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  }
 
  private void handleTextOrMediaInternal(UpdateEvent event) {
+ long chatId = event.chatId();
+ ReentrantLock lock = locks.computeIfAbsent(chatId, k -> new ReentrantLock());
+ lock.lock();
+ try {
+     handleTextOrMediaInternalBody(event);
+ } finally {
+     lock.unlock();
+ }
+ }
+
+ private void handleTextOrMediaInternalBody(UpdateEvent event) {
  long chatId = event.chatId();
 
  // B1.8/B1.9: Group mention requirement + guest mode
@@ -260,8 +311,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  try {
  String sessionId = session.getId() != null ? session.getId().toString() : null;
 
+ // B1.6/B2.7: Thread the message_thread_id from the event through to all sends
+ long threadId = event.messageThreadId();
+
  // Build footer text (will be appended to streaming message or sync response)
- result = streamChat(chatId, messageText, sessionId, session, event.messageId());
+ result = streamChat(chatId, messageText, sessionId, session, event.messageId(), threadId);
 
  // If streaming produced content and finalized a message, don't send duplicate
  if (!result.streamFinalized()) {
@@ -278,7 +332,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  }
 
  typingManager.flushTyping(chatId);
- sendFormatted(chatId, backendResponse, event.messageId());
+ sendFormatted(chatId, backendResponse, event.messageId(), threadId);
  }
 
  // Voice mode: synthesize TTS and send as voice message
@@ -288,7 +342,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
  // 💾 Memory updated notification 
  if (result.memoryUpdated()) {
- sendFormatted(chatId, "💾 Self-improvement review: Memory updated", event.messageId());
+ sendFormatted(chatId, "💾 Self-improvement review: Memory updated", event.messageId(), threadId);
  }
 
  // P0: Standing goal auto-continuation
@@ -300,7 +354,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  session, result.content(), () -> busyHandler.isInterrupted(chatIdForLambda));
  for (String continuation : continuations) {
  if (continuation != null && !continuation.isBlank()) {
- sendFormatted(chatId, continuation, event.messageId());
+ sendFormatted(chatId, continuation, event.messageId(), threadId);
  }
  }
  }
@@ -371,10 +425,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  * @param sessionId the session UUID string (may be null)
  * @param session the bot session (for footer model resolution)
  * @param userMessageId the user's message ID (for reply)
+ * @param messageThreadId the Telegram forum thread ID (0 = no thread routing)
  * @return the full accumulated response content and metadata
  */
  private AgentBackendClient.ChatResult streamChat(long chatId, String messageText, String sessionId,
- BotSessionEntity session, long userMessageId) {
+ BotSessionEntity session, long userMessageId, long messageThreadId) {
  // P0: PII Redaction — prepend redacted session context to the message
  String fullMessage = buildMessageWithContext(messageText, session, chatId);
  StringBuilder accumulated = new StringBuilder(); // clean LLM text only
@@ -590,22 +645,38 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  }
 
  private void sendFormatted(long chatId, String text) {
- sendFormatted(chatId, text, 0L);
+ sendFormatted(chatId, text, 0L, 0L);
  }
 
  /**
  * Send formatted text, optionally with reply_to_message_id for thread reply mode (B1.6).
+ * Defaults messageThreadId to 0 (no thread).
  *
  * @param chatId target chat ID
  * @param text text to send
  * @param userMessageId the user's message ID for reply_to (0 = no reply)
  */
  private void sendFormatted(long chatId, String text, long userMessageId) {
+ sendFormatted(chatId, text, userMessageId, 0L);
+ }
+
+ /**
+ * Send formatted text, optionally with reply_to_message_id for thread reply mode (B1.6),
+ * and routed to a specific forum thread via message_thread_id.
+ *
+ * @param chatId target chat ID
+ * @param text text to send
+ * @param userMessageId the user's message ID for reply_to (0 = no reply)
+ * @param messageThreadId the Telegram forum thread ID (0 = no thread routing)
+ */
+ private void sendFormatted(long chatId, String text, long userMessageId, long messageThreadId) {
  // B2.8: Response filter — filter silent/empty responses
  if (responseFilter.shouldFilter(text)) {
  log.debug("Response filtered (silent or empty) for chat {}", chatId);
  return;
  }
+
+ Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
 
  // Check for MEDIA: outbound — send as photo instead of text
  java.util.regex.Matcher mediaMatcher = MEDIA_PATTERN.matcher(text);
@@ -613,7 +684,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  String mediaPath = mediaMatcher.group(1);
  // Remove the MEDIA: line from the text
  String remainingText = MEDIA_PATTERN.matcher(text).replaceAll("").trim();
- sendMediaFile(chatId, mediaPath, remainingText);
+ sendMediaFile(chatId, mediaPath, remainingText, threadId);
  }
 
  // If there's remaining text after removing MEDIA: lines, send it
@@ -643,7 +714,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  } else {
  replyToMessageId = null;
  }
- telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null);
+ // Use 6-arg sendMessage when thread routing is needed, 5-arg otherwise
+ if (threadId != null) {
+     telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
+ } else {
+     telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null);
+ }
  }
  }
  }
@@ -651,32 +727,62 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  /**
  * Sends a file from the filesystem as a photo via Telegram.
  *
+ * <p>Security: the path is resolved and validated against allowed base
+ * directories ({@code properties.getWorkingDirectory()} and
+ * {@code /tmp/agent-media/}) to prevent path-traversal attacks. If the
+ * resolved path escapes the allowed bases, the file is not sent and a
+ * warning is logged.
+ *
  * @param chatId the target chat ID
  * @param path the file path to send
  * @param caption optional caption text
+ * @param threadId optional forum thread ID (null = no thread)
  */
- private void sendMediaFile(long chatId, String path, String caption) {
+ private void sendMediaFile(long chatId, String path, String caption, Integer threadId) {
  try {
- File file = new File(path);
- if (!file.exists() || !file.isFile()) {
- log.warn("MEDIA file not found: {}", path);
- telegramClient.sendMessage(chatId, "Media file not found: " + path);
- return;
- }
- byte[] data = Files.readAllBytes(file.toPath());
- String parseMode = properties.getParseMode();
- String formattedCaption = null;
- if (caption != null && !caption.isBlank()) {
- formattedCaption = caption;
- if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
- formattedCaption = MarkdownConverter.convert(caption);
- }
- }
- telegramClient.sendPhoto(chatId, data, formattedCaption, parseMode);
- log.debug("Sent media file {} to chat {}", path, chatId);
+     // Path traversal protection: resolve and validate against allowed bases
+     Path resolved = Paths.get(path).normalize();
+     Path workingDir = Paths.get(properties.getWorkingDirectory()).normalize();
+     Path mediaDir = Paths.get("/tmp/agent-media/").normalize();
+     boolean allowed = resolved.startsWith(workingDir) || resolved.startsWith(mediaDir);
+     if (!allowed) {
+         log.warn("MEDIA path outside allowed directories, skipping: {} (resolved={}, allowed={}, mediaDir={})",
+             path, resolved, workingDir, mediaDir);
+         return;
+     }
+
+     File file = resolved.toFile();
+     if (!file.exists() || !file.isFile()) {
+         log.warn("MEDIA file not found: {}", path);
+         if (threadId != null) {
+             telegramClient.sendMessage(chatId, "Media file not found: " + path,
+                 properties.getParseMode(), null, threadId, false);
+         } else {
+             telegramClient.sendMessage(chatId, "Media file not found: " + path,
+                 properties.getParseMode(), null, null);
+         }
+         return;
+     }
+     byte[] data = Files.readAllBytes(file.toPath());
+     String parseMode = properties.getParseMode();
+     String formattedCaption = null;
+     if (caption != null && !caption.isBlank()) {
+         formattedCaption = caption;
+         if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
+             formattedCaption = MarkdownConverter.convert(caption);
+         }
+     }
+     telegramClient.sendPhoto(chatId, data, formattedCaption, parseMode);
+     log.debug("Sent media file {} to chat {}", path, chatId);
  } catch (Exception e) {
- log.error("Failed to send media file {} to chat {}: {}", path, chatId, e.getMessage());
- telegramClient.sendMessage(chatId, "Failed to send media: " + e.getMessage());
+     log.error("Failed to send media file {} to chat {}: {}", path, chatId, e.getMessage());
+     if (threadId != null) {
+         telegramClient.sendMessage(chatId, "Failed to send media: " + e.getMessage(),
+             properties.getParseMode(), null, threadId, false);
+     } else {
+         telegramClient.sendMessage(chatId, "Failed to send media: " + e.getMessage(),
+             properties.getParseMode(), null, null);
+     }
  }
  }
 

@@ -10,21 +10,30 @@ import static org.assertj.core.api.Assertions.assertThat;
 class StartCommandTest {
 
     @Test
-    void startCommandMetadataAndHandleBehavior() {
+    void startCommandMetadata() {
         var cmd = new StartCommand();
-
-        // Verify name and description
         assertThat(cmd.name()).isEqualTo("start");
         assertThat(cmd.description()).isEqualTo("Initialize bot conversation");
+    }
 
-        // handle() returns null with no session (no-op command — Telegram protocol only)
-        UpdateEvent eventNoArgs = makeEvent("");
-        assertThat(cmd.handle(eventNoArgs, null)).isNull();
+    @Test
+    void startCommandReturnsWelcomeMessageWithoutSession() {
+        var cmd = new StartCommand();
+        UpdateEvent event = makeEvent("");
+        String response = cmd.handle(event, null);
+        assertThat(response).isNotNull();
+        assertThat(response).contains("Привет!");
+        assertThat(response).contains("/help");
+    }
 
-        // handle() returns null even with a session and args — it is a true no-op
+    @Test
+    void startCommandReturnsWelcomeMessageWithSession() {
+        var cmd = new StartCommand();
         BotSessionEntity session = new BotSessionEntity();
-        UpdateEvent eventWithArgs = makeEvent("some args");
-        assertThat(cmd.handle(eventWithArgs, session)).isNull();
+        UpdateEvent event = makeEvent("some args");
+        String response = cmd.handle(event, session);
+        assertThat(response).isNotNull();
+        assertThat(response).contains("автономный ИИ-агент");
     }
 
     private UpdateEvent makeEvent(String args) {
