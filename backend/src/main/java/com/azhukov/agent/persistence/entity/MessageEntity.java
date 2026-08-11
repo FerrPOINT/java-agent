@@ -1,5 +1,6 @@
 package com.azhukov.agent.persistence.entity;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -23,12 +24,15 @@ public class MessageEntity {
 
     private String role;
 
+    @Column(columnDefinition = "TEXT")
     private String content;
 
+    @Column(columnDefinition = "TEXT")
     private String toolCallId;
 
     private String toolCallName;
 
+    @Column(columnDefinition = "TEXT")
     private String toolCallArguments;
 
     private Integer turnIndex;

@@ -39,6 +39,7 @@ public class SessionEntity {
 
     private Instant updatedAt;
 
+    @Column(columnDefinition = "TEXT")
     private String subgoal;
 
     @ElementCollection(fetch = FetchType.EAGER)
