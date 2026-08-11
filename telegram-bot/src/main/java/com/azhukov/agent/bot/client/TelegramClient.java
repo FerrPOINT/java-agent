@@ -86,6 +86,12 @@ public class TelegramClient {
         return lastCallConflict;
     }
 
+    /** Mask token for logging — show first 4 and last 4 chars only. */
+    static String maskToken(String token) {
+        if (token == null || token.length() <= 8) return "***";
+        return token.substring(0, 4) + "..." + token.substring(token.length() - 4);
+    }
+
     // ─── Text messages ────────────────────────────────────────────
 
     public Optional<Long> sendMessage(long chatId, String text) {
@@ -324,6 +330,7 @@ public class TelegramClient {
         lastCallConflict = false; // B3: clear at start of each call
         acquireRateLimit();
         try {
+            log.debug("Telegram API call: POST /bot{}/{}, token length={}", maskToken(botToken), method, botToken.length());
             TelegramResponse response = restClient.post()
                 .uri("/bot{token}/{method}", botToken, method)
                 .accept(MediaType.APPLICATION_JSON)

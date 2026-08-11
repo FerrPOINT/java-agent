@@ -146,12 +146,16 @@ public class LongPollingService {
                 if (telegramClient.isLastCallConflict()) {
                     return handleConflict();
                 }
-                log.warn("getUpdates returned empty — possible network error");
+                log.debug("getUpdates returned empty (no new updates)");
                 return null;
             }
             // Successful fetch — reset conflict counter
             conflictRetryCount = 0;
-            return result.get();
+            List<Map<String, Object>> updates = result.get();
+            if (!updates.isEmpty()) {
+                log.info("Received {} update(s) from Telegram (offset={})", updates.size(), offset);
+            }
+            return updates;
         } catch (Exception e) {
             if (e instanceof InterruptedException ie) throw ie;
             log.warn("getUpdates failed: {}", e.getMessage());

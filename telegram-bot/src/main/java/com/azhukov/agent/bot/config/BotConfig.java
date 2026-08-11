@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.config;
 
+import com.azhukov.agent.bot.client.ContentTypeNormalizingInterceptor;
 import com.azhukov.agent.bot.client.DohIpDiscovery;
 import com.azhukov.agent.bot.client.FallbackIpTransport;
 import com.azhukov.agent.bot.client.TelegramRequestFactory;
@@ -19,7 +20,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -38,14 +38,12 @@ public class BotConfig {
 
     @Bean
     public RestClient telegramRestClient(ObjectMapper objectMapper) {
-        // Telegram long-polling sometimes returns Content-Type: application/octet-stream
-        // instead of application/json. We need a Jackson converter that also accepts
-        // application/octet-stream so RestClient can deserialize the response.
+        // Telegram long-polling intermittently returns Content-Type: application/octet-stream
+        // instead of application/json. The ContentTypeNormalizingInterceptor inspects the
+        // response body and rewrites the Content-Type to application/json when the body is
+        // valid JSON, so Spring's standard Jackson message converter handles deserialization.
         MappingJackson2HttpMessageConverter jacksonConverter =
             new MappingJackson2HttpMessageConverter(objectMapper);
-        List<org.springframework.http.MediaType> supportedTypes = new ArrayList<>(jacksonConverter.getSupportedMediaTypes());
-        supportedTypes.add(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM);
-        jacksonConverter.setSupportedMediaTypes(supportedTypes);
 
         // P0: Fallback IP Transport — discover fallback IPs via DoH and retry
         // against them when primary api.telegram.org is unreachable.
@@ -72,6 +70,7 @@ public class BotConfig {
                 converters.removeIf(c -> c instanceof MappingJackson2HttpMessageConverter);
                 converters.add(jacksonConverter);
             })
+            .requestInterceptor(new ContentTypeNormalizingInterceptor())
             .requestInterceptor(fallbackTransport)
             .build();
     }
