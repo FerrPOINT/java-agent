@@ -122,25 +122,32 @@ public class DefaultContextEngine implements ContextEngine {
  List<Message> trimmed = trimToFit(context);
  // Preflight: trigger compression at threshold of maxTokens (before API call)
  if (shouldCompressPreflight(trimmed)) {
- // Check cooldown — skip if compressed recently
- Instant lastCompressed = lastCompressedAt.get(session.id());
- if (lastCompressed == null || Duration.between(lastCompressed, Instant.now()).getSeconds() >= COMPRESSION_COOLDOWN_SECONDS) {
- trimmed = contextCompressor.compress(trimmed, contextProps.getTargetTokens() * charsPerToken());
- lastCompressedAt.put(session.id(), Instant.now());
- compressionCount.incrementAndGet();
- // Log compression boundary and record last_compression_at in session metadata
- if (contextCompressor instanceof DefaultContextCompressor dcc) {
- dcc.logCompressionBoundary(String.valueOf(session.id()), ts -> {
- lastCompressedAt.put(session.id(), ts);
- });
- }
- // Invalidate prompt cache after compression
- if (cacheTracker != null) {
- cacheTracker.invalidateSystemPrompt(String.valueOf(session.id()));
- }
- } else {
- log.debug("Skipping compression for session {} — within cooldown (last compressed {})", session.id(), lastCompressed);
- }
+     // Check cooldown — skip if compressed recently
+     Instant lastCompressed = lastCompressedAt.get(session.id());
+     if (lastCompressed == null || Duration.between(lastCompressed, Instant.now()).getSeconds() >= COMPRESSION_COOLDOWN_SECONDS) {
+         trimmed = contextCompressor.compress(trimmed, contextProps.getTargetTokens() * charsPerToken());
+         lastCompressedAt.put(session.id(), Instant.now());
+         compressionCount.incrementAndGet();
+         // Session rotation: create child session or fall back to logCompressionBoundary
+         if (contextCompressor instanceof DefaultContextCompressor dcc) {
+             var rotationResult = dcc.rotateSession(String.valueOf(session.id()));
+             if (rotationResult.isPresent()) {
+                 log.info("Session rotated: old={}, new={}, title='{}'",
+                         session.id(), rotationResult.get().newSessionId(), rotationResult.get().newTitle());
+             } else {
+                 // Fall back to legacy compression boundary logging
+                 dcc.logCompressionBoundary(String.valueOf(session.id()), ts -> {
+                     lastCompressedAt.put(session.id(), ts);
+                 });
+             }
+         }
+         // Invalidate prompt cache after compression
+         if (cacheTracker != null) {
+             cacheTracker.invalidateSystemPrompt(String.valueOf(session.id()));
+         }
+     } else {
+         log.debug("Skipping compression for session {} — within cooldown (last compressed {})", session.id(), lastCompressed);
+     }
  }
  return trimmed;
  }

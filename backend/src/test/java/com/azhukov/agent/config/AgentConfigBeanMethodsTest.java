@@ -82,7 +82,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void contextCompressor_bean() {
-        assertThat(config.contextCompressor(mock(ModelClient.class), mock(CompressionLockRepository.class), properties)).isNotNull();
+        assertThat(config.contextCompressor(mock(ModelClient.class), mock(CompressionLockRepository.class), properties, mock(SessionRepository.class))).isNotNull();
     }
 
     @Test

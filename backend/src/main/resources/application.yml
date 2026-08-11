@@ -175,6 +175,8 @@ agent:
     enabled: ${AGENT_COMPRESSION_ENABLED:true}
     summary-chunk-tokens: ${AGENT_COMPRESSION_SUMMARY_CHUNK_TOKENS:2000}
     abort-on-summary-failure: ${AGENT_COMPRESSION_ABORT_ON_SUMMARY_FAILURE:false}
+    session-rotation:
+      enabled: ${AGENT_COMPRESSION_SESSION_ROTATION_ENABLED:true}
   
   # ─── Delegation ───
   delegation:

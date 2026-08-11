@@ -39,6 +39,12 @@ public class SessionEntity {
 
     private Instant updatedAt;
 
+    /** Parent session ID — set when a child session is created via compression rotation. */
+    private UUID parentSessionId;
+
+    /** Session lifecycle status: "active" (default) or "compressed" (superseded by a child session). */
+    private String sessionStatus = "active";
+
     @Column(columnDefinition = "TEXT")
     private String subgoal;
 

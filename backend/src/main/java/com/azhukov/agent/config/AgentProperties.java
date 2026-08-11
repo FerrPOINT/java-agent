@@ -427,6 +427,13 @@ public class AgentProperties {
         private boolean enabled = true;
         private int summaryChunkTokens = 2000;
         private boolean abortOnSummaryFailure = false;
+        private final SessionRotationProperties sessionRotation = new SessionRotationProperties();
+
+        @Getter @Setter
+        public static class SessionRotationProperties {
+            /** Whether to create a child session after compression (default true). */
+            private boolean enabled = true;
+        }
     }
 
     // S5: Curator configuration — config-driven interval, idle gating, stale/archive thresholds

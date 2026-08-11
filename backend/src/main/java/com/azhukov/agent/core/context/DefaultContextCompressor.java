@@ -8,11 +8,14 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.persistence.entity.CompressionLockEntity;
+import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.CompressionLockRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -69,7 +72,17 @@ public class DefaultContextCompressor implements ContextCompressor {
  private final ModelClient modelClient;
  private final CompressionLockRepository lockRepository;
  private final AgentProperties properties;
+ /** SessionRepository for session rotation — non-final to avoid breaking existing constructor signature. */
+ private SessionRepository sessionRepository;
  private final ConcurrentHashMap<String, Integer> inMemoryLocks = new ConcurrentHashMap<>();
+
+ /** Result of a session rotation — carries the new session ID for downstream consumers. */
+ public record SessionRotationResult(UUID newSessionId, String newTitle) {}
+
+ /** Sets the SessionRepository — called by the @Bean factory after construction. */
+ public void setSessionRepository(SessionRepository sessionRepository) {
+     this.sessionRepository = sessionRepository;
+ }
 
  @Override
  public List<Message> compress(List<Message> messages, int targetChars) {
@@ -267,10 +280,84 @@ public class DefaultContextCompressor implements ContextCompressor {
  * set {@code last_compression_at} in session metadata
  */
  void logCompressionBoundary(String sessionId, java.util.function.Consumer<java.time.Instant> onCompressionDone) {
- log.info("Compression boundary for session {} — recording last_compression_at", sessionId);
- if (onCompressionDone != null) {
- onCompressionDone.accept(java.time.Instant.now());
+     log.info("Compression boundary for session {} — recording last_compression_at", sessionId);
+     if (onCompressionDone != null) {
+         onCompressionDone.accept(java.time.Instant.now());
+     }
  }
+
+ /**
+  * Rotates the session after a successful compression: creates a child session linked
+  * to the parent via {@code parent_session_id}, propagates the title with " (compressed)" suffix,
+  * marks the old session as "compressed", and returns the new session ID.
+  * <p>
+  * If session rotation is disabled (via {@code agent.compression.session-rotation.enabled=false}),
+  * this method returns an empty Optional and the caller should fall back to
+  * {@link #logCompressionBoundary(String, java.util.function.Consumer)}.
+  * <p>
+  * If the rotation fails (DB error, session not found, etc.), the method logs a warning
+  * and returns an empty Optional so that compression still succeeds with the old session.
+  *
+  * @param sessionIdStr the current session ID (as string)
+  * @return the new session ID and title, or empty if rotation was skipped or failed
+  */
+ java.util.Optional<SessionRotationResult> rotateSession(String sessionIdStr) {
+     if (!properties.getCompression().getSessionRotation().isEnabled()) {
+         log.debug("Session rotation disabled — falling back to logCompressionBoundary");
+         return java.util.Optional.empty();
+     }
+
+     if (sessionRepository == null) {
+         log.debug("Session rotation skipped — SessionRepository not injected");
+         return java.util.Optional.empty();
+     }
+
+     if (sessionIdStr == null) {
+         log.debug("Session rotation skipped — sessionId is null");
+         return java.util.Optional.empty();
+     }
+
+     UUID sessionId;
+     try {
+         sessionId = UUID.fromString(sessionIdStr);
+     } catch (IllegalArgumentException e) {
+         log.debug("Session rotation skipped — not a valid UUID: {}", sessionIdStr);
+         return java.util.Optional.empty();
+     }
+
+     try {
+         SessionEntity oldSession = sessionRepository.findById(sessionId).orElse(null);
+         if (oldSession == null) {
+             log.warn("Session rotation skipped — session {} not found in DB", sessionIdStr);
+             return java.util.Optional.empty();
+         }
+
+         // Mark old session as compressed
+         oldSession.setSessionStatus("compressed");
+         oldSession.setUpdatedAt(Instant.now());
+         sessionRepository.save(oldSession);
+
+         // Create child session
+         SessionEntity childSession = new SessionEntity();
+         childSession.setParentSessionId(sessionId);
+         childSession.setUserId(oldSession.getUserId());
+         String childTitle = (oldSession.getTitle() != null ? oldSession.getTitle() : "Untitled") + " (compressed)";
+         childSession.setTitle(childTitle);
+         childSession.setModelProvider(oldSession.getModelProvider());
+         childSession.setModelName(oldSession.getModelName());
+         childSession.setCreatedAt(Instant.now());
+         childSession.setUpdatedAt(Instant.now());
+         childSession.setSessionStatus("active");
+         sessionRepository.save(childSession);
+
+         log.info("Session rotation complete: parent={}, child={}, title='{}'",
+                 sessionId, childSession.getId(), childTitle);
+
+         return java.util.Optional.of(new SessionRotationResult(childSession.getId(), childTitle));
+     } catch (RuntimeException e) {
+         log.warn("Session rotation failed for session {} — compression will continue with old session", sessionIdStr, e);
+         return java.util.Optional.empty();
+     }
  }
 
  private String pruneToolOutput(Message m) {
