@@ -128,6 +128,12 @@ public class DefaultContextEngine implements ContextEngine {
                 trimmed = contextCompressor.compress(trimmed, contextProps.getTargetTokens() * charsPerToken());
                 lastCompressedAt.put(session.id(), Instant.now());
                 compressionCount.incrementAndGet();
+                // Log compression boundary and record last_compression_at in session metadata
+                if (contextCompressor instanceof DefaultContextCompressor dcc) {
+                    dcc.logCompressionBoundary(String.valueOf(session.id()), ts -> {
+                        lastCompressedAt.put(session.id(), ts);
+                    });
+                }
                 // Invalidate prompt cache after compression
                 if (cacheTracker != null) {
                     cacheTracker.invalidateSystemPrompt(String.valueOf(session.id()));
@@ -198,6 +204,11 @@ public class DefaultContextEngine implements ContextEngine {
         }
     }
 
+    @Override
+    public Instant getLastCompressionAt(UUID sessionId) {
+        return lastCompressedAt.get(sessionId);
+    }
+
     private int charsPerToken() {
         if (modelMetadataService != null) {
             return modelMetadataService.getMetadata(
@@ -254,6 +265,10 @@ public class DefaultContextEngine implements ContextEngine {
         for (Message m : messages) {
             total += m.content() != null ? m.content().length() : 0;
             total += 20;
+            // Account for image parts: each image costs IMAGE_CHAR_EQUIVALENT chars in the budget.
+            // Mirrors Hermes _content_length_for_budget() image handling.
+            int images = m.imageCount() != null ? m.imageCount() : 0;
+            total += images * DefaultContextCompressor.IMAGE_CHAR_EQUIVALENT;
         }
         return total;
     }

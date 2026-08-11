@@ -48,6 +48,18 @@ public class DefaultContextCompressor implements ContextCompressor {
     /** Chars per token rough estimate. */
     private static final int CHARS_PER_TOKEN = 4;
 
+    /**
+     * Flat token estimate for each image part in a multimodal message.
+     * Mirrors Hermes _IMAGE_TOKEN_ESTIMATE (1600): a realistic ceiling that keeps
+     * compression budgeting honest for multi-image conversations.
+     */
+    private static final int IMAGE_TOKEN_ESTIMATE = 1_600;
+    /**
+     * Image cost expressed in the char-budget currency the compressor speaks in.
+     * Mirrors Hermes _IMAGE_CHAR_EQUIVALENT = _IMAGE_TOKEN_ESTIMATE * _CHARS_PER_TOKEN.
+     */
+    static final int IMAGE_CHAR_EQUIVALENT = IMAGE_TOKEN_ESTIMATE * CHARS_PER_TOKEN;
+
     /** Marker that identifies a previously-generated summary system message. */
     private static final String SUMMARY_MARKER = "Earlier conversation (summarized):";
 
@@ -64,7 +76,7 @@ public class DefaultContextCompressor implements ContextCompressor {
         if (messages == null || messages.isEmpty()) {
             return messages;
         }
-        int currentChars = messages.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum();
+        int currentChars = messages.stream().mapToInt(this::contentLengthForBudget).sum();
         if (currentChars <= targetChars) {
             return messages;
         }
@@ -226,6 +238,39 @@ public class DefaultContextCompressor implements ContextCompressor {
         int compressedTokens = compressedChars / CHARS_PER_TOKEN;
         int scaled = (int) (compressedTokens * SUMMARY_RATIO);
         return Math.min(Math.max(scaled, MIN_SUMMARY_TOKENS), SUMMARY_TOKENS_CEILING);
+    }
+
+    /**
+     * Returns the effective char-length of a message's content for token budgeting,
+     * accounting for image parts. Mirrors Hermes' _content_length_for_budget().
+     * <p>
+     * For plain text messages, this is simply {@code content.length()}.
+     * For messages carrying images (via {@link Message#imageCount()}), each image
+     * adds {@link #IMAGE_CHAR_EQUIVALENT} to the budget, ensuring the compressor
+     * does not treat an image-heavy turn as near-zero tokens.
+     */
+    int contentLengthForBudget(Message m) {
+        int textLen = m.content() != null ? m.content().length() : 0;
+        int images = m.imageCount() != null ? m.imageCount() : 0;
+        return textLen + images * IMAGE_CHAR_EQUIVALENT;
+    }
+
+    /**
+     * Logs a compression boundary event for the given session, then records
+     * the timestamp via the provided callback. This is the simplified Java
+     * counterpart of Hermes' session rotation: instead of creating a child
+     * session entity, we emit a log marker and a metadata update so downstream
+     * consumers can detect when compression happened.
+     *
+     * @param sessionId          the session being compressed (may be null)
+     * @param onCompressionDone  callback invoked with the timestamp; used to
+     *                           set {@code last_compression_at} in session metadata
+     */
+    void logCompressionBoundary(String sessionId, java.util.function.Consumer<java.time.Instant> onCompressionDone) {
+        log.info("Compression boundary for session {} — recording last_compression_at", sessionId);
+        if (onCompressionDone != null) {
+            onCompressionDone.accept(java.time.Instant.now());
+        }
     }
 
     private String pruneToolOutput(Message m) {

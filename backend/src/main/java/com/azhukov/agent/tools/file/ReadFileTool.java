@@ -15,32 +15,59 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
+import java.util.Locale;
 
 @Component
 @AgentTool(
     name = "read_file",
-    description = "Read a text file with optional offset and limit. Returns content with line numbers. Paths outside allowed directories are blocked when file safety is enabled.",
+    description = "Read a text file with optional offset and limit. Returns content with line numbers. Paths outside allowed directories are blocked when file safety is enabled. Binary files and device paths are blocked.",
     toolset = "file"
 )
 @RequiredArgsConstructor
 public class ReadFileTool implements ToolHandler {
+
+    private static final int MAX_READ_CHARS = 100_000;
+
+    private static final Set<String> BINARY_EXTENSIONS = Set.of(
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svg",
+        ".pdf", ".zip", ".gz", ".tar", ".jar", ".class", ".so", ".dll",
+        ".exe", ".bin", ".dat", ".db", ".sqlite", ".mp3", ".mp4", ".avi",
+        ".mov", ".wav", ".ogg", ".flac", ".iso", ".img", ".wasm", ".o", ".a"
+    );
+
+    private static final Set<String> BLOCKED_DEVICE_PATHS = Set.of(
+        "/dev/zero", "/dev/random", "/dev/urandom",
+        "/dev/null", "/dev/full", "/dev/tcp"
+    );
 
     private final AgentProperties properties;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         ReadFileArgs args = ToolHandler.parseJson(arguments, ReadFileArgs.class);
-        Path path = Path.of(args.path()).toAbsolutePath().normalize();
+        String rawPath = args.path();
+        Path path = Path.of(rawPath).toAbsolutePath().normalize();
+
+        // Device path blocking — check before anything else
+        if (isBlockedDevicePath(rawPath)) {
+            return ToolResult.fail("Device file blocked: " + rawPath);
+        }
 
         if (!isPathAllowed(path)) {
-            return ToolResult.fail("Access denied: path is outside allowed directories: " + args.path());
+            return ToolResult.fail("Access denied: path is outside allowed directories: " + rawPath);
         }
 
         if (!Files.exists(path)) {
-            return ToolResult.fail("File not found: " + args.path());
+            return ToolResult.fail("File not found: " + rawPath);
         }
         if (!Files.isRegularFile(path)) {
-            return ToolResult.fail("Not a file: " + args.path());
+            return ToolResult.fail("Not a file: " + rawPath);
+        }
+
+        // Binary file detection by extension
+        if (isBinaryFile(path)) {
+            return ToolResult.fail("Binary file detected: " + rawPath + ". Use terminal tool for binary files.");
         }
 
         try {
@@ -58,10 +85,36 @@ public class ReadFileTool implements ToolHandler {
             for (int i = start; i < end; i++) {
                 sb.append(i + 1).append("|").append(lines.get(i)).append("\n");
             }
-            return ToolResult.ok(sb.toString());
+
+            // Char cap truncation
+            String result = sb.toString();
+            if (result.length() > MAX_READ_CHARS) {
+                result = result.substring(0, MAX_READ_CHARS) + "\n[... file truncated at " + MAX_READ_CHARS + " chars]";
+            }
+            return ToolResult.ok(result);
         } catch (IOException e) {
             return ToolResult.fail("Failed to read file: " + e.getMessage());
         }
+    }
+
+    private boolean isBinaryFile(Path path) {
+        String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
+        int dotIndex = fileName.lastIndexOf('.');
+        if (dotIndex < 0 || dotIndex == fileName.length() - 1) {
+            return false;
+        }
+        String ext = fileName.substring(dotIndex);
+        return BINARY_EXTENSIONS.contains(ext);
+    }
+
+    private boolean isBlockedDevicePath(String rawPath) {
+        String normalized = Path.of(rawPath).toAbsolutePath().normalize().toString();
+        for (String device : BLOCKED_DEVICE_PATHS) {
+            if (normalized.equals(device) || normalized.startsWith(device + "/")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isPathAllowed(Path path) {

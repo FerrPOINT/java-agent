@@ -46,4 +46,14 @@ public interface ContextEngine {
      */
     default void updateModel(String model) {
     }
+
+    /**
+     * Returns the timestamp of the last compression for the given session,
+     * or null if no compression has occurred.  Downstream consumers use this
+     * to detect compression boundaries without the full session-rotation
+     * machinery.
+     */
+    default java.time.Instant getLastCompressionAt(java.util.UUID sessionId) {
+        return null;
+    }
 }
