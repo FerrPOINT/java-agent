@@ -469,7 +469,7 @@ public class AgentController {
     @PostMapping("/agent/undo")
     public int undoTurnsBody(@RequestBody UndoRequest request) {
         UUID sessionId = request.sessionId();
-        int turns = request.turns() > 0 ? request.turns() : 1;
+        int turns = request.effectiveTurns();
         return agentRuntimeService.undoTurns(sessionId, turns);
     }
 
