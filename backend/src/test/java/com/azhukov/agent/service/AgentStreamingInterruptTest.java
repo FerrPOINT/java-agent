@@ -94,6 +94,8 @@ class AgentStreamingInterruptTest {
         properties.getContext().setMaxTokens(8192);
         properties.getModel().setModelName("test-model");
         properties.getCore().setMaxTurns(10);
+        properties.getError().setRetryDelayMs(10);
+        properties.getError().setRetryCapMs(50);
         sessionRepository = mock(SessionRepository.class);
         messageRepository = mock(MessageRepository.class);
         transactionTemplate = mock(TransactionTemplate.class);

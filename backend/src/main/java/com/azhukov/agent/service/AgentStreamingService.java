@@ -85,8 +85,7 @@ public class AgentStreamingService {
 
     private static final int MAX_STREAM_RETRIES = 5;
     private static final int MAX_CONTINUATION_ATTEMPTS = 1;
-    private static final long RETRY_BACKOFF_BASE_MS = 2_000L; // 2s base
-    private static final long RETRY_BACKOFF_CAP_MS = 60_000L; // cap at 60s
+    // Backoff base/cap are now read from AgentProperties at runtime (see getRetryBackoffBase/Cap)
 
 
     public SseEmitter streamTurn(ChatRequest request) {
@@ -273,10 +272,12 @@ public class AgentStreamingService {
                             : ErrorClassifier.ErrorType.RETRYABLE;
                         if (errorType == ErrorClassifier.ErrorType.RETRYABLE
                             || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
-                            // Exponential backoff: 2s, 4s, 8s, 16s, 32s (cap at 60s) + jitter
+                            // Exponential backoff: base*2^n capped, with jitter
+                            long baseMs = properties.getError().getRetryDelayMs();
+                            long capMs = properties.getError().getRetryCapMs();
                             long delayMs = Math.min(
-                                RETRY_BACKOFF_BASE_MS * (1L << streamRetries),
-                                RETRY_BACKOFF_CAP_MS);
+                                baseMs * (1L << streamRetries),
+                                capMs);
                             delayMs += ThreadLocalRandom.current().nextLong(0, 500);
                             String retryMsg = "⏳ Model overloaded, retrying (attempt "
                                 + (streamRetries + 1) + "/" + MAX_STREAM_RETRIES

@@ -29,3 +29,6 @@ agent:
     servers: []
   security:
     api-key:
+  error:
+    retry-delay-ms: 10
+    retry-cap-ms: 50

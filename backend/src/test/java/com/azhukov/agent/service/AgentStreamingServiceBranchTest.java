@@ -105,6 +105,8 @@ class AgentStreamingServiceBranchTest {
         properties.getContext().setMaxTokens(4096);
         properties.getModel().setModelName("test-model");
         properties.getCore().setMaxTurns(10);
+        properties.getError().setRetryDelayMs(10);
+        properties.getError().setRetryCapMs(50);
         sessionRepository = mock(SessionRepository.class);
         messageRepository = mock(MessageRepository.class);
         transactionTemplate = mock(TransactionTemplate.class);
@@ -174,7 +176,7 @@ class AgentStreamingServiceBranchTest {
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
 
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 
@@ -193,7 +195,7 @@ class AgentStreamingServiceBranchTest {
         runtimeConfigService.setModelOverride("override-model");
 
         ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
@@ -220,7 +222,7 @@ class AgentStreamingServiceBranchTest {
     void streamTurnUsesPropertiesModelWhenNoOverrideAndBlankSessionModel() throws Exception {
         // Session has blank model, no runtime override → should use properties model
         ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
@@ -248,7 +250,7 @@ class AgentStreamingServiceBranchTest {
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
 
         ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
@@ -278,7 +280,7 @@ class AgentStreamingServiceBranchTest {
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
 
         ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
@@ -305,7 +307,7 @@ class AgentStreamingServiceBranchTest {
         when(usageTracker.getSessionUsage(eq(SESSION_ID))).thenReturn(null);
 
         ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
@@ -414,7 +416,7 @@ class AgentStreamingServiceBranchTest {
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
             .thenReturn(List.of());
 
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
             handler.onToken("new session");
@@ -467,7 +469,7 @@ class AgentStreamingServiceBranchTest {
     @Test
     void iterationBudgetExhaustedTerminatesStream() throws Exception {
         ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         when(iterationBudget.isExhausted(any())).thenReturn(true);
 
@@ -555,7 +557,7 @@ class AgentStreamingServiceBranchTest {
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
 
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 
@@ -587,7 +589,7 @@ class AgentStreamingServiceBranchTest {
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
 
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 
@@ -622,7 +624,7 @@ class AgentStreamingServiceBranchTest {
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
 
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 
@@ -661,7 +663,7 @@ class AgentStreamingServiceBranchTest {
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
 
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 
@@ -695,7 +697,7 @@ class AgentStreamingServiceBranchTest {
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
 
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 
@@ -740,8 +742,8 @@ class AgentStreamingServiceBranchTest {
 
     @Test
     void permanentErrorTerminatesImmediatelyWithoutRetry() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 120_000L);
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 30_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         // Error thrown as exception from stream() (not via onError)
         // RuntimeException is classified as RETRYABLE by ErrorClassifier, so it will retry
@@ -755,7 +757,7 @@ class AgentStreamingServiceBranchTest {
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
-        emitter.awaitDone(120);
+        emitter.awaitDone(15);
 
         // Should have error events (initial + retries exhausted)
         boolean hasError = emitter.events.stream()
@@ -777,7 +779,7 @@ class AgentStreamingServiceBranchTest {
             .thenThrow(new RuntimeException("usage tracker broken"));
 
         ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
@@ -817,7 +819,7 @@ class AgentStreamingServiceBranchTest {
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
 
         ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
-        CollectingEmitter emitter = new CollectingEmitter(120_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 

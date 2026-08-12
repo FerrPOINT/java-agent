@@ -411,6 +411,8 @@ public class AgentProperties {
         private int retryAttempts = 5;
         private int retryDelayMs = 2000;
         private int backoffMultiplier = 2;
+        /** Cap for exponential backoff delay in milliseconds (default 60s). */
+        private int retryCapMs = 60_000;
     }
 
     @Getter @Setter

@@ -99,6 +99,8 @@ class AgentStreamingServiceGapTest {
         properties.getContext().setMaxTokens(8192);
         properties.getModel().setModelName("test-model");
         properties.getCore().setMaxTurns(10);
+        properties.getError().setRetryDelayMs(10);
+        properties.getError().setRetryCapMs(50);
         sessionRepository = mock(SessionRepository.class);
         messageRepository = mock(MessageRepository.class);
         transactionTemplate = mock(TransactionTemplate.class);
@@ -163,7 +165,7 @@ class AgentStreamingServiceGapTest {
         @DisplayName("When modelClient.stream() throws exception, error event is sent")
         void exceptionInStreamSendsErrorEvent() throws Exception {
             ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
-            CollectingEmitter emitter = new CollectingEmitter(120_000L);
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doThrow(new RuntimeException("stream setup failed"))
                 .when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
@@ -182,7 +184,7 @@ class AgentStreamingServiceGapTest {
         @DisplayName("When handler.onError() is called, error event is sent and stream terminates")
         void handlerOnErrorSendsErrorEvent() throws Exception {
             ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
-            CollectingEmitter emitter = new CollectingEmitter(120_000L);
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doAnswer(invocation -> {
                 StreamingResponseHandler handler = invocation.getArgument(2);
@@ -201,7 +203,7 @@ class AgentStreamingServiceGapTest {
         @DisplayName("When exception occurs in agentic loop, stream terminates with completeWithError")
         void exceptionTerminatesStream() throws Exception {
             ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
-            CollectingEmitter emitter = new CollectingEmitter(120_000L);
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doThrow(new RuntimeException("fatal error"))
                 .when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
@@ -224,7 +226,7 @@ class AgentStreamingServiceGapTest {
         @DisplayName("GAP: When stream completes with empty content, no continuation is attempted")
         void gap_emptyResponseNoContinuation() throws Exception {
             ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
-            CollectingEmitter emitter = new CollectingEmitter(120_000L);
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doAnswer(invocation -> {
                 StreamingResponseHandler handler = invocation.getArgument(2);
@@ -244,7 +246,7 @@ class AgentStreamingServiceGapTest {
         @DisplayName("GAP: When stream returns partial text then errors, no continuation")
         void gap_partialTextThenErrorNoContinuation() throws Exception {
             ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
-            CollectingEmitter emitter = new CollectingEmitter(120_000L);
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doAnswer(invocation -> {
                 StreamingResponseHandler handler = invocation.getArgument(2);
@@ -264,7 +266,7 @@ class AgentStreamingServiceGapTest {
         @DisplayName("GAP: When stream produces very short response, no continuation check")
         void gap_shortResponseNoContinuationCheck() throws Exception {
             ChatRequest request = new ChatRequest(SESSION_ID, "Write a 1000 word essay about Java.", null, 10_000L);
-            CollectingEmitter emitter = new CollectingEmitter(120_000L);
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doAnswer(invocation -> {
                 StreamingResponseHandler handler = invocation.getArgument(2);
@@ -442,7 +444,7 @@ class AgentStreamingServiceGapTest {
         @DisplayName("On successful completion, done event is sent")
         void doneEventOnSuccess() throws Exception {
             ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
-            CollectingEmitter emitter = new CollectingEmitter(120_000L);
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doAnswer(invocation -> {
                 StreamingResponseHandler handler = invocation.getArgument(2);
@@ -464,7 +466,7 @@ class AgentStreamingServiceGapTest {
         @DisplayName("On exception in agentic loop, done event is NOT sent (error only)")
         void noDoneEventOnException() throws Exception {
             ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
-            CollectingEmitter emitter = new CollectingEmitter(120_000L);
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doThrow(new RuntimeException("crash"))
                 .when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
@@ -485,7 +487,7 @@ class AgentStreamingServiceGapTest {
         @DisplayName("GAP: On handler.onError(), done event IS still sent (stream continues after error)")
         void doneEventStillSentOnHandlerError() throws Exception {
             ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
-            CollectingEmitter emitter = new CollectingEmitter(120_000L);
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doAnswer(invocation -> {
                 StreamingResponseHandler handler = invocation.getArgument(2);
@@ -513,7 +515,7 @@ class AgentStreamingServiceGapTest {
         @DisplayName("On budget exhaustion, done event IS sent (graceful termination)")
         void doneEventOnBudgetExhaustion() throws Exception {
             ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
-            CollectingEmitter emitter = new CollectingEmitter(120_000L);
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             when(iterationBudget.isExhausted(any())).thenReturn(true);
 
@@ -544,7 +546,7 @@ class AgentStreamingServiceGapTest {
         @DisplayName("Transient streaming error is retried and succeeds on second attempt")
         void transientErrorRetriedAndSucceeds() throws Exception {
             ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
-            CollectingEmitter emitter = new CollectingEmitter(120_000L);
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             java.util.concurrent.atomic.AtomicInteger streamCallCount = new java.util.concurrent.atomic.AtomicInteger(0);
             doAnswer(invocation -> {
@@ -606,7 +608,7 @@ class AgentStreamingServiceGapTest {
 
         void awaitDone() {
             await().pollInterval(50, TimeUnit.MILLISECONDS)
-                .atMost(120, TimeUnit.SECONDS)
+                .atMost(15, TimeUnit.SECONDS)
                 .until(() -> completed.get() || error.get() != null);
         }
     }
