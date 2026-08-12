@@ -32,3 +32,14 @@ agent:
   error:
     retry-delay-ms: 10
     retry-cap-ms: 50
+
+management:
+  endpoint:
+    health:
+      groups:
+        readiness:
+          include: db,model
+        liveness:
+          include: livenessState,ping
+        infrastructure:
+          include: mcp,browser,chromium

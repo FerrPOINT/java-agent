@@ -94,12 +94,24 @@ public class AgentStreamingService {
 
     /**
      * Apply CLI runtime settings from the request to the session.
+     * Wraps the SessionEntity load and cliState initialization in a
+     * read-only transaction to avoid LazyInitializationException when
+     * the lazy cliState ElementCollection is accessed from the async
+     * streaming thread.
      */
     private ChatRequest applyCliState(ChatRequest request) {
         if (request.sessionId() == null) {
             return request;
         }
-        SessionEntity session = sessionRepository.findById(request.sessionId()).orElse(null);
+        SessionEntity session = transactionTemplate.execute(status -> {
+            SessionEntity e = sessionRepository.findById(request.sessionId()).orElse(null);
+            if (e != null) {
+                // Force-initialize the lazy cliState collection inside the tx
+                // so CliStateApplier can safely read values after the tx closes.
+                org.hibernate.Hibernate.initialize(e.getCliState());
+            }
+            return e;
+        });
         return cliStateApplier.applyCliState(request, session);
     }
 

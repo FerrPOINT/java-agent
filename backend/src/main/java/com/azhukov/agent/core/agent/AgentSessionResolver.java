@@ -6,10 +6,13 @@ import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.Hibernate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -80,17 +83,30 @@ public class AgentSessionResolver {
      * @throws IllegalArgumentException if the session is not found
      */
     public Session loadSession(UUID id) {
-        SessionEntity e = sessionRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
-        Session session = sessionMapper.toDomain(e);
-        if (e.getCliState() != null && !e.getCliState().isEmpty()) {
-            for (var entry : e.getCliState().entrySet()) {
+        // Wrap the load + cliState access in a read-only transaction so the
+        // lazy ElementCollection is initialized while the Hibernate session
+        // is still open. Without this, getCliState() triggers a
+        // LazyInitializationException when called from the async streaming
+        // thread (outside any transaction).
+        return transactionTemplate.execute(status -> {
+            SessionEntity e = sessionRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
+            // Force-initialize the lazy cliState collection inside the tx
+            Map<String, String> cliStateCopy;
+            if (Hibernate.isInitialized(e.getCliState())) {
+                cliStateCopy = new HashMap<>(e.getCliState());
+            } else {
+                Hibernate.initialize(e.getCliState());
+                cliStateCopy = new HashMap<>(e.getCliState());
+            }
+            Session session = sessionMapper.toDomain(e);
+            for (var entry : cliStateCopy.entrySet()) {
                 session = session.withMetadata(entry.getKey(), entry.getValue());
             }
-        }
-        if (e.getSubgoal() != null && !e.getSubgoal().isBlank()) {
-            session = session.withMetadata("subgoal", e.getSubgoal());
-        }
-        return session;
+            if (e.getSubgoal() != null && !e.getSubgoal().isBlank()) {
+                session = session.withMetadata("subgoal", e.getSubgoal());
+            }
+            return session;
+        });
     }
 }

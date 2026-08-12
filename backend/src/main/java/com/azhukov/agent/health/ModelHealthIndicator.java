@@ -19,6 +19,14 @@ public class ModelHealthIndicator implements HealthIndicator {
 
     @Override
     public Health health() {
+        String provider = properties.getModel().getProvider();
+        if ("noop".equalsIgnoreCase(provider)) {
+            return Health.up()
+                .withDetail("model", properties.getModel().getModelName())
+                .withDetail("provider", "noop")
+                .withDetail("status", "not_configured")
+                .build();
+        }
         String modelName = properties.getModel().getModelName();
         try {
             var response = modelClient.complete(List.of(Message.user("ping")), List.of());

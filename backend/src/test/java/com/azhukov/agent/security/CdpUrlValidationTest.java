@@ -43,21 +43,85 @@ class CdpUrlValidationTest {
         assertThat(h.validate("wss://example.com:9222/devtools/browser/abc123")).isNull();
     }
 
+    // ── Valid http:// and https:// CDP URLs (DevTools HTTP endpoint) ──
+
+    @Test
+    void validHttpCdpUrlPasses() {
+        UrlSafetyHandler h = handler(props());
+        assertThat(h.validate("http://example.com:9222")).isNull();
+    }
+
+    @Test
+    void validHttpsCdpUrlPasses() {
+        UrlSafetyHandler h = handler(props());
+        assertThat(h.validate("https://example.com:9222")).isNull();
+    }
+
+    @Test
+    void validHttpCdpUrlWithPathPasses() {
+        UrlSafetyHandler h = handler(props());
+        assertThat(h.validate("http://example.com:9222/json/list")).isNull();
+    }
+
+    // ── Localhost and loopback always allowed for CDP ──
+
+    @Test
+    void allowsLocalhostWsWhenSafetyEnabled() {
+        UrlSafetyHandler h = handler(props());
+        assertThat(h.validate("ws://localhost:9222")).isNull();
+    }
+
+    @Test
+    void allowsLocalhostHttpWhenSafetyEnabled() {
+        UrlSafetyHandler h = handler(props());
+        assertThat(h.validate("http://localhost:9222")).isNull();
+    }
+
+    @Test
+    void allowsLocalhostLocaldomainWhenSafetyEnabled() {
+        UrlSafetyHandler h = handler(props());
+        assertThat(h.validate("ws://localhost.localdomain:9222")).isNull();
+    }
+
+    @Test
+    void allowsLoopbackIp127_0_0_1Ws() {
+        UrlSafetyHandler h = handler(props());
+        assertThat(h.validate("ws://127.0.0.1:9222")).isNull();
+    }
+
+    @Test
+    void allowsLoopbackIp127_0_0_1Http() {
+        UrlSafetyHandler h = handler(props());
+        assertThat(h.validate("http://127.0.0.1:9222")).isNull();
+    }
+
+    @Test
+    void allowsLoopbackIp127_1_2_3() {
+        UrlSafetyHandler h = handler(props());
+        assertThat(h.validate("ws://127.1.2.3:9222")).isNull();
+    }
+
+    @Test
+    void allowsIpv6Loopback() {
+        UrlSafetyHandler h = handler(props());
+        assertThat(h.validate("ws://[::1]:9222")).isNull();
+    }
+
+    @Test
+    void allowsUnspecifiedAddress0000() {
+        UrlSafetyHandler h = handler(props());
+        assertThat(h.validate("http://0.0.0.0:9222")).isNull();
+    }
+
+    @Test
+    void allowsLocalhostWhenSafetyDisabled() {
+        AgentProperties p = props();
+        p.getSecurity().setUrlSafetyEnabled(false);
+        UrlSafetyHandler h = handler(p);
+        assertThat(h.validate("ws://localhost:9222")).isNull();
+    }
+
     // ── Scheme validation ──
-
-    @Test
-    void rejectsHttpScheme() {
-        UrlSafetyHandler h = handler(props());
-        String error = h.validate("http://localhost:9222");
-        assertThat(error).contains("ws://").contains("wss://");
-    }
-
-    @Test
-    void rejectsHttpsScheme() {
-        UrlSafetyHandler h = handler(props());
-        String error = h.validate("https://example.com:9222");
-        assertThat(error).contains("ws://").contains("wss://");
-    }
 
     @Test
     void rejectsFtpScheme() {
@@ -71,6 +135,13 @@ class CdpUrlValidationTest {
         UrlSafetyHandler h = handler(props());
         String error = h.validate("file:///etc/passwd");
         assertThat(error).contains("ws://").contains("wss://");
+    }
+
+    @Test
+    void rejectsSchemeCaseInsensitive() {
+        UrlSafetyHandler h = handler(props());
+        String error = h.validate("FTP://example.com");
+        assertThat(error).contains("ws://");
     }
 
     // ── Empty / null ──
@@ -113,21 +184,14 @@ class CdpUrlValidationTest {
         assertThat(error).contains("embedded credentials");
     }
 
-    // ── SSRF protection ──
-
     @Test
-    void rejectsLocalhostWhenSafetyEnabled() {
+    void rejectsLocalhostWithEmbeddedCredentials() {
         UrlSafetyHandler h = handler(props());
-        String error = h.validate("ws://localhost:9222");
-        assertThat(error).contains("localhost").contains("blocked");
+        String error = h.validate("ws://admin:password@localhost:9222");
+        assertThat(error).contains("embedded credentials");
     }
 
-    @Test
-    void rejectsLocalhostLocaldomainWhenSafetyEnabled() {
-        UrlSafetyHandler h = handler(props());
-        String error = h.validate("ws://localhost.localdomain:9222");
-        assertThat(error).contains("localhost").contains("blocked");
-    }
+    // ── SSRF protection (metadata, configured blocked hosts) ──
 
     @Test
     void rejectsMetadataEndpoint() {
@@ -154,13 +218,12 @@ class CdpUrlValidationTest {
         assertThat(error).contains("blocked");
     }
 
-    // ── Localhost allowed when safety disabled ──
-
     @Test
-    void allowsLocalhostWhenSafetyDisabled() {
+    void rejectsBlockedHostEvenForLocalhost() {
         AgentProperties p = props();
-        p.getSecurity().setUrlSafetyEnabled(false);
+        p.getSecurity().setBlockedUrlHosts(List.of("localhost"));
         UrlSafetyHandler h = handler(p);
-        assertThat(h.validate("ws://localhost:9222")).isNull();
+        String error = h.validate("ws://localhost:9222");
+        assertThat(error).contains("blocked");
     }
 }

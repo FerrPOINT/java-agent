@@ -349,9 +349,11 @@ management:
       show-details: when_authorized
       groups:
         readiness:
-          include: db
+          include: db,model
         liveness:
           include: livenessState,ping
+        infrastructure:
+          include: mcp,browser,chromium
 
 resilience4j:
   retry:

@@ -60,24 +60,39 @@ public class UrlSafetyHandler {
     /**
      * Validates a Chrome DevTools Protocol (CDP) URL.
      * <p>
-     * CDP uses WebSocket transport ({@code ws://} or {@code wss://}).
+     * CDP uses either WebSocket transport ({@code ws://} or {@code wss://}) or
+     * HTTP transport ({@code http://} or {@code https://}) for the DevTools
+     * HTTP endpoint (e.g. {@code /json/list}).
+     * <p>
+     * CDP is always a local debugging protocol, so localhost and loopback
+     * addresses (127.0.0.0/8) are explicitly allowed even when URL safety
+     * is enabled. The SSRF guard does NOT apply to CDP URLs the same way it
+     * applies to outbound HTTP requests.
+     * <p>
      * This method checks:
      * <ul>
      *   <li>The URL is not null or blank</li>
-     *   <li>The scheme is {@code ws} or {@code wss}</li>
+     *   <li>The scheme is {@code ws}, {@code wss}, {@code http}, or {@code https}</li>
      *   <li>The host is present and not an embedded-credential URL</li>
-     *   <li>The host passes SSRF safety checks (private/loopback/metadata blocking)</li>
+     *   <li>The host is not a cloud metadata endpoint</li>
+     *   <li>The host is not in the configured blocked-hosts or blocked-domains lists</li>
+     *   <li>Localhost and loopback addresses are always allowed (CDP is local)</li>
      * </ul>
      *
-     * @param cdpUrl the CDP WebSocket URL to validate
+     * @param cdpUrl the CDP URL to validate
      * @return {@code null} if valid, or an error message describing why it is invalid
      */
     public String validate(String cdpUrl) {
         if (cdpUrl == null || cdpUrl.isBlank()) {
             return "cdpUrl is empty";
         }
-        if (!cdpUrl.startsWith("ws://") && !cdpUrl.startsWith("wss://")) {
-            return "cdpUrl must start with ws:// or wss:// (Chrome DevTools Protocol uses WebSocket)";
+        String lowerCdpUrl = cdpUrl.toLowerCase();
+        if (!lowerCdpUrl.startsWith("ws://")
+                && !lowerCdpUrl.startsWith("wss://")
+                && !lowerCdpUrl.startsWith("http://")
+                && !lowerCdpUrl.startsWith("https://")) {
+            return "cdpUrl must start with ws://, wss://, http://, or https:// "
+                    + "(Chrome DevTools Protocol uses WebSocket or HTTP)";
         }
         URI uri;
         try {
@@ -92,26 +107,60 @@ public class UrlSafetyHandler {
         if (uri.getUserInfo() != null && !uri.getUserInfo().isBlank()) {
             return "cdpUrl with embedded credentials is not allowed: " + uri.getHost();
         }
-        // SSRF safety checks: check blocked hosts and private/local addresses
-        if (urlSafety.isHostBlocked(uri.getHost())) {
-            return "cdpUrl host is blocked: " + uri.getHost();
-        }
-        // Check blocked domains
-        if (properties.getWeb().getBlockedDomains().contains(uri.getHost())) {
-            return "cdpUrl domain is blocked: " + uri.getHost();
-        }
-        // Check for localhost / metadata hosts
         String lowerHost = uri.getHost().toLowerCase();
-        if (lowerHost.equals("localhost") || lowerHost.equals("localhost.localdomain")) {
-            // Allow localhost for local CDP connections (common dev scenario)
-            // but only if URL safety is disabled; when enabled, block it
-            if (properties.getSecurity().isUrlSafetyEnabled()) {
-                return "cdpUrl pointing to localhost is blocked by safety policy";
+
+        // CDP is a local debugging protocol — localhost and loopback are always allowed
+        if (isLocalDebugHost(lowerHost)) {
+            // Still check configured blocked hosts / blocked domains even for localhost
+            if (urlSafety.isHostBlocked(uri.getHost())) {
+                return "cdpUrl host is blocked: " + uri.getHost();
             }
+            if (properties.getWeb().getBlockedDomains().contains(uri.getHost())) {
+                return "cdpUrl domain is blocked: " + uri.getHost();
+            }
+            return null; // localhost / loopback allowed for CDP
         }
+
+        // Block cloud metadata endpoints (SSRF risk even for CDP)
         if (lowerHost.equals("metadata.google.internal") || lowerHost.endsWith(".metadata.google.internal")) {
             return "cdpUrl pointing to metadata endpoint is blocked";
         }
+
+        // SSRF safety checks for non-local hosts: check blocked hosts and blocked domains
+        if (urlSafety.isHostBlocked(uri.getHost())) {
+            return "cdpUrl host is blocked: " + uri.getHost();
+        }
+        if (properties.getWeb().getBlockedDomains().contains(uri.getHost())) {
+            return "cdpUrl domain is blocked: " + uri.getHost();
+        }
+
         return null;
+    }
+
+    /**
+     * Returns true if the host is a local debugging host that should always be
+     * allowed for CDP URLs: {@code localhost}, {@code localhost.localdomain},
+     * or a loopback IP address (127.0.0.0/8 or ::1).
+     *
+     * @param lowerHost the lowercased hostname or IP literal
+     * @return true if the host is a local debugging host
+     */
+    private boolean isLocalDebugHost(String lowerHost) {
+        if ("localhost".equals(lowerHost) || "localhost.localdomain".equals(lowerHost)) {
+            return true;
+        }
+        // Loopback IPv4: 127.0.0.0/8 (any address starting with 127.)
+        if (lowerHost.matches("^127(\\.\\d+){3}$")) {
+            return true;
+        }
+        // IPv6 loopback: [::1] is represented as "::1" in URI host
+        if ("::1".equals(lowerHost) || "[::1]".equals(lowerHost)) {
+            return true;
+        }
+        // 0.0.0.0 / [::] — unspecified address used for local-only binding
+        if ("0.0.0.0".equals(lowerHost) || "[::]".equals(lowerHost) || "::".equals(lowerHost)) {
+            return true;
+        }
+        return false;
     }
 }

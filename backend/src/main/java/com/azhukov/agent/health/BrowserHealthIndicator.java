@@ -17,6 +17,12 @@ public class BrowserHealthIndicator implements HealthIndicator {
     @Override
     public Health health() {
         String cdpUrl = properties.getBrowser().getCdpUrl();
+        if (cdpUrl == null || cdpUrl.isBlank()) {
+            return Health.up()
+                .withDetail("status", "not_configured")
+                .withDetail("reason", "CDP URL is not configured")
+                .build();
+        }
         try {
             cdpClient.connect(cdpUrl);
             if (cdpClient.isConnected()) {
@@ -24,7 +30,7 @@ public class BrowserHealthIndicator implements HealthIndicator {
             }
             return Health.down().withDetail("cdpUrl", cdpUrl).withDetail("reason", "not connected").build();
         } catch (Exception e) {
-            return Health.down().withDetail("cdpUrl", cdpUrl != null ? cdpUrl : "unknown")
+            return Health.down().withDetail("cdpUrl", cdpUrl)
                 .withDetail("error", e.getMessage() != null ? e.getMessage() : e.getClass().getName())
                 .build();
         }
