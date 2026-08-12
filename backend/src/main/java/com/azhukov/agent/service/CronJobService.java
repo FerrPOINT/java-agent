@@ -202,17 +202,40 @@ public class CronJobService {
                 enhancedPrompt = loadedSkills + "\n\n---\n\n" + job.getPrompt();
                 log.debug("Injected {} skills into cron job '{}'", job.getSkills(), job.getName());
             }
-            // Run the prompt through the agent runtime
+            // Run the prompt through the agent runtime with retry on failure
             AgentRuntimeService runtimeService = agentRuntimeServiceProvider.getIfAvailable();
             if (runtimeService != null) {
-                runtimeService.runBackground(enhancedPrompt, null);
+                int maxRetries = 2;
+                int attempt = 0;
+                boolean success = false;
+                while (attempt <= maxRetries && !success) {
+                    try {
+                        runtimeService.runBackground(enhancedPrompt, null);
+                        success = true;
+                    } catch (Exception llmEx) {
+                        attempt++;
+                        if (attempt > maxRetries) {
+                            log.error("Cron job '{}' LLM call failed after {} attempts: {}",
+                                job.getName(), maxRetries + 1, llmEx.getMessage());
+                            throw llmEx;
+                        }
+                        log.warn("Cron job '{}' LLM call attempt {}/{} failed, retrying in 5s: {}",
+                            job.getName(), attempt, maxRetries + 1, llmEx.getMessage());
+                        try {
+                            Thread.sleep(5_000);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            throw new RuntimeException("Cron job retry interrupted", ie);
+                        }
+                    }
+                }
             } else {
                 log.warn("AgentRuntimeService not available, skipping cron job execution: {}", job.getName());
             }
             job.setLastRunAt(Instant.now());
             cronJobRepository.save(job);
         } catch (Exception e) {
-            log.error("Failed to execute cron job {}: {}", job.getName(), e.getMessage());
+            log.error("Failed to execute cron job {}: {} — job will be rescheduled", job.getName(), e.getMessage());
         }
     }
 

@@ -38,6 +38,8 @@ import jakarta.annotation.PostConstruct;
 public class AgentBackendClient {
 
  private static final long STREAM_IDLE_TIMEOUT_MS = 120_000; // 2 minutes of no data
+ private static final int MAX_CONNECT_RETRIES = 3;
+ private static final long[] CONNECT_BACKOFF_MS = {2_000, 4_000, 8_000};
 
  private final RestClient restClient;
  private final ObjectMapper objectMapper;
@@ -342,18 +344,46 @@ public class AgentBackendClient {
  ChatResult[] metadataHolder = new ChatResult[1];
 
  try {
- InputStream is = restClient.post()
- .uri("/api/v1/agent/chat/stream")
- .accept(MediaType.TEXT_EVENT_STREAM)
- .contentType(MediaType.APPLICATION_JSON)
- .body(body)
- .retrieve()
- .body(InputStream.class);
+ 	// --- Initial connection with retry on connection errors ---
+ 	InputStream is = null;
+ 	Exception lastConnectError = null;
+ 	for (int attempt = 0; attempt <= MAX_CONNECT_RETRIES; attempt++) {
+ 		try {
+ 			is = restClient.post()
+ 				.uri("/api/v1/agent/chat/stream")
+ 				.accept(MediaType.TEXT_EVENT_STREAM)
+ 				.contentType(MediaType.APPLICATION_JSON)
+ 				.body(body)
+ 				.retrieve()
+ 				.body(InputStream.class);
+ 			if (is != null) {
+ 				break; // connection established
+ 			}
+ 		} catch (Exception ce) {
+ 			lastConnectError = ce;
+ 			// Only retry on connection errors (IOException, ConnectException),
+ 			// NOT on HTTP errors (4xx/5xx responses from the backend)
+ 			if (isConnectionError(ce) && attempt < MAX_CONNECT_RETRIES) {
+ 				long backoff = CONNECT_BACKOFF_MS[attempt];
+ 				log.warn("SSE connection attempt {}/{} failed (connection error), retrying in {}ms: {}",
+ 					attempt + 1, MAX_CONNECT_RETRIES + 1, backoff, ce.getMessage());
+ 				try {
+ 					Thread.sleep(backoff);
+ 				} catch (InterruptedException ie) {
+ 					Thread.currentThread().interrupt();
+ 					throw ie;
+ 				}
+ 				continue;
+ 			}
+ 			// Not a connection error, or retries exhausted — propagate
+ 			throw ce;
+ 		}
+ 	}
 
- if (is == null) {
- onError.accept(new IllegalStateException("Backend stream returned null input stream"));
- return new ChatResult("");
- }
+ 	if (is == null) {
+ 		onError.accept(new IllegalStateException("Backend stream returned null input stream after retries"));
+ 		return new ChatResult("");
+ 	}
 
  try (BufferedReader reader = new BufferedReader(
  new InputStreamReader(is, StandardCharsets.UTF_8))) {
@@ -484,6 +514,26 @@ public class AgentBackendClient {
  onError.accept(e);
  return new ChatResult(accumulated.toString());
  }
+ }
+
+ /**
+  * Determine if an exception represents a connection-level failure
+  * (as opposed to an HTTP error response from the backend).
+  * Only connection errors are retried during initial SSE connection.
+  */
+ private static boolean isConnectionError(Throwable e) {
+ 	if (e == null) return false;
+ 	Throwable current = e;
+ 	while (current != null) {
+ 		if (current instanceof java.net.ConnectException) return true;
+ 		if (current instanceof java.io.IOException) return true;
+ 		// Spring RestClient wraps connection errors in ResourceAccessException
+ 		String className = current.getClass().getName();
+ 		if (className.contains("ResourceAccessException")) return true;
+ 		if (className.contains("ConnectException")) return true;
+ 		current = current.getCause();
+ 	}
+ 	return false;
  }
 
  private ChatResult extractMetadata(JsonNode event) {

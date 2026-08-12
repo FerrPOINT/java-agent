@@ -27,6 +27,8 @@ import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.persistence.repository.UsageRepository;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -202,6 +204,10 @@ public class AgentRuntimeService {
         compressSession(sessionId, focus, null);
     }
 
+    @Retryable(retryFor = {org.springframework.dao.OptimisticLockingFailureException.class,
+                           org.springframework.dao.PessimisticLockingFailureException.class},
+               maxAttempts = 3,
+               backoff = @Backoff(delay = 1000, multiplier = 2))
     public void compressSession(UUID sessionId, String focusTopic, Integer keepLastN) {
         List<MessageEntity> messageEntities = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
         if (messageEntities.size() <= 4) return;

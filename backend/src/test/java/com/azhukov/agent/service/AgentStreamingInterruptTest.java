@@ -147,7 +147,7 @@ class AgentStreamingInterruptTest {
             new RuntimeConfigService(), interruptToken, steerBuffer,
             new TokenEstimator(), new ToolResultFormatter(),
             new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate),
-            new CliStateApplier(), null);
+            new CliStateApplier(), null, null);
     }
 
     /**

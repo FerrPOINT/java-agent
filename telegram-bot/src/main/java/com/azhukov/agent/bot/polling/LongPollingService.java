@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.polling;
 
+import com.azhukov.agent.bot.client.TelegramApiException;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.lock.BotLockManager;
@@ -158,14 +159,9 @@ public class LongPollingService {
             return updates;
         } catch (Exception e) {
             if (e instanceof InterruptedException ie) throw ie;
-            // Check for 409 conflict via TelegramApiException
-            if (e.getClass().getSimpleName().equals("TelegramApiException")) {
-                try {
-                    int errorCode = (int) e.getClass().getMethod("getErrorCode").invoke(e);
-                    if (errorCode == 409) {
-                        return handleConflict();
-                    }
-                } catch (Exception ignored) {}
+            // Check for 409 conflict via direct cast (no reflection)
+            if (e instanceof TelegramApiException tae && tae.getErrorCode() == 409) {
+                return handleConflict();
             }
             log.warn("getUpdates failed: {}", e.getMessage());
             return null;

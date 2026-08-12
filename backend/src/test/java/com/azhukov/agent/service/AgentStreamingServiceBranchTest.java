@@ -152,7 +152,7 @@ class AgentStreamingServiceBranchTest {
             runtimeConfigService, interruptToken, steerBuffer,
             new TokenEstimator(), new ToolResultFormatter(),
             new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate),
-            new CliStateApplier(), null);
+            new CliStateApplier(), null, null);
     }
 
     // ── selectTools: disabledTools filtering ──

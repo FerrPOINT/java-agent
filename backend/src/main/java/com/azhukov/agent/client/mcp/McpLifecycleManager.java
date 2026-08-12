@@ -480,6 +480,23 @@ public class McpLifecycleManager {
                     .collect(Collectors.joining("\n"));
                 return ToolResult.ok(text);
             } catch (Exception e) {
+                // Check if this is a connection error — trigger auto-reconnect
+                String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+                if (msg.contains("connection") || msg.contains("closed") || msg.contains("disconnected")
+                    || msg.contains("refused") || msg.contains("reset") || msg.contains("not connected")
+                    || e instanceof java.io.IOException) {
+                    log.warn("MCP tool '{}' on server '{}' failed with connection error, triggering reconnect: {}",
+                        toolName, serverName, e.getMessage());
+                    // Find the server properties and schedule a reconnect
+                    properties.getMcp().getServers().stream()
+                        .filter(s -> s.getName().equals(serverName))
+                        .findFirst()
+                        .ifPresent(server -> {
+                            // Remove stale client entry
+                            clients.remove(serverName);
+                            scheduleReconnect(server, 0, false);
+                        });
+                }
                 return ToolResult.fail("MCP tool failed: " + sanitizeError(e.getMessage()));
             }
         }

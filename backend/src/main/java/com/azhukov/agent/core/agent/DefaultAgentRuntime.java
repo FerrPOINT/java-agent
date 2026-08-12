@@ -395,11 +395,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     break;
                 }
                 // Calculate backoff delay — exponential: 2s, 4s, 8s, 16s, 32s (cap 60s)
+                long retryDelayMs = properties.getError().getRetryDelayMs();
                 long delayMs;
                 if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
-                    delayMs = Math.min(2000L * (1L << attempt), 60_000L);
+                    delayMs = Math.min(retryDelayMs * (1L << attempt), 60_000L);
                 } else {
-                    long base = 2000L * (1L << attempt);
+                    long base = retryDelayMs * (1L << attempt);
                     long jitter = ThreadLocalRandom.current().nextLong(0, 500);
                     delayMs = Math.min(base + jitter, 60_000L);
                 }

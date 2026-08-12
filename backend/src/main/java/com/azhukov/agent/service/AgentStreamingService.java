@@ -47,6 +47,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.TimeoutException;
 import lombok.RequiredArgsConstructor;
@@ -79,6 +80,7 @@ public class AgentStreamingService {
     private final AgentSessionResolver sessionResolver;
     private final CliStateApplier cliStateApplier;
     private final AgentMetrics agentMetrics;
+    private final ConversationCompressor conversationCompressor;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
 
     private static final int MAX_STREAM_RETRIES = 5;
@@ -271,10 +273,11 @@ public class AgentStreamingService {
                             : ErrorClassifier.ErrorType.RETRYABLE;
                         if (errorType == ErrorClassifier.ErrorType.RETRYABLE
                             || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
-                            // Exponential backoff: 2s, 4s, 8s, 16s, 32s (cap at 60s)
+                            // Exponential backoff: 2s, 4s, 8s, 16s, 32s (cap at 60s) + jitter
                             long delayMs = Math.min(
                                 RETRY_BACKOFF_BASE_MS * (1L << streamRetries),
                                 RETRY_BACKOFF_CAP_MS);
+                            delayMs += ThreadLocalRandom.current().nextLong(0, 500);
                             String retryMsg = "⏳ Model overloaded, retrying (attempt "
                                 + (streamRetries + 1) + "/" + MAX_STREAM_RETRIES
                                 + ") in " + (delayMs / 1000) + "s...";
@@ -294,6 +297,34 @@ public class AgentStreamingService {
                             }
                             streamRetries++;
                             continue;
+                        }
+
+                        // Context overflow: compress and retry without counting as a retry attempt
+                        if (errorType == ErrorClassifier.ErrorType.CONTEXT_OVERFLOW) {
+                            log.warn("Context overflow detected during streaming, triggering compression: {}",
+                                error.getMessage());
+                            send(emitter, new StreamEvent("retry", null, null,
+                                "Compressing context..."), streamCtx);
+                            try {
+                                int targetChars = properties.getContext().getTargetTokens() * 4;
+                                List<Message> compressed = conversationCompressor.compress(context, null);
+                                if (compressed.size() < context.size()
+                                    || (compressed.size() == context.size()
+                                        && compressed.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum()
+                                        < context.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum())) {
+                                    context = compressed;
+                                    log.info("Context compressed from {} to {} messages during streaming, retrying",
+                                        turnMessages.size(), compressed.size());
+                                    // Don't count this as a retry attempt — retry immediately
+                                    continue;
+                                } else {
+                                    log.warn("Context overflow detected, compression did not reduce context, failing: {}",
+                                        error.getMessage());
+                                }
+                            } catch (Exception ce) {
+                                log.warn("Context compression failed during streaming: {}", ce.getMessage());
+                            }
+                            // Compression didn't help — fall through to permanent failure
                         }
                     }
                     // Permanent error or retries exhausted

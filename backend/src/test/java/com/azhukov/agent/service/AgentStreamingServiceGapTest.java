@@ -150,7 +150,7 @@ class AgentStreamingServiceGapTest {
             new RuntimeConfigService(), new InterruptToken(), new SteerBuffer(),
             new TokenEstimator(), new ToolResultFormatter(),
             new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate),
-            new CliStateApplier(), null);
+            new CliStateApplier(), null, null);
     }
 
     // ─── Error event and stream termination ───

@@ -87,25 +87,70 @@ public class TelegramLongPollingService {
         log.info("Telegram long polling stopped");
     }
 
+    private static final int MAX_CONFLICT_RETRIES = 5;
+    private static final long[] CONFLICT_BACKOFF_MS = {15_000, 30_000, 55_000, 55_000, 55_000};
+    private static final int MAX_GENERIC_RETRIES = 10;
+    private static final long GENERIC_BACKOFF_MS = 5_000;
+
+    private int conflictRetryCount = 0;
+    private int genericRetryCount = 0;
+
     private void pollLoop() {
         while (running.get()) {
             try {
                 List<Map<String, Object>> updates = fetchUpdates();
+                // Reset generic retry counter on successful fetch
+                genericRetryCount = 0;
                 for (Map<String, Object> update : updates) {
                     processUpdate(update);
+                }
+            } catch (ConflictException e) {
+                // 409 conflict — exponential backoff with max retries
+                conflictRetryCount++;
+                if (conflictRetryCount > MAX_CONFLICT_RETRIES) {
+                    log.error("Max 409 conflict retries ({}) exceeded, stopping polling to avoid infinite loop",
+                        MAX_CONFLICT_RETRIES);
+                    running.set(false);
+                    break;
+                }
+                int backoffIndex = Math.min(conflictRetryCount - 1, CONFLICT_BACKOFF_MS.length - 1);
+                long backoffMs = CONFLICT_BACKOFF_MS[backoffIndex];
+                log.warn("Telegram 409 conflict detected, backing off for {}ms (attempt {}/{})",
+                    backoffMs, conflictRetryCount, MAX_CONFLICT_RETRIES);
+                try {
+                    Thread.sleep(backoffMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
-                log.warn("Telegram long polling error", e);
+                // Non-409 error — bounded retries with fixed backoff
+                genericRetryCount++;
+                if (genericRetryCount > MAX_GENERIC_RETRIES) {
+                    log.error("Max generic error retries ({}) exceeded, stopping polling. Last error: {}",
+                        MAX_GENERIC_RETRIES, e.getMessage());
+                    running.set(false);
+                    break;
+                }
+                log.warn("Telegram long polling error (attempt {}/{}): {}",
+                    genericRetryCount, MAX_GENERIC_RETRIES, e.getMessage());
                 try {
-                    Thread.sleep(5000);
+                    Thread.sleep(GENERIC_BACKOFF_MS);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     break;
                 }
             }
+        }
+    }
+
+    /** Marker exception for HTTP 409 conflicts detected during fetchUpdates. */
+    private static class ConflictException extends RuntimeException {
+        ConflictException(String message) {
+            super(message);
         }
     }
 
@@ -124,10 +169,15 @@ public class TelegramLongPollingService {
                 .GET()
                 .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 409) {
+                throw new ConflictException("HTTP 409 Conflict: another polling instance is active");
+            }
             if (response.statusCode() != 200) {
                 log.warn("getUpdates non-200: {} body={}", response.statusCode(), response.body());
                 return List.of();
             }
+            // Successful fetch — reset conflict counter
+            conflictRetryCount = 0;
             Map<String, Object> body = objectMapper.readValue(response.body(), new TypeReference<>() {});
             Boolean ok = (Boolean) body.get("ok");
             if (!Boolean.TRUE.equals(ok)) {
@@ -142,16 +192,12 @@ public class TelegramLongPollingService {
                 return (List<Map<String, Object>>) list;
             }
             return List.of();
+        } catch (ConflictException e) {
+            throw e; // propagate to pollLoop for 409-specific handling
         } catch (InterruptedException e) {
             throw e;
         } catch (Exception e) {
-            log.warn("getUpdates failed", e);
-            try {
-                Thread.sleep(5000);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                throw ie;
-            }
+            log.warn("getUpdates failed: {}", e.getMessage());
             return List.of();
         }
     }
