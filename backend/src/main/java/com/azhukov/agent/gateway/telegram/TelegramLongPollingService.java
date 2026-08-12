@@ -212,8 +212,15 @@ public class TelegramLongPollingService {
         Map<String, Object> chat = (Map<String, Object>) message.get("chat");
         Map<String, Object> from = (Map<String, Object>) message.get("from");
         String text = Optional.ofNullable(message.get("text")).map(Object::toString).orElse("");
-        long chatId = chat == null ? 0L : ((Number) chat.get("id")).longValue();
-        long userId = from == null ? 0L : ((Number) from.get("id")).longValue();
+        // Null-safe extraction of chat/from IDs to prevent NPE on malformed updates
+        long chatId = 0L;
+        if (chat != null && chat.get("id") instanceof Number) {
+            chatId = ((Number) chat.get("id")).longValue();
+        }
+        long userId = 0L;
+        if (from != null && from.get("id") instanceof Number) {
+            userId = ((Number) from.get("id")).longValue();
+        }
         String username = from == null ? null : (String) from.get("username");
 
         SessionSource source = new SessionSource(

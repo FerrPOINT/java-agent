@@ -32,6 +32,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
@@ -297,14 +298,23 @@ public class McpLifecycleManager {
     }
 
     // ── Dynamic tool refresh ─────────────────────────────────────────────
+    private final Map<String, ScheduledFuture<?>> toolRefreshFutures = new ConcurrentHashMap<>();
+
     private void scheduleToolRefresh(String serverName) {
-        toolRefreshExecutor.scheduleWithFixedDelay(() -> {
+        // Cancel any existing tool refresh task before scheduling a new one
+        ScheduledFuture<?> oldFuture = toolRefreshFutures.remove(serverName);
+        if (oldFuture != null) {
+            oldFuture.cancel(false);
+            log.debug("Cancelled previous tool refresh for MCP server {}", serverName);
+        }
+        ScheduledFuture<?> future = toolRefreshExecutor.scheduleWithFixedDelay(() -> {
             try {
                 refreshTools(serverName);
             } catch (Exception e) {
                 log.warn("Tool refresh for MCP server {} failed: {}", serverName, e.getMessage());
             }
         }, TOOL_REFRESH_INTERVAL_SECONDS, TOOL_REFRESH_INTERVAL_SECONDS, TimeUnit.SECONDS);
+        toolRefreshFutures.put(serverName, future);
     }
 
     public void refreshTools(String serverName) {
@@ -416,6 +426,11 @@ public class McpLifecycleManager {
         shutdownRequested.set(true);
         reconnectExecutor.shutdownNow();
         toolRefreshExecutor.shutdownNow();
+        // Cancel all tool refresh futures
+        for (ScheduledFuture<?> f : toolRefreshFutures.values()) {
+            f.cancel(false);
+        }
+        toolRefreshFutures.clear();
         for (var state : clients.values()) {
             try {
                 state.client().close();

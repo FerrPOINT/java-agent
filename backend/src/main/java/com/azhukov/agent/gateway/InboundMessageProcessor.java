@@ -74,9 +74,9 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     }
 
     private boolean isAuthorized(SessionSource source) {
-        // Non-Telegram platforms are not gated by Telegram config
+        // Non-Telegram platforms are not gated by Telegram config — let them through
         if (source.platform() != Platform.TELEGRAM) {
-            return false;
+            return true;
         }
         var telegram = agentProperties.getGateway().getTelegram();
         // allowByDefault → open access

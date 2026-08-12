@@ -14,9 +14,11 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -28,7 +30,8 @@ public class CdpClient {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final Map<Integer, CompletableFuture<JsonNode>> pending = new ConcurrentHashMap<>();
-    private final Map<String, Consumer<JsonNode>> eventListeners = new ConcurrentHashMap<>();
+    // Use list of listeners per method so concurrent waitForEvent calls don't overwrite each other
+    private final Map<String, List<Consumer<JsonNode>>> eventListeners = new ConcurrentHashMap<>();
     private final AtomicInteger messageId = new AtomicInteger(1);
     private WebSocketClient webSocketClient;
     private String webSocketUrl;
@@ -117,6 +120,12 @@ public class CdpClient {
         }
         CompletableFuture<JsonNode> future = new CompletableFuture<>();
         pending.put(id, future);
+        // Null check: webSocketClient may be null if not connected or after disconnect
+        if (webSocketClient == null) {
+            pending.remove(id);
+            future.completeExceptionally(new IllegalStateException("CDP WebSocket is not connected"));
+            return future;
+        }
         webSocketClient.send(msg.toString());
         return future;
     }
@@ -136,9 +145,12 @@ public class CdpClient {
                 }
             } else if (node.has("method")) {
                 String method = node.get("method").asText();
-                Consumer<JsonNode> listener = eventListeners.get(method);
-                if (listener != null) {
-                    listener.accept(node.path("params"));
+                List<Consumer<JsonNode>> listeners = eventListeners.get(method);
+                if (listeners != null) {
+                    JsonNode params = node.path("params");
+                    for (Consumer<JsonNode> listener : listeners) {
+                        listener.accept(params);
+                    }
                 }
             }
         } catch (Exception e) {
@@ -147,13 +159,21 @@ public class CdpClient {
     }
 
     public void onEvent(String method, Consumer<JsonNode> listener) {
-        eventListeners.put(method, listener);
+        eventListeners.computeIfAbsent(method, k -> new CopyOnWriteArrayList<>()).add(listener);
     }
 
     public CompletableFuture<JsonNode> waitForEvent(String method, long timeoutSeconds) {
         CompletableFuture<JsonNode> future = new CompletableFuture<>();
         onEvent(method, future::complete);
         return future.orTimeout(timeoutSeconds, TimeUnit.SECONDS);
+    }
+
+    /**
+     * Removes all listeners for the given method.
+     * Useful for cleanup after waitForEvent.
+     */
+    public void removeListeners(String method) {
+        eventListeners.remove(method);
     }
 
     public boolean isConnected() {

@@ -69,7 +69,7 @@ class DefaultContextEngineBranchCoverageTest {
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.developer("You are a dev assistant."), Message.user("Hello"));
@@ -87,7 +87,7 @@ class DefaultContextEngineBranchCoverageTest {
 
         when(skillManager.listSkillNames()).thenReturn(List.of("coding"));
         when(skillManager.getSkill("coding")).thenReturn("Write clean code.");
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.developer("Dev prompt."), Message.user("Hi"));
@@ -109,7 +109,7 @@ class DefaultContextEngineBranchCoverageTest {
         when(skillManager.getSkill("skill1")).thenReturn("content1");
         when(skillManager.getSkill("skill2")).thenReturn("content2");
         when(skillManager.getSkill("skill3")).thenReturn("content3");
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Hi"));
@@ -129,7 +129,7 @@ class DefaultContextEngineBranchCoverageTest {
         when(skillManager.listSkillNames()).thenReturn(List.of("skill1", "skill2"));
         when(skillManager.getSkill("skill1")).thenReturn("content1");
         when(skillManager.getSkill("skill2")).thenReturn(null);
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Hi"));
@@ -153,7 +153,7 @@ class DefaultContextEngineBranchCoverageTest {
         String longContent = "x".repeat(500);
         when(skillManager.listSkillNames()).thenReturn(List.of("big-skill"));
         when(skillManager.getSkill("big-skill")).thenReturn(longContent);
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Hi"));
@@ -172,7 +172,7 @@ class DefaultContextEngineBranchCoverageTest {
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Hi"));
@@ -190,7 +190,7 @@ class DefaultContextEngineBranchCoverageTest {
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenThrow(new RuntimeException("DB connection failed"));
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Hi"));
@@ -217,7 +217,7 @@ class DefaultContextEngineBranchCoverageTest {
         toolMsg.setTurnIndex(2);
         toolMsg.setToolCallId("call-1");
 
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.id()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(List.of(toolMsg));
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Current"));
@@ -240,7 +240,7 @@ class DefaultContextEngineBranchCoverageTest {
         userMsg.setContent("test");
         userMsg.setTurnIndex(null);
 
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.id()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(List.of(userMsg));
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Current"));
@@ -262,7 +262,7 @@ class DefaultContextEngineBranchCoverageTest {
         nullContentMsg.setContent(null);
         nullContentMsg.setTurnIndex(1);
 
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.id()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(List.of(nullContentMsg));
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Current"));
@@ -314,7 +314,7 @@ class DefaultContextEngineBranchCoverageTest {
             memoryProvider, skillManager, messageRepository, contextCompressor, properties, cacheTracker);
 
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
         // Set lastCompressedAt to now (within cooldown)
@@ -470,7 +470,7 @@ class DefaultContextEngineBranchCoverageTest {
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
         // Create 10 messages — all under limit with maxContextMessages=50
@@ -492,7 +492,7 @@ class DefaultContextEngineBranchCoverageTest {
             memoryProvider, skillManager, messageRepository, contextCompressor, properties, cacheTracker);
 
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("Sys"), Message.user("Hi"));
@@ -508,7 +508,7 @@ class DefaultContextEngineBranchCoverageTest {
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
         List<Message> messages = List.of(Message.user("test"));

@@ -28,7 +28,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 @Service
 @Slf4j
@@ -40,8 +43,17 @@ public class CronJobService {
     private final AgentProperties properties;
     private final SkillManager skillManager;
 
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10);
+    // Daemon thread factory so cron threads don't prevent JVM shutdown
+    private static final ThreadFactory DAEMON_THREAD_FACTORY = r -> {
+        Thread t = new Thread(r, "cron-scheduler");
+        t.setDaemon(true);
+        return t;
+    };
+
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10, DAEMON_THREAD_FACTORY);
     private final Map<UUID, ScheduledFuture<?>> scheduledTasks = new ConcurrentHashMap<>();
+    // Per-job lock to prevent concurrent execution of the same job
+    private final Map<UUID, ReentrantLock> jobLocks = new ConcurrentHashMap<>();
     private final CronParser cronParser = new CronParser(CronDefinitionBuilder.instanceDefinitionFor(CronType.UNIX));
 
     @PostConstruct
@@ -178,11 +190,26 @@ public class CronJobService {
 
     private void executeAndReschedule(UUID jobId) {
         try {
-            CronJobEntity job = cronJobRepository.findById(jobId).orElse(null);
-            if (job == null || !job.isEnabled()) return;
-            executeJob(job);
-            // Reschedule
-            scheduleJob(job);
+            // Per-job lock: skip if another execution of the same job is still running
+            ReentrantLock lock = jobLocks.computeIfAbsent(jobId, k -> new ReentrantLock());
+            if (!lock.tryLock()) {
+                log.warn("Cron job {} already running, skipping this execution", jobId);
+                // Still reschedule
+                CronJobEntity job = cronJobRepository.findById(jobId).orElse(null);
+                if (job != null && job.isEnabled()) {
+                    scheduleJob(job);
+                }
+                return;
+            }
+            try {
+                CronJobEntity job = cronJobRepository.findById(jobId).orElse(null);
+                if (job == null || !job.isEnabled()) return;
+                executeJob(job);
+                // Reschedule
+                scheduleJob(job);
+            } finally {
+                lock.unlock();
+            }
         } catch (Exception e) {
             log.error("Error executing cron job {}: {}", jobId, e.getMessage());
         }

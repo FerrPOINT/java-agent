@@ -47,9 +47,12 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.TimeoutException;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 
 @Slf4j
@@ -86,6 +89,23 @@ public class AgentStreamingService {
     private static final int MAX_STREAM_RETRIES = 5;
     private static final int MAX_CONTINUATION_ATTEMPTS = 1;
     // Backoff base/cap are now read from AgentProperties at runtime (see getRetryBackoffBase/Cap)
+
+    // Dedicated executor for streaming tasks — avoids ForkJoinPool.commonPool() starvation
+    private final ExecutorService streamingExecutor = Executors.newThreadPerTaskExecutor(
+        Thread.ofVirtual().name("agent-stream-", 0).factory());
+
+    @PreDestroy
+    void shutdown() {
+        streamingExecutor.shutdown();
+        try {
+            if (!streamingExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                streamingExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            streamingExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
 
 
     public SseEmitter streamTurn(ChatRequest request) {
@@ -153,7 +173,7 @@ public class AgentStreamingService {
                 // Safety net: clear ThreadLocal if runAgenticLoop didn't
                 InterruptToken.clearCurrentSessionId();
             }
-        });
+        }, streamingExecutor);
         return emitter;
     }
 

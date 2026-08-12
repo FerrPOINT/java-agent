@@ -61,13 +61,14 @@ class CdpClientExtra2Test {
     }
 
     @Test
-    @DisplayName("send() throws when webSocketClient is null (not connected)")
+    @DisplayName("send() throws IllegalStateException when webSocketClient is null (not connected)")
     void sendThrowsWhenNotConnected() {
         CdpClient client = new CdpClient(new ObjectMapper());
         ObjectNode params = new ObjectMapper().createObjectNode().put("url", "http://example.com");
 
-        assertThatThrownBy(() -> client.send("Page.navigate", params))
-            .isInstanceOf(NullPointerException.class);
+        // After fix: send() returns a completed-exceptionally future instead of NPE
+        CompletableFuture<JsonNode> future = client.send("Page.navigate", params);
+        assertThat(future.isCompletedExceptionally()).isTrue();
     }
 
     @Test
@@ -84,18 +85,18 @@ class CdpClientExtra2Test {
     }
 
     @Test
-    @DisplayName("unregisterEventListener by replacing with null listener")
+    @DisplayName("unregisterEventListener by removing all listeners")
     void unregisterEventListenerByReplacingWithNull() throws Exception {
         CdpClient client = new CdpClient(new ObjectMapper());
         AtomicReference<JsonNode> captured = new AtomicReference<>();
         client.onEvent("Page.frameNavigated", captured::set);
 
-        // Unregister by setting a no-op listener
-        client.onEvent("Page.frameNavigated", node -> {});
+        // Unregister by removing all listeners for this method
+        client.removeListeners("Page.frameNavigated");
 
         invokeHandleMessage(client, "{\"method\":\"Page.frameNavigated\",\"params\":{\"frameId\":\"abc\"}}");
 
-        // captured should still be null since we replaced the listener
+        // captured should still be null since we removed all listeners
         assertThat(captured.get()).isNull();
     }
 

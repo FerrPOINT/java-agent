@@ -29,10 +29,29 @@ public interface ToolGuardrails {
     }
 
     /**
+     * Returns true if loop detection has halted further tool calls for a specific session.
+     *
+     * @param sessionId the session to check
+     * @return true if halted for this session, false otherwise
+     */
+    default boolean isHalted(java.util.UUID sessionId) {
+        return isHalted();
+    }
+
+    /**
      * Resets all stateful tracking between turns.
      */
     default void reset() {
         // no-op by default for backward compatibility
+    }
+
+    /**
+     * Resets all stateful tracking for a specific session.
+     *
+     * @param sessionId the session to reset
+     */
+    default void reset(java.util.UUID sessionId) {
+        reset();
     }
 
     /**

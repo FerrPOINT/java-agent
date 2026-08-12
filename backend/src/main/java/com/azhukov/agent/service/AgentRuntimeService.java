@@ -201,14 +201,26 @@ public class AgentRuntimeService {
 
     @Transactional
     public void compressSession(UUID sessionId, String focus) {
-        compressSession(sessionId, focus, null);
+        compressSessionInternal(sessionId, focus, null);
+    }
+
+    /**
+     * Public entry point for the 3-arg compress.
+     * Delegates to compressSessionInternal to avoid the self-invocation pitfall
+     * where @Retryable/@Transactional annotations are bypassed when called
+     * from within the same class.
+     */
+    @Transactional
+    public void compressSession(UUID sessionId, String focusTopic, Integer keepLastN) {
+        compressSessionInternal(sessionId, focusTopic, keepLastN);
     }
 
     @Retryable(retryFor = {org.springframework.dao.OptimisticLockingFailureException.class,
                            org.springframework.dao.PessimisticLockingFailureException.class},
                maxAttempts = 3,
                backoff = @Backoff(delay = 1000, multiplier = 2))
-    public void compressSession(UUID sessionId, String focusTopic, Integer keepLastN) {
+    @Transactional
+    public void compressSessionInternal(UUID sessionId, String focusTopic, Integer keepLastN) {
         List<MessageEntity> messageEntities = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
         if (messageEntities.size() <= 4) return;
 
@@ -272,6 +284,7 @@ public class AgentRuntimeService {
         return usageTracker.getInsights(null);
     }
 
+    @Transactional
     public void restart() {
         log.info("Restarting agent — clearing all session messages for user-1");
         for (SessionEntity session : sessionRepository.findAllByUserId("user-1", PageRequest.of(0, 50))) {

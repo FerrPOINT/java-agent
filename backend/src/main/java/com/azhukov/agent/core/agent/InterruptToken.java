@@ -73,6 +73,14 @@ public class InterruptToken {
     }
 
     /**
+     * Returns the session ID associated with the current thread, or null if none.
+     * Used by components that need session-scoped state (e.g. DefaultToolGuardrails).
+     */
+    public static UUID currentSessionId() {
+        return currentSessionId.get();
+    }
+
+    /**
      * Checks whether the current thread's session has been cancelled,
      * using the static singleton instance.  Returns false if no session
      * is set on the current thread or no instance is registered.

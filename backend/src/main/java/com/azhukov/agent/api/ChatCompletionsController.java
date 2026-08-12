@@ -93,12 +93,12 @@ public class ChatCompletionsController {
                     @Override
                     public void onError(Throwable error) {
                         sendSse(emitter, createErrorEvent(error.getMessage()));
-                        emitter.completeWithError(error);
+                        emitter.complete();
                     }
                 });
             } catch (Exception e) {
                 sendSse(emitter, createErrorEvent(e.getMessage()));
-                emitter.completeWithError(e);
+                emitter.complete();
             }
         });
 

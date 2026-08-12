@@ -134,16 +134,24 @@ class InboundMessageProcessorTest {
     }
 
     @Test
-    void acceptSkipsProcessingForNonTelegramPlatform() {
+    void acceptProcessesNonTelegramPlatform() {
+        // Non-Telegram platforms should be let through (not gated by Telegram config)
         agentProperties.getGateway().getTelegram().setAllowByDefault(true);
         SessionSource source = new SessionSource(Platform.UNKNOWN, CHAT_ID, USER_ID, USERNAME, USERNAME);
         MessageEvent event = messageEvent(source, USER_TEXT);
 
+        Session resolvedSession = new Session(SESSION_ID, USER_ID, "Telegram " + USERNAME,
+            MODEL_PROVIDER, MODEL_NAME, null, Map.of());
+        when(sessionResolver.resolve(source)).thenReturn(resolvedSession);
+        when(agentRuntime.runTurn(any(Session.class), eq(USER_TEXT), eq(List.of())))
+            .thenReturn(new TurnResult(List.of(Message.assistant(REPLY_TEXT, 1)), true, null));
+        when(routingService.send(Platform.UNKNOWN, source, REPLY_TEXT))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "msg-ok", null)));
+
         processor.accept(event);
 
-        verify(sessionResolver, never()).resolve(any());
-        verify(agentRuntime, never()).runTurn(any(), any(), any());
-        verify(routingService, never()).send(any(), any(), any());
+        verify(agentRuntime).runTurn(any(Session.class), eq(USER_TEXT), eq(List.of()));
+        verify(routingService).send(Platform.UNKNOWN, source, REPLY_TEXT);
     }
 
     @Test

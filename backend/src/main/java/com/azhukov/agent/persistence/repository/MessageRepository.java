@@ -25,6 +25,16 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
     List<MessageEntity> findByContentContainingIgnoreCase(String content);
 
     /**
+     * Loads the last N messages for a session in descending order (newest first).
+     * The caller should reverse the result to get ascending order.
+     *
+     * @param sessionId the session ID
+     * @param pageable  pagination (page 0, size N gives the first N = newest N)
+     * @return the last N messages in descending order
+     */
+    List<MessageEntity> findBySessionIdOrderByCreatedAtDesc(UUID sessionId, Pageable pageable);
+
+    /**
      * Full-text search on message content using PostgreSQL tsvector.
      * Returns messages ranked by FTS relevance.
      */

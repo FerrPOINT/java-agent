@@ -8,7 +8,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -26,6 +29,8 @@ public class ApprovalQueue {
     public static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(5);
 
     private final Map<UUID, PendingApproval> pending = new ConcurrentHashMap<>();
+    // Latch for efficient waiting — signaled when approval is decided
+    private final Map<UUID, CountDownLatch> latches = new ConcurrentHashMap<>();
 
     /**
      * Creates a pending approval request for the given session and tool call.
@@ -55,6 +60,11 @@ public class ApprovalQueue {
         PendingApproval p = new PendingApproval(
             UUID.randomUUID(), sessionId, call, reason, now, false, false, null, expiresAt);
         pending.put(sessionId, p);
+        // Replace any existing latch with a fresh one
+        CountDownLatch oldLatch = latches.put(sessionId, new CountDownLatch(1));
+        if (oldLatch != null) {
+            oldLatch.countDown(); // Release any previous waiter
+        }
         return p;
     }
 
@@ -69,6 +79,7 @@ public class ApprovalQueue {
                 p.requestId(), p.sessionId(), p.call(), p.reason(), p.requestedAt(),
                 false, true, "Auto-denied: timeout", p.expiresAt());
             pending.put(sessionId, denied);
+            signalLatch(sessionId);
             return denied;
         }
         return p;
@@ -90,6 +101,7 @@ public class ApprovalQueue {
             p.requestId(), p.sessionId(), p.call(), p.reason(), p.requestedAt(),
             approved, !approved, note, p.expiresAt());
         pending.put(sessionId, updated);
+        signalLatch(sessionId);
         return updated;
     }
 
@@ -107,6 +119,7 @@ public class ApprovalQueue {
             p.requestId(), p.sessionId(), p.call(), p.reason(), p.requestedAt(),
             false, true, note, p.expiresAt());
         pending.put(sessionId, updated);
+        signalLatch(sessionId);
         return updated;
     }
 
@@ -158,6 +171,7 @@ public class ApprovalQueue {
                     p.requestId(), p.sessionId(), p.call(), p.reason(), p.requestedAt(),
                     false, true, "Auto-denied: timeout", p.expiresAt());
                 pending.put(entry.getKey(), denied);
+                signalLatch(entry.getKey());
             }
         }
     }
@@ -167,6 +181,39 @@ public class ApprovalQueue {
      */
     public void clear(UUID sessionId) {
         pending.remove(sessionId);
+        signalLatch(sessionId);
+    }
+
+    /**
+     * Waits for the approval to be decided (approved/denied/timed out) or the given timeout.
+     * Uses a CountDownLatch internally — no busy-wait polling.
+     *
+     * @param sessionId   the session to wait for
+     * @param timeoutMs   max wait time in milliseconds
+     * @return true if the approval was decided within the timeout, false if timed out
+     */
+    public boolean awaitDecision(UUID sessionId, long timeoutMs) {
+        CountDownLatch latch = latches.get(sessionId);
+        if (latch == null) {
+            return true; // No latch means nothing pending
+        }
+        // Check if already decided
+        if (!isPending(sessionId)) {
+            return true;
+        }
+        try {
+            return latch.await(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private void signalLatch(UUID sessionId) {
+        CountDownLatch latch = latches.get(sessionId);
+        if (latch != null) {
+            latch.countDown();
+        }
     }
 
     /**

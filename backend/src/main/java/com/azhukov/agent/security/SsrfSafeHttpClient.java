@@ -10,19 +10,26 @@ public class SsrfSafeHttpClient {
 
     private final UrlSafetyHandler safety;
     private final SecretRedactor redactor;
-    private final RestClient restClient;
-    private final SimpleClientHttpRequestFactory requestFactory;
+    private final String userAgent;
 
     public SsrfSafeHttpClient(UrlSafetyHandler safety, SecretRedactor redactor, AgentProperties properties) {
         this.safety = safety;
         this.redactor = redactor;
-        this.requestFactory = new SimpleClientHttpRequestFactory();
-        this.requestFactory.setConnectTimeout(5_000); // 5s default connect timeout
-        this.requestFactory.setReadTimeout(30_000);   // 30s default read timeout
-        this.restClient = RestClient.builder()
+        this.userAgent = properties.getCore().getHttpUserAgent();
+    }
+
+    /**
+     * Creates a fresh RestClient with a per-request timeout so concurrent calls
+     * don't race to mutate a shared SimpleClientHttpRequestFactory.
+     */
+    private RestClient createClient(int timeoutSeconds) {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5_000);
+        factory.setReadTimeout(Math.max(1, timeoutSeconds) * 1000);
+        return RestClient.builder()
             .baseUrl("")
-            .defaultHeader("User-Agent", properties.getCore().getHttpUserAgent())
-            .requestFactory(requestFactory)
+            .defaultHeader("User-Agent", userAgent)
+            .requestFactory(factory)
             .build();
     }
 
@@ -31,9 +38,8 @@ public class SsrfSafeHttpClient {
         if (error != null) {
             throw new SecurityException(error);
         }
-        // Apply per-request read timeout on the shared request factory
-        requestFactory.setReadTimeout(timeoutSeconds * 1000);
-        String result = restClient.get()
+        RestClient client = createClient(timeoutSeconds);
+        String result = client.get()
             .uri(url)
             .header("User-Agent", "AzhukovAgent/1.0")
             .retrieve()
@@ -47,9 +53,8 @@ public class SsrfSafeHttpClient {
         if (error != null) {
             throw new SecurityException(error);
         }
-        // Apply per-request read timeout on the shared request factory
-        requestFactory.setReadTimeout(timeoutSeconds * 1000);
-        String result = restClient.post()
+        RestClient client = createClient(timeoutSeconds);
+        String result = client.post()
             .uri(url)
             .header("User-Agent", "AzhukovAgent/1.0")
             .body(body)

@@ -34,6 +34,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import jakarta.annotation.PreDestroy;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -76,6 +78,24 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final TokenEstimator tokenEstimator;
     private final ToolResultFormatter toolResultFormatter;
 
+    // Shared daemon executor for memory sync — avoids creating a new executor every turn
+    // Virtual threads are daemon by default in Java 25
+    private final ExecutorService memorySyncExecutor = Executors.newThreadPerTaskExecutor(
+        Thread.ofVirtual().name("memory-sync-", 0).factory());
+
+    @PreDestroy
+    void shutdown() {
+        memorySyncExecutor.shutdown();
+        try {
+            if (!memorySyncExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                memorySyncExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            memorySyncExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {
         List<Message> sanitized = messageSanitizer.sanitize(messages);
@@ -95,7 +115,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                                        ModelRequestOptions options) {
         UUID sessionIdUuid = session.id();
         String sessionId = sessionIdUuid.toString();
-        guardrail.reset();
+        guardrail.reset(sessionIdUuid);
         turnStateManager.clear(sessionIdUuid);
         TurnSnapshot budget = iterationBudget.startTurn(sessionIdUuid);
         String safeInput = inputSanitizer.sanitize(userInput);
@@ -162,16 +182,14 @@ public class DefaultAgentRuntime implements AgentRuntime {
             } else {
                 // Fallback: direct memory provider sync (legacy path)
                 try {
-                    var executor = Executors.newVirtualThreadPerTaskExecutor();
                     final List<Message> messagesToSync = List.copyOf(turnMessages);
-                    executor.submit(() -> {
+                    memorySyncExecutor.submit(() -> {
                         try {
                             memoryProvider.syncTurn(sessionId, messagesToSync);
                         } catch (Exception e) {
                             log.warn("Memory syncTurn failed for session {}: {}", sessionId, e.getMessage());
                         }
                     });
-                    executor.shutdown();
                 } catch (Exception e) {
                     log.warn("Failed to submit memory syncTurn for session {}: {}", sessionId, e.getMessage());
                 }
@@ -184,7 +202,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                                    int maxTurns, int turnIndex, TurnSnapshot budget, TurnState turnState,
                                    String sessionId, UUID sessionIdUuid, ModelRequestOptions options) {
         for (int i = 0; i < maxTurns; i++) {
-            if (guardrail.isHalted()) {
+            if (guardrail.isHalted(session.id())) {
                 turnMessages.add(Message.assistant("Turn halted by guardrails.", turnIndex));
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.GUARDRAIL_HALTED);
@@ -252,26 +270,26 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     }
                     return new TurnResult(turnMessages, true, null);
                 }
-                // Check approval flow
+                // Check approval flow — use latch-based wait instead of busy-wait
                 if (approvalQueue != null && approvalQueue.isPending(session.id())) {
                     log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
-                    long approvalWaitStart = System.currentTimeMillis();
                     long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
-                    while (approvalQueue.isPending(session.id())) {
-                        if (System.currentTimeMillis() - approvalWaitStart > approvalTimeoutMs) {
-                            log.warn("Approval wait timed out for session {} after {} ms", session.id(), approvalTimeoutMs);
-                            break;
-                        }
-                        try {
-                            Thread.sleep(200);
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                        if (interruptToken != null && interruptToken.isCancelled(session.id())) {
-                            log.info("Session {} interrupted while waiting for approval", session.id());
-                            break;
-                        }
+                    boolean decided = approvalQueue.awaitDecision(session.id(), approvalTimeoutMs);
+                    if (!decided) {
+                        log.warn("Approval wait timed out for session {} after {} ms", session.id(), approvalTimeoutMs);
+                    }
+                    // After interrupt, check interrupt flag and skip execution
+                    if (Thread.currentThread().isInterrupted()) {
+                        log.info("Session {} interrupted while waiting for approval", session.id());
+                        ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
+                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                        approvalQueue.clear(session.id());
+                        turnMessages.addAll(toolResults);
+                        turnIndex++;
+                        continue;
+                    }
+                    if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                        log.info("Session {} interrupted while waiting for approval", session.id());
                     }
                 }
                 if (approvalQueue != null && approvalQueue.isDenied(session.id())) {

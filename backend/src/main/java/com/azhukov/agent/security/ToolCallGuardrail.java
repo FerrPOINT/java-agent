@@ -4,6 +4,8 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.state.TurnState;
 
+import java.util.UUID;
+
 public interface ToolCallGuardrail {
     default GuardrailDecision beforeCall(String toolName, String arguments, TurnState state) {
         GuardrailDecision base = beforeCall(toolName, arguments);
@@ -19,5 +21,7 @@ public interface ToolCallGuardrail {
     GuardrailDecision beforeCall(String toolName, String arguments);
     GuardrailDecision afterCall(String toolName, String arguments, ToolResult result, boolean failed);
     default void reset() {}
+    default void reset(UUID sessionId) { reset(); }
     default boolean isHalted() { return false; }
+    default boolean isHalted(UUID sessionId) { return isHalted(); }
 }

@@ -298,20 +298,29 @@ public class DefaultContextEngine implements ContextEngine {
  }
 
  private void appendRecentHistory(Session session, List<Message> context) {
- try {
- List<MessageEntity> history = messageRepository.findBySessionIdOrderByCreatedAtAsc(session.id());
- int start = Math.max(0, history.size() - contextProps.getMaxContextMessages());
- for (MessageEntity e : history.subList(start, history.size())) {
- String role = e.getRole();
- String content = e.getContent() != null ? e.getContent() : "";
- context.add(switch (role) {
- case "assistant" -> Message.assistant(content, e.getTurnIndex() != null ? e.getTurnIndex() : 0);
- case "tool" -> Message.toolResult(e.getToolCallId(), content, e.getTurnIndex() != null ? e.getTurnIndex() : 0);
- default -> Message.user(content);
- });
- }
- } catch (Exception e) {
- log.debug("History load failed: {}", e.getMessage());
- }
+     try {
+         // Use paginated query to load only the last N messages instead of loading all.
+         // Query in descending order (newest first) then reverse to get ascending.
+         int maxMessages = contextProps.getMaxContextMessages();
+         if (maxMessages <= 0) {
+             maxMessages = 50;
+         }
+         List<MessageEntity> descHistory = messageRepository.findBySessionIdOrderByCreatedAtDesc(
+             session.id(), org.springframework.data.domain.PageRequest.of(0, maxMessages));
+         // Reverse to get ascending order (defensive copy in case the list is immutable)
+         java.util.List<MessageEntity> ascHistory = new java.util.ArrayList<>(descHistory);
+         java.util.Collections.reverse(ascHistory);
+         for (MessageEntity e : ascHistory) {
+             String role = e.getRole();
+             String content = e.getContent() != null ? e.getContent() : "";
+             context.add(switch (role) {
+                 case "assistant" -> Message.assistant(content, e.getTurnIndex() != null ? e.getTurnIndex() : 0);
+                 case "tool" -> Message.toolResult(e.getToolCallId(), content, e.getTurnIndex() != null ? e.getTurnIndex() : 0);
+                 default -> Message.user(content);
+             });
+         }
+     } catch (Exception e) {
+         log.debug("History load failed: {}", e.getMessage());
+     }
  }
 }

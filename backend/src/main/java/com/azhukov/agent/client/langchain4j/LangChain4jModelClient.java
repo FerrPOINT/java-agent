@@ -246,7 +246,14 @@ public class LangChain4jModelClient implements ModelClient {
 
         // Block until streaming completes or errors
         try {
-            latch.await(properties.getModel().getTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS);
+            boolean completed = latch.await(properties.getModel().getTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS);
+            if (!completed && errorRef.get() == null) {
+                // Latch timed out without completing or erroring — set timeout error
+                String timeoutMsg = "Model stream() timed out after " + properties.getModel().getTimeoutSeconds() + "s";
+                log.warn(timeoutMsg);
+                errorRef.set(new java.util.concurrent.TimeoutException(timeoutMsg));
+                handler.onError(errorRef.get());
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("Model stream() interrupted");

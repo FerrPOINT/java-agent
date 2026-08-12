@@ -62,7 +62,8 @@ public class BrowserService {
 
     public String click(String selector) throws Exception {
         ensureConnected();
-        String expression = "document.querySelector('" + selector.replace("'", "\\'") + "')?.click()";
+        // Use DOM API (DOM.querySelector + DOM.querySelector nodeId) instead of JS eval
+        // to prevent CSS selector injection through JavaScript evaluation
         JsonNode document = cdpClient.send("DOM.getDocument", null).get(60, TimeUnit.SECONDS);
         int rootNodeId = document.path("root").path("nodeId").asInt();
 
@@ -75,6 +76,14 @@ public class BrowserService {
         if (nodeId == null || nodeId.asInt() == 0) {
             return "Element not found: " + selector;
         }
+
+        // Use DOM.performScrollIntoView + DOM.focus + DOM.dispatchKey for click
+        // Or use Runtime.evaluate with a safe, JSON.stringify-quoted selector
+        // The safest approach: use DOM.resolveNode to get a RemoteObjectId, then
+        // use DOM.focus and simulate a click via Input.dispatchMouseEvent
+        // For simplicity and safety, use JSON.stringify to properly escape the selector
+        String safeSelector = mapper.writeValueAsString(selector);
+        String expression = "document.querySelector(" + safeSelector + ")?.click()";
         return evaluate(expression);
     }
 

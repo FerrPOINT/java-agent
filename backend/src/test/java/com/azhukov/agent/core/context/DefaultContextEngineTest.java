@@ -70,7 +70,7 @@ class DefaultContextEngineTest {
     @Test
     void prepareContextAddsSystemMessageFirst() {
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class))).thenReturn(Collections.emptyList());
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class))).thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("You are a helpful assistant."), Message.user("Hello"));
         List<Message> result = contextEngine.prepareContext(session, incoming);
@@ -88,8 +88,8 @@ class DefaultContextEngineTest {
 
         MessageEntity userMsg = entity("user", "previous user question", 1);
         MessageEntity assistantMsg = entity("assistant", "previous assistant answer", 1);
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.id()))
-                .thenReturn(List.of(userMsg, assistantMsg));
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(List.of(assistantMsg, userMsg)); // Desc order (newest first)
 
         List<Message> incoming = List.of(Message.system("System prompt"), Message.user("Current question"));
         List<Message> result = contextEngine.prepareContext(session, incoming);
@@ -109,7 +109,7 @@ class DefaultContextEngineTest {
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
 
         MessageEntity userMsg = entity("user", "What do you know about me?", 1);
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.id()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(List.of(userMsg));
 
         List<Message> incoming = List.of(Message.system("System prompt"), Message.user("Tell me something"));
@@ -129,7 +129,7 @@ class DefaultContextEngineTest {
         when(skillManager.listSkillNames()).thenReturn(List.of("coding", "web"));
         when(skillManager.getSkill("coding")).thenReturn("Write clean, tested Java code.");
         when(skillManager.getSkill("web")).thenReturn("Search the web using DuckDuckGo.");
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("System prompt"), Message.user("Help me"));
@@ -148,13 +148,14 @@ class DefaultContextEngineTest {
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
 
         // 4 history messages + system + current user = 6, max is 5.
+        // Desc order (newest first) — will be reversed by appendRecentHistory
         List<MessageEntity> history = List.of(
-                entity("user", "msg-1", 1),
-                entity("assistant", "msg-2", 1),
+                entity("assistant", "msg-4", 2),
                 entity("user", "msg-3", 2),
-                entity("assistant", "msg-4", 2)
+                entity("assistant", "msg-2", 1),
+                entity("user", "msg-1", 1)
         );
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.id())).thenReturn(history);
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), any(org.springframework.data.domain.Pageable.class))).thenReturn(history);
 
         List<Message> incoming = List.of(Message.system("System prompt"), Message.user("current"));
         List<Message> result = contextEngine.prepareContext(session, incoming);
@@ -167,7 +168,7 @@ class DefaultContextEngineTest {
     @Test
     void prepareContextTriggersCompressorWhenCharsExceedMaxTokensEstimate() {
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(Collections.emptyList());
 
         // maxTokens=100 => 100 * 4 = 400 chars threshold. Create a system message alone that is already over.
@@ -187,7 +188,7 @@ class DefaultContextEngineTest {
     @Test
     void prepareContextHandlesEmptyHistoryGracefully() {
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.user("Just a user message"));
