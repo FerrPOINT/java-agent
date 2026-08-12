@@ -41,7 +41,6 @@ public class SsrfSafeHttpClient {
         RestClient client = createClient(timeoutSeconds);
         String result = client.get()
             .uri(url)
-            .header("User-Agent", "AzhukovAgent/1.0")
             .retrieve()
             .body(String.class);
         if (result == null) result = "";
@@ -56,7 +55,6 @@ public class SsrfSafeHttpClient {
         RestClient client = createClient(timeoutSeconds);
         String result = client.post()
             .uri(url)
-            .header("User-Agent", "AzhukovAgent/1.0")
             .body(body)
             .retrieve()
             .body(String.class);

@@ -27,8 +27,6 @@ import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.persistence.repository.UsageRepository;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.retry.annotation.Backoff;
-import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -68,6 +66,7 @@ public class AgentRuntimeService {
     private final TransactionTemplate transactionTemplate;
     private final AgentSessionResolver sessionResolver;
     private final CliStateApplier cliStateApplier;
+    private final SessionCompressionHelper sessionCompressionHelper;
 
     private static final String UNKNOWN_MODEL = "unknown";
 
@@ -201,51 +200,12 @@ public class AgentRuntimeService {
 
     @Transactional
     public void compressSession(UUID sessionId, String focus) {
-        compressSessionInternal(sessionId, focus, null);
+        sessionCompressionHelper.compressSessionInternal(sessionId, focus, null);
     }
 
-    /**
-     * Public entry point for the 3-arg compress.
-     * Delegates to compressSessionInternal to avoid the self-invocation pitfall
-     * where @Retryable/@Transactional annotations are bypassed when called
-     * from within the same class.
-     */
     @Transactional
     public void compressSession(UUID sessionId, String focusTopic, Integer keepLastN) {
-        compressSessionInternal(sessionId, focusTopic, keepLastN);
-    }
-
-    @Retryable(retryFor = {org.springframework.dao.OptimisticLockingFailureException.class,
-                           org.springframework.dao.PessimisticLockingFailureException.class},
-               maxAttempts = 3,
-               backoff = @Backoff(delay = 1000, multiplier = 2))
-    @Transactional
-    public void compressSessionInternal(UUID sessionId, String focusTopic, Integer keepLastN) {
-        List<MessageEntity> messageEntities = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        if (messageEntities.size() <= 4) return;
-
-        // Convert to core Message objects
-        List<Message> messages = messageEntities.stream()
-            .map(messageMapper::toDomain)
-            .toList();
-
-        // Use ConversationCompressor for LLM-based compression
-        List<Message> compressed;
-        if (keepLastN != null && keepLastN > 0) {
-            compressed = conversationCompressor.compressPartial(messages, keepLastN);
-        } else {
-            compressed = conversationCompressor.compress(messages, focusTopic);
-        }
-
-        // Delete all old messages and persist compressed versions
-        messageRepository.deleteAll(messageEntities);
-        Instant now = Instant.now();
-        for (Message m : compressed) {
-            MessageEntity e = messageMapper.toEntity(m);
-            e.setSessionId(sessionId);
-            e.setCreatedAt(now);
-            messageRepository.save(e);
-        }
+        sessionCompressionHelper.compressSessionInternal(sessionId, focusTopic, keepLastN);
     }
 
     @Transactional

@@ -1261,7 +1261,7 @@ class BotMessageProcessorTest {
     // ─── Streaming with callbacks ───────────────────────────────
 
     @Test
-    void toolCallConsumerShowsToolProgress() {
+    void toolCallConsumerDoesNotShowToolProgress() {
         List<String> editedTexts = new ArrayList<>();
         when(streamEditor.editStream(anyLong(), anyLong(), anyString()))
             .thenAnswer(inv -> {
@@ -1279,20 +1279,14 @@ class BotMessageProcessorTest {
             });
 
         processor.accept(textEvent(1, 100L, "hello"));
-        // Verify tool progress was shown in stream edits
-        assertThat(editedTexts).anyMatch(t -> t.contains("🔧"));
-        assertThat(editedTexts).anyMatch(t -> t.contains("search"));
+        // Tool progress should NOT be shown in stream edits (tool_progress: off)
+        assertThat(editedTexts).noneMatch(t -> t.contains("🔧"));
+        // The tool name is tracked internally for heartbeat, not shown in stream
+        verify(streamEditor).setCurrentToolName(anyLong(), eq("search"));
     }
 
     @Test
-    void toolResultConsumerShowsToolResult() {
-        List<String> editedTexts = new ArrayList<>();
-        when(streamEditor.editStream(anyLong(), anyLong(), anyString()))
-            .thenAnswer(inv -> {
-                editedTexts.add(inv.getArgument(2));
-                return true;
-            });
-
+    void toolResultConsumerTriggersSegmentBreak() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(3);
@@ -1303,8 +1297,8 @@ class BotMessageProcessorTest {
             });
 
         processor.accept(textEvent(1, 100L, "hello"));
-        assertThat(editedTexts).anyMatch(t -> t.contains("✅"));
-        assertThat(editedTexts).anyMatch(t -> t.contains("search"));
+        // Tool results should NOT be shown in stream edits — instead a segment break is triggered
+        verify(streamEditor).onSegmentBreak(anyLong(), anyLong(), anyString());
     }
 
     @Test

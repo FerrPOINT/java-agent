@@ -121,6 +121,16 @@ public class StreamEditor {
     // Fresh-final
     private long freshFinalTimeoutMs;
 
+    // Buffer threshold: trigger an edit when accumulated text reaches this many chars
+    // since last edit, even if the interval hasn't elapsed.
+    private int bufferThreshold;
+
+    // Per-chat buffer tracking: chars accumulated since last edit
+    private final Map<Long, Integer> charsSinceLastEdit = new ConcurrentHashMap<>();
+
+    // Per-chat current tool name (for heartbeat display)
+    private final Map<Long, String> currentToolName = new ConcurrentHashMap<>();
+
     // Split during streaming: track current message id per chat
     private final Map<Long, AtomicLong> currentMessageId = new ConcurrentHashMap<>();
     private int streamingMaxChars;
@@ -134,6 +144,7 @@ public class StreamEditor {
         heartbeatIntervalSeconds = properties.getHeartbeatIntervalSeconds();
         freshFinalTimeoutMs = properties.getFreshFinalTimeoutMs();
         streamingMaxChars = properties.getStreamingMaxChars();
+        bufferThreshold = properties.getBufferThreshold();
         // P1: Initialize rich message support
         this.richMessageSupport = new RichMessageSupport(telegramClient);
         this.richMessageSupport.setRichMessagesEnabled(properties.getRichMessages().isEnabled());
@@ -161,6 +172,10 @@ public class StreamEditor {
         editIntervalMap.remove(chatId);
         // Reset current message id
         currentMessageId.remove(chatId);
+        // Reset buffer threshold tracking
+        charsSinceLastEdit.remove(chatId);
+        // Reset tool name
+        currentToolName.remove(chatId);
 
         String scrubbed = scrubThink(chatId, initialText);
         String formatted = formatForTelegram(scrubbed);
@@ -217,9 +232,19 @@ public class StreamEditor {
         Long last = lastEditTime.get(chatId);
         // B5: Use adaptive interval (may have been adjusted by flood handling)
         long currentInterval = getEffectiveInterval(chatId);
-        if (last != null && (now - last) < currentInterval) {
-            log.trace("Throttled edit for chat {} ({}ms since last, interval={})",
-                chatId, now - last, currentInterval);
+        
+        // Buffer threshold: track chars accumulated since last edit
+        int prevChars = charsSinceLastEdit.getOrDefault(chatId, 0);
+        // Track the total text length as our "chars since last edit" reference
+        charsSinceLastEdit.put(chatId, text.length());
+        int charsAccumulated = last != null ? (text.length() - (prevChars > 0 ? prevChars : 0)) : text.length();
+        
+        boolean intervalElapsed = last == null || (now - last) >= currentInterval;
+        boolean thresholdReached = bufferThreshold > 0 && charsAccumulated >= bufferThreshold;
+        
+        if (!intervalElapsed && !thresholdReached) {
+            log.trace("Throttled edit for chat {} ({}ms since last, interval={}, charsAccumulated={}, threshold={})",
+                chatId, last != null ? now - last : 0, currentInterval, charsAccumulated, bufferThreshold);
             return false;
         }
 
@@ -441,6 +466,8 @@ public class StreamEditor {
         streamStartTime.remove(chatId);
         lastTokenTime.remove(chatId);
         currentMessageId.remove(chatId);
+        charsSinceLastEdit.remove(chatId);
+        currentToolName.remove(chatId);
         stopHeartbeat(chatId);
     }
 
@@ -458,7 +485,51 @@ public class StreamEditor {
         streamStartTime.remove(chatId);
         lastTokenTime.remove(chatId);
         currentMessageId.remove(chatId);
+        charsSinceLastEdit.remove(chatId);
+        currentToolName.remove(chatId);
         stopHeartbeat(chatId);
+    }
+
+    // ─── Tool name tracking & segment break ───────────────────────
+
+    /**
+     * Set the current tool name for a chat (used in heartbeat display).
+     * Called when a tool starts executing — the name is shown in the heartbeat
+     * message but NOT in the streaming text (tool_progress: off).
+     */
+    public void setCurrentToolName(long chatId, String toolName) {
+        currentToolName.put(chatId, toolName);
+    }
+
+    /**
+     * Handle a segment break — called after a tool execution completes.
+     * Finalizes the current streaming message with the accumulated text so far,
+     * then starts a new streaming message for the continuation.
+     * This creates a visual separation between text segments and tool executions
+     * without showing tool progress in the stream.
+     */
+    public void onSegmentBreak(long chatId, long messageId, String accumulatedText) {
+        if (accumulatedText == null || accumulatedText.isBlank()) {
+            // No text accumulated yet — just clear the tool name
+            currentToolName.remove(chatId);
+            return;
+        }
+        // Finalize the current message with what we have (no cursor, no silent)
+        String scrubbed = scrubThink(chatId, accumulatedText);
+        String formatted = formatForTelegram(scrubbed);
+        try {
+            telegramClient.editMessageText(chatId, messageId, formatted, parseMode, false);
+        } catch (TelegramApiException e) {
+            if (!e.isRateLimit()) {
+                throw e;
+            }
+            log.debug("Segment break edit 429 rate limited for chat {}, skipping", chatId);
+        }
+        // Clear the tool name since the tool is done
+        currentToolName.remove(chatId);
+        // Reset buffer tracking for the new segment
+        charsSinceLastEdit.remove(chatId);
+        lastEditTime.put(chatId, System.currentTimeMillis());
     }
 
     // ─── Heartbeat ───────────────────────────────────────────────
@@ -505,7 +576,11 @@ public class StreamEditor {
         }
 
         long msgId = msgIdRef.get();
-        String heartbeatText = "⏳ Working — " + elapsedMinutes + "m";
+        String toolName = currentToolName.get(chatId);
+        String heartbeatText = "⏳ Working — " + elapsedMinutes + " min";
+        if (toolName != null && !toolName.isBlank()) {
+            heartbeatText += " — " + toolName;
+        }
         boolean disableNotification = streamingSilent;
         log.debug("Heartbeat for chat {}: {}", chatId, heartbeatText);
         try {

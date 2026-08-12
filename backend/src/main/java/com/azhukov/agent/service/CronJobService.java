@@ -209,6 +209,8 @@ public class CronJobService {
                 scheduleJob(job);
             } finally {
                 lock.unlock();
+                // Clean up the lock to avoid memory leak — it will be recreated if needed
+                jobLocks.remove(jobId, lock);
             }
         } catch (Exception e) {
             log.error("Error executing cron job {}: {}", jobId, e.getMessage());

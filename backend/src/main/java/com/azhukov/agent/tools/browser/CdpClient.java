@@ -164,8 +164,16 @@ public class CdpClient {
 
     public CompletableFuture<JsonNode> waitForEvent(String method, long timeoutSeconds) {
         CompletableFuture<JsonNode> future = new CompletableFuture<>();
-        onEvent(method, future::complete);
-        return future.orTimeout(timeoutSeconds, TimeUnit.SECONDS);
+        Consumer<JsonNode> listener = future::complete;
+        onEvent(method, listener);
+        return future.orTimeout(timeoutSeconds, TimeUnit.SECONDS)
+            .whenComplete((result, ex) -> {
+                // Remove the listener after the future completes (success, timeout, or error)
+                List<Consumer<JsonNode>> listeners = eventListeners.get(method);
+                if (listeners != null) {
+                    listeners.remove(listener);
+                }
+            });
     }
 
     /**

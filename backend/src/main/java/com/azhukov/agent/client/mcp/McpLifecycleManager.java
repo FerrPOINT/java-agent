@@ -294,6 +294,11 @@ public class McpLifecycleManager {
                 log.debug("Error closing existing MCP client before reconnect: {}", e.getMessage());
             }
         }
+        // Cancel and remove any pending tool refresh task for this server
+        ScheduledFuture<?> oldRefresh = toolRefreshFutures.remove(serverName);
+        if (oldRefresh != null) {
+            oldRefresh.cancel(false);
+        }
         scheduleReconnect(serverProps, 0, false);
     }
 
@@ -511,6 +516,11 @@ public class McpLifecycleManager {
                         .ifPresent(server -> {
                             // Remove stale client entry
                             clients.remove(serverName);
+                            // Cancel and remove any pending tool refresh task
+                            ScheduledFuture<?> oldRefresh = toolRefreshFutures.remove(serverName);
+                            if (oldRefresh != null) {
+                                oldRefresh.cancel(false);
+                            }
                             scheduleReconnect(server, 0, false);
                         });
                 }

@@ -199,13 +199,17 @@ public class ApprovalQueue {
         }
         // Check if already decided
         if (!isPending(sessionId)) {
+            latches.remove(sessionId);
             return true;
         }
         try {
-            return latch.await(timeoutMs, TimeUnit.MILLISECONDS);
+            boolean decided = latch.await(timeoutMs, TimeUnit.MILLISECONDS);
+            return decided;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
+        } finally {
+            latches.remove(sessionId);
         }
     }
 

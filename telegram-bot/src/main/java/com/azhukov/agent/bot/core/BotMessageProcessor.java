@@ -440,7 +440,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  // P0: PII Redaction — prepend redacted session context to the message
  String fullMessage = buildMessageWithContext(messageText, session, chatId);
  StringBuilder accumulated = new StringBuilder(); // clean LLM text only
- StringBuilder toolProgress = new StringBuilder(); // transient tool progress (🔧/✅ lines)
+ // toolProgress removed — tool progress is NOT shown in streaming (tool_progress: off)
  final long[] messageId = {-1};
  final boolean[] finalized = {false};
  final boolean[] interrupted = {false};
@@ -468,22 +468,22 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  }
  },
  // toolCallConsumer — called when backend emits tool_calls event
+ // Tool progress is NOT shown in the streaming message (tool_progress: off).
+ // The current tool name is tracked for heartbeat display only.
  toolCall -> {
- if (messageId[0] >= 0) {
- // Show tool progress in the streaming message (transient)
- String toolLine = "\n\n🔧 " + toolCall + "...";
- toolProgress.append(toolLine);
- streamEditor.editStream(chatId, messageId[0], accumulated.toString() + toolProgress);
- }
+     if (messageId[0] >= 0) {
+         // Track current tool name for heartbeat, but don't show in stream
+         streamEditor.setCurrentToolName(chatId, toolCall);
+     }
  },
  // toolResultConsumer — called when backend emits tool_result event
+ // Tool results are NOT shown in the streaming message (tool_progress: off).
  (toolName, toolResultPreview) -> {
- if (messageId[0] >= 0) {
- // Show tool result in the streaming message (transient)
- String resultLine = "\n✅ " + toolName + ": " + truncatePreview(toolResultPreview, 200);
- toolProgress.append(resultLine);
- streamEditor.editStream(chatId, messageId[0], accumulated.toString() + toolProgress);
- }
+     if (messageId[0] >= 0) {
+         // Send a new message to create a segment break after tool execution,
+         // so the response continues in a fresh message.
+         streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
+     }
  },
  // retryConsumer — called when backend emits retry/continuation events
  retryMsg -> {
@@ -568,12 +568,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  }
  throw new RuntimeException("Streaming failed: " + e.getMessage(), e);
  }
- }
-
- private String truncatePreview(String text, int maxLen) {
- if (text == null) return "";
- if (text.length() <= maxLen) return text;
- return text.substring(0, maxLen) + "...";
  }
 
  private AgentBackendClient.ChatResult fallbackSyncWithMetadata(String messageText, String sessionId,

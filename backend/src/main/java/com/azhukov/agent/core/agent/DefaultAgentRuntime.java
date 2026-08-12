@@ -170,6 +170,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
         try {
         result = runTurnLoop(session, turnMessages, tools, maxTurns, turnIndex, budget, turnState, sessionId, sessionIdUuid, options);
         } finally {
+            // Clean up per-session guardrail state to prevent memory leaks (REM-2)
+            guardrail.reset(sessionIdUuid);
             // S14: MemoryManager — sync turn data + queue prefetch for next turn
             if (memoryManager != null && memoryManager.hasProviders()) {
                 try {
@@ -290,6 +292,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     }
                     if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                         log.info("Session {} interrupted while waiting for approval", session.id());
+                        ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
+                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                        approvalQueue.clear(session.id());
+                        turnMessages.addAll(toolResults);
+                        turnIndex++;
+                        continue;
                     }
                 }
                 if (approvalQueue != null && approvalQueue.isDenied(session.id())) {

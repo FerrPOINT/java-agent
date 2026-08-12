@@ -23,7 +23,11 @@ public class BotProperties {
     @Min(1)
     private int maxMessageLength = 4096;
     private Duration typingRefreshInterval = Duration.ofSeconds(4);
-    private Duration streamEditInterval = Duration.ofMillis(1500);
+    private Duration streamEditInterval = Duration.ofMillis(800);
+    // Buffer threshold: when accumulated text since last edit reaches this many chars,
+    // trigger an edit even if the edit interval hasn't elapsed yet.
+    @Min(1)
+    private int bufferThreshold = 24;
     private String busyMode = "queue"; // queue | interrupt
     private String parseMode = "MarkdownV2"; // MarkdownV2 | HTML
     private boolean registerCommands = true;
@@ -181,7 +185,7 @@ public class BotProperties {
     @Getter
     @Setter
     public static class Display {
-        private String toolProgress = "compact"; // compact | verbose | hidden
+        private String toolProgress = "hidden"; // compact | verbose | hidden
         private int previewLength = 200;
     }
 }

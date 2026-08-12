@@ -123,7 +123,8 @@ class AgentRuntimeServiceTest {
             new RuntimeConfigService(),
             transactionTemplate,
             new AgentSessionResolver(sessionRepository, Mappers.getMapper(SessionEntityMapper.class), transactionTemplate),
-            new CliStateApplier()
+            new CliStateApplier(),
+            new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class), conversationCompressor)
         );
     }
 
