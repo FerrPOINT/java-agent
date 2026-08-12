@@ -289,7 +289,8 @@ public class McpLifecycleManager {
         if (existing != null) {
             try {
                 existing.client().close();
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                log.debug("Error closing existing MCP client before reconnect: {}", e.getMessage());
             }
         }
         scheduleReconnect(serverProps, 0, false);
@@ -301,7 +302,7 @@ public class McpLifecycleManager {
             try {
                 refreshTools(serverName);
             } catch (Exception e) {
-                log.debug("Tool refresh for MCP server {} failed: {}", serverName, e.getMessage());
+                log.warn("Tool refresh for MCP server {} failed: {}", serverName, e.getMessage());
             }
         }, TOOL_REFRESH_INTERVAL_SECONDS, TOOL_REFRESH_INTERVAL_SECONDS, TimeUnit.SECONDS);
     }
@@ -418,7 +419,8 @@ public class McpLifecycleManager {
         for (var state : clients.values()) {
             try {
                 state.client().close();
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                log.debug("Error closing MCP client: {}", e.getMessage());
             }
         }
         clients.clear();

@@ -70,9 +70,9 @@ public class SkillBundleService {
  }
  out.put(key, bundle);
  try {
- long mtime = Files.getLastModifiedTime(file).toMillis();
- if (mtime > maxMtime) maxMtime = mtime;
- } catch (IOException ignored) {}
+     long mtime = Files.getLastModifiedTime(file).toMillis();
+     if (mtime > maxMtime) maxMtime = mtime;
+ } catch (IOException e) { log.debug("Could not read modification time: {}", e.getMessage()); }
  } catch (Exception e) {
  log.warn("Failed to load bundle file: {}", file, e);
  }
@@ -81,9 +81,9 @@ public class SkillBundleService {
  Path bundlesDir = getBundlesDir();
  if (Files.isDirectory(bundlesDir)) {
  try {
- long dirMtime = Files.getLastModifiedTime(bundlesDir).toMillis();
- if (dirMtime > maxMtime) maxMtime = dirMtime;
- } catch (IOException ignored) {}
+     long dirMtime = Files.getLastModifiedTime(bundlesDir).toMillis();
+     if (dirMtime > maxMtime) maxMtime = dirMtime;
+ } catch (IOException e) { log.debug("Could not read modification time: {}", e.getMessage()); }
  }
  bundlesCache = out;
  bundlesCacheMtime = maxMtime;
@@ -300,14 +300,14 @@ public class SkillBundleService {
  Path base = getBundlesDir();
  if (Files.isDirectory(base)) {
  try {
- max = Files.getLastModifiedTime(base).toMillis();
- } catch (IOException ignored) {}
+     max = Files.getLastModifiedTime(base).toMillis();
+ } catch (IOException e) { log.debug("Could not read modification time: {}", e.getMessage()); }
  }
  for (Path file : iterBundleFiles()) {
  try {
- long mtime = Files.getLastModifiedTime(file).toMillis();
- if (mtime > max) max = mtime;
- } catch (IOException ignored) {}
+     long mtime = Files.getLastModifiedTime(file).toMillis();
+     if (mtime > max) max = mtime;
+ } catch (IOException e) { log.debug("Could not read modification time: {}", e.getMessage()); }
  }
  return max;
  }

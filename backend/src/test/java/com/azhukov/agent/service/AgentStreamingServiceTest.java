@@ -269,7 +269,12 @@ class AgentStreamingServiceTest {
         emitter.awaitDone();
 
         assertThat(emitter.events).hasSizeGreaterThanOrEqualTo(1);
-        assertThat(emitter.error.get()).isNotNull().hasMessage("model exploded");
+        // Error event is sent via SSE; emitter completes normally (not with error)
+        // to avoid propagating to GlobalExceptionHandler which can't write JSON on text/event-stream
+        boolean hasErrorEvent = emitter.events.stream()
+            .anyMatch(e -> "error".equals(e.name));
+        assertThat(hasErrorEvent).isTrue();
+        assertThat(emitter.completed.get()).isTrue();
     }
 
     @Test

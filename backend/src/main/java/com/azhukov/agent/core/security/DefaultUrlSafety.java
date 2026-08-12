@@ -139,7 +139,7 @@ public class DefaultUrlSafety implements UrlSafety {
                 if (ip >= 0 && ip <= 0xFFFFFFFFL) {
                     return isPrivateRange((int) ((ip >> 24) & 0xFF), (int) ((ip >> 16) & 0xFF));
                 }
-            } catch (NumberFormatException e) { /* ignore */ }
+            } catch (NumberFormatException e) { log.trace("IP parsing failed for '{}': {}", host, e.getMessage()); }
         }
         // Dotted notation with octal/hex parts (e.g., 0177.0.0.1 = 127.0.0.1)
         if (host.contains(".") && !host.contains(":")) {
@@ -158,7 +158,7 @@ public class DefaultUrlSafety implements UrlSafety {
                         }
                     }
                     return isPrivateRange(octets[0], octets[1]);
-                } catch (NumberFormatException e) { /* ignore */ }
+                } catch (NumberFormatException e) { log.trace("IP parsing failed for '{}': {}", host, e.getMessage()); }
             }
         }
         return false;

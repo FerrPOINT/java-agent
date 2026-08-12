@@ -144,7 +144,7 @@ public class AgentBackendClient {
 
  return new ChatResult(responseText, modelUsed, contextTokens, contextLength, false, memoryUpdated, backendSessionId);
  } catch (Exception e) {
- log.error("Backend chat failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("Backend chat failed for sessionId={}: {}", sessionId, e.getMessage());
  return new ChatResult("Error: " + e.getMessage());
  }
  }
@@ -204,7 +204,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("resetSession failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("resetSession failed for sessionId={}: {}", sessionId, e.getMessage());
  return false;
  }
  }
@@ -226,7 +226,7 @@ public class AgentBackendClient {
  }
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("getContext failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("getContext failed for sessionId={}: {}", sessionId, e.getMessage());
  return null;
  }
  }
@@ -248,7 +248,7 @@ public class AgentBackendClient {
  }
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("getUsage failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("getUsage failed for sessionId={}: {}", sessionId, e.getMessage());
  return null;
  }
  }
@@ -270,7 +270,7 @@ public class AgentBackendClient {
  }
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("listSessionsByUser failed for userId={}: {}", userId, e.getMessage());
+ log.warn("listSessionsByUser failed for userId={}: {}", userId, e.getMessage());
  return objectMapper.createArrayNode();
  }
  }
@@ -295,7 +295,7 @@ public class AgentBackendClient {
  }
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("getMemory failed: {}", e.getMessage());
+ log.warn("getMemory failed: {}", e.getMessage());
  return objectMapper.createArrayNode();
  }
  }
@@ -316,7 +316,7 @@ public class AgentBackendClient {
  }
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("getSkills failed: {}", e.getMessage());
+ log.warn("getSkills failed: {}", e.getMessage());
  return objectMapper.createArrayNode();
  }
  }
@@ -417,9 +417,8 @@ public class AgentBackendClient {
  timeoutSignal[0] = new IOException("SSE stream idle timeout: no data for "
  + STREAM_IDLE_TIMEOUT_MS + "ms");
  try {
- reader.close(); // unblocks readLine()
- } catch (IOException ignored) {
- }
+     reader.close(); // unblocks readLine()
+ } catch (IOException e) { log.debug("SSE watchdog reader close exception: {}", e.getMessage()); }
  }
  }, STREAM_IDLE_TIMEOUT_MS, 10_000, TimeUnit.MILLISECONDS);
 
@@ -525,7 +524,7 @@ public class AgentBackendClient {
  return result;
  }
  } catch (Exception e) {
- log.error("chatStream failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("chatStream failed for sessionId={}: {}", sessionId, e.getMessage());
  onError.accept(e);
  return new ChatResult(accumulated.toString());
  }
@@ -587,7 +586,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return "Context compressed.";
  } catch (Exception e) {
- log.error("compressSession failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("compressSession failed for sessionId={}: {}", sessionId, e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -602,7 +601,7 @@ public class AgentBackendClient {
  .body(Integer.class);
  return "Undid " + (deleted != null ? deleted : 0) + " messages.";
  } catch (Exception e) {
- log.error("undoTurns failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("undoTurns failed for sessionId={}: {}", sessionId, e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -619,7 +618,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return "Context compressed (kept last " + keepLastN + " exchanges).";
  } catch (Exception e) {
- log.error("compressSessionPartial failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("compressSessionPartial failed for sessionId={}: {}", sessionId, e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -642,7 +641,7 @@ public class AgentBackendClient {
  }
  return sb.toString().trim();
  } catch (Exception e) {
- log.error("listCheckpoints failed: {}", e.getMessage());
+ log.warn("listCheckpoints failed: {}", e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -655,7 +654,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return "Checkpoint restored: " + checkpointId;
  } catch (Exception e) {
- log.error("restoreCheckpoint failed for id={}: {}", checkpointId, e.getMessage());
+ log.warn("restoreCheckpoint failed for id={}: {}", checkpointId, e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -672,7 +671,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return "Checkpoint created: " + description;
  } catch (Exception e) {
- log.error("createCheckpoint failed: {}", e.getMessage());
+ log.warn("createCheckpoint failed: {}", e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -689,7 +688,7 @@ public class AgentBackendClient {
  .retrieve()
  .body(String.class);
  } catch (Exception e) {
- log.error("approve failed: {}", e.getMessage());
+ log.warn("approve failed: {}", e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -705,7 +704,7 @@ public class AgentBackendClient {
  .retrieve()
  .body(String.class);
  } catch (Exception e) {
- log.error("deny failed: {}", e.getMessage());
+ log.warn("deny failed: {}", e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -748,7 +747,7 @@ public class AgentBackendClient {
  default -> "Unknown choice: " + choice;
  };
  } catch (Exception e) {
- log.error("resolveApproval failed for sessionKey={}, choice={}: {}", sessionKey, choice, e.getMessage());
+ log.warn("resolveApproval failed for sessionKey={}, choice={}: {}", sessionKey, choice, e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -791,7 +790,7 @@ public class AgentBackendClient {
  default -> "Unknown choice: " + choice;
  };
  } catch (Exception e) {
- log.error("resolveSlashConfirm failed for sessionKey={}, confirmId={}, choice={}: {}",
+ log.warn("resolveSlashConfirm failed for sessionKey={}, confirmId={}, choice={}: {}",
  sessionKey, confirmId, choice, e.getMessage());
  return "Error: " + e.getMessage();
  }
@@ -806,7 +805,7 @@ public class AgentBackendClient {
  if (json == null || json.isBlank()) return objectMapper.createArrayNode();
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("listActiveAgents failed: {}", e.getMessage());
+ log.warn("listActiveAgents failed: {}", e.getMessage());
  return objectMapper.createArrayNode();
  }
  }
@@ -820,7 +819,7 @@ public class AgentBackendClient {
  if (json == null || json.isBlank()) return objectMapper.createObjectNode();
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("getInsights failed: {}", e.getMessage());
+ log.warn("getInsights failed: {}", e.getMessage());
  return objectMapper.createObjectNode();
  }
  }
@@ -837,7 +836,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return "Agent restarting...";
  } catch (Exception e) {
- log.error("restart failed: {}", e.getMessage());
+ log.warn("restart failed: {}", e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -850,7 +849,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return "MCP servers reloaded.";
  } catch (Exception e) {
- log.error("reloadMcp failed: {}", e.getMessage());
+ log.warn("reloadMcp failed: {}", e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -863,7 +862,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return "Skills and MCP servers reloaded.";
  } catch (Exception e) {
- log.error("reloadAll failed: {}", e.getMessage());
+ log.warn("reloadAll failed: {}", e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -881,7 +880,7 @@ public class AgentBackendClient {
  if (json == null || json.isBlank()) return objectMapper.createArrayNode();
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("getKanban failed: {}", e.getMessage());
+ log.warn("getKanban failed: {}", e.getMessage());
  return objectMapper.createArrayNode();
  }
  }
@@ -899,7 +898,7 @@ public class AgentBackendClient {
  if (json == null || json.isBlank()) return null;
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("addKanbanTask failed: {}", e.getMessage());
+ log.warn("addKanbanTask failed: {}", e.getMessage());
  return null;
  }
  }
@@ -912,7 +911,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("doneKanbanTask failed for id={}: {}", id, e.getMessage());
+ log.warn("doneKanbanTask failed for id={}: {}", id, e.getMessage());
  return false;
  }
  }
@@ -925,7 +924,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("clearKanban failed: {}", e.getMessage());
+ log.warn("clearKanban failed: {}", e.getMessage());
  return false;
  }
  }
@@ -938,7 +937,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return "Skills reloaded.";
  } catch (Exception e) {
- log.error("reloadSkills failed: {}", e.getMessage());
+ log.warn("reloadSkills failed: {}", e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -952,7 +951,7 @@ public class AgentBackendClient {
  if (json == null || json.isBlank()) return objectMapper.createArrayNode();
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("listBundles failed: {}", e.getMessage());
+ log.warn("listBundles failed: {}", e.getMessage());
  return objectMapper.createArrayNode();
  }
  }
@@ -965,7 +964,7 @@ public class AgentBackendClient {
  .retrieve()
  .body(String.class);
  } catch (Exception e) {
- log.error("installBundle failed: {}", e.getMessage());
+ log.warn("installBundle failed: {}", e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -978,7 +977,7 @@ public class AgentBackendClient {
  .retrieve()
  .body(String.class);
  } catch (Exception e) {
- log.error("uninstallBundle failed: {}", e.getMessage());
+ log.warn("uninstallBundle failed: {}", e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -998,7 +997,7 @@ public class AgentBackendClient {
  JsonNode idNode = node.get("id");
  return idNode != null ? "Branched session: " + idNode.asText() : "Branch created.";
  } catch (Exception e) {
- log.error("branchSession failed: {}", e.getMessage());
+ log.warn("branchSession failed: {}", e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -1018,7 +1017,7 @@ public class AgentBackendClient {
  .body(String.class);
  return result != null ? result : "Background task started.";
  } catch (Exception e) {
- log.error("runBackground failed: {}", e.getMessage());
+ log.warn("runBackground failed: {}", e.getMessage());
  return "Error: " + e.getMessage();
  }
  }
@@ -1051,7 +1050,7 @@ public class AgentBackendClient {
  .body(String.class);
  return result != null && result.contains("\"accepted\":true");
  } catch (Exception e) {
- log.error("steer failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("steer failed for sessionId={}: {}", sessionId, e.getMessage());
  return false;
  }
  }
@@ -1070,7 +1069,7 @@ public class AgentBackendClient {
  }
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("listCronJobs failed: {}", e.getMessage());
+ log.warn("listCronJobs failed: {}", e.getMessage());
  return objectMapper.createArrayNode();
  }
  }
@@ -1086,7 +1085,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("deleteCronJob failed for id={}: {}", id, e.getMessage());
+ log.warn("deleteCronJob failed for id={}: {}", id, e.getMessage());
  return false;
  }
  }
@@ -1102,7 +1101,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("pauseCronJob failed for id={}: {}", id, e.getMessage());
+ log.warn("pauseCronJob failed for id={}: {}", id, e.getMessage());
  return false;
  }
  }
@@ -1118,7 +1117,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("resumeCronJob failed for id={}: {}", id, e.getMessage());
+ log.warn("resumeCronJob failed for id={}: {}", id, e.getMessage());
  return false;
  }
  }
@@ -1132,7 +1131,7 @@ public class AgentBackendClient {
  if (json == null || json.isBlank()) return objectMapper.createArrayNode();
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("listPendingMemory failed: {}", e.getMessage());
+ log.warn("listPendingMemory failed: {}", e.getMessage());
  return objectMapper.createArrayNode();
  }
  }
@@ -1150,7 +1149,7 @@ public class AgentBackendClient {
  .body(Boolean.class);
  return Boolean.TRUE.equals(result);
  } catch (Exception e) {
- log.error("approvePendingMemory failed: {}", e.getMessage());
+ log.warn("approvePendingMemory failed: {}", e.getMessage());
  return false;
  }
  }
@@ -1168,7 +1167,7 @@ public class AgentBackendClient {
  .body(Boolean.class);
  return Boolean.TRUE.equals(result);
  } catch (Exception e) {
- log.error("rejectPendingMemory failed: {}", e.getMessage());
+ log.warn("rejectPendingMemory failed: {}", e.getMessage());
  return false;
  }
  }
@@ -1184,7 +1183,7 @@ public class AgentBackendClient {
  .retrieve()
  .toBodilessEntity();
  } catch (Exception e) {
- log.error("setMemoryApproval failed: {}", e.getMessage());
+ log.warn("setMemoryApproval failed: {}", e.getMessage());
  }
  }
 
@@ -1199,7 +1198,7 @@ public class AgentBackendClient {
  }
  return Boolean.parseBoolean(responseJson.trim());
  } catch (Exception e) {
- log.error("isMemoryApprovalEnabled failed: {}", e.getMessage());
+ log.warn("isMemoryApprovalEnabled failed: {}", e.getMessage());
  return false;
  }
  }
@@ -1213,7 +1212,7 @@ public class AgentBackendClient {
  if (json == null || json.isBlank()) return objectMapper.createArrayNode();
  return objectMapper.readTree(json);
  } catch (Exception e) {
- log.error("listAllMemory failed: {}", e.getMessage());
+ log.warn("listAllMemory failed: {}", e.getMessage());
  return objectMapper.createArrayNode();
  }
  }
@@ -1226,7 +1225,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("deleteMemory failed: {}", e.getMessage());
+ log.warn("deleteMemory failed: {}", e.getMessage());
  return false;
  }
  }
@@ -1246,7 +1245,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("storeMemory failed: {}", e.getMessage());
+ log.warn("storeMemory failed: {}", e.getMessage());
  return false;
  }
  }
@@ -1273,7 +1272,7 @@ public class AgentBackendClient {
  .body(byte[].class);
  return audio != null ? audio : new byte[0];
  } catch (Exception e) {
- log.error("tts failed: {}", e.getMessage());
+ log.warn("tts failed: {}", e.getMessage());
  return new byte[0];
  }
  }
@@ -1300,7 +1299,7 @@ public class AgentBackendClient {
  JsonNode node = objectMapper.readTree(json);
  return node.path("text").asText(null);
  } catch (Exception e) {
- log.error("transcribe failed: {}", e.getMessage());
+ log.warn("transcribe failed: {}", e.getMessage());
  return null;
  }
  }
@@ -1316,7 +1315,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("clearGoal failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("clearGoal failed for sessionId={}: {}", sessionId, e.getMessage());
  return false;
  }
  }
@@ -1332,7 +1331,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("setGoal failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("setGoal failed for sessionId={}: {}", sessionId, e.getMessage());
  return false;
  }
  }
@@ -1348,7 +1347,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("pauseGoal failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("pauseGoal failed for sessionId={}: {}", sessionId, e.getMessage());
  return false;
  }
  }
@@ -1364,7 +1363,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("resumeGoal failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("resumeGoal failed for sessionId={}: {}", sessionId, e.getMessage());
  return false;
  }
  }
@@ -1380,7 +1379,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("appendSubgoal failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("appendSubgoal failed for sessionId={}: {}", sessionId, e.getMessage());
  return false;
  }
  }
@@ -1396,7 +1395,7 @@ public class AgentBackendClient {
  .toBodilessEntity();
  return true;
  } catch (Exception e) {
- log.error("clearSubgoals failed for sessionId={}: {}", sessionId, e.getMessage());
+ log.warn("clearSubgoals failed for sessionId={}: {}", sessionId, e.getMessage());
  return false;
  }
  }

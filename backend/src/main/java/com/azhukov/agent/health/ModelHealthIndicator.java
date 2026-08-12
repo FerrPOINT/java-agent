@@ -4,12 +4,14 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class ModelHealthIndicator implements HealthIndicator {
@@ -36,6 +38,7 @@ public class ModelHealthIndicator implements HealthIndicator {
                 .withDetail("responseLength", content.length())
                 .build();
         } catch (Exception e) {
+            log.warn("Model health check failed: {}", e.getMessage());
             return Health.down()
                 .withDetail("model", modelName != null ? modelName : "unknown")
                 .withDetail("error", e.getMessage() != null ? e.getMessage() : e.getClass().getName())

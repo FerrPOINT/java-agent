@@ -302,7 +302,8 @@ public class DefaultContextReferenceService implements ContextReferenceService {
  int count = 1;
  try {
  count = Math.max(1, Math.min(Integer.parseInt(source), 10));
- } catch (NumberFormatException ignored) {
+ } catch (NumberFormatException e) {
+     log.debug("Reference line number parsing failed: {}", e.getMessage());
  }
  return runGitCommand("git log -" + count + " -p", "git log -" + count + " -p");
  }

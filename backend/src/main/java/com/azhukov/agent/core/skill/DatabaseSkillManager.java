@@ -389,7 +389,7 @@ public class DatabaseSkillManager implements SkillManager {
  String tl = e.getTrustLevel();
  if (tl != null) {
  try { return TrustLevel.valueOf(tl); }
- catch (IllegalArgumentException ignored) {}
+ catch (IllegalArgumentException ex) { log.warn("Unknown trust level '{}' in database, defaulting to AGENT_CREATED", tl); }
  }
  return TrustLevel.AGENT_CREATED;
  })

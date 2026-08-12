@@ -105,7 +105,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             try {
                 memoryManager.onTurnStart(sessionId, safeInput);
             } catch (Exception e) {
-                log.debug("MemoryManager onTurnStart failed: {}", e.getMessage());
+                log.warn("MemoryManager onTurnStart failed: {}", e.getMessage());
             }
         }
 
@@ -143,7 +143,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         try {
             memoryProvider.prefetch(safeInput, sessionId);
         } catch (Exception e) {
-            log.debug("Memory prefetch failed for session {}: {}", sessionId, e.getMessage());
+            log.warn("Memory prefetch failed for session {}: {}", sessionId, e.getMessage());
         }
 
         TurnResult result = null;
@@ -157,7 +157,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     memoryManager.syncAll(sessionId, messagesToSync);
                     memoryManager.queuePrefetchAll(safeInput, sessionId);
                 } catch (Exception e) {
-                    log.debug("MemoryManager sync/queue failed for session {}: {}", sessionId, e.getMessage());
+                    log.warn("MemoryManager sync/queue failed for session {}: {}", sessionId, e.getMessage());
                 }
             } else {
                 // Fallback: direct memory provider sync (legacy path)
@@ -168,12 +168,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         try {
                             memoryProvider.syncTurn(sessionId, messagesToSync);
                         } catch (Exception e) {
-                            log.debug("Memory syncTurn failed for session {}: {}", sessionId, e.getMessage());
+                            log.warn("Memory syncTurn failed for session {}: {}", sessionId, e.getMessage());
                         }
                     });
                     executor.shutdown();
                 } catch (Exception e) {
-                    log.debug("Failed to submit memory syncTurn for session {}: {}", sessionId, e.getMessage());
+                    log.warn("Failed to submit memory syncTurn for session {}: {}", sessionId, e.getMessage());
                 }
             }
         }
@@ -410,6 +410,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     Thread.sleep(delayMs);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
+                    log.debug("Model call retry interrupted, stopping retries");
                     break;
                 }
             }
@@ -425,7 +426,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 backgroundReviewService.reviewTurn(session.id(), turnMessages);
             }
         } catch (Exception e) {
-            log.debug("Background review trigger failed: {}", e.getMessage());
+            log.warn("Background review trigger failed: {}", e.getMessage());
         }
     }
 

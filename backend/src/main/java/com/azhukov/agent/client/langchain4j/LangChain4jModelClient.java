@@ -154,7 +154,7 @@ public class LangChain4jModelClient implements ModelClient {
                 return ChatResponse.toolCalls(calls);
             }
 
-            return ChatResponse.text(aiMessage.text());
+            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "");
         } catch (Exception e) {
             ErrorClassifier.ErrorType errorType = errorClassifier != null ? errorClassifier.classify(e) : ErrorClassifier.ErrorType.RETRYABLE;
             log.warn("Model complete() failed — errorType={}: {}", errorType, e.getMessage());
@@ -388,9 +388,10 @@ public class LangChain4jModelClient implements ModelClient {
                         .collect(Collectors.toList());
                     yield AiMessage.from(requests);
                 }
-                yield AiMessage.from(message.content());
+                yield AiMessage.from(message.content() != null ? message.content() : "");
             }
-            case TOOL -> dev.langchain4j.data.message.ToolExecutionResultMessage.from(message.toolCallId(), null, message.content());
+            case TOOL -> dev.langchain4j.data.message.ToolExecutionResultMessage.from(
+                message.toolCallId(), null, message.content() != null ? message.content() : "");
         };
     }
 
@@ -439,7 +440,7 @@ public class LangChain4jModelClient implements ModelClient {
             TokenUsage usage = TokenUsage.of(prompt, completion);
             usageConsumer.accept(new Usage(properties.getModel().getProvider(), properties.getModel().getModelName(), prompt, completion));
         } catch (Exception e) {
-            log.debug("Could not persist model usage: {}", e.getMessage());
+            log.warn("Could not persist model usage: {}", e.getMessage());
         }
     }
 

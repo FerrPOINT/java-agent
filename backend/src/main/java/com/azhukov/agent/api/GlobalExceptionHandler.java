@@ -15,13 +15,60 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
+import org.springframework.http.MediaType;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    /**
+     * Detect whether the current request is an SSE streaming endpoint by checking
+     * the Accept header for text/event-stream. When an exception propagates here
+     * during SSE streaming, returning a JSON ResponseEntity fails with
+     * HttpMessageNotWritableException because the response content type is
+     * text/event-stream. In that case, return an SseEmitter that emits an error event.
+     */
+    private static boolean isSseRequest() {
+        try {
+            RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
+            if (attrs instanceof ServletRequestAttributes sra) {
+                String accept = sra.getRequest().getHeader("Accept");
+                return accept != null && accept.contains(MediaType.TEXT_EVENT_STREAM_VALUE);
+            }
+        } catch (Exception e) {
+            log.debug("Failed to detect SSE request type: {}", e.getMessage());
+            // Ignore — fallback to non-SSE handling
+        }
+        return false;
+    }
+
+    /**
+     * Build an SSE error response for streaming endpoints.
+     * Returns an SseEmitter that immediately emits an error event and completes.
+     */
+    private static SseEmitter sseErrorEvent(HttpStatus status, String type, String message) {
+        SseEmitter emitter = new SseEmitter(5_000L);
+        try {
+            String payload = "{\"type\":\"" + type + "\",\"error\":\"" +
+                message.replace("\"", "\\\"").replace("\n", "\\n") + "\"}";
+            emitter.send(SseEmitter.event().name("error").data(payload));
+            emitter.complete();
+        } catch (Exception e) {
+            emitter.completeWithError(e);
+        }
+        return emitter;
+    }
+
     @ExceptionHandler(AgentException.class)
-    public ResponseEntity<Map<String, Object>> handleAgentException(AgentException ex) {
+    public Object handleAgentException(AgentException ex) {
+        log.warn("Agent exception: {}", ex.getMessage());
+        if (isSseRequest()) {
+            return sseErrorEvent(ex.getStatus(), "agent", ex.getMessage());
+        }
         return ResponseEntity.status(ex.getStatus()).body(Map.of(
             "type", "agent",
             "error", ex.getMessage()
@@ -34,6 +81,7 @@ public class GlobalExceptionHandler {
         for (FieldError error : ex.getBindingResult().getFieldErrors()) {
             errors.put(error.getField(), error.getDefaultMessage());
         }
+        log.debug("Validation error: {}", errors);
         return ResponseEntity.badRequest().body(Map.of(
             "type", "VALIDATION_ERROR",
             "errors", errors
@@ -45,6 +93,7 @@ public class GlobalExceptionHandler {
         String details = ex.getConstraintViolations().stream()
             .map(ConstraintViolation::getMessage)
             .collect(Collectors.joining("; "));
+        log.warn("Configuration constraint violation: {}", details);
         return ResponseEntity.badRequest().body(Map.of(
             "type", "configuration",
             "error", "Invalid configuration: " + details
@@ -53,6 +102,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleBadJson(HttpMessageNotReadableException ex) {
+        log.debug("Malformed JSON request body: {}", ex.getMessage());
         return ResponseEntity.badRequest().body(Map.of(
             "type", "bad_request",
             "error", "Invalid JSON body: " + ex.getMessage()
@@ -61,6 +111,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
+        log.debug("Illegal argument in request: {}", ex.getMessage());
         return ResponseEntity.badRequest().body(Map.of(
             "type", "bad_request",
             "error", ex.getMessage()
@@ -86,8 +137,12 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, Object>> handleGeneric(Exception ex) {
+    public Object handleGeneric(Exception ex) {
         log.error("Unhandled exception", ex);
+        if (isSseRequest()) {
+            return sseErrorEvent(HttpStatus.INTERNAL_SERVER_ERROR, "internal",
+                "Internal error: " + ex.getMessage());
+        }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
             "type", "internal",
             "error", "Internal error: " + ex.getMessage()

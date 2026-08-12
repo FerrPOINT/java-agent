@@ -3,10 +3,12 @@ package com.azhukov.agent.health;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.tools.browser.CdpClient;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class BrowserHealthIndicator implements HealthIndicator {
@@ -30,6 +32,7 @@ public class BrowserHealthIndicator implements HealthIndicator {
             }
             return Health.down().withDetail("cdpUrl", cdpUrl).withDetail("reason", "not connected").build();
         } catch (Exception e) {
+            log.warn("Browser/CDP health check failed: {}", e.getMessage());
             return Health.down().withDetail("cdpUrl", cdpUrl)
                 .withDetail("error", e.getMessage() != null ? e.getMessage() : e.getClass().getName())
                 .build();

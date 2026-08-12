@@ -285,7 +285,8 @@ public class BackgroundReviewService {
  default -> ToolResult.fail("Tool not in whitelist: " + call.name());
  };
  } catch (Exception e) {
- return ToolResult.fail("Tool execution error: " + e.getMessage());
+     log.warn("Background review tool '{}' execution failed: {}", call.name(), e.getMessage());
+     return ToolResult.fail("Tool execution error: " + e.getMessage());
  }
  }
 

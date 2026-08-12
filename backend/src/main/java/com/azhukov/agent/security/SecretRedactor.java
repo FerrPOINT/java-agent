@@ -1,6 +1,7 @@
 package com.azhukov.agent.security;
 
 import com.azhukov.agent.config.AgentProperties;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -8,6 +9,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Pattern;
 
+@Slf4j
 @Component
 public class SecretRedactor {
 
@@ -34,7 +36,7 @@ public class SecretRedactor {
             for (String p : custom) {
                 try {
                     patterns.add(Pattern.compile(p));
-                } catch (Exception ignored) {}
+                } catch (Exception e) { log.warn("Failed to compile custom secret redaction pattern '{}': {}", p, e.getMessage()); }
             }
         }
     }

@@ -1,5 +1,6 @@
 package com.azhukov.agent.config;
 
+import lombok.extern.slf4j.Slf4j;
 import org.flywaydb.core.Flyway;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -9,6 +10,7 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
 
+@Slf4j
 @Configuration
 @ConditionalOnProperty(name = "spring.flyway.enabled", havingValue = "true", matchIfMissing = true)
 public class FlywayConfig {
@@ -32,6 +34,7 @@ public class FlywayConfig {
             String url = connection.getMetaData().getURL();
             return url != null && url.contains(":h2:");
         } catch (SQLException e) {
+            log.warn("Failed to determine database type: {}", e.getMessage());
             return false;
         }
     }

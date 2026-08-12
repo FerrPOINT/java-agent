@@ -281,7 +281,8 @@ public class CronJobService {
         // Try human-readable interval first
         try {
             return Math.max(1, parseIntervalSeconds(cronExpression));
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.debug("Schedule '{}' is not a human-readable interval, trying cron: {}", cronExpression, e.getMessage());
             // Not a human-readable interval, try cron expression
         }
         try {

@@ -102,7 +102,7 @@ public class MemoryManager {
  try {
  return provider.handleToolCall(toolName, args);
  } catch (Exception e) {
- log.error("Memory provider '{}' handleToolCall({}) failed: {}", provider.name(), toolName, e.getMessage());
+ log.warn("Memory provider '{}' handleToolCall({}) failed: {}", provider.name(), toolName, e.getMessage());
  return "{\"error\":\"Memory tool '" + toolName + "' failed: " + e.getMessage() + "\"}";
  }
  }
@@ -163,7 +163,7 @@ public class MemoryManager {
  toolToProvider.put(toolName, provider);
  }
  } catch (Exception e) {
- log.debug("Failed to index tools for provider '{}': {}", name, e.getMessage());
+ log.warn("Failed to index tools for provider '{}': {}", name, e.getMessage());
  }
 
  log.info("Memory provider '{}' registered", name);
@@ -225,7 +225,7 @@ public class MemoryManager {
  }
  }
  } catch (Exception e) {
- log.debug("Memory provider getToolSchemas() failed: {}", e.getMessage());
+     log.warn("Memory provider getToolSchemas() failed: {}", e.getMessage());
  }
  }
  return schemas;
@@ -277,7 +277,7 @@ public class MemoryManager {
  blocks.add(block);
  }
  } catch (Exception e) {
- log.debug("Memory provider system prompt block failed: {}", e.getMessage());
+     log.warn("Memory provider system prompt block failed: {}", e.getMessage());
  }
  }
  return String.join("\n\n", blocks);
@@ -298,7 +298,7 @@ public class MemoryManager {
  parts.add(result);
  }
  } catch (Exception e) {
- log.debug("Memory provider prefetch failed (non-fatal): {}", e.getMessage());
+     log.warn("Memory provider prefetch failed (non-fatal): {}", e.getMessage());
  }
  }
  return String.join("\n\n", parts);
@@ -320,7 +320,7 @@ public class MemoryManager {
  try {
  provider.queuePrefetch(query, sessionId);
  } catch (Exception e) {
- log.debug("Memory provider queue_prefetch failed (non-fatal): {}", e.getMessage());
+     log.warn("Memory provider queue_prefetch failed (non-fatal): {}", e.getMessage());
  }
  }
  });
@@ -341,7 +341,7 @@ public class MemoryManager {
  try {
  provider.syncTurn(sessionId, turnMessages);
  } catch (Exception e) {
- log.debug("Memory provider sync_turn failed (non-fatal): {}", e.getMessage());
+     log.warn("Memory provider sync_turn failed (non-fatal): {}", e.getMessage());
  }
  }
  });
@@ -359,13 +359,13 @@ public class MemoryManager {
  try {
  provider.onTurnStart(0, userInput, Map.of());
  } catch (Exception e) {
- log.debug("Memory provider onTurnStart failed: {}", e.getMessage());
+     log.warn("Memory provider onTurnStart failed: {}", e.getMessage());
  }
  }
  try {
  prefetchAll(userInput, sessionId);
  } catch (Exception e) {
- log.debug("onTurnStart prefetch failed: {}", e.getMessage());
+ log.warn("onTurnStart prefetch failed: {}", e.getMessage());
  }
  }
 
@@ -382,7 +382,7 @@ public class MemoryManager {
  provider.onSessionStart(newSessionId);
  provider.onSessionSwitch(newSessionId, oldSessionId != null ? oldSessionId : "", false, false);
  } catch (Exception e) {
- log.debug("onSessionSwitch failed: {}", e.getMessage());
+     log.warn("onSessionSwitch failed: {}", e.getMessage());
  }
  }
  }
@@ -404,7 +404,7 @@ public class MemoryManager {
  parts.add(result);
  }
  } catch (Exception e) {
- log.debug("Memory provider onPreCompress failed: {}", e.getMessage());
+     log.warn("Memory provider onPreCompress failed: {}", e.getMessage());
  }
  }
  return String.join("\n\n", parts);
@@ -419,7 +419,7 @@ public class MemoryManager {
  try {
  provider.onDelegation(taskDescription, "", sessionId);
  } catch (Exception e) {
- log.debug("Memory provider onDelegation failed: {}", e.getMessage());
+     log.warn("Memory provider onDelegation failed: {}", e.getMessage());
  }
  }
  }
@@ -436,7 +436,7 @@ public class MemoryManager {
  try {
  provider.onMemoryWrite("add", "memory", fact, Map.of("session_id", sessionId, "category", category));
  } catch (Exception e) {
- log.debug("Memory provider onMemoryWrite failed: {}", e.getMessage());
+     log.warn("Memory provider onMemoryWrite failed: {}", e.getMessage());
  }
  }
  }
@@ -462,7 +462,7 @@ public class MemoryManager {
  try {
  provider.flushPending(timeoutMs);
  } catch (Exception e) {
- log.debug("Memory provider flushPending failed: {}", e.getMessage());
+     log.warn("Memory provider flushPending failed: {}", e.getMessage());
  }
  }
  }
@@ -522,7 +522,7 @@ public class MemoryManager {
  try {
  task.run();
  } catch (Exception e) {
- log.debug("Memory background task failed: {}", e.getMessage());
+     log.warn("Memory background task failed: {}", e.getMessage());
  }
  });
  }

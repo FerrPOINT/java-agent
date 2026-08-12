@@ -115,6 +115,7 @@ public class CheckpointManager {
         try {
             entity.setFilesJson(objectMapper.writeValueAsString(filesArray));
         } catch (Exception e) {
+            log.error("Failed to serialize checkpoint files JSON: {}", e.getMessage(), e);
             entity.setFilesJson("[]");
         }
 
@@ -241,6 +242,7 @@ public class CheckpointManager {
             }
             return sb.toString().substring(0, 16); // First 16 chars for lightweight
         } catch (Exception e) {
+            log.warn("Failed to hash file {}: {}", file, e.getMessage());
             return "ERROR";
         }
     }

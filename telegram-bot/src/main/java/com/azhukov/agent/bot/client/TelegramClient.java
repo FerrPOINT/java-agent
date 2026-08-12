@@ -314,7 +314,7 @@ public class TelegramClient {
                 // Let 429 propagate so StreamEditor can apply adaptive backoff
                 throw e;
             }
-            log.warn("editMessageText failed: {}", e.getMessage());
+            log.debug("editMessageText failed: {}", e.getMessage());
             return false;
         }
     }
@@ -324,7 +324,7 @@ public class TelegramClient {
         try {
             return callApi("deleteMessage", params).isPresent();
         } catch (TelegramApiException e) {
-            log.warn("deleteMessage failed: {}", e.getMessage());
+            log.debug("deleteMessage failed: {}", e.getMessage());
             return false;
         }
     }
@@ -351,7 +351,7 @@ public class TelegramClient {
         try {
             return callApi("editMessageReplyMarkup", params).isPresent();
         } catch (TelegramApiException e) {
-            log.warn("editMessageReplyMarkup failed: {}", e.getMessage());
+            log.debug("editMessageReplyMarkup failed: {}", e.getMessage());
             return false;
         }
     }
@@ -393,7 +393,7 @@ public class TelegramClient {
         try {
             return callApi("setMessageReaction", params).isPresent();
         } catch (TelegramApiException e) {
-            log.warn("setMessageReaction failed: {}", e.getMessage());
+            log.debug("setMessageReaction failed: {}", e.getMessage());
             return false;
         }
     }

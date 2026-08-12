@@ -173,11 +173,11 @@ class AgentStreamingServiceGapTest {
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
 
-            assertThat(emitter.error.get()).isNotNull();
-            assertThat(emitter.error.get().getMessage()).contains("stream setup failed");
+            // Error event is sent via SSE; emitter completes normally (not with error)
             boolean hasErrorEvent = emitter.events.stream()
                 .anyMatch(e -> "error".equals(e.name));
             assertThat(hasErrorEvent).isTrue();
+            assertThat(emitter.completed.get()).isTrue();
         }
 
         @Test
@@ -195,8 +195,11 @@ class AgentStreamingServiceGapTest {
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
 
-            assertThat(emitter.error.get()).isNotNull();
-            assertThat(emitter.error.get().getMessage()).isEqualTo("model stream error");
+            // Error event is sent via SSE; emitter completes normally
+            boolean hasErrorEvent = emitter.events.stream()
+                .anyMatch(e -> "error".equals(e.name));
+            assertThat(hasErrorEvent).isTrue();
+            assertThat(emitter.completed.get()).isTrue();
         }
 
         @Test
@@ -211,8 +214,12 @@ class AgentStreamingServiceGapTest {
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
 
-            assertThat(emitter.completed.get()).isFalse();
-            assertThat(emitter.error.get()).isNotNull();
+            // Error event is sent via SSE; emitter completes normally (not with error)
+            // to avoid propagating to GlobalExceptionHandler on text/event-stream content type
+            assertThat(emitter.completed.get()).isTrue();
+            boolean hasErrorEvent = emitter.events.stream()
+                .anyMatch(e -> "error".equals(e.name));
+            assertThat(hasErrorEvent).isTrue();
         }
     }
 
@@ -258,7 +265,10 @@ class AgentStreamingServiceGapTest {
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
 
-            assertThat(emitter.error.get()).isNotNull();
+            // Error event is sent via SSE; emitter completes normally
+            boolean hasErrorEvent = emitter.events.stream()
+                .anyMatch(e -> "error".equals(e.name));
+            assertThat(hasErrorEvent).isTrue();
             // GAP: partial response is lost — no mechanism to continue or retry
         }
 
@@ -507,8 +517,8 @@ class AgentStreamingServiceGapTest {
             boolean hasError = emitter.events.stream()
                 .anyMatch(e -> "error".equals(e.name));
             assertThat(hasError).isTrue();
-            // The error is set by completeWithError
-            assertThat(emitter.error.get()).isNotNull();
+            // Emitter completes normally — error is sent as SSE event, not via completeWithError
+            assertThat(emitter.completed.get()).isTrue();
         }
 
         @Test

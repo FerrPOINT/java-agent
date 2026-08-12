@@ -25,8 +25,11 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void agentExceptionReturnsCorrectStatusTypeAndMessage() {
-        ResponseEntity<Map<String, Object>> r = h.handleAgentException(
+        Object result = h.handleAgentException(
             new AgentException(HttpStatus.NOT_FOUND, "session not found"));
+        assertThat(result).isInstanceOf(ResponseEntity.class);
+        @SuppressWarnings("unchecked")
+        ResponseEntity<Map<String, Object>> r = (ResponseEntity<Map<String, Object>>) result;
         assertThat(r.getStatusCode().value()).isEqualTo(404);
         assertThat(r.getBody()).isNotNull();
         assertThat(r.getBody().get("type")).isEqualTo("agent");
@@ -132,8 +135,11 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void genericExceptionReturns500WithInternalTypeAndMessage() {
-        ResponseEntity<Map<String, Object>> r = h.handleGeneric(
+        Object result = h.handleGeneric(
             new RuntimeException("unexpected NPE in service layer"));
+        assertThat(result).isInstanceOf(ResponseEntity.class);
+        @SuppressWarnings("unchecked")
+        ResponseEntity<Map<String, Object>> r = (ResponseEntity<Map<String, Object>>) result;
         assertThat(r.getStatusCode().value()).isEqualTo(500);
         assertThat(r.getBody()).isNotNull();
         assertThat(r.getBody().get("type")).isEqualTo("internal");
@@ -143,15 +149,21 @@ class GlobalExceptionHandlerTest {
     @Test
     void agentExceptionWithDifferentStatusCodes() {
         // Verify that the status from the exception is respected, not hardcoded
-        ResponseEntity<Map<String, Object>> r1 = h.handleAgentException(
+        Object r1 = h.handleAgentException(
             new AgentException(HttpStatus.FORBIDDEN, "denied"));
-        assertThat(r1.getStatusCode().value()).isEqualTo(403);
-        assertThat(r1.getBody().get("error")).isEqualTo("denied");
+        assertThat(r1).isInstanceOf(ResponseEntity.class);
+        @SuppressWarnings("unchecked")
+        ResponseEntity<Map<String, Object>> re1 = (ResponseEntity<Map<String, Object>>) r1;
+        assertThat(re1.getStatusCode().value()).isEqualTo(403);
+        assertThat(re1.getBody().get("error")).isEqualTo("denied");
 
-        ResponseEntity<Map<String, Object>> r2 = h.handleAgentException(
+        Object r2 = h.handleAgentException(
             new AgentException(HttpStatus.UNPROCESSABLE_ENTITY, "bad state"));
-        assertThat(r2.getStatusCode().value()).isEqualTo(422);
-        assertThat(r2.getBody().get("error")).isEqualTo("bad state");
+        assertThat(r2).isInstanceOf(ResponseEntity.class);
+        @SuppressWarnings("unchecked")
+        ResponseEntity<Map<String, Object>> re2 = (ResponseEntity<Map<String, Object>>) r2;
+        assertThat(re2.getStatusCode().value()).isEqualTo(422);
+        assertThat(re2.getBody().get("error")).isEqualTo("bad state");
     }
 
     @Test

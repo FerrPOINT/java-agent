@@ -133,7 +133,7 @@ public class AgentStreamingService {
             if (callbackSessionId != null) {
                 interruptToken.cancel(callbackSessionId);
             }
-            log.warn("Stream error: {}", ex.getMessage());
+            log.warn("Stream error", ex);
         });
         emitter.onCompletion(() -> {
             streamCtx.markDisconnected();
@@ -476,7 +476,7 @@ public class AgentStreamingService {
             send(emitter, new StreamEvent("metadata", null, null, null,
                 modelUsed, contextTokens, contextLength, null, null, session.id()), streamCtx);
         } catch (Exception e) {
-            log.debug("Failed to send stream metadata event: {}", e.getMessage());
+            log.warn("Failed to send stream metadata event: {}", e.getMessage());
         }
     }
 
@@ -576,9 +576,13 @@ public class AgentStreamingService {
 
     private void safeCompleteWithError(SseEmitter emitter, Throwable error) {
         try {
-            emitter.completeWithError(error);
+            // Complete normally — the error has already been sent as an SSE event.
+            // Using completeWithError would propagate the exception to Spring's
+            // GlobalExceptionHandler, which would try to write a JSON error response
+            // on a text/event-stream content type, causing HttpMessageNotWritableException.
+            emitter.complete();
         } catch (IllegalStateException e) {
-            // Emitter already completed — ignore
+            log.debug("SSE emitter already completed when trying to complete with error: {}", e.getMessage());
         }
     }
 
@@ -590,7 +594,7 @@ public class AgentStreamingService {
                 .name(event.type())
                 .data(objectMapper.writeValueAsString(event)));
         } catch (IllegalStateException e) {
-            // Emitter already completed — ignore, don't log
+            log.debug("SSE event not sent (emitter completed): {}", e.getMessage());
         } catch (IOException e) {
             log.warn("Failed to send SSE event: {}", e.getMessage());
             streamCtx.markDisconnected();
