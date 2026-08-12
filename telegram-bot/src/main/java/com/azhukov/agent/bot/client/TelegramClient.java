@@ -649,9 +649,17 @@ public class TelegramClient {
         } catch (TelegramApiException e) {
             throw e; // Re-throw typed exceptions
         } catch (Exception e) {
-            log.warn("Telegram {} exception: {}", method, e.getMessage());
+            // Check for HTTP 409 conflict from RestClient (comes as HttpStatusCodeException)
+            String msg = e.getMessage();
+            if (msg != null && msg.contains("409 Conflict")) {
+                lastCallConflict = true;
+                lastApiErrorCode = 409;
+                log.warn("Telegram {} returned 409 Conflict: {}", method, msg);
+                throw new TelegramApiException(409, msg, -1);
+            }
+            log.warn("Telegram {} exception: {}", method, msg);
             lastApiErrorCode = -1; // Indicate exception (not a Telegram API error code)
-            throw new TelegramApiException(-1, e.getMessage(), -1);
+            throw new TelegramApiException(-1, msg, -1);
         } finally {
             releaseRateLimit();
         }

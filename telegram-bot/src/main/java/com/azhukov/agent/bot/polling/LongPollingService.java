@@ -158,6 +158,15 @@ public class LongPollingService {
             return updates;
         } catch (Exception e) {
             if (e instanceof InterruptedException ie) throw ie;
+            // Check for 409 conflict via TelegramApiException
+            if (e.getClass().getSimpleName().equals("TelegramApiException")) {
+                try {
+                    int errorCode = (int) e.getClass().getMethod("getErrorCode").invoke(e);
+                    if (errorCode == 409) {
+                        return handleConflict();
+                    }
+                } catch (Exception ignored) {}
+            }
             log.warn("getUpdates failed: {}", e.getMessage());
             return null;
         }
@@ -190,7 +199,8 @@ public class LongPollingService {
         log.info("Backing off for {}ms before retrying getUpdates", backoffMs);
 
         Thread.sleep(backoffMs);
-        return null; // signal poll loop to return (will be re-launched by reconnectWatcher)
+        // Return empty list (not null) to keep poll loop running and retry getUpdates
+        return List.of();
     }
 
     void triggerReconnect() {

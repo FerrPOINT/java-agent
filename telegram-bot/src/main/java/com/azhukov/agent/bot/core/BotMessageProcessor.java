@@ -478,6 +478,16 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  streamEditor.editStream(chatId, messageId[0], accumulated.toString() + toolProgress);
  }
  },
+ // retryConsumer — called when backend emits retry/continuation events
+ retryMsg -> {
+ if (messageId[0] >= 0) {
+ // Update streaming message to show retry status to the user
+ String display = accumulated.length() > 0
+ ? accumulated + "\n\n" + retryMsg
+ : retryMsg;
+ streamEditor.editStream(chatId, messageId[0], display);
+ }
+ },
  // onComplete
  result -> {
  if (messageId[0] >= 0 && accumulated.length() > 0) {

@@ -806,7 +806,7 @@ class AgentBackendClientTest {
         runtime.setMetadata("threadId", "7");
 
         client.chatStream("Hi", "s1", runtime,
-            t -> {}, t -> {}, (n, r) -> {}, r -> {}, e -> {});
+            t -> {}, t -> {}, (n, r) -> {}, msg -> {}, r -> {}, e -> {});
 
         verify(postSpec).body(argThat((Object body) -> {
             if (!(body instanceof java.util.Map<?, ?> map)) return false;
@@ -828,7 +828,7 @@ class AgentBackendClientTest {
         runtime.setMetadata("threadId", "3");
 
         client.chatStream("Hi", "s1", runtime,
-            t -> {}, t -> {}, (n, r) -> {}, r -> {}, e -> {});
+            t -> {}, t -> {}, (n, r) -> {}, msg -> {}, r -> {}, e -> {});
 
         verify(postSpec).body(argThat((Object body) -> {
             if (!(body instanceof java.util.Map<?, ?> map)) return false;
@@ -931,7 +931,7 @@ class AgentBackendClientTest {
         runtime.setReasoningLevel("high");
 
         client.chatStream("Hi", "s1", runtime,
-            t -> {}, t -> {}, (n, r) -> {}, r -> {}, e -> {});
+            t -> {}, t -> {}, (n, r) -> {}, msg -> {}, r -> {}, e -> {});
 
         verify(postSpec).body(argThat((Object body) -> {
             if (!(body instanceof java.util.Map<?, ?> map)) return false;

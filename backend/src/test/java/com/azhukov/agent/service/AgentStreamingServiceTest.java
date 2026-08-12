@@ -161,7 +161,7 @@ class AgentStreamingServiceTest {
     void streamTurnEmitsTokenEvents() throws Exception {
         ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
-        CollectingEmitter emitter = new CollectingEmitter(500L);
+        CollectingEmitter emitter = new CollectingEmitter(120_000L);
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
             handler.onToken("Hello");
@@ -190,7 +190,7 @@ class AgentStreamingServiceTest {
         ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
         ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"Paris\"}");
 
-        CollectingEmitter emitter = new CollectingEmitter(500L);
+        CollectingEmitter emitter = new CollectingEmitter(120_000L);
 
         // First model call returns tool calls, second returns text
         doAnswer(invocation -> {
@@ -226,7 +226,7 @@ class AgentStreamingServiceTest {
     void streamTurnEmitsMetadataFromUsageTracker() throws Exception {
         ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
-        CollectingEmitter emitter = new CollectingEmitter(500L);
+        CollectingEmitter emitter = new CollectingEmitter(120_000L);
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
             handler.onToken("Hi");
@@ -256,7 +256,7 @@ class AgentStreamingServiceTest {
         ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
         RuntimeException failure = new RuntimeException("model exploded");
 
-        CollectingEmitter emitter = new CollectingEmitter(500L);
+        CollectingEmitter emitter = new CollectingEmitter(120_000L);
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
             handler.onError(failure);
@@ -283,7 +283,7 @@ class AgentStreamingServiceTest {
         // sessionRepository.save must return the entity (default mock returns null)
         when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        CollectingEmitter emitter = new CollectingEmitter(500L);
+        CollectingEmitter emitter = new CollectingEmitter(120_000L);
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
             handler.onToken("created");
@@ -370,7 +370,7 @@ class AgentStreamingServiceTest {
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
 
-        CollectingEmitter emitter = new CollectingEmitter(500L);
+        CollectingEmitter emitter = new CollectingEmitter(120_000L);
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 
@@ -417,7 +417,7 @@ class AgentStreamingServiceTest {
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
 
-        CollectingEmitter emitter = new CollectingEmitter(500L);
+        CollectingEmitter emitter = new CollectingEmitter(120_000L);
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 
@@ -438,7 +438,7 @@ class AgentStreamingServiceTest {
     void streamTurnCleansUpInterruptTokenAfterCompletion() throws Exception {
         ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
-        CollectingEmitter emitter = new CollectingEmitter(500L);
+        CollectingEmitter emitter = new CollectingEmitter(120_000L);
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
             handler.onToken("done");
@@ -462,7 +462,7 @@ class AgentStreamingServiceTest {
     void streamTurnStopsSendingAfterClientDisconnect() throws Exception {
         ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
-        CollectingEmitter emitter = new CollectingEmitter(500L);
+        CollectingEmitter emitter = new CollectingEmitter(120_000L);
         AtomicBoolean firstSend = new AtomicBoolean(true);
         AtomicInteger sendCount = new AtomicInteger(0);
 
@@ -526,7 +526,7 @@ class AgentStreamingServiceTest {
 
         void awaitDone() {
             await().pollInterval(50, TimeUnit.MILLISECONDS)
-                .atMost(5, TimeUnit.SECONDS)
+                .atMost(120, TimeUnit.SECONDS)
                 .until(() -> completed.get() || error.get() != null);
         }
     }

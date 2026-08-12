@@ -379,8 +379,8 @@ class DefaultAgentRuntimeRetryTest {
         AgentProperties properties = new AgentProperties();
         properties.getCore().setMaxTurns(10);
         // The config exists with defaults
-        assertThat(properties.getError().getRetryAttempts()).isEqualTo(3);
-        assertThat(properties.getError().getRetryDelayMs()).isEqualTo(1000);
+        assertThat(properties.getError().getRetryAttempts()).isEqualTo(5);
+        assertThat(properties.getError().getRetryDelayMs()).isEqualTo(2000);
         assertThat(properties.getError().getBackoffMultiplier()).isEqualTo(2);
         // Also model-level retry config
         assertThat(properties.getModel().getMaxRetries()).isEqualTo(3);

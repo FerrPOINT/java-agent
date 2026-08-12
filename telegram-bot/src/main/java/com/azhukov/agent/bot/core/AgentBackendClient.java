@@ -322,6 +322,7 @@ public class AgentBackendClient {
  * @param tokenConsumer called for each token received
  * @param toolCallConsumer called for each tool call announcement (tool name)
  * @param toolResultConsumer called for each tool result (toolName, resultPreview)
+ * @param retryConsumer called for each retry/continuation status update (message text)
  * @param onComplete called when the stream completes successfully with the final metadata
  * @param onError called with an exception if the stream fails
  * @return the accumulated response content and metadata (also delivered via onComplete callback)
@@ -332,6 +333,7 @@ public class AgentBackendClient {
  Consumer<String> tokenConsumer,
  Consumer<String> toolCallConsumer,
  java.util.function.BiConsumer<String, String> toolResultConsumer,
+ Consumer<String> retryConsumer,
  Consumer<ChatResult> onComplete,
  Consumer<Throwable> onError) {
  Map<String, Object> body = buildChatBody(message, sessionId, runtime);
@@ -423,6 +425,20 @@ public class AgentBackendClient {
  if (!toolName.isEmpty()) {
  toolResultConsumer.accept(toolName, toolResult);
  }
+ continue;
+ }
+ // retry event — notify retry consumer so the bot can show retry status
+ if ("retry".equalsIgnoreCase(type)) {
+ String retryMsg = event.path("error").asText(
+ event.path("message").asText("Retrying..."));
+ retryConsumer.accept(retryMsg);
+ continue;
+ }
+ // continuation event — also surface as retry status
+ if ("continuation".equalsIgnoreCase(type)) {
+ String contMsg = event.path("error").asText(
+ event.path("message").asText("Continuing..."));
+ retryConsumer.accept(contMsg);
  continue;
  }
  JsonNode tokenNode = event.get("token");
@@ -1366,7 +1382,7 @@ public class AgentBackendClient {
 
  /**
  * Backward-compatible overload of {@link #chatStream(String, String, com.azhukov.agent.bot.session.BotSessionEntity,
- * Consumer, Consumer, BiConsumer, Consumer, Consumer)} without runtime flags.
+ * Consumer, Consumer, BiConsumer, Consumer, Consumer, Consumer)} without runtime flags.
  */
  public ChatResult chatStream(String message,
  String sessionId,
@@ -1376,6 +1392,6 @@ public class AgentBackendClient {
  Consumer<ChatResult> onComplete,
  Consumer<Throwable> onError) {
  return chatStream(message, sessionId, null, tokenConsumer, toolCallConsumer,
- toolResultConsumer, onComplete, onError);
+ toolResultConsumer, msg -> {}, onComplete, onError);
  }
 }

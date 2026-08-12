@@ -56,7 +56,7 @@ public class AgentProperties {
         private String baseUrl = "";
         private String apiKey = "";
         private String modelName = "";
-        private int timeoutSeconds = 600;
+        private int timeoutSeconds = 120;
         private int maxRetries = 3;
         private int maxTokens = 4096;
         private double temperature = 0.7;
@@ -408,8 +408,8 @@ public class AgentProperties {
 
     @Getter @Setter
     public static class ErrorProperties {
-        private int retryAttempts = 3;
-        private int retryDelayMs = 1000;
+        private int retryAttempts = 5;
+        private int retryDelayMs = 2000;
         private int backoffMultiplier = 2;
     }
 

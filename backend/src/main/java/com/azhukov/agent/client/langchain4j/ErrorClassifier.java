@@ -58,6 +58,13 @@ public class ErrorClassifier {
             return ErrorType.CONTENT_POLICY;
         }
 
+        // Model temporarily overloaded / service unavailable — retryable
+        if (lowerMessage.contains("overloaded") || lowerMessage.contains("temporarily unavailable")
+            || lowerMessage.contains("service unavailable") || lowerMessage.contains("503")
+            || lowerMessage.contains("model is overloaded") || lowerMessage.contains("please try again later")) {
+            return ErrorType.RATE_LIMIT;
+        }
+
         // Rate limit
         if (lowerMessage.contains("rate limit") || lowerMessage.contains("429") || lowerMessage.contains("too many requests")) {
             return ErrorType.RATE_LIMIT;

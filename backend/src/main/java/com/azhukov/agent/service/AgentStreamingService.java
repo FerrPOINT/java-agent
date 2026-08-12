@@ -81,8 +81,10 @@ public class AgentStreamingService {
     private final AgentMetrics agentMetrics;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
 
-    private static final int MAX_STREAM_RETRIES = 2;
+    private static final int MAX_STREAM_RETRIES = 5;
     private static final int MAX_CONTINUATION_ATTEMPTS = 1;
+    private static final long RETRY_BACKOFF_BASE_MS = 2_000L; // 2s base
+    private static final long RETRY_BACKOFF_CAP_MS = 60_000L; // cap at 60s
 
 
     public SseEmitter streamTurn(ChatRequest request) {
@@ -269,17 +271,37 @@ public class AgentStreamingService {
                             : ErrorClassifier.ErrorType.RETRYABLE;
                         if (errorType == ErrorClassifier.ErrorType.RETRYABLE
                             || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
-                            log.warn("Streaming attempt {} failed ({}), retrying: {}",
-                                streamRetries + 1, errorType, error.getMessage());
-                            send(emitter, new StreamEvent("retry", null, null,
-                                "Retrying after " + errorType), streamCtx);
+                            // Exponential backoff: 2s, 4s, 8s, 16s, 32s (cap at 60s)
+                            long delayMs = Math.min(
+                                RETRY_BACKOFF_BASE_MS * (1L << streamRetries),
+                                RETRY_BACKOFF_CAP_MS);
+                            String retryMsg = "⏳ Model overloaded, retrying (attempt "
+                                + (streamRetries + 1) + "/" + MAX_STREAM_RETRIES
+                                + ") in " + (delayMs / 1000) + "s...";
+                            log.warn("Streaming attempt {}/{} failed ({}), retrying in {} ms: {}",
+                                streamRetries + 1, MAX_STREAM_RETRIES, errorType, delayMs, error.getMessage());
+                            send(emitter, new StreamEvent("retry", null, null, retryMsg), streamCtx);
+                            try {
+                                Thread.sleep(delayMs);
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                log.warn("Retry backoff interrupted for session {}", session.id());
+                                send(emitter, new StreamEvent("error", null, null,
+                                    "Retry interrupted: " + ie.getMessage()), streamCtx);
+                                safeCompleteWithError(emitter, ie);
+                                persistTurn(session, turnMessages, isNew);
+                                return;
+                            }
                             streamRetries++;
                             continue;
                         }
                     }
                     // Permanent error or retries exhausted
                     log.error("Model call failed during streaming after {} retries", streamRetries, error);
-                    send(emitter, new StreamEvent("error", null, null, "Model call failed: " + error.getMessage()), streamCtx);
+                    String errorMsg = streamRetries >= MAX_STREAM_RETRIES
+                        ? "Model call failed after " + MAX_STREAM_RETRIES + " retries: " + error.getMessage()
+                        : "Model call failed: " + error.getMessage();
+                    send(emitter, new StreamEvent("error", null, null, errorMsg), streamCtx);
                     safeCompleteWithError(emitter, error instanceof Exception
                         ? (Exception) error : new RuntimeException(error));
                     persistTurn(session, turnMessages, isNew);

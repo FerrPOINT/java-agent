@@ -394,14 +394,14 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     log.warn("Model call failed with {} error, not retrying: {}", errorType, e.getMessage());
                     break;
                 }
-                // Calculate backoff delay
+                // Calculate backoff delay — exponential: 2s, 4s, 8s, 16s, 32s (cap 60s)
                 long delayMs;
                 if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
-                    delayMs = Math.min(2000L * (1L << attempt), 30_000L);
+                    delayMs = Math.min(2000L * (1L << attempt), 60_000L);
                 } else {
-                    long base = 500L * (1L << attempt);
-                    long jitter = ThreadLocalRandom.current().nextLong(0, 250);
-                    delayMs = Math.min(base + jitter, 5_000L);
+                    long base = 2000L * (1L << attempt);
+                    long jitter = ThreadLocalRandom.current().nextLong(0, 500);
+                    delayMs = Math.min(base + jitter, 60_000L);
                 }
                 log.warn("Model call failed (attempt {}/{}), classified as {}, retrying in {} ms: {}",
                     attempt + 1, retryAttempts + 1, errorType, delayMs, e.getMessage());

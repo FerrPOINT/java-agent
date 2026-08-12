@@ -95,10 +95,10 @@ class ErrorClassifierGapTest {
         }
 
         @Test
-        @DisplayName("503 service unavailable → RETRYABLE (default, not explicitly classified)")
+        @DisplayName("503 service unavailable → RATE_LIMIT (model overloaded, retry with backoff)")
         void serviceUnavailable() {
             assertThat(classifier.classify(new RuntimeException("503 service unavailable")))
-                .isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
+                .isEqualTo(ErrorClassifier.ErrorType.RATE_LIMIT);
         }
 
         @Test
@@ -175,6 +175,34 @@ class ErrorClassifierGapTest {
         @DisplayName("message containing 'Too Many Requests' (capitalized) → RATE_LIMIT (case insensitive)")
         void tooManyRequestsCapitalized() {
             assertThat(classifier.classify(new RuntimeException("Too Many Requests")))
+                .isEqualTo(ErrorClassifier.ErrorType.RATE_LIMIT);
+        }
+
+        @Test
+        @DisplayName("'model temporarily overloaded' → RATE_LIMIT")
+        void modelOverloaded() {
+            assertThat(classifier.classify(new RuntimeException("model is temporarily overloaded")))
+                .isEqualTo(ErrorClassifier.ErrorType.RATE_LIMIT);
+        }
+
+        @Test
+        @DisplayName("'overloaded' → RATE_LIMIT")
+        void overloaded() {
+            assertThat(classifier.classify(new RuntimeException("Server overloaded, please try again")))
+                .isEqualTo(ErrorClassifier.ErrorType.RATE_LIMIT);
+        }
+
+        @Test
+        @DisplayName("'temporarily unavailable' → RATE_LIMIT")
+        void temporarilyUnavailable() {
+            assertThat(classifier.classify(new RuntimeException("Service temporarily unavailable")))
+                .isEqualTo(ErrorClassifier.ErrorType.RATE_LIMIT);
+        }
+
+        @Test
+        @DisplayName("'please try again later' → RATE_LIMIT")
+        void tryAgainLater() {
+            assertThat(classifier.classify(new RuntimeException("Please try again later")))
                 .isEqualTo(ErrorClassifier.ErrorType.RATE_LIMIT);
         }
     }
