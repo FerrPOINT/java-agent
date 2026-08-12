@@ -4,6 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ContextReference;
 import com.azhukov.agent.core.model.ReferenceType;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.tools.terminal.CommandGuard;
 import jakarta.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -54,12 +55,17 @@ public class DefaultContextReferenceService implements ContextReferenceService {
  private final SkillManager skillManager;
  @Getter
  private HttpClient httpClient;
+ private CommandGuard commandGuard;
 
  @PostConstruct
  public void initHttpClient() {
- this.httpClient = HttpClient.newBuilder()
- .connectTimeout(Duration.ofSeconds(properties.getCore().getHttpClientTimeoutSeconds()))
- .build();
+     this.httpClient = HttpClient.newBuilder()
+         .connectTimeout(Duration.ofSeconds(properties.getCore().getHttpClientTimeoutSeconds()))
+         .build();
+     this.commandGuard = new CommandGuard(
+         properties.getSecurity().getBlockedCommands(),
+         properties.getTerminal().isBlockSudo()
+     );
  }
 
  private int getMaxReferenceTokens() {
@@ -302,8 +308,14 @@ public class DefaultContextReferenceService implements ContextReferenceService {
  }
 
  private Optional<String> runGitCommand(String command, String label) {
- try {
- String workingDir = properties.getCore().getWorkingDirectory();
+     try {
+         // Validate command against CommandGuard before execution
+         String blockReason = commandGuard.check(command);
+         if (blockReason != null) {
+             log.warn("Blocked git command by CommandGuard: {} — {}", command, blockReason);
+             return Optional.of("[" + label + ": blocked by CommandGuard: " + blockReason + "]");
+         }
+         String workingDir = properties.getCore().getWorkingDirectory();
  ProcessBuilder pb = new ProcessBuilder(command.split(" "));
  pb.directory(workingDir != null ? new java.io.File(workingDir) : new java.io.File("."));
  pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));

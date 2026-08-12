@@ -37,10 +37,12 @@ repositories {
 dependencies {
     // Spring Boot
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-health'
+    implementation 'io.micrometer:micrometer-registry-prometheus'
 
     // Groovy 5 (override Spring Boot 4.1 default 5.0.6 for latest patch)
     implementation 'org.apache.groovy:groovy:5.0.7'
@@ -79,6 +81,9 @@ dependencies {
     testCompileOnly 'org.mapstruct:mapstruct:1.6.3'
     testAnnotationProcessor 'org.mapstruct:mapstruct-processor:1.6.3'
 
+    // OpenAPI / Swagger UI
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.6'
+
     // WebSocket client for CDP
     implementation 'org.java-websocket:Java-WebSocket:1.6.0'
 
@@ -106,6 +111,11 @@ dependencies {
     testImplementation 'org.apache.groovy:groovy-test:5.0.7'
     runtimeOnly 'com.h2database:h2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // Testcontainers for real PostgreSQL integration tests
+    testImplementation 'org.testcontainers:testcontainers:1.20.4'
+    testImplementation 'org.testcontainers:postgresql:1.20.4'
+    testImplementation 'org.testcontainers:junit-jupiter:1.20.4'
 }
 
 tasks.named('test') {

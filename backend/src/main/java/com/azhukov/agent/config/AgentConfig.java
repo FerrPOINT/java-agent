@@ -145,11 +145,13 @@ public class AgentConfig {
                                      ErrorClassifier errorClassifier,
                                      ContextCompressor contextCompressor,
                                      com.azhukov.agent.core.security.ApprovalQueue approvalQueue,
-                                     com.azhukov.agent.core.memory.MemoryManager memoryManager) {
+                                     com.azhukov.agent.core.memory.MemoryManager memoryManager,
+                                     com.azhukov.agent.core.agent.TokenEstimator tokenEstimator,
+                                     com.azhukov.agent.core.agent.ToolResultFormatter toolResultFormatter) {
         return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
             memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService, interruptToken, turnFinalizer, steerBuffer,
-            errorClassifier, contextCompressor, approvalQueue, memoryManager);
+            errorClassifier, contextCompressor, approvalQueue, memoryManager, tokenEstimator, toolResultFormatter);
     }
 
     @Bean
@@ -322,8 +324,9 @@ public class AgentConfig {
             SessionResolver sessionResolver,
             AgentRuntime agentRuntime,
             org.springframework.beans.factory.ObjectProvider<GatewayRoutingService> routingServiceProvider,
-            com.azhukov.agent.persistence.MessagePersistenceService messagePersistenceService) {
-        return new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider, messagePersistenceService);
+            com.azhukov.agent.persistence.MessagePersistenceService messagePersistenceService,
+            AgentProperties agentProperties) {
+        return new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider, messagePersistenceService, agentProperties);
     }
 
     @Bean

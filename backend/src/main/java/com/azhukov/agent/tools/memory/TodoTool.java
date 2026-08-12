@@ -78,6 +78,7 @@ public class TodoTool implements ToolHandler {
         e.setStatus(status);
         e.setPriority(args.priority() != null ? args.priority() : "medium");
         e.setCreatedAt(Instant.now());
+        e.setUpdatedAt(Instant.now());
         todoRepository.save(e);
         return ToolResult.ok("Created todo: " + title);
     }
@@ -109,6 +110,7 @@ public class TodoTool implements ToolHandler {
         if (args.priority() != null) {
             existing.setPriority(args.priority());
         }
+        existing.setUpdatedAt(Instant.now());
         todoRepository.save(existing);
         return ToolResult.ok("Updated todo: " + existing.getId());
     }
@@ -184,8 +186,10 @@ public class TodoTool implements ToolHandler {
                 entity.setSessionId(session.id());
                 entity.setUserId(session.userId());
                 entity.setCreatedAt(Instant.now());
+                entity.setUpdatedAt(Instant.now());
                 created++;
             } else {
+                entity.setUpdatedAt(Instant.now());
                 updated++;
             }
             if (item.title() != null) {

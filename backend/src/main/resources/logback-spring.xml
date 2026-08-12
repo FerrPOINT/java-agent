@@ -4,7 +4,7 @@
 
     <springProfile name="prod">
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-            <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
+            <encoder class="com.azhukov.agent.core.security.RedactingLogstashEncoder"/>
         </appender>
     </springProfile>
 

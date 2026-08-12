@@ -1,6 +1,6 @@
 # Entity-Relationship Diagram
 
-> Derived from JPA entities (`persistence/entity/`) and Flyway migrations (V1–V18).
+> Derived from JPA entities (`persistence/entity/`) and Flyway migrations (V1–V23).
 > Mermaid ER diagram syntax.
 
 ---
@@ -11,12 +11,14 @@
 erDiagram
     sessions {
         UUID id PK
+        UUID parent_session_id FK "V19: session rotation"
         TEXT user_id
         TEXT title
         TEXT model_provider
         TEXT model_name
         TEXT system_prompt
         TEXT subgoal
+        TEXT session_status "V19: default 'active'"
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
     }
@@ -58,7 +60,7 @@ erDiagram
 
     todos {
         UUID id PK
-        UUID session_id FK
+        UUID session_id FK "V20: nullable (global kanban)"
         TEXT user_id
         TEXT title
         TEXT status "default: pending"
@@ -95,6 +97,7 @@ erDiagram
     sessions ||--o{ messages : "session_id"
     sessions ||--o{ todos : "session_id"
     sessions ||--o{ session_cli_state : "session_id"
+    sessions ||--o{ sessions : "parent_session_id (V19 rotation)"
 ```
 
 ---
@@ -123,7 +126,7 @@ erDiagram
 
     usage_log {
         UUID id PK
-        UUID session_id
+        UUID session_id FK "V21: FK to sessions"
         TEXT user_id
         TEXT model
         INTEGER prompt_tokens
@@ -142,6 +145,7 @@ erDiagram
     }
 
     checkpoints ||--o{ checkpoint_files : "checkpoint_id"
+    sessions ||--o{ usage_log : "session_id (V21 FK)"
 ```
 
 ---
@@ -217,6 +221,11 @@ erDiagram
 | V16 | Session CLI state (ElementCollection → session_cli_state table) |
 | V17 | Checkpoint files table |
 | V18 | Session search FTS |
+| V19 | Session rotation (parent_session_id, session_status) |
+| V20 | Todos: nullable session_id for global kanban items |
+| V21 | FK constraints (sessions.parent_session_id, usage_log.session_id) |
+| V22 | Composite indexes (todos, messages, usage_log, memory_pending, skills, cron_jobs, bot_sessions) |
+| V23 | Dead table cleanup (dropped: gateway_routing, context_references, approvals, session_model_usage) |
 
 ---
 
@@ -224,19 +233,21 @@ erDiagram
 
 | Entity | Table | Migrations |
 |--------|-------|------------|
-| `SessionEntity` | `sessions` | V2, V16 |
+| `SessionEntity` | `sessions` | V2, V16, V19 |
 | `MessageEntity` | `messages` | V2 |
 | `MemoryEntity` | `memory` | V2, V5 |
 | `PendingMemoryEntity` | `memory_pending` | V6 |
-| `TodoEntity` | `todos` | V2, V3, V4 |
+| `TodoEntity` | `todos` | V2, V3, V4, V20 |
 | `SkillEntity` | `skills` | V2, V12, V15 |
 | `CheckpointEntity` | `checkpoints` | V8, V17 |
 | `CheckpointFileEntity` | `checkpoint_files` | V17 |
-| `UsageEntity` | `usage_log` | V9 |
+| `UsageEntity` | `usage_log` | V9, V21 |
 | `CronJobEntity` | `cron_jobs` | V7, V14 |
 | `McpOAuthEntity` | `mcp_oauth_tokens` | V10 |
 | `AuditLogEntity` | `audit_log` | V11 |
 | `CuratorSnapshotEntity` | `curator_snapshots` | V13 |
 | `CompressionLockEntity` | `compression_locks` | V2 |
 
-Total: **14 JPA entities**, **18 Flyway migrations**.
+Total: **14 JPA entities**, **23 Flyway migrations**.
+
+Dropped tables (V23): `gateway_routing`, `context_references`, `approvals`, `session_model_usage`.

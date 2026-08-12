@@ -6,6 +6,10 @@ import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
+import com.azhukov.agent.core.agent.AgentSessionResolver;
+import com.azhukov.agent.core.agent.CliStateApplier;
+import com.azhukov.agent.core.agent.TokenEstimator;
+import com.azhukov.agent.core.agent.ToolResultFormatter;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
@@ -145,7 +149,10 @@ class AgentStreamingServiceBranchTest {
             contextEngine, objectMapper, usageTracker, properties,
             sessionRepository, messageRepository, transactionTemplate,
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
-            runtimeConfigService, interruptToken, steerBuffer);
+            runtimeConfigService, interruptToken, steerBuffer,
+            new TokenEstimator(), new ToolResultFormatter(),
+            new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate),
+            new CliStateApplier(), null);
     }
 
     // ── selectTools: disabledTools filtering ──

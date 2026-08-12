@@ -1,5 +1,6 @@
 package com.azhukov.agent.persistence.entity;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -24,6 +25,9 @@ public class SkillEntity {
     private String content;
 
     private String category;
+
+    @Column(name = "version")
+    private String version;
 
     private Instant updatedAt;
     private Instant createdAt;

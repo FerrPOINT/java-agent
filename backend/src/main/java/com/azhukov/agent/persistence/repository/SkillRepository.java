@@ -1,6 +1,8 @@
 package com.azhukov.agent.persistence.repository;
 
 import com.azhukov.agent.persistence.entity.SkillEntity;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -18,6 +20,8 @@ public interface SkillRepository extends JpaRepository<SkillEntity, UUID> {
 
     // S2: Curator — find non-archived skills
     List<SkillEntity> findByArchivedFalse();
+
+    Page<SkillEntity> findByArchivedFalse(Pageable pageable);
 
     // S2: Curator — find all skills (including archived)
     List<SkillEntity> findAllBy();

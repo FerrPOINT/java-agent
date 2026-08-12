@@ -5,6 +5,8 @@ import com.azhukov.agent.client.langchain4j.ErrorClassifier;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.DefaultAgentRuntime;
 import com.azhukov.agent.core.agent.SteerBuffer;
+import com.azhukov.agent.core.agent.TokenEstimator;
+import com.azhukov.agent.core.agent.ToolResultFormatter;
 import com.azhukov.agent.core.budget.DefaultIterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.ModelRequestOptions;
@@ -94,7 +96,7 @@ class BrowserAgentRuntimeLiveTest {
         ToolExecutionService toolExecutionService = new ToolExecutionService(registry, properties,
             new DefaultToolCallGuardrail(properties), new SecretRedactor(properties),
             new com.azhukov.agent.core.tool.ToolResultClassifier(),
-            new com.azhukov.agent.core.tool.ToolOutputLimiter(properties));
+            new com.azhukov.agent.core.tool.ToolOutputLimiter(properties), null);
 
         DefaultAgentRuntime runtime = new DefaultAgentRuntime(
             model, registry, toolExecutionService, promptBuilder, contextEngine, memoryProvider, skillManager,
@@ -102,7 +104,8 @@ class BrowserAgentRuntimeLiveTest {
             new com.azhukov.agent.security.MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
-            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null
+            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter()
         );
 
         var result = runtime.runTurn(session, "navigate and screenshot");

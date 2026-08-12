@@ -6,6 +6,8 @@ import com.azhukov.agent.api.dto.ContextInfoDto;
 import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
+import com.azhukov.agent.core.agent.CliStateApplier;
+import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.WriteApprovalGate;
 import com.azhukov.agent.core.model.Message;
@@ -24,6 +26,9 @@ import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -76,6 +81,7 @@ class AgentRuntimeServiceBranchTest {
     @Mock private SkillBundleService skillBundleService;
     @Mock private SkillManager skillManager;
     @Mock private McpLifecycleManager mcpLifecycleManager;
+    @Mock private TransactionTemplate transactionTemplate;
 
     private AgentProperties properties;
     private AgentRuntimeService agentRuntimeService;
@@ -89,6 +95,12 @@ class AgentRuntimeServiceBranchTest {
         properties = new AgentProperties();
         properties.getModel().setModelName("test-model");
         runtimeConfigService = new RuntimeConfigService();
+
+        // TransactionTemplate executes the callback immediately
+        lenient().when(transactionTemplate.execute(any())).thenAnswer(inv -> {
+            org.springframework.transaction.support.TransactionCallback<?> callback = inv.getArgument(0);
+            return callback.doInTransaction(null);
+        });
 
         agentRuntimeService = new AgentRuntimeService(
             agentRuntime,
@@ -109,7 +121,10 @@ class AgentRuntimeServiceBranchTest {
             skillManager,
             mcpLifecycleManager,
             new ObjectMapper(),
-            runtimeConfigService
+            runtimeConfigService,
+            transactionTemplate,
+            new AgentSessionResolver(sessionRepository, Mappers.getMapper(SessionEntityMapper.class), transactionTemplate),
+            new CliStateApplier()
         );
     }
 
@@ -567,8 +582,8 @@ class AgentRuntimeServiceBranchTest {
     void restartClearsAllSessionMessages() {
         SessionEntity s1 = newSessionEntity(UUID.randomUUID(), "user-1", "S1", "");
         SessionEntity s2 = newSessionEntity(UUID.randomUUID(), "user-1", "S2", "");
-        when(sessionRepository.findAllByUserId("user-1"))
-            .thenReturn(List.of(s1, s2));
+        when(sessionRepository.findAllByUserId("user-1", PageRequest.of(0, 50)))
+            .thenReturn(new PageImpl<>(List.of(s1, s2)));
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any()))
             .thenReturn(List.of());
 
@@ -652,7 +667,7 @@ class AgentRuntimeServiceBranchTest {
     @Test
     void listSessionsReturnsSessionsForUser() {
         SessionEntity e = newSessionEntity(SESSION_ID, "user-1", "Title", "");
-        when(sessionRepository.findAllByUserId("user-1")).thenReturn(List.of(e));
+        when(sessionRepository.findAllByUserId("user-1", PageRequest.of(0, 50))).thenReturn(new PageImpl<>(List.of(e)));
 
         var sessions = agentRuntimeService.listSessions();
 
@@ -665,7 +680,7 @@ class AgentRuntimeServiceBranchTest {
     @Test
     void listSessionsByUserIdReturnsSessionsForSpecifiedUser() {
         SessionEntity e = newSessionEntity(SESSION_ID, "custom-user", "Title", "");
-        when(sessionRepository.findAllByUserId("custom-user")).thenReturn(List.of(e));
+        when(sessionRepository.findAllByUserId("custom-user", PageRequest.of(0, 50))).thenReturn(new PageImpl<>(List.of(e)));
 
         var sessions = agentRuntimeService.listSessionsByUserId("custom-user");
 
@@ -678,7 +693,7 @@ class AgentRuntimeServiceBranchTest {
     void listActiveAgentsReturnsAllSessionsForUser() {
         SessionEntity e1 = newSessionEntity(SESSION_ID, "user-1", "Session 1", "");
         SessionEntity e2 = newSessionEntity(UUID.randomUUID(), "user-1", "Session 2", "");
-        when(sessionRepository.findAllByUserId("user-1")).thenReturn(List.of(e1, e2));
+        when(sessionRepository.findAllByUserId("user-1", PageRequest.of(0, 50))).thenReturn(new PageImpl<>(List.of(e1, e2)));
 
         var agents = agentRuntimeService.listActiveAgents();
 
@@ -692,7 +707,7 @@ class AgentRuntimeServiceBranchTest {
     @Test
     void listActiveAgentsHandlesNullTitle() {
         SessionEntity e = newSessionEntity(SESSION_ID, "user-1", null, "");
-        when(sessionRepository.findAllByUserId("user-1")).thenReturn(List.of(e));
+        when(sessionRepository.findAllByUserId("user-1", PageRequest.of(0, 50))).thenReturn(new PageImpl<>(List.of(e)));
 
         var agents = agentRuntimeService.listActiveAgents();
 

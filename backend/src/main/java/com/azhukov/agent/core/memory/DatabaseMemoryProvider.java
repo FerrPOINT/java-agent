@@ -43,6 +43,7 @@ public class DatabaseMemoryProvider implements MemoryProvider {
         e.setFact(fact);
         e.setTarget(target != null ? target : "memory");
         e.setCreatedAt(Instant.now());
+        e.setUpdatedAt(Instant.now());
         memoryRepository.save(e);
     }
 
@@ -55,6 +56,7 @@ public class DatabaseMemoryProvider implements MemoryProvider {
         for (MemoryEntity e : matches) {
             String updatedFact = e.getFact().replace(oldText, newText);
             e.setFact(updatedFact);
+            e.setUpdatedAt(Instant.now());
             memoryRepository.save(e);
         }
         return null;

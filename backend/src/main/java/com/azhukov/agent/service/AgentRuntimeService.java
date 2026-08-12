@@ -4,6 +4,8 @@ import com.azhukov.agent.api.dto.*;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
+import com.azhukov.agent.core.agent.CliStateApplier;
+import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.WriteApprovalGate;
@@ -24,8 +26,10 @@ import com.azhukov.agent.persistence.repository.MemoryRepository;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.persistence.repository.UsageRepository;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -59,10 +63,12 @@ public class AgentRuntimeService {
     private final McpLifecycleManager mcpLifecycleManager;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final RuntimeConfigService runtimeConfigService;
+    private final TransactionTemplate transactionTemplate;
+    private final AgentSessionResolver sessionResolver;
+    private final CliStateApplier cliStateApplier;
 
     private static final String UNKNOWN_MODEL = "unknown";
 
-    @Transactional
     public ChatResponseDto runDelegate(ChatRequest request) {
         int depth = request.delegationDepth() != null ? request.delegationDepth() : 0;
         Session session = createSession("user-1", "openai-compatible", "")
@@ -75,24 +81,12 @@ public class AgentRuntimeService {
         return buildResponse(session, result, false);
     }
 
-    @Transactional
     public ChatResponseDto runTurn(ChatRequest request) {
         ChatRequest applied = applyCliState(request);
-        boolean isNew;
-        Session session;
-        if (applied.sessionId() == null) {
-            isNew = true;
-            session = createSession("user-1", "openai-compatible", properties.getModel().getModelName());
-        } else {
-            try {
-                isNew = false;
-                session = loadSession(applied.sessionId());
-            } catch (IllegalArgumentException e) {
-                log.warn("Session {} not found in backend (sync path), creating new session", applied.sessionId());
-                isNew = true;
-                session = createSession("user-1", "openai-compatible", properties.getModel().getModelName());
-            }
-        }
+        var resolved = sessionResolver.resolveOrCreate(
+            applied.sessionId(), "user-1", properties.getModel().getModelName());
+        boolean isNew = resolved.isNew();
+        Session session = resolved.session();
 
         ModelRequestOptions options = toModelOptions(applied, session);
         TurnResult result = agentRuntime.runTurn(session, applied.message(), List.of(), options);
@@ -146,7 +140,7 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public List<SessionSummaryDto> listSessions() {
-        return sessionRepository.findAllByUserId("user-1").stream()
+        return sessionRepository.findAllByUserId("user-1", PageRequest.of(0, 50)).stream()
             .map(sessionMapper::toDomain)
             .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
@@ -197,7 +191,7 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public List<SessionSummaryDto> listSessionsByUserId(String userId) {
-        return sessionRepository.findAllByUserId(userId).stream()
+        return sessionRepository.findAllByUserId(userId, PageRequest.of(0, 50)).stream()
             .map(sessionMapper::toDomain)
             .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
@@ -208,7 +202,6 @@ public class AgentRuntimeService {
         compressSession(sessionId, focus, null);
     }
 
-    @Transactional
     public void compressSession(UUID sessionId, String focusTopic, Integer keepLastN) {
         List<MessageEntity> messageEntities = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
         if (messageEntities.size() <= 4) return;
@@ -258,7 +251,7 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public List<ActiveAgentDto> listActiveAgents() {
-        return sessionRepository.findAllByUserId("user-1").stream()
+        return sessionRepository.findAllByUserId("user-1", PageRequest.of(0, 50)).stream()
             .map(e -> new ActiveAgentDto(
                 e.getId().toString(),
                 "active",
@@ -273,16 +266,14 @@ public class AgentRuntimeService {
         return usageTracker.getInsights(null);
     }
 
-    @Transactional
     public void restart() {
         log.info("Restarting agent — clearing all session messages for user-1");
-        for (SessionEntity session : sessionRepository.findAllByUserId("user-1")) {
+        for (SessionEntity session : sessionRepository.findAllByUserId("user-1", PageRequest.of(0, 50))) {
             messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId()));
         }
         log.info("Agent restart complete — all session messages cleared");
     }
 
-    @Transactional
     public void reloadMcp() {
         log.info("Reloading MCP connections");
         mcpLifecycleManager.closeAll();
@@ -290,7 +281,6 @@ public class AgentRuntimeService {
         log.info("MCP reload complete");
     }
 
-    @Transactional
     public void reloadSkills() {
         log.info("Reloading skills");
         skillManager.reload();
@@ -350,7 +340,6 @@ public class AgentRuntimeService {
         return domainDtoMapper.toSessionSummaryDto(sessionMapper.toDomain(saved));
     }
 
-    @Transactional
     public String runBackground(String prompt, String sessionId) {
         // Background task — just run a turn in a new session
         Session session = createSession("user-1", "openai-compatible", "");
@@ -407,47 +396,25 @@ public class AgentRuntimeService {
         });
     }
 
-    @Transactional
     public Session createSession(String userId, String provider, String modelName) {
-        SessionEntity e = new SessionEntity();
-        e.setUserId(userId);
-        e.setModelProvider(provider);
-        e.setModelName(modelName);
-        e.setTitle("New chat");
-        e.setCreatedAt(Instant.now());
-        e.setUpdatedAt(Instant.now());
-        SessionEntity saved = sessionRepository.save(e);
-        return sessionMapper.toDomain(saved);
-    }
-
-    private Session loadSession(UUID id) {
-        SessionEntity e = sessionRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
-        Session session = sessionMapper.toDomain(e);
-        // Hydrate CLI state metadata from session_cli_state into session metadata for runtime use
-        if (e.getCliState() != null && !e.getCliState().isEmpty()) {
-            for (var entry : e.getCliState().entrySet()) {
-                session = session.withMetadata(entry.getKey(), entry.getValue());
-            }
-        }
-        if (e.getSubgoal() != null && !e.getSubgoal().isBlank()) {
-            session = session.withMetadata("subgoal", e.getSubgoal());
-        }
-        return session;
+        return sessionResolver.createSession(userId, provider, modelName);
     }
 
     private void persistMessages(UUID sessionId, List<Message> messages) {
-        Instant now = Instant.now();
-        for (Message m : messages) {
-            MessageEntity e = messageMapper.toEntity(m);
-            e.setSessionId(sessionId);
-            e.setCreatedAt(now);
-            if (m.toolCalls() != null && !m.toolCalls().isEmpty() && m.toolCall() == null) {
-                e.setToolCallName(m.toolCalls().get(0).name());
-                e.setToolCallArguments(m.toolCalls().get(0).arguments());
+        transactionTemplate.execute(status -> {
+            Instant now = Instant.now();
+            for (Message m : messages) {
+                MessageEntity e = messageMapper.toEntity(m);
+                e.setSessionId(sessionId);
+                e.setCreatedAt(now);
+                if (m.toolCalls() != null && !m.toolCalls().isEmpty() && m.toolCall() == null) {
+                    e.setToolCallName(m.toolCalls().get(0).name());
+                    e.setToolCallArguments(m.toolCalls().get(0).arguments());
+                }
+                messageRepository.save(e);
             }
-            messageRepository.save(e);
-        }
+            return null;
+        });
     }
 
     /**
@@ -458,54 +425,7 @@ public class AgentRuntimeService {
             return request;
         }
         SessionEntity session = sessionRepository.findById(request.sessionId()).orElse(null);
-        if (session == null) {
-            return request;
-        }
-        String reasoningEffort = request.reasoningEffort() != null ? request.reasoningEffort() : session.getCliStateValue("reasoningEffort");
-        String personality = request.personality() != null ? request.personality() : session.getCliStateValue("personality");
-        String queuedPrompt = request.queuedPrompt() != null ? request.queuedPrompt() : session.getCliStateValue("queuedPrompt");
-        String subgoal = request.subgoal() != null ? request.subgoal() : session.getSubgoal();
-        String goal = request.goal() != null ? request.goal() : session.getCliStateValue("goal");
-        if (goal == null || "true".equals(session.getCliStateValue("goalPaused"))) {
-            goal = null;
-        }
-        String subgoals = session.getCliStateValue("subgoals");
-
-        String finalMessage = buildMergedMessage(request.message(), queuedPrompt, goal, subgoals, subgoal);
-        return new ChatRequest(
-            request.sessionId(),
-            finalMessage,
-            request.delegationDepth(),
-            request.timeoutMs(),
-            reasoningEffort,
-            request.fastMode(),
-            request.voiceMode(),
-            personality,
-            request.enabledTools(),
-            request.disabledTools(),
-            null,
-            null,
-            request.cdpUrl(),
-            null
-        );
-    }
-
-    private String buildMergedMessage(String userMessage, String queuedPrompt, String goal, String subgoals, String subgoal) {
-        StringBuilder sb = new StringBuilder();
-        if (goal != null && !goal.isBlank()) {
-            sb.append("[Standing Goal]\n").append(goal).append("\n\n");
-        }
-        if (subgoals != null && !subgoals.isBlank()) {
-            sb.append("[Subgoals]\n").append(subgoals).append("\n\n");
-        }
-        if (subgoal != null && !subgoal.isBlank()) {
-            sb.append("[Goal/Subgoal focus]\n").append(subgoal).append("\n\n");
-        }
-        if (queuedPrompt != null && !queuedPrompt.isBlank()) {
-            sb.append("[Queued context]\n").append(queuedPrompt).append("\n\n");
-        }
-        sb.append(userMessage);
-        return sb.toString();
+        return cliStateApplier.applyCliState(request, session);
     }
 
     private ModelRequestOptions toModelOptions(ChatRequest request, Session session) {

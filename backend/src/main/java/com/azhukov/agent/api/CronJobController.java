@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.service.CronJobService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -19,7 +20,7 @@ public class CronJobController {
     private final CronJobService cronJobService;
 
     @PostMapping
-    public CronJobEntity create(@RequestBody CreateCronRequest request) {
+    public CronJobEntity create(@Valid @RequestBody CreateCronRequest request) {
         return cronJobService.create(request.name(), request.schedule(), request.prompt(), request.deliverTo(), request.skills());
     }
 
@@ -29,7 +30,7 @@ public class CronJobController {
     }
 
     @PutMapping("/{id}")
-    public CronJobEntity update(@PathVariable UUID id, @RequestBody UpdateCronRequest request) {
+    public CronJobEntity update(@PathVariable UUID id, @Valid @RequestBody UpdateCronRequest request) {
         return cronJobService.update(id, request.name(), request.schedule(), request.prompt(),
             request.deliverTo(), request.enabled());
     }
@@ -54,6 +55,18 @@ public class CronJobController {
         return cronJobService.runNow(id);
     }
 
-    public record CreateCronRequest(String name, String schedule, String prompt, String deliverTo, String skills) {}
-    public record UpdateCronRequest(String name, String schedule, String prompt, String deliverTo, Boolean enabled) {}
+    public record CreateCronRequest(
+        @jakarta.validation.constraints.NotBlank String name,
+        @jakarta.validation.constraints.NotBlank String schedule,
+        @jakarta.validation.constraints.NotBlank String prompt,
+        String deliverTo,
+        String skills
+    ) {}
+    public record UpdateCronRequest(
+        @jakarta.validation.constraints.NotBlank String name,
+        @jakarta.validation.constraints.NotBlank String schedule,
+        String prompt,
+        String deliverTo,
+        Boolean enabled
+    ) {}
 }

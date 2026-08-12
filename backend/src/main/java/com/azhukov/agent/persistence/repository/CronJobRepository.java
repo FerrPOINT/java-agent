@@ -1,6 +1,8 @@
 package com.azhukov.agent.persistence.repository;
 
 import com.azhukov.agent.persistence.entity.CronJobEntity;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -12,6 +14,8 @@ import java.util.UUID;
 public interface CronJobRepository extends JpaRepository<CronJobEntity, UUID> {
 
     List<CronJobEntity> findByEnabledTrue();
+
+    Page<CronJobEntity> findByEnabledTrue(Pageable pageable);
 
     Optional<CronJobEntity> findByName(String name);
 }

@@ -4,6 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.metrics.AgentMetrics;
 import com.azhukov.agent.security.SecretRedactor;
 import com.azhukov.agent.security.ToolCallGuardrail;
 import com.azhukov.agent.core.state.TurnState;
@@ -35,6 +36,7 @@ public class ToolExecutionService {
     private final SecretRedactor redactor;
     private final ToolResultClassifier toolResultClassifier;
     private final ToolOutputLimiter toolOutputLimiter;
+    private final AgentMetrics agentMetrics;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final Retry retry = Retry.of("tool", RetryConfig.custom()
             .maxAttempts(3)
@@ -82,6 +84,13 @@ public class ToolExecutionService {
             failed = true;
         }
         long duration = System.currentTimeMillis() - start;
+
+        if (agentMetrics != null) {
+            agentMetrics.incrementToolCalls(toolName);
+            if (failed) {
+                agentMetrics.incrementToolErrors(toolName);
+            }
+        }
 
         if (turnState != null) {
             turnState.recordExecution(new com.azhukov.agent.core.model.ToolCall(toolCallId, toolName, arguments), result, duration);

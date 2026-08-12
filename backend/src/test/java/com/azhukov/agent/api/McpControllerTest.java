@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.api.dto.McpReadResourceRequest;
 import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.azhukov.agent.config.AgentProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -49,7 +50,7 @@ class McpControllerTest {
         McpLifecycleManager mgr = mock(McpLifecycleManager.class);
         when(mgr.readResource("s", "file://x")).thenReturn("content");
         McpController c = new McpController(mgr, new AgentProperties(), new ObjectMapper());
-        Map<String, String> res = c.readResource("s", Map.of("uri", "file://x"));
+        Map<String, String> res = c.readResource("s", new McpReadResourceRequest("file://x"));
         assertThat(res.get("content")).isEqualTo("content");
     }
 }

@@ -9,6 +9,10 @@ import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
+import com.azhukov.agent.core.agent.AgentSessionResolver;
+import com.azhukov.agent.core.agent.CliStateApplier;
+import com.azhukov.agent.core.agent.TokenEstimator;
+import com.azhukov.agent.core.agent.ToolResultFormatter;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
@@ -143,7 +147,10 @@ class AgentStreamingServiceGapTest {
             contextEngine, objectMapper, usageTracker, properties,
             sessionRepository, messageRepository, transactionTemplate,
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
-            new RuntimeConfigService(), new InterruptToken(), new SteerBuffer());
+            new RuntimeConfigService(), new InterruptToken(), new SteerBuffer(),
+            new TokenEstimator(), new ToolResultFormatter(),
+            new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate),
+            new CliStateApplier(), null);
     }
 
     // ─── Error event and stream termination ───

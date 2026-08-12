@@ -1,5 +1,7 @@
 package com.azhukov.agent.bot.session;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -15,7 +17,11 @@ public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UU
 
     Optional<BotSessionEntity> findByUserIdAndActiveTrue(String userId);
 
+    Page<BotSessionEntity> findByUserIdAndActiveTrue(String userId, Pageable pageable);
+
     Optional<BotSessionEntity> findByChatIdAndActiveTrue(String chatId);
+
+    Page<BotSessionEntity> findByChatIdAndActiveTrue(String chatId, Pageable pageable);
 
     List<BotSessionEntity> findByUserIdOrderByUpdatedAtDesc(String userId);
 

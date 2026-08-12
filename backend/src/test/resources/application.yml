@@ -24,6 +24,8 @@ agent:
   mcp:
     enabled: false
     servers: []
+  security:
+    api-key:
   chromium:
     auto-start: false
     auto-install: false

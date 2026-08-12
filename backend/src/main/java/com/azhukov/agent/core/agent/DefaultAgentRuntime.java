@@ -73,7 +73,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ContextCompressor contextCompressor;
     private final com.azhukov.agent.core.security.ApprovalQueue approvalQueue;
     private final MemoryManager memoryManager;
-    private ModelRequestOptions lastModelOptions = ModelRequestOptions.empty();
+    private final TokenEstimator tokenEstimator;
+    private final ToolResultFormatter toolResultFormatter;
 
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {
@@ -86,11 +87,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
     @Override
     public TurnResult runTurn(Session session, String userInput, List<String> references,
                               ModelRequestOptions options) {
-        this.lastModelOptions = options != null ? options : ModelRequestOptions.empty();
-        return runTurnInternal(session, userInput, references);
+        ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
+        return runTurnInternal(session, userInput, references, effectiveOptions);
     }
 
-    private TurnResult runTurnInternal(Session session, String userInput, List<String> references) {
+    private TurnResult runTurnInternal(Session session, String userInput, List<String> references,
+                                       ModelRequestOptions options) {
         UUID sessionIdUuid = session.id();
         String sessionId = sessionIdUuid.toString();
         guardrail.reset();
@@ -146,7 +148,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
         TurnResult result = null;
         try {
-        result = runTurnLoop(session, turnMessages, tools, maxTurns, turnIndex, budget, turnState, sessionId, sessionIdUuid);
+        result = runTurnLoop(session, turnMessages, tools, maxTurns, turnIndex, budget, turnState, sessionId, sessionIdUuid, options);
         } finally {
             // S14: MemoryManager — sync turn data + queue prefetch for next turn
             if (memoryManager != null && memoryManager.hasProviders()) {
@@ -180,7 +182,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
     private TurnResult runTurnLoop(Session session, List<Message> turnMessages, List<ToolDefinition> tools,
                                    int maxTurns, int turnIndex, TurnSnapshot budget, TurnState turnState,
-                                   String sessionId, UUID sessionIdUuid) {
+                                   String sessionId, UUID sessionIdUuid, ModelRequestOptions options) {
         for (int i = 0; i < maxTurns; i++) {
             if (guardrail.isHalted()) {
                 turnMessages.add(Message.assistant("Turn halted by guardrails.", turnIndex));
@@ -203,9 +205,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
             ChatResponse response;
             try {
                 long callStart = System.currentTimeMillis();
-                response = callModelWithRetry(context, tools, session);
+                response = callModelWithRetry(context, tools, session, options);
                 int duration = (int) (System.currentTimeMillis() - callStart);
-                int estimatedInput = estimateTokens(context);
+                int estimatedInput = tokenEstimator.estimateTokens(context);
                 int estimatedOutput = estimateResponseTokens(response);
                 budget = iterationBudget.recordModelCall(budget, estimatedInput, estimatedOutput);
                 turnState.recordModelCall();
@@ -275,7 +277,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 if (approvalQueue != null && approvalQueue.isDenied(session.id())) {
                     log.info("Tool {} denied for session {}, skipping", call.name(), session.id());
                     ToolResult deniedResult = ToolResult.fail("Tool execution denied by user approval");
-                    toolResults.add(Message.toolResult(call.id(), formatResult(deniedResult), currentTurnIndex));
+                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
                     approvalQueue.clear(session.id());
                 } else {
                     long toolStart = System.currentTimeMillis();
@@ -285,7 +287,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     log.debug("Tool {} executed in {} ms: success={}, content length={}, error={}",
                         call.name(), duration, result.success(),
                         result.content() != null ? result.content().length() : 0, result.error());
-                    toolResults.add(Message.toolResult(call.id(), formatResult(result), currentTurnIndex));
+                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(result), currentTurnIndex));
                 }
             } else {
                 // Parallel path for multiple tool calls
@@ -336,7 +338,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
      * CONTEXT_OVERFLOW errors trigger compression, then retry with compressed context.
      * PERMANENT/BILLING/CONTENT_POLICY errors fail immediately.
      */
-    private ChatResponse callModelWithRetry(List<Message> context, List<ToolDefinition> tools, Session session) {
+    private ChatResponse callModelWithRetry(List<Message> context, List<ToolDefinition> tools, Session session,
+                                             ModelRequestOptions options) {
         int retryAttempts = properties.getError().getRetryAttempts();
         Exception lastException = null;
         int totalAttempts = 0;
@@ -346,7 +349,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         for (int attempt = 0; attempt <= retryAttempts; attempt++) {
             totalAttempts++;
             try {
-                return modelClient.complete(currentContext, tools, lastModelOptions);
+                return modelClient.complete(currentContext, tools, options);
             } catch (Exception e) {
                 lastException = e;
                 if (attempt >= retryAttempts) {
@@ -493,30 +496,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
             log.debug("Parallel tool {} result: success={}, content length={}, error={}",
                 call.name(), result.success(),
                 result.content() != null ? result.content().length() : 0, result.error());
-            toolResults.add(Message.toolResult(call.id(), formatResult(result), currentTurnIndex));
+            toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(result), currentTurnIndex));
         }
         return toolResults;
-    }
-
-    private String formatResult(ToolResult result) {
-        if (result.success()) {
-            return result.content();
-        }
-        return "Error: " + result.error();
-    }
-
-    private int estimateTokens(List<Message> messages) {
-        int chars = 0;
-        for (Message m : messages) {
-            chars += m.content() != null ? m.content().length() : 0;
-            if (m.toolCalls() != null) {
-                for (ToolCall tc : m.toolCalls()) {
-                    chars += tc.arguments() != null ? tc.arguments().length() : 0;
-                    chars += tc.name() != null ? tc.name().length() : 0;
-                }
-            }
-        }
-        return chars / 4 + 1;
     }
 
     private int estimateResponseTokens(ChatResponse response) {

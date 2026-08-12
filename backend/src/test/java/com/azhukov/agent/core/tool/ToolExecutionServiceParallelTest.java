@@ -48,7 +48,7 @@ class ToolExecutionServiceParallelTest {
 
     private ToolExecutionService buildService(ToolRegistry registry) {
         return new ToolExecutionService(registry, properties, guardrail(), redactor(),
-            new ToolResultClassifier(), new ToolOutputLimiter(properties));
+            new ToolResultClassifier(), new ToolOutputLimiter(properties), null);
     }
 
     // ─── Sequential execution verification ───

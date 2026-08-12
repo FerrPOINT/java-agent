@@ -1,9 +1,11 @@
 package com.azhukov.agent.core.skill;
 
+import com.azhukov.agent.tools.terminal.CommandGuard;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -32,6 +34,15 @@ public class SkillPreprocessor {
  private volatile boolean enabled = true;
  private volatile boolean inlineShellEnabled = false;
  private volatile int inlineShellTimeout = INLINE_SHELL_TIMEOUT_SECONDS;
+ private volatile CommandGuard commandGuard = new CommandGuard(List.of(), false);
+
+ /**
+  * Set the CommandGuard used to validate inline shell commands before execution.
+  * Defaults to a permissive guard (no blocked patterns, sudo allowed).
+  */
+ public void setCommandGuard(CommandGuard guard) {
+     this.commandGuard = guard;
+ }
 
  /**
  * S2: Set whether preprocessing is enabled.
@@ -129,8 +140,14 @@ public class SkillPreprocessor {
  * S2 FIX: Sets CWD to skillDir so relative paths in shell snippets work.
  */
  String runInlineShell(String command, String skillDir) {
- int timeout = Math.max(1, inlineShellTimeout);
- try {
+     int timeout = Math.max(1, inlineShellTimeout);
+     // Validate command against CommandGuard before execution
+     String blockReason = commandGuard.check(command);
+     if (blockReason != null) {
+         log.warn("Blocked inline shell command by CommandGuard: {} — {}", command, blockReason);
+         return "[inline-shell blocked by CommandGuard: " + blockReason + "]";
+     }
+     try {
  ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
  pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
  pb.redirectErrorStream(false);

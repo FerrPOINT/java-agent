@@ -34,7 +34,7 @@ class ToolExecutionServiceFullTest {
 
     private ToolExecutionService buildService(ToolRegistry registry, AgentProperties props) {
         return new ToolExecutionService(registry, props, guardrail(), redactor(),
-            new ToolResultClassifier(), new ToolOutputLimiter(props));
+            new ToolResultClassifier(), new ToolOutputLimiter(props), null);
     }
 
     private ToolRegistry buildRegistry(ToolResult result) {

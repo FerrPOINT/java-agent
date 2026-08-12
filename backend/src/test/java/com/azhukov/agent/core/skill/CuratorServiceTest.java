@@ -17,6 +17,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -165,7 +167,7 @@ class CuratorServiceTest {
 
     @Test
     void maybeRunCurator_idleEnough_runsCurator(@TempDir Path tempDir) {
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of());
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
         CuratorService service = new CuratorService(skillRepository, properties);
         service.setStateFile(tempDir.resolve(".curator_state"));
         // Seed old last_run_at so interval passes
@@ -184,7 +186,7 @@ class CuratorServiceTest {
     void runCycle_archivesStaleSkills() {
         SkillEntity stale = makeSkill("old-skill", Instant.now().minus(100, ChronoUnit.DAYS));
         SkillEntity active = makeSkill("active-skill", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(stale, active));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(stale, active)));
         when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
@@ -202,7 +204,7 @@ class CuratorServiceTest {
         // Skill older than staleAfterDays (30) but younger than archiveAfterDays (90)
         SkillEntity staleSkill = makeSkill("stale-skill", Instant.now().minus(45, ChronoUnit.DAYS));
         SkillEntity active = makeSkill("active-skill", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(staleSkill, active));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(staleSkill, active)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
@@ -219,7 +221,7 @@ class CuratorServiceTest {
         // Skill was stale but recently used
         SkillEntity staleSkill = makeSkill("stale-skill", Instant.now());
         staleSkill.setLifecycleState("stale");
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(staleSkill));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(staleSkill)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
@@ -232,7 +234,7 @@ class CuratorServiceTest {
     @Test
     void runCycle_protectedSkillsNotArchived() {
         SkillEntity protectedSkill = makeSkill("hermes-agent", Instant.now().minus(100, ChronoUnit.DAYS));
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(protectedSkill));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(protectedSkill)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
@@ -248,7 +250,7 @@ class CuratorServiceTest {
     void runCycle_pinnedSkillsNotArchived() {
         SkillEntity pinned = makeSkill("pinned-skill", Instant.now().minus(100, ChronoUnit.DAYS));
         pinned.setPinned(true);
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(pinned));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(pinned)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
@@ -266,7 +268,7 @@ class CuratorServiceTest {
     void runCycle_dryRun_doesNotMutate() {
         properties.getCurator().setDryRun(true);
         SkillEntity stale = makeSkill("old-skill", Instant.now().minus(100, ChronoUnit.DAYS));
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(stale));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(stale)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
@@ -316,7 +318,7 @@ class CuratorServiceTest {
 
     @Test
     void runCycle_updatesStateFile(@TempDir Path tempDir) {
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of());
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
         CuratorService service = new CuratorService(skillRepository, properties);
         service.setStateFile(tempDir.resolve(".curator_state"));
 
@@ -439,7 +441,7 @@ class CuratorServiceTest {
         SkillEntity s1 = makeSkill("browser-navigate", Instant.now());
         SkillEntity s2 = makeSkill("browser-click", Instant.now());
         SkillEntity s3 = makeSkill("browser-snapshot", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2, s3));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1, s2, s3)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
@@ -453,7 +455,7 @@ class CuratorServiceTest {
     void runCycle_llmConsolidation_succeeds() {
         SkillEntity s1 = makeSkill("browser-navigate", Instant.now());
         SkillEntity s2 = makeSkill("browser-click", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1, s2)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         String llmResponse = """
@@ -481,7 +483,7 @@ class CuratorServiceTest {
     void runCycle_llmFailure_fallsBackToHeuristic() {
         SkillEntity s1 = makeSkill("browser-navigate", Instant.now());
         SkillEntity s2 = makeSkill("browser-click", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1, s2)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
         when(modelClient.complete(any(), any())).thenThrow(new RuntimeException("LLM unavailable"));
 
@@ -495,7 +497,7 @@ class CuratorServiceTest {
     @Test
     void runCycle_createsBackupSnapshot() {
         SkillEntity s1 = makeSkill("test-skill", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
         when(backupService.createSnapshot(any())).thenReturn(
             new CuratorBackupService.CuratorSnapshot(UUID.randomUUID(), "curator-cycle", Instant.now(), 1));
@@ -509,7 +511,7 @@ class CuratorServiceTest {
     @Test
     void runCycle_includesActions() {
         SkillEntity stale = makeSkill("old-skill", Instant.now().minus(100, ChronoUnit.DAYS));
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(stale));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(stale)));
         when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(skillRepository, properties);
@@ -555,7 +557,7 @@ class CuratorServiceTest {
 
     @Test
     void runCycle_emptySkills_returnsEmptyReport() {
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of());
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
 
         CuratorService service = new CuratorService(skillRepository, properties);
         var report = service.runCycle();
@@ -625,7 +627,7 @@ class CuratorServiceTest {
     void agentLoop_withToolCalls_executesAndCollects() {
         SkillEntity s1 = makeSkill("browser-navigate", Instant.now());
         SkillEntity s2 = makeSkill("browser-click", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1, s2)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         // First LLM response: tool call to skills_list
@@ -664,7 +666,7 @@ class CuratorServiceTest {
     @Test
     void agentLoop_noToolCalls_immediatelyReturnsSummary() {
         SkillEntity s1 = makeSkill("test-skill", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         String yamlSummary = """
@@ -687,7 +689,7 @@ class CuratorServiceTest {
     void agentLoop_multipleToolCalls_executesAllInOrder() {
         SkillEntity s1 = makeSkill("skill-a", Instant.now());
         SkillEntity s2 = makeSkill("skill-b", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1, s2)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         // First response: two parallel tool calls
@@ -736,7 +738,7 @@ class CuratorServiceTest {
     void agentLoop_respectsMaxIterations() {
         properties.getCurator().setMaxCuratorIterations(3);
         SkillEntity s1 = makeSkill("test-skill", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         // Every response returns a tool call — loop should stop at maxIterations
@@ -761,7 +763,7 @@ class CuratorServiceTest {
     void agentLoop_modelFailureOnFirstCall_returnsNullAndFallsBack() {
         SkillEntity s1 = makeSkill("browser-navigate", Instant.now());
         SkillEntity s2 = makeSkill("browser-click", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1, s2)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         when(modelClient.complete(any(), any())).thenThrow(new RuntimeException("Model unavailable"));
@@ -778,7 +780,7 @@ class CuratorServiceTest {
     @Test
     void agentLoop_toolFailure_continuesLoop() {
         SkillEntity s1 = makeSkill("test-skill", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         // First response: tool call that fails
@@ -814,7 +816,7 @@ class CuratorServiceTest {
     @Test
     void agentLoop_toolExecutionException_continuesLoop() {
         SkillEntity s1 = makeSkill("test-skill", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         ChatResponse firstResponse = new ChatResponse("",
@@ -885,7 +887,7 @@ class CuratorServiceTest {
     void agentLoop_withoutToolServices_fallsBackToSingleCall() {
         SkillEntity s1 = makeSkill("browser-navigate", Instant.now());
         SkillEntity s2 = makeSkill("browser-click", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1, s2));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1, s2)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         String llmResponse = """
@@ -914,7 +916,7 @@ class CuratorServiceTest {
     @Test
     void agentLoop_modelFailureOnSecondCall_usesPartialResult() {
         SkillEntity s1 = makeSkill("test-skill", Instant.now());
-        when(skillRepository.findByArchivedFalse()).thenReturn(List.of(s1));
+        when(skillRepository.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(s1)));
         lenient().when(skillRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         // First response: tool call succeeds

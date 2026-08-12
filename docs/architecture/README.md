@@ -25,19 +25,24 @@ All diagrams use **Mermaid** syntax (renders inline in GitLab/GitHub).
 | [ADR-003](adr/ADR-003-langchain4j-for-llm-abstraction.md) | LangChain4j as LLM Client Abstraction | Accepted |
 | [ADR-004](adr/ADR-004-mcp-sdk-2.0.md) | MCP Java SDK 2.0 for Tool Protocol | Accepted |
 | [ADR-005](adr/ADR-005-spring-boot-4.1-java-25.md) | Spring Boot 4.1 + Java 25 Platform | Accepted |
+| [ADR-006](adr/ADR-006-api-key-authentication.md) | API Key Authentication | Accepted |
+| [ADR-007](adr/ADR-007-controller-split.md) | Controller Split (8 Focused Controllers) | Accepted |
+| [ADR-008](adr/ADR-008-agentic-loop-deduplication.md) | Agentic Loop Deduplication | Accepted |
+| [ADR-009](adr/ADR-009-micrometer-metrics.md) | Micrometer Metrics with Prometheus | Accepted |
+| [ADR-010](adr/ADR-010-testcontainers.md) | Testcontainers for Integration Tests | Accepted |
 
 ## Quick Stats
 
 | Metric | Value |
 |--------|-------|
-| Java source files | 359 |
-| Test files | 309 |
-| REST endpoints | 86 (82 AgentController + 4 McpController) |
+| Java source files | 468 |
+| Test files | 425 |
+| REST endpoints | 103 |
 | CLI slash commands | 74 |
-| Bot commands | 56 (+ 10 aliases) |
-| Flyway migrations | 18 (V1–V18) |
+| Bot commands | 58 (+ 10 aliases) |
+| Flyway migrations | 23 (V1–V23) |
 | Gradle modules | 3 (backend, telegram-bot, cli) |
-| MapStruct mappers | 4 |
+| MapStruct mappers | 5 |
 
 ## How to Read
 

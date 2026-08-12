@@ -1,8 +1,10 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.api.dto.McpReadResourceRequest;
 import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.azhukov.agent.config.AgentProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -44,8 +46,8 @@ public class McpController {
 
     @PostMapping("/mcp/servers/{name}/resources")
     public Map<String, String> readResource(@org.springframework.web.bind.annotation.PathVariable String name,
-                                            @RequestBody Map<String, String> request) {
-        String uri = request.get("uri");
+                                            @Valid @RequestBody McpReadResourceRequest request) {
+        String uri = request.uri();
         String content = mcpLifecycleManager.readResource(name, uri);
         return Map.of("uri", uri, "content", content);
     }

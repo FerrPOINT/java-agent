@@ -56,4 +56,62 @@ public class UrlSafetyHandler {
         }
         return null;
     }
+
+    /**
+     * Validates a Chrome DevTools Protocol (CDP) URL.
+     * <p>
+     * CDP uses WebSocket transport ({@code ws://} or {@code wss://}).
+     * This method checks:
+     * <ul>
+     *   <li>The URL is not null or blank</li>
+     *   <li>The scheme is {@code ws} or {@code wss}</li>
+     *   <li>The host is present and not an embedded-credential URL</li>
+     *   <li>The host passes SSRF safety checks (private/loopback/metadata blocking)</li>
+     * </ul>
+     *
+     * @param cdpUrl the CDP WebSocket URL to validate
+     * @return {@code null} if valid, or an error message describing why it is invalid
+     */
+    public String validate(String cdpUrl) {
+        if (cdpUrl == null || cdpUrl.isBlank()) {
+            return "cdpUrl is empty";
+        }
+        if (!cdpUrl.startsWith("ws://") && !cdpUrl.startsWith("wss://")) {
+            return "cdpUrl must start with ws:// or wss:// (Chrome DevTools Protocol uses WebSocket)";
+        }
+        URI uri;
+        try {
+            uri = new URI(cdpUrl);
+        } catch (URISyntaxException e) {
+            return "Invalid cdpUrl: " + e.getMessage();
+        }
+        if (uri.getHost() == null) {
+            return "cdpUrl host is missing";
+        }
+        // Block URLs with embedded credentials
+        if (uri.getUserInfo() != null && !uri.getUserInfo().isBlank()) {
+            return "cdpUrl with embedded credentials is not allowed: " + uri.getHost();
+        }
+        // SSRF safety checks: check blocked hosts and private/local addresses
+        if (urlSafety.isHostBlocked(uri.getHost())) {
+            return "cdpUrl host is blocked: " + uri.getHost();
+        }
+        // Check blocked domains
+        if (properties.getWeb().getBlockedDomains().contains(uri.getHost())) {
+            return "cdpUrl domain is blocked: " + uri.getHost();
+        }
+        // Check for localhost / metadata hosts
+        String lowerHost = uri.getHost().toLowerCase();
+        if (lowerHost.equals("localhost") || lowerHost.equals("localhost.localdomain")) {
+            // Allow localhost for local CDP connections (common dev scenario)
+            // but only if URL safety is disabled; when enabled, block it
+            if (properties.getSecurity().isUrlSafetyEnabled()) {
+                return "cdpUrl pointing to localhost is blocked by safety policy";
+            }
+        }
+        if (lowerHost.equals("metadata.google.internal") || lowerHost.endsWith(".metadata.google.internal")) {
+            return "cdpUrl pointing to metadata endpoint is blocked";
+        }
+        return null;
+    }
 }

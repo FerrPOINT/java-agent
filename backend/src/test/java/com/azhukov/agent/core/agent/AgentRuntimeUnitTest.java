@@ -147,7 +147,7 @@ class AgentRuntimeUnitTest {
         ToolExecutionService toolExecutionService = new ToolExecutionService(registry, properties,
             new DefaultToolCallGuardrail(properties), new SecretRedactor(properties),
             new com.azhukov.agent.core.tool.ToolResultClassifier(),
-            new com.azhukov.agent.core.tool.ToolOutputLimiter(properties));
+            new com.azhukov.agent.core.tool.ToolOutputLimiter(properties), null);
 
         DefaultAgentRuntime runtime = new DefaultAgentRuntime(
             throwingModel, registry, toolExecutionService, promptBuilder, contextEngine, memoryProvider, skillManager,
@@ -155,7 +155,8 @@ class AgentRuntimeUnitTest {
             new MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
-            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null
+            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter()
         );
 
         var result = runtime.runTurn(session, "hi");
@@ -185,7 +186,7 @@ class AgentRuntimeUnitTest {
         ToolExecutionService toolExecutionService = new ToolExecutionService(registry, properties,
             new DefaultToolCallGuardrail(properties), new SecretRedactor(properties),
             new com.azhukov.agent.core.tool.ToolResultClassifier(),
-            new com.azhukov.agent.core.tool.ToolOutputLimiter(properties));
+            new com.azhukov.agent.core.tool.ToolOutputLimiter(properties), null);
 
         return new DefaultAgentRuntime(
             model, registry, toolExecutionService, promptBuilder, contextEngine, memoryProvider, skillManager,
@@ -193,7 +194,8 @@ class AgentRuntimeUnitTest {
             new MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
-            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null
+            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter()
         );
     }
 

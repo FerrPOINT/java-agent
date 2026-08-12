@@ -44,7 +44,8 @@ class ToolExecutionServiceRetryTest {
             new DefaultToolCallGuardrail(properties),
             new SecretRedactor(properties),
             new ToolResultClassifier(),
-            new ToolOutputLimiter(properties)
+            new ToolOutputLimiter(properties),
+            null
         );
     }
 

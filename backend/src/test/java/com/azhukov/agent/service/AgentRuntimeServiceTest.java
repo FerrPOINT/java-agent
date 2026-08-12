@@ -4,6 +4,8 @@ import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
+import com.azhukov.agent.core.agent.CliStateApplier;
+import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.WriteApprovalGate;
 import com.azhukov.agent.core.model.Message;
@@ -26,6 +28,7 @@ import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
 import org.mapstruct.factory.Mappers;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.api.mapper.OpenAiMapper;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.List;
@@ -70,6 +73,7 @@ class AgentRuntimeServiceTest {
     private SkillBundleService skillBundleService;
     private com.azhukov.agent.core.skill.SkillManager skillManager;
     private com.azhukov.agent.client.mcp.McpLifecycleManager mcpLifecycleManager;
+    private TransactionTemplate transactionTemplate;
 
     @BeforeEach
     void setUp() {
@@ -90,6 +94,12 @@ class AgentRuntimeServiceTest {
         skillBundleService = mock(SkillBundleService.class);
         skillManager = mock(com.azhukov.agent.core.skill.SkillManager.class);
         mcpLifecycleManager = mock(com.azhukov.agent.client.mcp.McpLifecycleManager.class);
+        transactionTemplate = mock(TransactionTemplate.class);
+        // TransactionTemplate executes the callback immediately
+        when(transactionTemplate.execute(any())).thenAnswer(inv -> {
+            org.springframework.transaction.support.TransactionCallback<?> callback = inv.getArgument(0);
+            return callback.doInTransaction(null);
+        });
 
         agentRuntimeService = new AgentRuntimeService(
             agentRuntime,
@@ -110,7 +120,10 @@ class AgentRuntimeServiceTest {
             skillManager,
             mcpLifecycleManager,
             new com.fasterxml.jackson.databind.ObjectMapper(),
-            new RuntimeConfigService()
+            new RuntimeConfigService(),
+            transactionTemplate,
+            new AgentSessionResolver(sessionRepository, Mappers.getMapper(SessionEntityMapper.class), transactionTemplate),
+            new CliStateApplier()
         );
     }
 

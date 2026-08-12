@@ -48,7 +48,7 @@ public class SessionEntity {
     @Column(columnDefinition = "TEXT")
     private String subgoal;
 
-    @ElementCollection(fetch = FetchType.EAGER)
+    @ElementCollection(fetch = FetchType.LAZY)
     @CollectionTable(name = "session_cli_state", joinColumns = @JoinColumn(name = "session_id"))
     @MapKeyColumn(name = "state_key")
     @Column(name = "state_value")

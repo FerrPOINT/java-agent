@@ -1,6 +1,8 @@
 package com.azhukov.agent.persistence.repository;
 
 import com.azhukov.agent.persistence.entity.SessionEntity;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -16,6 +18,8 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     SessionEntity findByUserId(String userId);
 
     List<SessionEntity> findAllByUserId(String userId);
+
+    Page<SessionEntity> findAllByUserId(String userId, Pageable pageable);
 
     List<SessionEntity> findByTitleContainingIgnoreCase(String title);
 

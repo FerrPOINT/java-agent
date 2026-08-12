@@ -1,9 +1,11 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.api.dto.BackgroundRequest;
 import com.azhukov.agent.api.dto.ChatRequest;
-import com.azhukov.agent.api.dto.ChatResponseDto;
-import com.azhukov.agent.api.dto.CreditsDto;
+import com.azhukov.agent.api.dto.ContextInfoDto;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
+import com.azhukov.agent.api.dto.TodoDto;
+import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.InterruptToken;
@@ -13,14 +15,15 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.skill.CuratorService;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.api.dto.CheckpointDto;
+import com.azhukov.agent.api.dto.CheckpointDiffDto;
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
-import com.azhukov.agent.persistence.entity.TodoEntity;
-import com.azhukov.agent.persistence.repository.TodoRepository;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
 import com.azhukov.agent.service.CheckpointManager;
 import com.azhukov.agent.service.CliRuntimeSettingsService;
 import com.azhukov.agent.service.RuntimeConfigService;
+import com.azhukov.agent.service.TodoService;
 import com.azhukov.agent.service.tts.TtsService;
 import com.azhukov.agent.service.transcription.TranscriptionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -40,6 +43,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
@@ -52,8 +56,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Branch-coverage tests for AgentController — focuses on error paths,
- * edge cases, null inputs, and boundary conditions not covered by AgentControllerTest.
+ * Branch-coverage tests for the split controllers — focuses on error paths,
+ * edge cases, null inputs, and boundary conditions.
  */
 @ExtendWith(MockitoExtension.class)
 class AgentControllerBranchCoverageTest {
@@ -78,12 +82,13 @@ class AgentControllerBranchCoverageTest {
     @Mock private DomainDtoMapper domainDtoMapper;
     @Mock private CuratorService curatorService;
     @Mock private CliRuntimeSettingsService cliRuntimeSettingsService;
-    @Mock private TodoRepository todoRepository;
+    @Mock private TodoService todoService;
+    @Mock private RuntimeConfigService runtimeConfigService;
+    @Mock private com.azhukov.agent.security.UrlSafetyHandler urlSafetyHandler;
 
     private SteerBuffer steerBuffer;
     private InterruptToken interruptToken;
     private ApprovalQueue approvalQueue;
-    private RuntimeConfigService runtimeConfigService;
 
     @BeforeEach
     void setUp() {
@@ -91,25 +96,82 @@ class AgentControllerBranchCoverageTest {
         steerBuffer = new SteerBuffer();
         interruptToken = new InterruptToken();
         approvalQueue = new ApprovalQueue();
-        runtimeConfigService = new RuntimeConfigService();
+    }
 
-        AgentController controller = new AgentController(
+    // ── MockMvc builders for each controller ──
+
+    private MockMvc chatMockMvc() {
+        AgentChatController controller = new AgentChatController(
             agentRuntimeService, streamingService, memoryProvider, skillManager,
-            checkpointManager, ttsService, transcriptionService,
-            steerBuffer, interruptToken, approvalQueue,
-            cliRuntimeSettingsService,
-            agentProperties, domainDtoMapper, curatorService, todoRepository,
-            runtimeConfigService
+            ttsService, transcriptionService,
+            steerBuffer, interruptToken, approvalQueue, agentProperties,
+            null
         );
-        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+        return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
     }
 
-    // ── Goal endpoint branches ──
+    private MockMvc sessionMockMvc() {
+        SessionController controller = new SessionController(
+            agentRuntimeService, domainDtoMapper, agentProperties, checkpointManager
+        );
+        return MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    private MockMvc memoryMockMvc() {
+        MemoryController controller = new MemoryController(memoryProvider, agentRuntimeService);
+        return MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    private MockMvc skillMockMvc() {
+        SkillController controller = new SkillController(skillManager, agentRuntimeService);
+        return MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    private MockMvc checkpointMockMvc() {
+        CheckpointController controller = new CheckpointController(checkpointManager);
+        return MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    private MockMvc runtimeSettingsMockMvc() {
+        RuntimeSettingsController controller = new RuntimeSettingsController(
+            cliRuntimeSettingsService, agentProperties,
+            memoryProvider, ttsService, transcriptionService,
+            runtimeConfigService, agentRuntimeService, urlSafetyHandler
+        );
+        return MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    private MockMvc kanbanMockMvc() {
+        KanbanController controller = new KanbanController(todoService);
+        return MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    private MockMvc curatorMockMvc() {
+        CuratorController controller = new CuratorController(curatorService);
+        return MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    // ── RuntimeSettings: Goal endpoint branches ──
 
     @Test
     void setGoalBlankReturns400() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         mockMvc.perform(post("/api/v1/agent/goal")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -123,6 +185,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void setGoalNullReturns400() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         mockMvc.perform(post("/api/v1/agent/goal")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -135,6 +198,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void setGoalValidReturnsOk() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         mockMvc.perform(post("/api/v1/agent/goal")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -148,6 +212,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void pauseGoalReturnsOk() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         mockMvc.perform(post("/api/v1/agent/goal/pause")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -160,6 +225,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void resumeGoalReturnsOk() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         mockMvc.perform(post("/api/v1/agent/goal/resume")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -172,6 +238,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void clearGoalDeleteReturnsOk() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         mockMvc.perform(delete("/api/v1/agent/goal")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -184,6 +251,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void clearGoalPostReturnsOk() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         mockMvc.perform(post("/api/v1/agent/goal/clear")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -194,10 +262,11 @@ class AgentControllerBranchCoverageTest {
             .andExpect(status().isOk());
     }
 
-    // ── Subgoal append branch ──
+    // ── RuntimeSettings: Subgoal append branch ──
 
     @Test
     void setSubgoalWithAppendTrueCallsAppend() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         mockMvc.perform(post("/api/v1/agent/subgoal")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -212,6 +281,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void clearSubgoalsDeleteReturnsOk() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         mockMvc.perform(delete("/api/v1/agent/subgoal")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -224,6 +294,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void clearSubgoalsPostReturnsOk() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         mockMvc.perform(post("/api/v1/agent/subgoal/clear")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -234,10 +305,11 @@ class AgentControllerBranchCoverageTest {
             .andExpect(status().isOk());
     }
 
-    // ── Personality endpoint ──
+    // ── RuntimeSettings: Personality endpoint ──
 
     @Test
     void setPersonalityReturnsOk() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         mockMvc.perform(post("/api/v1/agent/personality")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -249,10 +321,11 @@ class AgentControllerBranchCoverageTest {
             .andExpect(status().isOk());
     }
 
-    // ── State reset ──
+    // ── RuntimeSettings: State reset ──
 
     @Test
     void resetStateReturnsOk() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         mockMvc.perform(post("/api/v1/agent/state/reset")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -267,6 +340,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void storeMemoryBlankFactReturns400() throws Exception {
+        mockMvc = memoryMockMvc();
         mockMvc.perform(post("/api/v1/agent/memory")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -275,19 +349,22 @@ class AgentControllerBranchCoverageTest {
                     }
                     """))
             .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.type").value("bad_request"));
+            .andExpect(jsonPath("$.type").value("VALIDATION_ERROR"));
     }
 
     @Test
     void storeMemoryNullFactReturns400() throws Exception {
+        mockMvc = memoryMockMvc();
         mockMvc.perform(post("/api/v1/agent/memory")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{}"))
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.type").value("VALIDATION_ERROR"));
     }
 
     @Test
     void storeMemoryWithDefaultsReturnsOk() throws Exception {
+        mockMvc = memoryMockMvc();
         doNothing().when(memoryProvider).store(any(), any(), any(), any());
 
         mockMvc.perform(post("/api/v1/agent/memory")
@@ -302,6 +379,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void storeMemoryWithCustomUserIdAndCategoryReturnsOk() throws Exception {
+        mockMvc = memoryMockMvc();
         doNothing().when(memoryProvider).store(eq("custom-user"), any(), eq("preference"), any());
 
         mockMvc.perform(post("/api/v1/agent/memory")
@@ -319,6 +397,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void memoryReturnsList() throws Exception {
+        mockMvc = memoryMockMvc();
         when(memoryProvider.recall(eq("default"), eq(""), eq(100)))
             .thenReturn(List.of("fact1", "fact2"));
 
@@ -333,6 +412,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void listPendingMemoryReturnsList() throws Exception {
+        mockMvc = memoryMockMvc();
         when(agentRuntimeService.listPendingMemory("user-1")).thenReturn(List.of());
 
         mockMvc.perform(get("/api/v1/agent/memory/pending/user-1"))
@@ -342,6 +422,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void listAllMemoryReturnsList() throws Exception {
+        mockMvc = memoryMockMvc();
         when(agentRuntimeService.listAllMemory("user-1")).thenReturn(List.of());
 
         mockMvc.perform(get("/api/v1/agent/memory/all/user-1"))
@@ -351,17 +432,18 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void deleteMemoryReturnsOk() throws Exception {
+        mockMvc = memoryMockMvc();
         doNothing().when(agentRuntimeService).deleteMemory(any(), any());
 
         mockMvc.perform(delete("/api/v1/agent/memory/user-1/" + SESSION_ID))
             .andExpect(status().isOk());
     }
 
-    // ── Approve/Deny branches ──
+    // ── AgentChat: Approve/Deny branches ──
 
     @Test
     void approveAllPendingReturnsMessage() throws Exception {
-        // No pending approvals, all=true → "Approved all pending approvals"
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/approve")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -374,7 +456,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void approveWithNoPendingReturnsMessage() throws Exception {
-        // DenyRequest has boolean all, default false — no pending → "No pending approvals"
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/approve")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -387,7 +469,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void approveWithInvalidSessionIdReturnsMessage() throws Exception {
-        // scope is "not-a-uuid" → IllegalArgumentException → "Invalid session ID: not-a-uuid"
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/approve")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -401,6 +483,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void approveWithValidSessionIdNoPendingReturnsMessage() throws Exception {
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/approve")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -414,6 +497,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void denyAllPendingReturnsMessage() throws Exception {
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/deny")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -426,6 +510,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void denyWithNoPendingReturnsMessage() throws Exception {
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/deny")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -436,10 +521,11 @@ class AgentControllerBranchCoverageTest {
             .andExpect(status().isOk());
     }
 
-    // ── Tool approval endpoints ──
+    // ── AgentChat: Tool approval endpoints ──
 
     @Test
     void pendingApprovalsReturnsList() throws Exception {
+        mockMvc = chatMockMvc();
         mockMvc.perform(get("/api/v1/agent/approvals/pending"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$").isArray());
@@ -447,6 +533,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void approveToolReturnsOk() throws Exception {
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/approvals/" + SESSION_ID + "/approve")
                 .contentType(MediaType.APPLICATION_JSON)
                 .param("decision", "approve"))
@@ -455,15 +542,17 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void denyToolReturnsOk() throws Exception {
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/approvals/" + SESSION_ID + "/deny")
                 .contentType(MediaType.APPLICATION_JSON))
             .andExpect(status().isOk());
     }
 
-    // ── Model switching branches ──
+    // ── Session: Model switching branches ──
 
     @Test
     void switchModelNullSessionReturnsError() throws Exception {
+        mockMvc = sessionMockMvc();
         mockMvc.perform(post("/api/v1/agent/model")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -478,6 +567,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void switchModelBlankModelReturnsError() throws Exception {
+        mockMvc = sessionMockMvc();
         mockMvc.perform(post("/api/v1/agent/model")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -492,6 +582,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void switchModelServiceThrowsReturnsError() throws Exception {
+        mockMvc = sessionMockMvc();
         doThrow(new RuntimeException("session not found"))
             .when(agentRuntimeService).switchModel(any(UUID.class), any(), any());
 
@@ -510,6 +601,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void switchModelSuccessReturnsOk() throws Exception {
+        mockMvc = sessionMockMvc();
         mockMvc.perform(post("/api/v1/agent/model")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -526,6 +618,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void getCurrentModelWithoutSessionReturnsError() throws Exception {
+        mockMvc = sessionMockMvc();
         mockMvc.perform(get("/api/v1/agent/model"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.error").value("sessionId required"));
@@ -533,8 +626,9 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void getCurrentModelWithSessionReturnsInfo() throws Exception {
+        mockMvc = sessionMockMvc();
         when(agentRuntimeService.getContext(SESSION_ID))
-            .thenReturn(new com.azhukov.agent.api.dto.ContextInfoDto(
+            .thenReturn(new ContextInfoDto(
                 SESSION_ID, 5, 100, List.of(), null, null, null));
 
         mockMvc.perform(get("/api/v1/agent/model")
@@ -546,6 +640,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void getCurrentModelServiceThrowsReturnsError() throws Exception {
+        mockMvc = sessionMockMvc();
         when(agentRuntimeService.getContext(SESSION_ID))
             .thenThrow(new RuntimeException("session not found"));
 
@@ -555,10 +650,11 @@ class AgentControllerBranchCoverageTest {
             .andExpect(jsonPath("$.error").value("session not found"));
     }
 
-    // ── Stop endpoint ──
+    // ── AgentChat: Stop endpoint ──
 
     @Test
     void stopWithoutBodyReturnsOk() throws Exception {
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/stop"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.ok").value(true));
@@ -566,6 +662,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void stopWithSessionIdCancelsInterrupt() throws Exception {
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/stop")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -577,10 +674,11 @@ class AgentControllerBranchCoverageTest {
             .andExpect(jsonPath("$.ok").value(true));
     }
 
-    // ── Skill content endpoint ──
+    // ── Skill: content endpoint ──
 
     @Test
     void getSkillContentFoundReturnsContent() throws Exception {
+        mockMvc = skillMockMvc();
         when(skillManager.getSkill("coding")).thenReturn("Write clean code");
 
         mockMvc.perform(get("/api/v1/agent/skills/coding"))
@@ -592,6 +690,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void getSkillContentNotFoundReturnsError() throws Exception {
+        mockMvc = skillMockMvc();
         when(skillManager.getSkill("unknown")).thenReturn(null);
 
         mockMvc.perform(get("/api/v1/agent/skills/unknown"))
@@ -600,10 +699,11 @@ class AgentControllerBranchCoverageTest {
             .andExpect(jsonPath("$.error").exists());
     }
 
-    // ── Bundle endpoints ──
+    // ── Skill: Bundle endpoints ──
 
     @Test
     void installBundleSuccessReturnsOk() throws Exception {
+        mockMvc = skillMockMvc();
         mockMvc.perform(post("/api/v1/agent/bundles/install")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -617,6 +717,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void installBundleThrowsReturnsError() throws Exception {
+        mockMvc = skillMockMvc();
         doThrow(new RuntimeException("bundle not found"))
             .when(agentRuntimeService).installBundle(any());
 
@@ -634,6 +735,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void uninstallBundleSuccessReturnsOk() throws Exception {
+        mockMvc = skillMockMvc();
         mockMvc.perform(post("/api/v1/agent/bundles/uninstall")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -647,6 +749,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void uninstallBundleThrowsReturnsError() throws Exception {
+        mockMvc = skillMockMvc();
         doThrow(new RuntimeException("not installed"))
             .when(agentRuntimeService).uninstallBundle(any());
 
@@ -663,6 +766,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void bundlesListReturnsList() throws Exception {
+        mockMvc = skillMockMvc();
         when(agentRuntimeService.listBundles()).thenReturn(List.of("bundle-1", "bundle-2"));
 
         mockMvc.perform(get("/api/v1/agent/bundles"))
@@ -673,6 +777,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void bundlesAliasReturnsSameList() throws Exception {
+        mockMvc = skillMockMvc();
         when(agentRuntimeService.listBundles()).thenReturn(List.of("bundle-1"));
 
         mockMvc.perform(get("/api/v1/agent/skills/bundles"))
@@ -683,7 +788,8 @@ class AgentControllerBranchCoverageTest {
     // ── Checkpoint endpoints ──
 
     @Test
-    void createCheckpointReturnsEntity() throws Exception {
+    void createCheckpointReturnsDto() throws Exception {
+        mockMvc = checkpointMockMvc();
         CheckpointEntity cp = new CheckpointEntity();
         cp.setId(UUID.randomUUID());
         cp.setDescription("test");
@@ -695,6 +801,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void createCheckpointWithDescription() throws Exception {
+        mockMvc = checkpointMockMvc();
         CheckpointEntity cp = new CheckpointEntity();
         cp.setId(UUID.randomUUID());
         cp.setDescription("custom");
@@ -712,6 +819,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void listCheckpointsReturnsList() throws Exception {
+        mockMvc = checkpointMockMvc();
         when(checkpointManager.list()).thenReturn(List.of());
 
         mockMvc.perform(get("/api/v1/agent/checkpoint"))
@@ -721,6 +829,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void restoreCheckpointReturnsMessage() throws Exception {
+        mockMvc = checkpointMockMvc();
         doNothing().when(checkpointManager).restore(any(UUID.class));
 
         UUID cpId = UUID.randomUUID();
@@ -730,6 +839,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void deleteCheckpointReturnsOk() throws Exception {
+        mockMvc = checkpointMockMvc();
         doNothing().when(checkpointManager).remove(any(UUID.class));
 
         UUID cpId = UUID.randomUUID();
@@ -741,6 +851,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void diffCheckpointsReturnsJson() throws Exception {
+        mockMvc = checkpointMockMvc();
         UUID left = UUID.randomUUID();
         UUID right = UUID.randomUUID();
         com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
@@ -754,10 +865,11 @@ class AgentControllerBranchCoverageTest {
             .andExpect(status().isOk());
     }
 
-    // ── Steer endpoint ──
+    // ── AgentChat: Steer endpoint ──
 
     @Test
     void steerWithNullSessionIdReturnsNotAccepted() throws Exception {
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/steer")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -771,6 +883,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void steerWithBlankTextReturnsNotAccepted() throws Exception {
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/steer")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -785,6 +898,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void steerValidReturnsAccepted() throws Exception {
+        mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/steer")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -801,8 +915,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void curatorRunReturnsReport() throws Exception {
-        // CuratorService.runCycle() returns CuratorReport — use mock to return null
-        // which tests the "no report" branch
+        mockMvc = curatorMockMvc();
         when(curatorService.runCycle()).thenReturn(null);
 
         mockMvc.perform(post("/api/v1/agent/curator/run"))
@@ -811,13 +924,8 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void curatorRunWithReportReturnsReport() throws Exception {
-        // This tests the non-null branch — use Mockito mock with any()
-        // The controller calls toString() on the result, so any non-null works
-        // We need to match CuratorReport type — use thenAnswer
-        when(curatorService.runCycle()).thenAnswer(inv -> {
-            // Return null to test the "no report" message path
-            return null;
-        });
+        mockMvc = curatorMockMvc();
+        when(curatorService.runCycle()).thenAnswer(inv -> null);
 
         mockMvc.perform(post("/api/v1/agent/curator/run"))
             .andExpect(status().isOk());
@@ -825,6 +933,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void curatorPauseReturnsOk() throws Exception {
+        mockMvc = curatorMockMvc();
         doNothing().when(curatorService).setPaused(true);
 
         mockMvc.perform(post("/api/v1/agent/curator/pause"))
@@ -833,16 +942,18 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void curatorResumeReturnsOk() throws Exception {
+        mockMvc = curatorMockMvc();
         doNothing().when(curatorService).setPaused(false);
 
         mockMvc.perform(post("/api/v1/agent/curator/resume"))
             .andExpect(status().isOk());
     }
 
-    // ── Restart/reload endpoints ──
+    // ── RuntimeSettings: Restart/reload endpoints ──
 
     @Test
     void restartReturnsOk() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         doNothing().when(agentRuntimeService).restart();
         mockMvc.perform(post("/api/v1/agent/restart"))
             .andExpect(status().isOk());
@@ -850,6 +961,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void reloadMcpReturnsOk() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         doNothing().when(agentRuntimeService).reloadMcp();
         mockMvc.perform(post("/api/v1/agent/reload-mcp"))
             .andExpect(status().isOk());
@@ -857,6 +969,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void reloadSkillsReturnsOk() throws Exception {
+        mockMvc = skillMockMvc();
         doNothing().when(agentRuntimeService).reloadSkills();
         mockMvc.perform(post("/api/v1/agent/reload-skills"))
             .andExpect(status().isOk());
@@ -864,16 +977,18 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void reloadAllReturnsOk() throws Exception {
+        mockMvc = skillMockMvc();
         doNothing().when(agentRuntimeService).reloadSkills();
         doNothing().when(agentRuntimeService).reloadMcp();
         mockMvc.perform(post("/api/v1/agent/reload"))
             .andExpect(status().isOk());
     }
 
-    // ── Background endpoint ──
+    // ── AgentChat: Background endpoint ──
 
     @Test
     void backgroundReturnsSessionId() throws Exception {
+        mockMvc = chatMockMvc();
         when(agentRuntimeService.runBackground(any(), any()))
             .thenReturn("new-session-id");
 
@@ -888,10 +1003,11 @@ class AgentControllerBranchCoverageTest {
             .andExpect(status().isOk());
     }
 
-    // ── Branch session ──
+    // ── Session: Branch session ──
 
     @Test
     void branchSessionReturnsDto() throws Exception {
+        mockMvc = sessionMockMvc();
         SessionSummaryDto dto = new SessionSummaryDto(
             SESSION_ID, "user-1", "Branch of test", "openai-compatible", "", FIXED_TIME, FIXED_TIME);
         when(agentRuntimeService.branchSession(eq(SESSION_ID), any())).thenReturn(dto);
@@ -901,12 +1017,13 @@ class AgentControllerBranchCoverageTest {
             .andExpect(jsonPath("$.id").value(SESSION_ID.toString()));
     }
 
-    // ── Context / Usage / Sessions by user ──
+    // ── Session: Context / Usage / Sessions by user ──
 
     @Test
     void getContextReturnsInfo() throws Exception {
+        mockMvc = sessionMockMvc();
         when(agentRuntimeService.getContext(SESSION_ID))
-            .thenReturn(new com.azhukov.agent.api.dto.ContextInfoDto(
+            .thenReturn(new ContextInfoDto(
                 SESSION_ID, 3, 200, List.of("read_file"), null, null, null));
 
         mockMvc.perform(get("/api/v1/agent/session/" + SESSION_ID + "/context"))
@@ -916,6 +1033,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void resetSessionReturnsOk() throws Exception {
+        mockMvc = sessionMockMvc();
         doNothing().when(agentRuntimeService).resetSession(any());
 
         mockMvc.perform(post("/api/v1/agent/session/" + SESSION_ID + "/reset"))
@@ -924,8 +1042,9 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void getUsageReturnsDto() throws Exception {
+        mockMvc = sessionMockMvc();
         when(agentRuntimeService.getUsage(SESSION_ID))
-            .thenReturn(new com.azhukov.agent.api.dto.UsageDto(SESSION_ID, 100, 500));
+            .thenReturn(new UsageDto(SESSION_ID, 100, 500));
 
         mockMvc.perform(get("/api/v1/agent/session/" + SESSION_ID + "/usage"))
             .andExpect(status().isOk())
@@ -934,6 +1053,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void sessionsByUserIdReturnsList() throws Exception {
+        mockMvc = sessionMockMvc();
         when(agentRuntimeService.listSessionsByUserId("user-1")).thenReturn(List.of());
 
         mockMvc.perform(get("/api/v1/agent/sessions/user-1"))
@@ -941,10 +1061,11 @@ class AgentControllerBranchCoverageTest {
             .andExpect(jsonPath("$").isArray());
     }
 
-    // ── Skills endpoint ──
+    // ── Skill: Skills endpoint ──
 
     @Test
     void skillsReturnsList() throws Exception {
+        mockMvc = skillMockMvc();
         when(skillManager.listSkillNames()).thenReturn(List.of("coding", "web"));
 
         mockMvc.perform(get("/api/v1/agent/skills"))
@@ -952,10 +1073,11 @@ class AgentControllerBranchCoverageTest {
             .andExpect(jsonPath("$.length()").value(2));
     }
 
-    // ── Agents / Insights ──
+    // ── RuntimeSettings: Agents / Insights ──
 
     @Test
     void agentsReturnsList() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         when(agentRuntimeService.listActiveAgents()).thenReturn(List.of());
 
         mockMvc.perform(get("/api/v1/agent/agents"))
@@ -965,17 +1087,19 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void insightsReturnsDto() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         when(agentRuntimeService.getInsights()).thenReturn(new com.azhukov.agent.api.dto.InsightsDto(
-            0, 0, java.util.Map.of()));
+            0, 0, Map.of()));
 
         mockMvc.perform(get("/api/v1/agent/insights"))
             .andExpect(status().isOk());
     }
 
-    // ── Compress endpoint branches ──
+    // ── Session: Compress endpoint branches ──
 
     @Test
     void compressWithFocusTopicReturnsMessage() throws Exception {
+        mockMvc = sessionMockMvc();
         doNothing().when(agentRuntimeService).compressSession(any(), any(), any());
 
         mockMvc.perform(post("/api/v1/agent/session/" + SESSION_ID + "/compress")
@@ -991,6 +1115,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void compressWithoutBodyReturnsMessage() throws Exception {
+        mockMvc = sessionMockMvc();
         doNothing().when(agentRuntimeService).compressSession(any(), any(), any());
 
         mockMvc.perform(post("/api/v1/agent/session/" + SESSION_ID + "/compress"))
@@ -999,6 +1124,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void compressWithFocusOnlyReturnsMessage() throws Exception {
+        mockMvc = sessionMockMvc();
         doNothing().when(agentRuntimeService).compressSession(any(), eq("auth"), any());
 
         mockMvc.perform(post("/api/v1/agent/session/" + SESSION_ID + "/compress")
@@ -1011,22 +1137,24 @@ class AgentControllerBranchCoverageTest {
             .andExpect(status().isOk());
     }
 
-    // ── Undo endpoint ──
+    // ── Session: Undo endpoint ──
 
     @Test
     void undoTurnsReturnsCount() throws Exception {
-        when(agentRuntimeService.undoTurns(eq(SESSION_ID), org.mockito.ArgumentMatchers.anyInt())).thenReturn(3);
+        mockMvc = sessionMockMvc();
+        when(agentRuntimeService.undoTurns(eq(SESSION_ID), anyInt())).thenReturn(3);
 
         mockMvc.perform(post("/api/v1/agent/session/" + SESSION_ID + "/undo")
                 .param("turns", "2"))
             .andExpect(status().isOk());
     }
 
-    // ── Codex runtime with override ──
+    // ── RuntimeSettings: Codex runtime with override ──
 
     @Test
     void codexRuntimeStatusWithOverrideReturnsOverride() throws Exception {
-        runtimeConfigService.setModelOverride("claude-sonnet-4");
+        mockMvc = runtimeSettingsMockMvc();
+        when(runtimeConfigService.getModelOverride()).thenReturn("claude-sonnet-4");
         when(agentProperties.getModel()).thenReturn(modelProperties);
         when(modelProperties.getProvider()).thenReturn("openai");
         when(modelProperties.getMaxRetries()).thenReturn(3);
@@ -1041,20 +1169,18 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void codexRuntimeResetClearsOverride() throws Exception {
-        runtimeConfigService.setModelOverride("temp-model");
+        mockMvc = runtimeSettingsMockMvc();
         doNothing().when(cliRuntimeSettingsService).resetAllSessions();
 
         mockMvc.perform(post("/api/v1/agent/codex-runtime/reset"))
             .andExpect(status().isOk());
-
-        // Verify override was cleared
-        assert runtimeConfigService.getModelOverride() == null;
     }
 
-    // ── Create session with null body ──
+    // ── Session: Create session with null body ──
 
     @Test
     void createSessionWithNullBodyUsesDefaultUser() throws Exception {
+        mockMvc = sessionMockMvc();
         when(agentProperties.getModel()).thenReturn(modelProperties);
         when(modelProperties.getModelName()).thenReturn("test-model");
         Session session = new Session(SESSION_ID, "user-1", "New chat", "openai-compatible", "test-model", null, Map.of());
@@ -1069,6 +1195,7 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void createSessionWithUserIdUsesProvided() throws Exception {
+        mockMvc = sessionMockMvc();
         when(agentProperties.getModel()).thenReturn(modelProperties);
         when(modelProperties.getModelName()).thenReturn("test-model");
         Session session = new Session(SESSION_ID, "custom-user", "New chat", "openai-compatible", "test-model", null, Map.of());
@@ -1091,14 +1218,9 @@ class AgentControllerBranchCoverageTest {
 
     @Test
     void kanbanDoneTaskFoundReturnsOk() throws Exception {
-        TodoEntity todo = new TodoEntity();
-        todo.setId(SESSION_ID);
-        todo.setUserId("default");
-        todo.setTitle("Test");
-        todo.setStatus("pending");
-        todo.setPriority("medium");
-        when(todoRepository.findById(SESSION_ID)).thenReturn(Optional.of(todo));
-        when(todoRepository.save(any(TodoEntity.class))).thenReturn(todo);
+        mockMvc = kanbanMockMvc();
+        TodoDto dto = new TodoDto(SESSION_ID, null, "default", "Test", "done", "medium", FIXED_TIME);
+        when(todoService.markDone(SESSION_ID)).thenReturn(Optional.of(dto));
 
         mockMvc.perform(post("/api/v1/agent/kanban/done/" + SESSION_ID))
             .andExpect(status().isOk());

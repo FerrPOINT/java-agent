@@ -2,13 +2,13 @@
 
 ## Project Overview
 
-Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-project: `backend` (REST API, LLM, tools) + `telegram-bot` (56 команд, streaming, polling).
+Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-project: `backend` (REST API, LLM, tools) + `telegram-bot` (58 команд, streaming, polling).
 
 ## Build & Test
 
 ```bash
 cd /opt/dev/java-agent
-./gradlew check                # 1500 tests, 0 failures
+./gradlew check                # 5229 tests, 0 failures
 ./gradlew compileJava          # compile only
 ./gradlew bootJar              # build JAR
 ./gradlew slowTest             # @Tag("slow") integration tests
@@ -193,7 +193,7 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 
 ### 5. Testing
 
-- **1500 тестов**, 279 test files, 0 failures.
+- **5229 тестов**, 425 test files, 0 failures.
 - Coverage gate: LINE ≥ 80%.
 - Маппер-тесты: `Mappers.getMapper(X.class)`, edge cases (nulls, enums, empty collections).
 - Service-тесты с `new`: вызывать `init()` после конструирования (для `@PostConstruct`).
@@ -228,11 +228,11 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 - Curator config: `agent.curator.*` in `application.yml` controls the auto-curated kanban board (columns, WIP limits, labels).
 - Memory limits: `agent.memory.char-limit` and `agent.user.char-limit` in `application.yml` cap memory and user input sizes.
 - Profiles: `dev` (Ollama Cloud), `noop` (H2 + mock LLM), `cli` (REPL), `prod` (production).
-- Flyway migrations: `backend/src/main/resources/db/migration/` — 16 migrations (V1–V16).
+- Flyway migrations: `backend/src/main/resources/db/migration/` — 23 migrations (V1–V23).
 
 ### 9. Bot Architecture
 
-- 56 commands, each `@Component` implementing `CommandHandler` interface.
+- 58 commands, each `@Component` implementing `CommandHandler` interface.
 - `CommandRegistry` — maps command names to handlers, resolves 10 aliases.
 - `GoalAutoContinueService` — automatically continues goal-driven agent loops until completion or user interrupt.
 - `BotMessageProcessor` — central message dispatch (18 dependencies, `@PostConstruct` for debouncer wiring).
@@ -246,15 +246,16 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 
 | Metric | Value |
 |--------|-------|
-| Java source files | 359 |
-| Test files | 309 |
+| Java source files | 468 |
+| Test files | 425 |
 | `@RequiredArgsConstructor` | 159 files |
 | `@Slf4j` | 88 files |
 | `@Data` (JPA) | 16 files |
-| MapStruct mappers | 4 |
-| Bot commands | 56 (+ 10 aliases) |
+| MapStruct mappers | 5 |
+| Bot commands | 58 (+ 10 aliases) |
 | CLI slash commands | 74 |
-| Backend endpoints | 86 (82 AgentController + 4 McpController) |
+| Backend endpoints | 103 |
+| Flyway migrations | 23 (V1–V23) |
 | Gradle modules | 3 (backend, telegram-bot, cli) |
 
 ## Project Structure

@@ -4,6 +4,9 @@ spring:
     driver-class-name: org.h2.Driver
     username: sa
     password:
+    hikari:
+      maximum-pool-size: 5
+      leak-detection-timeout: 0
   jpa:
     hibernate:
       ddl-auto: create-drop
@@ -24,3 +27,5 @@ agent:
   mcp:
     enabled: false
     servers: []
+  security:
+    api-key:

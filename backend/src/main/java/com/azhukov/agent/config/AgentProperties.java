@@ -291,6 +291,8 @@ public class AgentProperties {
         private boolean redactSecrets = true;
         /** Whether PII patterns (emails, phone numbers, etc.) are redacted (default false). */
         private boolean redactPii = false;
+        /** REST API key for authenticating incoming HTTP requests (empty = auth disabled / dev mode). */
+        private String apiKey = "";
         private final List<String> alwaysRequireApprovalTools = new ArrayList<>();
         private final List<String> sensitiveEnvVarPatterns = new ArrayList<>();
         private final List<String> allowedPaths = new ArrayList<>();

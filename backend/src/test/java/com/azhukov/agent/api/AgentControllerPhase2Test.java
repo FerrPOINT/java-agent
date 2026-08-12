@@ -9,6 +9,9 @@ import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
 import com.azhukov.agent.service.CheckpointManager;
+import com.azhukov.agent.service.RuntimeConfigService;
+import com.azhukov.agent.service.tts.TtsService;
+import com.azhukov.agent.service.transcription.TranscriptionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,53 +45,69 @@ class AgentControllerPhase2Test {
     private MockMvc mockMvc;
     private ObjectMapper objectMapper;
 
-    @Mock
-    private AgentRuntimeService agentRuntimeService;
-
-    @Mock
-    private AgentStreamingService streamingService;
-
-    @Mock
-    private MemoryProvider memoryProvider;
-
-    @Mock
-    private SkillManager skillManager;
-
-    @Mock
-    private CheckpointManager checkpointManager;
-
-    @Mock
-    private com.azhukov.agent.service.tts.TtsService ttsService;
-
-    @Mock
-    private com.azhukov.agent.service.transcription.TranscriptionService transcriptionService;
-
-    @Mock
-    private AgentProperties agentProperties;
-
-    @Mock
-    private DomainDtoMapper domainDtoMapper;
+    @Mock private AgentRuntimeService agentRuntimeService;
+    @Mock private AgentStreamingService streamingService;
+    @Mock private MemoryProvider memoryProvider;
+    @Mock private SkillManager skillManager;
+    @Mock private CheckpointManager checkpointManager;
+    @Mock private TtsService ttsService;
+    @Mock private TranscriptionService transcriptionService;
+    @Mock private AgentProperties agentProperties;
+    @Mock private DomainDtoMapper domainDtoMapper;
+    @Mock private RuntimeConfigService runtimeConfigService;
+    @Mock private com.azhukov.agent.service.CliRuntimeSettingsService cliRuntimeSettingsService;
+    @Mock private com.azhukov.agent.security.UrlSafetyHandler urlSafetyHandler;
 
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
+    }
 
-        AgentController controller = new AgentController(agentRuntimeService, streamingService,
-            memoryProvider, skillManager, checkpointManager, ttsService, transcriptionService,
-            new com.azhukov.agent.core.agent.SteerBuffer(), new com.azhukov.agent.core.agent.InterruptToken(),
+    private MockMvc runtimeSettingsMockMvc() {
+        RuntimeSettingsController controller = new RuntimeSettingsController(
+            cliRuntimeSettingsService, agentProperties,
+            memoryProvider, ttsService, transcriptionService,
+            runtimeConfigService, agentRuntimeService, urlSafetyHandler
+        );
+        return MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    private MockMvc skillMockMvc() {
+        SkillController controller = new SkillController(skillManager, agentRuntimeService);
+        return MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    private MockMvc sessionMockMvc() {
+        SessionController controller = new SessionController(
+            agentRuntimeService, domainDtoMapper, agentProperties, checkpointManager
+        );
+        return MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    private MockMvc chatMockMvc() {
+        AgentChatController controller = new AgentChatController(
+            agentRuntimeService, streamingService, memoryProvider, skillManager,
+            ttsService, transcriptionService,
+            new com.azhukov.agent.core.agent.SteerBuffer(),
+            new com.azhukov.agent.core.agent.InterruptToken(),
             new com.azhukov.agent.core.security.ApprovalQueue(),
-            new com.azhukov.agent.service.CliRuntimeSettingsService(null, null),
-            agentProperties, domainDtoMapper,
-            org.mockito.Mockito.mock(com.azhukov.agent.core.skill.CuratorService.class),
-            org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.TodoRepository.class),
-            new com.azhukov.agent.service.RuntimeConfigService());
-        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+            agentProperties,
+            null
+        );
+        return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
     }
 
     @Test
     void restartReturns200() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         doNothing().when(agentRuntimeService).restart();
 
         mockMvc.perform(post("/api/v1/agent/restart"))
@@ -97,6 +116,7 @@ class AgentControllerPhase2Test {
 
     @Test
     void reloadMcpReturns200() throws Exception {
+        mockMvc = runtimeSettingsMockMvc();
         doNothing().when(agentRuntimeService).reloadMcp();
 
         mockMvc.perform(post("/api/v1/agent/reload-mcp"))
@@ -105,6 +125,7 @@ class AgentControllerPhase2Test {
 
     @Test
     void reloadSkillsReturns200() throws Exception {
+        mockMvc = skillMockMvc();
         doNothing().when(agentRuntimeService).reloadSkills();
 
         mockMvc.perform(post("/api/v1/agent/reload-skills"))
@@ -113,6 +134,7 @@ class AgentControllerPhase2Test {
 
     @Test
     void bundlesReturns200WithArray() throws Exception {
+        mockMvc = skillMockMvc();
         when(agentRuntimeService.listBundles()).thenReturn(List.of("bundle-1", "bundle-2"));
 
         mockMvc.perform(get("/api/v1/agent/bundles"))
@@ -126,6 +148,7 @@ class AgentControllerPhase2Test {
 
     @Test
     void branchSessionReturns200WithSessionDto() throws Exception {
+        mockMvc = sessionMockMvc();
         SessionSummaryDto dto = new SessionSummaryDto(
             SESSION_ID,
             "user-1",
@@ -152,6 +175,7 @@ class AgentControllerPhase2Test {
 
     @Test
     void backgroundReturns200WithString() throws Exception {
+        mockMvc = chatMockMvc();
         when(agentRuntimeService.runBackground(any(String.class), any())).thenReturn(SESSION_ID.toString());
 
         String requestBody = objectMapper.writeValueAsString(

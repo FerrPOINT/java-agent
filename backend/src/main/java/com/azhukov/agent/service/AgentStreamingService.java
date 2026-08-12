@@ -13,8 +13,13 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.agent.CliStateApplier;
 import com.azhukov.agent.core.agent.InterruptToken;
+import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.agent.SteerBuffer;
+import com.azhukov.agent.core.agent.StreamContext;
+import com.azhukov.agent.core.agent.TokenEstimator;
+import com.azhukov.agent.core.agent.ToolResultFormatter;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
@@ -22,6 +27,7 @@ import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.client.langchain4j.ErrorClassifier;
+import com.azhukov.agent.metrics.AgentMetrics;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
@@ -68,18 +74,15 @@ public class AgentStreamingService {
     private final RuntimeConfigService runtimeConfigService;
     private final InterruptToken interruptToken;
     private final SteerBuffer steerBuffer;
+    private final TokenEstimator tokenEstimator;
+    private final ToolResultFormatter toolResultFormatter;
+    private final AgentSessionResolver sessionResolver;
+    private final CliStateApplier cliStateApplier;
+    private final AgentMetrics agentMetrics;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
 
     private static final int MAX_STREAM_RETRIES = 2;
     private static final int MAX_CONTINUATION_ATTEMPTS = 1;
-
-    /**
-     * Volatile flag shared between the streaming thread and SseEmitter lifecycle
-     * callbacks (which fire on the servlet container thread).  When the client
-     * disconnects (timeout, error, or completion), this is set to true so that
-     * {@link #send(SseEmitter, StreamEvent)} can skip further writes.
-     */
-    private volatile boolean clientDisconnected = false;
 
 
     public SseEmitter streamTurn(ChatRequest request) {
@@ -94,79 +97,31 @@ public class AgentStreamingService {
             return request;
         }
         SessionEntity session = sessionRepository.findById(request.sessionId()).orElse(null);
-        if (session == null) {
-            return request;
-        }
-        // Read current state
-        String reasoningEffort = request.reasoningEffort() != null ? request.reasoningEffort() : session.getCliStateValue("reasoningEffort");
-        String personality = request.personality() != null ? request.personality() : session.getCliStateValue("personality");
-        String queuedPrompt = request.queuedPrompt() != null ? request.queuedPrompt() : session.getCliStateValue("queuedPrompt");
-        String subgoal = request.subgoal() != null ? request.subgoal() : session.getSubgoal();
-        String goal = request.goal() != null ? request.goal() : session.getCliStateValue("goal");
-        if (goal == null || "true".equals(session.getCliStateValue("goalPaused"))) {
-            goal = null;
-        }
-        String subgoals = session.getCliStateValue("subgoals");
-
-        // Build merged request
-        String finalMessage = buildMergedMessage(request.message(), queuedPrompt, goal, subgoals, subgoal);
-        return new ChatRequest(
-            request.sessionId(),
-            finalMessage,
-            request.delegationDepth(),
-            request.timeoutMs(),
-            reasoningEffort,
-            request.fastMode(),
-            request.voiceMode(),
-            personality,
-            request.enabledTools(),
-            request.disabledTools(),
-            null, // consumed
-            null,
-            request.cdpUrl()
-        );
-    }
-
-    private String buildMergedMessage(String userMessage, String queuedPrompt, String goal, String subgoals, String subgoal) {
-        StringBuilder sb = new StringBuilder();
-        if (goal != null && !goal.isBlank()) {
-            sb.append("[Standing Goal]\n").append(goal).append("\n\n");
-        }
-        if (subgoals != null && !subgoals.isBlank()) {
-            sb.append("[Subgoals]\n").append(subgoals).append("\n\n");
-        }
-        if (subgoal != null && !subgoal.isBlank()) {
-            sb.append("[Goal/Subgoal]\n").append(subgoal).append("\n\n");
-        }
-        if (queuedPrompt != null && !queuedPrompt.isBlank()) {
-            sb.append("[Queued context]\n").append(queuedPrompt).append("\n\n");
-        }
-        sb.append(userMessage);
-        return sb.toString();
+        return cliStateApplier.applyCliState(request, session);
     }
 
     SseEmitter streamTurn(ChatRequest request, SseEmitter emitter) {
-        // Reset disconnect flag for a new stream
-        clientDisconnected = false;
+        // Create per-stream context (replaces the old singleton volatile boolean)
+        StreamContext streamCtx = new StreamContext();
 
         // Register SseEmitter lifecycle callbacks for cleanup and interrupt
         UUID callbackSessionId = request.sessionId();
         emitter.onTimeout(() -> {
-            clientDisconnected = true;
+            streamCtx.markDisconnected();
             if (callbackSessionId != null) {
                 interruptToken.cancel(callbackSessionId);
             }
             safeCompleteWithError(emitter, new TimeoutException("Stream timed out"));
         });
         emitter.onError(ex -> {
-            clientDisconnected = true;
+            streamCtx.markDisconnected();
             if (callbackSessionId != null) {
                 interruptToken.cancel(callbackSessionId);
             }
             log.warn("Stream error: {}", ex.getMessage());
         });
         emitter.onCompletion(() -> {
-            clientDisconnected = true;
+            streamCtx.markDisconnected();
             if (callbackSessionId != null) {
                 interruptToken.cancel(callbackSessionId);
             }
@@ -174,10 +129,10 @@ public class AgentStreamingService {
 
         CompletableFuture.runAsync(() -> {
             try {
-                runAgenticLoop(applyCliState(request), emitter);
+                runAgenticLoop(applyCliState(request), emitter, streamCtx);
             } catch (Exception e) {
                 log.error("Streaming failed", e);
-                send(emitter, new StreamEvent("error", null, null, e.getMessage()));
+                send(emitter, new StreamEvent("error", null, null, e.getMessage()), streamCtx);
                 safeCompleteWithError(emitter, e);
             } finally {
                 // Safety net: clear ThreadLocal if runAgenticLoop didn't
@@ -187,27 +142,16 @@ public class AgentStreamingService {
         return emitter;
     }
 
-    private void runAgenticLoop(ChatRequest request, SseEmitter emitter) {
+    private void runAgenticLoop(ChatRequest request, SseEmitter emitter, StreamContext streamCtx) {
         ThinkScrubber scrubber = new ThinkScrubber();
 
         // Resolve or create session — if sessionId is provided but not found in backend DB,
         // create a new session (the bot may have a sessionId from its own bot_sessions table
         // which is separate from backend's sessions table).
-        boolean isNew;
-        Session session;
-        if (request.sessionId() == null) {
-            isNew = true;
-            session = createSession("user-1", "openai-compatible", properties.getModel().getModelName());
-        } else {
-            try {
-                isNew = false;
-                session = loadSession(request.sessionId());
-            } catch (IllegalArgumentException e) {
-                log.warn("Session {} not found in backend, creating new session", request.sessionId());
-                isNew = true;
-                session = createSession("user-1", "openai-compatible", properties.getModel().getModelName());
-            }
-        }
+        var resolved = sessionResolver.resolveOrCreate(
+            request.sessionId(), "user-1", properties.getModel().getModelName());
+        boolean isNew = resolved.isNew();
+        Session session = resolved.session();
 
         // Set the ThreadLocal session ID so LangChain4jModelClient can check cancellation
         InterruptToken.setCurrentSessionId(session.id());
@@ -239,8 +183,8 @@ public class AgentStreamingService {
             // Check for interrupt at the top of each agentic-loop iteration
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                 log.info("Streaming turn cancelled by interrupt for session {}", session.id());
-                send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."));
-                send(emitter, new StreamEvent("done", null, null, null));
+                send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
+                send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
                 persistTurn(session, turnMessages, isNew);
                 return;
@@ -248,8 +192,8 @@ public class AgentStreamingService {
             if (iterationBudget.isExhausted(budget)) {
                 log.warn("Iteration budget exhausted for session {} after {} model calls",
                     session.id(), budget.modelCalls());
-                send(emitter, new StreamEvent("token", "Iteration budget exhausted.", null, null));
-                send(emitter, new StreamEvent("done", null, null, null));
+                send(emitter, new StreamEvent("token", "Iteration budget exhausted.", null, null), streamCtx);
+                send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
                 persistTurn(session, turnMessages, isNew);
                 return;
@@ -269,6 +213,7 @@ public class AgentStreamingService {
                 final AtomicReference<Throwable> capturedError = new AtomicReference<>();
 
                 try {
+                    long llmStart = System.currentTimeMillis();
                     modelClient.stream(context, tools, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
@@ -279,7 +224,7 @@ public class AgentStreamingService {
                             }
                             String scrubbed = scrubber.scrub(token);
                             if (!scrubbed.isEmpty()) {
-                                send(emitter, new StreamEvent("token", scrubbed, null, null));
+                                send(emitter, new StreamEvent("token", scrubbed, null, null), streamCtx);
                                 contentBuilder.append(scrubbed);
                             }
                         }
@@ -287,14 +232,14 @@ public class AgentStreamingService {
                         @Override
                         public void onToolCalls(List<ToolCall> toolCalls) {
                             collectedToolCalls.addAll(toolCalls);
-                            send(emitter, new StreamEvent("tool_calls", null, toolCalls, null));
+                            send(emitter, new StreamEvent("tool_calls", null, toolCalls, null), streamCtx);
                         }
 
                         @Override
                         public void onComplete() {
                             String remaining = scrubber.flush();
                             if (remaining != null && !remaining.isEmpty()) {
-                                send(emitter, new StreamEvent("token", remaining, null, null));
+                                send(emitter, new StreamEvent("token", remaining, null, null), streamCtx);
                                 contentBuilder.append(remaining);
                             }
                         }
@@ -304,12 +249,16 @@ public class AgentStreamingService {
                             capturedError.set(error);
                         }
                     });
+                    if (agentMetrics != null) {
+                        agentMetrics.llmLatencyTimer().record(System.currentTimeMillis() - llmStart,
+                            java.util.concurrent.TimeUnit.MILLISECONDS);
+                    }
                 } catch (Exception e) {
                     capturedError.set(e);
                 }
 
                 budget = iterationBudget.recordModelCall(budget,
-                    estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
+                    tokenEstimator.estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
 
                 // Handle errors with retry
                 if (capturedError.get() != null) {
@@ -323,14 +272,14 @@ public class AgentStreamingService {
                             log.warn("Streaming attempt {} failed ({}), retrying: {}",
                                 streamRetries + 1, errorType, error.getMessage());
                             send(emitter, new StreamEvent("retry", null, null,
-                                "Retrying after " + errorType));
+                                "Retrying after " + errorType), streamCtx);
                             streamRetries++;
                             continue;
                         }
                     }
                     // Permanent error or retries exhausted
                     log.error("Model call failed during streaming after {} retries", streamRetries, error);
-                    send(emitter, new StreamEvent("error", null, null, "Model call failed: " + error.getMessage()));
+                    send(emitter, new StreamEvent("error", null, null, "Model call failed: " + error.getMessage()), streamCtx);
                     safeCompleteWithError(emitter, error instanceof Exception
                         ? (Exception) error : new RuntimeException(error));
                     persistTurn(session, turnMessages, isNew);
@@ -342,7 +291,7 @@ public class AgentStreamingService {
                 if (isEmpty && continuationAttempts < MAX_CONTINUATION_ATTEMPTS) {
                     log.warn("Truncated response detected (empty content, no tool calls), sending continuation prompt");
                     send(emitter, new StreamEvent("continuation", null, null,
-                        "Continuation prompt sent to model"));
+                        "Continuation prompt sent to model"), streamCtx);
                     continuationAttempts++;
                     turnMessages.add(Message.assistant("", turnIndex));
                     turnMessages.add(Message.user("Please continue your response."));
@@ -363,8 +312,8 @@ public class AgentStreamingService {
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                 log.info("Streaming turn cancelled by interrupt after model response for session {}", session.id());
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
-                send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."));
-                send(emitter, new StreamEvent("done", null, null, null));
+                send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
+                send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
                 persistTurn(session, turnMessages, isNew);
                 return;
@@ -373,8 +322,8 @@ public class AgentStreamingService {
             // No tool calls → turn is complete
             if (!response.hasToolCalls()) {
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
-                sendMetadataEvent(emitter, session);
-                send(emitter, new StreamEvent("done", null, null, null));
+                sendMetadataEvent(emitter, session, streamCtx);
+                send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
                 persistTurn(session, turnMessages, isNew);
                 return;
@@ -386,8 +335,8 @@ public class AgentStreamingService {
             // Check interrupt before executing tools
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                 log.info("Streaming turn cancelled by interrupt before tool execution for session {}", session.id());
-                send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."));
-                send(emitter, new StreamEvent("done", null, null, null));
+                send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
+                send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
                 persistTurn(session, turnMessages, isNew);
                 return;
@@ -399,14 +348,14 @@ public class AgentStreamingService {
                 if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                     log.info("Streaming turn cancelled by interrupt before tool {} for session {}",
                         call.name(), session.id());
-                    send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."));
-                    send(emitter, new StreamEvent("done", null, null, null));
+                    send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
+                    send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                     emitter.complete();
                     persistTurn(session, turnMessages, isNew);
                     return;
                 }
                 send(emitter, new StreamEvent("tool_start", null, null, null,
-                    null, null, null, call.name(), null));
+                    null, null, null, call.name(), null), streamCtx);
 
                 long toolStart = System.currentTimeMillis();
                 ToolResult result = toolExecutionService.execute(
@@ -417,9 +366,9 @@ public class AgentStreamingService {
 
                 String resultPreview = formatResultPreview(result);
                 send(emitter, new StreamEvent("tool_result", null, null, null,
-                    null, null, null, call.name(), resultPreview));
+                    null, null, null, call.name(), resultPreview), streamCtx);
 
-                String toolResultContent = formatResult(result);
+                String toolResultContent = toolResultFormatter.formatResult(result);
                 // Inject pending steer note into the tool result
                 if (steerBuffer != null) {
                     String steerText = steerBuffer.consume(session.id());
@@ -435,8 +384,8 @@ public class AgentStreamingService {
         }
 
         // Max turns reached
-        send(emitter, new StreamEvent("token", "Reached maximum turns without completion.", null, null));
-        send(emitter, new StreamEvent("done", null, null, null));
+        send(emitter, new StreamEvent("token", "Reached maximum turns without completion.", null, null), streamCtx);
+        send(emitter, new StreamEvent("done", null, null, null), streamCtx);
         emitter.complete();
         persistTurn(session, turnMessages, isNew);
         } finally {
@@ -446,27 +395,20 @@ public class AgentStreamingService {
         }
     }
 
-    private String formatResult(ToolResult result) {
-        if (result.success()) {
-            return result.content();
-        }
-        return "Error: " + result.error();
-    }
-
     private String formatResultPreview(ToolResult result) {
-        String content = result.success() ? result.content() : "Error: " + result.error();
+        String content = toolResultFormatter.formatResult(result);
         int maxLen = 500;
         if (content.length() <= maxLen) return content;
         return content.substring(0, maxLen) + "...";
     }
 
-    private void sendMetadataEvent(SseEmitter emitter, Session session) {
+    private void sendMetadataEvent(SseEmitter emitter, Session session, StreamContext streamCtx) {
         try {
             String modelUsed = resolveModelUsed(session);
             int contextLength = properties.getContext().getMaxTokens();
             int contextTokens = estimateContextTokens(session.id());
             send(emitter, new StreamEvent("metadata", null, null, null,
-                modelUsed, contextTokens, contextLength, null, null));
+                modelUsed, contextTokens, contextLength, null, null), streamCtx);
         } catch (Exception e) {
             log.debug("Failed to send stream metadata event: {}", e.getMessage());
         }
@@ -507,20 +449,6 @@ public class AgentStreamingService {
         if (sessionId == null) return 0;
         UsageDto usage = usageTracker.getSessionUsage(sessionId);
         return usage != null ? usage.tokenEstimate() : 0;
-    }
-
-    private int estimateTokens(List<Message> messages) {
-        int chars = 0;
-        for (Message m : messages) {
-            chars += m.content() != null ? m.content().length() : 0;
-            if (m.toolCalls() != null) {
-                for (ToolCall tc : m.toolCalls()) {
-                    chars += tc.arguments() != null ? tc.arguments().length() : 0;
-                    chars += tc.name() != null ? tc.name().length() : 0;
-                }
-            }
-        }
-        return chars / 4 + 1;
     }
 
     private int estimateResponseTokens(String content, List<ToolCall> toolCalls) {
@@ -580,33 +508,6 @@ public class AgentStreamingService {
             .stream().map(messageMapper::toDomain).toList();
     }
 
-    private Session createSession(String userId, String provider, String modelName) {
-        var e = new SessionEntity();
-        e.setUserId(userId);
-        e.setModelProvider(provider);
-        e.setModelName(modelName);
-        e.setTitle("New chat");
-        e.setCreatedAt(Instant.now());
-        e.setUpdatedAt(Instant.now());
-        var saved = sessionRepository.save(e);
-        return sessionMapper.toDomain(saved);
-    }
-
-    private Session loadSession(UUID id) {
-        var e = sessionRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
-        Session session = sessionMapper.toDomain(e);
-        if (e.getCliState() != null && !e.getCliState().isEmpty()) {
-            for (var entry : e.getCliState().entrySet()) {
-                session = session.withMetadata(entry.getKey(), entry.getValue());
-            }
-        }
-        if (e.getSubgoal() != null && !e.getSubgoal().isBlank()) {
-            session = session.withMetadata("subgoal", e.getSubgoal());
-        }
-        return session;
-    }
-
     private void safeCompleteWithError(SseEmitter emitter, Throwable error) {
         try {
             emitter.completeWithError(error);
@@ -615,8 +516,8 @@ public class AgentStreamingService {
         }
     }
 
-    private void send(SseEmitter emitter, StreamEvent event) {
-        if (clientDisconnected) return;
+    private void send(SseEmitter emitter, StreamEvent event, StreamContext streamCtx) {
+        if (streamCtx.isClientDisconnected()) return;
         try {
             emitter.send(SseEmitter.event()
                 .id(UUID.randomUUID().toString())
@@ -626,7 +527,7 @@ public class AgentStreamingService {
             // Emitter already completed — ignore, don't log
         } catch (IOException e) {
             log.warn("Failed to send SSE event: {}", e.getMessage());
-            clientDisconnected = true;
+            streamCtx.markDisconnected();
         }
     }
 }

@@ -116,7 +116,9 @@ class AgentRuntimeFullScenariosTest {
             new ErrorClassifier(),
             null,
             new com.azhukov.agent.core.security.ApprovalQueue(),
-            null
+            null,
+            new TokenEstimator(),
+            new ToolResultFormatter()
         );
     }
 
@@ -143,7 +145,9 @@ class AgentRuntimeFullScenariosTest {
             new ErrorClassifier(),
             null,
             new com.azhukov.agent.core.security.ApprovalQueue(),
-            null
+            null,
+            new TokenEstimator(),
+            new ToolResultFormatter()
         );
     }
 

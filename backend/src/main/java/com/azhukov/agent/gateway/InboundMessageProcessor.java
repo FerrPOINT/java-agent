@@ -1,5 +1,6 @@
 package com.azhukov.agent.gateway;
 
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.gateway.model.MessageEvent;
@@ -21,6 +22,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     private final AgentRuntime agentRuntime;
     private final ObjectProvider<GatewayRoutingService> routingServiceProvider;
     private final MessagePersistenceService messagePersistenceService;
+    private final AgentProperties agentProperties;
 
     @Override
     public void accept(MessageEvent event) {
@@ -72,6 +74,31 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     }
 
     private boolean isAuthorized(SessionSource source) {
-        return source.platform() == Platform.TELEGRAM;
+        // Non-Telegram platforms are not gated by Telegram config
+        if (source.platform() != Platform.TELEGRAM) {
+            return false;
+        }
+        var telegram = agentProperties.getGateway().getTelegram();
+        // allowByDefault → open access
+        if (telegram.isAllowByDefault()) {
+            return true;
+        }
+        String userId = source.userId();
+        if (userId != null && !userId.isBlank()) {
+            for (String allowed : telegram.getAllowedUserIds()) {
+                if (userId.equals(allowed)) {
+                    return true;
+                }
+            }
+        }
+        String username = source.username();
+        if (username != null && !username.isBlank()) {
+            for (String allowed : telegram.getAllowedUsernames()) {
+                if (username.equals(allowed)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }

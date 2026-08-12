@@ -5,6 +5,10 @@ import com.azhukov.agent.api.dto.StreamEvent;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
+import com.azhukov.agent.core.agent.AgentSessionResolver;
+import com.azhukov.agent.core.agent.CliStateApplier;
+import com.azhukov.agent.core.agent.TokenEstimator;
+import com.azhukov.agent.core.agent.ToolResultFormatter;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.context.ContextEngine;
@@ -140,7 +144,10 @@ class AgentStreamingInterruptTest {
             contextEngine, objectMapper, usageTracker, properties,
             sessionRepository, messageRepository, transactionTemplate,
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
-            new RuntimeConfigService(), interruptToken, steerBuffer);
+            new RuntimeConfigService(), interruptToken, steerBuffer,
+            new TokenEstimator(), new ToolResultFormatter(),
+            new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate),
+            new CliStateApplier(), null);
     }
 
     /**

@@ -141,7 +141,13 @@ public class McpLifecycleManager {
     }
 
     private McpSyncClient createStdioClient(AgentProperties.McpProperties.ServerProperties server) {
-        ServerParameters.Builder paramsBuilder = ServerParameters.builder(server.getCommand())
+        String command = server.getCommand();
+        String validationError = validateStdioCommand(command);
+        if (validationError != null) {
+            throw new IllegalArgumentException(
+                "MCP server " + server.getName() + " command validation failed: " + validationError);
+        }
+        ServerParameters.Builder paramsBuilder = ServerParameters.builder(command)
             .args(server.getArgs());
         // Build filtered environment for stdio subprocess
         Map<String, String> filteredEnv = buildSafeEnv(server.getEnv());
@@ -187,6 +193,55 @@ public class McpLifecycleManager {
             return text;
         }
         return CREDENTIAL_PATTERN.matcher(text).replaceAll("[REDACTED]");
+    }
+
+    // ── Stdio command validation ─────────────────────────────────────────
+    private static final Set<String> SHELL_METACHARACTERS = Set.of(
+        ";", "|", "&", "&&", "||", "`", "$(", "$", "(", ")", "{", "}", "<", ">",
+        "\n", "\r", "\\"
+    );
+
+    /**
+     * Validates an MCP server stdio command before spawning a subprocess.
+     * <p>
+     * Checks:
+     * <ul>
+     *   <li>Command is not null or blank</li>
+     *   <li>Command does not contain shell metacharacters ({@code ;}, {@code |},
+     *       {@code &}, {@code &&}, {@code ||}, backticks, {@code $()}, etc.)</li>
+     *   <li>If the command is a single executable path (no spaces), checks that
+     *       the file exists and is executable</li>
+     * </ul>
+     *
+     * @param command the raw command string from MCP server configuration
+     * @return {@code null} if valid, or an error message describing why it is invalid
+     */
+    static String validateStdioCommand(String command) {
+        if (command == null || command.isBlank()) {
+            return "Command is null or empty";
+        }
+        String trimmed = command.trim();
+        // Check for shell metacharacters
+        for (String metachar : SHELL_METACHARACTERS) {
+            if (trimmed.contains(metachar)) {
+                return "Command contains forbidden shell metacharacter: '" + metachar + "'";
+            }
+        }
+        // If the command is a single token (no spaces), check it exists and is executable
+        if (!trimmed.contains(" ")) {
+            java.nio.file.Path cmdPath = java.nio.file.Paths.get(trimmed);
+            if (cmdPath.isAbsolute()) {
+                java.io.File cmdFile = cmdPath.toFile();
+                if (!cmdFile.exists()) {
+                    return "Command executable does not exist: " + trimmed;
+                }
+                if (!cmdFile.canExecute()) {
+                    return "Command file is not executable: " + trimmed;
+                }
+            }
+            // For relative paths, rely on PATH resolution at exec time
+        }
+        return null;
     }
 
     // ── Reconnection with exponential backoff ────────────────────────────

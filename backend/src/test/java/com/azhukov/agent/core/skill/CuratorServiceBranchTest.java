@@ -6,6 +6,8 @@ import com.azhukov.agent.persistence.repository.SkillRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -155,7 +157,7 @@ class CuratorServiceBranchTest {
     @Test
     void maybeRunCurator_nullActivityTime_runsIfIntervalPassed(@TempDir Path tempDir) {
         SkillRepository repo = mock(SkillRepository.class);
-        when(repo.findByArchivedFalse()).thenReturn(List.of());
+        when(repo.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
         AgentProperties props = new AgentProperties();
         CuratorService service = new CuratorService(repo, props);
         service.setStateFile(tempDir.resolve(".curator_state"));
@@ -234,7 +236,7 @@ class CuratorServiceBranchTest {
     void runCycle_protectedSkill_hermesAgentNotArchived() {
         SkillEntity protectedSkill = makeSkill("hermes-agent", Instant.now().minus(200, ChronoUnit.DAYS));
         SkillRepository repo = mock(SkillRepository.class);
-        when(repo.findByArchivedFalse()).thenReturn(List.of(protectedSkill));
+        when(repo.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(protectedSkill)));
         lenient().when(repo.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(repo, new AgentProperties());
@@ -247,7 +249,7 @@ class CuratorServiceBranchTest {
     void runCycle_protectedSkill_backendDevNotArchived() {
         SkillEntity protectedSkill = makeSkill("backend-dev", Instant.now().minus(200, ChronoUnit.DAYS));
         SkillRepository repo = mock(SkillRepository.class);
-        when(repo.findByArchivedFalse()).thenReturn(List.of(protectedSkill));
+        when(repo.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(protectedSkill)));
         lenient().when(repo.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(repo, new AgentProperties());
@@ -259,7 +261,7 @@ class CuratorServiceBranchTest {
     void runCycle_protectedSkill_defaultNotArchived() {
         SkillEntity protectedSkill = makeSkill("default", Instant.now().minus(200, ChronoUnit.DAYS));
         SkillRepository repo = mock(SkillRepository.class);
-        when(repo.findByArchivedFalse()).thenReturn(List.of(protectedSkill));
+        when(repo.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(protectedSkill)));
         lenient().when(repo.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(repo, new AgentProperties());
@@ -273,7 +275,7 @@ class CuratorServiceBranchTest {
     void runCycle_skillExactly30DaysOld_markedStale() {
         SkillEntity skill = makeSkill("stale-skill", Instant.now().minus(31, ChronoUnit.DAYS));
         SkillRepository repo = mock(SkillRepository.class);
-        when(repo.findByArchivedFalse()).thenReturn(List.of(skill));
+        when(repo.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(skill)));
         lenient().when(repo.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(repo, new AgentProperties());
@@ -286,7 +288,7 @@ class CuratorServiceBranchTest {
     void runCycle_skillExactly90DaysOld_archived() {
         SkillEntity skill = makeSkill("old-skill", Instant.now().minus(91, ChronoUnit.DAYS));
         SkillRepository repo = mock(SkillRepository.class);
-        when(repo.findByArchivedFalse()).thenReturn(List.of(skill));
+        when(repo.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(skill)));
         when(repo.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(repo, new AgentProperties());
@@ -303,7 +305,7 @@ class CuratorServiceBranchTest {
         props.getCurator().setDryRun(true);
         SkillEntity skill = makeSkill("stale-skill", Instant.now().minus(45, ChronoUnit.DAYS));
         SkillRepository repo = mock(SkillRepository.class);
-        when(repo.findByArchivedFalse()).thenReturn(List.of(skill));
+        when(repo.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(skill)));
         lenient().when(repo.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(repo, props);
@@ -319,7 +321,7 @@ class CuratorServiceBranchTest {
         SkillEntity pinned = makeSkill("pinned-skill", Instant.now().minus(100, ChronoUnit.DAYS));
         pinned.setPinned(true);
         SkillRepository repo = mock(SkillRepository.class);
-        when(repo.findByArchivedFalse()).thenReturn(List.of(pinned));
+        when(repo.findByArchivedFalse(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(pinned)));
         lenient().when(repo.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CuratorService service = new CuratorService(repo, props);

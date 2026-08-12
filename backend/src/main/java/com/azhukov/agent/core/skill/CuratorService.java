@@ -16,6 +16,7 @@ import com.azhukov.agent.persistence.entity.SkillEntity;
 import com.azhukov.agent.persistence.repository.SkillRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -400,7 +401,7 @@ public class CuratorService {
  }
 
  // S5: Classify skills with three-state lifecycle
- List<SkillEntity> allSkills = skillRepository.findByArchivedFalse();
+ List<SkillEntity> allSkills = skillRepository.findByArchivedFalse(PageRequest.of(0, 50)).getContent();
  List<String> active = new ArrayList<>();
  List<String> stale = new ArrayList<>();
  List<String> archived = new ArrayList<>();
