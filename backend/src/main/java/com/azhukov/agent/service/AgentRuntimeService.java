@@ -247,7 +247,7 @@ public class AgentRuntimeService {
     @Transactional
     public void restart() {
         log.info("Restarting agent — clearing all session messages for user-1");
-        for (SessionEntity session : sessionRepository.findAllByUserId("user-1", PageRequest.of(0, 50))) {
+        for (SessionEntity session : sessionRepository.findAllByUserId("user-1")) {
             messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId()));
         }
         log.info("Agent restart complete — all session messages cleared");
@@ -425,13 +425,11 @@ public class AgentRuntimeService {
         if (reasoningEffort == null || reasoningEffort.isBlank()) {
             reasoningEffort = session.metadata().get("reasoningEffort");
         }
-        Integer maxTokens = null;
-        if (maxTokens == null || maxTokens <= 0) {
-            try {
-                maxTokens = Integer.parseInt(session.metadata().getOrDefault("maxTokens", "0"));
-            } catch (NumberFormatException e) {
-                maxTokens = 0;
-            }
+        Integer maxTokens;
+        try {
+            maxTokens = Integer.parseInt(session.metadata().getOrDefault("maxTokens", "0"));
+        } catch (NumberFormatException e) {
+            maxTokens = 0;
         }
         return new ModelRequestOptions(reasoningEffort, fastMode, request.voiceMode(),
             request.personality(), request.subgoal(), maxTokens);

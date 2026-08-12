@@ -583,8 +583,8 @@ class AgentRuntimeServiceBranchTest {
     void restartClearsAllSessionMessages() {
         SessionEntity s1 = newSessionEntity(UUID.randomUUID(), "user-1", "S1", "");
         SessionEntity s2 = newSessionEntity(UUID.randomUUID(), "user-1", "S2", "");
-        when(sessionRepository.findAllByUserId("user-1", PageRequest.of(0, 50)))
-            .thenReturn(new PageImpl<>(List.of(s1, s2)));
+        when(sessionRepository.findAllByUserId("user-1"))
+            .thenReturn(List.of(s1, s2));
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any()))
             .thenReturn(List.of());
 

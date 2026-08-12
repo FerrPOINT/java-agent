@@ -113,7 +113,7 @@ public class DefaultToolGuardrails implements ToolGuardrails {
   sessionStates.remove(sessionId);
  }
 
- private Set<String> blockedTools = Set.of();
+ private volatile Set<String> blockedTools = Set.of();
 
  // ─── Pre-call validation (before_call) ───
 

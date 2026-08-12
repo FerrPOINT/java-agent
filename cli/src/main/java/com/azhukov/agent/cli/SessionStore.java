@@ -1,7 +1,6 @@
 package com.azhukov.agent.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
@@ -32,19 +31,13 @@ public class SessionStore {
     private final Map<String, SessionEntry> byId = new LinkedHashMap<>();
 
     public SessionStore() {
-        this(createDefaultMapper(), STORE_FILE);
+        this(SharedObjectMapper.get(), STORE_FILE);
     }
 
     public SessionStore(ObjectMapper objectMapper, Path storePath) {
         this.objectMapper = objectMapper;
         this.storePath = storePath;
         load();
-    }
-
-    private static ObjectMapper createDefaultMapper() {
-        ObjectMapper m = new ObjectMapper();
-        m.registerModule(new JavaTimeModule());
-        return m;
     }
 
     /**

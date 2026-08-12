@@ -49,6 +49,19 @@ public class InterruptToken {
     }
 
     /**
+     * Clears the static singleton reference on bean destruction to prevent
+     * leaks across Spring context restarts (e.g. in integration tests).
+     */
+    @jakarta.annotation.PreDestroy
+    void destroy() {
+        // Only clear if we are still the registered instance (avoids clearing
+        // a newer instance set by a different context).
+        if (instance == this) {
+            instance = null;
+        }
+    }
+
+    /**
      * Called by the container (or manually in tests) to register the singleton
      * so that {@link #isCancelledGlobally()} can check cancellation from code
      * that doesn't have a direct reference (e.g. LangChain4jModelClient).

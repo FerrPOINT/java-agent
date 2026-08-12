@@ -254,7 +254,13 @@ public class DefaultContextEngine implements ContextEngine {
  if (trimmed.size() <= 2) break;
  boolean removed = false;
  for (int i = 1; i < trimmed.size() - 1; i++) {
+ // M25: If this message is a tool call (has toolCalls), also remove
+ // the following tool result messages to keep pairs together.
  trimmed.remove(i);
+ // Remove trailing TOOL messages that follow the removed tool call
+ while (i < trimmed.size() - 1 && trimmed.get(i).role() == Role.TOOL) {
+ trimmed.remove(i);
+ }
  removed = true;
  break;
  }

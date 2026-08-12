@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.client;
 
+import com.azhukov.agent.bot.config.SharedObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -42,7 +43,7 @@ public class DohIpDiscovery {
     private final HttpClient httpClient;
 
     public DohIpDiscovery() {
-        this(new ObjectMapper(), createDefaultHttpClient());
+        this(SharedObjectMapper.get(), createDefaultHttpClient());
     }
 
     public DohIpDiscovery(ObjectMapper objectMapper, HttpClient httpClient) {

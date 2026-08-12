@@ -114,10 +114,10 @@ class DatabaseMemoryProviderTest {
     @Test
     void replaceReturnsMessageWhenNoMatches() {
         MemoryRepository repo = mock(MemoryRepository.class);
-        when(repo.findByUserIdAndTargetAndFactContaining("u", "mem", "old")).thenReturn(List.of());
+        when(repo.findByUserIdAndTargetAndFact("u", "mem", "old")).thenReturn(List.of());
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String result = p.replace("u", "mem", "old", "new");
-        assertThat(result).isEqualTo("No entry found containing: old");
+        assertThat(result).isEqualTo("No entry found with exact text: old");
         verify(repo, never()).save(any());
     }
 
@@ -125,26 +125,38 @@ class DatabaseMemoryProviderTest {
     void replaceUpdatesMatchingEntitiesAndReturnsNull() {
         MemoryRepository repo = mock(MemoryRepository.class);
         MemoryEntity e1 = new MemoryEntity();
-        e1.setFact("this is old text here");
+        e1.setFact("old text");
         MemoryEntity e2 = new MemoryEntity();
-        e2.setFact("old text and more");
-        when(repo.findByUserIdAndTargetAndFactContaining("u", "mem", "old text"))
+        e2.setFact("old text");
+        when(repo.findByUserIdAndTargetAndFact("u", "mem", "old text"))
             .thenReturn(List.of(e1, e2));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String result = p.replace("u", "mem", "old text", "new text");
         assertThat(result).isNull();
-        assertThat(e1.getFact()).isEqualTo("this is new text here");
-        assertThat(e2.getFact()).isEqualTo("new text and more");
+        // M24: Exact match — the fact is replaced entirely, not substring-replaced
+        assertThat(e1.getFact()).isEqualTo("new text");
+        assertThat(e2.getFact()).isEqualTo("new text");
         verify(repo, times(2)).save(any());
+    }
+
+    @Test
+    void replaceDoesNotMatchSubstringEntries() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        // M24: Entries that merely contain the old text should NOT match
+        when(repo.findByUserIdAndTargetAndFact("u", "mem", "old text")).thenReturn(List.of());
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        String result = p.replace("u", "mem", "old text", "new text");
+        assertThat(result).isEqualTo("No entry found with exact text: old text");
+        verify(repo, never()).save(any());
     }
 
     @Test
     void removeReturnsMessageWhenNoMatches() {
         MemoryRepository repo = mock(MemoryRepository.class);
-        when(repo.findByUserIdAndTargetAndFactContaining("u", "mem", "old")).thenReturn(List.of());
+        when(repo.findByUserIdAndTargetAndFact("u", "mem", "old")).thenReturn(List.of());
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String result = p.remove("u", "mem", "old");
-        assertThat(result).isEqualTo("No entry found containing: old");
+        assertThat(result).isEqualTo("No entry found with exact text: old");
         verify(repo, never()).deleteAll(any());
     }
 
@@ -152,8 +164,8 @@ class DatabaseMemoryProviderTest {
     void removeDeletesMatchingEntitiesAndReturnsNull() {
         MemoryRepository repo = mock(MemoryRepository.class);
         MemoryEntity e1 = new MemoryEntity();
-        e1.setFact("old text here");
-        when(repo.findByUserIdAndTargetAndFactContaining("u", "mem", "old text"))
+        e1.setFact("old text");
+        when(repo.findByUserIdAndTargetAndFact("u", "mem", "old text"))
             .thenReturn(List.of(e1));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String result = p.remove("u", "mem", "old text");

@@ -217,9 +217,17 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  // ─── Text / Media ──────────────────────────────────────────────
 
  private void handleTextOrMedia(UpdateEvent event) {
- handleTextOrMediaInternal(event);
- // Drain queued messages after top-level processing (not recursive)
- drainQueue(event.chatId());
+ long chatId = event.chatId();
+ ReentrantLock lock = locks.computeIfAbsent(chatId, k -> new ReentrantLock());
+ lock.lock();
+ try {
+     handleTextOrMediaInternal(event);
+     // M28: Drain queued messages inside the per-chat lock to prevent
+     // new messages arriving between draining and processing
+     drainQueueLocked(chatId);
+ } finally {
+     lock.unlock();
+ }
  }
 
  private void handleTextOrMediaInternal(UpdateEvent event) {
@@ -387,17 +395,21 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
  /**
  * Drain queued messages for a chat — linear, not recursive.
- * Uses {@link #handleTextOrMediaInternal} to avoid recursive drain calls.
+ * M28: Must be called while holding the per-chat lock to prevent
+ * new messages from arriving between draining and processing.
+ * Uses {@link #handleTextOrMediaInternalBody} directly to avoid
+ * re-acquiring the lock (which would deadlock with ReentrantLock
+ * — actually ReentrantLock is reentrant, but we avoid the overhead).
  * Guards against infinite loops with a max drain depth.
  */
- private void drainQueue(long chatId) {
+ private void drainQueueLocked(long chatId) {
  int maxDrainDepth = 100;
  int drained = 0;
  while (busyHandler.hasQueued(chatId) && drained < maxDrainDepth) {
  List<UpdateEvent> queued = busyHandler.drainQueue(chatId);
  for (UpdateEvent queuedEvent : queued) {
  try {
- handleTextOrMediaInternal(queuedEvent);
+ handleTextOrMediaInternalBody(queuedEvent);
  } catch (Exception e) {
  log.error("Error draining queued message for chat {}: {}", chatId, e.getMessage(), e);
  }

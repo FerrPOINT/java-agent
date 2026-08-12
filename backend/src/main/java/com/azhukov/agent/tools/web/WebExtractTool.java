@@ -76,6 +76,7 @@ public class WebExtractTool implements ToolHandler {
         Document doc = Jsoup.connect(url)
             .userAgent("Mozilla/5.0 (compatible; JavaAgent/1.0)")
             .timeout(timeoutSeconds * 1000)
+            .followRedirects(false)
             .get();
 
         for (Element el : doc.select("script, style, nav, header, footer, aside, form")) {

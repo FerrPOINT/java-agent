@@ -5,6 +5,7 @@ import com.azhukov.agent.persistence.entity.PendingMemoryEntity;
 import com.azhukov.agent.persistence.repository.PendingMemoryRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -80,6 +81,7 @@ public class WriteApprovalGate {
      * Approve a pending write — apply it to memory.
      * @return true on success, false if not found or already resolved
      */
+    @Transactional
     public boolean approve(String userId, UUID id) {
         Optional<PendingMemoryEntity> opt = pendingRepository.findByIdAndUserId(id, userId);
         if (opt.isEmpty()) return false;

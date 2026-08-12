@@ -38,8 +38,9 @@ public class TypingManager {
 
 
     public void startTyping(long chatId) {
-        // Atomic: putIfAbsent prevents duplicate tasks from concurrent calls
-        if (activeTyping.containsKey(chatId)) return;
+        // Atomic: putIfAbsent prevents duplicate tasks from concurrent calls.
+        // Send typing immediately — the first sendTyping gives instant feedback
+        // even if another thread wins the putIfAbsent race (the extra send is harmless).
         telegramClient.sendTyping(chatId);
         ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(() -> {
             try {

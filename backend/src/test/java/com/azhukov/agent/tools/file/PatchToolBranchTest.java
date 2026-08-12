@@ -272,16 +272,17 @@ class PatchToolBranchTest {
         assertThat(Files.readString(file)).isEqualTo("x bar x baz x");
     }
 
-    // ── replace where old equals new (no change) ──
+    // ── replace where old equals new (string found, no change) ──
 
     @Test
-    void replaceMode_replaceAllNoChange_returnsFail(@TempDir Path dir) throws Exception {
+    void replaceMode_replaceAllNoChange_returnsSuccess(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("f.txt");
         Files.writeString(file, "foo bar");
         ToolResult r = tool.execute(
             "{\"path\":\"" + file + "\",\"old_string\":\"foo\",\"new_string\":\"foo\",\"replace_all\":true}", null, session);
-        // When updated equals content, should return "old_string not found"
-        assertThat(r.success()).isFalse();
+        // When old_string is found in content, the patch succeeds even if new_string equals old_string.
+        // The fix (L32) uses indexOf to check existence rather than comparing updated vs content.
+        assertThat(r.success()).isTrue();
     }
 
     /** Convert a raw string to a JSON string literal */

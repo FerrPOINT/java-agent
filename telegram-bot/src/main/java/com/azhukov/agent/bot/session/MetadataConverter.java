@@ -1,12 +1,11 @@
 package com.azhukov.agent.bot.session;
 
+import com.azhukov.agent.bot.config.SharedObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;
 
 import java.util.concurrent.ConcurrentHashMap;
-
 /**
  * JPA {@link AttributeConverter} that serializes a {@link ConcurrentHashMap} to a JSON string
  * for storage in the {@code bot_sessions.metadata} column and deserializes it back.
@@ -17,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Converter
 public class MetadataConverter implements AttributeConverter<ConcurrentHashMap<String, String>, String> {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER = SharedObjectMapper.get();
     private static final TypeReference<ConcurrentHashMap<String, String>> TYPE = new TypeReference<>() {};
 
     @Override

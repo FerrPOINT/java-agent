@@ -146,8 +146,8 @@ class AgentConfigBeanMethodsTest {
     }
 
     @Test
-    void legacyToolGuardrails_bean() {
-        assertThat(config.legacyToolGuardrails(properties, mock(com.azhukov.agent.core.security.ApprovalQueue.class))).isNotNull();
+    void toolGuardrails_bean() {
+        assertThat(config.toolGuardrails(properties, mock(com.azhukov.agent.core.security.ApprovalQueue.class))).isNotNull();
     }
 
     @Test
@@ -188,11 +188,6 @@ class AgentConfigBeanMethodsTest {
     @Test
     void redactor_bean() {
         assertThat(config.redactor(properties)).isNotNull();
-    }
-
-    @Test
-    void toolGuardrails_bean() {
-        assertThat(config.toolGuardrails(properties, mock(com.azhukov.agent.core.security.ApprovalQueue.class))).isNotNull();
     }
 
     @Test

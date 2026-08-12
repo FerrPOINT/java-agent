@@ -67,14 +67,14 @@ public class PatchTool implements ToolHandler {
 
     private ToolResult replace(Path path, String oldString, String newString, boolean replaceAll) throws IOException {
         String content = Files.readString(path, StandardCharsets.UTF_8);
-        // Strategy 0: exact match
-        if (content.contains(oldString)) {
+        // Strategy 0: exact match — use indexOf to check existence before replacing.
+        // This correctly handles the edge case where oldString.equals(newString):
+        // replaceFirst/replace would produce identical content, but the string WAS
+        // found, so the patch should succeed rather than reporting "not found".
+        if (content.indexOf(oldString) >= 0) {
             String updated = replaceAll
                 ? content.replace(oldString, newString)
                 : content.replaceFirst(Pattern.quote(oldString), Matcher.quoteReplacement(newString));
-            if (updated.equals(content)) {
-                return ToolResult.fail("old_string not found");
-            }
             Files.writeString(path, updated, StandardCharsets.UTF_8);
             return ToolResult.ok("Patched " + path + " (replace " + (replaceAll ? "all" : "first") + ")");
         }

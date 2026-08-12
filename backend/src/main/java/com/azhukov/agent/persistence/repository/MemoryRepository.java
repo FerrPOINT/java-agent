@@ -22,5 +22,8 @@ public interface MemoryRepository extends JpaRepository<MemoryEntity, UUID> {
 
     List<MemoryEntity> findByUserIdAndTargetAndFactContaining(String userId, String target, String fact);
 
+    // M24: Exact match for replace/remove to prevent unintended broad edits
+    List<MemoryEntity> findByUserIdAndTargetAndFact(String userId, String target, String fact);
+
     void deleteByUserIdAndTargetAndFactContaining(String userId, String target, String fact);
 }

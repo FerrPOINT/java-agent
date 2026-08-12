@@ -83,6 +83,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ExecutorService memorySyncExecutor = Executors.newThreadPerTaskExecutor(
         Thread.ofVirtual().name("memory-sync-", 0).factory());
 
+    // M17: Shared executor for parallel tool execution — avoids creating a new executor per batch
+    private final ExecutorService parallelToolExecutor = Executors.newThreadPerTaskExecutor(
+        Thread.ofVirtual().name("tool-parallel-", 0).factory());
+
     @PreDestroy
     void shutdown() {
         memorySyncExecutor.shutdown();
@@ -92,6 +96,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }
         } catch (InterruptedException e) {
             memorySyncExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+        parallelToolExecutor.shutdown();
+        try {
+            if (!parallelToolExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                parallelToolExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            parallelToolExecutor.shutdownNow();
             Thread.currentThread().interrupt();
         }
     }
@@ -401,7 +414,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
                             compressionAttempted = true;
                             log.info("Context compressed from {} to {} messages, retrying model call",
                                 context.size(), compressed.size());
-                            // Don't consume a retry attempt for compression — retry immediately
+                            // Don't consume a retry attempt for compression — retry immediately.
+                            // The attempt-- below offsets the loop's attempt++ so that the
+                            // compression retry effectively reuses the current attempt slot
+                            // (net-zero change), giving compression a "free" retry that
+                            // doesn't count against the retry budget.
                             attempt--;
                             continue;
                         } else {
@@ -480,33 +497,32 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private List<Message> executeToolsInParallel(List<ToolCall> toolCalls, Session session,
                                                   TurnState turnState, int currentTurnIndex) {
         List<CompletableFuture<ToolResult>> futures = new ArrayList<>();
-        try (ExecutorService parallelExecutor = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (ToolCall call : toolCalls) {
-                futures.add(CompletableFuture.supplyAsync(() -> {
-                    try {
-                        return toolExecutionService.execute(call.name(), call.id(),
-                            call.arguments(), null, session, turnState);
-                    } catch (Exception e) {
-                        log.warn("Tool {} failed in parallel execution: {}", call.name(), e.getMessage());
-                        return ToolResult.fail("Tool execution failed: " + call.name() + " - " + e.getMessage());
-                    }
-                }, parallelExecutor));
-            }
-
-            // Wait for all futures to complete
-            CompletableFuture<Void> allOf = CompletableFuture.allOf(
-                futures.toArray(new CompletableFuture[0]));
-            try {
-                allOf.join();
-            } catch (CompletionException e) {
-                log.warn("Parallel tool execution had unexpected error", e);
-            }
-
-            // If interrupted, cancel remaining futures
-            if (Thread.currentThread().isInterrupted()) {
-                for (CompletableFuture<ToolResult> f : futures) {
-                    f.cancel(true);
+        // M17: Use shared executor instead of creating one per tool batch
+        for (ToolCall call : toolCalls) {
+            futures.add(CompletableFuture.supplyAsync(() -> {
+                try {
+                    return toolExecutionService.execute(call.name(), call.id(),
+                        call.arguments(), null, session, turnState);
+                } catch (Exception e) {
+                    log.warn("Tool {} failed in parallel execution: {}", call.name(), e.getMessage());
+                    return ToolResult.fail("Tool execution failed: " + call.name() + " - " + e.getMessage());
                 }
+            }, parallelToolExecutor));
+        }
+
+        // Wait for all futures to complete
+        CompletableFuture<Void> allOf = CompletableFuture.allOf(
+            futures.toArray(new CompletableFuture[0]));
+        try {
+            allOf.join();
+        } catch (CompletionException e) {
+            log.warn("Parallel tool execution had unexpected error", e);
+        }
+
+        // If interrupted, cancel remaining futures
+        if (Thread.currentThread().isInterrupted()) {
+            for (CompletableFuture<ToolResult> f : futures) {
+                f.cancel(true);
             }
         }
 

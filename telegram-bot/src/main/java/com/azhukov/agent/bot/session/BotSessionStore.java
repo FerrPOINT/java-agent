@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Service layer for managing bot sessions.
@@ -20,6 +21,13 @@ import java.util.UUID;
 public class BotSessionStore {
 
     private final BotSessionRepository repository;
+
+    /**
+     * Locks per userId to prevent race conditions on concurrent resolveOrCreate calls.
+     * Without this, two concurrent calls for the same user could both find no existing
+     * session and both create new ones, resulting in duplicate active sessions.
+     */
+    private final ConcurrentHashMap<String, Object> createLocks = new ConcurrentHashMap<>();
 
     /**
      * Find the active session for the given user, or create a new one.
@@ -36,14 +44,26 @@ public class BotSessionStore {
             return existing.get();
         }
 
-        BotSessionEntity session = new BotSessionEntity();
-        session.setUserId(userId);
-        session.setChatId(chatId);
-        session.setUsername(username);
-        session.setActive(true);
-        session.setCreatedAt(Instant.now());
-        session.setUpdatedAt(Instant.now());
-        return repository.save(session);
+        // Synchronize per userId to prevent duplicate session creation on concurrent calls.
+        // The database unique constraint is the ultimate safety net, but this lock avoids
+        // unnecessary constraint violation exceptions and duplicate write attempts.
+        Object lock = createLocks.computeIfAbsent(userId, k -> new Object());
+        synchronized (lock) {
+            // Double-check after acquiring the lock — another thread may have created the session
+            existing = repository.findByUserIdAndActiveTrue(userId);
+            if (existing.isPresent()) {
+                return existing.get();
+            }
+
+            BotSessionEntity session = new BotSessionEntity();
+            session.setUserId(userId);
+            session.setChatId(chatId);
+            session.setUsername(username);
+            session.setActive(true);
+            session.setCreatedAt(Instant.now());
+            session.setUpdatedAt(Instant.now());
+            return repository.save(session);
+        }
     }
 
     @Transactional

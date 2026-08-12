@@ -502,11 +502,14 @@ public class McpLifecycleManager {
                     .collect(Collectors.joining("\n"));
                 return ToolResult.ok(text);
             } catch (Exception e) {
-                // Check if this is a connection error — trigger auto-reconnect
+                // Only reconnect on actual connection failures, not tool execution errors.
+                // Tool execution errors (e.g. bad arguments, server-side logic errors) should
+                // NOT trigger a reconnect — that would unnecessarily tear down a working connection.
                 String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-                if (msg.contains("connection") || msg.contains("closed") || msg.contains("disconnected")
-                    || msg.contains("refused") || msg.contains("reset") || msg.contains("not connected")
-                    || e instanceof java.io.IOException) {
+                boolean isConnectionError = msg.contains("connection") || msg.contains("closed")
+                    || msg.contains("disconnected") || msg.contains("refused")
+                    || msg.contains("reset") || msg.contains("not connected");
+                if (isConnectionError) {
                     log.warn("MCP tool '{}' on server '{}' failed with connection error, triggering reconnect: {}",
                         toolName, serverName, e.getMessage());
                     // Find the server properties and schedule a reconnect

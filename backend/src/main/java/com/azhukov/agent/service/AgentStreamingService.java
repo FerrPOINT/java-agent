@@ -191,6 +191,9 @@ public class AgentStreamingService {
         // Set the ThreadLocal session ID so LangChain4jModelClient can check cancellation
         InterruptToken.setCurrentSessionId(session.id());
 
+        // M18: Track whether persistTurn has already been called to prevent double-persistence
+        java.util.concurrent.atomic.AtomicBoolean persisted = new java.util.concurrent.atomic.AtomicBoolean(false);
+
         try {
 
         // Build messages with full session context (system + history + user)
@@ -221,7 +224,7 @@ public class AgentStreamingService {
                 send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
-                persistTurn(session, turnMessages, isNew);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
                 return;
             }
             if (iterationBudget.isExhausted(budget)) {
@@ -230,7 +233,7 @@ public class AgentStreamingService {
                 send(emitter, new StreamEvent("token", "Iteration budget exhausted.", null, null), streamCtx);
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
-                persistTurn(session, turnMessages, isNew);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
                 return;
             }
 
@@ -325,7 +328,7 @@ public class AgentStreamingService {
                                 send(emitter, new StreamEvent("error", null, null,
                                     "Retry interrupted: " + ie.getMessage()), streamCtx);
                                 safeCompleteWithError(emitter, ie);
-                                persistTurn(session, turnMessages, isNew);
+                                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
                                 return;
                             }
                             streamRetries++;
@@ -368,7 +371,7 @@ public class AgentStreamingService {
                     send(emitter, new StreamEvent("error", null, null, errorMsg), streamCtx);
                     safeCompleteWithError(emitter, error instanceof Exception
                         ? (Exception) error : new RuntimeException(error));
-                    persistTurn(session, turnMessages, isNew);
+                    if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
                     return;
                 }
 
@@ -401,7 +404,7 @@ public class AgentStreamingService {
                 send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
-                persistTurn(session, turnMessages, isNew);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
                 return;
             }
 
@@ -411,7 +414,7 @@ public class AgentStreamingService {
                 sendMetadataEvent(emitter, session, streamCtx);
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
-                persistTurn(session, turnMessages, isNew);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
                 return;
             }
 
@@ -424,7 +427,7 @@ public class AgentStreamingService {
                 send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
-                persistTurn(session, turnMessages, isNew);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
                 return;
             }
 
@@ -437,7 +440,7 @@ public class AgentStreamingService {
                     send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                     send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                     emitter.complete();
-                    persistTurn(session, turnMessages, isNew);
+                    if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
                     return;
                 }
                 send(emitter, new StreamEvent("tool_start", null, null, null,
@@ -473,7 +476,7 @@ public class AgentStreamingService {
         send(emitter, new StreamEvent("token", "Reached maximum turns without completion.", null, null), streamCtx);
         send(emitter, new StreamEvent("done", null, null, null), streamCtx);
         emitter.complete();
-        persistTurn(session, turnMessages, isNew);
+        if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
         } finally {
             // Clean up interrupt token map entry and ThreadLocal after stream completion
             interruptToken.remove(session.id());

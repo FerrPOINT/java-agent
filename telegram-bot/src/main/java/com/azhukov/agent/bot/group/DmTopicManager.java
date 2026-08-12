@@ -2,8 +2,8 @@ package com.azhukov.agent.bot.group;
 
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
+import com.azhukov.agent.bot.config.SharedObjectMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
@@ -46,7 +46,7 @@ public class DmTopicManager {
     public DmTopicManager(BotProperties properties, TelegramClient telegramClient) {
         this(properties, telegramClient,
             Path.of(System.getProperty("user.home"), ".java-agent", "bot-config.json"),
-            new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT));
+            SharedObjectMapper.pretty());
     }
 
     public DmTopicManager(BotProperties properties, TelegramClient telegramClient, Path configFile, ObjectMapper objectMapper) {

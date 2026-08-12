@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.lock;
 
+import com.azhukov.agent.bot.config.SharedObjectMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
@@ -46,7 +47,7 @@ public class BotLockManager {
      * @param replace   when true, signal the existing instance to stop and take over
      */
     public BotLockManager(String botToken, boolean replace) {
-        this(new ObjectMapper(), Path.of(LOCK_DIR), botToken, replace);
+        this(SharedObjectMapper.get(), Path.of(LOCK_DIR), botToken, replace);
     }
 
     public BotLockManager(ObjectMapper objectMapper, Path lockDir, String botToken, boolean replace) {

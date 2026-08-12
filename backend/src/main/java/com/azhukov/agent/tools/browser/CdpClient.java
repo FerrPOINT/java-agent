@@ -74,11 +74,11 @@ public class CdpClient {
     }
 
     private void connectWebSocket() throws Exception {
-        CompletableFuture<Void> connected = new CompletableFuture<>();
+        CompletableFuture<Void> connectFuture = new CompletableFuture<>();
         this.webSocketClient = new WebSocketClient(new URI(webSocketUrl)) {
             @Override
             public void onOpen(ServerHandshake handshake) {
-                connected.complete(null);
+                connectFuture.complete(null);
             }
             @Override
             public void onMessage(String message) {
@@ -90,12 +90,12 @@ public class CdpClient {
             }
             @Override
             public void onError(Exception ex) {
-                if (!connected.isDone()) connected.completeExceptionally(ex);
+                if (!connectFuture.isDone()) connectFuture.completeExceptionally(ex);
                 log.error("CDP websocket error", ex);
             }
         };
         webSocketClient.connect();
-        connected.get(120, TimeUnit.SECONDS);
+        connectFuture.get(120, TimeUnit.SECONDS);
     }
 
     public synchronized void disconnect() {

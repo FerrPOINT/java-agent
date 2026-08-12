@@ -14,7 +14,6 @@ import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -63,7 +62,7 @@ public class CronJobService {
             return;
         }
         log.info("Initializing cron jobs...");
-        List<CronJobEntity> jobs = cronJobRepository.findByEnabledTrue(PageRequest.of(0, 50)).getContent();
+        List<CronJobEntity> jobs = cronJobRepository.findByEnabledTrue();
         for (CronJobEntity job : jobs) {
             scheduleJob(job);
         }

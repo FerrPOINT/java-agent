@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
@@ -47,8 +48,8 @@ public class LongPollingService {
     // P0: Gateway lock — prevents concurrent instances with the same bot token
     private BotLockManager lockManager;
 
-    // B3: 409 conflict tracking
-    private int conflictRetryCount = 0;
+    // B3: 409 conflict tracking — M29: AtomicInteger for thread safety
+    private final AtomicInteger conflictRetryCount = new AtomicInteger(0);
     private static final long[] CONFLICT_BACKOFF_MS = {15_000, 30_000, 55_000, 55_000, 55_000};
 
     public boolean isRunning() {
@@ -151,7 +152,7 @@ public class LongPollingService {
                 return null;
             }
             // Successful fetch — reset conflict counter
-            conflictRetryCount = 0;
+            conflictRetryCount.set(0);
             List<Map<String, Object>> updates = result.get();
             if (!updates.isEmpty()) {
                 log.info("Received {} update(s) from Telegram (offset={})", updates.size(), offset);
@@ -178,11 +179,11 @@ public class LongPollingService {
      */
     private List<Map<String, Object>> handleConflict() throws InterruptedException {
         int maxRetries = properties.getPolling().getConflictMaxRetries();
-        conflictRetryCount++;
+        int currentCount = conflictRetryCount.incrementAndGet();
         log.warn("Another polling instance detected (HTTP 409), backing off. Attempt {}/{}",
-            conflictRetryCount, maxRetries);
+            currentCount, maxRetries);
 
-        if (conflictRetryCount > maxRetries) {
+        if (currentCount > maxRetries) {
             log.error("Max conflict retries ({}) exceeded for HTTP 409. Stopping polling to avoid infinite loop.",
                 maxRetries);
             running.set(false);
@@ -190,7 +191,7 @@ public class LongPollingService {
         }
 
         // Exponential backoff: 15s, 30s, 55s, 55s, 55s...
-        int backoffIndex = Math.min(conflictRetryCount - 1, CONFLICT_BACKOFF_MS.length - 1);
+        int backoffIndex = Math.min(currentCount - 1, CONFLICT_BACKOFF_MS.length - 1);
         long backoffMs = CONFLICT_BACKOFF_MS[backoffIndex];
         log.info("Backing off for {}ms before retrying getUpdates", backoffMs);
 

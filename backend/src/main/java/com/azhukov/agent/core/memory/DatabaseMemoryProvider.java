@@ -49,13 +49,13 @@ public class DatabaseMemoryProvider implements MemoryProvider {
 
     @Override
     public String replace(String userId, String target, String oldText, String newText) {
-        List<MemoryEntity> matches = memoryRepository.findByUserIdAndTargetAndFactContaining(userId, target, oldText);
+        // M24: Use exact match instead of contains to prevent unintended broad edits
+        List<MemoryEntity> matches = memoryRepository.findByUserIdAndTargetAndFact(userId, target, oldText);
         if (matches.isEmpty()) {
-            return "No entry found containing: " + oldText;
+            return "No entry found with exact text: " + oldText;
         }
         for (MemoryEntity e : matches) {
-            String updatedFact = e.getFact().replace(oldText, newText);
-            e.setFact(updatedFact);
+            e.setFact(newText);
             e.setUpdatedAt(Instant.now());
             memoryRepository.save(e);
         }
@@ -64,9 +64,10 @@ public class DatabaseMemoryProvider implements MemoryProvider {
 
     @Override
     public String remove(String userId, String target, String oldText) {
-        List<MemoryEntity> matches = memoryRepository.findByUserIdAndTargetAndFactContaining(userId, target, oldText);
+        // M24: Use exact match instead of contains to prevent unintended broad deletions
+        List<MemoryEntity> matches = memoryRepository.findByUserIdAndTargetAndFact(userId, target, oldText);
         if (matches.isEmpty()) {
-            return "No entry found containing: " + oldText;
+            return "No entry found with exact text: " + oldText;
         }
         memoryRepository.deleteAll(matches);
         return null;

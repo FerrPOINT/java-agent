@@ -97,7 +97,7 @@ public class AgentConfig {
 
     @Bean
     public ObjectMapper objectMapper() {
-        return new ObjectMapper();
+        return SharedObjectMapper.get();
     }
 
     @Bean
@@ -204,13 +204,6 @@ public class AgentConfig {
     @ConditionalOnMissingBean(ToolCallGuardrail.class)
     public ToolCallGuardrail toolCallGuardrail(AgentProperties properties) {
         return new DefaultToolCallGuardrail(properties);
-    }
-
-    @Bean
-    @ConditionalOnMissingBean(com.azhukov.agent.core.security.ToolGuardrails.class)
-    public com.azhukov.agent.core.security.ToolGuardrails legacyToolGuardrails(AgentProperties properties,
-                                                                                com.azhukov.agent.core.security.ApprovalQueue approvalQueue) {
-        return new com.azhukov.agent.core.security.DefaultToolGuardrails(properties, approvalQueue);
     }
 
     @Bean

@@ -11,10 +11,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.AbstractAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -40,23 +45,29 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
                                      FilterChain filterChain) throws ServletException, IOException {
         String configuredKey = agentProperties.getSecurity().getApiKey();
 
-        // Auth disabled — dev mode
+        // Auth disabled — dev mode: set a default authenticated principal
         if (configuredKey == null || configuredKey.isBlank()) {
+            SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("dev"));
             filterChain.doFilter(request, response);
             return;
         }
 
         String requestUri = request.getRequestURI();
 
-        // Health endpoints are always exempt
+        // Health endpoints are always exempt: set a default authenticated principal
         if (isHealthEndpoint(requestUri)) {
+            SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("health"));
             filterChain.doFilter(request, response);
             return;
         }
 
         String providedKey = extractApiKey(request);
 
-        if (providedKey != null && providedKey.equals(configuredKey)) {
+        if (providedKey != null && constantTimeEquals(configuredKey, providedKey)) {
+            // Set authentication in SecurityContext so Spring Security's
+            // anyRequest().authenticated() check passes.
+            Authentication auth = new ApiKeyAuthentication(providedKey);
+            SecurityContextHolder.getContext().setAuthentication(auth);
             filterChain.doFilter(request, response);
             return;
         }
@@ -83,6 +94,21 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         return null;
     }
 
+    /**
+     * Constant-time string comparison to prevent timing attacks on API key validation.
+     * Always compares all characters regardless of early mismatch.
+     */
+    private static boolean constantTimeEquals(String configuredKey, String providedKey) {
+        if (configuredKey.length() != providedKey.length()) {
+            return false;
+        }
+        int result = 0;
+        for (int i = 0; i < configuredKey.length(); i++) {
+            result |= configuredKey.charAt(i) ^ providedKey.charAt(i);
+        }
+        return result == 0;
+    }
+
     private boolean isHealthEndpoint(String uri) {
         if (uri == null) {
             return false;
@@ -98,6 +124,30 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             ));
         } catch (JsonProcessingException e) {
             return "{\"type\":\"" + type + "\",\"message\":\"" + message + "\"}";
+        }
+    }
+
+    /**
+     * Simple authentication token representing an authenticated API key principal.
+     * Used to satisfy Spring Security's {@code anyRequest().authenticated()} check.
+     */
+    private static class ApiKeyAuthentication extends AbstractAuthenticationToken {
+        private final String apiKey;
+
+        ApiKeyAuthentication(String apiKey) {
+            super(List.of(new SimpleGrantedAuthority("ROLE_API")));
+            this.apiKey = apiKey;
+            setAuthenticated(true);
+        }
+
+        @Override
+        public Object getCredentials() {
+            return apiKey;
+        }
+
+        @Override
+        public Object getPrincipal() {
+            return "api-user";
         }
     }
 }

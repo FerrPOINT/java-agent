@@ -322,7 +322,7 @@ public class CheckpointManager {
             || lower.matches(".*\\bdd\\b.*") && lower.contains("if=")
             || lower.contains("mv ") && (lower.contains("/etc/") || lower.contains("/usr/") || lower.contains("/bin/"))
             || lower.contains("chmod 000")
-            || lower.contains("chown")
+            || lower.matches(".*\\bchown\\b.*")
             || lower.contains("> /dev/");
     }
 }

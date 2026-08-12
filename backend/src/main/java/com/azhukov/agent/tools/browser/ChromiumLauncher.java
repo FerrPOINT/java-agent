@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import jakarta.annotation.PreDestroy;
 
 @Component
 @Slf4j
@@ -22,6 +23,9 @@ import java.util.stream.Collectors;
 public class ChromiumLauncher {
 
     private final AgentProperties properties;
+
+    // M23: Track the launched Chromium process so it can be killed on shutdown.
+    private volatile Process launchedProcess;
 
     public Process launch(Path executable) throws IOException {
         AgentProperties.ChromiumProperties chromium = properties.getChromium();
@@ -53,7 +57,19 @@ public class ChromiumLauncher {
         log.info("Launching Chromium: {}", String.join(" ", args));
         Process process = pb.start();
         log.info("Chromium process started, pid={}", process.pid());
+        // M23: Track the process for cleanup on shutdown
+        this.launchedProcess = process;
         return process;
+    }
+
+    @PreDestroy
+    void destroy() {
+        // M23: Kill the launched Chromium process on bean destruction
+        Process p = launchedProcess;
+        if (p != null && p.isAlive()) {
+            log.info("Destroying Chromium process (pid={}) on shutdown", p.pid());
+            p.destroyForcibly();
+        }
     }
 
     public Path findExecutable(ChromiumPlatform.Platform platform, Path installDir) {

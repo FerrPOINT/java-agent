@@ -54,10 +54,10 @@ class PatchToolExtraTest {
     void replaceWhereNewEqualsOld(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("f.txt");
         Files.writeString(file, "foo bar");
-        // old_string == new_string → updated.equals(content) → "old_string not found"
+        // old_string == new_string → the string IS found in content, so the patch succeeds.
+        // The fix (L32) uses indexOf to check existence rather than comparing updated vs content.
         ToolResult r = tool.execute("{\"path\":\"" + file + "\",\"old_string\":\"foo\",\"new_string\":\"foo\"}", null, session);
-        assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("old_string not found");
+        assertThat(r.success()).isTrue();
     }
 
     @Test

@@ -181,6 +181,7 @@ public class ProcessTool implements ToolHandler {
         final Instant startedAt;
         private final List<String> outputBuffer = new ArrayList<>();
         private final Thread readerThread;
+        private OutputStreamWriter stdinWriter;
 
         ManagedProcess(String id, String command, Process process, int timeoutSeconds) {
             this.id = id;
@@ -231,9 +232,15 @@ public class ProcessTool implements ToolHandler {
 
         void writeStdin(String data) {
             try {
-                OutputStreamWriter writer = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8);
-                writer.write(data);
-                writer.flush();
+                // Reuse a single OutputStreamWriter across calls instead of creating a new
+                // one each time. A new writer wraps the same underlying OutputStream but is
+                // never explicitly flushed/closed by the previous call, potentially leaving
+                // buffered data unwritten. Reusing one writer ensures all data is flushed.
+                if (stdinWriter == null) {
+                    stdinWriter = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8);
+                }
+                stdinWriter.write(data);
+                stdinWriter.flush();
             } catch (IOException e) {
                 throw new IllegalStateException("Failed to write to stdin: " + e.getMessage(), e);
             }
@@ -241,7 +248,13 @@ public class ProcessTool implements ToolHandler {
 
         void closeStdin() {
             try {
-                process.getOutputStream().close();
+                if (stdinWriter != null) {
+                    stdinWriter.flush();
+                    stdinWriter.close();
+                    stdinWriter = null;
+                } else {
+                    process.getOutputStream().close();
+                }
             } catch (IOException ignored) {
             }
         }

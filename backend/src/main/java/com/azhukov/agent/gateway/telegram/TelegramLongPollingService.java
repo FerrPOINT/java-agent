@@ -75,8 +75,8 @@ public class TelegramLongPollingService {
             com.azhukov.agent.gateway.model.Platform.TELEGRAM, true, java.util.Map.of(), java.util.Map.of()));
         running.set(true);
         executor.submit(this::pollLoop);
-        log.info("Telegram long polling started with token prefix={} and timeout={}s",
-            token.substring(0, Math.min(token.length(), 8)),
+        log.info("Telegram long polling started with token suffix=...{} and timeout={}s",
+            token.substring(Math.max(0, token.length() - 4)),
             properties.getGateway().getTelegram().getTimeoutSeconds());
     }
 

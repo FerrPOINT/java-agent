@@ -162,8 +162,6 @@ public class StreamEditor {
      * @return the message id wrapped in Optional, or empty if the send failed
      */
     public Optional<Long> startStream(long chatId, String initialText) {
-        // B6: Reset think scrubber for this chat
-        thinkScrubbers.remove(chatId);
         // B5: Reset flood state
         floodStrikes.remove(chatId);
         streamingDisabled.remove(chatId);
@@ -175,6 +173,9 @@ public class StreamEditor {
         charsSinceLastEdit.remove(chatId);
         // Reset tool name
         currentToolName.remove(chatId);
+        // M27: Don't remove thinkScrubber yet — move to after successful send
+        // But we need a fresh scrubber for the new stream — replace explicitly
+        thinkScrubbers.put(chatId, new ThinkScrubber());
 
         String scrubbed = scrubThink(chatId, initialText);
         String formatted = formatForTelegram(scrubbed);
@@ -203,8 +204,11 @@ public class StreamEditor {
             currentMessageId.put(chatId, new AtomicLong(messageId.get()));
             // Start heartbeat
             startHeartbeat(chatId);
+            // M27: thinkScrubber is already set up — keep it for the active stream
             log.debug("Started stream for chat {}, messageId={}", chatId, messageId.get());
         } else {
+            // M27: Send failed — clean up the think scrubber we created
+            thinkScrubbers.remove(chatId);
             log.warn("Failed to start stream for chat {}", chatId);
         }
         return messageId;
