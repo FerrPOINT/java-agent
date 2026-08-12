@@ -38,6 +38,14 @@ public class BotSessionEntity {
     private Instant createdAt;
     private Instant updatedAt;
 
+    /**
+     * The session ID assigned by the backend. The bot sends this to the backend
+     * so it can find the correct conversation history. Null on first message
+     * (backend creates a new session and returns its ID).
+     */
+    @Column(name = "backend_session_id")
+    private UUID backendSessionId;
+
     // P0: Session lifecycle states — suspend / resume-pending (persisted)
     @Column(name = "suspended")
     private boolean suspended = false;

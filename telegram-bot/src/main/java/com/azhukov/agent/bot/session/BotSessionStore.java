@@ -235,4 +235,21 @@ public class BotSessionStore {
         repository.save(session);
         return true;
     }
+
+    /**
+     * Update the backend session ID for a bot session. Called after the first
+     * backend interaction to persist the UUID that the backend assigned, so
+     * subsequent requests can use it for conversation history continuity.
+     *
+     * @param botSessionId    the bot session's own UUID
+     * @param backendSessionId the backend-assigned session UUID
+     */
+    @Transactional
+    public void updateBackendSessionId(UUID botSessionId, UUID backendSessionId) {
+        repository.findById(botSessionId).ifPresent(session -> {
+            session.setBackendSessionId(backendSessionId);
+            session.setUpdatedAt(Instant.now());
+            repository.save(session);
+        });
+    }
 }

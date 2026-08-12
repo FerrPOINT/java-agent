@@ -309,13 +309,20 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
  AgentBackendClient.ChatResult result;
  try {
- String sessionId = session.getId() != null ? session.getId().toString() : null;
+     String sessionId = session.getBackendSessionId() != null
+         ? session.getBackendSessionId().toString()
+         : null;
 
  // B1.6/B2.7: Thread the message_thread_id from the event through to all sends
  long threadId = event.messageThreadId();
 
  // Build footer text (will be appended to streaming message or sync response)
  result = streamChat(chatId, messageText, sessionId, session, event.messageId(), threadId);
+
+ // Persist the backend-assigned session ID for conversation history continuity
+ if (result.backendSessionId() != null) {
+     sessionStore.updateBackendSessionId(session.getId(), result.backendSessionId());
+ }
 
  // If streaming produced content and finalized a message, don't send duplicate
  if (!result.streamFinalized()) {
@@ -538,7 +545,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  streamResult.contextTokens(),
  streamResult.contextLength(),
  finalized[0],
- streamResult.memoryUpdated()
+ streamResult.memoryUpdated(),
+ streamResult.backendSessionId()
  );
  }
  // If streaming produced no visible tokens but has metadata, prefer the sync fallback to get content
@@ -548,7 +556,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  // Stream finished but produced no content and no metadata
  return new AgentBackendClient.ChatResult(accumulated.toString(),
  streamResult.modelUsed(), streamResult.contextTokens(), streamResult.contextLength(), false,
- streamResult.memoryUpdated());
+ streamResult.memoryUpdated(), streamResult.backendSessionId());
  } catch (StreamInterruptedException e) {
  // Already handled in onError callback
  return new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, finalized[0], false);
@@ -569,7 +577,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  }
 
  private AgentBackendClient.ChatResult fallbackSyncWithMetadata(String messageText, String sessionId,
- com.azhukov.agent.bot.session.BotSessionEntity session,
+ BotSessionEntity session,
  AgentBackendClient.ChatResult streamResult) {
  AgentBackendClient.ChatResult syncResult = backendClient.chat(messageText, sessionId, session);
  return new AgentBackendClient.ChatResult(
@@ -578,7 +586,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  syncResult.contextTokens() != null ? syncResult.contextTokens() : streamResult.contextTokens(),
  syncResult.contextLength() != null ? syncResult.contextLength() : streamResult.contextLength(),
  false,
- syncResult.memoryUpdated() || streamResult.memoryUpdated()
+ syncResult.memoryUpdated() || streamResult.memoryUpdated(),
+ syncResult.backendSessionId() != null ? syncResult.backendSessionId() : streamResult.backendSessionId()
  );
  }
 

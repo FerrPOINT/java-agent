@@ -461,7 +461,7 @@ public class AgentStreamingService {
             int contextLength = properties.getContext().getMaxTokens();
             int contextTokens = estimateContextTokens(session.id());
             send(emitter, new StreamEvent("metadata", null, null, null,
-                modelUsed, contextTokens, contextLength, null, null), streamCtx);
+                modelUsed, contextTokens, contextLength, null, null, session.id()), streamCtx);
         } catch (Exception e) {
             log.debug("Failed to send stream metadata event: {}", e.getMessage());
         }

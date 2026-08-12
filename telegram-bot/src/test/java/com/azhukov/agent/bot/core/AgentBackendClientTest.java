@@ -2152,5 +2152,13 @@ class AgentBackendClientTest {
         assertThat(r.contextLength()).isEqualTo(100);
         assertThat(r.streamFinalized()).isTrue();
         assertThat(r.memoryUpdated()).isTrue();
+        assertThat(r.backendSessionId()).isNull();
+    }
+
+    @Test
+    void chatResult_sevenArgConstructor_includesBackendSessionId() {
+        java.util.UUID sid = java.util.UUID.randomUUID();
+        AgentBackendClient.ChatResult r = new AgentBackendClient.ChatResult("hi", "model", 10, 100, true, true, sid);
+        assertThat(r.backendSessionId()).isEqualTo(sid);
     }
 }

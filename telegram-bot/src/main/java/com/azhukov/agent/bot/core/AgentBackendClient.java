@@ -68,18 +68,23 @@ public class AgentBackendClient {
  Integer contextTokens,
  Integer contextLength,
  boolean streamFinalized,
- boolean memoryUpdated
+ boolean memoryUpdated,
+ java.util.UUID backendSessionId
  ) {
  public ChatResult(String content) {
- this(content, null, null, null, false, false);
+     this(content, null, null, null, false, false, null);
  }
 
  public ChatResult(String content, String modelUsed, Integer contextTokens, Integer contextLength) {
- this(content, modelUsed, contextTokens, contextLength, false, false);
+     this(content, modelUsed, contextTokens, contextLength, false, false, null);
  }
 
  public ChatResult(String content, String modelUsed, Integer contextTokens, Integer contextLength, boolean streamFinalized) {
- this(content, modelUsed, contextTokens, contextLength, streamFinalized, false);
+     this(content, modelUsed, contextTokens, contextLength, streamFinalized, false, null);
+ }
+
+ public ChatResult(String content, String modelUsed, Integer contextTokens, Integer contextLength, boolean streamFinalized, boolean memoryUpdated) {
+     this(content, modelUsed, contextTokens, contextLength, streamFinalized, memoryUpdated, null);
  }
  }
 
@@ -127,8 +132,17 @@ public class AgentBackendClient {
  Integer contextTokens = node.has("contextTokens") ? node.get("contextTokens").asInt(0) : null;
  Integer contextLength = node.has("contextLength") ? node.get("contextLength").asInt(0) : null;
  boolean memoryUpdated = node.has("memoryUpdated") && node.get("memoryUpdated").asBoolean(false);
+ java.util.UUID backendSessionId = null;
+ JsonNode sessionIdNode = node.get("sessionId");
+ if (sessionIdNode != null && !sessionIdNode.isNull() && sessionIdNode.isTextual()) {
+     try {
+         backendSessionId = java.util.UUID.fromString(sessionIdNode.asText());
+     } catch (IllegalArgumentException e) {
+         log.warn("Backend returned invalid sessionId: {}", sessionIdNode.asText());
+     }
+ }
 
- return new ChatResult(responseText, modelUsed, contextTokens, contextLength, false, memoryUpdated);
+ return new ChatResult(responseText, modelUsed, contextTokens, contextLength, false, memoryUpdated, backendSessionId);
  } catch (Exception e) {
  log.error("Backend chat failed for sessionId={}: {}", sessionId, e.getMessage());
  return new ChatResult("Error: " + e.getMessage());
@@ -481,7 +495,8 @@ public class AgentBackendClient {
  ChatResult result = metadataHolder[0] != null
  ? new ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
  metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(),
- metadataHolder[0].streamFinalized(), metadataHolder[0].memoryUpdated())
+ metadataHolder[0].streamFinalized(), metadataHolder[0].memoryUpdated(),
+ metadataHolder[0].backendSessionId())
  : new ChatResult(accumulated.toString());
  onComplete.accept(result);
  return result;
@@ -504,7 +519,7 @@ public class AgentBackendClient {
  ChatResult result = metadataHolder[0] != null
  ? new ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
  metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(), false,
- metadataHolder[0].memoryUpdated())
+ metadataHolder[0].memoryUpdated(), metadataHolder[0].backendSessionId())
  : new ChatResult(accumulated.toString());
  onComplete.accept(result);
  return result;
@@ -542,7 +557,16 @@ public class AgentBackendClient {
  Integer contextLength = event.has("contextLength") ? event.get("contextLength").asInt(0) : null;
  boolean memoryUpdated = event.has("memoryUpdated") && event.get("memoryUpdated").asBoolean(false);
  boolean streamFinalized = event.has("streamFinalized") && event.get("streamFinalized").asBoolean(false);
- return new ChatResult(null, modelUsed, contextTokens, contextLength, streamFinalized, memoryUpdated);
+ java.util.UUID backendSessionId = null;
+ JsonNode sessionIdNode = event.get("sessionId");
+ if (sessionIdNode != null && !sessionIdNode.isNull() && sessionIdNode.isTextual()) {
+     try {
+         backendSessionId = java.util.UUID.fromString(sessionIdNode.asText());
+     } catch (IllegalArgumentException e) {
+         log.warn("Stream metadata contained invalid sessionId: {}", sessionIdNode.asText());
+     }
+ }
+ return new ChatResult(null, modelUsed, contextTokens, contextLength, streamFinalized, memoryUpdated, backendSessionId);
  }
 
  // ------------------------------------------------------------------
