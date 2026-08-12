@@ -432,7 +432,7 @@ class TurnFinalizerTest {
             UUID sessionId = UUID.randomUUID();
             List<Message> messages = List.of(
                 Message.user("hello"),
-                Message.assistant("Iteration budget exhausted. Stopping to avoid runaway loop.", 1)
+                Message.assistant("⚠️ Iteration budget exhausted (1/5)", 1)
             );
             TurnFinalizer.FinalizationResult result = finalizer.finalize(sessionId, messages, false);
             // The budget message is a complete sentence with terminal punctuation,

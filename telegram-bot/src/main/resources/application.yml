@@ -54,7 +54,7 @@ bot:
   link-preview: ${BOT_LINK_PREVIEW:true}
 
   footer:
-    enabled: ${BOT_FOOTER_ENABLED:true}
+    enabled: ${BOT_FOOTER_ENABLED:false}
     fields:
       - model
       - context_pct

@@ -154,7 +154,7 @@ class AgentStreamingServiceBranchTest {
             runtimeConfigService, interruptToken, steerBuffer,
             new TokenEstimator(), new ToolResultFormatter(),
             new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate),
-            new CliStateApplier(), null, null);
+            new CliStateApplier(), null, null, new com.azhukov.agent.core.metadata.ModelMetadataService());
     }
 
     // ── selectTools: disabledTools filtering ──
@@ -483,13 +483,13 @@ class AgentStreamingServiceBranchTest {
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 
-        // Should have a "token" event with "Iteration budget exhausted."
+        // Should have a "token" event with the new budget exhausted message format
         boolean hasBudgetMessage = emitter.events.stream()
             .anyMatch(e -> {
                 if (!"token".equals(e.name)) return false;
                 try {
                     StreamEvent ev = deserialize(e.data, StreamEvent.class);
-                    return "Iteration budget exhausted.".equals(ev.token());
+                    return ev.token() != null && ev.token().contains("Iteration budget exhausted");
                 } catch (Exception ex) {
                     return false;
                 }

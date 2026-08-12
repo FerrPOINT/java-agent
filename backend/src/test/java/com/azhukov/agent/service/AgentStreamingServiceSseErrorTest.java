@@ -153,7 +153,7 @@ class AgentStreamingServiceSseErrorTest {
             new RuntimeConfigService(), new InterruptToken(), new SteerBuffer(),
             new TokenEstimator(), new ToolResultFormatter(),
             new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate),
-            new CliStateApplier(), null, null);
+            new CliStateApplier(), null, null, new com.azhukov.agent.core.metadata.ModelMetadataService());
     }
 
     // ── Error from modelClient.stream() throw → emitter completes normally, error event sent ──

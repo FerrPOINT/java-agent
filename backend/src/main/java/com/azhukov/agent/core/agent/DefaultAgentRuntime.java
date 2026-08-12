@@ -227,7 +227,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
             if (iterationBudget.isExhausted(budget)) {
                 log.warn("Iteration budget exhausted for session {} after {} model calls, {} tool executions",
                     session.id(), budget.modelCalls(), budget.toolExecutions());
-                turnMessages.add(Message.assistant("Iteration budget exhausted. Stopping to avoid runaway loop.", turnIndex));
+                String budgetMsg = "⚠️ Iteration budget exhausted (" + budget.modelCalls()
+                    + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
+                turnMessages.add(Message.assistant(budgetMsg, turnIndex));
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.BUDGET_EXHAUSTED);
                 }

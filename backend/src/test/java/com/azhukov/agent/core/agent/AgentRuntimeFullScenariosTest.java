@@ -329,11 +329,11 @@ class AgentRuntimeFullScenariosTest {
 
         assertThat(result.completed()).isTrue();
         assertThat(result.error()).isNull();
-        assertThat(result.finalText()).isEqualTo("Iteration budget exhausted. Stopping to avoid runaway loop.");
+        assertThat(result.finalText()).isEqualTo("⚠️ Iteration budget exhausted (1/5)");
         assertThat(result.messages()).hasSize(5); // system, user, assistant tool-calls, tool result, budget assistant
 
         assertThat(result.messages().get(result.messages().size() - 1).content())
-            .isEqualTo("Iteration budget exhausted. Stopping to avoid runaway loop.");
+            .isEqualTo("⚠️ Iteration budget exhausted (1/5)");
     }
 
     @Test

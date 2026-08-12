@@ -27,6 +27,7 @@ import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.client.langchain4j.ErrorClassifier;
+import com.azhukov.agent.core.metadata.ModelMetadataService;
 import com.azhukov.agent.metrics.AgentMetrics;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
@@ -84,6 +85,7 @@ public class AgentStreamingService {
     private final CliStateApplier cliStateApplier;
     private final AgentMetrics agentMetrics;
     private final ConversationCompressor conversationCompressor;
+    private final ModelMetadataService modelMetadataService;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
 
     private static final int MAX_STREAM_RETRIES = 5;
@@ -230,7 +232,9 @@ public class AgentStreamingService {
             if (iterationBudget.isExhausted(budget)) {
                 log.warn("Iteration budget exhausted for session {} after {} model calls",
                     session.id(), budget.modelCalls());
-                send(emitter, new StreamEvent("token", "Iteration budget exhausted.", null, null), streamCtx);
+                String budgetMsg = "⚠️ Iteration budget exhausted (" + budget.modelCalls()
+                    + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
+                send(emitter, new StreamEvent("token", budgetMsg, null, null), streamCtx);
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
@@ -411,7 +415,7 @@ public class AgentStreamingService {
             // No tool calls → turn is complete
             if (!response.hasToolCalls()) {
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
-                sendMetadataEvent(emitter, session, streamCtx);
+                sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens());
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
@@ -492,10 +496,19 @@ public class AgentStreamingService {
     }
 
     private void sendMetadataEvent(SseEmitter emitter, Session session, StreamContext streamCtx) {
+        sendMetadataEvent(emitter, session, streamCtx, 0);
+    }
+
+    private void sendMetadataEvent(SseEmitter emitter, Session session, StreamContext streamCtx, int lastInputTokens) {
         try {
             String modelUsed = resolveModelUsed(session);
-            int contextLength = properties.getContext().getMaxTokens();
-            int contextTokens = estimateContextTokens(session.id());
+            int contextLength = modelMetadataService.detectContextLength(modelUsed);
+            if (contextLength <= 0) {
+                contextLength = properties.getContext().getMaxTokens();
+            }
+            int contextTokens = lastInputTokens > 0
+                ? lastInputTokens
+                : estimateContextTokens(session.id());
             send(emitter, new StreamEvent("metadata", null, null, null,
                 modelUsed, contextTokens, contextLength, null, null, session.id()), streamCtx);
         } catch (Exception e) {

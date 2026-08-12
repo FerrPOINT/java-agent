@@ -149,7 +149,7 @@ class AgentStreamingInterruptTest {
             new RuntimeConfigService(), interruptToken, steerBuffer,
             new TokenEstimator(), new ToolResultFormatter(),
             new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate),
-            new CliStateApplier(), null, null);
+            new CliStateApplier(), null, null, new com.azhukov.agent.core.metadata.ModelMetadataService());
     }
 
     /**

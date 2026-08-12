@@ -7,6 +7,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.context.ContextEngine;
+import com.azhukov.agent.core.metadata.ModelMetadataService;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
@@ -156,7 +157,7 @@ class AgentStreamingServiceTest {
             new RuntimeConfigService(), new InterruptToken(), new SteerBuffer(),
             new TokenEstimator(), new ToolResultFormatter(),
             new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate),
-            new CliStateApplier(), null, null);
+            new CliStateApplier(), null, null, new ModelMetadataService());
     }
 
     @Test
@@ -248,9 +249,84 @@ class AgentStreamingServiceTest {
             .orElseThrow(() -> new AssertionError("No metadata event found"));
         StreamEvent metadata = deserialize(metadataEvent.data, StreamEvent.class);
         assertThat(metadata.type()).isEqualTo("metadata");
+        // contextTokens comes from budget.totalInputTokens() (estimated from context messages)
+        // Since the mock IterationBudget returns a mock snapshot, totalInputTokens() returns 0
+        // → falls back to usageTracker.getSessionUsage() → 1500
         assertThat(metadata.contextTokens()).isEqualTo(1500);
-        assertThat(metadata.contextLength()).isEqualTo(8192);
+        // contextLength is now detected from model name via ModelMetadataService
+        // "moonshotai/kimi-k2.6" → kimi → 262144
+        assertThat(metadata.contextLength()).isEqualTo(262_144);
         assertThat(metadata.modelUsed()).isEqualTo("moonshotai/kimi-k2.6");
+    }
+
+    @Test
+    void streamTurnMetadataUsesRealModelContextWindow() throws Exception {
+        // Bug 2: context always shows 0% because contextLength was using
+        // properties.getContext().getMaxTokens() (response limit) instead of
+        // the actual model context window from ModelMetadataService.
+        // With kimi-k2.6, the real context window is 262144, not 8192.
+        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(2);
+            handler.onToken("Hi");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        SseEvent metadataEvent = emitter.events.stream()
+            .filter(e -> "metadata".equals(e.name))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("No metadata event found"));
+        StreamEvent metadata = deserialize(metadataEvent.data, StreamEvent.class);
+        // The context length must be the real model context window (262144 for kimi),
+        // NOT the response max-tokens (8192).
+        assertThat(metadata.contextLength())
+            .as("contextLength should be kimi's real context window, not maxTokens")
+            .isEqualTo(262_144)
+            .isGreaterThan(properties.getContext().getMaxTokens());
+    }
+
+    @Test
+    void streamTurnMetadataContextTokensFromBudgetInputTokens() throws Exception {
+        // Bug 2: contextTokens should use the actual input tokens from the last
+        // model call (budget.totalInputTokens()), not just usageTracker.
+        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+
+        // Create a budget snapshot with real input token counts
+        int expectedInputTokens = 5000;
+        IterationBudget.TurnSnapshot realSnapshot = new IterationBudget.TurnSnapshot(
+            SESSION_ID, java.time.Instant.now(), 1, 1, 0,
+            expectedInputTokens, 100, 0L, false, null
+        );
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class)))
+            .thenReturn(realSnapshot);
+
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(2);
+            handler.onToken("Hi");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        SseEvent metadataEvent = emitter.events.stream()
+            .filter(e -> "metadata".equals(e.name))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("No metadata event found"));
+        StreamEvent metadata = deserialize(metadataEvent.data, StreamEvent.class);
+        // contextTokens should be the actual input token count from the budget,
+        // not 0 from the usageTracker fallback
+        assertThat(metadata.contextTokens())
+            .as("contextTokens should come from budget.totalInputTokens()")
+            .isEqualTo(expectedInputTokens);
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.budget;
 
+import com.azhukov.agent.config.AgentProperties;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -40,12 +41,40 @@ class DefaultIterationBudgetTest {
 
     @Test
     void exhaustsAfterMaxToolExecutions() {
+        // Set a low tool execution limit for this test
+        props.getBudget().setMaxToolExecutionsPerTurn(5);
         var snap = budget.startTurn(UUID.randomUUID());
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 5; i++) {
             snap = budget.recordToolExecution(snap, "x", 1);
         }
         assertTrue(snap.exhausted());
         assertTrue(budget.isExhausted(snap));
+    }
+
+    @Test
+    void doesNotExhaustWith200ToolExecutionsAtDefaultLimit() {
+        // Verify the new default of 200 tool executions doesn't trigger prematurely
+        var snap = budget.startTurn(UUID.randomUUID());
+        for (int i = 0; i < 50; i++) {
+            snap = budget.recordToolExecution(snap, "x", 1);
+        }
+        assertFalse(snap.exhausted());
+        assertFalse(budget.isExhausted(snap));
+    }
+
+    @Test
+    void defaultMaxModelCallsIs90MatchingHermes() {
+        // Hermes uses max_iterations=90 (default) — verify our default matches
+        AgentProperties.BudgetProperties defaultBudget = new AgentProperties.BudgetProperties();
+        assertThat(defaultBudget.getMaxModelCallsPerTurn()).isEqualTo(90);
+    }
+
+    @Test
+    void defaultMaxToolExecutionsIs200Not20() {
+        // Bug 1: old default was 20, way too low. New default is 200
+        // (effectively unlimited, matching Hermes which doesn't limit tools separately)
+        AgentProperties.BudgetProperties defaultBudget = new AgentProperties.BudgetProperties();
+        assertThat(defaultBudget.getMaxToolExecutionsPerTurn()).isEqualTo(200);
     }
 
     @Test
