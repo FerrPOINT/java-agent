@@ -85,11 +85,10 @@ public class StreamEditor {
     private long minIntervalMs; // Configured minimum interval (from streamEditInterval)
     private final Map<Long, Long> lastEditTime = new ConcurrentHashMap<>();
 
-    // B5: Adaptive rate limiting state
-    private static final long MAX_INTERVAL_MS = 5000;
-    private static final double FLOOD_MULTIPLIER = 1.5;
-    private static final double SUCCESS_DIVISOR = 0.9;
-    private static final int MAX_FLOOD_STRIKES = 5;
+    // B5: Adaptive rate limiting — Hermes uses x2 multiplier, 10s max, 3 strikes
+    private static final long MAX_INTERVAL_MS = 10000;
+    private static final double FLOOD_MULTIPLIER = 2.0;
+    private static final int MAX_FLOOD_STRIKES = 3;
     private static final int FLOOD_WARN_THRESHOLD = 3;
     private final Map<Long, Integer> floodStrikes = new ConcurrentHashMap<>();
     private final Map<Long, Boolean> streamingDisabled = new ConcurrentHashMap<>();
@@ -179,6 +178,20 @@ public class StreamEditor {
 
         String scrubbed = scrubThink(chatId, initialText);
         String formatted = formatForTelegram(scrubbed);
+
+        // Hermes: if initial text is empty or too short (<4 chars), don't send a message yet.
+        // Wait for editStream to accumulate >=4 chars before sending the first message.
+        if (formatted.isEmpty() || formatted.length() < 4) {
+            // Record start time for heartbeat and fresh-final even without a message
+            long now = System.currentTimeMillis();
+            streamStartTime.put(chatId, now);
+            lastTokenTime.put(chatId, now);
+            // Start heartbeat — it will use currentMessageId if available
+            startHeartbeat(chatId);
+            log.debug("Started stream for chat {} with no initial message (waiting for >=4 chars)", chatId);
+            return Optional.empty();
+        }
+
         // B7: Initial message — silent if configured
         Optional<Long> messageId = sendMessageWithNotification(chatId, formatted, false);
         if (messageId.isPresent()) {
@@ -228,16 +241,41 @@ public class StreamEditor {
             return false;
         }
 
+        // Hermes: if no message was sent yet (startStream returned empty because
+        // initial text was <4 chars), check if we now have >=4 chars to send the first message.
+        AtomicLong currentMsgId = currentMessageId.get(chatId);
+        if (currentMsgId == null && text.length() >= 4) {
+            String scrubbed = scrubThink(chatId, text);
+            String formatted = formatForTelegram(scrubbed);
+            if (!formatted.isEmpty() && formatted.length() >= 4) {
+                Optional<Long> newMsgId = sendMessageWithNotification(chatId, formatted + streamCursor, false);
+                if (newMsgId.isPresent()) {
+                    currentMessageId.put(chatId, new AtomicLong(newMsgId.get()));
+                    lastEditTime.put(chatId, System.currentTimeMillis());
+                    floodStrikes.remove(chatId);
+                    log.debug("Sent first streaming message for chat {} (delayed start), messageId={}", chatId, newMsgId.get());
+                    return true;
+                }
+                return false;
+            }
+            return false;
+        }
+        // If still not enough chars, skip
+        if (currentMsgId == null) {
+            return false;
+        }
+
+        // Use the internal currentMessageId (may differ from messageId parameter after segment break)
+        long effectiveMessageId = currentMsgId.get();
+
         long now = System.currentTimeMillis();
         Long last = lastEditTime.get(chatId);
         // B5: Use adaptive interval (may have been adjusted by flood handling)
         long currentInterval = getEffectiveInterval(chatId);
         
-        // Buffer threshold: track chars accumulated since last edit
-        int prevChars = charsSinceLastEdit.getOrDefault(chatId, 0);
-        // Track the total text length as our "chars since last edit" reference
-        charsSinceLastEdit.put(chatId, text.length());
-        int charsAccumulated = last != null ? (text.length() - (prevChars > 0 ? prevChars : 0)) : text.length();
+        // Buffer threshold: Hermes measures TOTAL accumulated text length (not delta since last edit).
+        // The accumulated text is the full scrubbed text passed to editStream.
+        int charsAccumulated = text.length();
         
         boolean intervalElapsed = last == null || (now - last) >= currentInterval;
         boolean thresholdReached = bufferThreshold > 0 && charsAccumulated >= bufferThreshold;
@@ -257,20 +295,21 @@ public class StreamEditor {
 
         // Split if text exceeds max chars
         if (streamingMaxChars > 0 && withCursor.length() > streamingMaxChars) {
-            return editStreamSplit(chatId, messageId, withCursor);
+            return editStreamSplit(chatId, effectiveMessageId, withCursor);
         }
 
         // B7: Silent notification during streaming
+        // Hermes: send raw text (no parse_mode) during streaming edits
         boolean disableNotification = streamingSilent;
         boolean success;
         try {
-            success = telegramClient.editMessageText(chatId, messageId, withCursor, parseMode, disableNotification);
+            success = telegramClient.editMessageText(chatId, effectiveMessageId, withCursor, null, disableNotification);
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
                 // 429 from editMessageText — apply adaptive flood handling.
                 // callApi already set lastApiErrorCode=429 before throwing,
                 // so handleEditFailure will see the correct error code.
-                success = handleEditFailure(chatId, messageId, formatted);
+                success = handleEditFailure(chatId, effectiveMessageId, formatted);
             } else {
                 throw e;
             }
@@ -278,15 +317,13 @@ public class StreamEditor {
 
         if (success) {
             lastEditTime.put(chatId, now);
-            // B5: On success — gradually decrease interval (cool down)
-            decreaseInterval(chatId);
-            // Reset flood strikes on success
+            // Hermes: on success, only reset flood strikes — interval stays at backoff level
             floodStrikes.remove(chatId);
         } else {
             // B5: Edit failed — check error code. handleEditFailure may
             // do a truncated retry for 400 errors; if the retry succeeds,
             // treat the overall editStream as successful.
-            success = handleEditFailure(chatId, messageId, formatted);
+            success = handleEditFailure(chatId, effectiveMessageId, formatted);
         }
         return success;
     }
@@ -305,7 +342,8 @@ public class StreamEditor {
         boolean disableNotification = streamingSilent;
         boolean success;
         try {
-            success = telegramClient.editMessageText(chatId, messageId, firstPart, parseMode, disableNotification);
+            // Hermes: raw text (no parse_mode) during streaming
+            success = telegramClient.editMessageText(chatId, messageId, firstPart, null, disableNotification);
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
                 success = handleEditFailure(chatId, messageId, firstPart);
@@ -317,7 +355,6 @@ public class StreamEditor {
 
         if (success) {
             lastEditTime.put(chatId, System.currentTimeMillis());
-            decreaseInterval(chatId);
             floodStrikes.remove(chatId);
         } else {
             handleEditFailure(chatId, messageId, firstPart);
@@ -333,7 +370,7 @@ public class StreamEditor {
                 int end = Math.min(pos + streamingMaxChars, remainder.length());
                 String chunk = remainder.substring(pos, end);
                 Optional<Long> newMsgId = telegramClient.sendMessage(
-                    chatId, chunk, parseMode, prevMsgId, null);
+                    chatId, chunk, null, prevMsgId, null);
                 if (newMsgId.isPresent()) {
                     prevMsgId = newMsgId.get();
                     currentMessageId.put(chatId, new AtomicLong(prevMsgId));
@@ -370,6 +407,11 @@ public class StreamEditor {
         // Stop heartbeat
         stopHeartbeat(chatId);
 
+        // Use internal currentMessageId if available (may differ from messageId
+        // parameter after a segment break created a new message).
+        AtomicLong currentMsgId = currentMessageId.get(chatId);
+        long effectiveMessageId = currentMsgId != null ? currentMsgId.get() : messageId;
+
         // B6: Final scrub — also flush any remaining think-block state
         String scrubbed = scrubThinkFinal(chatId, finalText);
 
@@ -381,20 +423,20 @@ public class StreamEditor {
 
         if (freshFinal) {
             log.debug("Fresh-final for chat {} (stream exceeded {}ms), deleting old msg {} and sending new",
-                chatId, freshFinalTimeoutMs, messageId);
+                chatId, freshFinalTimeoutMs, effectiveMessageId);
             // P1: Try rich message delivery first
             if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
                 Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null, null);
                 if (richMsgId.isPresent()) {
-                    telegramClient.deleteMessage(chatId, messageId);
+                    telegramClient.deleteMessage(chatId, effectiveMessageId);
                     cleanupStream(chatId);
                     return true;
                 }
             }
             // Delete old message and send new one
-            telegramClient.deleteMessage(chatId, messageId);
+            telegramClient.deleteMessage(chatId, effectiveMessageId);
             String formatted = formatForTelegram(scrubbed);
-            Optional<Long> newMsgId = sendMessageWithNotification(chatId, formatted, false);
+            Optional<Long> newMsgId = sendFormattedMessage(chatId, formatted);
             cleanupStream(chatId);
             if (newMsgId.isPresent()) {
                 log.debug("Fresh-final sent for chat {}, new messageId={}", chatId, newMsgId.get());
@@ -410,8 +452,8 @@ public class StreamEditor {
             Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null, null);
             if (richMsgId.isPresent()) {
                 // Rich message sent successfully — delete the old streaming message
-                log.debug("Finalized stream via rich message for chat {}, deleting old msg {}", chatId, messageId);
-                telegramClient.deleteMessage(chatId, messageId);
+                log.debug("Finalized stream via rich message for chat {}, deleting old msg {}", chatId, effectiveMessageId);
+                telegramClient.deleteMessage(chatId, effectiveMessageId);
                 cleanupStream(chatId);
                 return true;
             }
@@ -419,11 +461,12 @@ public class StreamEditor {
             log.debug("Rich message delivery failed for chat {}, falling back to MarkdownV2", chatId);
         }
 
+        // Hermes: on finalize, apply MarkdownConverter formatting (raw during streaming, formatted final)
         String formatted = formatForTelegram(scrubbed);
         // B7: Final message — NOT silent (push notification enabled)
         boolean success;
         try {
-            success = telegramClient.editMessageText(chatId, messageId, formatted, parseMode, false);
+            success = telegramClient.editMessageText(chatId, effectiveMessageId, formatted, parseMode, false);
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
                 // 429 on final edit — fall through to sendMessage fallback
@@ -436,11 +479,11 @@ public class StreamEditor {
 
         // Fallback: if edit failed, try sendMessage as a new message
         if (!success) {
-            log.warn("Final edit failed for chat {}, messageId={}, trying sendMessage fallback", chatId, messageId);
-            Optional<Long> fallbackMsgId = sendMessageWithNotification(chatId, formatted, false);
+            log.warn("Final edit failed for chat {}, messageId={}, trying sendMessage fallback", chatId, effectiveMessageId);
+            Optional<Long> fallbackMsgId = sendFormattedMessage(chatId, formatted);
             if (fallbackMsgId.isPresent()) {
                 // Optionally delete the old stale message
-                telegramClient.deleteMessage(chatId, messageId);
+                telegramClient.deleteMessage(chatId, effectiveMessageId);
                 cleanupStream(chatId);
                 log.debug("Finalize fallback succeeded for chat {}, new messageId={}", chatId, fallbackMsgId.get());
                 return true;
@@ -449,9 +492,9 @@ public class StreamEditor {
 
         cleanupStream(chatId);
         if (success) {
-            log.debug("Finalized stream for chat {}, messageId={}", chatId, messageId);
+            log.debug("Finalized stream for chat {}, messageId={}", chatId, effectiveMessageId);
         } else {
-            log.warn("Failed to finalize stream for chat {}, messageId={}", chatId, messageId);
+            log.warn("Failed to finalize stream for chat {}, messageId={}", chatId, effectiveMessageId);
         }
         return success;
     }
@@ -515,10 +558,11 @@ public class StreamEditor {
             return;
         }
         // Finalize the current message with what we have (no cursor, no silent)
+        // Hermes: raw text (no parse_mode) during streaming
         String scrubbed = scrubThink(chatId, accumulatedText);
-        String formatted = formatForTelegram(scrubbed);
+        String formatted = scrubbed; // Raw text during streaming — no formatForTelegram
         try {
-            telegramClient.editMessageText(chatId, messageId, formatted, parseMode, false);
+            telegramClient.editMessageText(chatId, messageId, formatted, null, false);
         } catch (TelegramApiException e) {
             if (!e.isRateLimit()) {
                 throw e;
@@ -530,6 +574,10 @@ public class StreamEditor {
         // Reset buffer tracking for the new segment
         charsSinceLastEdit.remove(chatId);
         lastEditTime.put(chatId, System.currentTimeMillis());
+        // Hermes: reset currentMessageId to null so the next editStream call
+        // creates a NEW message (text after tool call appears below as a new message).
+        // Track the old message ID for reply threading.
+        currentMessageId.remove(chatId);
     }
 
     // ─── Heartbeat ───────────────────────────────────────────────
@@ -584,7 +632,8 @@ public class StreamEditor {
         boolean disableNotification = streamingSilent;
         log.debug("Heartbeat for chat {}: {}", chatId, heartbeatText);
         try {
-            telegramClient.editMessageText(chatId, msgId, heartbeatText, parseMode, disableNotification);
+            // Hermes: raw text (no parse_mode) during streaming
+            telegramClient.editMessageText(chatId, msgId, heartbeatText, null, disableNotification);
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
                 log.debug("Heartbeat edit 429 rate limited for chat {}, skipping", chatId);
@@ -615,16 +664,8 @@ public class StreamEditor {
         }
     }
 
-    private void decreaseInterval(long chatId) {
-        AtomicLong interval = editIntervalMap.computeIfAbsent(chatId, k -> new AtomicLong(minIntervalMs));
-        long current = interval.get();
-        long newInterval = Math.max((long) (current * SUCCESS_DIVISOR), minIntervalMs);
-        if (newInterval != current) {
-            log.debug("Decreasing edit interval from {}ms to {}ms after successful edit (chat {})",
-                current, newInterval, chatId);
-            interval.set(newInterval);
-        }
-    }
+    // Note: Hermes does not decrease the interval on success.
+    // The interval stays at the backoff level and only flood strikes are reset to 0.
 
     /**
      * Handle edit failure. Distinguishes 400 (message too long) from 429 (flood).
@@ -660,7 +701,6 @@ public class StreamEditor {
             }
             if (retried) {
                 lastEditTime.put(chatId, System.currentTimeMillis());
-                decreaseInterval(chatId);
                 floodStrikes.remove(chatId);
             }
             return retried;
@@ -948,6 +988,15 @@ public class StreamEditor {
         // (disable_notification is not a standard sendMessage param, but we use it
         // for consistency — Telegram's sendMessage doesn't support disable_notification,
         // so we just send normally for the initial message)
+        // Hermes: during streaming, send raw text (no parse_mode).
+        return telegramClient.sendMessage(chatId, text, null, null, null);
+    }
+
+    /**
+     * Send a formatted final message with parse_mode enabled.
+     * Used by finalizeStream fallback paths where MarkdownV2 formatting is needed.
+     */
+    private Optional<Long> sendFormattedMessage(long chatId, String text) {
         return telegramClient.sendMessage(chatId, text, parseMode, null, null);
     }
 

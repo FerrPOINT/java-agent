@@ -41,6 +41,9 @@ bot:
   typing-refresh-interval: 4s
   stream-edit-interval: 800ms
   buffer-threshold: 24
+  heartbeat-interval-seconds: ${BOT_HEARTBEAT_INTERVAL:180}
+  initial-stream-text: ""
+  streaming-max-chars: 32768
   busy-mode: queue
   parse-mode: MarkdownV2
   register-commands: true
