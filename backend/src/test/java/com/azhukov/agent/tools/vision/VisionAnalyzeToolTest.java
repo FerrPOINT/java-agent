@@ -3,6 +3,8 @@ package com.azhukov.agent.tools.vision;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.service.ImageShrinker;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -14,13 +16,18 @@ import static org.mockito.Mockito.*;
 
 class VisionAnalyzeToolTest {
 
+    private ImageShrinker createShrinker() {
+        AgentProperties props = new AgentProperties();
+        return new ImageShrinker(props);
+    }
+
     @Test
     void analyzesLocalFile(@TempDir Path dir) throws Exception {
         Path img = dir.resolve("x.png");
         Files.write(img, new byte[]{1, 2, 3});
         ModelClient client = mock(ModelClient.class);
         when(client.analyzeImage(anyString(), eq("prompt"))).thenReturn("description");
-        VisionAnalyzeTool t = new VisionAnalyzeTool(client);
+        VisionAnalyzeTool t = new VisionAnalyzeTool(client, createShrinker());
         ToolResult r = t.execute("{\"image\":\"" + img + "\",\"prompt\":\"prompt\"}", null, Session.create("u","p","m"));
         assertThat(r.success()).isTrue();
         assertThat(r.content()).isEqualTo("description");
@@ -29,7 +36,7 @@ class VisionAnalyzeToolTest {
     @Test
     void missingImageFails() {
         ModelClient client = mock(ModelClient.class);
-        VisionAnalyzeTool t = new VisionAnalyzeTool(client);
+        VisionAnalyzeTool t = new VisionAnalyzeTool(client, createShrinker());
         ToolResult r = t.execute("{}", null, Session.create("u","p","m"));
         assertThat(r.success()).isFalse();
     }
@@ -37,7 +44,7 @@ class VisionAnalyzeToolTest {
     @Test
     void missingFileFails() {
         ModelClient client = mock(ModelClient.class);
-        VisionAnalyzeTool t = new VisionAnalyzeTool(client);
+        VisionAnalyzeTool t = new VisionAnalyzeTool(client, createShrinker());
         ToolResult r = t.execute("{\"image\":\"/tmp/nonexistent.png\"}", null, Session.create("u","p","m"));
         assertThat(r.success()).isFalse();
     }

@@ -15,6 +15,7 @@ import com.azhukov.agent.bot.goal.GoalAutoContinueService;
 import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
+import com.azhukov.agent.bot.media.MediaDeliveryService;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.reaction.ReactionManager;
 import com.azhukov.agent.bot.session.BotSessionEntity;
@@ -65,6 +66,7 @@ class BotMessageProcessorTest {
     private BotProperties properties;
     private StreamEditor streamEditor;
     private InboundMediaHandler inboundMediaHandler;
+    private MediaDeliveryService mediaDeliveryService;
     private RuntimeFooter runtimeFooter;
     private ReactionManager reactionManager;
     private TextBatchDebouncer textBatchDebouncer;
@@ -93,6 +95,8 @@ class BotMessageProcessorTest {
         callbackQueryHandler = mock(CallbackQueryHandler.class);
         streamEditor = mock(StreamEditor.class);
         inboundMediaHandler = mock(InboundMediaHandler.class);
+        // S-2: Use real MediaDeliveryService (not a mock) so media extraction works
+        mediaDeliveryService = new MediaDeliveryService();
         runtimeFooter = mock(RuntimeFooter.class);
         reactionManager = mock(ReactionManager.class);
         textBatchDebouncer = mock(TextBatchDebouncer.class);
@@ -127,8 +131,8 @@ class BotMessageProcessorTest {
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
-            properties, streamEditor, inboundMediaHandler, runtimeFooter,
-            reactionManager, textBatchDebouncer, photoBatchDebouncer,
+            properties, streamEditor, inboundMediaHandler, mediaDeliveryService,
+            runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService);
     }
 
@@ -391,7 +395,7 @@ class BotMessageProcessorTest {
     void textMessageStartsAndStopsTyping() {
         stubStreamingResult("Response", true);
         processor.accept(textEvent(1, 100L, "Hello"));
-        verify(typingManager).startTyping(100L);
+        verify(typingManager).startTyping(eq(100L), any());
         verify(typingManager).stopTyping(100L);
     }
 
@@ -734,8 +738,8 @@ class BotMessageProcessorTest {
             });
 
         processor.accept(textEvent(1, 100L, "hello"));
-        // The finalized text should contain "Interrupted by user"
-        assertThat(finalizedTexts).anyMatch(t -> t.contains("Interrupted by user"));
+        // The finalized text should contain the partial accumulated content (no "[Interrupted by user]")
+        assertThat(finalizedTexts).anyMatch(t -> t.contains("Partial response"));
     }
 
     @Test
@@ -755,7 +759,8 @@ class BotMessageProcessorTest {
             });
 
         processor.accept(textEvent(1, 100L, "hello"));
-        assertThat(finalizedTexts).anyMatch(t -> t.contains("[Error: stream error]"));
+        // Error messages are now user-friendly (matching Hermes), not raw [Error: msg]
+        assertThat(finalizedTexts).anyMatch(t -> t.contains("Temporary issue"));
     }
 
     @Test
@@ -777,7 +782,8 @@ class BotMessageProcessorTest {
             });
 
         processor.accept(textEvent(1, 100L, "hello"));
-        assertThat(finalizedTexts).anyMatch(t -> t.contains("Partial content") && t.contains("[Error:"));
+        // Partial content + user-friendly error message
+        assertThat(finalizedTexts).anyMatch(t -> t.contains("Partial content") && t.contains("Temporary issue"));
     }
 
     // ─── Streaming fallback ─────────────────────────────────────
@@ -1112,11 +1118,11 @@ class BotMessageProcessorTest {
         properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
-        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), anyString()))
+        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
             .thenReturn(Optional.of(1L));
 
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), anyString());
+        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
     }
 
     @Test
@@ -1125,7 +1131,9 @@ class BotMessageProcessorTest {
         properties.setWorkingDirectory("/tmp");
         stubStreamingResult("MEDIA:/tmp/nonexistent_path_to_file.jpg", false);
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendMessage(eq(100L), contains("Media file not found"), anyString(), any(), any());
+        // S-2: File not found is silently skipped (no error message sent to user)
+        // The MEDIA: tag is still stripped from the displayed text
+        verify(telegramClient, never()).sendPhoto(anyLong(), any(byte[].class), any(), any());
     }
 
     @Test
@@ -1135,11 +1143,11 @@ class BotMessageProcessorTest {
         properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("Here is the photo\nMEDIA:" + mediaFile.toString(), false);
-        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), anyString()))
+        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
             .thenReturn(Optional.of(1L));
 
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), anyString());
+        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
         verify(telegramClient).sendMessage(eq(100L), contains("Here is the photo"), anyString(), any(), any());
     }
 
@@ -1151,7 +1159,8 @@ class BotMessageProcessorTest {
 
         stubStreamingResult("MEDIA:" + dir.toString(), false);
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendMessage(eq(100L), contains("Media file not found"), anyString(), any(), any());
+        // S-2: Directory (not a file) is silently skipped
+        verify(telegramClient, never()).sendPhoto(anyLong(), any(byte[].class), any(), any());
     }
 
     @Test
@@ -1161,11 +1170,12 @@ class BotMessageProcessorTest {
         properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
-        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), anyString()))
+        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
             .thenThrow(new RuntimeException("send failed"));
 
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendMessage(eq(100L), contains("Failed to send media"), anyString(), any(), any());
+        // S-2: Send failure is logged, no error message sent to user
+        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
     }
 
     // ─── sendFormatted — reply modes ────────────────────────────
@@ -1686,11 +1696,12 @@ class BotMessageProcessorTest {
         properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
-        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), anyString()))
+        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
             .thenReturn(Optional.of(1L));
 
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), eq("MarkdownV2"));
+        // S-2: deliverImageBatch sends photo with null caption and null parseMode
+        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
     }
 
     // ─── Error in accept() catch block ───────────────────────────
@@ -1793,7 +1804,7 @@ class BotMessageProcessorTest {
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
         processor.accept(textEvent(1, 100L, "hello"));
         // The file should NOT be sent because the path is outside allowed dirs
-        verify(telegramClient, never()).sendPhoto(anyLong(), any(byte[].class), any(), anyString());
+        verify(telegramClient, never()).sendPhoto(anyLong(), any(byte[].class), any(), any());
     }
 
     @Test
@@ -1805,10 +1816,10 @@ class BotMessageProcessorTest {
         properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
-        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), anyString()))
+        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
             .thenReturn(Optional.of(1L));
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), anyString());
+        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
     }
 
     @Test
@@ -1822,10 +1833,10 @@ class BotMessageProcessorTest {
             properties.setWorkingDirectory("/some/other/dir");
 
             stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
-            when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), anyString()))
+            when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
                 .thenReturn(Optional.of(1L));
             processor.accept(textEvent(1, 100L, "hello"));
-            verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), anyString());
+            verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
         } finally {
             Files.deleteIfExists(mediaFile);
         }
@@ -1842,7 +1853,7 @@ class BotMessageProcessorTest {
         String traversalPath = tempDir.resolve("test.jpg").toString();
         stubStreamingResult("MEDIA:" + traversalPath, false);
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient, never()).sendPhoto(anyLong(), any(byte[].class), any(), anyString());
+        verify(telegramClient, never()).sendPhoto(anyLong(), any(byte[].class), any(), any());
     }
 
     // ─── message_thread_id pass-through ────────────────────────────

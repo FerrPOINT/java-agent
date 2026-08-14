@@ -35,6 +35,9 @@ public interface MessageMapper {
     @Mapping(target = "role", source = "role", qualifiedByName = "roleToString")
     @Mapping(target = "sessionId", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
+    // M7: Verified — toEntity() maps tool calls from both Message.toolCall() (single)
+    // and Message.toolCalls() (list) into MessageEntity fields (toolCallId, toolCallName,
+    // toolCallArguments). Tool call metadata is preserved during mid-turn persistence.
     default MessageEntity toEntity(Message message) {
         if (message == null) {
             return null;

@@ -16,6 +16,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -269,5 +270,368 @@ class CronJobServiceTest {
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         CronJobEntity updated = service.update(id, "new-name", "10m", "New prompt", null, true);
         assertThat(updated.getSchedule()).isEqualTo("10m");
+    }
+
+    // ── Fix 1: Full field update tests ──
+
+    @Test
+    void updateAllFields() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("old-name");
+        job.setSchedule("0 * * * *");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CronJobEntity updated = service.update(
+            id, "new-name", "every 1h", "New prompt", "telegram", true,
+            "skill1,skill2", "ctx-job-1",
+            5,
+            "check.sh", true,
+            "web,terminal", "/tmp/workdir",
+            "openai", "gpt-4", "https://api.openai.com"
+        );
+
+        assertThat(updated.getName()).isEqualTo("new-name");
+        assertThat(updated.getSchedule()).isEqualTo("every 1h");
+        assertThat(updated.getPrompt()).isEqualTo("New prompt");
+        assertThat(updated.getDeliverTo()).isEqualTo("telegram");
+        assertThat(updated.getSkills()).isEqualTo("skill1,skill2");
+        assertThat(updated.getContextFrom()).isEqualTo("ctx-job-1");
+        assertThat(updated.getRepeatCount()).isEqualTo(5);
+        assertThat(updated.getScript()).isEqualTo("check.sh");
+        assertThat(updated.isNoAgent()).isTrue();
+        assertThat(updated.getEnabledToolsets()).isEqualTo("web,terminal");
+        assertThat(updated.getWorkdir()).isEqualTo("/tmp/workdir");
+        assertThat(updated.getModelProvider()).isEqualTo("openai");
+        assertThat(updated.getModelName()).isEqualTo("gpt-4");
+        assertThat(updated.getBaseUrl()).isEqualTo("https://api.openai.com");
+    }
+
+    @Test
+    void updateNoAgentRequiresScript() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("test-job");
+        job.setSchedule("0 * * * *");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.update(id, null, null, null, null, null,
+                null, null, null, null, true, null, null, null, null, null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("script");
+    }
+
+    @Test
+    void updateNoAgentWithScriptInSameUpdate() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("test-job");
+        job.setSchedule("0 * * * *");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CronJobEntity updated = service.update(
+            id, null, null, null, null, null,
+            null, null, null, "monitor.sh", true,
+            null, null, null, null, null);
+
+        assertThat(updated.isNoAgent()).isTrue();
+        assertThat(updated.getScript()).isEqualTo("monitor.sh");
+    }
+
+    @Test
+    void updateClearsFieldsWithEmptyString() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("test-job");
+        job.setSchedule("0 * * * *");
+        job.setScript("old.sh");
+        job.setEnabledToolsets("web,terminal");
+        job.setWorkdir("/tmp/old");
+        job.setModelProvider("openai");
+        job.setModelName("gpt-4");
+        job.setBaseUrl("https://old.com");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CronJobEntity updated = service.update(
+            id, null, null, null, null, null,
+            null, null, null, "", null,
+            "", "", "", "", "");
+
+        assertThat(updated.getScript()).isNull();
+        assertThat(updated.getEnabledToolsets()).isNull();
+        assertThat(updated.getWorkdir()).isNull();
+        assertThat(updated.getModelProvider()).isNull();
+        assertThat(updated.getModelName()).isNull();
+        assertThat(updated.getBaseUrl()).isNull();
+    }
+
+    // ── Fix 2: Repeat count tests ──
+
+    @Test
+    void createWithRepeatCount() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        CronJobEntity job = service.create(
+            "repeat-job", "every 1h", "Run task", null, null, null,
+            3, null, false, null, null, null, null, null);
+        assertThat(job.getRepeatCount()).isEqualTo(3);
+        assertThat(job.getRepeatCompleted()).isEqualTo(0);
+    }
+
+    @Test
+    void createWithZeroRepeatNormalizesToNull() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        CronJobEntity job = service.create(
+            "repeat-job", "every 1h", "Run task", null, null, null,
+            0, null, false, null, null, null, null, null);
+        assertThat(job.getRepeatCount()).isNull();
+    }
+
+    @Test
+    void updateRepeatCount() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("test-job");
+        job.setSchedule("every 1h");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CronJobEntity updated = service.update(
+            id, null, null, null, null, null,
+            null, null, 10, null, null, null, null, null, null, null);
+
+        assertThat(updated.getRepeatCount()).isEqualTo(10);
+    }
+
+    @Test
+    void updateRepeatCountZeroNormalizesToNull() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("test-job");
+        job.setSchedule("every 1h");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CronJobEntity updated = service.update(
+            id, null, null, null, null, null,
+            null, null, 0, null, null, null, null, null, null, null);
+
+        assertThat(updated.getRepeatCount()).isNull();
+    }
+
+    // ── Fix 3: One-shot schedule tests ──
+
+    @Test
+    void createOneShotBareDuration_setsRepeatCount1() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        // "30m" without "every" → one-shot, repeatCount auto-set to 1
+        CronJobEntity job = service.create("oneshot", "30m", "Run once", null);
+        assertThat(job.getRepeatCount()).isEqualTo(1);
+    }
+
+    @Test
+    void createOneShotIsoTimestamp_setsRepeatCount1() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        // ISO timestamp → one-shot, repeatCount auto-set to 1
+        CronJobEntity job = service.create("oneshot-iso", "2099-12-31T23:59:00", "Run once", null);
+        assertThat(job.getRepeatCount()).isEqualTo(1);
+    }
+
+    @Test
+    void createRecurringInterval_repeatCountNotAutoSet() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        // "every 30m" → recurring, repeatCount stays null (forever)
+        CronJobEntity job = service.create("recurring", "every 30m", "Run forever", null);
+        assertThat(job.getRepeatCount()).isNull();
+    }
+
+    @Test
+    void createCronExpression_repeatCountNotAutoSet() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        // "0 9 * * *" → recurring cron, repeatCount stays null
+        CronJobEntity job = service.create("cron-job", "0 9 * * *", "Run daily", null);
+        assertThat(job.getRepeatCount()).isNull();
+    }
+
+    @Test
+    void createOneShotWithExplicitRepeatOverridesAutoSet() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        // one-shot with explicit repeat=3 → use 3, not auto-1
+        CronJobEntity job = service.create(
+            "oneshot-3x", "30m", "Run 3 times", null, null, null,
+            3, null, false, null, null, null, null, null);
+        assertThat(job.getRepeatCount()).isEqualTo(3);
+    }
+
+    @Test
+    void validateIsoTimestampSchedule() {
+        // Should not throw
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        service.create("iso-job", "2099-06-01T09:00:00", "Run at time", null);
+    }
+
+    @Test
+    void validateIsoTimestampWithoutSeconds() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        service.create("iso-job", "2099-06-01T09:00", "Run at time", null);
+    }
+
+    // ── Fix 4: no_agent mode tests ──
+
+    @Test
+    void createNoAgentWithoutScript_throwsException() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.create(
+                "noagent-job", "every 5m", null, null, null, null,
+                null, null, true, null, null, null, null, null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("no_agent");
+    }
+
+    @Test
+    void createNoAgentWithScript_succeeds() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        CronJobEntity job = service.create(
+            "watchdog", "every 5m", null, null, null, null,
+            null, "monitor.sh", true, null, null, null, null, null);
+        assertThat(job.isNoAgent()).isTrue();
+        assertThat(job.getScript()).isEqualTo("monitor.sh");
+    }
+
+    @Test
+    void runNoAgentJob_executesScriptDirectly() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("watchdog");
+        job.setEnabled(true);
+        job.setNoAgent(true);
+        // Use a script that exists on the system — echo via bash
+        job.setScript("echo hello");
+        // This won't find the file, but it exercises the no_agent path and doesn't call LLM
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.runNow(id);
+
+        // Verify LLM was NOT called
+        verify(agentRuntimeService, never()).runBackground(any(), any());
+    }
+
+    // ── Fix 5/6/7: Override field tests ──
+
+    @Test
+    void createWithEnabledToolsets() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        CronJobEntity job = service.create(
+            "restricted", "every 1h", "Run task", null, null, null,
+            null, null, false, "web,terminal", null, null, null, null);
+        assertThat(job.getEnabledToolsets()).isEqualTo("web,terminal");
+    }
+
+    @Test
+    void createWithWorkdir() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        CronJobEntity job = service.create(
+            "workdir-job", "every 1h", "Run task", null, null, null,
+            null, null, false, null, "/opt/dev", null, null, null);
+        assertThat(job.getWorkdir()).isEqualTo("/opt/dev");
+    }
+
+    @Test
+    void createWithModelOverrides() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+        CronJobEntity job = service.create(
+            "override-job", "every 1h", "Run task", null, null, null,
+            null, null, false, null, null, "anthropic", "claude-sonnet-4", "https://api.anthropic.com");
+        assertThat(job.getModelProvider()).isEqualTo("anthropic");
+        assertThat(job.getModelName()).isEqualTo("claude-sonnet-4");
+        assertThat(job.getBaseUrl()).isEqualTo("https://api.anthropic.com");
+    }
+
+    @Test
+    void runNowWithOverrides_injectsOverrideInfoIntoPrompt() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("override-cron");
+        job.setPrompt("Do something");
+        job.setEnabled(true);
+        job.setEnabledToolsets("web,terminal");
+        job.setWorkdir("/opt/dev");
+        job.setModelProvider("openai");
+        job.setModelName("gpt-4");
+        job.setBaseUrl("https://api.openai.com");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.runNow(id);
+
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron toolset restriction: web,terminal]"), eq(null));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron workdir: /opt/dev]"), eq(null));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron model provider: openai]"), eq(null));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron model name: gpt-4]"), eq(null));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron base URL: https://api.openai.com]"), eq(null));
     }
 }

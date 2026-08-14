@@ -97,7 +97,9 @@ class DefaultAgentRuntimeRetryTest {
         when(contextEngine.prepareContext(any(Session.class), any(List.class)))
             .thenAnswer(inv -> inv.getArgument(1));
         when(toolRegistry.getDefinitions(anySet()))
-            .thenReturn(List.<ToolDefinition>of());
+            .thenReturn(List.<ToolDefinition>of(
+                new ToolDefinition("weather", "Get weather", java.util.Map.of())
+            ));
 
         IterationBudget.TurnSnapshot snapshot = mock(IterationBudget.TurnSnapshot.class);
         when(iterationBudget.startTurn(any(UUID.class))).thenReturn(snapshot);
@@ -117,7 +119,7 @@ class DefaultAgentRuntimeRetryTest {
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
             new com.azhukov.agent.core.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter());
+            new TokenEstimator(), new ToolResultFormatter(), null, null);
     }
 
     // ─── Retry on transient errors ───
@@ -173,7 +175,7 @@ class DefaultAgentRuntimeRetryTest {
     @DisplayName("When modelClient.complete() throws permanent error (invalid key), turn ends immediately with error")
     void permanentErrorNotRetried() {
         when(modelClient.complete(any(List.class), any(List.class), any()))
-            .thenThrow(new RuntimeException("invalid API key"));
+            .thenThrow(new IllegalArgumentException("bad configuration"));
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         TurnResult result = runtime.runTurn(session, "Hello");
@@ -181,7 +183,7 @@ class DefaultAgentRuntimeRetryTest {
         // Invalid API key is PERMANENT → no retry, single call
         assertThat(result.completed()).isFalse();
         assertThat(result.error()).contains("Model call failed");
-        assertThat(result.error()).contains("invalid API key");
+        assertThat(result.error()).contains("bad configuration");
         verify(modelClient, times(1)).complete(any(List.class), any(List.class), any());
     }
 
@@ -224,10 +226,14 @@ class DefaultAgentRuntimeRetryTest {
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         TurnResult result = runtime.runTurn(session, "Hello");
 
-        // Content policy is PERMANENT → no retry, single call
-        assertThat(result.completed()).isFalse();
-        assertThat(result.error()).contains("Model call failed");
+        // Content policy is terminal (Part F) — no retry, single call.
+        // The turn returns completed=true with a user-friendly content policy message
+        // (instead of a raw "Model call failed" error).
+        assertThat(result.completed()).isTrue();
+        assertThat(result.error()).isNull();
         verify(modelClient, times(1)).complete(any(List.class), any(List.class), any());
+        verify(turnFinalizer).finalize(any(UUID.class), any(List.class), org.mockito.ArgumentMatchers.eq(false),
+            org.mockito.ArgumentMatchers.eq(TurnExitReason.CONTENT_POLICY));
     }
 
     @Test
@@ -354,7 +360,7 @@ class DefaultAgentRuntimeRetryTest {
                 if (modelCallCount.incrementAndGet() == 1) {
                     return ChatResponse.toolCalls(List.of(toolCall));
                 }
-                throw new RuntimeException("invalid API key");
+                throw new IllegalArgumentException("bad configuration");
             });
 
         when(toolExecutionService.execute(
@@ -367,7 +373,7 @@ class DefaultAgentRuntimeRetryTest {
 
         // Second model call fails permanently → no retry
         assertThat(result.completed()).isFalse();
-        assertThat(result.error()).contains("invalid API key");
+        assertThat(result.error()).contains("bad configuration");
         assertThat(modelCallCount.get()).isEqualTo(2); // First succeeded, second failed permanently
     }
 
@@ -379,8 +385,8 @@ class DefaultAgentRuntimeRetryTest {
         AgentProperties properties = new AgentProperties();
         properties.getCore().setMaxTurns(10);
         // The config exists with defaults
-        assertThat(properties.getError().getRetryAttempts()).isEqualTo(5);
-        assertThat(properties.getError().getRetryDelayMs()).isEqualTo(2000);
+        assertThat(properties.getError().getRetryAttempts()).isEqualTo(3);
+        assertThat(properties.getError().getRetryDelayMs()).isEqualTo(1000);
         assertThat(properties.getError().getBackoffMultiplier()).isEqualTo(2);
         // Also model-level retry config
         assertThat(properties.getModel().getMaxRetries()).isEqualTo(3);
@@ -408,7 +414,9 @@ class DefaultAgentRuntimeRetryTest {
         when(contextEngine.prepareContext(any(Session.class), any(List.class)))
             .thenAnswer(inv -> inv.getArgument(1));
         when(toolRegistry.getDefinitions(anySet()))
-            .thenReturn(List.<ToolDefinition>of());
+            .thenReturn(List.<ToolDefinition>of(
+                new ToolDefinition("weather", "Get weather", java.util.Map.of())
+            ));
         IterationBudget.TurnSnapshot snapshot = mock(IterationBudget.TurnSnapshot.class);
         when(iterationBudget.startTurn(any(UUID.class))).thenReturn(snapshot);
         when(iterationBudget.isExhausted(any())).thenReturn(false);
@@ -424,7 +432,7 @@ class DefaultAgentRuntimeRetryTest {
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
             new com.azhukov.agent.core.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter());
+            new TokenEstimator(), new ToolResultFormatter(), null, null);
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         customRuntime.runTurn(session, "Hello");

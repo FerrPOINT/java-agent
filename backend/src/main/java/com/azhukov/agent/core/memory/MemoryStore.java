@@ -18,7 +18,7 @@ public class MemoryStore {
 
     public static final String TARGET_MEMORY = "memory";
     public static final String TARGET_USER = "user";
-    public static final String DELIMITER = "§";
+    public static final String DELIMITER = "\n§\n";
     /** Default char limit for the "memory" store, used when no config is provided. */
     public static final int DEFAULT_MEMORY_CHAR_LIMIT = 2200;
     /** Default char limit for the "user" store, used when no config is provided. */
@@ -94,9 +94,14 @@ public class MemoryStore {
             return null; // Already exists, no-op (dedup)
         }
         int limit = getCharLimit(target);
-        int currentChars = store.stream().mapToInt(String::length).sum();
-        if (currentChars + trimmed.length() > limit) {
-            return "Content exceeds char limit (" + limit + ") for target: " + target;
+        int currentChars = charCount(store);
+        int newTotal = currentChars + trimmed.length() + (store.isEmpty() ? 0 : DELIMITER.length());
+        if (newTotal > limit) {
+            // Parity with Hermes add() lines 328-341: error with current usage
+            return "Memory at " + currentChars + "/" + limit + " chars. "
+                + "Adding this entry (" + trimmed.length() + " chars) would exceed the limit. "
+                + "Consolidate now: use 'replace' to merge overlapping entries into shorter ones "
+                + "or 'remove' stale or less important entries, then retry this add — all in this turn.";
         }
         store.add(trimmed);
         invalidateSnapshot();
@@ -124,14 +129,49 @@ public class MemoryStore {
         if (store == null) {
             return "Unknown target: " + target;
         }
+        // Find ALL entries containing oldText (parity with Hermes replace() lines 369-383)
+        List<int[]> matchIndices = new ArrayList<>();
+        List<String> matchTexts = new ArrayList<>();
         for (int i = 0; i < store.size(); i++) {
             if (store.get(i).contains(oldText)) {
-                store.set(i, newText.trim());
-                invalidateSnapshot();
-                return null;
+                matchIndices.add(new int[]{i});
+                matchTexts.add(store.get(i));
             }
         }
-        return "No entry found containing: " + oldText;
+        if (matchIndices.isEmpty()) {
+            return "No entry found containing: " + oldText;
+        }
+        // If >1 unique entries match, return error with previews (parity with Hermes)
+        if (matchTexts.size() > 1) {
+            long uniqueCount = matchTexts.stream().distinct().count();
+            if (uniqueCount > 1) {
+                StringBuilder sb = new StringBuilder();
+                sb.append("Multiple entries match '").append(oldText).append("'. Be more specific:");
+                int i = 1;
+                for (String e : matchTexts) {
+                    String preview = e.length() > 80 ? e.substring(0, 80) + "..." : e;
+                    sb.append("\n").append(i++).append(". ").append(preview);
+                }
+                return sb.toString();
+            }
+            // All identical — safe to replace first
+        }
+        int idx = matchIndices.get(0)[0];
+        // Overflow check: after replacement, total store chars must not exceed limit
+        // Parity with Hermes replace() lines 389-406
+        int limit = getCharLimit(target);
+        List<String> testEntries = new ArrayList<>(store);
+        testEntries.set(idx, newText.trim());
+        int newTotal = String.join(DELIMITER, testEntries).length();
+        if (newTotal > limit) {
+            int current = charCount(store);
+            return "Replacement would put memory at " + newTotal + "/" + limit + " chars. "
+                + "Shorten the new content, or 'remove' other stale or less important entries "
+                + "to make room, then retry — all in this turn.";
+        }
+        store.set(idx, newText.trim());
+        invalidateSnapshot();
+        return null;
     }
 
     /**
@@ -146,14 +186,36 @@ public class MemoryStore {
         if (store == null) {
             return "Unknown target: " + target;
         }
+        // Find ALL entries containing oldText (parity with Hermes remove() lines 426-440)
+        List<Integer> matchIndices = new ArrayList<>();
+        List<String> matchTexts = new ArrayList<>();
         for (int i = 0; i < store.size(); i++) {
             if (store.get(i).contains(oldText)) {
-                store.remove(i);
-                invalidateSnapshot();
-                return null;
+                matchIndices.add(i);
+                matchTexts.add(store.get(i));
             }
         }
-        return "No entry found containing: " + oldText;
+        if (matchIndices.isEmpty()) {
+            return "No entry found containing: " + oldText;
+        }
+        // If >1 unique entries match, return error with previews (parity with Hermes)
+        if (matchTexts.size() > 1) {
+            long uniqueCount = matchTexts.stream().distinct().count();
+            if (uniqueCount > 1) {
+                StringBuilder sb = new StringBuilder();
+                sb.append("Multiple entries match '").append(oldText).append("'. Be more specific:");
+                int i = 1;
+                for (String e : matchTexts) {
+                    String preview = e.length() > 80 ? e.substring(0, 80) + "..." : e;
+                    sb.append("\n").append(i++).append(". ").append(preview);
+                }
+                return sb.toString();
+            }
+            // All identical — safe to remove first
+        }
+        store.remove(matchIndices.get(0).intValue());
+        invalidateSnapshot();
+        return null;
     }
 
     /**
@@ -227,5 +289,15 @@ public class MemoryStore {
             return userCharLimit;
         }
         return 0;
+    }
+
+    /**
+     * Count total chars including delimiters (parity with Hermes _char_count).
+     */
+    private int charCount(List<String> store) {
+        if (store == null || store.isEmpty()) {
+            return 0;
+        }
+        return String.join(DELIMITER, store).length();
     }
 }

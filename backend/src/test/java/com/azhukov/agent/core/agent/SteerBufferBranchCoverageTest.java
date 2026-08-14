@@ -8,7 +8,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Branch-coverage tests for SteerBuffer — covers null session IDs,
- * whitespace-only text, overwriting previous steer, and clear on empty.
+ * whitespace-only text, concatenating multiple steers, and clear on empty.
  */
 class SteerBufferBranchCoverageTest {
 
@@ -28,12 +28,12 @@ class SteerBufferBranchCoverageTest {
     }
 
     @Test
-    void steerOverwritesPreviousPending() {
+    void steerConcatenatesWithNewlineOnMultipleSteers() {
         SteerBuffer buffer = new SteerBuffer();
         UUID sessionId = UUID.randomUUID();
         buffer.steer(sessionId, "first note");
         buffer.steer(sessionId, "second note");
-        assertThat(buffer.consume(sessionId)).isEqualTo("second note");
+        assertThat(buffer.consume(sessionId)).isEqualTo("first note\nsecond note");
     }
 
     @Test

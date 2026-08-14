@@ -55,8 +55,38 @@ public interface MemoryProvider {
  }
 
  default String read(String userId, String target) {
- List<String> facts = recall(userId, "", 100);
- return String.join("§", facts);
+     List<String> facts = recall(userId, "", 100);
+     return String.join("§", facts);
+ }
+
+ /**
+  * Return the raw (unformatted) entry texts for the target store.
+  * Unlike {@link #read}, this excludes headers, category prefixes, and
+  * other formatting — just the pure entry content.
+  * Used for accurate char counting (parity with Hermes _char_count).
+  */
+ default List<String> getRawEntries(String userId, String target) {
+     return recall(userId, "", 100);
+ }
+
+ /**
+  * Return the total char count of raw entries joined by the § delimiter.
+  * Parity with Hermes _char_count(): len(ENTRY_DELIMITER.join(entries)).
+  */
+ default int getCharCount(String userId, String target) {
+     List<String> entries = getRawEntries(userId, target);
+     if (entries == null || entries.isEmpty()) {
+         return 0;
+     }
+     return String.join("\n§\n", entries).length();
+ }
+
+ /**
+  * Return the number of raw entries for the target store.
+  */
+ default int getEntryCount(String userId, String target) {
+     List<String> entries = getRawEntries(userId, target);
+     return entries == null ? 0 : entries.size();
  }
 
  default Map<String, String> getSnapshot(String userId) {

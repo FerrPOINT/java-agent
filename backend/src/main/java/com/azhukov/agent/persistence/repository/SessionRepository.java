@@ -19,9 +19,18 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
 
     List<SessionEntity> findAllByUserId(String userId);
 
+    // M15: Count query for reliable has_more pagination
+    long countByUserId(String userId);
+
     Page<SessionEntity> findAllByUserId(String userId, Pageable pageable);
 
     List<SessionEntity> findByTitleContainingIgnoreCase(String title);
+
+    /**
+     * Find child sessions by parent_session_id, ordered by most recently created.
+     * Used for compression child-chain resolution (parity with Hermes resolve_resume_session_id).
+     */
+    List<SessionEntity> findByParentSessionIdOrderByCreatedAtDesc(UUID parentSessionId);
 
     /**
      * Full-text search on session titles using PostgreSQL tsvector.

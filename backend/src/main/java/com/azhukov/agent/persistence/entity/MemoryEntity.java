@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.Data;
 
 import java.time.Instant;
@@ -32,4 +33,12 @@ public class MemoryEntity {
 
     @Column(name = "updated_at")
     private Instant updatedAt;
+
+    /**
+     * JPA optimistic lock version — detects concurrent modifications from other
+     * sessions, tools, or manual DB edits. Equivalent to Hermes' file-based
+     * _detect_external_drift() round-trip mismatch detection (issue #26045).
+     */
+    @Version
+    private Long version;
 }

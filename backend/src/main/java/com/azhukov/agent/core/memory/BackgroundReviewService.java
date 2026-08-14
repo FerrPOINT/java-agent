@@ -85,27 +85,43 @@ public class BackgroundReviewService {
  private final ConcurrentHashMap<UUID, StaleActionFilter.PriorToolResults> priorResultsCache = new ConcurrentHashMap<>();
 
  /**
- * Review a turn's conversation and save facts to memory if appropriate.
- * Runs asynchronously with a configurable delay.
- *
- * S7: Uses per-turn prompt selection based on conversation content.
- */
+  * Review a turn's conversation and save facts to memory if appropriate.
+  * Runs asynchronously with a configurable delay.
+  *
+  * S7: Uses per-turn prompt selection based on conversation content.
+  */
  public void reviewTurn(UUID sessionId, List<Message> messages) {
- if (!properties.getMemory().getBackgroundReview().isEnabled()) {
- return;
- }
- if (messages == null || messages.isEmpty()) {
- return;
+     reviewTurn(sessionId, messages, true, true);
  }
 
- int delayMs = properties.getMemory().getBackgroundReview().getDelayMs();
- executor.schedule(() -> {
- try {
- doReview(sessionId, messages);
- } catch (Exception e) {
- log.error("Background review failed for session {}: {}", sessionId, e.getMessage());
- }
- }, delayMs, TimeUnit.MILLISECONDS);
+ /**
+  * Nudge-gated review: only reviews memory and/or skills depending on which
+  * nudge counter triggered. Mirrors Hermes spawn_background_review_thread
+  * which receives review_memory and review_skills booleans and picks the
+  * prompt accordingly.
+  *
+  * @param reviewMemory  true if the memory nudge counter triggered
+  * @param reviewSkills   true if the skill nudge counter triggered
+  */
+ public void reviewTurn(UUID sessionId, List<Message> messages, boolean reviewMemory, boolean reviewSkills) {
+     if (!properties.getMemory().getBackgroundReview().isEnabled()) {
+         return;
+     }
+     if (messages == null || messages.isEmpty()) {
+         return;
+     }
+     if (!reviewMemory && !reviewSkills) {
+         return;
+     }
+
+     int delayMs = properties.getMemory().getBackgroundReview().getDelayMs();
+     executor.schedule(() -> {
+         try {
+             doReview(sessionId, messages, reviewMemory, reviewSkills);
+         } catch (Exception e) {
+             log.error("Background review failed for session {}: {}", sessionId, e.getMessage());
+         }
+     }, delayMs, TimeUnit.MILLISECONDS);
  }
 
  /**
@@ -149,19 +165,32 @@ public class BackgroundReviewService {
  }
 
  /**
- * S3/S7: Mini conversation loop with tool whitelist and full schemas.
- */
- private void doReview(UUID sessionId, List<Message> messages) {
- log.debug("Starting background review for session {}", sessionId);
+  * S3/S7: Mini conversation loop with tool whitelist and full schemas.
+  * Nudge-gated: picks the review prompt based on which nudge triggered,
+  * mirroring Hermes spawn_background_review_thread prompt selection.
+  */
+ private void doReview(UUID sessionId, List<Message> messages, boolean reviewMemory, boolean reviewSkills) {
+     log.debug("Starting background review for session {} (memory={}, skills={})",
+         sessionId, reviewMemory, reviewSkills);
 
- // S7: Collect prior tool results for stale-action filtering
- StaleActionFilter.PriorToolResults priorResults = StaleActionFilter.collectPriorToolResults(messages);
- priorResultsCache.put(sessionId, priorResults);
+     // S7: Collect prior tool results for stale-action filtering
+     StaleActionFilter.PriorToolResults priorResults = StaleActionFilter.collectPriorToolResults(messages);
+     priorResultsCache.put(sessionId, priorResults);
 
- // S7: Per-turn prompt selection — choose memory-only, skill-only, or combined
- String reviewPrompt = ReviewPromptSelector.selectPrompt(messages);
- log.debug("Background review for session {}: prompt type = {}",
- sessionId, ReviewPromptSelector.selectReviewType(messages));
+     // Pick the review prompt based on which nudge triggered — same logic as
+     // Hermes spawn_background_review_thread: combined > memory-only > skill-only.
+     String reviewPrompt;
+     if (reviewMemory && reviewSkills) {
+         reviewPrompt = ReviewPromptSelector.selectPrompt(messages);
+     } else if (reviewMemory) {
+         reviewPrompt = ReviewPrompts.MEMORY_REVIEW_PROMPT;
+     } else {
+         reviewPrompt = ReviewPrompts.SKILL_REVIEW_PROMPT;
+     }
+     log.debug("Background review for session {}: prompt type = {}",
+         sessionId, reviewMemory && reviewSkills
+             ? ReviewPromptSelector.selectReviewType(messages)
+             : (reviewMemory ? "MEMORY_ONLY" : "SKILL_ONLY"));
 
  // Build review messages: system prompt + conversation snapshot
  List<Message> reviewMessages = new ArrayList<>();

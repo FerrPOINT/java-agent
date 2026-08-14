@@ -47,6 +47,176 @@ public class SkillUtils {
  private static final Pattern SKILL_INVALID_CHARS = Pattern.compile("[^a-z0-9-]");
  private static final Pattern SKILL_MULTI_HYPHEN = Pattern.compile("-{2,}");
 
+ // ── Injection pattern detection (ported from skills_tool.py _INJECTION_PATTERNS) ──
+
+ /**
+  * Simple prompt-injection detection patterns. These are checked on skill_view
+  * to warn the user (but not block viewing), mirroring the Hermes behavior.
+  */
+ public static final List<String> INJECTION_PATTERNS = List.of(
+     "ignore previous instructions",
+     "ignore all previous",
+     "you are now",
+     "disregard your",
+     "forget your instructions",
+     "new instructions:",
+     "system prompt:",
+     "<system>",
+     "]]>"
+ );
+
+ // ── Env var name validation ──
+
+ private static final Pattern ENV_VAR_NAME_RE = Pattern.compile("^[A-Z_][A-Z0-9_]*$");
+
+ // ── Tags parsing ──────────────────────────────────────────────────────
+
+ /**
+  * Parse tags from a frontmatter value. Handles:
+  * <ul>
+  *   <li>Already-parsed list (from YAML): [tag1, tag2]</li>
+  *   <li>String with brackets: "[tag1, tag2]"</li>
+  *   <li>Comma-separated string: "tag1, tag2"</li>
+  * </ul>
+  */
+ public static List<String> parseTags(Object tagsValue) {
+     if (tagsValue == null) {
+         return List.of();
+     }
+     if (tagsValue instanceof List<?> list) {
+         return list.stream()
+             .filter(Objects::nonNull)
+             .map(String::valueOf)
+             .map(String::trim)
+             .filter(s -> !s.isEmpty())
+             .toList();
+     }
+     String str = String.valueOf(tagsValue).trim();
+     if (str.isEmpty()) {
+         return List.of();
+     }
+     if (str.startsWith("[") && str.endsWith("]")) {
+         str = str.substring(1, str.length() - 1);
+     }
+     return Arrays.stream(str.split(","))
+         .map(String::trim)
+         .map(s -> {
+             // Strip surrounding quotes
+             if ((s.startsWith("\"") && s.endsWith("\"")) ||
+                 (s.startsWith("'") && s.endsWith("'"))) {
+                 return s.substring(1, s.length() - 1);
+             }
+             return s;
+         })
+         .filter(s -> !s.isEmpty())
+         .toList();
+ }
+
+ // ── Required environment variables extraction ─────────────────────────
+
+ /**
+  * Extract required environment variables from frontmatter.
+  * Supports:
+  * <ul>
+  *   <li>Comma-separated string: "API_KEY, SECRET_TOKEN"</li>
+  *   <li>YAML list: [API_KEY, SECRET_TOKEN]</li>
+  *   <li>List of dicts: [{name: API_KEY, help: ...}, ...]</li>
+  * </ul>
+  * @return list of env var entries, each with at least "name" key
+  */
+ @SuppressWarnings("unchecked")
+ public static List<Map<String, Object>> extractRequiredEnvironmentVariables(Map<String, Object> frontmatter) {
+     Object raw = frontmatter.get("required_environment_variables");
+     if (raw == null) {
+         return List.of();
+     }
+     // Normalize to list
+     List<?> rawList;
+     if (raw instanceof List<?> list) {
+         rawList = list;
+     } else if (raw instanceof Map<?, ?> map) {
+         rawList = List.of(map);
+     } else {
+         // String: comma-separated
+         rawList = Arrays.stream(String.valueOf(raw).split(","))
+             .map(String::trim)
+             .filter(s -> !s.isEmpty())
+             .toList();
+     }
+
+     List<Map<String, Object>> result = new ArrayList<>();
+     Set<String> seen = new HashSet<>();
+
+     for (Object item : rawList) {
+         if (item instanceof String nameStr) {
+             String name = nameStr.trim();
+             if (!name.isEmpty() && !seen.contains(name) && ENV_VAR_NAME_RE.matcher(name).matches()) {
+                 seen.add(name);
+                 result.add(Map.of("name", name));
+             }
+         } else if (item instanceof Map<?, ?> itemMap) {
+             Object nameObj = itemMap.get("name");
+             if (nameObj == null) nameObj = itemMap.get("env_var");
+             if (nameObj == null) continue;
+             String name = String.valueOf(nameObj).trim();
+             if (name.isEmpty() || seen.contains(name) || !ENV_VAR_NAME_RE.matcher(name).matches()) {
+                 continue;
+             }
+             seen.add(name);
+             Map<String, Object> entry = new LinkedHashMap<>();
+             entry.put("name", name);
+             Object prompt = itemMap.get("prompt");
+             entry.put("prompt", prompt != null ? String.valueOf(prompt).trim() : "Enter value for " + name);
+             Object help = itemMap.get("help");
+             if (help == null) help = itemMap.get("provider_url");
+             if (help == null) help = itemMap.get("url");
+             if (help != null) entry.put("help", String.valueOf(help).trim());
+             Object requiredFor = itemMap.get("required_for");
+             if (requiredFor != null) entry.put("required_for", String.valueOf(requiredFor).trim());
+             if (itemMap.get("optional") != null) entry.put("optional", true);
+             result.add(entry);
+         }
+     }
+     return result;
+ }
+
+ /**
+  * Check which required env vars are NOT set in System.getenv().
+  * @return list of missing env var names
+  */
+ public static List<String> findMissingEnvironmentVariables(List<Map<String, Object>> requiredEnvVars) {
+     List<String> missing = new ArrayList<>();
+     for (Map<String, Object> entry : requiredEnvVars) {
+         if (Boolean.TRUE.equals(entry.get("optional"))) continue;
+         String name = String.valueOf(entry.get("name"));
+         String value = System.getenv(name);
+         if (value == null || value.isBlank()) {
+             missing.add(name);
+         }
+     }
+     return missing;
+ }
+
+ // ── Injection pattern detection ──────────────────────────────────────
+
+ /**
+  * Scan content for suspicious prompt-injection patterns.
+  * @return list of matched patterns (empty if none found)
+  */
+ public static List<String> detectInjectionPatterns(String content) {
+     if (content == null || content.isBlank()) {
+         return List.of();
+     }
+     String lower = content.toLowerCase();
+     List<String> found = new ArrayList<>();
+     for (String pattern : INJECTION_PATTERNS) {
+         if (lower.contains(pattern)) {
+             found.add(pattern);
+         }
+     }
+     return found;
+ }
+
  // ── Frontmatter parsing ───────────────────────────────────────────────
 
  /**

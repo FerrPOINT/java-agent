@@ -1771,4 +1771,244 @@ public class BackendClient {
             return handleErr("addSubgoal", e);
         }
     }
+
+    // ------------------------------------------------------------------
+    // P2-11: New backend methods for missing CLI commands
+    // ------------------------------------------------------------------
+
+    /**
+     * Export the current session as JSON (conversation history + metadata).
+     */
+    public String exportSession(String sessionId) {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/session/{id}/context", sessionId)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "No session data to export.";
+            return json;
+        } catch (Exception e) {
+            return handleErr("exportSession", e);
+        }
+    }
+
+    /**
+     * Import a session from JSON data.
+     */
+    public String importSession(String jsonData) {
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/session/import")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(jsonData)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Session imported.";
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Session imported.");
+        } catch (Exception e) {
+            return handleErr("importSession", e);
+        }
+    }
+
+    /**
+     * Sweep (clean up) old sessions for a user.
+     * @param userId the user ID
+     * @param olderThanDays remove sessions older than this many days (0 = use default)
+     */
+    public String sweepSessions(String userId, int olderThanDays) {
+        try {
+            String json = restClient.delete()
+                .uri(uriBuilder -> uriBuilder.path("/api/v1/agent/sessions/{userId}")
+                    .queryParam("sweep", true)
+                    .queryParam("olderThanDays", olderThanDays)
+                    .build(userId))
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Sweep complete.";
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Sweep complete.");
+        } catch (Exception e) {
+            return handleErr("sweepSessions", e);
+        }
+    }
+
+    /**
+     * List available toolsets (groups of tools).
+     */
+    public JsonNode listToolsets() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/toolsets")
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return objectMapper.createArrayNode();
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("listToolsets failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    /**
+     * Enable or disable a toolset.
+     */
+    public String toggleToolset(String toolsetName, boolean enabled) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("toolset", toolsetName);
+        body.put("enabled", enabled);
+        String uri = enabled ? "/api/v1/agent/toolsets/enable" : "/api/v1/agent/toolsets/disable";
+        try {
+            restClient.post()
+                .uri(uri)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+            return "Toolset " + toolsetName + ": " + (enabled ? "enabled" : "disabled");
+        } catch (Exception e) {
+            return handleErr("toggleToolset", e);
+        }
+    }
+
+    /**
+     * Hand off the current session to a different model.
+     * This is a convenience wrapper around switchModel that formats the result as a handoff.
+     */
+    public String handoffModel(String sessionId, String model, String provider) {
+        String result = switchModel(sessionId, model, provider);
+        return "Handoff: " + result;
+    }
+
+    /**
+     * Get the current plan / todo list for the session.
+     */
+    public String getPlan(String sessionId) {
+        try {
+            String json = restClient.get()
+                .uri(uriBuilder -> uriBuilder.path("/api/v1/agent/session/{id}/context")
+                    .queryParam("plan", true)
+                    .build(sessionId))
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "No plan available.";
+            JsonNode node = objectMapper.readTree(json);
+            JsonNode plan = node.path("plan");
+            if (plan.isMissingNode() || plan.isNull()) return "No plan set for this session.";
+            if (plan.isArray()) {
+                StringBuilder sb = new StringBuilder("Current plan:\n");
+                int i = 1;
+                for (JsonNode item : plan) {
+                    String text = item.path("text").asText(item.asText("?"));
+                    boolean done = item.path("done").asBoolean(false);
+                    sb.append(String.format("  %d. [%s] %s%n", i++, done ? "x" : " ", text));
+                }
+                return sb.toString().stripTrailing();
+            }
+            return "Plan: " + plan.asText();
+        } catch (Exception e) {
+            return handleErr("getPlan", e);
+        }
+    }
+
+    /**
+     * Get suggestions for the current session.
+     */
+    public JsonNode getSuggestions() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/suggestions")
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return objectMapper.createArrayNode();
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.error("getSuggestions failed: {}", e.getMessage());
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    /**
+     * Dismiss a suggestion by ID.
+     */
+    public String dismissSuggestion(String suggestionId) {
+        try {
+            restClient.delete()
+                .uri("/api/v1/agent/suggestions/{id}", suggestionId)
+                .retrieve()
+                .toBodilessEntity();
+            return "Suggestion dismissed: " + suggestionId;
+        } catch (Exception e) {
+            return handleErr("dismissSuggestion", e);
+        }
+    }
+
+    /**
+     * Annotate a session with a note.
+     */
+    public String annotateSession(String sessionId, String note) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        body.put("note", note);
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/session/annotate")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Annotation saved.";
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Annotation saved.");
+        } catch (Exception e) {
+            return handleErr("annotateSession", e);
+        }
+    }
+
+    /**
+     * Replay a session from a specific point.
+     */
+    public String replaySession(String sessionId, String fromPoint) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessionId", sessionId);
+        if (fromPoint != null && !fromPoint.isBlank()) {
+            body.put("from", fromPoint);
+        }
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/session/replay")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Replay started.";
+            JsonNode node = objectMapper.readTree(json);
+            return node.path("message").asText("Replay started.");
+        } catch (Exception e) {
+            return handleErr("replaySession", e);
+        }
+    }
+
+    /**
+     * Upload a debug report (system info + logs) and get shareable links.
+     */
+    public String uploadDebugReport() {
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/debug-report")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(java.util.Map.of())
+                .retrieve()
+                .body(String.class);
+            if (json == null || json.isBlank()) return "Debug report uploaded.";
+            JsonNode node = objectMapper.readTree(json);
+            String link = node.path("link").asText(null);
+            if (link != null && !link.isBlank()) {
+                return "Debug report uploaded. Shareable link: " + link;
+            }
+            return node.path("message").asText("Debug report uploaded.");
+        } catch (Exception e) {
+            return handleErr("uploadDebugReport", e);
+        }
+    }
 }

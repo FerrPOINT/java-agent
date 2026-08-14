@@ -118,7 +118,7 @@ class AgentRuntimeFullScenariosTest {
             new com.azhukov.agent.core.security.ApprovalQueue(),
             null,
             new TokenEstimator(),
-            new ToolResultFormatter()
+            new ToolResultFormatter(), null, null
         );
     }
 
@@ -147,7 +147,7 @@ class AgentRuntimeFullScenariosTest {
             new com.azhukov.agent.core.security.ApprovalQueue(),
             null,
             new TokenEstimator(),
-            new ToolResultFormatter()
+            new ToolResultFormatter(), null, null
         );
     }
 
@@ -155,7 +155,10 @@ class AgentRuntimeFullScenariosTest {
         when(promptBuilder.buildSystemMessage(any())).thenReturn(Message.system("system prompt"));
         when(contextEngine.prepareContext(eq(session), anyList())).thenAnswer(inv -> inv.getArgument(1));
         when(toolRegistry.getDefinitions(any())).thenReturn(List.of(
-            new ToolDefinition("read_file", "reads a file", Map.of())
+            new ToolDefinition("read_file", "reads a file", Map.of()),
+            new ToolDefinition("first", "first tool", Map.of()),
+            new ToolDefinition("second", "second tool", Map.of()),
+            new ToolDefinition("tool", "generic tool", Map.of())
         ));
     }
 
@@ -320,8 +323,14 @@ class AgentRuntimeFullScenariosTest {
         when(iterationBudget.recordToolExecution(eq(afterCall), anyString(), anyLong())).thenReturn(afterTool);
 
         ToolCall toolCall = new ToolCall("c1", "tool", "{}");
+        // Budget exhaustion now triggers a toolless summary LLM call (mirrors Hermes
+        // _handle_max_iterations). The mock returns the tool call first, then the
+        // summary text on the second call.
         useModelClient(new MockModelClient(
-            List.of(ChatResponse.toolCalls(List.of(toolCall)))
+            List.of(
+                ChatResponse.toolCalls(List.of(toolCall)),
+                ChatResponse.text("I completed step 1 but could not finish step 2 due to budget limits.")
+            )
         ));
         when(toolExecutionService.execute(eq("tool"), eq("c1"), eq("{}"), eq(null), eq(session), any(com.azhukov.agent.core.state.TurnState.class))).thenReturn(ToolResult.ok("ok"));
 
@@ -329,11 +338,12 @@ class AgentRuntimeFullScenariosTest {
 
         assertThat(result.completed()).isTrue();
         assertThat(result.error()).isNull();
-        assertThat(result.finalText()).isEqualTo("⚠️ Iteration budget exhausted (1/5)");
-        assertThat(result.messages()).hasSize(5); // system, user, assistant tool-calls, tool result, budget assistant
+        // The final text should be the LLM-generated summary, not the raw budget message
+        assertThat(result.finalText()).isEqualTo("I completed step 1 but could not finish step 2 due to budget limits.");
+        assertThat(result.messages()).hasSize(5); // system, user, assistant tool-calls, tool result, budget summary assistant
 
         assertThat(result.messages().get(result.messages().size() - 1).content())
-            .isEqualTo("⚠️ Iteration budget exhausted (1/5)");
+            .isEqualTo("I completed step 1 but could not finish step 2 due to budget limits.");
     }
 
     @Test

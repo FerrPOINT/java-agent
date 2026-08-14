@@ -67,6 +67,9 @@ public class AgentRuntimeService {
     private final AgentSessionResolver sessionResolver;
     private final CliStateApplier cliStateApplier;
     private final SessionCompressionHelper sessionCompressionHelper;
+    private final com.azhukov.agent.core.context.ContextCompressor contextCompressor;
+    private final com.azhukov.agent.core.metadata.ModelMetadataService modelMetadataService;
+    private final com.azhukov.agent.core.agent.MidTurnPersistenceCallback midTurnPersistenceCallback;
 
     private static final String UNKNOWN_MODEL = "unknown";
 
@@ -75,9 +78,27 @@ public class AgentRuntimeService {
         Session session = createSession("user-1", "openai-compatible", "")
             .withMetadata("delegation_depth", String.valueOf(depth));
 
+        // P1-5: Persist user message before turn when mid-turn persistence is active
+        if (midTurnPersistenceCallback != null) {
+            transactionTemplate.execute(status -> {
+                Instant now = Instant.now();
+                MessageEntity userMsg = new MessageEntity();
+                userMsg.setSessionId(session.id());
+                userMsg.setRole("user");
+                userMsg.setContent(request.message());
+                userMsg.setTurnIndex(0);
+                userMsg.setCreatedAt(now);
+                messageRepository.save(userMsg);
+                return null;
+            });
+        }
+
         TurnResult result = agentRuntime.runTurn(session, request.message(), List.of(),
             ModelRequestOptions.empty());
-        persistMessages(session.id(), result.messages());
+        // P1-5: Only call persistMessages if mid-turn persistence is NOT active
+        if (midTurnPersistenceCallback == null) {
+            persistMessages(session.id(), result.messages());
+        }
 
         return buildResponse(session, result, false);
     }
@@ -89,9 +110,31 @@ public class AgentRuntimeService {
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
 
+        // P1-5: When mid-turn persistence is active, persist the user message before
+        // the turn starts. The DefaultAgentRuntime will persist assistant messages
+        // and tool results mid-turn via the MidTurnPersistenceCallback. This avoids
+        // duplicate writes at end-of-turn.
+        if (midTurnPersistenceCallback != null) {
+            transactionTemplate.execute(status -> {
+                Instant now = Instant.now();
+                MessageEntity userMsg = new MessageEntity();
+                userMsg.setSessionId(session.id());
+                userMsg.setRole("user");
+                userMsg.setContent(applied.message());
+                userMsg.setTurnIndex(0);
+                userMsg.setCreatedAt(now);
+                messageRepository.save(userMsg);
+                return null;
+            });
+        }
+
         ModelRequestOptions options = toModelOptions(applied, session);
         TurnResult result = agentRuntime.runTurn(session, applied.message(), List.of(), options);
-        persistMessages(session.id(), result.messages());
+        // P1-5: Only call persistMessages if mid-turn persistence is NOT active
+        // (mid-turn persistence already saved all new messages during the turn)
+        if (midTurnPersistenceCallback == null) {
+            persistMessages(session.id(), result.messages());
+        }
         sessionTitleService.maybeUpdateTitle(session.id(), result.messages(), isNew);
 
         // Record token usage from the turn
@@ -283,6 +326,16 @@ public class AgentRuntimeService {
         }
         session.setUpdatedAt(Instant.now());
         sessionRepository.save(session);
+
+        // P2-51: Recalculate compression threshold for the new model's context window.
+        // Different models have different context window sizes, so the threshold at which
+        // compression kicks in must be updated when the model switches.
+        if (modelMetadataService != null && contextCompressor != null && model != null && !model.isBlank()) {
+            int newContextWindowSize = modelMetadataService.detectContextLength(model);
+            contextCompressor.recalculateThreshold(newContextWindowSize);
+            log.info("Model switched for session {}: model={}, contextWindow={}, compression threshold recalculated",
+                sessionId, model, newContextWindowSize);
+        }
     }
 
     @Transactional
@@ -322,8 +375,25 @@ public class AgentRuntimeService {
     public String runBackground(String prompt, String sessionId) {
         // Background task — just run a turn in a new session
         Session session = createSession("user-1", "openai-compatible", "");
+        // P1-5: Persist user message before turn when mid-turn persistence is active
+        if (midTurnPersistenceCallback != null) {
+            transactionTemplate.execute(status -> {
+                Instant now = Instant.now();
+                MessageEntity userMsg = new MessageEntity();
+                userMsg.setSessionId(session.id());
+                userMsg.setRole("user");
+                userMsg.setContent(prompt);
+                userMsg.setTurnIndex(0);
+                userMsg.setCreatedAt(now);
+                messageRepository.save(userMsg);
+                return null;
+            });
+        }
         TurnResult result = agentRuntime.runTurn(session, prompt);
-        persistMessages(session.id(), result.messages());
+        // P1-5: Only call persistMessages if mid-turn persistence is NOT active
+        if (midTurnPersistenceCallback == null) {
+            persistMessages(session.id(), result.messages());
+        }
         return session.id().toString();
     }
 

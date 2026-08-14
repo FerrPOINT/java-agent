@@ -18,16 +18,16 @@ class ErrorClassifierTest {
     }
 
     @Test
-    void classify_timeoutException_returnsRetryable() {
+    void classify_timeoutException_returnsTimeout() {
         ErrorClassifier.ErrorType type = classifier.classify(new TimeoutException("Operation timed out"));
-        assertThat(type).isEqualTo(ErrorClassifier.ErrorType.RETRYABLE);
+        assertThat(type).isEqualTo(ErrorClassifier.ErrorType.TIMEOUT);
     }
 
     @Test
-    void classify_invalidKey_returnsPermanent() {
+    void classify_invalidApiKey_returnsAuth() {
         ErrorClassifier.ErrorType type = classifier.classify(
             new RuntimeException("Invalid API key provided"));
-        assertThat(type).isEqualTo(ErrorClassifier.ErrorType.PERMANENT);
+        assertThat(type).isEqualTo(ErrorClassifier.ErrorType.AUTH);
     }
 
     @Test

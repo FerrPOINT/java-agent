@@ -14,6 +14,7 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.service.ImageShrinker;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
@@ -47,20 +48,28 @@ public class LangChain4jModelClient implements ModelClient {
     private final ErrorClassifier errorClassifier;
     private final RateLimitTracker rateLimitTracker;
     private final CredentialPool credentialPool;
+    private final ImageShrinker imageShrinker;
 
     public LangChain4jModelClient(AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker) {
-        this(properties, usageConsumer, errorClassifier, rateLimitTracker, null);
+        this(properties, usageConsumer, errorClassifier, rateLimitTracker, null, null);
     }
 
     public LangChain4jModelClient(AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker,
                                    CredentialPool credentialPool) {
+        this(properties, usageConsumer, errorClassifier, rateLimitTracker, credentialPool, null);
+    }
+
+    public LangChain4jModelClient(AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
+                                   ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker,
+                                   CredentialPool credentialPool, ImageShrinker imageShrinker) {
         this.properties = properties;
         this.usageConsumer = usageConsumer;
         this.errorClassifier = errorClassifier;
         this.rateLimitTracker = rateLimitTracker;
         this.credentialPool = credentialPool;
+        this.imageShrinker = imageShrinker;
 
         // Resolve credentials: use credential pool if available, otherwise fall back to config
         String apiKey = properties.getModel().getApiKey();
@@ -95,13 +104,20 @@ public class LangChain4jModelClient implements ModelClient {
     public LangChain4jModelClient(ChatModel chatModel, StreamingChatModel streamingChatModel,
                                    AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker) {
-        this(chatModel, streamingChatModel, properties, usageConsumer, errorClassifier, rateLimitTracker, null);
+        this(chatModel, streamingChatModel, properties, usageConsumer, errorClassifier, rateLimitTracker, null, null);
     }
 
     public LangChain4jModelClient(ChatModel chatModel, StreamingChatModel streamingChatModel,
                                    AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker,
                                    CredentialPool credentialPool) {
+        this(chatModel, streamingChatModel, properties, usageConsumer, errorClassifier, rateLimitTracker, credentialPool, null);
+    }
+
+    public LangChain4jModelClient(ChatModel chatModel, StreamingChatModel streamingChatModel,
+                                   AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
+                                   ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker,
+                                   CredentialPool credentialPool, ImageShrinker imageShrinker) {
         this.chatModel = chatModel;
         this.streamingChatModel = streamingChatModel;
         this.properties = properties;
@@ -109,6 +125,7 @@ public class LangChain4jModelClient implements ModelClient {
         this.errorClassifier = errorClassifier;
         this.rateLimitTracker = rateLimitTracker;
         this.credentialPool = credentialPool;
+        this.imageShrinker = imageShrinker;
     }
 
     @Override
@@ -151,6 +168,13 @@ public class LangChain4jModelClient implements ModelClient {
                 List<ToolCall> calls = aiMessage.toolExecutionRequests().stream()
                     .map(r -> new ToolCall(r.id(), r.name(), r.arguments()))
                     .collect(Collectors.toList());
+                // Preserve text alongside tool calls — the text is "commentary"
+                // (interim assistant message) shown to the user before tool execution.
+                // Mirrors Hermes _emit_interim_assistant_message().
+                String text = aiMessage.text();
+                if (text != null && !text.isBlank()) {
+                    return ChatResponse.textAndToolCalls(text, calls);
+                }
                 return ChatResponse.toolCalls(calls);
             }
 
@@ -287,9 +311,14 @@ public class LangChain4jModelClient implements ModelClient {
     }
 
     public String analyzeImage(String base64Image, String prompt, ModelRequestOptions options) {
+        // P2-15: shrink image if it exceeds provider payload limits
+        String effectiveBase64 = base64Image;
+        if (imageShrinker != null) {
+            effectiveBase64 = imageShrinker.shrinkIfNeeded(base64Image);
+        }
         UserMessage message = UserMessage.from(
             dev.langchain4j.data.message.TextContent.from(prompt),
-            dev.langchain4j.data.message.ImageContent.from(base64Image, "image/png")
+            dev.langchain4j.data.message.ImageContent.from(effectiveBase64, "image/png")
         );
         ChatRequest request = ChatRequest.builder()
             .messages(List.of(message))

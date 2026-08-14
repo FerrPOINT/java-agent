@@ -31,6 +31,7 @@ import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.persistence.MessagePersistenceService;
 import com.azhukov.agent.persistence.repository.*;
 import com.azhukov.agent.security.*;
+import com.azhukov.agent.service.ImageShrinker;
 import com.azhukov.agent.service.TurnUsageCollector;
 import io.github.resilience4j.retry.RetryRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
@@ -67,7 +68,7 @@ class AgentConfigBeanMethodsTest {
     @Test
     void openAiCompatibleModelClient_bean() {
         properties.getModel().setProvider("openai-compatible");
-        assertThat(config.openAiCompatibleModelClient(properties, mock(TurnUsageCollector.class), new ErrorClassifier(), new RateLimitTracker())).isInstanceOfAny(LangChain4jModelClient.class, ModelClient.class);
+        assertThat(config.openAiCompatibleModelClient(properties, mock(TurnUsageCollector.class), new ErrorClassifier(), new RateLimitTracker(), new ImageShrinker(properties))).isInstanceOfAny(LangChain4jModelClient.class, ModelClient.class);
     }
 
     @Test
@@ -92,12 +93,12 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void agentRuntime_bean() {
-        assertThat(config.agentRuntime(mock(ModelClient.class), mock(ToolRegistry.class), mock(ToolExecutionService.class), mock(PromptBuilder.class), mock(ContextEngine.class), mock(MemoryProvider.class), mock(SkillManager.class), mock(IterationBudget.class), mock(MessageSanitizer.class), mock(ContextReferenceService.class), properties, mock(UserInputSanitizer.class), mock(ToolCallGuardrail.class), mock(TurnStateManager.class), mock(BackgroundReviewService.class), mock(InterruptToken.class), mock(TurnFinalizer.class), mock(com.azhukov.agent.core.agent.SteerBuffer.class), mock(ErrorClassifier.class), mock(ContextCompressor.class), mock(com.azhukov.agent.core.security.ApprovalQueue.class), mock(com.azhukov.agent.core.memory.MemoryManager.class), mock(com.azhukov.agent.core.agent.TokenEstimator.class), mock(com.azhukov.agent.core.agent.ToolResultFormatter.class))).isNotNull();
+        assertThat(config.agentRuntime(mock(ModelClient.class), mock(ToolRegistry.class), mock(ToolExecutionService.class), mock(PromptBuilder.class), mock(ContextEngine.class), mock(MemoryProvider.class), mock(SkillManager.class), mock(IterationBudget.class), mock(MessageSanitizer.class), mock(ContextReferenceService.class), properties, mock(UserInputSanitizer.class), mock(ToolCallGuardrail.class), mock(TurnStateManager.class), mock(BackgroundReviewService.class), mock(InterruptToken.class), mock(TurnFinalizer.class), mock(com.azhukov.agent.core.agent.SteerBuffer.class), mock(ErrorClassifier.class), mock(ContextCompressor.class), mock(com.azhukov.agent.core.security.ApprovalQueue.class), mock(com.azhukov.agent.core.memory.MemoryManager.class), mock(com.azhukov.agent.core.agent.TokenEstimator.class), mock(com.azhukov.agent.core.agent.ToolResultFormatter.class), mock(com.azhukov.agent.core.agent.MidTurnPersistenceCallback.class), mock(com.azhukov.agent.core.agent.CommentaryCallback.class))).isNotNull();
     }
 
     @Test
     void promptBuilder_bean() {
-        assertThat(config.promptBuilder(properties, mock(ToolRegistry.class), mock(AgentConstants.class), mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.CodingContextDetector.class), mock(MemoryProvider.class))).isNotNull();
+        assertThat(config.promptBuilder(properties, mock(ToolRegistry.class), mock(AgentConstants.class), mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.CodingContextDetector.class), mock(MemoryProvider.class), mock(com.azhukov.agent.core.skill.SkillManager.class))).isNotNull();
     }
 
     @Test
@@ -152,7 +153,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void contextEngine_bean() {
-        assertThat(config.contextEngine(mock(MemoryProvider.class), mock(SkillManager.class), mock(MessageRepository.class), mock(ContextCompressor.class), properties, mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class))).isNotNull();
+        assertThat(config.contextEngine(mock(MemoryProvider.class), mock(SkillManager.class), mock(MessageRepository.class), mock(ContextCompressor.class), properties, mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class))).isNotNull();
     }
 
     @Test
@@ -202,7 +203,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void gatewayMessageHandler_bean() {
-        assertThat(config.gatewayMessageHandler(mock(SessionResolver.class), mock(AgentRuntime.class), mock(ObjectProvider.class), mock(MessagePersistenceService.class), properties)).isNotNull();
+        assertThat(config.gatewayMessageHandler(mock(SessionResolver.class), mock(AgentRuntime.class), mock(ObjectProvider.class), mock(MessagePersistenceService.class), mock(com.azhukov.agent.core.agent.MidTurnPersistenceCallback.class), properties, mock(com.azhukov.agent.core.agent.SteerBuffer.class))).isNotNull();
     }
 
     @Test

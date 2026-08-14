@@ -1,6 +1,6 @@
 # Java Agent
 
-Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-агент с поддержкой LLM, инструментов, Telegram-шлюза и MCP.
+Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-агент с поддержкой LLM, инструментов, Telegram-шлюза, MCP и CLI REPL.
 
 ## Стек
 
@@ -32,12 +32,12 @@ Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-аге
 java-agent/
 ├── backend/                    # Backend: REST API, LLM client, tools, persistence
 │   └── src/main/java/com/azhukov/agent/
-│       ├── api/                # REST controllers + DTO + mappers
+│       ├── api/                # REST controllers (17) + DTO + mappers
 │       ├── cli/                # Picocli / JLine REPL
 │       ├── client/             # LLM clients (LangChain4j, NoOp) + MCP client
 │       ├── config/             # AgentProperties, MapStructConfig, beans
 │       ├── core/               # domain layer (AgentRuntime, tools, context, memory, skills, state, security)
-│       ├── gateway/            # Telegram/webhook adapters + routing
+│       ├── gateway/            # Telegram/webhook adapters + routing + steer
 │       ├── persistence/        # JPA entities + repositories + mappers + Flyway
 │       ├── security/           # SSRF-safe HTTP client, safety validators
 │       ├── service/            # AgentRuntimeService, AgentStreamingService, TTS, transcription
@@ -55,21 +55,117 @@ java-agent/
 │       ├── group/              # Group message filter
 │       ├── keyboard/           # Inline keyboards (model/provider selection)
 │       ├── lifecycle/          # Bot lifecycle
-│       ├── media/              # Media cache, inbound media, location handler
+│       ├── media/              # Media cache, inbound media, MediaDeliveryService, location handler
 │       ├── polling/            # Long polling, reconnect watcher, fallback IP resolver
 │       ├── session/            # BotSessionEntity, BotSessionStore
-│       ├── streaming/          # StreamEditor (edit-message streaming)
+│       ├── streaming/          # StreamEditor (edit-message + native draft streaming)
 │       ├── typing/             # TypingManager
 │       └── webhook/            # Webhook secret validator
 ├── cli/                        # CLI: standalone REPL, REST client to backend
 │   └── src/main/java/com/azhukov/agent/cli/
-│       ├── BackendClient.java  # 22 REST methods to backend
+│       ├── BackendClient.java  # REST methods to backend
 │       ├── ReplLoop.java       # JLine interactive REPL with SSE streaming
-│       ├── SlashCommandRegistry.java  # 47 slash commands
+│       ├── SlashCommandRegistry.java  # 92 slash commands
 │       └── MarkdownRenderer.java # ANSI color markdown
 ├── docs/                       # Architecture docs
 └── docker-compose.yml          # Production deployment
 ```
+
+## Возможности
+
+### LLM и инструменты
+
+- OpenAI-compatible API (streaming, tool calls, reasoning effort)
+- 36+ встроенных инструментов (file, terminal, web, browser, memory, skills, cron, delegation, TTS, image-gen, и др.)
+- MCP client + server (MCP Java SDK 2.0.0)
+- LangChain4j integration с fallback model support
+- Context compression (tool dedup, sanitize, auto-focus, protect)
+- Session checkpoints + rollback + undo
+- Background review (memory + skill nudges)
+- Curator (skill consolidation, dry-run)
+
+### Telegram bot
+
+- 56 команд + 10 aliases
+- Streaming (edit-message + native draft streaming)
+- MEDIA: tags — автоматическая доставка файлов (images, video, audio, documents)
+- Steer mode — инъекция сообщений в активный run
+- Busy-ack — подтверждение при занятом агенте
+- Commentary — промежуточные сообщения при tool execution
+- Group chat filtering, inline keyboards, media cache
+
+### CLI REPL
+
+92 slash commands. Ключевые:
+
+| Категория | Команды |
+|-----------|---------|
+| Сессии | `/new`, `/sessions`, `/resume`, `/branch`, `/checkpoint`, `/checkpoints`, `/rollback`, `/undo`, `/delete-checkpoint`, `/save`, `/export`, `/import`, `/replay`, `/history` |
+| Контекст | `/compress`, `/context`, `/diff`, `/snapshot`, `/clear`, `/sweep` |
+| Память | `/memory`, `/memory-all`, `/memory-pending`, `/memory-approve`, `/memory-reject`, `/memory-delete` |
+| Skills | `/skills`, `/install`, `/uninstall`, `/bundles`, `/reload-skills` |
+| Модель | `/model`, `/reasoning`, `/fast`, `/voice`, `/verbose`, `/yolo`, `/profile`, `/toolsets`, `/platforms` |
+| Cron | `/cron`, `/cron-create`, `/cron-delete`, `/cron-pause`, `/cron-resume` |
+| Delegation | `/agents`, `/handoff`, `/goal`, `/subgoal`, `/steer`, `/stop`, `/queue`, `/busy` |
+| Инструменты | `/tools`, `/approve-tool`, `/deny-tool`, `/approvals`, `/browser` |
+| Отладка | `/debug`, `/plan`, `/doctor`, `/health`, `/status`, `/statusbar`, `/usage`, `/gquota`, `/credits`, `/insights` |
+| Аннотации | `/annotate`, `/suggestions`, `/redraw`, `/image`, `/editor` |
+| Прочее | `/config`, `/personality`, `/title`, `/context`, `/insights`, `/curator`, `/codex_runtime`, `/plugins`, `/reload`, `/reload-mcp`, `/restart`, `/retry`, `/version`, `/whoami`, `/help`, `/exit`, `/quit` |
+
+### REST API
+
+| Endpoint | Method | Назначение |
+|----------|--------|------------|
+| `/api/v1/agent/chat` | POST | Chat (sync) |
+| `/api/v1/agent/chat/stream` | POST | Chat (SSE streaming) |
+| `/api/v1/agent/steer` | POST | Steer — инъекция сообщения в активный run |
+| `/v1/chat/completions` | POST | OpenAI-compatible endpoint |
+| `/v1/models` | GET | Список доступных моделей |
+| `/v1/capabilities` | GET | Machine-readable API capabilities |
+| `/v1/toolsets` | GET | Список toolsets и инструментов |
+| `/api/v2/sessions` | GET, POST | List / create sessions (paginated) |
+| `/api/v2/sessions/{id}` | GET, PATCH, DELETE | Session CRUD |
+| `/api/v2/sessions/{id}/messages` | GET | Session messages |
+| `/api/v2/sessions/{id}/chat` | POST | Chat within session (sync) |
+| `/api/v2/sessions/{id}/chat/stream` | POST | Chat within session (SSE) |
+| `/api/v1/memory/*` | GET, POST, DELETE | Memory management |
+| `/api/v1/skills/*` | GET, POST, DELETE | Skills management |
+| `/api/v1/checkpoints/*` | GET, POST | Checkpoints |
+| `/api/v1/cron/*` | GET, POST, DELETE | Cron jobs |
+| `/api/v1/kanban/*` | GET, POST | Kanban board |
+| `/actuator/health` | GET | Health check |
+
+## Конфигурация
+
+### Основные опции
+
+| Опция | Env var | Default | Описание |
+|-------|---------|---------|----------|
+| `agent.model.provider` | `AGENT_MODEL_PROVIDER` | `openai-compatible` | LLM провайдер |
+| `agent.model.name` | `AGENT_MODEL_NAME` | — | Название модели |
+| `agent.model.base-url` | `AGENT_MODEL_BASE_URL` | — | URL endpoint |
+| `agent.model.api-key` | `AGENT_MODEL_API_KEY` | — | API-ключ |
+| `agent.model.reasoning-effort` | — | `medium` | low/medium/high |
+| `agent.model.fast-mode` | — | `false` | Быстрый режим (low tokens) |
+| `agent.max-turns` | — | `100` | Максимум ходов |
+| `agent.max-model-calls-per-turn` | — | `100` | Максимум вызовов модели за ход |
+
+### Поведение и доставка
+
+| Опция | Env var | Default | Описание |
+|-------|---------|---------|----------|
+| `agent.gateway.busy-input-mode` | `AGENT_BUSY_INPUT_MODE` | `interrupt` | `interrupt` / `queue` / `steer` — обработка сообщений при занятом агенте |
+| `agent.gateway.busy-ack-enabled` | `AGENT_BUSY_ACK_ENABLED` | `true` | Отправлять busy-ack при mid-run сообщении |
+| `agent.commentary-enabled` | `AGENT_COMMENTARY_ENABLED` | `true` | Commentary-сообщения при tool execution |
+| `bot.streaming-transport` | `AGENT_STREAMING_TRANSPORT` | `auto` | `auto` / `edit` / `draft` / `off` — транспорт стриминга в Telegram |
+
+### Безопасность
+
+| Опция | Описание |
+|-------|----------|
+| `agent.security.redact-secrets` | Маскирование API-ключей, токенов, паролей |
+| `agent.security.redact-pii` | Маскирование PII (email, phone, IP) |
+| `agent.security.approval-gate` | Подтверждение деструктивных инструментов |
 
 ## Профили
 
@@ -130,7 +226,7 @@ cd ../cli && ./gradlew bootJar
 java -jar build/libs/java-agent-cli-0.0.1-SNAPSHOT.jar --backend.url=http://localhost:8090
 ```
 
-47 slash commands (`/help`, `/new`, `/status`, `/compress`, `/undo`, `/checkpoint`, `/memory`, `/skills`, `/exit`), SSE streaming, JLine autocomplete.
+92 slash commands, SSE streaming, JLine autocomplete. `/help` — список всех команд.
 
 ## Production
 
@@ -140,29 +236,25 @@ docker compose -f docker-compose.local.yml up --build  # local dev, порты 1
 ```
 
 - `docker-compose.yml` — production (порт 8080, PostgreSQL 5432)
-- `docker-compose.local.yml` — local dev (порт 18090, PostgreSQL 18091) — не конфликтует с другими сервисами
+- `docker-compose.local.yml` — local dev (порт 18090, PostgreSQL 18091)
 - Dockerfile: `eclipse-temurin:25-jre-noble` + Chromium runtime deps
 - `server.shutdown: immediate` — workaround для graceful shutdown бага Spring Boot 4.1.0
-- Health readiness включает только `db`, чтобы LLM/CDP-сбои не помечали под неготовой
-
-Подробности — `backend/docs/13-production-hardening.md`.
+- Health readiness включает только `db`
 
 ## Сборка и тесты
 
 ```bash
-cd backend
-./gradlew test          # unit + integration, исключает live/slow
-./gradlew jacocoTestReport
-./gradlew bootJar       # собрать jar
+cd /opt/dev/java-agent
+./gradlew build -x slowTest   # 6139 тестов, 602 test classes, 0 failures
+./gradlew slowTest            # @Tag("slow") integration tests
+./gradlew jacocoTestReport    # coverage report
+./gradlew bootJar             # собрать jar
 ```
 
-### Slow / E2E tests
+### E2E
 
 ```bash
-cd backend
-./gradlew slowTest      # @Tag("slow") integration tests (no external services, uses noop LLM)
-cd ..
-./scripts/e2e-docker-compose-test.sh  # Docker Compose E2E (noop provider + PostgreSQL)
+./scripts/e2e-docker-compose-test.sh  # Docker Compose E2E (noop + PostgreSQL)
 ```
 
 ## Переменные окружения
@@ -170,14 +262,17 @@ cd ..
 | Переменная | Назначение |
 |------------|------------|
 | `AGENT_NAME` | Имя агента |
-| `AGENT_MODEL_PROVIDER` | Провайдер модели (`openai-compatible`, `noop`) |
-| `AGENT_MODEL_BASE_URL` | URL OpenAI-compatible endpoint |
+| `AGENT_MODEL_PROVIDER` | `openai-compatible`, `noop` |
+| `AGENT_MODEL_BASE_URL` | URL endpoint |
 | `AGENT_MODEL_API_KEY` | API-ключ |
 | `AGENT_MODEL_NAME` | Название модели |
-| `AGENT_MODEL_TIMEOUT_SECONDS` | Таймаут HTTP-модели (default 600) |
-| `AGENT_MODEL_MAX_RETRIES` | Повторы |
+| `AGENT_MODEL_TIMEOUT_SECONDS` | Таймаут HTTP (default 600) |
 | `AGENT_AUXILIARY_*` | Настройки auxiliary-модели |
 | `AGENT_VISION_*` | Настройки vision |
+| `AGENT_BUSY_INPUT_MODE` | `interrupt` / `queue` / `steer` |
+| `AGENT_BUSY_ACK_ENABLED` | Busy-ack (default true) |
+| `AGENT_COMMENTARY_ENABLED` | Commentary (default true) |
+| `AGENT_STREAMING_TRANSPORT` | `auto` / `edit` / `draft` / `off` (bot) |
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | PostgreSQL |
 | `AGENT_BROWSER_CDP_URL` | URL Chrome DevTools Protocol |
 | `AGENT_TERMINAL_*` | Таймауты терминала |
@@ -192,6 +287,9 @@ cd ..
 - `docs/04-proposed-java-structure.md` — модульная структура
 - `docs/05-migration-notes.md` — нетривиальные моменты
 - `docs/06-vision-browser.md` — vision и browser
+- `docs/27-overall-gap-plan.md` — план доработок
+- `docs/28-hermes-parity-audit.md` — parity аудит
+- `docs/29-quality-audit-fixes.md` — quality аудит (45 исправлений)
 - `backend/docs/09-builtin-tools.md` — встроенные инструменты
 - `backend/docs/10-production-readiness.md` — production readiness
 - `backend/docs/11-chromium.md` — Chromium auto-install

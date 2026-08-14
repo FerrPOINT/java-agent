@@ -18,7 +18,7 @@ import java.util.Optional;
 
 @AgentTool(
     name = "cronjob",
-    description = "Create and manage scheduled cron jobs for the agent. Actions: create, list, pause, resume, remove, run.",
+    description = "Create and manage scheduled cron jobs for the agent. Actions: create, list, pause, resume, remove, run, update.",
     toolset = "core"
 )
 @Component
@@ -41,16 +41,27 @@ public class CronJobTool implements ToolHandler {
             case "resume" -> resumeJob(args);
             case "remove" -> removeJob(args);
             case "run" -> runJob(args);
-            default -> ToolResult.fail("Unknown cron action: " + action + ". Use: create, list, pause, resume, remove, run");
+            case "update" -> updateJob(args);
+            default -> ToolResult.fail("Unknown cron action: " + action + ". Use: create, list, pause, resume, remove, run, update");
         };
     }
 
     private ToolResult createJob(CronJobArgs args) {
         if (args.name() == null || args.name().isBlank()) return ToolResult.fail("name is required");
         if (args.schedule() == null || args.schedule().isBlank()) return ToolResult.fail("schedule is required");
-        if (args.prompt() == null || args.prompt().isBlank()) return ToolResult.fail("prompt is required");
+        // prompt is optional when no_agent=true (script is the job)
+        if (!Boolean.TRUE.equals(args.noAgent()) && (args.prompt() == null || args.prompt().isBlank())) {
+            return ToolResult.fail("prompt is required (or set no_agent=true with script)");
+        }
         try {
-            CronJobEntity entity = cronJobService.create(args.name(), args.schedule(), args.prompt(), args.deliverTo(), args.skills());
+            CronJobEntity entity = cronJobService.create(
+                args.name(), args.schedule(), args.prompt(), args.deliverTo(),
+                args.skills(), args.contextFrom(),
+                args.repeat(),
+                args.script(), args.noAgent() != null && args.noAgent(),
+                args.enabledToolsets(), args.workdir(),
+                args.modelProvider(), args.modelName(), args.baseUrl()
+            );
             return ToolResult.ok(formatJob(entity));
         } catch (Exception e) {
             return ToolResult.fail("Failed to create cron job: " + e.getMessage());
@@ -119,10 +130,55 @@ public class CronJobTool implements ToolHandler {
         }
     }
 
+    private ToolResult updateJob(CronJobArgs args) {
+        if (args.name() == null || args.name().isBlank()) return ToolResult.fail("name is required");
+        try {
+            Optional<CronJobEntity> job = cronJobService.findByName(args.name());
+            if (job.isEmpty()) return ToolResult.fail("Cron job not found: " + args.name());
+            CronJobEntity entity = cronJobService.update(
+                job.get().getId(), args.name(), args.schedule(), args.prompt(), args.deliverTo(), null,
+                args.skills(), args.contextFrom(),
+                args.repeat(),
+                args.script(), args.noAgent(),
+                args.enabledToolsets(), args.workdir(),
+                args.modelProvider(), args.modelName(), args.baseUrl()
+            );
+            return ToolResult.ok("Updated cron job: " + entity.getName());
+        } catch (Exception e) {
+            return ToolResult.fail("Failed to update cron job: " + e.getMessage());
+        }
+    }
+
     private String formatJob(CronJobEntity job) {
-        return String.format("id=%s | name=%s | schedule=%s | enabled=%s | lastRun=%s | nextRun=%s",
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("id=%s | name=%s | schedule=%s | enabled=%s | lastRun=%s | nextRun=%s",
             job.getId(), job.getName(), job.getSchedule(), job.isEnabled(),
-            job.getLastRunAt(), job.getNextRunAt());
+            job.getLastRunAt(), job.getNextRunAt()));
+        if (job.getRepeatCount() != null) {
+            sb.append(String.format(" | repeat=%d/%d", job.getRepeatCompleted(), job.getRepeatCount()));
+        }
+        if (job.isNoAgent()) {
+            sb.append(" | noAgent=true");
+        }
+        if (job.getScript() != null && !job.getScript().isBlank()) {
+            sb.append(" | script=").append(job.getScript());
+        }
+        if (job.getEnabledToolsets() != null && !job.getEnabledToolsets().isBlank()) {
+            sb.append(" | toolsets=").append(job.getEnabledToolsets());
+        }
+        if (job.getWorkdir() != null && !job.getWorkdir().isBlank()) {
+            sb.append(" | workdir=").append(job.getWorkdir());
+        }
+        if (job.getModelProvider() != null && !job.getModelProvider().isBlank()) {
+            sb.append(" | provider=").append(job.getModelProvider());
+        }
+        if (job.getModelName() != null && !job.getModelName().isBlank()) {
+            sb.append(" | model=").append(job.getModelName());
+        }
+        if (job.getBaseUrl() != null && !job.getBaseUrl().isBlank()) {
+            sb.append(" | baseUrl=").append(job.getBaseUrl());
+        }
+        return sb.toString();
     }
 
     record CronJobArgs(
@@ -131,6 +187,15 @@ public class CronJobTool implements ToolHandler {
         String schedule,
         String prompt,
         @JsonProperty("deliver_to") String deliverTo,
-        String skills
+        String skills,
+        @JsonProperty("context_from") String contextFrom,
+        Integer repeat,
+        String script,
+        @JsonProperty("no_agent") Boolean noAgent,
+        @JsonProperty("enabled_toolsets") String enabledToolsets,
+        String workdir,
+        @JsonProperty("model_provider") String modelProvider,
+        @JsonProperty("model_name") String modelName,
+        @JsonProperty("base_url") String baseUrl
     ) {}
 }

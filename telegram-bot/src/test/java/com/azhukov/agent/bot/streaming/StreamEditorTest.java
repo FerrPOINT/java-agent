@@ -3,6 +3,7 @@ package com.azhukov.agent.bot.streaming;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.client.TelegramResponse;
 import com.azhukov.agent.bot.config.BotProperties;
+import com.azhukov.agent.bot.media.MediaDeliveryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -38,7 +39,7 @@ class StreamEditorTest {
         props.setParseMode("MarkdownV2");
         props.setStreamingSilent(true);
         props.setHeartbeatIntervalSeconds(1); // Short for testing
-        editor = new StreamEditor(client, props);
+        editor = new StreamEditor(client, props, new MediaDeliveryService());
         editor.init();
         // Mock getMe to return no rich messages support, so existing tests use legacy path
         TelegramResponse meResponse = mock(TelegramResponse.class);
@@ -71,7 +72,7 @@ class StreamEditorTest {
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
         props.setStreamCursor(" \u23F3"); // ⏳
-        StreamEditor customEditor = new StreamEditor(client, props);
+        StreamEditor customEditor = new StreamEditor(client, props, new MediaDeliveryService());
         customEditor.init();
 
         String cursor = " \u23F3";
@@ -267,18 +268,49 @@ class StreamEditorTest {
     @Test
     void scrubThink_stripsCompleteThinkBlock() {
         StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
-        String input = "Let me think. " + THINK_OPEN + "reasoning here" + THINK_CLOSE + " Here is my answer.";
+        String input = THINK_OPEN + "reasoning here" + THINK_CLOSE + "Here is my answer.";
         String result = scrubber.scrub(input);
         assertThat(result).contains("Here is my answer.");
         assertThat(result).doesNotContain("reasoning");
+    }
+
+    @Test
+    void scrubThink_stripsThinkBlockAtBoundary() {
+        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        // Think block at start of text (boundary)
+        String input = THINK_OPEN + "reasoning" + THINK_CLOSE + " Answer.";
+        String result = scrubber.scrub(input);
+        assertThat(result).contains("Answer.");
+        assertThat(result).doesNotContain("reasoning");
+    }
+
+    @Test
+    void scrubThink_doesNotStripInlineThinkTag() {
+        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        // Inline think tag in prose (NOT at block boundary) should NOT be stripped
+        String input = "Let me think. " + THINK_OPEN + "reasoning" + THINK_CLOSE + " Here is my answer.";
+        String result = scrubber.scrub(input);
+        assertThat(result).contains("Here is my answer.");
         assertThat(result).contains("Let me think.");
+    }
+
+    @Test
+    void scrubThink_stripsAtNewlineBoundary() {
+        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        // Think block after a newline (at block boundary)
+        String input = "First line\n" + THINK_OPEN + "reasoning" + THINK_CLOSE + "\nAnswer.";
+        String result = scrubber.scrub(input);
+        assertThat(result).contains("First line");
+        assertThat(result).contains("Answer.");
+        assertThat(result).doesNotContain("reasoning");
     }
 
     @Test
     void scrubThink_handlesSplitChunks() {
         StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
-        String r1 = scrubber.scrub("Hello " + THINK_OPEN + "this is reasoning");
-        assertThat(r1).contains("Hello ");
+        // Think block at start of text (boundary)
+        String r1 = scrubber.scrub(THINK_OPEN + "this is reasoning");
+        assertThat(r1).isEmpty(); // nothing before the think tag at boundary
         assertThat(r1).doesNotContain("reasoning");
 
         String r2 = scrubber.scrub(" more reasoning continues");
@@ -299,18 +331,32 @@ class StreamEditorTest {
     }
 
     @Test
-    void scrubThink_caseInsensitive() {
+    void scrubThink_caseSensitiveDoesNotMatchUppercase() {
         StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        // Case-sensitive: <THINK> should NOT match <think> tags (Hermes behavior)
         String open = LT + "THINK" + GT;
         String close = LT + "/THINK" + GT;
+        // <THINK> is NOT in the tag list, so it won't be stripped (only exact tags are matched)
         String input = open + "uppercase thinking" + close + " Answer.";
         String result = scrubber.scrub(input);
+        // Since <THINK> is not a recognized tag, the content passes through
         assertThat(result).contains("Answer.");
-        assertThat(result).doesNotContain("uppercase thinking");
+    }
+
+    @Test
+    void scrubThink_caseSensitiveMatchesThinkTag() {
+        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        // Lowercase <think> should be matched and stripped (exact, case-sensitive)
+        String input = THINK_OPEN + "lowercase thinking" + THINK_CLOSE + " Answer.";
+        String result = scrubber.scrub(input);
+        assertThat(result).contains("Answer.");
+        assertThat(result).doesNotContain("lowercase thinking");
     }
 
     @Test
     void stripThinkTagsRegex_removesAllVariants() {
+        // Regex safety net still exists as a static utility, but is no longer
+        // used by scrubThinkFinal (which now relies solely on the stateful scrubber).
         assertThat(StreamEditor.stripThinkTagsRegex(THINK_OPEN + "abc" + THINK_CLOSE + "rest")).isEqualTo("rest");
         assertThat(StreamEditor.stripThinkTagsRegex(THINKING_OPEN + "abc" + THINKING_CLOSE + "rest")).isEqualTo("rest");
         assertThat(StreamEditor.stripThinkTagsRegex(REASONING_OPEN + "abc" + REASONING_CLOSE + "rest")).isEqualTo("rest");
@@ -332,6 +378,7 @@ class StreamEditorTest {
     @Test
     void scrubThink_handlesReasoningScratchpadTag() {
         StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        // Reasoning scratchpad at start of text (block boundary)
         String input = REASONING_SCRATCHPAD_OPEN + "secret thinking" + REASONING_SCRATCHPAD_CLOSE + "Answer";
         String result = scrubber.scrub(input);
         assertThat(result).contains("Answer");
@@ -357,6 +404,7 @@ class StreamEditorTest {
         when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
             .thenReturn(true);
 
+        // Think block at start of text (block boundary) — should be stripped
         String input = THINK_OPEN + "secret" + THINK_CLOSE + "Final answer";
         boolean result = editor.finalizeStream(123L, 42L, input);
 
@@ -457,7 +505,7 @@ class StreamEditorTest {
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
         props.setStreamingSilent(true);
-        StreamEditor silentEditor = new StreamEditor(client, props);
+        StreamEditor silentEditor = new StreamEditor(client, props, new MediaDeliveryService());
         silentEditor.init();
 
         // Hermes: startStream sends via sendMessage (null parse_mode)
@@ -510,7 +558,7 @@ class StreamEditorTest {
         props.setParseMode("MarkdownV2");
         props.setStreamingMaxChars(20);
         props.setStreamCursor("|");
-        StreamEditor splitEditor = new StreamEditor(client, props);
+        StreamEditor splitEditor = new StreamEditor(client, props, new MediaDeliveryService());
         splitEditor.init();
 
         String text = "This is a very long text that exceeds the max chars limit";
@@ -542,11 +590,12 @@ class StreamEditorTest {
     void scrubThink_handlesPartialClosingTagAcrossChunks() {
         StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
 
-        String r1 = scrubber.scrub("Hello " + THINK_OPEN + " some reasoning");
-        assertThat(r1).contains("Hello ");
+        // Think block at start of text (boundary)
+        String r1 = scrubber.scrub(THINK_OPEN + " some reasoning");
+        assertThat(r1).isEmpty();
         assertThat(r1).doesNotContain("reasoning");
 
-        // Partial closing tag at end: "</t" could be start of "</think>"
+        // Partial closing tag at end: "</t" could be start of ""
         String r2 = scrubber.scrub(" more reasoning " + LT + "/t");
         assertThat(r2).isEmpty();
 
@@ -560,8 +609,9 @@ class StreamEditorTest {
     void scrubThink_handlesReasoningScratchpadSplitChunks() {
         StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
 
-        String r1 = scrubber.scrub("Hello " + REASONING_SCRATCHPAD_OPEN + "secret thoughts");
-        assertThat(r1).contains("Hello ");
+        // Reasoning scratchpad at start of text (boundary)
+        String r1 = scrubber.scrub(REASONING_SCRATCHPAD_OPEN + "secret thoughts");
+        assertThat(r1).isEmpty();
         assertThat(r1).doesNotContain("secret");
 
         String r2 = scrubber.scrub(" more secrets " + REASONING_SCRATCHPAD_CLOSE + " Real answer");

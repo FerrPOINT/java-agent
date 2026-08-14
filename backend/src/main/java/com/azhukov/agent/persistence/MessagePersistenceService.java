@@ -27,6 +27,17 @@ public class MessagePersistenceService {
 
     private final MessageRepository messageRepository;
 
+    /**
+     * P1-5: Persist only the user message before a turn starts.
+     * Used when mid-turn persistence is active — the DefaultAgentRuntime
+     * will persist assistant + tool messages during the turn via
+     * MidTurnPersistenceCallback.
+     */
+    @Transactional
+    public void persistUserMessage(Session session, String userInput) {
+        saveMessage(session.id(), "user", userInput, null, null, null, 0);
+    }
+
     @Transactional
     public void persistTurn(Session session, String userInput, TurnResult turnResult) {
         // Save user message

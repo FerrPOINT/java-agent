@@ -146,6 +146,24 @@ class AgentStreamingServiceBranchTest {
         SessionEntityMapper sessionMapper = org.mapstruct.factory.Mappers.getMapper(SessionEntityMapper.class);
         MessageMapper messageMapper = org.mapstruct.factory.Mappers.getMapper(MessageMapper.class);
 
+        com.azhukov.agent.core.agent.SessionLineageService lineageService = mock(com.azhukov.agent.core.agent.SessionLineageService.class);
+        // Delegate loadMessagesWithAncestors to messageRepository so history-loading tests work
+        when(lineageService.loadMessagesWithAncestors(any(UUID.class))).thenAnswer(inv -> {
+            UUID sid = inv.getArgument(0);
+            var entities = messageRepository.findBySessionIdOrderByCreatedAtAsc(sid);
+            if (entities == null || entities.isEmpty()) {
+                return java.util.Collections.emptyList();
+            }
+            java.util.List<Message> msgs = new java.util.ArrayList<>(entities.size());
+            for (var entity : entities) {
+                Message msg = messageMapper.toDomain(entity);
+                if (msg != null) {
+                    msgs.add(msg);
+                }
+            }
+            return msgs;
+        });
+
         streamingService = new AgentStreamingService(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,
             contextEngine, objectMapper, usageTracker, properties,
@@ -153,8 +171,9 @@ class AgentStreamingServiceBranchTest {
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
             runtimeConfigService, interruptToken, steerBuffer,
             new TokenEstimator(), new ToolResultFormatter(),
-            new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate),
-            new CliStateApplier(), null, null, new com.azhukov.agent.core.metadata.ModelMetadataService());
+            new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate, messageRepository, mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
+            lineageService,
+            new CliStateApplier(), null, null, new com.azhukov.agent.core.metadata.ModelMetadataService(), null);
     }
 
     // ── selectTools: disabledTools filtering ──

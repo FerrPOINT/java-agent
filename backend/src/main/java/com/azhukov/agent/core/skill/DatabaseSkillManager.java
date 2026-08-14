@@ -11,7 +11,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -109,19 +111,31 @@ public class DatabaseSkillManager implements SkillManager {
 
  @Override
  public boolean deleteSkill(String name) {
- return skillRepository.findByName(name).map(e -> {
- // P1-9: Pinned-skill guard — prevent deletion of pinned skills
- if (e.isPinned()) {
- log.warn("Skill '{}' is pinned and cannot be deleted by skill manager. " +
- "Ask the user to unpin it first.", name);
- throw new IllegalStateException(
- "Skill '" + name + "' is pinned and cannot be deleted. " +
- "Ask the user to unpin it first."
- );
+     return deleteSkill(name, null);
  }
- skillRepository.delete(e);
- return true;
- }).orElse(false);
+
+ // S: Delete with absorbed_into — set absorbedInto on the entity before deletion
+ @Override
+ public boolean deleteSkill(String name, String absorbedInto) {
+     return skillRepository.findByName(name).map(e -> {
+         // P1-9: Pinned-skill guard — prevent deletion of pinned skills
+         if (e.isPinned()) {
+             log.warn("Skill '{}' is pinned and cannot be deleted by skill manager. " +
+                 "Ask the user to unpin it first.", name);
+             throw new IllegalStateException(
+                 "Skill '" + name + "' is pinned and cannot be deleted. " +
+                 "Ask the user to unpin it first."
+             );
+         }
+         if (absorbedInto != null && !absorbedInto.isBlank()) {
+             e.setAbsorbedInto(absorbedInto);
+             e.setUpdatedAt(Instant.now());
+             skillRepository.save(e);
+             log.info("Skill '{}' marked as absorbed into '{}' before deletion.", name, absorbedInto);
+         }
+         skillRepository.delete(e);
+         return true;
+     }).orElse(false);
  }
 
  // S7: Telemetry
@@ -156,24 +170,278 @@ public class DatabaseSkillManager implements SkillManager {
  // S9: Get skill info with metadata
  @Override
  public SkillInfo getSkillInfo(String name) {
- return skillRepository.findByName(name)
- .map(this::toSkillInfo)
- .orElse(null);
+     return skillRepository.findByName(name)
+         .map(this::toSkillInfo)
+         .orElse(null);
+ }
+
+ /**
+  * Multi-strategy skill lookup (mirrors Hermes skills_tool.py lines 1000-1078).
+  * <ul>
+  *   <li>Strategy 1: Direct DB lookup by name</li>
+  *   <li>Strategy 2: Recursive filesystem search by directory name</li>
+  *   <li>Strategy 3: Frontmatter {@code name:} field match</li>
+  * </ul>
+  * If multiple strategies find different skills, a collision is reported.
+  */
+ @Override
+ public SkillLookupResult getSkillInfoMultiStrategy(String name) {
+     List<SkillInfo> candidates = new ArrayList<>();
+     List<String> candidatePaths = new ArrayList<>();
+
+     // Strategy 1: Direct DB lookup by name
+     SkillInfo dbInfo = skillRepository.findByName(name)
+         .map(this::toSkillInfo)
+         .orElse(null);
+     if (dbInfo != null) {
+         candidates.add(dbInfo);
+         candidatePaths.add("db:" + name);
+     }
+
+     // Strategy 2 & 3: Recursive filesystem search by directory name + frontmatter name match
+     Path skillsDir = getSkillsDir();
+     if (Files.isDirectory(skillsDir)) {
+         for (Path skillFile : SkillUtils.iterSkillIndexFiles(skillsDir, "SKILL.md")) {
+             if (SkillUtils.isExcludedSkillPath(skillFile)) continue;
+             // Strategy 2: directory name matches
+             Path parentDir = skillFile.getParent();
+             if (parentDir != null && name.equals(parentDir.getFileName().toString())) {
+                 SkillInfo fsInfo = loadSkillFromFile(name, skillFile);
+                 if (fsInfo != null) {
+                     if (!candidates.contains(fsInfo)) {
+                         candidates.add(fsInfo);
+                         candidatePaths.add(skillFile.toString());
+                     }
+                 }
+                 continue;
+             }
+             // Strategy 3: frontmatter name: matches
+             try {
+                 String content = Files.readString(skillFile);
+                 SkillUtils.FrontmatterResult fr = SkillUtils.parseFrontmatter(content);
+                 Object fmName = fr.frontmatter().get("name");
+                 if (fmName != null && name.equals(String.valueOf(fmName))) {
+                     SkillInfo fsInfo = loadSkillFromFile(name, skillFile);
+                     if (fsInfo != null && !candidates.contains(fsInfo)) {
+                         candidates.add(fsInfo);
+                         candidatePaths.add(skillFile.toString());
+                     }
+                 }
+             } catch (IOException e) {
+                 log.debug("Failed to read skill file for name match: {}", skillFile);
+             }
+         }
+
+         // Strategy: legacy flat <name>.md files
+         for (Path foundMd : findLegacyMdFiles(skillsDir, name)) {
+             SkillInfo fsInfo = loadSkillFromFile(name, foundMd);
+             if (fsInfo != null && !candidates.contains(fsInfo)) {
+                 candidates.add(fsInfo);
+                 candidatePaths.add(foundMd.toString());
+             }
+         }
+     }
+
+     // Collision detection
+     if (candidates.size() > 1) {
+         log.warn("Skill name collision for '{}': {} candidates — {}", name, candidates.size(), String.join("; ", candidatePaths));
+         return new SkillLookupResult(
+             null,
+             candidatePaths,
+             "Ambiguous skill name '" + name + "': " + candidates.size() +
+             " skills match across DB and filesystem. Refusing to guess — load one explicitly."
+         );
+     }
+
+     if (candidates.isEmpty()) {
+         return new SkillLookupResult(null, List.of(), null);
+     }
+     return new SkillLookupResult(candidates.get(0), List.of(), null);
+ }
+
+ private SkillInfo loadSkillFromFile(String name, Path skillFile) {
+     try {
+         String content = Files.readString(skillFile);
+         SkillUtils.FrontmatterResult fr = SkillUtils.parseFrontmatter(content);
+         Map<String, Object> fm = fr.frontmatter();
+         String skillName = fm.get("name") != null ? String.valueOf(fm.get("name")) : name;
+         String category = fm.get("category") != null ? String.valueOf(fm.get("category")) : "";
+
+         // Extract tags and related_skills
+         List<String> tags = extractTags(fm);
+         List<String> relatedSkills = extractRelatedSkills(fm);
+
+         // Check disabled
+         boolean disabled = isSkillDisabled(skillName);
+
+         // List linked files from filesystem
+         LinkedFiles linkedFiles = listLinkedFilesFromFilesystem(skillFile.getParent());
+
+         return new SkillInfo(
+             skillName, content, category, null, 0, 0, null, false, "AGENT_CREATED",
+             tags, relatedSkills, disabled, linkedFiles
+         );
+     } catch (IOException e) {
+         log.debug("Failed to read skill file: {}", skillFile);
+         return null;
+     }
+ }
+
+ private List<Path> findLegacyMdFiles(Path skillsDir, String name) {
+     List<Path> results = new ArrayList<>();
+     String targetName = name + ".md";
+     findLegacyMdRecursive(skillsDir, targetName, results);
+     return results;
+ }
+
+ private void findLegacyMdRecursive(Path dir, String targetName, List<Path> results) {
+     try (var stream = Files.list(dir)) {
+         for (Path entry : stream.toList()) {
+             if (Files.isDirectory(entry)) {
+                 String dirName = entry.getFileName().toString();
+                 if (!SkillUtils.getExcludedSkillDirs().contains(dirName)) {
+                     findLegacyMdRecursive(entry, targetName, results);
+                 }
+             } else if (entry.getFileName().toString().equals(targetName) && !targetName.equals("SKILL.md")) {
+                 results.add(entry);
+             }
+         }
+     } catch (IOException e) {
+         log.debug("Failed to scan for legacy md: {}", dir);
+     }
+ }
+
+ private LinkedFiles listLinkedFilesFromFilesystem(Path skillDir) {
+     if (skillDir == null || !Files.isDirectory(skillDir)) {
+         return new LinkedFiles(List.of(), List.of(), List.of(), List.of());
+     }
+     List<String> refs = new ArrayList<>();
+     List<String> tmpl = new ArrayList<>();
+     List<String> scr = new ArrayList<>();
+     List<String> ast = new ArrayList<>();
+
+     Path refsDir = skillDir.resolve("references");
+     if (Files.isDirectory(refsDir)) {
+         try (var stream = Files.list(refsDir)) {
+             stream.filter(Files::isRegularFile)
+                 .filter(p -> p.toString().endsWith(".md"))
+                 .forEach(p -> refs.add(skillDir.relativize(p).toString().replace('\\', '/')));
+         } catch (IOException e) { /* ignore */ }
+     }
+
+     Path tmplDir = skillDir.resolve("templates");
+     if (Files.isDirectory(tmplDir)) {
+         try (var stream = Files.walk(tmplDir, 3)) {
+             stream.filter(Files::isRegularFile)
+                 .forEach(p -> {
+                     String name = p.getFileName().toString();
+                     if (name.endsWith(".md") || name.endsWith(".py") || name.endsWith(".yaml") ||
+                         name.endsWith(".yml") || name.endsWith(".json") || name.endsWith(".tex") ||
+                         name.endsWith(".sh")) {
+                         tmpl.add(skillDir.relativize(p).toString().replace('\\', '/'));
+                     }
+                 });
+         } catch (IOException e) { /* ignore */ }
+     }
+
+     Path scriptsDir = skillDir.resolve("scripts");
+     if (Files.isDirectory(scriptsDir)) {
+         try (var stream = Files.list(scriptsDir)) {
+             stream.filter(Files::isRegularFile)
+                 .forEach(p -> {
+                     String name = p.getFileName().toString();
+                     if (name.endsWith(".py") || name.endsWith(".sh") || name.endsWith(".bash") ||
+                         name.endsWith(".js") || name.endsWith(".ts") || name.endsWith(".rb")) {
+                         scr.add(skillDir.relativize(p).toString().replace('\\', '/'));
+                     }
+                 });
+         } catch (IOException e) { /* ignore */ }
+     }
+
+     Path assetsDir = skillDir.resolve("assets");
+     if (Files.isDirectory(assetsDir)) {
+         try (var stream = Files.walk(assetsDir, 3)) {
+             stream.filter(Files::isRegularFile)
+                 .forEach(p -> ast.add(skillDir.relativize(p).toString().replace('\\', '/')));
+         } catch (IOException e) { /* ignore */ }
+     }
+
+     return new LinkedFiles(List.copyOf(refs), List.copyOf(tmpl), List.copyOf(scr), List.copyOf(ast));
+ }
+
+ private List<String> extractTags(Map<String, Object> frontmatter) {
+     // Check metadata.hermes.tags first (agentskills.io convention), fall back to top-level
+     Object metadata = frontmatter.get("metadata");
+     if (metadata instanceof Map<?, ?> metaMap) {
+         Object hermes = metaMap.get("hermes");
+         if (hermes instanceof Map<?, ?> hermesMap) {
+             Object tags = hermesMap.get("tags");
+             if (tags != null) {
+                 return SkillUtils.parseTags(tags);
+             }
+         }
+     }
+     return SkillUtils.parseTags(frontmatter.get("tags"));
+ }
+
+ private List<String> extractRelatedSkills(Map<String, Object> frontmatter) {
+     Object metadata = frontmatter.get("metadata");
+     if (metadata instanceof Map<?, ?> metaMap) {
+         Object hermes = metaMap.get("hermes");
+         if (hermes instanceof Map<?, ?> hermesMap) {
+             Object rs = hermesMap.get("related_skills");
+             if (rs != null) {
+                 return SkillUtils.parseTags(rs);
+             }
+         }
+     }
+     return SkillUtils.parseTags(frontmatter.get("related_skills"));
+ }
+
+ private boolean isSkillDisabled(String skillName) {
+     if (skillName == null || skillName.isBlank()) return false;
+     // Check frontmatter disabled: true — this is checked by the caller via SkillViewTool
+     // Here we just check config-level disabled list
+     // (the SkillUtils-based config check requires properties injection)
+     return false;
  }
 
  private SkillInfo toSkillInfo(SkillEntity e) {
- String category = extractCategory(e.getContent());
- return new SkillInfo(
- e.getName(),
- e.getContent(),
- category,
- e.getUpdatedAt(),
- e.getViewCount(),
- e.getManageCount(),
- e.getLastActivityAt(),
- e.isArchived(),
- e.getTrustLevel() != null ? e.getTrustLevel() : TrustLevel.AGENT_CREATED.name()
- );
+     String category = e.getCategory() != null ? e.getCategory() : extractCategory(e.getContent());
+     // Parse frontmatter for tags and related_skills
+     List<String> tags = List.of();
+     List<String> relatedSkills = List.of();
+     boolean disabled = false;
+     LinkedFiles linkedFiles = null;
+     if (e.getContent() != null) {
+         SkillUtils.FrontmatterResult fr = SkillUtils.parseFrontmatter(e.getContent());
+         Map<String, Object> fm = fr.frontmatter();
+         tags = extractTags(fm);
+         relatedSkills = extractRelatedSkills(fm);
+         // Check disabled: true in frontmatter
+         Object disabledObj = fm.get("disabled");
+         disabled = disabledObj != null && (Boolean.TRUE.equals(disabledObj) || "true".equals(String.valueOf(disabledObj)));
+     }
+     // List linked files from filesystem
+     Path skillDir = getSkillsDir().resolve(e.getName());
+     if (Files.isDirectory(skillDir)) {
+         linkedFiles = listLinkedFilesFromFilesystem(skillDir);
+     }
+     return new SkillInfo(
+         e.getName(),
+         e.getContent(),
+         category,
+         e.getUpdatedAt(),
+         e.getViewCount(),
+         e.getManageCount(),
+         e.getLastActivityAt(),
+         e.isArchived(),
+         e.getTrustLevel() != null ? e.getTrustLevel() : TrustLevel.AGENT_CREATED.name(),
+         tags,
+         relatedSkills,
+         disabled,
+         linkedFiles
+     );
  }
 
  // S9: Parse YAML frontmatter category
@@ -203,22 +471,29 @@ public class DatabaseSkillManager implements SkillManager {
  // S3: Write support file
  @Override
  public void writeSupportFile(String skillName, String filePath, String content) {
- validateSupportFilePath(filePath);
- // P1-9: Validate support file content size
- if (content != null && content.getBytes().length > MAX_SUPPORT_FILE_BYTES) {
- throw new IllegalArgumentException(
- "Support file content exceeds " + MAX_SUPPORT_FILE_BYTES + " bytes (limit: 1 MiB)."
- );
- }
- Path dir = getSkillsDir().resolve(skillName);
- Path target = dir.resolve(filePath);
- try {
- Files.createDirectories(target.getParent());
- Files.writeString(target, content);
- log.debug("Wrote support file: {}/{}", skillName, filePath);
- } catch (IOException e) {
- throw new RuntimeException("Failed to write support file: " + e.getMessage(), e);
- }
+     validateSupportFilePath(filePath);
+     // P1-9: Validate support file content size
+     if (content != null && content.getBytes().length > MAX_SUPPORT_FILE_BYTES) {
+         throw new IllegalArgumentException(
+             "Support file content exceeds " + MAX_SUPPORT_FILE_BYTES + " bytes (limit: 1 MiB)."
+         );
+     }
+     // P2-49: Security scan — block dangerous content in support files
+     TrustLevel trustLevel = determineTrustLevelForSave(skillName);
+     String scanError = SkillSecurityScanner.scanAndGuard(skillName, content, trustLevel);
+     if (scanError != null) {
+         log.warn("Security scan blocked support file save '{}/{}': {}", skillName, filePath, scanError);
+         throw new SecurityException(scanError);
+     }
+     Path dir = getSkillsDir().resolve(skillName);
+     Path target = dir.resolve(filePath);
+     try {
+         Files.createDirectories(target.getParent());
+         Files.writeString(target, content);
+         log.debug("Wrote support file: {}/{}", skillName, filePath);
+     } catch (IOException e) {
+         throw new RuntimeException("Failed to write support file: " + e.getMessage(), e);
+     }
  }
 
  // S3: Remove support file

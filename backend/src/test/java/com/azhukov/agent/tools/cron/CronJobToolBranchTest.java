@@ -17,6 +17,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
@@ -116,7 +117,7 @@ class CronJobToolBranchTest {
 
     @Test
     void createJob_serviceThrows_returnsFail() {
-        when(cronJobService.create(any(), any(), any(), any(), any()))
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("DB error"));
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute(
@@ -336,7 +337,7 @@ class CronJobToolBranchTest {
 
     @Test
     void createJob_withDeliverToAndSkills() {
-        when(cronJobService.create(any(), any(), any(), any(), any())).thenAnswer(inv -> {
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
             CronJobEntity e = new CronJobEntity();
             e.setId(UUID.randomUUID());
             e.setName(inv.getArgument(0));
@@ -350,7 +351,9 @@ class CronJobToolBranchTest {
             "{\"action\":\"create\",\"name\":\"daily-report\",\"schedule\":\"0 9 * * *\",\"prompt\":\"Generate report\",\"deliver_to\":\"telegram\",\"skills\":\"coding\"}",
             assistant(), session());
         assertThat(result.success()).isTrue();
-        org.mockito.Mockito.verify(cronJobService).create("daily-report", "0 9 * * *", "Generate report", "telegram", "coding");
+        org.mockito.Mockito.verify(cronJobService).create(
+            "daily-report", "0 9 * * *", "Generate report", "telegram", "coding",
+            null, null, null, false, null, null, null, null, null);
     }
 
     // ── formatJob: entity with all fields set ──

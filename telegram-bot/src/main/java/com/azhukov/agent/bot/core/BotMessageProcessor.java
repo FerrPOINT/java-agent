@@ -17,6 +17,7 @@ import com.azhukov.agent.bot.goal.GoalAutoContinueService;
 import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
+import com.azhukov.agent.bot.media.MediaDeliveryService;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.reaction.ReactionManager;
 import com.azhukov.agent.bot.session.BotSessionEntity;
@@ -29,12 +30,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
+import java.net.SocketTimeoutException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
@@ -69,6 +73,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  private final BotProperties properties;
  private final StreamEditor streamEditor;
  private final InboundMediaHandler inboundMediaHandler;
+ private final MediaDeliveryService mediaDeliveryService;
  private final RuntimeFooter runtimeFooter;
  private final ReactionManager reactionManager;
  private final TextBatchDebouncer textBatchDebouncer;
@@ -294,18 +299,9 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
  // Check busy state
  if (busyHandler.isBusy(chatId)) {
- String busyMode = busyHandler.getBusyMode();
- if ("interrupt".equalsIgnoreCase(busyMode)) {
- busyHandler.interrupt(chatId);
- // Queue the interrupting message for re-processing after the current turn stops
- busyHandler.queueMessage(chatId, event);
- log.debug("Interrupting busy chat {} and queued interrupting message", chatId);
- return;
- } else {
- busyHandler.queueMessage(chatId, event);
- log.debug("Queued message for busy chat {}", chatId);
- return;
- }
+     String effectiveMode = busyHandler.getEffectiveBusyInputMode();
+     handleBusyMessage(chatId, event, effectiveMode, session);
+     return;
  }
 
  // B1.2: Reaction — processing start
@@ -313,7 +309,9 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
  // Process the turn
  busyHandler.markBusy(chatId);
- typingManager.startTyping(chatId);
+ // B1.6/B2.7: Route typing indicator to the correct forum thread
+ Integer typingThreadId = event.messageThreadId() > 0 ? (int) event.messageThreadId() : null;
+ typingManager.startTyping(chatId, typingThreadId);
 
  AgentBackendClient.ChatResult result;
  try {
@@ -394,7 +392,169 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  }
 
  /**
- * Drain queued messages for a chat — linear, not recursive.
+  * Handle a message that arrives while the agent is busy.
+  * Dispatches based on the effective busy-input mode:
+  * <ul>
+  *   <li><b>steer</b>: call the backend steer API to inject mid-run, send busy-ack</li>
+  *   <li><b>queue</b>: buffer the message for the next turn, send busy-ack</li>
+  *   <li><b>interrupt</b>: stop the current run, queue the message, send busy-ack</li>
+  * </ul>
+  * For "interrupt" mode with active subagents, demotes to "queue" to avoid
+  * destroying subagent work (mirrors Hermes #30170).
+  *
+  * @param chatId the Telegram chat ID
+  * @param event the inbound update event
+  * @param effectiveMode the resolved busy-input mode ("steer", "queue", or "interrupt")
+  * @param session the bot session (for session ID lookup)
+  */
+ private void handleBusyMessage(long chatId, UpdateEvent event, String effectiveMode,
+                                 BotSessionEntity session) {
+     String messageText = extractMessageText(event);
+     if (messageText == null || messageText.isBlank()) {
+         log.debug("No text in busy message for chat {}, skipping", chatId);
+         return;
+     }
+
+     boolean demotedForSubagents = false;
+     String actualMode = effectiveMode;
+
+     // #30170: Demote interrupt to queue when subagents are active
+     if ("interrupt".equals(effectiveMode)) {
+         // Check if the backend has active subagents — if so, demote to queue
+         // to avoid destroying subagent work (mirrors Hermes behavior).
+         // The backend's DelegateTaskTool tracks active subagents per session.
+         // We check via the backend client's health/active-agents endpoint.
+         // For simplicity and safety, we always demote if we can't confirm
+         // no subagents are active — this matches Hermes' conservative approach.
+         try {
+             if (session.getBackendSessionId() != null && backendHasActiveSubagents(session)) {
+                 demotedForSubagents = true;
+                 actualMode = "queue";
+                 log.info("Demoting interrupt to queue for chat {} — active subagents detected", chatId);
+             }
+         } catch (Exception e) {
+             log.debug("Could not check subagent status for chat {}: {}", chatId, e.getMessage());
+         }
+     }
+
+     boolean steered = false;
+
+     if ("steer".equals(actualMode)) {
+         // Steer mode: inject mid-run via the backend steer API
+         String sessionId = session.getBackendSessionId() != null
+             ? session.getBackendSessionId().toString()
+             : null;
+         if (sessionId != null) {
+             try {
+                 steered = backendClient.steer(sessionId, messageText);
+             } catch (Exception e) {
+                 log.warn("Steer failed for chat {}: {}", chatId, e.getMessage());
+                 steered = false;
+             }
+         }
+         if (!steered) {
+             // Fall back to queue if steer failed
+             actualMode = "queue";
+         }
+     }
+
+     // Queue the message unless it was successfully steered
+     // (steered text already landed inside the run — don't replay as next-turn message)
+     if (!steered) {
+         busyHandler.queueMessage(chatId, event);
+     }
+
+     // Interrupt if in interrupt mode (and not demoted)
+     if ("interrupt".equals(actualMode) && !demotedForSubagents) {
+         busyHandler.interrupt(chatId);
+         log.debug("Interrupted busy chat {} and queued interrupting message", chatId);
+     } else if (steered) {
+         log.debug("Steered message into active run for chat {}", chatId);
+     } else {
+         log.debug("Queued message for busy chat {} (mode={})", chatId, actualMode);
+     }
+
+     // Send busy-ack if enabled and debounce allows
+     sendBusyAck(chatId, event, actualMode, steered, demotedForSubagents);
+ }
+
+ /**
+  * Send a busy-ack message to the user, respecting debounce and config.
+  *
+  * @param chatId the Telegram chat ID
+  * @param event the inbound update event (for thread routing)
+  * @param mode the effective mode ("steer", "queue", or "interrupt")
+  * @param steered whether the message was successfully steered
+  * @param demotedForSubagents whether interrupt was demoted to queue for subagent protection
+  */
+ private void sendBusyAck(long chatId, UpdateEvent event, String mode,
+                          boolean steered, boolean demotedForSubagents) {
+     if (!busyHandler.isBusyAckEnabled()) {
+         log.debug("Busy-ack suppressed for chat {} (disabled)", chatId);
+         return;
+     }
+     if (!busyHandler.shouldSendBusyAck(chatId)) {
+         log.debug("Busy-ack debounced for chat {}", chatId);
+         return;
+     }
+
+     String ackMessage;
+     if (steered) {
+         ackMessage = "⏩ Steered into current run. Your message arrives after the next tool call.";
+     } else if ("queue".equals(mode) && demotedForSubagents) {
+         ackMessage = "⏳ Subagent working — your message is queued for when it finishes (use /stop to cancel everything).";
+     } else if ("queue".equals(mode)) {
+         ackMessage = "⏳ Queued for the next turn. I'll respond once the current task finishes.";
+     } else {
+         ackMessage = "⚡ Interrupting current task. I'll respond to your message shortly.";
+     }
+
+     // First-time onboarding hint
+     if (busyHandler.shouldShowOnboardingHint()) {
+         ackMessage = ackMessage + "\n\n💡 You can change how messages are handled while I'm busy. "
+             + "Current mode: " + mode + ". "
+             + "Use /steer to inject a note mid-run, or ask the admin about busy-input-mode settings.";
+     }
+
+     Integer threadId = event.messageThreadId() > 0 ? (int) event.messageThreadId() : null;
+     telegramClient.sendMessage(chatId, ackMessage,
+         properties.getParseMode(), null, threadId, false);
+     log.debug("Sent busy-ack to chat {} (mode={})", chatId, mode);
+ }
+
+ /**
+  * Check if the backend has active subagents for the given session.
+  * Uses the backend's active-agents endpoint.
+  *
+  * @param session the bot session
+  * @return true if there are active subagents
+  */
+ private boolean backendHasActiveSubagents(BotSessionEntity session) {
+     if (session.getBackendSessionId() == null) {
+         return false;
+     }
+     try {
+         var agents = backendClient.listActiveAgents();
+         if (agents == null || !agents.isArray()) {
+             return false;
+         }
+         // If any active agent has a different session ID, it's a subagent
+         String currentSession = session.getBackendSessionId().toString();
+         for (var agent : agents) {
+             var id = agent.path("sessionId").asText("");
+             if (!id.isEmpty() && !id.equals(currentSession)) {
+                 return true;
+             }
+         }
+         return false;
+     } catch (Exception e) {
+         log.debug("Could not check active subagents: {}", e.getMessage());
+         return false;
+     }
+ }
+
+ /**
+  * Drain queued messages for a chat — linear, not recursive.
  * M28: Must be called while holding the per-chat lock to prevent
  * new messages from arriving between draining and processing.
  * Uses {@link #handleTextOrMediaInternalBody} directly to avoid
@@ -521,30 +681,46 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  if (!footer.isEmpty()) {
  finalText = finalText + footer;
  }
+ // S-2: Extract MEDIA: tags before finalizing the stream message
+ // so the displayed text doesn't contain raw MEDIA: tags
+ if (properties.isMediaDeliveryEnabled()) {
+ MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(finalText);
+ finalText = extraction.cleanedText();
+ // Finalize the stream with cleaned text
  streamEditor.finalizeStream(chatId, messageId[0], finalText);
  finalized[0] = true;
+ // Deliver extracted media files as native Telegram attachments
+ if (!extraction.media().isEmpty()) {
+ Integer mediaThreadId = messageThreadId > 0 ? (int) messageThreadId : null;
+ deliverMedia(chatId, extraction.media(), mediaThreadId);
+ }
+ } else {
+ streamEditor.finalizeStream(chatId, messageId[0], finalText);
+ finalized[0] = true;
+ }
  }
  },
  // onError
  error -> {
  if (error instanceof StreamInterruptedException) {
- // Interrupted — finalize with what we have
+ // Interrupted — finalize with accumulated content (no raw error text)
  interrupted[0] = true;
  if (messageId[0] >= 0 && accumulated.length() > 0) {
  streamEditor.finalizeStream(chatId, messageId[0],
- accumulated + "\n\n[Interrupted by user]");
+ accumulated.toString());
  finalized[0] = true;
  }
  } else {
- log.error("Stream error for chat {}: {}", chatId, error.getMessage());
- // Finalize with partial content + error
- if (messageId[0] >= 0) {
- String errorText = accumulated.length() > 0
- ? accumulated + "\n\n[Error: " + error.getMessage() + "]"
- : "[Error: " + error.getMessage() + "]";
- streamEditor.finalizeStream(chatId, messageId[0], errorText);
- finalized[0] = true;
- }
+     log.error("Stream error for chat {}: {}", chatId, error.getMessage());
+     // Finalize with partial content + user-friendly error message
+     if (messageId[0] >= 0) {
+         String userFriendlyError = toUserFriendlyError(error);
+         String errorText = accumulated.length() > 0
+             ? accumulated + "\n\n" + userFriendlyError
+             : userFriendlyError;
+         streamEditor.finalizeStream(chatId, messageId[0], errorText);
+         finalized[0] = true;
+     }
  }
  }
  );
@@ -600,6 +776,50 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  /** Internal exception to break out of streaming on interrupt. */
  private static class StreamInterruptedException extends RuntimeException {
  StreamInterruptedException() { super("Stream interrupted"); }
+ }
+
+ /**
+  * Convert a stream error into a user-friendly message, matching Hermes behavior.
+  * Instead of showing raw [Error: msg], provide contextual messages:
+  * - Rate limit errors → "Rate limited by Telegram. Retrying..."
+  * - Network/timeout errors → "Network issue. Retrying..."
+  * - Auth/config errors → "Configuration issue. Contact admin."
+  * - Generic errors → "Temporary issue. Please try again."
+  *
+  * <p>Package-private for testability.
+  *
+  * @param error the exception from the stream
+  * @return a user-friendly error message
+  */
+ static String toUserFriendlyError(Throwable error) {
+     if (error == null) {
+         return "Temporary issue. Please try again.";
+     }
+     String msg = error.getMessage() != null ? error.getMessage().toLowerCase() : "";
+     String className = error.getClass().getSimpleName().toLowerCase();
+
+     // Rate limit / flood control
+     if (msg.contains("rate limit") || msg.contains("flood") || msg.contains("429")
+         || msg.contains("too many requests") || msg.contains("retry after")) {
+         return "Rate limited by Telegram. Retrying...";
+     }
+     // Network / timeout errors
+     if (error instanceof TimeoutException
+         || error instanceof SocketTimeoutException
+         || className.contains("timeout")
+         || msg.contains("timeout") || msg.contains("timed out")
+         || msg.contains("connection") || msg.contains("network")
+         || msg.contains("unreachable") || msg.contains("reset")) {
+         return "Network issue. Retrying...";
+     }
+     // Auth / configuration errors
+     if (msg.contains("unauthorized") || msg.contains("auth") || msg.contains("forbidden")
+         || msg.contains("api key") || msg.contains("token") || msg.contains("401")
+         || msg.contains("403") || msg.contains("permission")) {
+         return "Configuration issue. Contact admin.";
+     }
+     // Generic fallback
+     return "Temporary issue. Please try again.";
  }
 
  // ─── Helpers ───────────────────────────────────────────────────
@@ -697,31 +917,31 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  private void sendFormatted(long chatId, String text, long userMessageId, long messageThreadId) {
  // B2.8: Response filter — filter silent/empty responses
  if (responseFilter.shouldFilter(text)) {
- log.debug("Response filtered (silent or empty) for chat {}", chatId);
- return;
+     log.debug("Response filtered (silent or empty) for chat {}", chatId);
+     return;
  }
 
  Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
 
- // Check for MEDIA: outbound — send as photo instead of text
- java.util.regex.Matcher mediaMatcher = MEDIA_PATTERN.matcher(text);
- if (mediaMatcher.find()) {
- String mediaPath = mediaMatcher.group(1);
- // Remove the MEDIA: line from the text
- String remainingText = MEDIA_PATTERN.matcher(text).replaceAll("").trim();
- sendMediaFile(chatId, mediaPath, remainingText, threadId);
+ // S-2: Extract MEDIA: tags and bare file paths using MediaDeliveryService
+ String textForDisplay = text;
+ if (properties.isMediaDeliveryEnabled()) {
+     MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(text);
+     textForDisplay = extraction.cleanedText();
+     // Deliver extracted media files as native Telegram attachments
+     if (!extraction.media().isEmpty()) {
+         deliverMedia(chatId, extraction.media(), threadId);
+     }
  }
 
- // If there's remaining text after removing MEDIA: lines, send it
- String textWithoutMedia = MEDIA_PATTERN.matcher(text).replaceAll("").trim();
- if (textWithoutMedia.isBlank()) {
- return;
+ if (textForDisplay.isBlank()) {
+     return;
  }
 
  String parseMode = properties.getParseMode();
- String formatted = textWithoutMedia;
+ String formatted = textForDisplay;
  if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
- formatted = MarkdownConverter.convert(textWithoutMedia);
+     formatted = MarkdownConverter.convert(textForDisplay);
  }
 
  // B1.6: Thread reply mode — off/all/first
@@ -730,85 +950,177 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
  List<String> chunks = MessageSplitter.split(formatted);
  for (int i = 0; i < chunks.size(); i++) {
- String chunk = chunks.get(i);
- if (!chunk.isBlank()) {
- if ("all".equalsIgnoreCase(replyMode) && userMessageId > 0) {
- replyToMessageId = userMessageId;
- } else if ("first".equalsIgnoreCase(replyMode) && i == 0 && userMessageId > 0) {
- replyToMessageId = userMessageId;
- } else {
- replyToMessageId = null;
- }
- // Use 6-arg sendMessage when thread routing is needed, 5-arg otherwise
- if (threadId != null) {
-     telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
- } else {
-     telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null);
- }
- }
+     String chunk = chunks.get(i);
+     if (!chunk.isBlank()) {
+         if ("all".equalsIgnoreCase(replyMode) && userMessageId > 0) {
+             replyToMessageId = userMessageId;
+         } else if ("first".equalsIgnoreCase(replyMode) && i == 0 && userMessageId > 0) {
+             replyToMessageId = userMessageId;
+         } else {
+             replyToMessageId = null;
+         }
+         // Use 6-arg sendMessage when thread routing is needed, 5-arg otherwise
+         if (threadId != null) {
+             telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
+         } else {
+             telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null);
+         }
+     }
  }
  }
 
  /**
- * Sends a file from the filesystem as a photo via Telegram.
- *
- * <p>Security: the path is resolved and validated against allowed base
- * directories ({@code properties.getWorkingDirectory()} and
- * {@code /tmp/agent-media/}) to prevent path-traversal attacks. If the
- * resolved path escapes the allowed bases, the file is not sent and a
- * warning is logged.
- *
- * @param chatId the target chat ID
- * @param path the file path to send
- * @param caption optional caption text
- * @param threadId optional forum thread ID (null = no thread)
- */
- private void sendMediaFile(long chatId, String path, String caption, Integer threadId) {
- try {
-     // Path traversal protection: resolve and validate against allowed bases
-     Path resolved = Paths.get(path).normalize();
-     Path workingDir = Paths.get(properties.getWorkingDirectory()).normalize();
-     Path mediaDir = Paths.get("/tmp/agent-media/").normalize();
-     boolean allowed = resolved.startsWith(workingDir) || resolved.startsWith(mediaDir);
-     if (!allowed) {
-         log.warn("MEDIA path outside allowed directories, skipping: {} (resolved={}, allowed={}, mediaDir={})",
-             path, resolved, workingDir, mediaDir);
+  * S-2: Validate that a media file path is within allowed base directories.
+  * Security check to prevent path-traversal attacks.
+  *
+  * @param path the file path to validate
+  * @return true if the path is within an allowed directory
+  */
+ private boolean isMediaPathAllowed(String path) {
+     try {
+         Path resolved = Paths.get(path).normalize();
+         Path workingDir = Paths.get(properties.getWorkingDirectory()).normalize();
+         Path mediaDir = Paths.get("/tmp/agent-media/").normalize();
+         return resolved.startsWith(workingDir) || resolved.startsWith(mediaDir);
+     } catch (Exception e) {
+         return false;
+     }
+ }
+
+ /**
+  * S-2: Deliver media files as native Telegram attachments.
+  * Routes by extension: images → sendPhoto/sendMediaGroup, video → sendVideo,
+  * audio → sendVoice (with [[audio_as_voice]]) or sendDocument, others → sendDocument.
+  * Batch images: up to 10 per sendMediaGroup.
+  *
+  * @param chatId target chat ID
+  * @param media  list of media descriptors to deliver
+  * @param threadId optional forum thread ID (null = no thread)
+  */
+ private void deliverMedia(long chatId, List<MediaDeliveryService.MediaDescriptor> media, Integer threadId) {
+ if (media == null || media.isEmpty()) return;
+
+ // Partition: images (not as_document) go to batch, everything else goes individually
+ List<MediaDeliveryService.MediaDescriptor> imageBatch = new ArrayList<>();
+ List<MediaDeliveryService.MediaDescriptor> individualFiles = new ArrayList<>();
+
+ for (MediaDeliveryService.MediaDescriptor desc : media) {
+     // Security: validate path against allowed base directories
+     if (!isMediaPathAllowed(desc.path())) {
+         log.warn("MEDIA path outside allowed directories, skipping: {}", desc.path());
+         continue;
+     }
+     if (desc.isImage() && !desc.asDocument()) {
+         imageBatch.add(desc);
+     } else {
+         individualFiles.add(desc);
+     }
+ }
+
+     // Deliver image batch via sendMediaGroup (up to 10 per call)
+     if (!imageBatch.isEmpty()) {
+         deliverImageBatch(chatId, imageBatch);
+     }
+
+     // Deliver individual files
+     for (MediaDeliveryService.MediaDescriptor desc : individualFiles) {
+         deliverSingleMedia(chatId, desc);
+     }
+ }
+
+ /**
+  * Deliver a batch of images via sendMediaGroup (up to 10 per call).
+  * For a single image, uses sendPhoto instead.
+  */
+ private void deliverImageBatch(long chatId, List<MediaDeliveryService.MediaDescriptor> images) {
+ if (images.size() == 1) {
+     // Single image — use sendPhoto
+     MediaDeliveryService.MediaDescriptor desc = images.get(0);
+     try {
+         File file = new File(desc.path());
+         if (!file.exists() || !file.isFile()) {
+             log.warn("Media file not found: {}", desc.path());
+             // M2: Notify user that the referenced file doesn't exist
+             telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
+             return;
+         }
+             byte[] data = Files.readAllBytes(file.toPath());
+             String fileName = file.getName();
+             telegramClient.sendPhoto(chatId, data, null, null);
+             log.debug("Sent photo {} to chat {}", desc.path(), chatId);
+         } catch (Exception e) {
+             log.error("Failed to send photo {} to chat {}: {}", desc.path(), chatId, e.getMessage());
+         }
          return;
      }
 
-     File file = resolved.toFile();
-     if (!file.exists() || !file.isFile()) {
-         log.warn("MEDIA file not found: {}", path);
-         if (threadId != null) {
-             telegramClient.sendMessage(chatId, "Media file not found: " + path,
-                 properties.getParseMode(), null, threadId, false);
-         } else {
-             telegramClient.sendMessage(chatId, "Media file not found: " + path,
-                 properties.getParseMode(), null, null);
+     // Multiple images — chunk into groups of 10
+     for (int i = 0; i < images.size(); i += MediaDeliveryService.MAX_MEDIA_GROUP_SIZE) {
+         int end = Math.min(i + MediaDeliveryService.MAX_MEDIA_GROUP_SIZE, images.size());
+         List<MediaDeliveryService.MediaDescriptor> chunk = images.subList(i, end);
+
+         List<TelegramClient.PhotoInput> photoInputs = new ArrayList<>();
+         for (MediaDeliveryService.MediaDescriptor desc : chunk) {
+             try {
+             File file = new File(desc.path());
+             if (!file.exists() || !file.isFile()) {
+                 log.warn("Media file not found, skipping: {}", desc.path());
+                 // M2: Notify user that the referenced file doesn't exist
+                 telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
+                 continue;
+             }
+                 byte[] data = Files.readAllBytes(file.toPath());
+                 String fileName = file.getName();
+                 // First photo in the group gets the caption (if any)
+                 String caption = (photoInputs.isEmpty()) ? null : null;
+                 photoInputs.add(new TelegramClient.PhotoInput(data, fileName, caption));
+             } catch (Exception e) {
+                 log.warn("Failed to read media file {}: {}", desc.path(), e.getMessage());
+             }
          }
-         return;
-     }
-     byte[] data = Files.readAllBytes(file.toPath());
-     String parseMode = properties.getParseMode();
-     String formattedCaption = null;
-     if (caption != null && !caption.isBlank()) {
-         formattedCaption = caption;
-         if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-             formattedCaption = MarkdownConverter.convert(caption);
+
+         if (!photoInputs.isEmpty()) {
+             List<Long> messageIds = telegramClient.sendMediaGroup(chatId, photoInputs);
+             log.debug("Sent media group of {} to chat {} (messageIds: {})",
+                 photoInputs.size(), chatId, messageIds);
          }
-     }
-     telegramClient.sendPhoto(chatId, data, formattedCaption, parseMode);
-     log.debug("Sent media file {} to chat {}", path, chatId);
- } catch (Exception e) {
-     log.error("Failed to send media file {} to chat {}: {}", path, chatId, e.getMessage());
-     if (threadId != null) {
-         telegramClient.sendMessage(chatId, "Failed to send media: " + e.getMessage(),
-             properties.getParseMode(), null, threadId, false);
-     } else {
-         telegramClient.sendMessage(chatId, "Failed to send media: " + e.getMessage(),
-             properties.getParseMode(), null, null);
      }
  }
+
+ /**
+  * Deliver a single media file, routing by extension.
+  * - Video → sendVideo
+  * - Audio with [[audio_as_voice]] → sendAudioAsVoice
+  * - Image with [[as_document]] → sendDocument
+  * - Everything else → sendDocument
+  */
+ private void deliverSingleMedia(long chatId, MediaDeliveryService.MediaDescriptor desc) {
+     try {
+         File file = new File(desc.path());
+         if (!file.exists() || !file.isFile()) {
+             log.warn("Media file not found: {}", desc.path());
+             // M2: Notify user that the referenced file doesn't exist
+             telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
+             return;
+         }
+         byte[] data = Files.readAllBytes(file.toPath());
+         String fileName = file.getName();
+         String parseMode = properties.getParseMode();
+
+         if (desc.isVideo()) {
+             telegramClient.sendVideo(chatId, data, fileName, null, null);
+             log.debug("Sent video {} to chat {}", desc.path(), chatId);
+         } else if (desc.isAudio() && desc.asVoice()) {
+             telegramClient.sendAudioAsVoice(chatId, data, fileName, null);
+             log.debug("Sent voice {} to chat {}", desc.path(), chatId);
+         } else {
+             // Document (covers as_document images, audio without voice, PDFs, etc.)
+             telegramClient.sendDocument(chatId, data, fileName, null, null);
+             log.debug("Sent document {} to chat {}", desc.path(), chatId);
+         }
+     } catch (Exception e) {
+         log.error("Failed to send media {} to chat {}: {}", desc.path(), chatId, e.getMessage());
+     }
  }
 
  private void sendError(long chatId, String message) {
@@ -824,11 +1136,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  }
  }
 
- /** Pattern to match MEDIA:/path in response text. */
- private static final java.util.regex.Pattern MEDIA_PATTERN =
- java.util.regex.Pattern.compile("MEDIA:(\\S+)");
-
-
  @PostConstruct
  void init() {
  textBatchDebouncer.onDispatch(this::dispatchTextBatch);
@@ -839,8 +1146,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  */
  private void sendVoiceResponse(long chatId, String text) {
  try {
- // Strip MEDIA: lines and markdown from text before TTS
- String cleanText = MEDIA_PATTERN.matcher(text).replaceAll("").trim();
+ // Strip MEDIA: lines and directives from text before TTS
+ String cleanText = mediaDeliveryService.stripMediaTagsForDisplay(text);
  if (cleanText.isBlank()) return;
  // Limit text length for TTS (Telegram voice messages max ~1 hour, but keep it reasonable)
  if (cleanText.length() > 4000) {

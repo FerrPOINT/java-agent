@@ -13,6 +13,11 @@ public interface SkillManager {
 
     boolean deleteSkill(String name);
 
+    // S: Delete with absorbed_into — set absorbedInto on the skill entity before deletion
+    default boolean deleteSkill(String name, String absorbedInto) {
+        return deleteSkill(name);
+    }
+
     // S6: Save with provenance
     default void saveSkill(String name, String content, WriteOrigin origin) {
         saveSkill(name, content);
@@ -27,7 +32,8 @@ public interface SkillManager {
     // S9: Rich skill metadata for listing
     default List<SkillInfo> listSkills() {
         return listSkillNames().stream()
-            .map(name -> new SkillInfo(name, "", "", null, 0, 0, null, false, "AGENT_CREATED"))
+            .map(name -> new SkillInfo(name, "", "", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false, null))
             .toList();
     }
 
@@ -35,16 +41,75 @@ public interface SkillManager {
     default SkillInfo getSkillInfo(String name) {
         String content = getSkill(name);
         if (content == null) return null;
-        return new SkillInfo(name, content, "", null, 0, 0, null, false, "AGENT_CREATED");
+        return new SkillInfo(name, content, "", null, 0, 0, null, false, "AGENT_CREATED",
+            List.of(), List.of(), false, null);
     }
 
-    // S3: Patch skill content (find-and-replace)
+    /**
+     * Multi-strategy skill lookup (mirrors Hermes skills_tool.py lines 1000-1078).
+     * <ul>
+     *   <li>Strategy 1: Direct DB lookup by name</li>
+     *   <li>Strategy 2: Recursive filesystem search by directory name</li>
+     *   <li>Strategy 3: Frontmatter {@code name:} field match</li>
+     * </ul>
+     * If multiple strategies find different skills, a collision is reported.
+     *
+     * @return lookup result containing the resolved skill (or null) and any collision paths
+     */
+    default SkillLookupResult getSkillInfoMultiStrategy(String name) {
+        // Default: just use getSkillInfo
+        SkillInfo info = getSkillInfo(name);
+        if (info != null) {
+            return new SkillLookupResult(info, List.of(), null);
+        }
+        return new SkillLookupResult(null, List.of(), null);
+    }
+
+    // S3: Patch skill content (find-and-replace, all occurrences)
     default boolean patchSkill(String name, String oldText, String newText) {
+        return patchSkill(name, oldText, newText, true);
+    }
+
+    // S: Patch skill content with replaceAll flag.
+    // When replaceAll=false — only first occurrence is replaced.
+    // When replaceAll=true — all occurrences are replaced (legacy behaviour).
+    default boolean patchSkill(String name, String oldText, String newText, boolean replaceAll) {
         String content = getSkill(name);
         if (content == null) return false;
-        String patched = content.replace(oldText, newText);
+        String patched;
+        if (replaceAll) {
+            patched = content.replace(oldText, newText);
+        } else {
+            patched = content.replaceFirst(
+                java.util.regex.Pattern.quote(oldText),
+                java.util.regex.Matcher.quoteReplacement(newText)
+            );
+        }
         if (patched.equals(content)) return false;
         saveSkill(name, patched);
+        return true;
+    }
+
+    // S: Patch a support file (references/, templates/, scripts/) — find-and-replace
+    default boolean patchSupportFile(String skillName, String filePath, String oldText, String newText) {
+        return patchSupportFile(skillName, filePath, oldText, newText, true);
+    }
+
+    // S: Patch a support file with replaceAll flag
+    default boolean patchSupportFile(String skillName, String filePath, String oldText, String newText, boolean replaceAll) {
+        String content = readSupportFile(skillName, filePath);
+        if (content == null) return false;
+        String patched;
+        if (replaceAll) {
+            patched = content.replace(oldText, newText);
+        } else {
+            patched = content.replaceFirst(
+                java.util.regex.Pattern.quote(oldText),
+                java.util.regex.Matcher.quoteReplacement(newText)
+            );
+        }
+        if (patched.equals(content)) return false;
+        writeSupportFile(skillName, filePath, patched);
         return true;
     }
 
@@ -68,6 +133,15 @@ public interface SkillManager {
         return List.of();
     }
 
+    /**
+     * List support files for a skill, organized by type (references, templates, scripts, assets).
+     * @return a {@link LinkedFiles} structure with separate lists for each type
+     */
+    default LinkedFiles listSupportFilesByType(String skillName) {
+        List<String> all = listSupportFiles(skillName);
+        return LinkedFiles.fromFlatList(all);
+    }
+
     // S2: Curator — archive a skill
     default boolean archiveSkill(String name) {
         return false;
@@ -81,7 +155,7 @@ public interface SkillManager {
     // Reload skills — re-scan filesystem, refresh caches, etc.
     default void reload() {}
 
-    // S9: Skill info record
+    // S9: Skill info record — extended with tags, related_skills, disabled, linked_files
     record SkillInfo(
         String name,
         String content,
@@ -91,6 +165,68 @@ public interface SkillManager {
         int manageCount,
         Instant lastActivityAt,
         boolean archived,
-        String trustLevel
+        String trustLevel,
+        List<String> tags,
+        List<String> relatedSkills,
+        boolean disabled,
+        LinkedFiles linkedFiles
     ) {}
+
+    /**
+     * Result of multi-strategy skill lookup.
+     *
+     * @param info the resolved skill, or null if not found
+     * @param collisionPaths paths of colliding skills (non-empty if multiple skills matched)
+     * @param error error message if a collision or other lookup error occurred
+     */
+    record SkillLookupResult(
+        SkillInfo info,
+        List<String> collisionPaths,
+        String error
+    ) {}
+
+    /**
+     * Linked files organized by type: references, templates, scripts, assets.
+     */
+    record LinkedFiles(
+        List<String> references,
+        List<String> templates,
+        List<String> scripts,
+        List<String> assets
+    ) {
+        /**
+         * Build a LinkedFiles from a flat list of paths (e.g., "references/ref.md").
+         */
+        public static LinkedFiles fromFlatList(List<String> files) {
+            if (files == null || files.isEmpty()) {
+                return new LinkedFiles(List.of(), List.of(), List.of(), List.of());
+            }
+            List<String> refs = new java.util.ArrayList<>();
+            List<String> tmpl = new java.util.ArrayList<>();
+            List<String> scr = new java.util.ArrayList<>();
+            List<String> ast = new java.util.ArrayList<>();
+            for (String f : files) {
+                String normalized = f.replace('\\', '/');
+                if (normalized.startsWith("references/")) {
+                    refs.add(normalized);
+                } else if (normalized.startsWith("templates/")) {
+                    tmpl.add(normalized);
+                } else if (normalized.startsWith("scripts/")) {
+                    scr.add(normalized);
+                } else if (normalized.startsWith("assets/")) {
+                    ast.add(normalized);
+                }
+            }
+            return new LinkedFiles(
+                List.copyOf(refs), List.copyOf(tmpl), List.copyOf(scr), List.copyOf(ast)
+            );
+        }
+
+        /**
+         * Return true if all lists are empty.
+         */
+        public boolean isEmpty() {
+            return references.isEmpty() && templates.isEmpty() && scripts.isEmpty() && assets.isEmpty();
+        }
+    }
 }

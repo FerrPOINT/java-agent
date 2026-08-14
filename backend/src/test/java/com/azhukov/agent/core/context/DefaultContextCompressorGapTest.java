@@ -78,9 +78,10 @@ class DefaultContextCompressorGapTest {
             List<Message> result = compressor.compress(messages, 10); // small target forces compression
 
             // protectFirstN=1 → head = first 1 message, protectLastN=1 → tail = last 1 message
-            // middle = messages[1] and messages[2] → summarized
-            // result = head + summary + tail = 3 messages
-            assertThat(result).hasSize(3);
+            // ensureLastUserAndAssistantInTail pulls tail back to include last user message
+            // middle = messages[1] → summarized, tail = messages[2..3] (user + assistant)
+            // result = head + summary + tail = 4 messages
+            assertThat(result).hasSize(4);
             // Head is preserved (first message)
             assertThat(result.get(0).content()).isEqualTo("Tell me about Java");
             // Summary system message
@@ -88,8 +89,9 @@ class DefaultContextCompressorGapTest {
             assertThat(result.get(1).content()).contains("Earlier conversation (summarized):");
             assertThat(result.get(1).content()).contains("Summary of conversation");
             assertThat(result.get(1).content()).startsWith("[REFERENCE ONLY");
-            // Tail is preserved (last message)
-            assertThat(result.get(2).content()).isEqualTo("Python is also a programming language.");
+            // Tail is preserved (last 2 messages: user + assistant)
+            assertThat(result.get(2).content()).isEqualTo("What about Python?");
+            assertThat(result.get(3).content()).isEqualTo("Python is also a programming language.");
         }
 
         @Test
@@ -175,9 +177,10 @@ class DefaultContextCompressorGapTest {
             List<Message> result = compressor.compress(messages, 100);
 
             // protectFirstN=1 → head = [system msg], protectLastN=1 → tail = ["current question"]
-            // middle = [user "a"×2000, assistant "b"×2000] → summarized
-            // result = head(1) + summary(1) + tail(1) = 3
-            assertThat(result).hasSize(3);
+            // ensureLastUserAndAssistantInTail pulls tail back to include last assistant message
+            // middle = [user "a"×2000] → summarized, tail = [assistant "b"×2000, user "current question"]
+            // result = head(1) + summary(1) + tail(2) = 4
+            assertThat(result).hasSize(4);
             // First message is the original system message, preserved
             assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
             assertThat(result.get(0).content()).isEqualTo("IMPORTANT: You are a specialized medical assistant.");
@@ -186,8 +189,8 @@ class DefaultContextCompressorGapTest {
             assertThat(result.get(1).content()).startsWith("[REFERENCE ONLY");
             assertThat(result.get(1).content()).contains("Earlier conversation (summarized):");
             assertThat(result.get(1).content()).contains("LLM summary text");
-            // Third message is the tail (current question)
-            assertThat(result.get(2).content()).isEqualTo("current question");
+            // Tail messages: assistant (pulled into tail) + user (current question)
+            assertThat(result.get(3).content()).isEqualTo("current question");
         }
 
         @Test
@@ -260,11 +263,12 @@ class DefaultContextCompressorGapTest {
             List<Message> result = compressor.compress(messages, 100);
 
             // protectFirstN=1 → head = [user "a"×2000], protectLastN=1 → tail = [assistant "Here is more info"]
-            // middle = [assistant "b"×2000, user "Tell me more"] → summarized
-            // result = head(1) + summary(1) + tail(1) = 3
-            assertThat(result).hasSize(3);
+            // ensureLastUserAndAssistantInTail pulls tail back to include last user message
+            // middle = [assistant "b"×2000] → summarized, tail = [user "Tell me more", assistant "Here is more info"]
+            // result = head(1) + summary(1) + tail(2) = 4
+            assertThat(result).hasSize(4);
             // Tail is preserved
-            assertThat(result.get(2).content()).isEqualTo("Here is more info");
+            assertThat(result.get(3).content()).isEqualTo("Here is more info");
         }
 
         @Test
@@ -285,11 +289,13 @@ class DefaultContextCompressorGapTest {
             List<Message> result = compressor.compress(messages, 100);
 
             // protectFirstN=1 → head = [user "a"×2000], protectLastN=1 → tail = [assistant "response3"]
-            // middle = [assistant "b"×2000, user "Important question", assistant "response1", assistant "response2"]
-            // result = head(1) + summary(1) + tail(1) = 3
-            assertThat(result).hasSize(3);
+            // ensureLastUserAndAssistantInTail pulls tail back to include last user message
+            // middle = [assistant "b"×2000] → summarized
+            // tail = [user "Important question", assistant "response1", assistant "response2", assistant "response3"]
+            // result = head(1) + summary(1) + tail(4) = 6
+            assertThat(result).hasSize(6);
             // Tail is preserved
-            assertThat(result.get(2).content()).isEqualTo("response3");
+            assertThat(result.get(5).content()).isEqualTo("response3");
         }
 
         @Test
@@ -509,15 +515,18 @@ class DefaultContextCompressorGapTest {
 
             // Arrange so the tool result is in the middle (between protected head and tail)
             // protectFirstN=1 → head = [user "Search for files"], protectLastN=1 → tail = [assistant "done"]
-            // middle = [toolResult, assistant "Here are the results.", user "current question", assistant "ok"]
-            // Tool result at index 1 is in middle → pruned before summarization
+            // ensureLastUserAndAssistantInTail pulls tail back to include last user message
+            // middle = [assistantToolCalls, toolResult, assistant "Here are the results."]
+            // tail = [user "current question", assistant "done"]
+            // Tool result in middle → pruned before summarization
             List<Message> messages = List.of(
                 Message.user("Search for files"),
+                Message.assistantToolCalls(List.of(new com.azhukov.agent.core.model.ToolCall(
+                    "call-1", "search", "{}")), 1),
                 Message.toolResult("call-1", largeToolOutput, 1),
                 Message.assistant("Here are the results.", 2),
                 Message.user("current question"),
-                Message.assistant("ok", 3),
-                Message.assistant("done", 4)
+                Message.assistant("done", 3)
             );
 
             List<Message> result = compressor.compress(messages, 100);
@@ -565,12 +574,15 @@ class DefaultContextCompressorGapTest {
 
             List<Message> result = compressor.compress(messages, 100);
 
-            // result = head(1) + summary(1) + tail(1) = 3
-            assertThat(result).hasSize(3);
+            // ensureLastUserAndAssistantInTail pulls tail back to include last user message
+            // middle = [assistantToolCalls, toolResult, assistant a1×500] → summarized
+            // tail = [user q2×500, assistant a2×500]
+            // result = head(1) + summary(1) + tail(2) = 4
+            assertThat(result).hasSize(4);
             // Head preserved
             assertThat(result.get(0).content()).isEqualTo("q1".repeat(500));
-            // Tail preserved
-            assertThat(result.get(2).content()).isEqualTo("a2".repeat(500));
+            // Tail preserved (last message)
+            assertThat(result.get(3).content()).isEqualTo("a2".repeat(500));
         }
     }
 

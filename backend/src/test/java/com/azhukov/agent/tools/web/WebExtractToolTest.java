@@ -67,16 +67,19 @@ class WebExtractToolTest {
 
         Document doc = Jsoup.parse(html, "https://example.com");
         Connection connection = mock(Connection.class);
+        Connection.Response response = mock(Connection.Response.class);
         when(connection.userAgent(anyString())).thenReturn(connection);
         when(connection.timeout(eq(10000))).thenReturn(connection);
         when(connection.followRedirects(eq(false))).thenReturn(connection);
-        when(connection.get()).thenReturn(doc);
+        when(connection.execute()).thenReturn(response);
+        when(response.contentType()).thenReturn("text/html");
+        when(response.parse()).thenReturn(doc);
 
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect("https://example.com")).thenReturn(connection);
 
             WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
-            var result = tool.execute("{\"urls\":\"https://example.com\"}", null, null);
+            var result = tool.execute("{\"urls\":[\"https://example.com\"]}", null, null);
 
             assertThat(result.success()).isTrue();
             assertThat(result.content())
@@ -103,23 +106,29 @@ class WebExtractToolTest {
         Document doc2 = Jsoup.parse("<html><head><title>Two</title></head><body><p>Second page.</p></body></html>", "https://two.com");
 
         Connection conn1 = mock(Connection.class);
+        Connection.Response resp1 = mock(Connection.Response.class);
         when(conn1.userAgent(anyString())).thenReturn(conn1);
         when(conn1.timeout(eq(10000))).thenReturn(conn1);
         when(conn1.followRedirects(eq(false))).thenReturn(conn1);
-        when(conn1.get()).thenReturn(doc1);
+        when(conn1.execute()).thenReturn(resp1);
+        when(resp1.contentType()).thenReturn("text/html");
+        when(resp1.parse()).thenReturn(doc1);
 
         Connection conn2 = mock(Connection.class);
+        Connection.Response resp2 = mock(Connection.Response.class);
         when(conn2.userAgent(anyString())).thenReturn(conn2);
         when(conn2.timeout(eq(10000))).thenReturn(conn2);
         when(conn2.followRedirects(eq(false))).thenReturn(conn2);
-        when(conn2.get()).thenReturn(doc2);
+        when(conn2.execute()).thenReturn(resp2);
+        when(resp2.contentType()).thenReturn("text/html");
+        when(resp2.parse()).thenReturn(doc2);
 
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect("https://one.com")).thenReturn(conn1);
             jsoup.when(() -> Jsoup.connect("https://two.com")).thenReturn(conn2);
 
             WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
-            var result = tool.execute("{\"urls\":\"https://one.com, https://two.com\"}", null, null);
+            var result = tool.execute("{\"urls\":[\"https://one.com\",\"https://two.com\"]}", null, null);
 
             assertThat(result.success()).isTrue();
             assertThat(result.content())
@@ -139,7 +148,7 @@ class WebExtractToolTest {
         when(redactor.redact(anyString())).thenAnswer(i -> i.getArgument(0));
 
         WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
-        var result = tool.execute("{\"urls\":\"https://evil.com\"}", null, null);
+        var result = tool.execute("{\"urls\":[\"https://evil.com\"]}", null, null);
 
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("URL blocked by safety policy");
@@ -153,7 +162,7 @@ class WebExtractToolTest {
         when(redactor.redact(anyString())).thenAnswer(i -> i.getArgument(0));
 
         WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
-        var result = tool.execute("{\"urls\":\"not-a-url\"}", null, null);
+        var result = tool.execute("{\"urls\":[\"not-a-url\"]}", null, null);
 
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("--- URL: not-a-url ---");
@@ -168,16 +177,19 @@ class WebExtractToolTest {
 
         Document doc = Jsoup.parse("<html><head><title></title></head><body></body></html>", "https://empty.example");
         Connection connection = mock(Connection.class);
+        Connection.Response response = mock(Connection.Response.class);
         when(connection.userAgent(anyString())).thenReturn(connection);
         when(connection.timeout(eq(10000))).thenReturn(connection);
         when(connection.followRedirects(eq(false))).thenReturn(connection);
-        when(connection.get()).thenReturn(doc);
+        when(connection.execute()).thenReturn(response);
+        when(response.contentType()).thenReturn("text/html");
+        when(response.parse()).thenReturn(doc);
 
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect("https://empty.example")).thenReturn(connection);
 
             WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
-            var result = tool.execute("{\"urls\":\"https://empty.example\"}", null, null);
+            var result = tool.execute("{\"urls\":[\"https://empty.example\"]}", null, null);
 
             assertThat(result.success()).isTrue();
             assertThat(result.content()).contains("--- URL: https://empty.example ---");
@@ -197,7 +209,7 @@ class WebExtractToolTest {
         };
 
         tool.init();
-        var result = tool.execute("{\"urls\":\"https://down.example\"}", null, null);
+        var result = tool.execute("{\"urls\":[\"https://down.example\"]}", null, null);
         assertThat(result.success()).isTrue();
         assertThat(result.content())
             .contains("--- URL: https://down.example ---")
@@ -224,16 +236,19 @@ class WebExtractToolTest {
 
         Document doc = Jsoup.parse("<html><head><title>T</title></head><body><p>" + "x".repeat(200) + "</p></body></html>", "https://long.example");
         Connection connection = mock(Connection.class);
+        Connection.Response response = mock(Connection.Response.class);
         when(connection.userAgent(anyString())).thenReturn(connection);
         when(connection.timeout(eq(10000))).thenReturn(connection);
         when(connection.followRedirects(eq(false))).thenReturn(connection);
-        when(connection.get()).thenReturn(doc);
+        when(connection.execute()).thenReturn(response);
+        when(response.contentType()).thenReturn("text/html");
+        when(response.parse()).thenReturn(doc);
 
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect("https://long.example")).thenReturn(connection);
 
             WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor); tool.init();
-            var result = tool.execute("{\"urls\":\"https://long.example\"}", null, null);
+            var result = tool.execute("{\"urls\":[\"https://long.example\"]}", null, null);
 
             assertThat(result.success()).isTrue();
             assertThat(result.content()).endsWith("\n[truncated]");

@@ -15,7 +15,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Tracks busy sessions per chatId and handles concurrent message arrival
- * in either "queue" or "interrupt" mode (per {@link BotProperties#getBusyMode()}).
+ * in either "queue", "interrupt", or "steer" mode
+ * (per {@link BotProperties#getBusyInputMode()}).
  *
  * <p>In <b>queue</b> mode, messages arriving while a chat is busy are buffered
  * and can be drained later via {@link #drainQueue(long)}.
@@ -23,6 +24,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>In <b>interrupt</b> mode, calling {@link #interrupt(long)} cancels the
  * current turn by setting the interrupt flag, and queued messages are still
  * available for draining.
+ *
+ * <p>In <b>steer</b> mode, messages arriving while a chat is busy are sent to
+ * the backend steer API for mid-run injection. The steer text is not queued
+ * locally — it's forwarded to the backend immediately.
  */
 @Service
 @RequiredArgsConstructor
@@ -40,6 +45,18 @@ public class BusySessionHandler {
     /** Interrupt flags per chat (used in "interrupt" mode). */
     private final ConcurrentHashMap<Long, AtomicBoolean> interruptFlags = new ConcurrentHashMap<>();
 
+    /** Last busy-ack timestamp per chat (epoch millis) for 30-second debounce. */
+    private final ConcurrentHashMap<Long, Long> busyAckTimestamps = new ConcurrentHashMap<>();
+
+    // M4: busyAckHintShown is intentionally a per-install (singleton) flag, not per-chat.
+    // This bean is a Spring singleton, so the onboarding hint is shown once across all
+    // chats for the lifetime of the process. This matches the design: the hint explains
+    // the busy-input-mode feature which is a global setting, not per-chat state.
+    private volatile boolean busyAckHintShown = false;
+
+    /** Busy-ack debounce window in milliseconds. */
+    private static final long BUSY_ACK_COOLDOWN_MS = 30_000L;
+
     /** Whether the given chat is currently processing a turn. */
     public boolean isBusy(long chatId) {
         AtomicBoolean flag = busyChats.get(chatId);
@@ -53,13 +70,14 @@ public class BusySessionHandler {
         log.debug("Marked chat {} as busy", chatId);
     }
 
-    /** Mark the given chat as free (not busy). */
+    /** Mark the chat as free (not busy). */
     public void markFree(long chatId) {
         AtomicBoolean flag = busyChats.get(chatId);
         if (flag != null) {
             flag.set(false);
         }
         interruptFlags.computeIfAbsent(chatId, k -> new AtomicBoolean()).set(false);
+        busyAckTimestamps.remove(chatId);
         log.debug("Marked chat {} as free", chatId);
     }
 
@@ -127,11 +145,87 @@ public class BusySessionHandler {
     }
 
     /**
-     * Returns the configured busy mode ("queue" or "interrupt").
+     * Returns the configured busy mode (legacy: "queue" or "interrupt").
      *
      * @return the busy mode string
      */
     public String getBusyMode() {
         return properties.getBusyMode();
+    }
+
+    /**
+     * Returns the effective busy-input mode, resolving between
+     * {@code busyInputMode} (new) and {@code busyMode} (legacy).
+     * If {@code busyInputMode} is set to "steer", returns "steer".
+     * Otherwise falls back to {@code busyMode} for backward compatibility.
+     *
+     * @return "steer", "queue", or "interrupt"
+     */
+    public String getEffectiveBusyInputMode() {
+        String mode = properties.getBusyInputMode();
+        if (mode != null && !mode.isBlank()) {
+            String lower = mode.toLowerCase().strip();
+            if (lower.equals("steer") || lower.equals("queue") || lower.equals("interrupt")) {
+                return lower;
+            }
+        }
+        // Fall back to legacy busyMode
+        String legacy = properties.getBusyMode();
+        if (legacy != null && !legacy.isBlank()) {
+            return legacy.toLowerCase().strip();
+        }
+        return "interrupt";
+    }
+
+    /**
+     * Check if busy-ack messages are enabled.
+     *
+     * @return true if busy-ack should be sent
+     */
+    public boolean isBusyAckEnabled() {
+        return properties.isBusyAckEnabled();
+    }
+
+    /**
+     * Check if a busy-ack should be sent for this chat, respecting the
+     * 30-second debounce window. If the ack is allowed, the timestamp
+     * is updated atomically.
+     *
+     * @param chatId the Telegram chat ID
+     * @return true if the ack should be sent (within debounce window)
+     */
+    public boolean shouldSendBusyAck(long chatId) {
+        long now = System.currentTimeMillis();
+        boolean[] shouldSend = {true};
+        busyAckTimestamps.compute(chatId, (k, lastAck) -> {
+            if (lastAck != null && (now - lastAck) < BUSY_ACK_COOLDOWN_MS) {
+                shouldSend[0] = false;
+                return lastAck;
+            }
+            return now;
+        });
+        return shouldSend[0];
+    }
+
+    /**
+     * Check if the onboarding hint has been shown and mark it as shown.
+     *
+     * @return true if this is the first time (hint should be shown)
+     */
+    public boolean shouldShowOnboardingHint() {
+        if (!busyAckHintShown) {
+            busyAckHintShown = true;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Clear the busy-ack timestamp for a chat (e.g. when the chat becomes free).
+     *
+     * @param chatId the Telegram chat ID
+     */
+    public void clearBusyAckTimestamp(long chatId) {
+        busyAckTimestamps.remove(chatId);
     }
 }

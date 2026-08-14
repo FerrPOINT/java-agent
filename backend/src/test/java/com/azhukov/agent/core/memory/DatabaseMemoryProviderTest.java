@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.memory;
 
 import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MemoryEntity;
 import com.azhukov.agent.persistence.repository.MemoryRepository;
 import org.junit.jupiter.api.Test;
@@ -10,6 +11,7 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 class DatabaseMemoryProviderTest {
@@ -114,63 +116,99 @@ class DatabaseMemoryProviderTest {
     @Test
     void replaceReturnsMessageWhenNoMatches() {
         MemoryRepository repo = mock(MemoryRepository.class);
-        when(repo.findByUserIdAndTargetAndFact("u", "mem", "old")).thenReturn(List.of());
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem")).thenReturn(List.of());
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String result = p.replace("u", "mem", "old", "new");
-        assertThat(result).isEqualTo("No entry found with exact text: old");
+        assertThat(result).isEqualTo("No entry found containing: old");
         verify(repo, never()).save(any());
     }
 
     @Test
-    void replaceUpdatesMatchingEntitiesAndReturnsNull() {
+    void replaceWithMultipleUniqueMatchesReturnsError() {
         MemoryRepository repo = mock(MemoryRepository.class);
         MemoryEntity e1 = new MemoryEntity();
-        e1.setFact("old text");
+        e1.setFact("old text version 1");
         MemoryEntity e2 = new MemoryEntity();
-        e2.setFact("old text");
-        when(repo.findByUserIdAndTargetAndFact("u", "mem", "old text"))
+        e2.setFact("old text version 2");
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem"))
             .thenReturn(List.of(e1, e2));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String result = p.replace("u", "mem", "old text", "new text");
-        assertThat(result).isNull();
-        // M24: Exact match — the fact is replaced entirely, not substring-replaced
-        assertThat(e1.getFact()).isEqualTo("new text");
-        assertThat(e2.getFact()).isEqualTo("new text");
-        verify(repo, times(2)).save(any());
+        // Multiple unique matches → error, no replacements performed
+        assertThat(result).isNotNull();
+        assertThat(result).contains("Multiple entries");
+        assertThat(e1.getFact()).isEqualTo("old text version 1");
+        assertThat(e2.getFact()).isEqualTo("old text version 2");
+        verify(repo, never()).save(any());
     }
 
     @Test
-    void replaceDoesNotMatchSubstringEntries() {
+    void replaceWithSingleMatchUpdatesAndReturnsNull() {
         MemoryRepository repo = mock(MemoryRepository.class);
-        // M24: Entries that merely contain the old text should NOT match
-        when(repo.findByUserIdAndTargetAndFact("u", "mem", "old text")).thenReturn(List.of());
+        MemoryEntity e1 = new MemoryEntity();
+        e1.setFact("old text");
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem"))
+            .thenReturn(List.of(e1));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String result = p.replace("u", "mem", "old text", "new text");
-        assertThat(result).isEqualTo("No entry found with exact text: old text");
-        verify(repo, never()).save(any());
+        assertThat(result).isNull();
+        assertThat(e1.getFact()).isEqualTo("new text");
+        verify(repo).save(e1);
+    }
+
+    @Test
+    void replaceMatchesSubstringEntries() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        // Substring match: entry contains "old text" as part of a larger fact
+        MemoryEntity e1 = new MemoryEntity();
+        e1.setFact("the old text is here");
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem"))
+            .thenReturn(List.of(e1));
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        String result = p.replace("u", "mem", "old text", "new text");
+        assertThat(result).isNull();
+        assertThat(e1.getFact()).isEqualTo("new text");
+        verify(repo).save(e1);
     }
 
     @Test
     void removeReturnsMessageWhenNoMatches() {
         MemoryRepository repo = mock(MemoryRepository.class);
-        when(repo.findByUserIdAndTargetAndFact("u", "mem", "old")).thenReturn(List.of());
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem")).thenReturn(List.of());
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String result = p.remove("u", "mem", "old");
-        assertThat(result).isEqualTo("No entry found with exact text: old");
-        verify(repo, never()).deleteAll(any());
+        assertThat(result).isEqualTo("No entry found containing: old");
+        verify(repo, never()).delete(any());
     }
 
     @Test
-    void removeDeletesMatchingEntitiesAndReturnsNull() {
+    void removeWithMultipleUniqueMatchesReturnsError() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        MemoryEntity e1 = new MemoryEntity();
+        e1.setFact("old text version 1");
+        MemoryEntity e2 = new MemoryEntity();
+        e2.setFact("old text version 2");
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem"))
+            .thenReturn(List.of(e1, e2));
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        String result = p.remove("u", "mem", "old text");
+        // Multiple unique matches → error, no deletion performed
+        assertThat(result).isNotNull();
+        assertThat(result).contains("Multiple entries");
+        verify(repo, never()).delete(any());
+    }
+
+    @Test
+    void removeWithSingleMatchDeletesAndReturnsNull() {
         MemoryRepository repo = mock(MemoryRepository.class);
         MemoryEntity e1 = new MemoryEntity();
         e1.setFact("old text");
-        when(repo.findByUserIdAndTargetAndFact("u", "mem", "old text"))
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem"))
             .thenReturn(List.of(e1));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String result = p.remove("u", "mem", "old text");
         assertThat(result).isNull();
-        verify(repo).deleteAll(List.of(e1));
+        verify(repo).delete(e1);
     }
 
     @Test
@@ -243,5 +281,117 @@ class DatabaseMemoryProviderTest {
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         p.syncTurn("session-1", null);
         verifyNoInteractions(repo);
+    }
+
+    // ── Drift detection tests (parity with Hermes _detect_external_drift) ──
+
+    @Test
+    void store_withOversizedFact_throwsDriftError() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        String oversized = "x".repeat(2201); // exceeds MEMORY_CHAR_LIMIT (2200)
+        assertThatThrownBy(() -> p.store("u", "memory", "cat", oversized))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("Refusing to write memory target 'memory'")
+            .hasMessageContaining("exceeds the store's char limit");
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void store_withOversizedUserFact_throwsDriftError() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        String oversized = "x".repeat(1376); // exceeds USER_CHAR_LIMIT (1375)
+        assertThatThrownBy(() -> p.store("u", "user", "cat", oversized))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("Refusing to write memory target 'user'");
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void store_withExactLimit_succeeds() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        String exactLimit = "x".repeat(2200); // exactly MEMORY_CHAR_LIMIT
+        p.store("u", "memory", "cat", exactLimit);
+        verify(repo).save(any(MemoryEntity.class));
+    }
+
+    @Test
+    void store_withOptimisticLockFailure_throwsDriftError() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        when(repo.save(any(MemoryEntity.class)))
+            .thenThrow(new org.springframework.orm.ObjectOptimisticLockingFailureException(
+                MemoryEntity.class, "fake-id", null));
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        assertThatThrownBy(() -> p.store("u", "memory", "cat", "fact"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("Refusing to write memory target 'memory'")
+            .hasMessageContaining("optimistic lock conflict");
+    }
+
+    @Test
+    void replace_withOversizedNewText_returnsDriftError() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        MemoryEntity existing = new MemoryEntity();
+        existing.setUserId("u");
+        existing.setTarget("memory");
+        existing.setFact("old");
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "memory"))
+            .thenReturn(List.of(existing));
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        String oversized = "x".repeat(2201);
+        String result = p.replace("u", "memory", "old", oversized);
+        assertThat(result).contains("Refusing to write memory target 'memory'")
+            .contains("exceeds the store's char limit");
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void replace_withOptimisticLockFailure_returnsDriftError() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        MemoryEntity existing = new MemoryEntity();
+        existing.setUserId("u");
+        existing.setTarget("memory");
+        existing.setFact("old");
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "memory"))
+            .thenReturn(List.of(existing));
+        when(repo.save(any(MemoryEntity.class)))
+            .thenThrow(new org.springframework.orm.ObjectOptimisticLockingFailureException(
+                MemoryEntity.class, "fake-id", null));
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        String result = p.replace("u", "memory", "old", "new");
+        assertThat(result).contains("Refusing to write memory target 'memory'")
+            .contains("optimistic lock conflict");
+    }
+
+    @Test
+    void remove_withOptimisticLockFailure_returnsDriftError() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        MemoryEntity existing = new MemoryEntity();
+        existing.setUserId("u");
+        existing.setTarget("memory");
+        existing.setFact("old");
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "memory"))
+            .thenReturn(List.of(existing));
+        doThrow(new org.springframework.orm.ObjectOptimisticLockingFailureException(
+                MemoryEntity.class, "fake-id", null))
+            .when(repo).delete(existing);
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        String result = p.remove("u", "memory", "old");
+        assertThat(result).contains("Refusing to write memory target 'memory'")
+            .contains("optimistic lock conflict");
+    }
+
+    @Test
+    void driftErrorMessageContainsRemediationGuidance() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        String oversized = "x".repeat(2201);
+        assertThatThrownBy(() -> p.store("u", "memory", "cat", oversized))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("Resolve the drift first")
+            .hasMessageContaining("silent data loss")
+            .hasMessageContaining("#26045");
     }
 }

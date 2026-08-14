@@ -26,16 +26,16 @@ class TypingManagerTest {
 
     @Test
     void startTyping_sendsImmediatelyAndSchedules() throws InterruptedException {
-        when(client.sendTyping(anyLong())).thenReturn(true);
+        when(client.sendTyping(anyLong(), any())).thenReturn(true);
         manager.startTyping(123L);
         Thread.sleep(150);
-        verify(client, atLeast(2)).sendTyping(123L);
+        verify(client, atLeast(2)).sendTyping(eq(123L), any());
         manager.stopTyping(123L);
     }
 
     @Test
     void stopTyping_cancelsRefresh() throws InterruptedException {
-        when(client.sendTyping(anyLong())).thenReturn(true);
+        when(client.sendTyping(anyLong(), any())).thenReturn(true);
         manager.startTyping(123L);
         Thread.sleep(80);
         manager.stopTyping(123L);
@@ -47,7 +47,7 @@ class TypingManagerTest {
 
     @Test
     void isTyping_trueAfterStart() {
-        when(client.sendTyping(anyLong())).thenReturn(true);
+        when(client.sendTyping(anyLong(), any())).thenReturn(true);
         manager.startTyping(123L);
         assertThat(manager.isTyping(123L)).isTrue();
         manager.stopTyping(123L);
@@ -55,7 +55,7 @@ class TypingManagerTest {
 
     @Test
     void isTyping_falseAfterStop() {
-        when(client.sendTyping(anyLong())).thenReturn(true);
+        when(client.sendTyping(anyLong(), any())).thenReturn(true);
         manager.startTyping(123L);
         manager.stopTyping(123L);
         assertThat(manager.isTyping(123L)).isFalse();
@@ -63,19 +63,19 @@ class TypingManagerTest {
 
     @Test
     void flushTyping_sendsOneFinalActionBeforeStopping() {
-        when(client.sendTyping(anyLong())).thenReturn(true);
+        when(client.sendTyping(anyLong(), any())).thenReturn(true);
         manager.startTyping(123L);
         clearInvocations(client);
 
         manager.flushTyping(123L);
-        verify(client).sendTyping(123L);
+        verify(client).sendTyping(eq(123L), any());
 
         manager.stopTyping(123L);
     }
 
     @Test
     void flushTyping_whenNotActive_doesNothing() {
-        when(client.sendTyping(anyLong())).thenReturn(true);
+        when(client.sendTyping(anyLong(), any())).thenReturn(true);
         manager.flushTyping(123L);
         verifyNoInteractions(client);
     }

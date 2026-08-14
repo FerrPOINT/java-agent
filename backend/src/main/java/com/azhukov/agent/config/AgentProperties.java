@@ -43,12 +43,30 @@ public class AgentProperties {
     private final TtsProperties tts = new TtsProperties();
     private final TranscriptionProperties transcription = new TranscriptionProperties();
     private final CronProperties cron = new CronProperties();
-    private final StreamingProperties streaming = new StreamingProperties();
     private final ErrorProperties error = new ErrorProperties();
+
+    // ── Commentary (interim assistant messages) ──
+    // Mirrors Hermes interim_assistant_messages config (default true).
+    // When true, visible text accompanying tool calls is emitted as an
+    // interim "commentary" message before tool execution begins.
+    private boolean commentaryEnabled = true;
     private final CodingContextProperties codingContext = new CodingContextProperties();
     private final ToolProperties tools = new ToolProperties();
     private final CompressionProperties compression = new CompressionProperties();
     private final CuratorProperties curator = new CuratorProperties();
+
+    // ── Fallback chain: ordered list of alternate models/providers ──
+    // Mirrors Hermes _fallback_chain — when the primary model fails after all
+    // retries, the runtime switches to the next entry in this chain.
+    // Each entry specifies provider, model, baseUrl, and apiKey.
+    private List<FallbackConfig> fallbackChain = new ArrayList<>();
+
+    public void setFallbackChain(List<FallbackConfig> chain) {
+        this.fallbackChain.clear();
+        if (chain != null) {
+            this.fallbackChain.addAll(chain);
+        }
+    }
 
     @Getter @Setter
     public static class ModelProperties {
@@ -63,6 +81,12 @@ public class AgentProperties {
         private final Map<String, String> headers = new HashMap<>();
         private int reasoningEffort = 70;
         private boolean fastMode = false;
+        /** Maximum size in bytes per image before shrinking (default 4 MB). */
+        private int maxImageSizeBytes = 4 * 1024 * 1024;
+        /** Maximum total image payload in bytes before shrinking (default 20 MB). */
+        private int maxTotalImageSizeBytes = 20 * 1024 * 1024;
+        /** JPEG quality (0.0–1.0) used when re-encoding shrunk images (default 0.85). */
+        private double imageJpegQuality = 0.85;
     }
 
     @Getter @Setter
@@ -152,6 +176,12 @@ public class AgentProperties {
         private int memoryCharLimit = 2200;
         /** Maximum total characters for the "user" store (default 1375). */
         private int userCharLimit = 1375;
+        /** How many user turns between memory reviews (0 = disabled, default 10). */
+        private int nudgeInterval = 10;
+        /** Enable/disable user profile in memory (default true). */
+        private boolean userProfileEnabled = true;
+        /** Minimum turns before flushing memory to persistent storage (default 6). */
+        private int flushMinTurns = 6;
         private final BackgroundReviewProperties backgroundReview = new BackgroundReviewProperties();
     }
 
@@ -178,9 +208,15 @@ public class AgentProperties {
         // S2: Template vars substitution enabled
         private boolean templateVars = true;
         // S2: Inline shell expansion enabled
-        private boolean inlineShell = false;
+        private boolean inlineShell = true;
         // S2: Inline shell timeout in seconds
-        private int inlineShellTimeout = 10;
+        private int inlineShellTimeout = 30;
+        /** How many tool-calling iterations between skill reviews (0 = disabled, default 15). */
+        private int creationNudgeInterval = 15;
+        /** Require approval before writing skill files (default false). */
+        private boolean writeApproval = false;
+        /** Extra security checks for agent-created skills (default false). */
+        private boolean guardAgentCreated = false;
 
         public void setExternalDirs(List<String> dirs) { this.externalDirs.clear(); this.externalDirs.addAll(dirs); }
         public void setDisabled(List<String> disabled) { this.disabled.clear(); this.disabled.addAll(disabled); }
@@ -212,7 +248,9 @@ public class AgentProperties {
         private int maxReferenceTokens = 0; // 0 → computed as maxTokens / 4 at runtime
         private int protectFirstN = 3;
         /** Number of trailing messages (recent context) to protect from compression. */
-        private int protectLastN = 6;
+        private int protectLastN = 20;
+        /** Target ratio for compression (0.0–1.0, default 0.20). */
+        private double targetRatio = 0.20;
     }
 
     @Getter @Setter
@@ -220,8 +258,8 @@ public class AgentProperties {
         private boolean enabled = true;
         /** Maximum delegation spawn depth (0 = parent, 1 = first child). Default 3. */
         private int maxDepth = 3;
-        /** Maximum spawn depth — agents at depths 0..maxSpawnDepth-1 can spawn; maxSpawnDepth is the leaf floor. Default 3 (matches maxDepth). */
-        private int maxSpawnDepth = 3;
+        /** Maximum spawn depth — agents at depths 0..maxSpawnDepth-1 can spawn; maxSpawnDepth is the leaf floor. Default 1 (matches Hermes MAX_DEPTH). */
+        private int maxSpawnDepth = 1;
         /** Maximum number of concurrent child subagents. Default 3. */
         private int maxConcurrentChildren = 3;
         /** Default timeout in seconds for a single child subagent. Default 300. */
@@ -230,11 +268,41 @@ public class AgentProperties {
         private int childTimeoutSeconds = 0;
         /** Global kill switch for the orchestrator role. When false, role='orchestrator' is forced to 'leaf'. Default true. */
         private boolean orchestratorEnabled = true;
+        /**
+         * When true, skip the approval gate for delegated tasks (subagent auto-approve).
+         * The child session carries a metadata flag that tells DefaultAgentRuntime to
+         * bypass approval-queue checks for every tool call in that session.
+         * Default false — approval is still required unless explicitly enabled.
+         */
+        private boolean subagentAutoApprove = false;
+        /**
+         * Maximum iterations (model calls) per child subagent turn.
+         * Mirrors Hermes delegation.max_iterations (default 50).
+         * When 0 or negative, the child uses the global core.max-turns setting.
+         */
+        private int maxIterations = 50;
+        /**
+         * Optional model name override for delegated subagents.
+         * Mirrors Hermes delegation.model — routes subagents to a different model.
+         */
+        private String model = "";
+        /**
+         * Optional provider override for delegated subagents.
+         * Mirrors Hermes delegation.provider — routes subagents to a different provider.
+         */
+        private String provider = "";
+        /**
+         * Optional reasoning effort override for delegated subagents.
+         * Mirrors Hermes delegation.reasoning_effort.
+         */
+        private String reasoningEffort = "";
         /** Tools that children must never have access to (always stripped from child toolsets). */
         private final List<String> blockedTools = new ArrayList<>(java.util.List.of(
             "delegate_task",   // no recursive delegation (leaf children)
             "clarify",          // no user interaction
-            "send_message"      // no cross-platform side effects
+            "memory",           // no writes to shared MEMORY.md
+            "send_message",     // no cross-platform side effects
+            "execute_code"      // children should reason step-by-step, not write scripts
         ));
 
         public void setBlockedTools(List<String> tools) { this.blockedTools.clear(); this.blockedTools.addAll(tools); }
@@ -310,6 +378,10 @@ public class AgentProperties {
     @Getter @Setter
     public static class GatewayProperties {
         private final TelegramProperties telegram = new TelegramProperties();
+        /** Busy-input mode: "interrupt" (default), "queue", or "steer". */
+        private String busyInputMode = "interrupt";
+        /** Whether to send busy-ack messages when a user message arrives mid-run (default true). */
+        private boolean busyAckEnabled = true;
     }
 
     @Getter @Setter
@@ -341,7 +413,7 @@ public class AgentProperties {
 
     @Getter @Setter
     public static class BudgetProperties {
-        private int maxModelCallsPerTurn = 90;
+        private int maxModelCallsPerTurn = 100;
         private int maxToolExecutionsPerTurn = 200;
         private int maxTokensPerTurn = 200000;
         private int maxToolDurationMsPerTurn = 600000;
@@ -401,15 +473,9 @@ public class AgentProperties {
     }
 
     @Getter @Setter
-    public static class StreamingProperties {
-        private boolean scrubThinkBlocks = true;
-        private int editIntervalMs = 1500;
-    }
-
-    @Getter @Setter
     public static class ErrorProperties {
-        private int retryAttempts = 5;
-        private int retryDelayMs = 2000;
+        private int retryAttempts = 3;
+        private int retryDelayMs = 1000;
         private int backoffMultiplier = 2;
         /** Cap for exponential backoff delay in milliseconds (default 60s). */
         private int retryCapMs = 60_000;

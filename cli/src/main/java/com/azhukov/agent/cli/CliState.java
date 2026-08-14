@@ -30,6 +30,8 @@ public class CliState {
     private final Map<String, Boolean> toolStates = new ConcurrentHashMap<>();
     private volatile String cdpUrl = "";
     private volatile String currentSessionId = null;
+    private volatile boolean debugMode = false;
+    private volatile String userProfile = "default";
 
     public VerboseMode getVerboseMode() { return verboseMode; }
     public void setVerboseMode(VerboseMode verboseMode) { this.verboseMode = verboseMode; }
@@ -126,4 +128,11 @@ public class CliState {
     public static String[] getValidReasoningLevels() {
         return REASONING_LEVELS.clone();
     }
+
+    public boolean isDebugMode() { return debugMode; }
+    public void setDebugMode(boolean debugMode) { this.debugMode = debugMode; }
+    public boolean toggleDebugMode() { this.debugMode = !this.debugMode; return this.debugMode; }
+
+    public String getUserProfile() { return userProfile; }
+    public void setUserProfile(String userProfile) { this.userProfile = userProfile; }
 }

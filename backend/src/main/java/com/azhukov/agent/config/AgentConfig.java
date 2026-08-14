@@ -62,6 +62,7 @@ import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.persistence.repository.SkillRepository;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.service.ImageShrinker;
 import com.azhukov.agent.service.TurnUsageCollector;
 import com.azhukov.agent.tools.memory.MemoryTool;
 import com.azhukov.agent.tools.memory.SkillManageTool;
@@ -89,10 +90,11 @@ public class AgentConfig {
     @ConditionalOnProperty(name = "agent.model.provider", havingValue = "openai-compatible")
     @ConditionalOnMissingBean(ModelClient.class)
     public ModelClient openAiCompatibleModelClient(AgentProperties properties, TurnUsageCollector turnUsageCollector,
-                                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker) {
+                                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker,
+                                                    ImageShrinker imageShrinker) {
         return new LangChain4jModelClient(properties, usage -> {
             turnUsageCollector.record(usage.promptTokens(), usage.completionTokens());
-        }, errorClassifier, rateLimitTracker);
+        }, errorClassifier, rateLimitTracker, null, imageShrinker);
     }
 
     @Bean
@@ -147,16 +149,19 @@ public class AgentConfig {
                                      com.azhukov.agent.core.security.ApprovalQueue approvalQueue,
                                      com.azhukov.agent.core.memory.MemoryManager memoryManager,
                                      com.azhukov.agent.core.agent.TokenEstimator tokenEstimator,
-                                     com.azhukov.agent.core.agent.ToolResultFormatter toolResultFormatter) {
+                                     com.azhukov.agent.core.agent.ToolResultFormatter toolResultFormatter,
+                                     com.azhukov.agent.core.agent.MidTurnPersistenceCallback midTurnPersistenceCallback,
+                                     com.azhukov.agent.core.agent.CommentaryCallback commentaryCallback) {
         return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
             memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService, interruptToken, turnFinalizer, steerBuffer,
-            errorClassifier, contextCompressor, approvalQueue, memoryManager, tokenEstimator, toolResultFormatter);
+            errorClassifier, contextCompressor, approvalQueue, memoryManager, tokenEstimator, toolResultFormatter,
+            midTurnPersistenceCallback, commentaryCallback);
     }
 
     @Bean
-    public PromptBuilder promptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants agentConstants, com.azhukov.agent.core.prompt.PromptCacheTracker cacheTracker, com.azhukov.agent.core.context.CodingContextDetector codingContextDetector, MemoryProvider memoryProvider) {
-        return new DefaultPromptBuilder(properties, toolRegistry, agentConstants, cacheTracker, codingContextDetector, memoryProvider);
+    public PromptBuilder promptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants agentConstants, com.azhukov.agent.core.prompt.PromptCacheTracker cacheTracker, com.azhukov.agent.core.context.CodingContextDetector codingContextDetector, MemoryProvider memoryProvider, com.azhukov.agent.core.skill.SkillManager skillManager) {
+        return new DefaultPromptBuilder(properties, toolRegistry, agentConstants, cacheTracker, codingContextDetector, memoryProvider, skillManager);
     }
 
     @Bean
@@ -212,8 +217,11 @@ public class AgentConfig {
                                        MessageRepository messageRepository,
                                        ContextCompressor contextCompressor,
                                        AgentProperties properties,
-                                       com.azhukov.agent.core.prompt.PromptCacheTracker cacheTracker) {
-        return new DefaultContextEngine(memoryProvider, skillManager, messageRepository, contextCompressor, properties, cacheTracker);
+                                       com.azhukov.agent.core.prompt.PromptCacheTracker cacheTracker,
+                                       com.azhukov.agent.core.agent.SessionLineageService sessionLineageService) {
+        DefaultContextEngine engine = new DefaultContextEngine(memoryProvider, skillManager, messageRepository, contextCompressor, properties, cacheTracker);
+        engine.setSessionLineageService(sessionLineageService);
+        return engine;
     }
 
     @Bean
@@ -318,8 +326,10 @@ public class AgentConfig {
             AgentRuntime agentRuntime,
             org.springframework.beans.factory.ObjectProvider<GatewayRoutingService> routingServiceProvider,
             com.azhukov.agent.persistence.MessagePersistenceService messagePersistenceService,
-            AgentProperties agentProperties) {
-        return new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider, messagePersistenceService, agentProperties);
+            com.azhukov.agent.core.agent.MidTurnPersistenceCallback midTurnPersistenceCallback,
+            AgentProperties agentProperties,
+            com.azhukov.agent.core.agent.SteerBuffer steerBuffer) {
+        return new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider, messagePersistenceService, midTurnPersistenceCallback, agentProperties, steerBuffer);
     }
 
     @Bean
@@ -339,5 +349,18 @@ public class AgentConfig {
     @ConditionalOnMissingBean
     public TimeLimiterRegistry timeLimiterRegistry() {
         return TimeLimiterRegistry.ofDefaults();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(com.azhukov.agent.core.agent.CommentaryCallback.class)
+    public com.azhukov.agent.core.agent.CommentaryCallback commentaryCallback() {
+        return (sessionId, text, alreadyStreamed) -> {
+            // No-op default for the REST API path. Commentary is handled via SSE
+            // "commentary" events in the streaming path — the Telegram bot consumes
+            // those events and issues a segment break. Non-streaming clients (REST
+            // API) receive the commentary text as part of the regular response,
+            // so no separate delivery is needed. Gateway implementations can
+            // override this bean to send commentary as a separate message.
+        };
     }
 }

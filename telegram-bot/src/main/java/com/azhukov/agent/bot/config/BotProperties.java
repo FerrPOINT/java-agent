@@ -29,6 +29,15 @@ public class BotProperties {
     @Min(1)
     private int bufferThreshold = 24;
     private String busyMode = "queue"; // queue | interrupt
+    /** Busy-input mode: "interrupt" (default), "queue", or "steer".
+     * When set, overrides busyMode for the busy-dispatch logic.
+     * "steer" injects mid-run via the backend steer API;
+     * "queue" buffers for the next turn;
+     * "interrupt" stops the current run.
+     */
+    private String busyInputMode = "interrupt";
+    /** Whether to send busy-ack messages when a user message arrives mid-run. */
+    private boolean busyAckEnabled = true;
     private String parseMode = "MarkdownV2"; // MarkdownV2 | HTML
     private boolean registerCommands = true;
     @Min(1)
@@ -46,6 +55,9 @@ public class BotProperties {
     // P0: PII Redaction — hash user IDs and chat IDs before injecting into system prompt
     private boolean redactPii = true;
 
+    // S-2: Media delivery — extract MEDIA: tags and deliver files as native Telegram attachments
+    private boolean mediaDeliveryEnabled = true;
+
     // P0: B7: When true, streaming edit messages are delivered silently (disable_notification=true).
     // Only the final message after streaming completes triggers a push notification.
     private boolean streamingSilent = true;
@@ -62,6 +74,15 @@ public class BotProperties {
     // Threshold (chars) to split streaming text into a new message during editStream.
     // Matches Hermes behavior when rich messages are available.
     private int streamingMaxChars = 32768;
+
+    // S5: Streaming transport selection for draft streaming.
+    //   "auto"  — prefer native draft streaming (sendMessageDraft) when the chat
+    //             supports it (DM only); fall back to edit-based.
+    //   "draft" — explicitly request native draft streaming; fall back to edit
+    //             when unsupported.
+    //   "edit"  — progressive editMessageText (legacy/default behavior).
+    //   "off"   — no streaming (buffer all content, send on finalize).
+    private String streamingTransport = "auto";
 
     private final Polling polling = new Polling();
     private final Webhook webhook = new Webhook();

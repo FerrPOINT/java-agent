@@ -46,17 +46,20 @@ class WebExtractToolRedirectTest {
 
         Document doc = Jsoup.parse("<html><head><title>Test</title></head><body><p>Hello</p></body></html>", "https://example.com");
         Connection connection = mock(Connection.class);
+        Connection.Response response = mock(Connection.Response.class);
         when(connection.userAgent(anyString())).thenReturn(connection);
         when(connection.timeout(eq(10000))).thenReturn(connection);
         when(connection.followRedirects(eq(false))).thenReturn(connection);
-        when(connection.get()).thenReturn(doc);
+        when(connection.execute()).thenReturn(response);
+        when(response.contentType()).thenReturn("text/html");
+        when(response.parse()).thenReturn(doc);
 
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
             jsoup.when(() -> Jsoup.connect("https://example.com")).thenReturn(connection);
 
             WebExtractTool tool = new WebExtractTool(properties, urlSafety, redactor);
             tool.init();
-            var result = tool.execute("{\"urls\":\"https://example.com\"}", null, null);
+            var result = tool.execute("{\"urls\":[\"https://example.com\"]}", null, null);
 
             assertThat(result.success()).isTrue();
             // Verify followRedirects(false) was called on the connection

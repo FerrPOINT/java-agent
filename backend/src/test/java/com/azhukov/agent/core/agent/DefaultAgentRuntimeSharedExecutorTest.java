@@ -73,7 +73,9 @@ class DefaultAgentRuntimeSharedExecutorTest {
         when(contextEngine.prepareContext(any(Session.class), any(List.class)))
             .thenAnswer(inv -> inv.getArgument(1));
         when(toolRegistry.getDefinitions(anySet()))
-            .thenReturn(List.<ToolDefinition>of());
+            .thenReturn(List.<ToolDefinition>of(
+                new ToolDefinition("test_tool", "test tool", java.util.Map.of())
+            ));
 
         IterationBudget.TurnSnapshot snapshot = mock(IterationBudget.TurnSnapshot.class);
         when(iterationBudget.startTurn(any(UUID.class))).thenReturn(snapshot);
@@ -91,7 +93,7 @@ class DefaultAgentRuntimeSharedExecutorTest {
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
             new com.azhukov.agent.core.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter());
+            new TokenEstimator(), new ToolResultFormatter(), null, null);
     }
 
     @Test

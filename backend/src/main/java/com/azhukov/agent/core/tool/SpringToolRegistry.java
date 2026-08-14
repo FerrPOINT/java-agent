@@ -92,6 +92,9 @@ public class SpringToolRegistry implements ToolRegistry {
         Map<String, Object> field = new LinkedHashMap<>();
         field.put("type", param != null && !param.type().isBlank() ? param.type() : mapType(type));
         field.put("description", param != null ? param.description() : "");
+        if (param != null && param.enumValues().length > 0) {
+            field.put("enum", java.util.Arrays.asList(param.enumValues()));
+        }
         properties.put(name, field);
         if (param == null || param.required()) {
             required.add(name);

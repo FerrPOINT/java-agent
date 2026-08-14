@@ -36,6 +36,48 @@ public class CronJobEntity {
     @Column(name = "skills")
     private String skills;
 
+    /** P1-45: Comma-separated upstream cron job IDs whose output should be injected as context. */
+    @Column(name = "context_from")
+    private String contextFrom;
+
+    // ── V26: Full Hermes parity fields ──
+
+    /** Repeat count: null = forever, N = run N times then auto-delete. */
+    @Column(name = "repeat_count")
+    private Integer repeatCount;
+
+    /** How many times the job has successfully completed. */
+    @Column(name = "repeat_completed")
+    private int repeatCompleted = 0;
+
+    /** Path to a script for script-only (no_agent) mode or data-collection. */
+    @Column(name = "script")
+    private String script;
+
+    /** Skip the LLM entirely — run script and deliver stdout verbatim. */
+    @Column(name = "no_agent")
+    private boolean noAgent = false;
+
+    /** Comma-separated toolset names to restrict the job's agent to. */
+    @Column(name = "enabled_toolsets")
+    private String enabledToolsets;
+
+    /** Working directory for the job's agent. */
+    @Column(name = "workdir")
+    private String workdir;
+
+    /** Per-job model provider override. */
+    @Column(name = "model_provider")
+    private String modelProvider;
+
+    /** Per-job model name override. */
+    @Column(name = "model_name")
+    private String modelName;
+
+    /** Per-job base URL override. */
+    @Column(name = "base_url")
+    private String baseUrl;
+
     @Column(name = "created_at")
     private Instant createdAt;
 

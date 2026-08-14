@@ -9,6 +9,7 @@ import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
@@ -16,10 +17,13 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.agent.CliStateApplier;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
+import com.azhukov.agent.core.agent.SessionLineageService;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.agent.StreamContext;
 import com.azhukov.agent.core.agent.TokenEstimator;
 import com.azhukov.agent.core.agent.ToolResultFormatter;
+import com.azhukov.agent.core.agent.MidTurnPersistenceCallback;
+import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
@@ -82,10 +86,12 @@ public class AgentStreamingService {
     private final TokenEstimator tokenEstimator;
     private final ToolResultFormatter toolResultFormatter;
     private final AgentSessionResolver sessionResolver;
+    private final SessionLineageService sessionLineageService;
     private final CliStateApplier cliStateApplier;
     private final AgentMetrics agentMetrics;
     private final ConversationCompressor conversationCompressor;
     private final ModelMetadataService modelMetadataService;
+    private final MidTurnPersistenceCallback midTurnPersistenceCallback;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
 
     private static final int MAX_STREAM_RETRIES = 5;
@@ -196,6 +202,11 @@ public class AgentStreamingService {
         // M18: Track whether persistTurn has already been called to prevent double-persistence
         java.util.concurrent.atomic.AtomicBoolean persisted = new java.util.concurrent.atomic.AtomicBoolean(false);
 
+        // P1-5: Mid-turn persistence cursor — tracks how many messages have been
+        // flushed to the database during this turn. After each tool batch, new
+        // messages are persisted immediately, mirroring Hermes' _persist_session.
+        int persistedUpTo = 0; // will be set after initial messages are built
+
         try {
 
         // Build messages with full session context (system + history + user)
@@ -219,6 +230,11 @@ public class AgentStreamingService {
         var budget = iterationBudget.startTurn(session.id());
         turnStateManager.clear(session.id());
 
+        // P1-5: Initialize persistence cursor — all messages so far (system + history + user)
+        // are persisted by the end-of-turn persistTurn() call. Mid-turn persistence only
+        // covers new messages generated during the agentic loop below.
+        persistedUpTo = turnMessages.size();
+
         for (int i = 0; i < maxTurns; i++) {
             // Check for interrupt at the top of each agentic-loop iteration
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
@@ -226,7 +242,7 @@ public class AgentStreamingService {
                 send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
-                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
             }
             if (iterationBudget.isExhausted(budget)) {
@@ -237,7 +253,7 @@ public class AgentStreamingService {
                 send(emitter, new StreamEvent("token", budgetMsg, null, null), streamCtx);
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
-                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
             }
 
@@ -332,7 +348,7 @@ public class AgentStreamingService {
                                 send(emitter, new StreamEvent("error", null, null,
                                     "Retry interrupted: " + ie.getMessage()), streamCtx);
                                 safeCompleteWithError(emitter, ie);
-                                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
+                                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                                 return;
                             }
                             streamRetries++;
@@ -375,7 +391,7 @@ public class AgentStreamingService {
                     send(emitter, new StreamEvent("error", null, null, errorMsg), streamCtx);
                     safeCompleteWithError(emitter, error instanceof Exception
                         ? (Exception) error : new RuntimeException(error));
-                    if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
+                    if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                     return;
                 }
 
@@ -393,10 +409,18 @@ public class AgentStreamingService {
                 }
 
                 // Success — construct response
+                // Preserve text alongside tool calls — the text is "commentary"
+                // (interim assistant message) shown to the user before tool execution.
+                // Mirrors Hermes _emit_interim_assistant_message().
+                String streamedContent = contentBuilder.toString();
                 if (!collectedToolCalls.isEmpty()) {
-                    response = ChatResponse.toolCalls(collectedToolCalls);
+                    if (streamedContent != null && !streamedContent.isBlank()) {
+                        response = ChatResponse.textAndToolCalls(streamedContent, collectedToolCalls);
+                    } else {
+                        response = ChatResponse.toolCalls(collectedToolCalls);
+                    }
                 } else {
-                    response = ChatResponse.text(contentBuilder.toString());
+                    response = ChatResponse.text(streamedContent);
                 }
                 break;
             }
@@ -408,7 +432,7 @@ public class AgentStreamingService {
                 send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
-                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
             }
 
@@ -418,12 +442,32 @@ public class AgentStreamingService {
                 sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens());
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
-                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
             }
 
             // Tool calls → execute each, emit tool_result events
-            turnMessages.add(Message.assistantToolCalls(response.toolCalls(), turnIndex));
+            // ── Commentary emission (parity with Hermes _emit_interim_assistant_message) ──
+            // When the LLM returns BOTH text AND tool calls, the text is "commentary" —
+            // an interim assistant message shown to the user before tool execution.
+            // In the streaming path, the text was already shown via onToken callbacks,
+            // so we emit a "commentary" event with alreadyStreamed=true to signal the
+            // gateway to issue a segment break (visual separator), not a duplicate message.
+            if (properties.isCommentaryEnabled() && response.hasContent() && response.hasToolCalls()) {
+                send(emitter, new StreamEvent("commentary", response.content(), null, null), streamCtx);
+                log.debug("Emitted commentary for session {} (alreadyStreamed=true): {} chars",
+                    session.id(), response.content().length());
+            }
+
+            turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex));
+
+            // P1-5: Persist the assistant message (with tool calls) immediately.
+            if (midTurnPersistenceCallback != null) {
+                // M6: Only advance cursor if persistence succeeded
+                if (midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
+                    persistedUpTo = turnMessages.size();
+                }
+            }
 
             // Check interrupt before executing tools
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
@@ -431,7 +475,7 @@ public class AgentStreamingService {
                 send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
-                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
             }
 
@@ -444,7 +488,7 @@ public class AgentStreamingService {
                     send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                     send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                     emitter.complete();
-                    if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
+                    if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                     return;
                 }
                 send(emitter, new StreamEvent("tool_start", null, null, null,
@@ -462,15 +506,42 @@ public class AgentStreamingService {
                     null, null, null, call.name(), resultPreview), streamCtx);
 
                 String toolResultContent = toolResultFormatter.formatResult(result);
-                // Inject pending steer note into the tool result
-                if (steerBuffer != null) {
-                    String steerText = steerBuffer.consume(session.id());
-                    if (steerText != null) {
-                        toolResultContent = toolResultContent + "\n\n[STEER NOTE] " + steerText;
-                        log.info("Injected steer note for session {}", session.id());
+                turnMessages.add(Message.toolResult(call.id(), toolResultContent, turnIndex));
+            }
+
+            // M1: Inject pending steer note into the last tool result after all tools complete,
+            // matching DefaultAgentRuntime's post-batch steer injection (not per-tool).
+            if (steerBuffer != null) {
+                String steerText = steerBuffer.consume(session.id());
+                if (steerText != null && !turnMessages.isEmpty()) {
+                    // Find the last tool result message and append the steer note
+                    for (int mi = turnMessages.size() - 1; mi >= 0; mi--) {
+                        Message lastMsg = turnMessages.get(mi);
+                        if (lastMsg.toolCallId() != null || lastMsg.role() == Role.TOOL) {
+                            // M8: Sanitize steer text — strip any steer marker strings to prevent injection
+                            String sanitizedSteer = steerText
+                                .replace(DefaultPromptBuilder.STEER_MARKER_OPEN, "")
+                                .replace(DefaultPromptBuilder.STEER_MARKER_CLOSE, "");
+                            String enhancedContent = lastMsg.content() + "\n\n"
+                                + DefaultPromptBuilder.STEER_MARKER_OPEN + "\n" + sanitizedSteer + "\n"
+                                + DefaultPromptBuilder.STEER_MARKER_CLOSE;
+                            turnMessages.set(mi,
+                                Message.toolResult(lastMsg.toolCallId(), enhancedContent, lastMsg.turnIndex()));
+                            log.info("Injected steer note for session {}", session.id());
+                            break;
+                        }
                     }
                 }
-                turnMessages.add(Message.toolResult(call.id(), toolResultContent, turnIndex));
+            }
+
+            // P1-5: Persist tool result messages immediately after the batch completes.
+            // If the JVM crashes after tool execution but before the next model call,
+            // all tool results are preserved in the database.
+            if (midTurnPersistenceCallback != null) {
+                // M6: Only advance cursor if persistence succeeded
+                if (midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
+                    persistedUpTo = turnMessages.size();
+                }
             }
 
             turnIndex++;
@@ -480,7 +551,7 @@ public class AgentStreamingService {
         send(emitter, new StreamEvent("token", "Reached maximum turns without completion.", null, null), streamCtx);
         send(emitter, new StreamEvent("done", null, null, null), streamCtx);
         emitter.complete();
-        if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew);
+        if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
         } finally {
             // Clean up interrupt token map entry and ThreadLocal after stream completion
             interruptToken.remove(session.id());
@@ -565,10 +636,15 @@ public class AgentStreamingService {
     }
 
     private void persistTurn(Session session, List<Message> turnMessages, boolean isNew) {
+        persistTurn(session, turnMessages, isNew, 0);
+    }
+
+    private void persistTurn(Session session, List<Message> turnMessages, boolean isNew, int fromIndex) {
         try {
             transactionTemplate.execute(status -> {
                 Instant now = Instant.now();
-                for (Message m : turnMessages) {
+                for (int idx = fromIndex; idx < turnMessages.size(); idx++) {
+                    Message m = turnMessages.get(idx);
                     // Skip system/developer message — it's regenerated each turn
                     if (m.role() == com.azhukov.agent.core.model.Role.SYSTEM
                             || m.role() == com.azhukov.agent.core.model.Role.DEVELOPER) continue;
@@ -606,8 +682,10 @@ public class AgentStreamingService {
     }
 
     private List<Message> loadHistory(UUID sessionId) {
-        return messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)
-            .stream().map(messageMapper::toDomain).toList();
+        // Load messages with ancestor context (mirrors Hermes get_messages_as_conversation
+        // with include_ancestors=True). After compression rotation, the child session
+        // starts fresh — ancestor messages provide historical context.
+        return sessionLineageService.loadMessagesWithAncestors(sessionId);
     }
 
     private void safeCompleteWithError(SseEmitter emitter, Throwable error) {

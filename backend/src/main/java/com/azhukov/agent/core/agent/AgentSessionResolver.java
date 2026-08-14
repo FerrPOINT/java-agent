@@ -3,6 +3,7 @@ package com.azhukov.agent.core.agent;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
+import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -12,7 +13,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -27,6 +31,8 @@ public class AgentSessionResolver {
     private final SessionRepository sessionRepository;
     private final SessionEntityMapper sessionMapper;
     private final TransactionTemplate transactionTemplate;
+    private final MessageRepository messageRepository;
+    private final SessionLineageService sessionLineageService;
 
     /**
      * Result of {@link #resolveOrCreate(UUID, String, String)} — carries the
@@ -48,7 +54,12 @@ public class AgentSessionResolver {
             return new ResolvedSession(createSession(userId, "openai-compatible", modelName), true);
         }
         try {
-            return new ResolvedSession(loadSession(sessionId), false);
+            // P0-24: Follow compression child chain to find the descendant with messages
+            UUID resolvedId = resolveResumeSessionId(sessionId);
+            if (!resolvedId.equals(sessionId)) {
+                log.info("Session {} redirected to child {} (compression chain resolution)", sessionId, resolvedId);
+            }
+            return new ResolvedSession(loadSession(resolvedId), false);
         } catch (IllegalArgumentException e) {
             log.warn("Session {} not found in backend, creating new session", sessionId);
             return new ResolvedSession(createSession(userId, "openai-compatible", modelName), true);
@@ -108,5 +119,96 @@ public class AgentSessionResolver {
             }
             return session;
         });
+    }
+
+    /**
+     * P0-24: Resolve a session ID to the descendant that actually holds messages.
+     * <p>
+     * Context compression ends the current session and forks a new child session
+     * (linked via {@code parentSessionId}). The child is where new messages land —
+     * the parent ends up with 0 messages. This method walks the parent → child chain
+     * and returns the first descendant that has at least one message.
+     * <p>
+     * Ported from Hermes {@code resolve_resume_session_id()}.
+     * <p>
+     * The chain is walked via the most recently created child; depth cap (32) guards
+     * against accidental loops.
+     *
+     * @param sessionId the requested session ID
+     * @return the resolved session ID (same as input if no redirect needed)
+     */
+    public UUID resolveResumeSessionId(UUID sessionId) {
+        if (sessionId == null) {
+            return sessionId;
+        }
+        return transactionTemplate.execute(status -> {
+            // If this session already has messages, nothing to redirect
+            if (messageRepository.countBySessionId(sessionId) > 0) {
+                return sessionId;
+            }
+            // Walk descendants: at each step, pick the most-recently-created child
+            UUID current = sessionId;
+            Set<UUID> seen = new HashSet<>();
+            seen.add(current);
+            for (int i = 0; i < 32; i++) {
+                List<SessionEntity> children = sessionRepository
+                    .findByParentSessionIdOrderByCreatedAtDesc(current);
+                if (children == null || children.isEmpty()) {
+                    return sessionId;
+                }
+                UUID childId = children.get(0).getId();
+                if (childId == null || seen.contains(childId)) {
+                    return sessionId;
+                }
+                seen.add(childId);
+                // Check if this child has messages
+                if (messageRepository.countBySessionId(childId) > 0) {
+                    return childId;
+                }
+                current = childId;
+            }
+            return sessionId;
+        });
+    }
+
+    /**
+     * Walk the parent→child chain from the given session UP to the root parent,
+     * collecting all ancestor session IDs. Returns an ordered list:
+     * [root_parent, ..., parent, current_session].
+     * <p>
+     * Delegates to {@link SessionLineageService#findAncestorSessionIds(UUID)}.
+     * Ported from Hermes {@code _session_lineage_root_to_tip(session_id)}.
+     *
+     * @param sessionId the starting session ID (typically the current/tip session)
+     * @return ordered list of session IDs from root to tip, or [sessionId] if no parents
+     */
+    public List<UUID> findAncestorSessionIds(UUID sessionId) {
+        return sessionLineageService.findAncestorSessionIds(sessionId);
+    }
+
+    /**
+     * Check if a session has a parent session (i.e., it was created via compression rotation).
+     * <p>
+     * Delegates to {@link SessionLineageService#hasParentSession(UUID)}.
+     *
+     * @param sessionId the session ID to check
+     * @return true if the session has a parentSessionId, false otherwise
+     */
+    public boolean hasParentSession(UUID sessionId) {
+        return sessionLineageService.hasParentSession(sessionId);
+    }
+
+    /**
+     * Load messages from the entire session lineage (root to tip), combining messages
+     * from all ancestor sessions with the current session's messages.
+     * <p>
+     * Delegates to {@link SessionLineageService#loadMessagesWithAncestors(UUID)}.
+     * Mirrors Hermes {@code get_messages_as_conversation(session_id, include_ancestors=True)}.
+     *
+     * @param sessionId the current (tip) session ID
+     * @return combined message list from all sessions in the lineage, ordered root-to-tip
+     */
+    public List<com.azhukov.agent.core.model.Message> loadMessagesWithAncestors(UUID sessionId) {
+        return sessionLineageService.loadMessagesWithAncestors(sessionId);
     }
 }

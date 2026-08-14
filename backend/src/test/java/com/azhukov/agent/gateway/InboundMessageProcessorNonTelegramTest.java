@@ -55,7 +55,7 @@ class InboundMessageProcessorNonTelegramTest {
         when(routingServiceProvider.getIfAvailable()).thenReturn(routingService);
 
         processor = new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider,
-            messagePersistenceService, agentProperties);
+            messagePersistenceService, null, agentProperties, new com.azhukov.agent.core.agent.SteerBuffer());
     }
 
     @Test

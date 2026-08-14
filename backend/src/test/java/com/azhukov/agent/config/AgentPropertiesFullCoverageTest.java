@@ -235,6 +235,10 @@ class AgentPropertiesFullCoverageTest {
         p.setDefaultTimeoutSeconds(600);
         p.setChildTimeoutSeconds(120);
         p.setOrchestratorEnabled(false);
+        p.setMaxIterations(50);
+        p.setModel("gpt-4o-mini");
+        p.setProvider("openai");
+        p.setReasoningEffort("high");
         p.setBlockedTools(List.of("custom_blocked_tool"));
 
         assertFalse(p.isEnabled());
@@ -244,11 +248,15 @@ class AgentPropertiesFullCoverageTest {
         assertEquals(600, p.getDefaultTimeoutSeconds());
         assertEquals(120, p.getChildTimeoutSeconds());
         assertFalse(p.isOrchestratorEnabled());
+        assertEquals(50, p.getMaxIterations());
+        assertEquals("gpt-4o-mini", p.getModel());
+        assertEquals("openai", p.getProvider());
+        assertEquals("high", p.getReasoningEffort());
         assertThat(p.getBlockedTools()).containsExactly("custom_blocked_tool");
 
-        // Default blocked tools include delegate_task, clarify, send_message
+        // Default blocked tools include delegate_task, clarify, memory, send_message, execute_code
         var defaults = new AgentProperties.DelegationProperties();
-        assertThat(defaults.getBlockedTools()).contains("delegate_task", "clarify", "send_message");
+        assertThat(defaults.getBlockedTools()).contains("delegate_task", "clarify", "memory", "send_message", "execute_code");
     }
 
     @Test

@@ -1,14 +1,17 @@
 package com.azhukov.agent.core.agent;
 
+import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
+import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -22,6 +25,8 @@ class AgentSessionResolverTest {
     private SessionRepository sessionRepository;
     private SessionEntityMapper sessionMapper;
     private TransactionTemplate transactionTemplate;
+    private MessageRepository messageRepository;
+    private SessionLineageService sessionLineageService;
     private AgentSessionResolver resolver;
 
     @BeforeEach
@@ -29,11 +34,18 @@ class AgentSessionResolverTest {
         sessionRepository = mock(SessionRepository.class);
         sessionMapper = org.mapstruct.factory.Mappers.getMapper(SessionEntityMapper.class);
         transactionTemplate = mock(TransactionTemplate.class);
+        messageRepository = mock(MessageRepository.class);
+        sessionLineageService = mock(SessionLineageService.class);
         when(transactionTemplate.execute(any())).thenAnswer(inv -> {
             org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
             return cb.doInTransaction(null);
         });
-        resolver = new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate);
+        // Default: lineage service returns single-session list (no ancestors)
+        when(sessionLineageService.findAncestorSessionIds(any())).thenAnswer(inv ->
+            java.util.List.of((UUID) inv.getArgument(0)));
+        when(sessionLineageService.hasParentSession(any())).thenReturn(false);
+        when(sessionLineageService.loadMessagesWithAncestors(any())).thenReturn(java.util.Collections.emptyList());
+        resolver = new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate, messageRepository, sessionLineageService);
     }
 
     @Test
@@ -63,6 +75,7 @@ class AgentSessionResolverTest {
         entity.setCreatedAt(Instant.now());
         entity.setUpdatedAt(Instant.now());
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(entity));
+        when(messageRepository.countBySessionId(sessionId)).thenReturn(1L);
 
         AgentSessionResolver.ResolvedSession result = resolver.resolveOrCreate(sessionId, "user-1", "gpt-4");
 
@@ -138,5 +151,95 @@ class AgentSessionResolverTest {
         } catch (IllegalArgumentException e) {
             assertThat(e.getMessage()).contains("Session not found");
         }
+    }
+
+    // ── resolveResumeSessionId tests ──
+
+    @Test
+    void resolveResumeSessionId_returnsSelf_whenSessionHasMessages() {
+        UUID sessionId = UUID.randomUUID();
+        when(messageRepository.countBySessionId(sessionId)).thenReturn(1L);
+
+        UUID result = resolver.resolveResumeSessionId(sessionId);
+
+        assertThat(result).isEqualTo(sessionId);
+    }
+
+    @Test
+    void resolveResumeSessionId_returnsChild_whenParentHasNoMessages() {
+        UUID parentId = UUID.randomUUID();
+        UUID childId = UUID.randomUUID();
+        SessionEntity childEntity = new SessionEntity();
+        childEntity.setId(childId);
+
+        when(messageRepository.countBySessionId(parentId)).thenReturn(0L);
+        when(sessionRepository.findByParentSessionIdOrderByCreatedAtDesc(parentId))
+            .thenReturn(List.of(childEntity));
+        when(messageRepository.countBySessionId(childId)).thenReturn(1L);
+
+        UUID result = resolver.resolveResumeSessionId(parentId);
+
+        assertThat(result).isEqualTo(childId);
+    }
+
+    @Test
+    void resolveResumeSessionId_returnsSelf_whenNoDescendantHasMessages() {
+        UUID sessionId = UUID.randomUUID();
+        UUID childId = UUID.randomUUID();
+        SessionEntity childEntity = new SessionEntity();
+        childEntity.setId(childId);
+
+        when(messageRepository.countBySessionId(sessionId)).thenReturn(0L);
+        when(sessionRepository.findByParentSessionIdOrderByCreatedAtDesc(sessionId))
+            .thenReturn(List.of(childEntity));
+        when(messageRepository.countBySessionId(childId)).thenReturn(0L);
+        // child has no messages and no further children
+        when(sessionRepository.findByParentSessionIdOrderByCreatedAtDesc(childId))
+            .thenReturn(List.of());
+
+        UUID result = resolver.resolveResumeSessionId(sessionId);
+
+        assertThat(result).isEqualTo(sessionId);
+    }
+
+    @Test
+    void resolveResumeSessionId_returnsNull_forNullId() {
+        UUID result = resolver.resolveResumeSessionId(null);
+
+        assertThat(result).isNull();
+    }
+
+    // ── Lineage delegate methods ──
+
+    @Test
+    void findAncestorSessionIds_delegatesToLineageService() {
+        UUID sessionId = UUID.randomUUID();
+        UUID parentId = UUID.randomUUID();
+        when(sessionLineageService.findAncestorSessionIds(sessionId))
+            .thenReturn(List.of(parentId, sessionId));
+
+        List<UUID> result = resolver.findAncestorSessionIds(sessionId);
+
+        assertThat(result).containsExactly(parentId, sessionId);
+    }
+
+    @Test
+    void hasParentSession_delegatesToLineageService() {
+        UUID sessionId = UUID.randomUUID();
+        when(sessionLineageService.hasParentSession(sessionId)).thenReturn(true);
+
+        assertThat(resolver.hasParentSession(sessionId)).isTrue();
+    }
+
+    @Test
+    void loadMessagesWithAncestors_delegatesToLineageService() {
+        UUID sessionId = UUID.randomUUID();
+        when(sessionLineageService.loadMessagesWithAncestors(sessionId))
+            .thenReturn(List.of(Message.user("test")));
+
+        List<com.azhukov.agent.core.model.Message> result = resolver.loadMessagesWithAncestors(sessionId);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).content()).isEqualTo("test");
     }
 }

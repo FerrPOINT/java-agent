@@ -439,7 +439,9 @@ class DefaultContextCompressorBranchCoverageTest {
         messages.add(Message.user("last"));
 
         List<Message> result = comp.compress(messages, 100);
-        assertThat(result).hasSize(3);
+        // ensureLastUserAndAssistantInTail pulls tail back to include last user message
+        // result = head(1) + summary(1) + tail(2) = 4
+        assertThat(result).hasSize(4);
         // Summary should be truncated
         assertThat(result.get(1).content()).isNotBlank();
     }

@@ -143,10 +143,12 @@ class DefaultContextCompressorEnhancementsTest {
 
             // protectFirstN=1 → head = [user "Original question"]
             // protectLastN=1 → tail = [user "current question"]
-            // middle includes the previous summary + 4 other messages
+            // ensureLastUserAndAssistantInTail pulls tail back to include last assistant message
+            // middle includes the previous summary + 3 other messages
+            // tail = [assistant "Python is great", user "current question"]
             List<Message> result = compressor.compress(messages, 100);
 
-            assertThat(result).hasSize(3);
+            assertThat(result).hasSize(4);
             assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
             assertThat(result.get(1).content()).contains("Updated summary");
         }
@@ -184,7 +186,9 @@ class DefaultContextCompressorEnhancementsTest {
 
             List<Message> result = compressor.compress(messages, 100);
 
-            assertThat(result).hasSize(3);
+            // ensureLastUserAndAssistantInTail pulls tail back to include last user message
+            // result = head(1) + summary(1) + tail(2) = 4
+            assertThat(result).hasSize(4);
         }
 
         @Test
@@ -295,7 +299,9 @@ class DefaultContextCompressorEnhancementsTest {
 
             // Should not NPE on null content in assistant tool call message
             List<Message> result = compressor.compress(messages, 100);
-            assertThat(result).hasSize(3);
+            // ensureLastUserAndAssistantInTail pulls tail back to include last user message
+            // result = head(1) + summary(1) + tail(2) = 4
+            assertThat(result).hasSize(4);
         }
     }
 }

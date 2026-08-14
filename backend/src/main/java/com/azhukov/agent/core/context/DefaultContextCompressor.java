@@ -15,9 +15,16 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
@@ -66,6 +73,43 @@ public class DefaultContextCompressor implements ContextCompressor {
  /** Marker that identifies a previously-generated summary system message. */
  private static final String SUMMARY_MARKER = "Earlier conversation (summarized):";
 
+ /** P2-51: Compression threshold fraction of the context window (mirrors ModelMetadataService default). */
+ private static final double COMPRESSION_THRESHOLD_FRACTION = 0.75;
+
+ /**
+  * Minimum context length required to run the agent (mirrors Hermes MINIMUM_CONTEXT_LENGTH = 64_000).
+  * <p>
+  * This floor prevents premature compression on large-context models: a 200K-context model
+  * at 50% threshold would compress at 100K tokens, which is correct — but the 64K floor
+  * prevents even larger models (1M) from compressing at a too-low absolute token count.
+  */
+ static final int MINIMUM_CONTEXT_LENGTH = 64_000;
+
+ /**
+  * Proactive compression threshold fraction — 50% of the context window (mirrors Hermes threshold_percent default).
+  * Used by {@link #shouldCompressProactive} to check whether to compress after tool batches.
+  */
+ static final double PROACTIVE_THRESHOLD_FRACTION = 0.50;
+
+ /**
+  * Anti-thrashing: minimum savings percentage for a compression to be considered "effective".
+  * If compression saves less than this percentage, it's counted as a low-savings compression.
+  * Mirrors Hermes: {@code savings_pct < 10} → increment _ineffective_compression_count.
+  */
+ static final double LOW_SAVINGS_THRESHOLD_PCT = 10.0;
+
+ /**
+  * Anti-thrashing: maximum consecutive low-savings compressions before shouldCompress returns false.
+  * Mirrors Hermes: {@code if self._ineffective_compression_count >= 2: return False}.
+  */
+ static final int MAX_CONSECUTIVE_LOW_SAVINGS = 2;
+
+ /**
+  * Maximum compression attempts on context overflow before giving up.
+  * Mirrors Hermes: {@code max_compression_attempts = 3}.
+  */
+ static final int MAX_COMPRESSION_ATTEMPTS = 3;
+
  /** Strips MEDIA:/path directives from summarizer input so file-path artifacts don't pollute the summary. */
  private static final Pattern MEDIA_DIRECTIVE_RE = Pattern.compile("MEDIA:[^\\s]+");
 
@@ -76,6 +120,30 @@ public class DefaultContextCompressor implements ContextCompressor {
  private SessionRepository sessionRepository;
  private final ConcurrentHashMap<String, Integer> inMemoryLocks = new ConcurrentHashMap<>();
 
+ /**
+  * P2-51: Dynamic compression threshold in chars, recalculated when the model switches.
+  * 0 means "not set" — fall back to config-based targetTokens at call sites.
+  */
+ private volatile int compressionThresholdChars = 0;
+
+ /**
+  * Anti-thrashing: consecutive low-savings compression counter.
+  * <p>
+  * Mirrors Hermes {@code _ineffective_compression_count}. After each compression, if savings
+  * are less than {@link #LOW_SAVINGS_THRESHOLD_PCT} (10%), this counter increments. If it
+  * reaches {@link #MAX_CONSECUTIVE_LOW_SAVINGS} (2), {@link #shouldCompress} returns false
+  * to skip compression and avoid thrashing.
+  * <p>
+  * Reset to 0 when a compression saves more than 10%.
+  */
+ private volatile int consecutiveLowSavings = 0;
+
+ /**
+  * Anti-thrashing: last compression savings percentage (0-100).
+  * Mirrors Hermes {@code _last_compression_savings_pct}.
+  */
+ private volatile double lastCompressionSavingsPct = 100.0;
+
  /** Result of a session rotation — carries the new session ID for downstream consumers. */
  public record SessionRotationResult(UUID newSessionId, String newTitle) {}
 
@@ -84,95 +152,321 @@ public class DefaultContextCompressor implements ContextCompressor {
      this.sessionRepository = sessionRepository;
  }
 
+ /**
+  * P2-51: Recalculate the compression threshold when the model switches.
+  * <p>
+  * Different models have different context window sizes. When the user switches
+  * models mid-session, the compression threshold must be updated to reflect
+  * the new model's context window. The threshold is computed as:
+  * <pre>
+  *   thresholdTokens = max((int)(newContextWindowSize * 0.75), MINIMUM_CONTEXT_LENGTH)
+  *   thresholdChars  = thresholdTokens * CHARS_PER_TOKEN
+  * </pre>
+  * The {@link #MINIMUM_CONTEXT_LENGTH} floor prevents premature compression on
+  * large-context models (e.g., a 200K model at 75% compresses at 150K, which is
+  * correct, but a 1M model shouldn't compress at 750K — the 64K floor ensures
+  * reasonable behavior).
+  * <p>
+  * This mirrors Hermes {@code update_model()}:
+  * <pre>
+  *   self.threshold_tokens = max(
+  *       int(context_length * self.threshold_percent),
+  *       MINIMUM_CONTEXT_LENGTH,
+  *   )
+  *   target_tokens = int(self.threshold_tokens * self.summary_target_ratio)
+  *   self.tail_token_budget = target_tokens
+  *   self.max_summary_tokens = min(int(context_length * 0.05), _SUMMARY_TOKENS_CEILING)
+  * </pre>
+  *
+  * @param newContextWindowSize the new model's context window size in tokens
+  */
+ @Override
+ public void recalculateThreshold(int newContextWindowSize) {
+     if (newContextWindowSize <= 0) {
+         log.debug("recalculateThreshold: ignoring non-positive context window size {}", newContextWindowSize);
+         return;
+     }
+     // Apply 64K floor (mirrors Hermes: max(int(ctx * threshold_percent), MINIMUM_CONTEXT_LENGTH))
+     int thresholdTokens = Math.max(
+         (int) (newContextWindowSize * COMPRESSION_THRESHOLD_FRACTION),
+         MINIMUM_CONTEXT_LENGTH
+     );
+     this.compressionThresholdChars = thresholdTokens * CHARS_PER_TOKEN;
+     // Recalculate tail budget: threshold_tokens * summary_target_ratio (mirrors Hermes)
+     // summary_target_ratio = SUMMARY_RATIO (0.20) → tail_token_budget = thresholdTokens * 0.20
+     // This is informational for now; the compress() method uses config-based targetTokens.
+     // Recalculate max summary tokens: min(context_length * 0.05, SUMMARY_TOKENS_CEILING)
+     // (mirrors Hermes: self.max_summary_tokens = min(int(context_length * 0.05), _SUMMARY_TOKENS_CEILING))
+     // The compress() method already uses computeSummaryBudget which applies these caps.
+     log.info("Compression threshold recalculated for new context window {}: thresholdTokens={}, thresholdChars={}",
+         newContextWindowSize, thresholdTokens, this.compressionThresholdChars);
+ }
+
+ /**
+  * P2-51: Returns the dynamic compression threshold in chars, or 0 if not yet set.
+  * Callers should fall back to config-based {@code targetTokens * CHARS_PER_TOKEN} when this returns 0.
+  *
+  * @return the dynamic compression threshold in chars, or 0 if not set
+  */
+ public int getCompressionThresholdChars() {
+     return compressionThresholdChars;
+ }
+
+ /**
+  * Proactive compression check — called after each tool batch in the turn loop,
+  * BEFORE the next model call. Returns true if the estimated token count
+  * exceeds the proactive compression threshold.
+  * <p>
+  * The threshold is computed as:
+  * <pre>
+  *   thresholdTokens = max((int)(contextWindowSize * 0.50), MINIMUM_CONTEXT_LENGTH)
+  * </pre>
+  * Hermes uses {@code threshold_percent = 0.50} with the 64K floor. The 50% threshold
+  * leaves ample headroom for tool results that arrive after the API call.
+  * <p>
+  * Mirrors Hermes {@code should_compress(prompt_tokens)}:
+  * <ul>
+  *   <li>threshold_tokens = max(int(context_length * threshold_percent), MINIMUM_CONTEXT_LENGTH)</li>
+  *   <li>if tokens &lt; threshold_tokens → return False</li>
+  *   <li>Anti-thrashing: if _ineffective_compression_count &gt;= 2 → return False</li>
+  * </ul>
+  *
+  * @param estimatedTokens the estimated token count for the current context
+  * @param contextWindowSize the model's context window size in tokens
+  * @return true if proactive compression should be triggered
+  */
+ public boolean shouldCompressProactive(int estimatedTokens, int contextWindowSize) {
+     if (contextWindowSize <= 0) {
+         return false;
+     }
+     // Apply 64K floor (mirrors Hermes: max(int(ctx * threshold_percent), MINIMUM_CONTEXT_LENGTH))
+     int thresholdTokens = Math.max(
+         (int) (contextWindowSize * PROACTIVE_THRESHOLD_FRACTION),
+         MINIMUM_CONTEXT_LENGTH
+     );
+     if (estimatedTokens < thresholdTokens) {
+         return false;
+     }
+     // Anti-thrashing: skip if last 2 compressions saved < 10% each
+     if (consecutiveLowSavings >= MAX_CONSECUTIVE_LOW_SAVINGS) {
+         log.warn("Proactive compression skipped — last {} compressions saved <{}% each. "
+             + "Consider /new to start a fresh session, or /compress for focused compression.",
+             consecutiveLowSavings, (int) LOW_SAVINGS_THRESHOLD_PCT);
+         return false;
+     }
+     return true;
+ }
+
+ /**
+  * Reactive compression check — called on CONTEXT_OVERFLOW or PAYLOAD_TOO_LARGE errors.
+  * Returns true if compression should be attempted (respecting anti-thrashing).
+  * <p>
+  * Mirrors Hermes {@code should_compress(prompt_tokens)}.
+  *
+  * @param estimatedTokens the estimated token count for the current context
+  * @return true if compression should be attempted
+  */
+ public boolean shouldCompress(int estimatedTokens) {
+     // Anti-thrashing: skip if last 2 compressions saved < 10% each
+     if (consecutiveLowSavings >= MAX_CONSECUTIVE_LOW_SAVINGS) {
+         log.warn("Compression skipped — last {} compressions saved <{}% each. "
+             + "Consider /new to start a fresh session, or /compress for focused compression.",
+             consecutiveLowSavings, (int) LOW_SAVINGS_THRESHOLD_PCT);
+         return false;
+     }
+     return true;
+ }
+
+ /**
+  * Anti-thrashing: record the savings from a compression and update the counter.
+  * <p>
+  * Mirrors Hermes:
+  * <pre>
+  *   savings_pct = (saved_estimate / display_tokens * 100) if display_tokens > 0 else 0
+  *   self._last_compression_savings_pct = savings_pct
+  *   if savings_pct < 10:
+  *       self._ineffective_compression_count += 1
+  *   else:
+  *       self._ineffective_compression_count = 0
+  * </pre>
+  *
+  * @param originalTokens the token estimate before compression
+  * @param compressedTokens the token estimate after compression
+  */
+ void recordCompressionSavings(int originalTokens, int compressedTokens) {
+     double savingsPct = originalTokens > 0
+         ? ((double) (originalTokens - compressedTokens) / originalTokens * 100.0)
+         : 0.0;
+     this.lastCompressionSavingsPct = savingsPct;
+     if (savingsPct < LOW_SAVINGS_THRESHOLD_PCT) {
+         this.consecutiveLowSavings++;
+         log.warn("Low-savings compression: {}% saved (consecutive count now {}/{})",
+             String.format("%.1f", savingsPct), consecutiveLowSavings, MAX_CONSECUTIVE_LOW_SAVINGS);
+     } else {
+         this.consecutiveLowSavings = 0;
+     }
+ }
+
+ /**
+  * Reset the anti-thrashing counter. Called when a new session starts or when
+  * the user manually triggers compression via /compress.
+  */
+ public void resetAntiThrashing() {
+     this.consecutiveLowSavings = 0;
+     this.lastCompressionSavingsPct = 100.0;
+ }
+
+ /**
+  * Returns the consecutive low-savings compression count for monitoring.
+  */
+ public int getConsecutiveLowSavings() {
+     return consecutiveLowSavings;
+ }
+
+ /**
+  * Returns the last compression savings percentage (0-100).
+  */
+ public double getLastCompressionSavingsPct() {
+     return lastCompressionSavingsPct;
+ }
+
  @Override
  public List<Message> compress(List<Message> messages, int targetChars) {
- if (messages == null || messages.isEmpty()) {
- return messages;
- }
- int currentChars = messages.stream().mapToInt(this::contentLengthForBudget).sum();
- if (currentChars <= targetChars) {
- return messages;
- }
+     if (messages == null || messages.isEmpty()) {
+         return messages;
+     }
+     int currentChars = messages.stream().mapToInt(this::contentLengthForBudget).sum();
+     if (currentChars <= targetChars) {
+         return messages;
+     }
 
- int protectFirstN = properties.getContext().getProtectFirstN();
- int protectLastN = properties.getContext().getProtectLastN();
+     int protectFirstN = properties.getContext().getProtectFirstN();
+     int protectLastN = properties.getContext().getProtectLastN();
 
- // If total messages <= protectFirstN + protectLastN, skip compression (not enough to compress)
- if (messages.size() <= protectFirstN + protectLastN) {
- log.debug("Not enough messages to compress (total={}, protectFirst={}, protectLast={})",
- messages.size(), protectFirstN, protectLastN);
- return messages;
- }
+     // If total messages <= protectFirstN + protectLastN, skip compression (not enough to compress)
+     if (messages.size() <= protectFirstN + protectLastN) {
+         log.debug("Not enough messages to compress (total={}, protectFirst={}, protectLast={})",
+             messages.size(), protectFirstN, protectLastN);
+         return messages;
+     }
 
- // Protect head: first N messages (system + first user + first assistant, etc.)
- int headEnd = Math.min(protectFirstN, messages.size());
- // Protect tail: last N messages (recent context)
- int tailStart = Math.max(headEnd, messages.size() - protectLastN);
+     // Protect head: first N messages (system + first user + first assistant, etc.)
+     int headEnd = Math.min(protectFirstN, messages.size());
+     // Protect tail: last N messages (recent context)
+     int tailStart = Math.max(headEnd, messages.size() - protectLastN);
 
- // Messages between head and tail are candidates for compression
- List<Message> headMessages = messages.subList(0, headEnd);
- List<Message> middleMessages = messages.subList(headEnd, tailStart);
- List<Message> tailMessages = messages.subList(tailStart, messages.size());
+     // 1.4: Tool group alignment — don't split tool_call/result groups at the boundary.
+     // If the message at tailStart is a tool result, slide forward past the tool group.
+     tailStart = alignBoundaryForward(messages, tailStart);
 
- if (middleMessages.isEmpty()) {
- log.debug("No middle messages to compress after protecting head and tail");
- return messages;
- }
+     // Messages between head and tail are candidates for compression
+     List<Message> headMessages = messages.subList(0, headEnd);
+     List<Message> middleMessages = messages.subList(headEnd, tailStart);
+     List<Message> tailMessages = messages.subList(tailStart, messages.size());
 
- // Detect and extract any previous summary from middle messages for iterative compaction
- String previousSummary = extractPreviousSummary(middleMessages);
+     if (middleMessages.isEmpty()) {
+         log.debug("No middle messages to compress after protecting head and tail");
+         return messages;
+     }
 
- // Build summary input from middle messages with tool output pruning and richer detail
- StringBuilder summaryInput = new StringBuilder();
- for (Message m : middleMessages) {
- String content = m.content();
- if (m.role() == Role.TOOL) {
- content = pruneToolOutput(m);
- } else if (m.toolCalls() != null && !m.toolCalls().isEmpty()) {
- // Include tool call details for richer summarizer context
- StringBuilder detail = new StringBuilder();
- if (content != null && !content.isBlank()) {
- detail.append(content);
- }
- for (ToolCall tc : m.toolCalls()) {
- if (detail.length() > 0) detail.append(" ");
- detail.append("[tool_call: ").append(tc.name());
- String args = tc.arguments();
- if (args != null && !args.isBlank() && args.length() <= 200) {
- detail.append("(").append(args).append(")");
- } else if (args != null && !args.isBlank()) {
- detail.append("(").append(args, 0, 200).append("...)");
- }
- detail.append("]");
- }
- content = detail.toString();
- }
- if (content != null && !content.isBlank()) {
- content = MEDIA_DIRECTIVE_RE.matcher(content).replaceAll("").strip();
- }
- if (content != null && !content.isBlank()) {
- summaryInput.append(m.role()).append(": ").append(content).append("\n\n");
- }
- }
+     // 1.1: Tool result dedup — replace older duplicate tool outputs with back-reference.
+     // Only deduplicates content > 200 chars (small results aren't worth the back-ref overhead).
+     List<Message> dedupedMiddle = dedupToolResults(middleMessages);
 
- // If we found a previous summary, prepend it so the LLM can build on it iteratively
- if (previousSummary != null) {
- summaryInput.insert(0, "Previous summary (update and refine):\n" + previousSummary + "\n\nNew turns to incorporate:\n");
- }
+     // 1.2: Tool pair sanitization — remove orphaned tool results (whose assistant
+     // tool_call was compressed away) and insert stub results for orphaned tool_calls
+     // (whose results were dropped). This prevents API 400 "No tool call found" errors.
+     List<Message> sanitizedMiddle = sanitizeToolPairs(dedupedMiddle);
 
- // Compute a scaled summary budget proportional to the compressed content
- int summaryBudget = computeSummaryBudget(summaryInput.length());
+     // 1.3: Ensure last user and last assistant messages are in the protected tail.
+     // If they ended up in the middle (compressed) region, pull the tail boundary back.
+     // This prevents the user's latest request or the agent's latest reply from being
+     // summarised away — a critical data-loss prevention (#10896, #29824 in Hermes).
+     int adjustedTailStart = ensureLastUserAndAssistantInTail(messages, headEnd, tailStart);
+     if (adjustedTailStart != tailStart) {
+         tailStart = adjustedTailStart;
+         middleMessages = messages.subList(headEnd, tailStart);
+         tailMessages = messages.subList(tailStart, messages.size());
+         sanitizedMiddle = sanitizeToolPairs(dedupToolResults(middleMessages));
+     }
 
- String summary = summarize(summaryInput.toString(), summaryBudget);
+     // Detect and extract any previous summary from middle messages for iterative compaction
+     String previousSummary = extractPreviousSummary(sanitizedMiddle);
 
- List<Message> compressed = new ArrayList<>();
- // Preserve protected head messages (includes system message)
- compressed.addAll(headMessages);
- // Add summary as a system message with anti-injection prefix and end marker
- compressed.add(Message.system(ANTI_INJECTION_PREFIX + "Earlier conversation (summarized):\n" + summary + SUMMARY_END_MARKER));
- // Preserve protected tail messages
- compressed.addAll(tailMessages);
- return compressed;
+     // 1.5: Auto-focus topic — extract the topic from recent user messages to guide
+     // the LLM summariser toward what's currently relevant.
+     String topic = extractTopic(messages, headEnd, tailStart);
+
+     // Build summary input from middle messages with tool output pruning and richer detail
+     StringBuilder summaryInput = new StringBuilder();
+     if (topic != null && !topic.isBlank()) {
+         summaryInput.append("Current topic focus: ").append(topic).append("\n\n");
+     }
+     for (Message m : sanitizedMiddle) {
+         String content = m.content();
+         if (m.role() == Role.TOOL) {
+             content = pruneToolOutput(m);
+         } else if (m.toolCalls() != null && !m.toolCalls().isEmpty()) {
+             // Include tool call details for richer summarizer context
+             StringBuilder detail = new StringBuilder();
+             if (content != null && !content.isBlank()) {
+                 detail.append(content);
+             }
+             for (ToolCall tc : m.toolCalls()) {
+                 if (detail.length() > 0) detail.append(" ");
+                 detail.append("[tool_call: ").append(tc.name());
+                 String args = tc.arguments();
+                 if (args != null && !args.isBlank() && args.length() <= 200) {
+                     detail.append("(").append(args).append(")");
+                 } else if (args != null && !args.isBlank()) {
+                     detail.append("(").append(args, 0, 200).append("...)");
+                 }
+                 detail.append("]");
+             }
+             content = detail.toString();
+         }
+         if (content != null && !content.isBlank()) {
+             content = MEDIA_DIRECTIVE_RE.matcher(content).replaceAll("").strip();
+         }
+         if (content != null && !content.isBlank()) {
+             summaryInput.append(m.role()).append(": ").append(content).append("\n\n");
+         }
+     }
+
+     // If we found a previous summary, prepend it so the LLM can build on it iteratively
+     if (previousSummary != null) {
+         summaryInput.insert(0, "Previous summary (update and refine):\n" + previousSummary + "\n\nNew turns to incorporate:\n");
+     }
+
+     // Compute a scaled summary budget proportional to the compressed content
+     int summaryBudget = computeSummaryBudget(summaryInput.length());
+
+     String summary = summarize(summaryInput.toString(), summaryBudget);
+
+     List<Message> compressed = new ArrayList<>();
+     // Preserve protected head messages (includes system message)
+     compressed.addAll(headMessages);
+     // Add summary as a system message with anti-injection prefix and end marker
+     compressed.add(Message.system(ANTI_INJECTION_PREFIX + "Earlier conversation (summarized):\n" + summary + SUMMARY_END_MARKER));
+     // Preserve protected tail messages
+     compressed.addAll(tailMessages);
+
+     // Final sanitization pass on the complete compressed list — ensures tool pairs
+     // are well-formed after the summary system message is inserted.
+     compressed = sanitizeToolPairs(compressed);
+
+     // Anti-thrashing: record compression savings (mirrors Hermes _compress_context)
+     int originalChars = messages.stream().mapToInt(this::contentLengthForBudget).sum();
+     int compressedChars = compressed.stream().mapToInt(this::contentLengthForBudget).sum();
+     int originalTokens = originalChars / CHARS_PER_TOKEN;
+     int compressedTokens = compressedChars / CHARS_PER_TOKEN;
+     recordCompressionSavings(originalTokens, compressedTokens);
+     log.info("Compressed: {} -> {} messages (~{} tokens saved, {}%)",
+         messages.size(), compressed.size(),
+         originalTokens - compressedTokens,
+         String.format("%.0f", lastCompressionSavingsPct));
+
+     return compressed;
  }
 
  @Override
@@ -360,7 +654,211 @@ public class DefaultContextCompressor implements ContextCompressor {
      }
  }
 
- private String pruneToolOutput(Message m) {
+     // ── Compression helper methods (parity with Hermes context_compressor.py) ──
+
+    /**
+     * 1.1: Tool result dedup — replace older duplicate tool outputs with a back-reference.
+     * Mirrors Hermes _prune_tool_results Pass 1: MD5-hash content > 200 chars, keep
+     * the most recent occurrence, replace older duplicates with "[Duplicate tool output]".
+     */
+    private List<Message> dedupToolResults(List<Message> messages) {
+        List<Message> result = new ArrayList<>(messages);
+        Map<String, Integer> contentHashes = new LinkedHashMap<>();
+        int pruned = 0;
+        // Walk backwards — most recent first, so older duplicates are replaced
+        for (int i = result.size() - 1; i >= 0; i--) {
+            Message msg = result.get(i);
+            if (msg.role() != Role.TOOL) continue;
+            String content = msg.content();
+            if (content == null || content.length() < 200) continue;
+            String hash = md5Short(content);
+            if (contentHashes.containsKey(hash)) {
+                // Older duplicate — replace with back-reference
+                result.set(i, Message.toolResult(msg.toolCallId(),
+                    "[Duplicate tool output — same content as a more recent call]", msg.turnIndex()));
+                pruned++;
+            } else {
+                contentHashes.put(hash, i);
+            }
+        }
+        if (pruned > 0) {
+            log.debug("Tool result dedup: replaced {} duplicate(s) with back-references", pruned);
+        }
+        return result;
+    }
+
+    /**
+     * 1.2: Tool pair sanitization — fix orphaned tool_call/tool_result pairs.
+     * Mirrors Hermes _sanitize_tool_pairs:
+     * - Remove tool results whose assistant tool_call was compressed away (orphaned results)
+     * - Insert stub results for assistant tool_calls whose results were dropped (orphaned calls)
+     * Prevents API 400 "No tool call found for function call output" errors.
+     */
+    private List<Message> sanitizeToolPairs(List<Message> messages) {
+        // Collect all surviving tool_call IDs from assistant messages
+        Set<String> survivingCallIds = new HashSet<>();
+        for (Message msg : messages) {
+            if (msg.toolCalls() != null) {
+                for (ToolCall tc : msg.toolCalls()) {
+                    if (tc.id() != null) {
+                        survivingCallIds.add(tc.id());
+                    }
+                }
+            }
+        }
+
+        // Collect all tool result call_ids
+        Set<String> resultCallIds = new HashSet<>();
+        for (Message msg : messages) {
+            if (msg.role() == Role.TOOL && msg.toolCallId() != null) {
+                resultCallIds.add(msg.toolCallId());
+            }
+        }
+
+        // 1. Remove orphaned tool results (no matching assistant tool_call)
+        Set<String> orphanedResults = new HashSet<>(resultCallIds);
+        orphanedResults.removeAll(survivingCallIds);
+        if (!orphanedResults.isEmpty()) {
+            List<Message> filtered = new ArrayList<>();
+            for (Message msg : messages) {
+                if (msg.role() == Role.TOOL && orphanedResults.contains(msg.toolCallId())) {
+                    continue; // skip orphaned result
+                }
+                filtered.add(msg);
+            }
+            messages = filtered;
+            log.debug("Compression sanitizer: removed {} orphaned tool result(s)", orphanedResults.size());
+        }
+
+        // 2. Add stub results for orphaned tool_calls (no matching tool result)
+        Set<String> missingResults = new HashSet<>(survivingCallIds);
+        missingResults.removeAll(resultCallIds);
+        if (!missingResults.isEmpty()) {
+            List<Message> patched = new ArrayList<>();
+            for (Message msg : messages) {
+                patched.add(msg);
+                if (msg.toolCalls() != null) {
+                    for (ToolCall tc : msg.toolCalls()) {
+                        if (tc.id() != null && missingResults.contains(tc.id())) {
+                            patched.add(Message.toolResult(tc.id(),
+                                "[Result from earlier conversation — see context summary above]",
+                                msg.turnIndex()));
+                        }
+                    }
+                }
+            }
+            messages = patched;
+            log.debug("Compression sanitizer: added {} stub tool result(s)", missingResults.size());
+        }
+
+        return messages;
+    }
+
+    /**
+     * 1.3: Ensure the last user and last assistant messages are in the protected tail.
+     * Mirrors Hermes _ensure_last_user_message_in_tail + _ensure_last_assistant_message_in_tail.
+     * If they ended up in the middle (compressed) region, pull the tail boundary back.
+     */
+    private int ensureLastUserAndAssistantInTail(List<Message> messages, int headEnd, int tailStart) {
+        // Find last user message index
+        int lastUserIdx = -1;
+        for (int i = messages.size() - 1; i >= headEnd; i--) {
+            if (messages.get(i).role() == Role.USER) {
+                lastUserIdx = i;
+                break;
+            }
+        }
+        // Find last assistant message index (with content, not just tool calls)
+        int lastAssistantIdx = -1;
+        for (int i = messages.size() - 1; i >= headEnd; i--) {
+            Message m = messages.get(i);
+            if (m.role() == Role.ASSISTANT && m.content() != null && !m.content().isBlank()) {
+                lastAssistantIdx = i;
+                break;
+            }
+        }
+
+        int newTailStart = tailStart;
+        // If last user message is in the middle, pull tail back to include it
+        if (lastUserIdx >= 0 && lastUserIdx < newTailStart) {
+            newTailStart = lastUserIdx;
+            log.debug("Anchoring tail to last user message at index {} (was {}) to prevent active-task loss",
+                lastUserIdx, tailStart);
+        }
+        // If last assistant message is in the middle (before the user), pull tail back further
+        if (lastAssistantIdx >= 0 && lastAssistantIdx < newTailStart) {
+            // Align backward past any tool results that precede the assistant message
+            int aligned = alignBoundaryBackward(messages, lastAssistantIdx);
+            newTailStart = Math.max(aligned, headEnd + 1);
+            log.debug("Anchoring tail to last assistant message at index {} (was {}) to keep reply visible",
+                lastAssistantIdx, tailStart);
+        }
+        return newTailStart;
+    }
+
+    /**
+     * 1.4: Align boundary forward — if the message at idx is a tool result,
+     * slide forward past the tool group so we don't start the tail mid-group.
+     */
+    private int alignBoundaryForward(List<Message> messages, int idx) {
+        while (idx < messages.size() && messages.get(idx).role() == Role.TOOL) {
+            idx++;
+        }
+        return idx;
+    }
+
+    /**
+     * 1.4: Align boundary backward — if the message at idx is a tool result,
+     * slide backward to include the preceding assistant tool_call message.
+     */
+    private int alignBoundaryBackward(List<Message> messages, int idx) {
+        while (idx > 0 && messages.get(idx).role() == Role.TOOL) {
+            idx--;
+        }
+        return idx;
+    }
+
+    /**
+     * 1.5: Extract topic from recent user messages to guide the summariser.
+     * Takes the last 3 user messages and extracts a short topic string.
+     */
+    private String extractTopic(List<Message> messages, int headEnd, int tailStart) {
+        // Collect recent user messages from the tail region
+        List<String> recentUserMsgs = new ArrayList<>();
+        for (int i = messages.size() - 1; i >= tailStart && recentUserMsgs.size() < 3; i--) {
+            Message m = messages.get(i);
+            if (m.role() == Role.USER && m.content() != null && !m.content().isBlank()) {
+                // Take first 200 chars as topic signal
+                String snippet = m.content().length() > 200
+                    ? m.content().substring(0, 200) + "..."
+                    : m.content();
+                recentUserMsgs.add(snippet);
+            }
+        }
+        if (recentUserMsgs.isEmpty()) {
+            return null;
+        }
+        // Join the recent user messages into a topic hint
+        return String.join(" | ", recentUserMsgs);
+    }
+
+    /** MD5 hash, first 12 hex chars — mirrors Hermes hashlib.md5(...).hexdigest()[:12] */
+    private static String md5Short(String content) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] digest = md.digest(content.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.substring(0, 12);
+        } catch (NoSuchAlgorithmException e) {
+            // Should never happen — MD5 is in every JDK
+            return Integer.toHexString(content.hashCode());
+        }
+    }
+
+    private String pruneToolOutput(Message m) {
  if (m.content() == null) {
  return "";
  }

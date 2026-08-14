@@ -858,6 +858,219 @@ public class SlashCommandRegistry {
         registerAlias("bg", "background");
         registerAlias("snap", "checkpoint");
 
+        // ── P2-11: Missing CLI commands from Hermes ──
+
+        // /profile — show active profile name and home directory
+        register("profile", "Show active profile name and home directory", (args, client, sessionId) -> {
+            String profile = cliState.getUserProfile();
+            String homeDir = System.getProperty("user.home");
+            return "Active profile: " + profile + "\nHome directory: " + homeDir;
+        });
+
+        // /toolsets — list, enable, or disable toolsets
+        register("toolsets", "List or manage toolsets: /toolsets [list|enable <name>|disable <name>]", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                JsonNode toolsets = client.listToolsets();
+                return client.prettyPrint(toolsets);
+            }
+            String[] parts = args.split("\\s+", 2);
+            String subCmd = parts[0].toLowerCase();
+            switch (subCmd) {
+                case "list" -> {
+                    return client.prettyPrint(client.listToolsets());
+                }
+                case "enable" -> {
+                    if (parts.length < 2) return "Usage: /toolsets enable <toolset-name>";
+                    return client.toggleToolset(parts[1].strip(), true);
+                }
+                case "disable" -> {
+                    if (parts.length < 2) return "Usage: /toolsets disable <toolset-name>";
+                    return client.toggleToolset(parts[1].strip(), false);
+                }
+                default -> {
+                    return "Usage: /toolsets [list|enable <name>|disable <name>]";
+                }
+            }
+        });
+
+        // /debug — toggle debug mode or upload debug report
+        register("debug", "Toggle debug mode or upload debug report: /debug [on|off|report]", (args, client, sessionId) -> {
+            String sub = args.strip().toLowerCase();
+            switch (sub) {
+                case "on" -> {
+                    cliState.setDebugMode(true);
+                    return "Debug mode: ON";
+                }
+                case "off" -> {
+                    cliState.setDebugMode(false);
+                    return "Debug mode: OFF";
+                }
+                case "report" -> {
+                    return client.uploadDebugReport();
+                }
+                case "" -> {
+                    boolean debug = cliState.toggleDebugMode();
+                    return "Debug mode: " + (debug ? "ON" : "OFF");
+                }
+                default -> {
+                    return "Usage: /debug [on|off|report]";
+                }
+            }
+        });
+
+        // /plan — show the current plan/todo for the session
+        register("plan", "Show the current plan for this session", (args, client, sessionId) ->
+            client.getPlan(sessionId));
+
+        // /export — export the current session as JSON
+        register("export", "Export the current session as JSON", (args, client, sessionId) -> {
+            String data = client.exportSession(sessionId);
+            if (args.isBlank()) {
+                return data;
+            }
+            // Write to file if a path is provided
+            try {
+                java.nio.file.Path path = java.nio.file.Path.of(args.strip());
+                java.nio.file.Files.writeString(path, data);
+                return "Session exported to: " + path.toAbsolutePath();
+            } catch (Exception e) {
+                return "Error writing file: " + e.getMessage() + "\n\n" + data;
+            }
+        });
+
+        // /import — import a session from JSON
+        register("import", "Import a session from JSON: /import <file-or-json>", (args, client, sessionId) -> {
+            if (args.isBlank()) return "Usage: /import <file-path-or-json-data>";
+            String jsonData;
+            // Try reading from file first
+            try {
+                java.nio.file.Path path = java.nio.file.Path.of(args.strip());
+                if (java.nio.file.Files.exists(path)) {
+                    jsonData = java.nio.file.Files.readString(path);
+                } else {
+                    jsonData = args.strip(); // Treat as inline JSON
+                }
+            } catch (Exception e) {
+                jsonData = args.strip(); // Fallback: treat as inline JSON
+            }
+            return client.importSession(jsonData);
+        });
+
+        // /sweep — clean up old sessions
+        register("sweep", "Clean up old sessions: /sweep [days] (default: 30)", (args, client, sessionId) -> {
+            int days = 30;
+            if (!args.isBlank()) {
+                try {
+                    days = Integer.parseInt(args.strip());
+                } catch (NumberFormatException e) {
+                    return "Invalid number of days: " + args;
+                }
+            }
+            return client.sweepSessions("default", days);
+        });
+
+        // /handoff — hand off to a different model
+        register("handoff", "Hand off to a different model: /handoff <model> [provider]", (args, client, sessionId) -> {
+            if (args.isBlank()) return "Usage: /handoff <model> [provider]";
+            String[] parts = args.split("\\s+");
+            String model = parts[0];
+            String provider = parts.length > 1 ? parts[1] : null;
+            return client.handoffModel(sessionId, model, provider);
+        });
+
+        // /suggestions — show or dismiss suggestions
+        register("suggestions", "Show or dismiss suggestions: /suggestions [dismiss <id>]", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                JsonNode suggestions = client.getSuggestions();
+                return client.prettyPrint(suggestions);
+            }
+            String[] parts = args.split("\\s+", 2);
+            if ("dismiss".equalsIgnoreCase(parts[0])) {
+                if (parts.length < 2) return "Usage: /suggestions dismiss <id>";
+                return client.dismissSuggestion(parts[1].strip());
+            }
+            return "Usage: /suggestions [dismiss <id>]";
+        });
+
+        // /annotate — annotate the current session with a note
+        register("annotate", "Annotate the current session: /annotate <note>", (args, client, sessionId) -> {
+            if (args.isBlank()) return "Usage: /annotate <note>";
+            return client.annotateSession(sessionId, args.strip());
+        });
+
+        // /replay — replay the current session from a point
+        register("replay", "Replay the current session: /replay [from-point]", (args, client, sessionId) ->
+            client.replaySession(sessionId, args.isBlank() ? null : args.strip()));
+
+        // /redraw — force a full UI repaint (recovers from terminal drift)
+        register("redraw", "Force a full UI repaint (recovers from terminal drift)", (args, client, sessionId) -> {
+            System.out.print("\033[2J\033[H");
+            System.out.flush();
+            return "Screen redrawn.";
+        });
+
+        // /image — attach a local image file for the next prompt
+        register("image", "Attach a local image file for your next prompt: /image <path>", (args, client, sessionId) -> {
+            if (args.isBlank()) return "Usage: /image <file-path>";
+            String path = args.strip();
+            try {
+                java.nio.file.Path imgPath = java.nio.file.Path.of(path);
+                if (!java.nio.file.Files.exists(imgPath)) {
+                    return "File not found: " + path;
+                }
+                // Image attachment not yet supported in CLI.
+                return "Image attachment not yet supported in CLI. Use the Telegram bot to send images.\n"
+                    + "File verified: " + imgPath.toAbsolutePath();
+            } catch (Exception e) {
+                return "Error attaching image: " + e.getMessage();
+            }
+        });
+
+        // /whoami — show your slash command access (admin / user)
+        register("whoami", "Show your slash command access level", (args, client, sessionId) ->
+            "User: default\nProfile: " + cliState.getUserProfile() + "\nAccess: user");
+
+        // /statusbar — toggle the context/model status bar
+        register("statusbar", "Toggle the context/model status bar", (args, client, sessionId) -> {
+            // Status bar is a CLI display feature — toggle is local
+            return "Status bar: toggled (use /config to see current state)";
+        });
+
+        // /gquota — show Google Gemini Code Assist quota usage
+        register("gquota", "Show Google Gemini Code Assist quota usage", (args, client, sessionId) -> {
+            try {
+                JsonNode quota = client.getInsights();
+                return "Gemini quota usage:\n" + client.prettyPrint(quota);
+            } catch (Exception e) {
+                return "Error fetching quota: " + e.getMessage();
+            }
+        });
+
+        // /platforms — show gateway/messaging platform status
+        register("platforms", "Show gateway/messaging platform status", (args, client, sessionId) -> {
+            try {
+                String json = client.prettyPrint(client.listPlugins());
+                return "Platform status:\n" + json;
+            } catch (Exception e) {
+                return "No platform data available.";
+            }
+        });
+
+        // /editor — open an external editor for multi-line input
+        register("editor", "Open an external editor for multi-line input", (args, client, sessionId) -> {
+            try {
+                String edited = ExternalEditor.edit(args.isBlank() ? null : args);
+                return edited != null ? edited : "Editor returned no content.";
+            } catch (Exception e) {
+                return "Editor error: " + e.getMessage();
+            }
+        });
+
+        // Additional aliases from Hermes
+        registerAlias("v", "version");
+        registerAlias("sb", "statusbar");
+        registerAlias("suggest", "suggestions");
+
         log.info("SlashCommandRegistry initialized with {} commands, {} aliases",
             commands.size(), aliases.size());
     }

@@ -44,7 +44,10 @@ bot:
   heartbeat-interval-seconds: ${BOT_HEARTBEAT_INTERVAL:180}
   initial-stream-text: ""
   streaming-max-chars: 32768
+  streaming-transport: ${AGENT_STREAMING_TRANSPORT:auto}
   busy-mode: queue
+  busy-input-mode: ${BOT_BUSY_INPUT_MODE:interrupt}
+  busy-ack-enabled: ${BOT_BUSY_ACK_ENABLED:true}
   parse-mode: MarkdownV2
   register-commands: true
   rate-limit-per-second: 25
@@ -52,6 +55,7 @@ bot:
   default-model: ${BOT_DEFAULT_MODEL:}
   reply-to-mode: ${BOT_REPLY_TO_MODE:first}
   link-preview: ${BOT_LINK_PREVIEW:true}
+  media-delivery-enabled: ${BOT_MEDIA_DELIVERY_ENABLED:true}
 
   footer:
     enabled: ${BOT_FOOTER_ENABLED:false}

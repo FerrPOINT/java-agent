@@ -61,4 +61,22 @@ public class TelegramApiException extends RuntimeException {
     public boolean isRateLimit() {
         return errorCode == 429;
     }
+
+    /**
+     * Returns {@code true} if this exception represents a MarkdownV2 parse
+     * error (Telegram returns error code 400 with description containing
+     * "can_parse_entities"). This is used to trigger a plain-text fallback:
+     * re-send the message without {@code parse_mode}.
+     *
+     * @return {@code true} if the error is a MarkdownV2 parse failure
+     */
+    public boolean isParseError() {
+        if (errorDescription == null) {
+            return false;
+        }
+        String lower = errorDescription.toLowerCase();
+        return lower.contains("can_parse_entities")
+            || lower.contains("parse entities")
+            || lower.contains("can't parse entities");
+    }
 }

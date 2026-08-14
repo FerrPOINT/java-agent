@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -66,7 +67,7 @@ class MemoryToolsUnitTest {
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("Added to memory store");
+        assertThat(result.content()).contains("Entry added");
         verify(memoryProvider).store(USER_ID, "memory", "auto", "User prefers dark mode");
     }
 
@@ -154,6 +155,82 @@ class MemoryToolsUnitTest {
 
         assertThat(result.success()).isTrue();
         verify(memoryProvider).store(USER_ID, "memory", "auto", "test fact");
+    }
+
+    // ── Fix 1: Char count uses getCharCount() not read().length() ──
+
+    @Test
+    void memoryToolSuccessResponseUsesPureCharCount() {
+        MemoryTool tool = new MemoryTool(memoryProvider);
+        // getCharCount returns pure entries joined: "Fact one\n§\nFact two" = 20 chars
+        when(memoryProvider.getCharCount(USER_ID, "memory")).thenReturn(20);
+        when(memoryProvider.getEntryCount(USER_ID, "memory")).thenReturn(2);
+        String args = "{\"action\":\"add\",\"target\":\"memory\",\"content\":\"test fact\"}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        // Should show 20 (pure chars), not the length of read() which includes headers
+        assertThat(result.content()).contains("20/2200");
+        assertThat(result.content()).contains("entry_count: 2");
+    }
+
+    // ── Fix 4: Error response includes usage info ──
+
+    @Test
+    void memoryToolAddOverflow_returnsStructuredErrorWithUsage() {
+        MemoryTool tool = new MemoryTool(memoryProvider);
+        when(memoryProvider.getCharCount(USER_ID, "memory")).thenReturn(2000);
+        when(memoryProvider.getEntryCount(USER_ID, "memory")).thenReturn(3);
+        doThrow(new IllegalStateException("Memory at 2000/2200 chars. Adding this entry (300 chars) would exceed the limit."))
+            .when(memoryProvider).store(USER_ID, "memory", "auto", "x".repeat(300));
+        String args = "{\"action\":\"add\",\"target\":\"memory\",\"content\":\"" + "x".repeat(300) + "\"}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("exceed the limit");
+        // Fix 4: should include current usage info
+        assertThat(result.error()).contains("Current:");
+        assertThat(result.error()).contains("2000/2200");
+        assertThat(result.error()).contains("3 entries");
+        assertThat(result.error()).contains("Consolidate now");
+    }
+
+    @Test
+    void memoryToolReplaceOverflow_returnsStructuredErrorWithUsage() {
+        MemoryTool tool = new MemoryTool(memoryProvider);
+        when(memoryProvider.getCharCount(USER_ID, "memory")).thenReturn(2000);
+        when(memoryProvider.getEntryCount(USER_ID, "memory")).thenReturn(2);
+        when(memoryProvider.replace(USER_ID, "memory", "old", "x".repeat(500)))
+            .thenReturn("Replacement would put memory at 2400/2200 chars. Shorten the new content.");
+        String args = "{\"action\":\"replace\",\"target\":\"memory\",\"old_text\":\"old\",\"content\":\"" + "x".repeat(500) + "\"}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Replacement would put memory at");
+        // Fix 4: should include current usage info
+        assertThat(result.error()).contains("Current:");
+        assertThat(result.error()).contains("2000/2200");
+        assertThat(result.error()).contains("Consolidate now");
+    }
+
+    @Test
+    void memoryToolMultipleMatchError_includesPreviews() {
+        MemoryTool tool = new MemoryTool(memoryProvider);
+        when(memoryProvider.getCharCount(USER_ID, "memory")).thenReturn(50);
+        when(memoryProvider.getEntryCount(USER_ID, "memory")).thenReturn(2);
+        when(memoryProvider.replace(USER_ID, "memory", "common", "new"))
+            .thenReturn("Multiple entries match 'common'. Be more specific:\n1. First common entry\n2. Second common entry");
+        String args = "{\"action\":\"replace\",\"target\":\"memory\",\"old_text\":\"common\",\"content\":\"new\"}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Multiple entries match");
+        assertThat(result.error()).contains("1. First common entry");
+        assertThat(result.error()).contains("2. Second common entry");
     }
 
     // ── TodoTool tests ──
@@ -291,11 +368,14 @@ class MemoryToolsUnitTest {
     @Test
     void skillViewToolReturnsSkillContent() {
         SkillViewTool tool = new SkillViewTool(skillManager);
-        // S9: getSkillInfo now returns rich metadata
-        when(skillManager.getSkillInfo("testing")).thenReturn(new SkillManager.SkillInfo(
-            "testing", "# Testing Guide\nUse JUnit 5.", "", null, 0, 0, null, false, "AGENT_CREATED"
+        // S9: getSkillInfoMultiStrategy now returns rich metadata
+        when(skillManager.getSkillInfoMultiStrategy("testing")).thenReturn(new SkillManager.SkillLookupResult(
+            new SkillManager.SkillInfo(
+                "testing", "# Testing Guide\nUse JUnit 5.", "", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false,
+                new SkillManager.LinkedFiles(List.of(), List.of(), List.of(), List.of())
+            ), List.of(), null
         ));
-        when(skillManager.listSupportFiles("testing")).thenReturn(List.of());
         String args = "{\"name\":\"testing\"}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
@@ -310,13 +390,15 @@ class MemoryToolsUnitTest {
     @Test
     void skillViewToolFailsWhenSkillNotFound() {
         SkillViewTool tool = new SkillViewTool(skillManager);
-        when(skillManager.getSkillInfo("missing")).thenReturn(null);
+        when(skillManager.getSkillInfoMultiStrategy("missing")).thenReturn(new SkillManager.SkillLookupResult(
+            null, List.of(), null
+        ));
         String args = "{\"name\":\"missing\"}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).isEqualTo("Skill not found: missing");
+        assertThat(result.error()).contains("Skill not found");
     }
 
     // ── SkillsListTool tests (S9: now with metadata) ──
@@ -326,9 +408,12 @@ class MemoryToolsUnitTest {
         SkillsListTool tool = new SkillsListTool(skillManager);
         // S9: listSkills returns SkillInfo objects
         when(skillManager.listSkills()).thenReturn(List.of(
-            new SkillManager.SkillInfo("testing", "", "", null, 0, 0, null, false, "AGENT_CREATED"),
-            new SkillManager.SkillInfo("refactoring", "", "", null, 0, 0, null, false, "AGENT_CREATED"),
-            new SkillManager.SkillInfo("docs", "", "", null, 0, 0, null, false, "AGENT_CREATED")
+            new SkillManager.SkillInfo("testing", "", "", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false, null),
+            new SkillManager.SkillInfo("refactoring", "", "", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false, null),
+            new SkillManager.SkillInfo("docs", "", "", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false, null)
         ));
 
         ToolResult result = tool.execute("{}", LAST_MESSAGE, SESSION);
@@ -350,6 +435,76 @@ class MemoryToolsUnitTest {
 
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("No skills available.");
+    }
+
+    // ── SkillsListTool category filter tests (P2-50) ──
+
+    @Test
+    void skillsListToolFiltersByCategory() {
+        SkillsListTool tool = new SkillsListTool(skillManager);
+        when(skillManager.listSkills()).thenReturn(List.of(
+            new SkillManager.SkillInfo("testing", "", "dev", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false, null),
+            new SkillManager.SkillInfo("refactoring", "", "dev", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false, null),
+            new SkillManager.SkillInfo("docs", "", "writing", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false, null)
+        ));
+
+        ToolResult result = tool.execute("{\"category\":\"dev\"}", LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("testing");
+        assertThat(result.content()).contains("refactoring");
+        assertThat(result.content()).doesNotContain("docs");
+    }
+
+    @Test
+    void skillsListToolCategoryFilterIsCaseInsensitive() {
+        SkillsListTool tool = new SkillsListTool(skillManager);
+        when(skillManager.listSkills()).thenReturn(List.of(
+            new SkillManager.SkillInfo("testing", "", "Dev", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false, null),
+            new SkillManager.SkillInfo("docs", "", "Writing", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false, null)
+        ));
+
+        ToolResult result = tool.execute("{\"category\":\"DEV\"}", LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("testing");
+        assertThat(result.content()).doesNotContain("docs");
+    }
+
+    @Test
+    void skillsListToolCategoryFilterNoMatch() {
+        SkillsListTool tool = new SkillsListTool(skillManager);
+        when(skillManager.listSkills()).thenReturn(List.of(
+            new SkillManager.SkillInfo("testing", "", "dev", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false, null)
+        ));
+
+        ToolResult result = tool.execute("{\"category\":\"nonexistent\"}", LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("No skills available in category: nonexistent");
+    }
+
+    @Test
+    void skillsListToolWithoutCategoryReturnsAll() {
+        SkillsListTool tool = new SkillsListTool(skillManager);
+        when(skillManager.listSkills()).thenReturn(List.of(
+            new SkillManager.SkillInfo("testing", "", "dev", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false, null),
+            new SkillManager.SkillInfo("docs", "", "writing", null, 0, 0, null, false, "AGENT_CREATED",
+                List.of(), List.of(), false, null)
+        ));
+
+        ToolResult result = tool.execute("{}", LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("testing");
+        assertThat(result.content()).contains("docs");
     }
 
     // ── SkillManageTool tests (S3: now with frontmatter + validation) ──

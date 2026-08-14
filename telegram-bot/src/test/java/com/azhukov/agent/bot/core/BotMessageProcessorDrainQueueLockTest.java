@@ -13,6 +13,7 @@ import com.azhukov.agent.bot.goal.GoalAutoContinueService;
 import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
+import com.azhukov.agent.bot.media.MediaDeliveryService;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.reaction.ReactionManager;
 import com.azhukov.agent.bot.session.BotSessionEntity;
@@ -47,6 +48,7 @@ class BotMessageProcessorDrainQueueLockTest {
     private BotProperties properties;
     private StreamEditor streamEditor;
     private InboundMediaHandler inboundMediaHandler;
+    private MediaDeliveryService mediaDeliveryService;
     private RuntimeFooter runtimeFooter;
     private ReactionManager reactionManager;
     private TextBatchDebouncer textBatchDebouncer;
@@ -70,6 +72,12 @@ class BotMessageProcessorDrainQueueLockTest {
         properties = new BotProperties();
         streamEditor = mock(StreamEditor.class);
         inboundMediaHandler = mock(InboundMediaHandler.class);
+        mediaDeliveryService = mock(MediaDeliveryService.class);
+        when(mediaDeliveryService.extractMediaTags(anyString()))
+            .thenAnswer(inv -> new MediaDeliveryService.ExtractionResult(
+                java.util.List.of(), inv.getArgument(0)));
+        when(mediaDeliveryService.stripMediaTagsForDisplay(anyString()))
+            .thenAnswer(inv -> inv.getArgument(0));
         runtimeFooter = mock(RuntimeFooter.class);
         reactionManager = mock(ReactionManager.class);
         textBatchDebouncer = mock(TextBatchDebouncer.class);
@@ -93,7 +101,7 @@ class BotMessageProcessorDrainQueueLockTest {
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
-            properties, streamEditor, inboundMediaHandler, runtimeFooter,
+            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, runtimeFooter,
             reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService
         );

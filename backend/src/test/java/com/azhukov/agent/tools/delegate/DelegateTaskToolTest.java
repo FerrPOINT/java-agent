@@ -5,8 +5,10 @@ import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.model.TurnResult;
+import com.azhukov.agent.core.tool.ToolRegistry;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -14,6 +16,7 @@ import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -35,9 +38,39 @@ class DelegateTaskToolTest {
         };
     }
 
+    /** Wraps a mock ToolRegistry in an ObjectProvider for test-friendly constructor. */
+    private static ObjectProvider<ToolRegistry> toolRegistryProvider(ToolRegistry registry) {
+        return new ObjectProvider<>() {
+            @Override public ToolRegistry getObject() { return registry; }
+            @Override public ToolRegistry getObject(Object... args) { return registry; }
+            @Override public ToolRegistry getIfAvailable() { return registry; }
+            @Override public ToolRegistry getIfUnique() { return registry; }
+        };
+    }
+
+    /** Creates a mock ToolRegistry with the given toolsets. */
+    private static ObjectProvider<ToolRegistry> toolRegistry(Set<String> toolsets) {
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(toolsets);
+        when(registry.getDefinitions(any())).thenReturn(List.of());
+        return toolRegistryProvider(registry);
+    }
+
+    /** Creates a mock ToolRegistry with the given toolsets and definitions. */
+    private static ObjectProvider<ToolRegistry> toolRegistry(Set<String> toolsets, List<ToolDefinition> defs) {
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(toolsets);
+        when(registry.getDefinitions(any())).thenReturn(defs);
+        return toolRegistryProvider(registry);
+    }
+
+    private static final Set<String> DEFAULT_PARENT_TOOLSETS = Set.of(
+        "web", "file", "terminal", "coding", "core", "delegation", "memory", "gateway", "todo", "browser"
+    );
+
     private AgentProperties defaultProperties() {
         AgentProperties props = new AgentProperties();
-        // Use defaults: maxDepth=3, maxSpawnDepth=3, maxConcurrentChildren=3
+        // Use defaults: maxDepth=3, maxSpawnDepth=1, maxConcurrentChildren=3
         return props;
     }
 
@@ -71,7 +104,7 @@ class DelegateTaskToolTest {
         when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
             .thenReturn(completedResult("Task completed successfully"));
 
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         Session session = defaultSession();
 
         ToolResult result = tool.execute("{\"goal\":\"analyze logs\"}", null, session);
@@ -87,7 +120,7 @@ class DelegateTaskToolTest {
     void failsWhenGoalMissing() {
         AgentProperties props = defaultProperties();
         AgentRuntime runtime = mock(AgentRuntime.class);
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         Session session = defaultSession();
 
         ToolResult result = tool.execute("{}", null, session);
@@ -100,7 +133,7 @@ class DelegateTaskToolTest {
     void failsWhenMaxSpawnDepthReached() {
         AgentProperties props = defaultProperties();
         AgentRuntime runtime = mock(AgentRuntime.class);
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         Session session = sessionWithDepth(3);
 
         ToolResult result = tool.execute("{\"goal\":\"nested task\"}", null, session);
@@ -114,7 +147,7 @@ class DelegateTaskToolTest {
         AgentProperties props = defaultProperties();
         props.getDelegation().setEnabled(false);
         AgentRuntime runtime = mock(AgentRuntime.class);
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         Session session = defaultSession();
 
         ToolResult result = tool.execute("{\"goal\":\"some task\"}", null, session);
@@ -133,7 +166,7 @@ class DelegateTaskToolTest {
         when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
             .thenReturn(completedResult("Done"));
 
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), 5);
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS), 5);
         Session session = defaultSession();
 
         String args = """
@@ -160,7 +193,7 @@ class DelegateTaskToolTest {
         AgentProperties props = defaultProperties();
         // maxConcurrentChildren defaults to 3
         AgentRuntime runtime = mock(AgentRuntime.class);
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         Session session = defaultSession();
 
         String args = """
@@ -180,7 +213,7 @@ class DelegateTaskToolTest {
     void batchFailsWhenTaskMissingGoal() {
         AgentProperties props = defaultProperties();
         AgentRuntime runtime = mock(AgentRuntime.class);
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         Session session = defaultSession();
 
         String args = """
@@ -213,11 +246,12 @@ class DelegateTaskToolTest {
     @Test
     void orchestratorRoleRespectedWhenEnabledAndWithinDepth() throws Exception {
         AgentProperties props = defaultProperties();
+        props.getDelegation().setMaxSpawnDepth(2); // allow orchestrator at depth 1
         AgentRuntime runtime = mock(AgentRuntime.class);
         when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
             .thenReturn(completedResult("Orchestrated"));
 
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         Session session = sessionWithDepth(0); // parent at depth 0
 
         ToolResult result = tool.execute("{\"goal\":\"orchestrate\",\"role\":\"orchestrator\"}", null, session);
@@ -235,7 +269,7 @@ class DelegateTaskToolTest {
         when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
             .thenReturn(completedResult("Leaf work"));
 
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         Session session = defaultSession();
 
         ToolResult result = tool.execute("{\"goal\":\"try orchestrate\",\"role\":\"orchestrator\"}", null, session);
@@ -253,7 +287,7 @@ class DelegateTaskToolTest {
         when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
             .thenReturn(completedResult("Leaf work"));
 
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         // Parent at depth 1, child would be at depth 2 = max_spawn_depth → orchestrator can't nest further
         Session session = sessionWithDepth(1);
 
@@ -314,7 +348,7 @@ class DelegateTaskToolTest {
     void resolveChildTimeoutUsesCallerTimeoutWhenPositive() {
         AgentProperties props = defaultProperties();
         AgentRuntime runtime = mock(AgentRuntime.class);
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         int resolved = tool.resolveChildTimeout(props.getDelegation(), 600);
         assertThat(resolved).isEqualTo(600);
     }
@@ -323,7 +357,7 @@ class DelegateTaskToolTest {
     void resolveChildTimeoutFloorsAt30Seconds() {
         AgentProperties props = defaultProperties();
         AgentRuntime runtime = mock(AgentRuntime.class);
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         int resolved = tool.resolveChildTimeout(props.getDelegation(), 5);
         assertThat(resolved).isEqualTo(30);
     }
@@ -333,7 +367,7 @@ class DelegateTaskToolTest {
         AgentProperties props = defaultProperties();
         props.getDelegation().setChildTimeoutSeconds(120);
         AgentRuntime runtime = mock(AgentRuntime.class);
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         int resolved = tool.resolveChildTimeout(props.getDelegation(), 0);
         assertThat(resolved).isEqualTo(120);
     }
@@ -343,7 +377,7 @@ class DelegateTaskToolTest {
         AgentProperties props = defaultProperties();
         props.getDelegation().setDefaultTimeoutSeconds(450);
         AgentRuntime runtime = mock(AgentRuntime.class);
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         int resolved = tool.resolveChildTimeout(props.getDelegation(), 0);
         assertThat(resolved).isEqualTo(450);
     }
@@ -377,10 +411,46 @@ class DelegateTaskToolTest {
                 return completedResult("done");
             });
 
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         Session session = defaultSession();
 
         tool.execute("{\"goal\":\"test depth\"}", null, session);
+    }
+
+    @Test
+    void subagentAutoApproveSetsMetadataWhenEnabled() throws Exception {
+        AgentProperties props = defaultProperties();
+        props.getDelegation().setSubagentAutoApprove(true);
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
+            .thenAnswer(invocation -> {
+                Session childSession = invocation.getArgument(0);
+                assertThat(childSession.metadata()).containsEntry("subagent_auto_approve", "true");
+                return completedResult("auto-approved");
+            });
+
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+        Session session = defaultSession();
+
+        tool.execute("{\"goal\":\"auto approve task\"}", null, session);
+    }
+
+    @Test
+    void subagentAutoApproveOmitsMetadataWhenDisabled() throws Exception {
+        AgentProperties props = defaultProperties();
+        // subagentAutoApprove defaults to false
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
+            .thenAnswer(invocation -> {
+                Session childSession = invocation.getArgument(0);
+                assertThat(childSession.metadata()).doesNotContainKey("subagent_auto_approve");
+                return completedResult("normal");
+            });
+
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+        Session session = defaultSession();
+
+        tool.execute("{\"goal\":\"normal task\"}", null, session);
     }
 
     // ── Error handling ──────────────────────────────────────────────────
@@ -392,7 +462,7 @@ class DelegateTaskToolTest {
         when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
             .thenReturn(errorResult("LLM API failed"));
 
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         Session session = defaultSession();
 
         ToolResult result = tool.execute("{\"goal\":\"failing task\"}", null, session);
@@ -410,7 +480,7 @@ class DelegateTaskToolTest {
         when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
             .thenThrow(new RuntimeException("Runtime crashed"));
 
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         Session session = defaultSession();
 
         ToolResult result = tool.execute("{\"goal\":\"crash test\"}", null, session);
@@ -426,7 +496,7 @@ class DelegateTaskToolTest {
     void activeSubagentCountReturnsZeroWhenIdle() {
         AgentProperties props = defaultProperties();
         AgentRuntime runtime = mock(AgentRuntime.class);
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         assertThat(tool.getActiveSubagentCount()).isEqualTo(0);
         assertThat(tool.getAvailableConcurrencyPermits()).isEqualTo(3);
     }
@@ -435,7 +505,285 @@ class DelegateTaskToolTest {
     void listActiveSubagentsIsEmptyWhenIdle() {
         AgentProperties props = defaultProperties();
         AgentRuntime runtime = mock(AgentRuntime.class);
-        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime));
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
         assertThat(tool.listActiveSubagents()).isEmpty();
+    }
+
+    // ── Fix 1: Toolset inheritance ──────────────────────────────────────
+
+    @Test
+    void resolveChildToolsetsInheritsParentToolsetsWhenNoneSpecified() {
+        AgentProperties props = defaultProperties();
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+
+        Set<String> parent = Set.of("web", "file", "terminal", "coding", "memory", "gateway", "delegation", "core");
+        List<String> child = tool.resolveChildToolsets(null, parent, "leaf");
+
+        // Should inherit parent's toolsets minus blocked ones (delegation, memory, gateway)
+        assertThat(child).contains("web", "file", "terminal", "coding", "core");
+        assertThat(child).doesNotContain("delegation", "memory", "gateway");
+    }
+
+    @Test
+    void resolveChildToolsetsIntersectsWhenExplicitToolsetsSpecified() {
+        AgentProperties props = defaultProperties();
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+
+        Set<String> parent = Set.of("web", "file", "terminal", "coding", "memory", "gateway", "delegation", "core");
+        // Request only web and file (both exist in parent)
+        List<String> child = tool.resolveChildToolsets(List.of("web", "file"), parent, "leaf");
+
+        assertThat(child).containsExactlyInAnyOrder("web", "file");
+    }
+
+    @Test
+    void resolveChildToolsetsFiltersOutToolsetsNotInParent() {
+        AgentProperties props = defaultProperties();
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+
+        Set<String> parent = Set.of("web", "file");
+        // Request toolsets that parent doesn't have
+        List<String> child = tool.resolveChildToolsets(List.of("web", "browser", "terminal"), parent, "leaf");
+
+        // Only "web" should remain (browser and terminal are not in parent)
+        assertThat(child).containsExactly("web");
+    }
+
+    @Test
+    void resolveChildToolsetsOrchestratorReAddsDelegation() {
+        AgentProperties props = defaultProperties();
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+
+        Set<String> parent = Set.of("web", "file", "delegation", "memory");
+        List<String> child = tool.resolveChildToolsets(null, parent, "orchestrator");
+
+        // Orchestrator should get delegation back
+        assertThat(child).contains("delegation");
+        assertThat(child).contains("web", "file");
+        assertThat(child).doesNotContain("memory"); // memory is still blocked
+    }
+
+    @Test
+    void resolveParentToolsetsReadsFromRegistry() {
+        AgentProperties props = defaultProperties();
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        Set<String> registered = Set.of("web", "file", "terminal");
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(registered));
+
+        Set<String> parent = tool.resolveParentToolsets();
+        assertThat(parent).containsExactlyInAnyOrder("web", "file", "terminal");
+    }
+
+    @Test
+    void childSessionReceivesToolsetsMetadata() throws Exception {
+        AgentProperties props = defaultProperties();
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
+            .thenAnswer(invocation -> {
+                Session childSession = invocation.getArgument(0);
+                String toolsetsMeta = childSession.getMetadata("delegation_toolsets");
+                assertThat(toolsetsMeta).isNotNull();
+                // Should contain web, file, terminal, coding, core but NOT delegation, memory, gateway
+                assertThat(toolsetsMeta).contains("web");
+                assertThat(toolsetsMeta).doesNotContain("delegation");
+                assertThat(toolsetsMeta).doesNotContain("memory");
+                assertThat(toolsetsMeta).doesNotContain("gateway");
+                return completedResult("done");
+            });
+
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+        Session session = defaultSession();
+
+        tool.execute("{\"goal\":\"test toolsets\"}", null, session);
+    }
+
+    // ── Fix 2: Blocked tools ─────────────────────────────────────────────
+
+    @Test
+    void blockedToolsIncludeMemoryAndExecuteCode() {
+        AgentProperties props = defaultProperties();
+        List<String> blocked = props.getDelegation().getBlockedTools();
+        assertThat(blocked).contains("delegate_task", "clarify", "memory", "send_message", "execute_code");
+    }
+
+    @Test
+    void blockedToolsetNamesIncludesDelegationMemoryGateway() {
+        assertThat(DelegateTaskTool.BLOCKED_TOOLSET_NAMES).contains("delegation", "memory", "gateway");
+    }
+
+    // ── Fix 3: Per-task toolsets ────────────────────────────────────────
+
+    @Test
+    void perTaskToolsetsAppliedToChildSession() throws Exception {
+        AgentProperties props = defaultProperties();
+        props.getDelegation().setMaxConcurrentChildren(5);
+        AgentRuntime runtime = mock(AgentRuntime.class);
+
+        // Capture toolsets metadata for each child
+        java.util.List<String> capturedToolsets = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
+            .thenAnswer(invocation -> {
+                Session childSession = invocation.getArgument(0);
+                capturedToolsets.add(childSession.getMetadata("delegation_toolsets"));
+                return completedResult("Done");
+            });
+
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS), 5);
+        Session session = defaultSession();
+
+        String args = """
+            {"tasks": [
+              {"goal": "task A", "toolsets": ["web", "file"]},
+              {"goal": "task B", "toolsets": ["terminal", "coding"]}
+            ]}
+            """;
+
+        ToolResult result = tool.execute(args, null, session);
+        assertThat(result.success()).isTrue();
+        assertThat(capturedToolsets).hasSize(2);
+        // Batch tasks run in parallel, so order is non-deterministic.
+        // Verify both expected toolset combinations are present.
+        assertThat(capturedToolsets).contains("web,file");
+        assertThat(capturedToolsets).contains("terminal,coding");
+    }
+
+    // ── Fix 4: acp_command / acp_args ────────────────────────────────────
+
+    @Test
+    void acpCommandPassedToChildSession() throws Exception {
+        AgentProperties props = defaultProperties();
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
+            .thenAnswer(invocation -> {
+                Session childSession = invocation.getArgument(0);
+                assertThat(childSession.getMetadata("delegation_acp_command")).isEqualTo("copilot");
+                assertThat(childSession.getMetadata("delegation_acp_args")).isEqualTo("--acp,--stdio");
+                return completedResult("done");
+            });
+
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+        Session session = defaultSession();
+
+        String args = """
+            {"goal":"test acp","acpCommand":"copilot","acpArgs":["--acp","--stdio"]}
+            """;
+        tool.execute(args, null, session);
+    }
+
+    @Test
+    void perTaskAcpCommandOverridesTopLevel() throws Exception {
+        AgentProperties props = defaultProperties();
+        props.getDelegation().setMaxConcurrentChildren(5);
+        AgentRuntime runtime = mock(AgentRuntime.class);
+
+        java.util.List<String> capturedCommands = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
+            .thenAnswer(invocation -> {
+                Session childSession = invocation.getArgument(0);
+                capturedCommands.add(childSession.getMetadata("delegation_acp_command"));
+                return completedResult("done");
+            });
+
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS), 5);
+        Session session = defaultSession();
+
+        // Top-level acpCommand: "copilot"
+        // Task 0: no per-task acp → should inherit "copilot"
+        // Task 1: per-task acp "other-cli" → should be "other-cli"
+        String args = """
+            {"acpCommand":"copilot","tasks": [
+              {"goal": "task A"},
+              {"goal": "task B", "acpCommand": "other-cli"}
+            ]}
+            """;
+        tool.execute(args, null, session);
+
+        assertThat(capturedCommands).hasSize(2);
+        // Batch tasks run in parallel, so order is non-deterministic.
+        assertThat(capturedCommands).contains("copilot", "other-cli");
+    }
+
+    @Test
+    void acpCommandOmittedWhenNotSet() throws Exception {
+        AgentProperties props = defaultProperties();
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
+            .thenAnswer(invocation -> {
+                Session childSession = invocation.getArgument(0);
+                assertThat(childSession.metadata()).doesNotContainKey("delegation_acp_command");
+                assertThat(childSession.metadata()).doesNotContainKey("delegation_acp_args");
+                return completedResult("done");
+            });
+
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+        Session session = defaultSession();
+
+        tool.execute("{\"goal\":\"no acp\"}", null, session);
+    }
+
+    // ── Fix 5: max_iterations ───────────────────────────────────────────
+
+    @Test
+    void maxIterationsFromConfigPassedToChildSession() throws Exception {
+        AgentProperties props = defaultProperties();
+        props.getDelegation().setMaxIterations(25);
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
+            .thenAnswer(invocation -> {
+                Session childSession = invocation.getArgument(0);
+                assertThat(childSession.getMetadata("delegation_max_turns")).isEqualTo("25");
+                return completedResult("done");
+            });
+
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+        Session session = defaultSession();
+
+        tool.execute("{\"goal\":\"test max iter\"}", null, session);
+    }
+
+    @Test
+    void maxIterationsFromCallerOverridesConfig() {
+        AgentProperties props = defaultProperties();
+        props.getDelegation().setMaxIterations(25);
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+
+        int resolved = tool.resolveMaxIterations(props.getDelegation(), 50);
+        assertThat(resolved).isEqualTo(50);
+    }
+
+    @Test
+    void maxIterationsDefaultsToConfigWhenCallerNotSet() {
+        AgentProperties props = defaultProperties();
+        props.getDelegation().setMaxIterations(30);
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+
+        int resolved = tool.resolveMaxIterations(props.getDelegation(), null);
+        assertThat(resolved).isEqualTo(30);
+    }
+
+    @Test
+    void maxIterationsZeroWhenConfigZeroAndCallerNotSet() {
+        AgentProperties props = defaultProperties();
+        props.getDelegation().setMaxIterations(0);
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+
+        int resolved = tool.resolveMaxIterations(props.getDelegation(), null);
+        assertThat(resolved).isEqualTo(0);
+    }
+
+    // ── Fix 6: Stale comment ─────────────────────────────────────────────
+
+    @Test
+    void maxSpawnDepthDefaultIsOne() {
+        AgentProperties props = new AgentProperties();
+        // The default should be 1 (matches Hermes MAX_DEPTH), not 3
+        assertThat(props.getDelegation().getMaxSpawnDepth()).isEqualTo(1);
     }
 }

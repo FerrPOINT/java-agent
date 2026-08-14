@@ -484,6 +484,11 @@ public class AgentBackendClient {
  retryConsumer.accept(contMsg);
  continue;
  }
+ // commentary event — the text was already streamed via token events,
+ // so skip it to avoid duplicating the text in the output.
+ if ("commentary".equalsIgnoreCase(type)) {
+ continue;
+ }
  JsonNode tokenNode = event.get("token");
  if (tokenNode != null && !tokenNode.isNull() && tokenNode.isTextual()) {
  String token = tokenNode.asText();

@@ -9,6 +9,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.core.agent.SessionLineageService;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +38,13 @@ public class DefaultContextEngine implements ContextEngine {
  private final AgentProperties.ContextProperties contextProps;
  private final PromptCacheTracker cacheTracker;
  private final ModelMetadataService modelMetadataService;
+
+ /**
+  * Session lineage service for loading ancestor messages after compression rotation.
+  * Optional — set via {@link #setSessionLineageService} after construction.
+  * When null, falls back to loading current-session-only history.
+  */
+ private SessionLineageService sessionLineageService;
 
  private final Map<UUID, Map<String, String>> snapshotCache = new ConcurrentHashMap<>();
  private final Map<UUID, String> lastMemoryHash = new ConcurrentHashMap<>();
@@ -86,9 +94,21 @@ public class DefaultContextEngine implements ContextEngine {
  this.modelMetadataService = modelMetadataService;
  // Initialize context length from model metadata if available
  if (modelMetadataService != null && properties.getModel().getModelName() != null) {
- this.contextLength = modelMetadataService.detectContextLength(properties.getModel().getModelName());
- this.thresholdTokens = (int) (contextLength * 0.75);
+     this.contextLength = modelMetadataService.detectContextLength(properties.getModel().getModelName());
+     this.thresholdTokens = (int) (contextLength * 0.75);
  }
+ }
+
+ /**
+ * Inject the {@link SessionLineageService} for loading ancestor messages
+ * after compression rotation. Called by the Spring {@code @Bean} factory
+ * after construction. When not set, history loading falls back to
+ * current-session-only queries.
+ *
+ * @param sessionLineageService the lineage service, or null to disable
+ */
+ public void setSessionLineageService(SessionLineageService sessionLineageService) {
+ this.sessionLineageService = sessionLineageService;
  }
 
  @Override
@@ -200,20 +220,37 @@ public class DefaultContextEngine implements ContextEngine {
  }
 
  /**
- * Update model and recalculate context length from model metadata.
- */
+  * Update model and recalculate context length from model metadata.
+  * Also recalculates the compressor's threshold to stay calibrated after a model switch.
+  */
  @Override
  public void updateModel(String model) {
- if (modelMetadataService != null && model != null && !model.isBlank()) {
- this.contextLength = modelMetadataService.detectContextLength(model);
- this.thresholdTokens = (int) (contextLength * 0.75);
- log.debug("Updated model: {}, contextLength={}, threshold={}", model, contextLength, thresholdTokens);
- }
+     if (modelMetadataService != null && model != null && !model.isBlank()) {
+         this.contextLength = modelMetadataService.detectContextLength(model);
+         this.thresholdTokens = (int) (contextLength * 0.75);
+         log.debug("Updated model: {}, contextLength={}, threshold={}", model, contextLength, thresholdTokens);
+         // Wire recalculateThreshold in the compressor so it stays calibrated
+         // after a model switch (e.g., 200K → 32K). Mirrors Hermes update_model():
+         //   self.threshold_tokens = max(int(context_length * threshold_percent), MINIMUM_CONTEXT_LENGTH)
+         //   self.tail_token_budget = int(self.threshold_tokens * self.summary_target_ratio)
+         //   self.max_summary_tokens = min(int(context_length * 0.05), _SUMMARY_TOKENS_CEILING)
+         if (contextCompressor != null) {
+             contextCompressor.recalculateThreshold(contextLength);
+         }
+     }
  }
 
  @Override
  public Instant getLastCompressionAt(UUID sessionId) {
- return lastCompressedAt.get(sessionId);
+     return lastCompressedAt.get(sessionId);
+ }
+
+ /**
+  * Returns the current context window size in tokens.
+  * Used by the proactive compression check in DefaultAgentRuntime.
+  */
+ public int getContextLength() {
+     return contextLength;
  }
 
  private int charsPerToken() {
@@ -305,6 +342,32 @@ public class DefaultContextEngine implements ContextEngine {
 
  private void appendRecentHistory(Session session, List<Message> context) {
      try {
+         // When SessionLineageService is available, load messages from the
+         // entire session lineage (root-to-tip) so that ancestor messages from
+         // compression-rotated sessions are included. Mirrors Hermes
+         // get_messages_as_conversation(include_ancestors=True).
+         if (sessionLineageService != null) {
+             List<Message> lineageMessages = sessionLineageService.loadMessagesWithAncestors(session.id());
+             if (lineageMessages != null && !lineageMessages.isEmpty()) {
+                 // Apply the same maxMessages limit as the paginated path.
+                 int maxMessages = contextProps.getMaxContextMessages();
+                 if (maxMessages <= 0) {
+                     maxMessages = 50;
+                 }
+                 List<Message> recent;
+                 if (lineageMessages.size() > maxMessages) {
+                     // Keep the most recent N messages
+                     recent = new ArrayList<>(lineageMessages.subList(
+                         lineageMessages.size() - maxMessages, lineageMessages.size()));
+                 } else {
+                     recent = new ArrayList<>(lineageMessages);
+                 }
+                 context.addAll(recent);
+                 return;
+             }
+             // No lineage messages found — fall through to current-session query
+         }
+
          // Use paginated query to load only the last N messages instead of loading all.
          // Query in descending order (newest first) then reverse to get ascending.
          int maxMessages = contextProps.getMaxContextMessages();

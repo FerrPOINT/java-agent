@@ -8,6 +8,8 @@ import java.util.Locale;
 
 /**
  * Classifies exceptions into categories that drive retry/backoff behaviour.
+ * <p>
+ * Parity with Hermes {@code error_classifier.py} FailoverReason enum (20+ values).
  */
 @Component
 @Slf4j
@@ -19,7 +21,61 @@ public class ErrorClassifier {
         RATE_LIMIT,
         BILLING,
         CONTEXT_OVERFLOW,
-        CONTENT_POLICY
+        CONTENT_POLICY,
+        // Extended categories — parity with Hermes FailoverReason
+        AUTH,              // 401 — token expired or invalid, may need rotation
+        AUTH_PERMANENT,    // 403 — key revoked, no rotation will help
+        OVERLOADED,        // 529 — provider overloaded (Anthropic-specific)
+        SERVER_ERROR,      // 500 — internal server error, retryable
+        TIMEOUT,           // Read/connect timeout
+        MODEL_NOT_FOUND,   // 404 — model name wrong or not available
+        FORMAT_ERROR,      // 422 — request format rejected by API
+        // Additional categories — parity with Hermes FailoverReason (20+ values)
+        PAYLOAD_TOO_LARGE,             // 413 — request entity too large
+        IMAGE_TOO_LARGE,               // 413/400 with image context — image exceeds provider limit
+        PROVIDER_POLICY_BLOCKED,        // 403/404 — aggregator policy block (e.g. OpenRouter privacy)
+        INVALID_ENCRYPTED_CONTENT,      // 400 with encrypted_content — Responses replay blob rejected
+        THINKING_SIGNATURE,            // 400 with thinking/sig — Anthropic thinking block signature invalid
+        LONG_CONTEXT_TIER,             // 429 with "extra usage" or "long context" — tier gate
+        LLAMA_CPP_GRAMMAR,             // 400 with grammar pattern — llama.cpp json-schema-to-grammar rejection
+        // MULTIMODAL_TOOL_CONTENT — stripped from FORMAT_ERROR; models that reject list-type tool content
+        MULTIMODAL_TOOL_CONTENT         // 400 — provider rejected list-type content in tool messages
+    }
+
+    /**
+     * Recovery hints — tells the caller what recovery action is appropriate.
+     * Mirrors Hermes ClassifiedError recovery hints.
+     */
+    public record RecoveryHints(
+        boolean retryable,
+        boolean shouldCompress,
+        boolean shouldRotateCredential,
+        boolean shouldFallback
+    ) {
+        public static RecoveryHints canRetry() {
+            return new RecoveryHints(true, false, false, false);
+        }
+        public static RecoveryHints compressAndRetry() {
+            return new RecoveryHints(true, true, false, false);
+        }
+        public static RecoveryHints rotateAndRetry() {
+            return new RecoveryHints(true, false, true, false);
+        }
+        public static RecoveryHints noRetry() {
+            return new RecoveryHints(false, false, false, false);
+        }
+        public static RecoveryHints switchModel() {
+            return new RecoveryHints(false, false, false, true);
+        }
+        public static RecoveryHints compressAndRetryWithFallback() {
+            return new RecoveryHints(true, true, false, true);
+        }
+        public static RecoveryHints rotateAndFallback() {
+            return new RecoveryHints(false, false, true, true);
+        }
+        public static RecoveryHints fallback() {
+            return new RecoveryHints(false, false, false, true);
+        }
     }
 
     /**
@@ -29,69 +85,269 @@ public class ErrorClassifier {
      * @return the classified error type
      */
     public ErrorType classify(Exception exception) {
+        return classifyWithHints(exception).type();
+    }
+
+    /**
+     * Classify the exception and return recovery hints.
+     * Mirrors Hermes ClassifiedError with recovery action hints.
+     * <p>
+     * Priority-ordered pipeline (matching Hermes {@code classify_api_error}):
+     * 1. Content-policy blocks (deterministic per-request, don't retry)
+     * 2. Thinking signature (400 + thinking/sig)
+     * 3. Long context tier (429 + "extra usage" + "long context")
+     * 4. OAuth 1M beta forbidden (400 + "long context beta" + "not yet available")
+     * 5. llama.cpp grammar (400 + grammar patterns)
+     * 6. Invalid encrypted content (400 + encrypted_content)
+     * 7. Billing (402 / billing patterns)
+     * 8. Context overflow
+     * 9. Payload too large (413)
+     * 10. Image too large (413/400 + image patterns)
+     * 11. Provider policy blocked (403/404 + policy patterns)
+     * 12. Auth (401)
+     * 13. Auth permanent (403)
+     * 14. Model not found (404)
+     * 15. Format error (422)
+     * 16. Overloaded (529)
+     * 17. Server error (500/503)
+     * 18. Rate limit (429)
+     * 19. Timeout
+     * 20. Permanent (invalid key/api)
+     * 21. Connection issues
+     * 22. Default: RETRYABLE
+     */
+    public ClassificationResult classifyWithHints(Exception exception) {
         if (exception == null) {
-            return ErrorType.RETRYABLE;
+            return new ClassificationResult(ErrorType.RETRYABLE, RecoveryHints.canRetry());
         }
 
         String message = exception.getMessage();
         String lowerMessage = message != null ? message.toLowerCase(Locale.ROOT) : "";
 
-        // Billing errors — permanent, no retry
-        if (lowerMessage.contains("insufficient credits") || lowerMessage.contains("insufficient_quota")
-            || lowerMessage.contains("insufficient balance") || lowerMessage.contains("credit balance")
-            || lowerMessage.contains("billing quota") || lowerMessage.contains("payment required")
-            || lowerMessage.contains("quota exceeded")) {
-            return ErrorType.BILLING;
-        }
-
-        // Context overflow — permanent, no retry
-        if (lowerMessage.contains("context length") || lowerMessage.contains("context window")
-            || lowerMessage.contains("maximum context") || lowerMessage.contains("token limit exceeded")
-            || lowerMessage.contains("context_length_exceeded")) {
-            return ErrorType.CONTEXT_OVERFLOW;
-        }
-
-        // Content policy violations — permanent, no retry
+        // ── 1. Content-policy blocks (highest priority — deterministic, don't retry) ──
+        // Mirrors Hermes _CONTENT_POLICY_BLOCKED_PATTERNS
         if (lowerMessage.contains("content policy") || lowerMessage.contains("content filter")
             || lowerMessage.contains("content management") || lowerMessage.contains("safety")
-            || lowerMessage.contains("harmful content") || lowerMessage.contains("prohibited content")) {
-            return ErrorType.CONTENT_POLICY;
+            || lowerMessage.contains("harmful content") || lowerMessage.contains("prohibited content")
+            // OpenAI Codex cybersecurity refusal
+            || lowerMessage.contains("flagged for possible cybersecurity risk")
+            || lowerMessage.contains("trusted access for cyber")
+            // OpenAI moderation
+            || lowerMessage.contains("violates our usage policies")
+            || lowerMessage.contains("violates openai's usage policies")
+            || lowerMessage.contains("your request was flagged by")
+            // Anthropic safety system
+            || lowerMessage.contains("prompt was flagged by our safety")
+            || lowerMessage.contains("responses cannot be generated due to safety")
+            // Azure / OpenAI Responses content filter
+            || lowerMessage.contains("content_filter")
+            || lowerMessage.contains("responsibleaipolicyviolation")) {
+            return new ClassificationResult(ErrorType.CONTENT_POLICY, RecoveryHints.fallback());
         }
 
-        // Model temporarily overloaded / service unavailable — retryable
-        if (lowerMessage.contains("overloaded") || lowerMessage.contains("temporarily unavailable")
-            || lowerMessage.contains("service unavailable") || lowerMessage.contains("503")
-            || lowerMessage.contains("model is overloaded") || lowerMessage.contains("please try again later")) {
-            return ErrorType.RATE_LIMIT;
+        // ── 2. Thinking signature (400 + thinking/sig) ──
+        // Mirrors Hermes FailoverReason.thinking_signature
+        if (lowerMessage.contains("400")
+            && lowerMessage.contains("thinking")
+            && (lowerMessage.contains("signature")
+                || lowerMessage.contains("cannot be modified")
+                || lowerMessage.contains("must remain as they were"))) {
+            return new ClassificationResult(ErrorType.THINKING_SIGNATURE, RecoveryHints.canRetry());
         }
 
-        // Rate limit
-        if (lowerMessage.contains("rate limit") || lowerMessage.contains("429") || lowerMessage.contains("too many requests")) {
-            return ErrorType.RATE_LIMIT;
+        // ── 3. Long context tier (429 + "extra usage" + "long context") ──
+        // Mirrors Hermes FailoverReason.long_context_tier
+        if (lowerMessage.contains("429")
+            && lowerMessage.contains("extra usage")
+            && lowerMessage.contains("long context")) {
+            return new ClassificationResult(ErrorType.LONG_CONTEXT_TIER, RecoveryHints.compressAndRetry());
         }
 
-        // Timeout
-        if (exception instanceof TimeoutException) {
-            return ErrorType.RETRYABLE;
-        }
-        if (lowerMessage.contains("timeout") || lowerMessage.contains("timed out")) {
-            return ErrorType.RETRYABLE;
+        // ── 4. OAuth 1M beta forbidden (400 + "long context beta" + "not yet available") ──
+        // Mirrors Hermes FailoverReason.oauth_long_context_beta_forbidden
+        if (lowerMessage.contains("400")
+            && lowerMessage.contains("long context beta")
+            && lowerMessage.contains("not yet available")) {
+            return new ClassificationResult(ErrorType.LONG_CONTEXT_TIER, RecoveryHints.canRetry());
         }
 
-        // Permanent — invalid key / API
+        // ── 5. llama.cpp grammar pattern (400 + grammar patterns) ──
+        // Mirrors Hermes FailoverReason.llama_cpp_grammar_pattern
+        if (lowerMessage.contains("400")
+            && (lowerMessage.contains("error parsing grammar")
+                || lowerMessage.contains("json-schema-to-grammar")
+                || (lowerMessage.contains("unable to generate parser") && lowerMessage.contains("template")))) {
+            return new ClassificationResult(ErrorType.LLAMA_CPP_GRAMMAR, RecoveryHints.canRetry());
+        }
+
+        // ── 6. Invalid encrypted content (400 + encrypted_content) ──
+        // Mirrors Hermes FailoverReason.invalid_encrypted_content
+        if (lowerMessage.contains("400")
+            && (lowerMessage.contains("encrypted_content")
+                || lowerMessage.contains("encrypted content")
+                || lowerMessage.contains("invalid encrypted"))) {
+            return new ClassificationResult(ErrorType.INVALID_ENCRYPTED_CONTENT, RecoveryHints.canRetry());
+        }
+
+        // ── 7. Billing (402 / billing patterns) ──
+        // Mirrors Hermes _BILLING_PATTERNS
+        if (lowerMessage.contains("402")
+            || lowerMessage.contains("insufficient credits") || lowerMessage.contains("insufficient_quota")
+            || lowerMessage.contains("insufficient balance") || lowerMessage.contains("credit balance")
+            || lowerMessage.contains("credits exhausted") || lowerMessage.contains("credits have been exhausted")
+            || lowerMessage.contains("no usable credits") || lowerMessage.contains("top up your credits")
+            || lowerMessage.contains("billing quota") || lowerMessage.contains("payment required")
+            || lowerMessage.contains("billing hard limit") || lowerMessage.contains("quota exceeded")
+            || lowerMessage.contains("exceeded your current quota")
+            || lowerMessage.contains("account is deactivated")
+            || lowerMessage.contains("plan does not include")
+            || lowerMessage.contains("out of funds") || lowerMessage.contains("run out of funds")
+            || lowerMessage.contains("balance_depleted")
+            || lowerMessage.contains("model_not_supported_on_free_tier")
+            || lowerMessage.contains("not available on the free tier")
+            || lowerMessage.contains("billing")) {
+            return new ClassificationResult(ErrorType.BILLING, RecoveryHints.rotateAndFallback());
+        }
+
+        // ── 8. Context overflow — compress and retry ──
+        if (lowerMessage.contains("context length") || lowerMessage.contains("context window")
+            || lowerMessage.contains("maximum context") || lowerMessage.contains("token limit exceeded")
+            || lowerMessage.contains("context_length_exceeded")
+            || lowerMessage.contains("context size") || lowerMessage.contains("too many tokens")
+            || lowerMessage.contains("reduce the length") || lowerMessage.contains("exceeds the limit")
+            || lowerMessage.contains("prompt is too long") || lowerMessage.contains("prompt exceeds max length")
+            || lowerMessage.contains("max_model_len") || lowerMessage.contains("prompt length")
+            || lowerMessage.contains("input is too long") || lowerMessage.contains("maximum model length")
+            || lowerMessage.contains("context length exceeded")) {
+            return new ClassificationResult(ErrorType.CONTEXT_OVERFLOW, RecoveryHints.compressAndRetry());
+        }
+
+        // ── 9. Payload too large (413) ──
+        // Mirrors Hermes FailoverReason.payload_too_large
+        if (lowerMessage.contains("413")
+            || lowerMessage.contains("request entity too large")
+            || lowerMessage.contains("payload too large")
+            || lowerMessage.contains("error code: 413")) {
+            return new ClassificationResult(ErrorType.PAYLOAD_TOO_LARGE, RecoveryHints.compressAndRetry());
+        }
+
+        // ── 10. Image too large (413/400 + image patterns) ──
+        // Mirrors Hermes FailoverReason.image_too_large + _IMAGE_TOO_LARGE_PATTERNS
+        if (lowerMessage.contains("image exceeds")
+            || lowerMessage.contains("image too large")
+            || lowerMessage.contains("image_too_large")
+            || lowerMessage.contains("image size exceeds")
+            || lowerMessage.contains("image dimensions exceed")
+            || lowerMessage.contains("dimensions exceed max allowed size")
+            || lowerMessage.contains("max allowed size: 8000")) {
+            return new ClassificationResult(ErrorType.IMAGE_TOO_LARGE, RecoveryHints.compressAndRetry());
+        }
+
+        // ── 11. Provider policy blocked (403/404 + policy patterns) ──
+        // Mirrors Hermes FailoverReason.provider_policy_blocked + _PROVIDER_POLICY_BLOCKED_PATTERNS
+        if (lowerMessage.contains("no endpoints available matching your guardrail")
+            || lowerMessage.contains("no endpoints available matching your data policy")
+            || lowerMessage.contains("no endpoints found matching your data policy")) {
+            return new ClassificationResult(ErrorType.PROVIDER_POLICY_BLOCKED, RecoveryHints.noRetry());
+        }
+
+        // ── 12. Auth errors — 401 ──
+        if (lowerMessage.contains("401") || lowerMessage.contains("unauthorized")
+            || lowerMessage.contains("invalid api key") || lowerMessage.contains("invalid_api_key")
+            || lowerMessage.contains("authentication failed")
+            || lowerMessage.contains("invalid token") || lowerMessage.contains("token expired")
+            || lowerMessage.contains("token revoked")) {
+            return new ClassificationResult(ErrorType.AUTH, RecoveryHints.rotateAndRetry());
+        }
+
+        // ── 13. Auth permanent — 403 ──
+        // Check billing-403 first (key limit exceeded, spending limit)
+        if (lowerMessage.contains("403") || lowerMessage.contains("forbidden")
+            || lowerMessage.contains("access denied") || lowerMessage.contains("permission denied")) {
+            // OpenRouter 403 "key limit exceeded" is actually billing
+            if (lowerMessage.contains("key limit exceeded") || lowerMessage.contains("spending limit")) {
+                return new ClassificationResult(ErrorType.BILLING, RecoveryHints.rotateAndFallback());
+            }
+            return new ClassificationResult(ErrorType.AUTH_PERMANENT, RecoveryHints.fallback());
+        }
+
+        // ── 14. Model not found — 404 ──
+        if (lowerMessage.contains("404") || lowerMessage.contains("model not found")
+            || lowerMessage.contains("model_not_found") || lowerMessage.contains("does not exist")
+            || lowerMessage.contains("no such model") || lowerMessage.contains("is not a valid model")
+            || lowerMessage.contains("invalid model") || lowerMessage.contains("unknown model")
+            || lowerMessage.contains("unsupported model")) {
+            return new ClassificationResult(ErrorType.MODEL_NOT_FOUND, RecoveryHints.switchModel());
+        }
+
+        // ── 15. Format error — 422 ──
+        if (lowerMessage.contains("422") || lowerMessage.contains("unprocessable")
+            || (lowerMessage.contains("invalid_request_error") && lowerMessage.contains("format"))
+            || lowerMessage.contains("unknown parameter") || lowerMessage.contains("unsupported parameter")
+            || lowerMessage.contains("unrecognized request argument")
+            || lowerMessage.contains("unknown_parameter") || lowerMessage.contains("unsupported_parameter")) {
+            return new ClassificationResult(ErrorType.FORMAT_ERROR, RecoveryHints.noRetry());
+        }
+
+        // ── Multimodal tool content — provider rejected list-type content in tool messages ──
+        // Mirrors Hermes _MULTIMODAL_TOOL_CONTENT_PATTERNS
+        if (lowerMessage.contains("text is not set")
+            || lowerMessage.contains("tool message content must be a string")
+            || lowerMessage.contains("tool content must be a string")
+            || lowerMessage.contains("tool message must be a string")
+            || lowerMessage.contains("expected string, got list")
+            || lowerMessage.contains("expected string, got array")
+            || lowerMessage.contains("tool_call.content must be string")) {
+            return new ClassificationResult(ErrorType.MULTIMODAL_TOOL_CONTENT, RecoveryHints.canRetry());
+        }
+
+        // ── 16. Provider overloaded (Anthropic-specific 529) ──
+        if (lowerMessage.contains("529") || lowerMessage.contains("overloaded")
+            || lowerMessage.contains("model is overloaded")) {
+            return new ClassificationResult(ErrorType.OVERLOADED, RecoveryHints.canRetry());
+        }
+
+        // ── 17. Server error — 500/503 ──
+        if (lowerMessage.contains("500") || lowerMessage.contains("internal server error")
+            || lowerMessage.contains("server error") || lowerMessage.contains("503")
+            || lowerMessage.contains("service unavailable") || lowerMessage.contains("temporarily unavailable")
+            || lowerMessage.contains("please try again later")) {
+            return new ClassificationResult(ErrorType.SERVER_ERROR, RecoveryHints.canRetry());
+        }
+
+        // ── 18. Rate limit — 429 ──
+        if (lowerMessage.contains("rate limit") || lowerMessage.contains("429")
+            || lowerMessage.contains("too many requests")
+            || lowerMessage.contains("throttled") || lowerMessage.contains("resource_exhausted")
+            || lowerMessage.contains("requests per minute") || lowerMessage.contains("tokens per minute")) {
+            return new ClassificationResult(ErrorType.RATE_LIMIT, RecoveryHints.canRetry());
+        }
+
+        // ── 19. Timeout ──
+        if (exception instanceof TimeoutException
+            || lowerMessage.contains("timeout") || lowerMessage.contains("timed out")
+            || lowerMessage.contains("deadline exceeded") || lowerMessage.contains("operation timed out")
+            || lowerMessage.contains("upstream timed out")) {
+            return new ClassificationResult(ErrorType.TIMEOUT, RecoveryHints.canRetry());
+        }
+
+        // ── 20. Permanent — invalid key / API ──
         if (exception instanceof IllegalArgumentException) {
-            return ErrorType.PERMANENT;
+            return new ClassificationResult(ErrorType.PERMANENT, RecoveryHints.noRetry());
         }
         if (lowerMessage.contains("invalid") && (lowerMessage.contains("key") || lowerMessage.contains("api"))) {
-            return ErrorType.PERMANENT;
+            return new ClassificationResult(ErrorType.PERMANENT, RecoveryHints.noRetry());
         }
 
-        // Connection issues
+        // ── 21. Connection issues ──
         if (lowerMessage.contains("connection") || lowerMessage.contains("refused") || lowerMessage.contains("reset")) {
-            return ErrorType.RETRYABLE;
+            return new ClassificationResult(ErrorType.RETRYABLE, RecoveryHints.canRetry());
         }
 
-        // Default: safer to retry
-        return ErrorType.RETRYABLE;
+        // ── 22. Default: safer to retry ──
+        return new ClassificationResult(ErrorType.RETRYABLE, RecoveryHints.canRetry());
     }
+
+    /** Full classification result with type and recovery hints. */
+    public record ClassificationResult(ErrorType type, RecoveryHints hints) {}
 }

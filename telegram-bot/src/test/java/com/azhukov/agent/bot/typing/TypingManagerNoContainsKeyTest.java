@@ -36,7 +36,7 @@ class TypingManagerNoContainsKeyTest {
 
     @Test
     void concurrentStartTypingDoesNotScheduleDuplicates() throws Exception {
-        when(client.sendTyping(anyLong())).thenReturn(true);
+        when(client.sendTyping(anyLong(), any())).thenReturn(true);
 
         int threadCount = 5;
         CountDownLatch startLatch = new CountDownLatch(1);
@@ -63,7 +63,7 @@ class TypingManagerNoContainsKeyTest {
         // but only one periodic task should be scheduled.
         // The fix ensures no containsKey early-return that creates a race window.
         // Verify that typing was sent (at least once from immediate sends)
-        verify(client, atLeast(threadCount)).sendTyping(42L);
+        verify(client, atLeast(threadCount)).sendTyping(eq(42L), any());
 
         // Only one periodic task should be running
         assertThat(manager.isTyping(42L)).isTrue();
@@ -74,12 +74,12 @@ class TypingManagerNoContainsKeyTest {
 
     @Test
     void startTypingSendsImmediateThenPeriodic() throws InterruptedException {
-        when(client.sendTyping(anyLong())).thenReturn(true);
+        when(client.sendTyping(anyLong(), any())).thenReturn(true);
         manager.startTyping(99L);
 
         // Wait for at least 2 calls (immediate + one periodic)
         Thread.sleep(600);
-        verify(client, atLeast(2)).sendTyping(99L);
+        verify(client, atLeast(2)).sendTyping(eq(99L), any());
 
         manager.stopTyping(99L);
     }

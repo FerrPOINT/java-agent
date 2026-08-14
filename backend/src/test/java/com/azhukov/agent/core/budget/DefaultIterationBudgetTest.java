@@ -63,10 +63,10 @@ class DefaultIterationBudgetTest {
     }
 
     @Test
-    void defaultMaxModelCallsIs90MatchingHermes() {
-        // Hermes uses max_iterations=90 (default) — verify our default matches
+    void defaultMaxModelCallsIs100MatchingUserPreference() {
+        // User wants 100 model calls per turn (100×100 default)
         AgentProperties.BudgetProperties defaultBudget = new AgentProperties.BudgetProperties();
-        assertThat(defaultBudget.getMaxModelCallsPerTurn()).isEqualTo(90);
+        assertThat(defaultBudget.getMaxModelCallsPerTurn()).isEqualTo(100);
     }
 
     @Test
@@ -75,6 +75,20 @@ class DefaultIterationBudgetTest {
         // (effectively unlimited, matching Hermes which doesn't limit tools separately)
         AgentProperties.BudgetProperties defaultBudget = new AgentProperties.BudgetProperties();
         assertThat(defaultBudget.getMaxToolExecutionsPerTurn()).isEqualTo(200);
+    }
+
+    @Test
+    void defaultMemoryNudgeIntervalIs10() {
+        // Hermes default: memory.nudge_interval = 10 (review every 10 user turns)
+        AgentProperties.MemoryProperties defaultMemory = new AgentProperties.MemoryProperties();
+        assertThat(defaultMemory.getNudgeInterval()).isEqualTo(10);
+    }
+
+    @Test
+    void defaultSkillCreationNudgeIntervalIs15() {
+        // Hermes default: skills.creation_nudge_interval = 15 (review every 15 tool-calling iterations)
+        AgentProperties.SkillsProperties defaultSkills = new AgentProperties.SkillsProperties();
+        assertThat(defaultSkills.getCreationNudgeInterval()).isEqualTo(15);
     }
 
     @Test

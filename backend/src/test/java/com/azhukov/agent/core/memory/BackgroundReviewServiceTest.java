@@ -478,4 +478,151 @@ class BackgroundReviewServiceTest {
         });
         svc.shutdown();
     }
+
+    // ── Nudge-gated review tests ─────────────────────────────────────
+
+    @Test
+    void reviewTurn_memoryOnlyFlag_usesMemoryPrompt() {
+        when(modelClient.complete(any(), any())).thenReturn(new ChatResponse("Done", List.of()));
+
+        var svc = createService();
+        UUID sessionId = UUID.randomUUID();
+        List<Message> messages = List.of(
+            Message.user("some conversation without skill signals"),
+            Message.assistant("ok", 0)
+        );
+        svc.reviewTurn(sessionId, messages, true, false);
+
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+            verify(modelClient).complete(any(), any())
+        );
+
+        org.mockito.ArgumentCaptor<List<Message>> msgsCaptor =
+            org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(modelClient).complete(msgsCaptor.capture(), any());
+        List<Message> reviewMessages = msgsCaptor.getValue();
+        Message lastUserMsg = null;
+        for (Message m : reviewMessages) {
+            if (m.role() == com.azhukov.agent.core.model.Role.USER) {
+                lastUserMsg = m;
+            }
+        }
+        assertThat(lastUserMsg).isNotNull();
+        // When only memory nudge fired, the prompt should be MEMORY_REVIEW_PROMPT
+        // (not combined, not skill)
+        assertThat(lastUserMsg.content()).isEqualTo(ReviewPrompts.MEMORY_REVIEW_PROMPT);
+        svc.shutdown();
+    }
+
+    @Test
+    void reviewTurn_skillOnlyFlag_usesSkillPrompt() {
+        when(modelClient.complete(any(), any())).thenReturn(new ChatResponse("Done", List.of()));
+
+        var svc = createService();
+        UUID sessionId = UUID.randomUUID();
+        List<Message> messages = List.of(
+            Message.user("some conversation"),
+            Message.assistant("ok", 0)
+        );
+        svc.reviewTurn(sessionId, messages, false, true);
+
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+            verify(modelClient).complete(any(), any())
+        );
+
+        org.mockito.ArgumentCaptor<List<Message>> msgsCaptor =
+            org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(modelClient).complete(msgsCaptor.capture(), any());
+        List<Message> reviewMessages = msgsCaptor.getValue();
+        Message lastUserMsg = null;
+        for (Message m : reviewMessages) {
+            if (m.role() == com.azhukov.agent.core.model.Role.USER) {
+                lastUserMsg = m;
+            }
+        }
+        assertThat(lastUserMsg).isNotNull();
+        // When only skill nudge fired, the prompt should be SKILL_REVIEW_PROMPT
+        assertThat(lastUserMsg.content()).isEqualTo(ReviewPrompts.SKILL_REVIEW_PROMPT);
+        svc.shutdown();
+    }
+
+    @Test
+    void reviewTurn_bothFlagsFalse_doesNothing() {
+        var svc = createService();
+        UUID sessionId = UUID.randomUUID();
+        svc.reviewTurn(sessionId, List.of(Message.user("test")), false, false);
+        verifyNoInteractions(modelClient);
+        svc.shutdown();
+    }
+
+    @Test
+    void reviewTurn_bothFlagsTrue_usesCombinedPromptFromSelector() {
+        when(modelClient.complete(any(), any())).thenReturn(new ChatResponse("Done", List.of()));
+
+        var svc = createService();
+        UUID sessionId = UUID.randomUUID();
+        // Include both memory and skill signals so ReviewPromptSelector picks COMBINED
+        List<Message> messages = List.of(
+            Message.user("I prefer concise answers"),
+            Message.assistant("This debugging workflow should work.", 0)
+        );
+        svc.reviewTurn(sessionId, messages, true, true);
+
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+            verify(modelClient).complete(any(), any())
+        );
+
+        org.mockito.ArgumentCaptor<List<Message>> msgsCaptor =
+            org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(modelClient).complete(msgsCaptor.capture(), any());
+        List<Message> reviewMessages = msgsCaptor.getValue();
+        Message lastUserMsg = null;
+        for (Message m : reviewMessages) {
+            if (m.role() == com.azhukov.agent.core.model.Role.USER) {
+                lastUserMsg = m;
+            }
+        }
+        assertThat(lastUserMsg).isNotNull();
+        // When both nudges fired, the prompt is selected by ReviewPromptSelector
+        // (which may be combined, memory-only, or skill-only depending on conversation content)
+        assertThat(lastUserMsg.content()).isIn(
+            ReviewPrompts.COMBINED_REVIEW_PROMPT,
+            ReviewPrompts.MEMORY_REVIEW_PROMPT,
+            ReviewPrompts.SKILL_REVIEW_PROMPT
+        );
+        svc.shutdown();
+    }
+
+    @Test
+    void reviewTurn_memoryOnlyFlagWithSkillSignals_stillUsesMemoryPrompt() {
+        // When only memory nudge fired, even if conversation has skill signals,
+        // the prompt should be MEMORY_REVIEW_PROMPT (nudge overrides content-based selection)
+        when(modelClient.complete(any(), any())).thenReturn(new ChatResponse("Done", List.of()));
+
+        var svc = createService();
+        UUID sessionId = UUID.randomUUID();
+        List<Message> messages = List.of(
+            Message.user("stop doing that, this is too verbose"),
+            Message.assistant("Sorry, I'll fix the workflow.", 0)
+        );
+        svc.reviewTurn(sessionId, messages, true, false);
+
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+            verify(modelClient).complete(any(), any())
+        );
+
+        org.mockito.ArgumentCaptor<List<Message>> msgsCaptor =
+            org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(modelClient).complete(msgsCaptor.capture(), any());
+        List<Message> reviewMessages = msgsCaptor.getValue();
+        Message lastUserMsg = null;
+        for (Message m : reviewMessages) {
+            if (m.role() == com.azhukov.agent.core.model.Role.USER) {
+                lastUserMsg = m;
+            }
+        }
+        assertThat(lastUserMsg).isNotNull();
+        assertThat(lastUserMsg.content()).isEqualTo(ReviewPrompts.MEMORY_REVIEW_PROMPT);
+        svc.shutdown();
+    }
 }

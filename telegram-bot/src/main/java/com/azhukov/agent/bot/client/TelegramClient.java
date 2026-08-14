@@ -8,6 +8,7 @@ import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -219,6 +220,19 @@ public class TelegramClient {
                 log.warn("sendMessage 429 rate limit (no retry_after): {}", e.getMessage());
                 return Optional.empty();
             }
+            // P1-6: MarkdownV2 parse error fallback — retry without parse_mode (plain text)
+            if (parseMode != null && e.isParseError()) {
+                log.warn("sendMessage MarkdownV2 parse error for chat {}, falling back to plain text: {}", chatId, e.getMessage());
+                Map<String, Object> plainParams = new LinkedHashMap<>(params);
+                plainParams.remove("parse_mode");
+                try {
+                    Optional<TelegramResponse> retry = callApi("sendMessage", plainParams);
+                    return retry.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+                } catch (TelegramApiException retryEx) {
+                    log.warn("sendMessage plain-text fallback also failed: {}", retryEx.getMessage());
+                    return Optional.empty();
+                }
+            }
             // Non-429 error: check if we should retry without reply_to_message_id
             if (replyToMessageId != null && shouldRetryWithoutReply(e.getErrorDescription())) {
                 log.debug("sendMessage failed with reply_to_message_id={}, retrying without", replyToMessageId);
@@ -314,6 +328,21 @@ public class TelegramClient {
                 // Let 429 propagate so StreamEditor can apply adaptive backoff
                 throw e;
             }
+            // P1-6: MarkdownV2 parse error fallback — retry without parse_mode (plain text)
+            if (parseMode != null && e.isParseError()) {
+                log.warn("editMessageText MarkdownV2 parse error for chat {}, falling back to plain text: {}", chatId, e.getMessage());
+                Map<String, Object> plainParams = new LinkedHashMap<>(params);
+                plainParams.remove("parse_mode");
+                try {
+                    return callApi("editMessageText", plainParams).isPresent();
+                } catch (TelegramApiException retryEx) {
+                    if (retryEx.isRateLimit()) {
+                        throw retryEx;
+                    }
+                    log.debug("editMessageText plain-text fallback also failed: {}", retryEx.getMessage());
+                    return false;
+                }
+            }
             log.debug("editMessageText failed: {}", e.getMessage());
             return false;
         }
@@ -368,8 +397,45 @@ public class TelegramClient {
         }
     }
 
+    /**
+     * Send a chat action with optional forum thread routing.
+     * When {@code messageThreadId} is non-null, the action is routed to the
+     * correct forum topic thread.
+     *
+     * @param chatId target chat id
+     * @param action the chat action (e.g. "typing")
+     * @param messageThreadId optional forum thread id (null = no thread routing)
+     * @return true if the action was sent successfully
+     */
+    public boolean sendChatAction(long chatId, String action, Integer messageThreadId) {
+        if (messageThreadId == null) {
+            return sendChatAction(chatId, action);
+        }
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("chat_id", chatId);
+        params.put("action", action);
+        params.put("message_thread_id", messageThreadId);
+        try {
+            return callApi("sendChatAction", params).isPresent();
+        } catch (TelegramApiException e) {
+            log.warn("sendChatAction failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
     public boolean sendTyping(long chatId) {
         return sendChatAction(chatId, "typing");
+    }
+
+    /**
+     * Send a typing indicator with optional forum thread routing.
+     *
+     * @param chatId target chat id
+     * @param messageThreadId optional forum thread id (null = no thread routing)
+     * @return true if the typing indicator was sent successfully
+     */
+    public boolean sendTyping(long chatId, Integer messageThreadId) {
+        return sendChatAction(chatId, "typing", messageThreadId);
     }
 
     // ─── Message reactions ─────────────────────────────────────────
@@ -448,6 +514,147 @@ public class TelegramClient {
             return Optional.empty();
         }
     }
+
+    /**
+     * Send a video file. The video is uploaded as a multipart attachment.
+     *
+     * @param chatId    target chat id
+     * @param video     video file bytes
+     * @param fileName  filename for the uploaded video (e.g. "video.mp4")
+     * @param caption   optional caption text
+     * @param parseMode optional parse mode for the caption
+     * @return the sent message id wrapped in Optional, or empty on failure
+     */
+    public Optional<Long> sendVideo(long chatId, byte[] video, String fileName,
+                                     String caption, String parseMode) {
+        String name = (fileName == null || fileName.isBlank()) ? "video.mp4" : fileName;
+        MultipartBodyBuilder builder = new MultipartBodyBuilder();
+        builder.part("chat_id", String.valueOf(chatId));
+        builder.part("video", new ByteArrayResource(video) {
+            @Override public String getFilename() { return name; }
+        }, MediaType.APPLICATION_OCTET_STREAM);
+        if (caption != null && !caption.isBlank()) builder.part("caption", caption);
+        if (parseMode != null && !parseMode.isBlank()) builder.part("parse_mode", parseMode);
+        try {
+            return callMultipartApi("sendVideo", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        } catch (TelegramApiException e) {
+            log.warn("sendVideo failed: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Send an audio file as a voice message. Uses {@code sendVoice} under the hood
+     * with the provided filename so Telegram can display the correct format.
+     *
+     * @param chatId   target chat id
+     * @param audio    audio file bytes
+     * @param fileName filename (e.g. "audio.mp3")
+     * @param caption  optional caption
+     * @return the sent message id, or empty on failure
+     */
+    public Optional<Long> sendAudioAsVoice(long chatId, byte[] audio, String fileName, String caption) {
+        String name = (fileName == null || fileName.isBlank()) ? "voice.ogg" : fileName;
+        MultipartBodyBuilder builder = new MultipartBodyBuilder();
+        builder.part("chat_id", String.valueOf(chatId));
+        builder.part("voice", new ByteArrayResource(audio) {
+            @Override public String getFilename() { return name; }
+        }, MediaType.parseMediaType("audio/ogg"));
+        if (caption != null && !caption.isBlank()) builder.part("caption", caption);
+        try {
+            return callMultipartApi("sendVoice", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        } catch (TelegramApiException e) {
+            log.warn("sendAudioAsVoice failed: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Send a group of photos as a Telegram album (sendMediaGroup).
+     * Telegram allows up to 10 items per media group; larger lists should
+     * be chunked by the caller.
+     *
+     * <p>Uses a JSON {@code media} parameter with {@code attach://} references
+     * to the multipart-uploaded files.
+     *
+     * @param chatId  target chat id
+     * @param photos  list of (photo bytes, filename, caption) entries
+     * @return list of sent message ids (may be shorter than photos on partial failure)
+     */
+    public List<Long> sendMediaGroup(long chatId, List<PhotoInput> photos) {
+        if (photos == null || photos.isEmpty()) {
+            return List.of();
+        }
+        MultipartBodyBuilder builder = new MultipartBodyBuilder();
+        builder.part("chat_id", String.valueOf(chatId));
+
+        // Build the media JSON array with attach:// references
+        List<Map<String, Object>> mediaArray = new ArrayList<>();
+        for (int i = 0; i < photos.size(); i++) {
+            PhotoInput photo = photos.get(i);
+            String attachName = "photo" + i;
+            String mediaType = "photo";
+            // GIFs are sent as animations, not photos — but for simplicity in
+            // media groups, we send them as photos (Telegram will reject .gif
+            // in media groups; the caller should peel off GIFs before calling).
+            MediaType mimeType = guessImageMediaType(photo.fileName());
+            builder.part(attachName, new ByteArrayResource(photo.data()) {
+                @Override public String getFilename() { return photo.fileName(); }
+            }, mimeType);
+
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("type", mediaType);
+            item.put("media", "attach://" + attachName);
+            if (photo.caption() != null && !photo.caption().isBlank()) {
+                item.put("caption", photo.caption());
+                item.put("parse_mode", "MarkdownV2");
+            }
+            mediaArray.add(item);
+        }
+
+        try {
+            builder.part("media", objectMapper.writeValueAsString(mediaArray));
+        } catch (Exception e) {
+            log.warn("sendMediaGroup: failed to serialize media JSON: {}", e.getMessage());
+            return List.of();
+        }
+
+        try {
+            Optional<TelegramResponse> response = callMultipartApi("sendMediaGroup", builder.build());
+            if (response.isPresent()) {
+                // sendMediaGroup returns an array of Message objects
+                Object result = response.get().result();
+                if (result instanceof List<?> list) {
+                    List<Long> messageIds = new ArrayList<>();
+                    for (Object item : list) {
+                        if (item instanceof Map<?, ?> msg) {
+                            Object id = msg.get("message_id");
+                            if (id instanceof Number num) {
+                                messageIds.add(num.longValue());
+                            }
+                        }
+                    }
+                    return messageIds;
+                }
+            }
+            return List.of();
+        } catch (TelegramApiException e) {
+            log.warn("sendMediaGroup failed: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    private static MediaType guessImageMediaType(String fileName) {
+        if (fileName == null) return MediaType.IMAGE_JPEG;
+        String lower = fileName.toLowerCase();
+        if (lower.endsWith(".png")) return MediaType.IMAGE_PNG;
+        if (lower.endsWith(".gif")) return MediaType.IMAGE_GIF;
+        if (lower.endsWith(".webp")) return MediaType.parseMediaType("image/webp");
+        return MediaType.IMAGE_JPEG;
+    }
+
+    /** Input for sendMediaGroup: photo bytes, filename, and optional caption. */
+    public record PhotoInput(byte[] data, String fileName, String caption) {}
 
     // ─── File download ────────────────────────────────────────────
 
@@ -586,6 +793,111 @@ public class TelegramClient {
             log.warn("getUpdates failed: {}", e.getMessage());
             return Optional.empty();
         }
+    }
+
+    // ─── Draft streaming (Bot API 9.5 sendMessageDraft) ──────────
+
+    /**
+     * Check whether native draft streaming is supported for the given chat.
+     *
+     * <p>Bot API 9.5 introduced {@code sendMessageDraft} which renders an
+     * animated streaming preview (like ChatGPT's streaming UI). It is
+     * available for private (DM) chats only — groups, supergroups, channels,
+     * and forum topics must use the edit-based path.
+     *
+     * <p>This implementation uses a direct HTTP POST to the Telegram Bot API
+     * (the java-agent does not use a high-level telegrambots library that
+     * wraps sendMessageDraft). The method is always callable — the actual
+     * API call in {@link #sendDraft} will return an error if the bot lacks
+     * the capability, and the caller falls back to edit-based streaming.
+     *
+     * @param chatType the chat type string ("dm", "private", "group", "supergroup", "forum", etc.)
+     * @return {@code true} if draft streaming should be attempted for this chat type
+     */
+    public boolean supportsDraftStreaming(String chatType) {
+        if (chatType == null) {
+            return false;
+        }
+        String lower = chatType.toLowerCase();
+        return lower.equals("dm") || lower.equals("private");
+    }
+
+    /**
+     * Send a draft streaming frame via the Telegram Bot API method
+     * {@code sendMessageDraft} (Bot API 9.5).
+     *
+     * <p>The Bot API animates the preview when the same {@code draft_id} is
+     * reused across consecutive calls in the same chat. When the response
+     * finishes, the caller sends the final text via the normal
+     * {@code sendMessage} path; the draft preview clears naturally on the
+     * client (Telegram has no Bot API to "promote" a draft to a real
+     * message — the final {@code sendMessage} is what the user receives in
+     * their chat history).
+     *
+     * <p>Implements a direct HTTP POST to
+     * {@code https://api.telegram.org/bot{token}/sendMessageDraft} because
+     * the java-agent does not use a high-level telegrambots library that
+     * wraps this method.
+     *
+     * <p>MarkdownV2 parse_mode is tried first (matching the formatting of
+     * the final message). On a parse error (Telegram returns 400 with
+     * "can_parse_entities"), the call retries as plain text (no parse_mode).
+     * On any other error, the method returns {@code false} so the caller can
+     * fall back to edit-based streaming.
+     *
+     * @param chatId  target chat id
+     * @param text    the draft text to display
+     * @param draftId the draft id for managing the draft lifecycle (increment on segment break)
+     * @return {@code true} if the draft frame was successfully sent
+     */
+    public boolean sendDraft(long chatId, String text, int draftId) {
+        return sendDraft(chatId, text, draftId, null);
+    }
+
+    /**
+     * Send a draft streaming frame with optional message_thread_id.
+     *
+     * @param messageThreadId optional forum thread id (null = no thread routing)
+     * @return {@code true} if the draft frame was successfully sent
+     */
+    public boolean sendDraft(long chatId, String text, int draftId, Integer messageThreadId) {
+        if (botToken.isBlank()) {
+            log.warn("Bot token is empty; cannot call sendMessageDraft");
+            return false;
+        }
+        // Try MarkdownV2 first, then fall back to plain text
+        for (boolean useMarkdown : new boolean[]{true, false}) {
+            Map<String, Object> params = new LinkedHashMap<>();
+            params.put("chat_id", chatId);
+            params.put("draft_id", draftId);
+            params.put("text", text);
+            if (useMarkdown) {
+                params.put("parse_mode", "MarkdownV2");
+            }
+            if (messageThreadId != null) {
+                params.put("message_thread_id", messageThreadId);
+            }
+            try {
+                Optional<TelegramResponse> response = callApi("sendMessageDraft", params);
+                if (response.isPresent() && response.get().isSuccess()) {
+                    log.debug("sendMessageDraft succeeded for chat {} draftId={} (markdown={})", chatId, draftId, useMarkdown);
+                    return true;
+                }
+                // Should not reach here — callApi throws on non-ok responses
+                return false;
+            } catch (TelegramApiException e) {
+                if (useMarkdown && e.isParseError()) {
+                    log.debug("sendMessageDraft MarkdownV2 parse error for chat {}, retrying as plain text: {}", chatId, e.getMessage());
+                    continue; // Retry without parse_mode
+                }
+                // Non-parse error (including errors on the plain-text attempt) — log and return false
+                log.debug("sendMessageDraft failed for chat {} draftId={}: {}", chatId, draftId, e.getMessage());
+                return false;
+            }
+        }
+        // Both attempts failed
+        log.debug("sendMessageDraft exhausted both markdown and plain-text attempts for chat {} draftId={}", chatId, draftId);
+        return false;
     }
 
     // ─── Internal ─────────────────────────────────────────────────

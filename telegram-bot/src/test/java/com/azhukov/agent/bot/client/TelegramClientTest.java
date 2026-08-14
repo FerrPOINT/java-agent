@@ -1395,4 +1395,104 @@ class TelegramClientTest {
             assertThat(ex.getMessage()).contains("500");
         }
     }
+
+    // ─── S5: sendMessageDraft tests ──────────────────────────────
+
+    @Nested
+    @DisplayName("S5: sendDraft (sendMessageDraft)")
+    class SendDraftTests {
+
+        @Test
+        @DisplayName("supportsDraftStreaming returns true for DM/private")
+        void supportsDraftStreaming_dmReturnsTrue() {
+            assertThat(client.supportsDraftStreaming("dm")).isTrue();
+            assertThat(client.supportsDraftStreaming("private")).isTrue();
+        }
+
+        @Test
+        @DisplayName("supportsDraftStreaming returns false for group/supergroup/forum/null")
+        void supportsDraftStreaming_nonDmReturnsFalse() {
+            assertThat(client.supportsDraftStreaming("group")).isFalse();
+            assertThat(client.supportsDraftStreaming("supergroup")).isFalse();
+            assertThat(client.supportsDraftStreaming("forum")).isFalse();
+            assertThat(client.supportsDraftStreaming(null)).isFalse();
+            assertThat(client.supportsDraftStreaming("")).isFalse();
+        }
+
+        @Test
+        @DisplayName("sendDraft succeeds with MarkdownV2")
+        void sendDraft_succeedsWithMarkdownV2() {
+            TelegramResponse okResponse = new TelegramResponse(true, null, "OK", Map.of(), null);
+            stubPostChain(okResponse);
+
+            boolean result = client.sendDraft(123L, "Hello *world*", 1);
+
+            assertThat(result).isTrue();
+        }
+
+        @Test
+        @DisplayName("sendDraft falls back to plain text on MarkdownV2 parse error")
+        void sendDraft_fallsBackToPlainTextOnParseError() {
+            // First call (MarkdownV2) returns parse error
+            TelegramResponse parseError = errorResponse(400, "Bad Request: can't parse entities: unmatched asterisk");
+            // Second call (plain text) succeeds
+            TelegramResponse okResponse = new TelegramResponse(true, null, "OK", Map.of(), null);
+
+            // Stub two sequential calls
+            when(restClient.post()).thenReturn(postUriSpec);
+            when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
+            when(bodySpec.accept(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.contentType(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.body(anyMap())).thenReturn(bodySpec);
+            when(bodySpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.body(TelegramResponse.class))
+                .thenReturn(parseError)  // First call: MarkdownV2 parse error
+                .thenReturn(okResponse);  // Second call: plain text success
+
+            boolean result = client.sendDraft(123L, "Hello *invalid markdown", 1);
+
+            assertThat(result).isTrue();
+        }
+
+        @Test
+        @DisplayName("sendDraft returns false on non-parse error")
+        void sendDraft_returnsFalseOnNonParseError() {
+            TelegramResponse errorResp = errorResponse(403, "Forbidden: bot was blocked by the user");
+            stubPostChain(errorResp);
+
+            boolean result = client.sendDraft(123L, "Hello", 1);
+
+            assertThat(result).isFalse();
+        }
+
+        @Test
+        @DisplayName("sendDraft returns false when both markdown and plain text fail")
+        void sendDraft_returnsFalseWhenBothAttemptsFail() {
+            // Both calls return parse error (so the plain text retry also fails)
+            TelegramResponse parseError1 = errorResponse(400, "Bad Request: can't parse entities");
+            TelegramResponse parseError2 = errorResponse(400, "Bad Request: can't parse entities");
+
+            when(restClient.post()).thenReturn(postUriSpec);
+            when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
+            when(bodySpec.accept(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.contentType(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.body(anyMap())).thenReturn(bodySpec);
+            when(bodySpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.body(TelegramResponse.class))
+                .thenReturn(parseError1)
+                .thenReturn(parseError2);
+
+            boolean result = client.sendDraft(123L, "Hello", 1);
+
+            assertThat(result).isFalse();
+        }
+
+        @Test
+        @DisplayName("sendDraft returns false when bot token is blank")
+        void sendDraft_returnsFalseWhenTokenBlank() {
+            TelegramClient blankClient = new TelegramClient(restClient, objectMapper, "", 0);
+            boolean result = blankClient.sendDraft(123L, "Hello", 1);
+            assertThat(result).isFalse();
+        }
+    }
 }

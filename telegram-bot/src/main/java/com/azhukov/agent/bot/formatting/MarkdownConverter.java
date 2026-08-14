@@ -178,11 +178,21 @@ public final class MarkdownConverter {
     private static final Pattern LIST_PATTERN =
         Pattern.compile("(?m)^[-*+]\\s+(.+)$");
 
-    // Fenced code block: ```lang\n...``` (lang supports c++, objective-c, etc.)
+    // Fenced code block: ```lang\n...```
+    // L9: Handles standard fenced code blocks. Nested triple backticks (code blocks
+    // inside code blocks) are a known limitation of regex-based parsing — the pattern
+    // stops at the first closing ```. For content with nested code blocks, the user
+    // should use indentation-based code blocks (4 spaces) instead. This matches the
+    // behavior of most Markdown processors that use regex for fenced code detection.
     private static final Pattern CODE_BLOCK_PATTERN =
         Pattern.compile("```([^\\n]*)\\n(.*?)```", Pattern.DOTALL);
 
     // Inline code: `code`
+    // L8: Backtick escaping inside inline code is handled by escapeCodeBlockContent()
+    // which is called in protectInlineCode(). The pattern itself just matches the content
+    // between backticks — the escaping happens separately. This is not dead code: the pattern
+    // is used to extract inline code for protection, and escapeCodeBlockContent handles the
+    // backtick escaping within that content.
     private static final Pattern INLINE_CODE_PATTERN =
         Pattern.compile("`([^`]+)`");
 
@@ -269,12 +279,15 @@ public final class MarkdownConverter {
         while (matcher.find()) {
             String lang = matcher.group(1);
             String code = matcher.group(2);
+            // P1-7: Escape backslash and backtick inside code blocks for MarkdownV2 compliance.
+            // The MarkdownV2 spec requires escaping \ and ` even inside code blocks.
+            String escapedCode = escapeCodeBlockContent(code);
             // Preserve trailing newline if present
             String replacement;
             if (lang != null && !lang.isEmpty()) {
-                replacement = "```" + lang + "\n" + code + "```";
+                replacement = "```" + lang + "\n" + escapedCode + "```";
             } else {
-                replacement = "```\n" + code + "```";
+                replacement = "```\n" + escapedCode + "```";
             }
             String placeholder = makePlaceholder(protectedSegments.size());
             protectedSegments.add(replacement);
@@ -289,7 +302,9 @@ public final class MarkdownConverter {
         StringBuffer sb = new StringBuffer();
         while (matcher.find()) {
             String code = matcher.group(1);
-            String replacement = "`" + code + "`";
+            // P1-7: Escape backslash and backtick inside inline code for MarkdownV2 compliance.
+            String escapedCode = escapeCodeBlockContent(code);
+            String replacement = "`" + escapedCode + "`";
             String placeholder = makePlaceholder(protectedSegments.size());
             protectedSegments.add(replacement);
             matcher.appendReplacement(sb, Matcher.quoteReplacement(placeholder));
@@ -388,6 +403,39 @@ public final class MarkdownConverter {
 
     private static String makePlaceholder(int index) {
         return PROTECT_PREFIX + index + PROTECT_SUFFIX;
+    }
+
+    /**
+     * Escape backslash and backtick characters inside code blocks and inline code
+     * for MarkdownV2 compliance. The MarkdownV2 spec requires escaping these
+     * characters even inside code blocks. Other special characters are NOT
+     * escaped inside code blocks — they should remain literal.
+     *
+     * <p>Escaping rules:
+     * <ul>
+     *   <li>{@code \} → {@code \\}</li>
+     *   <li>{@code `} → {@code \\`} (escaped backtick)</li>
+     * </ul>
+     *
+     * @param code the raw code content (without surrounding backticks)
+     * @return code content with backslash and backtick escaped
+     */
+    static String escapeCodeBlockContent(String code) {
+        if (code == null || code.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(code.length() * 2);
+        for (int i = 0; i < code.length(); i++) {
+            char c = code.charAt(i);
+            if (c == '\\') {
+                sb.append("\\\\");
+            } else if (c == '`') {
+                sb.append("\\`");
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     /**

@@ -10,6 +10,10 @@ import java.util.concurrent.ConcurrentMap;
  * Stores mid-run steer notes per session.
  * The steer text is injected into the next tool result's content,
  * giving the agent new context without breaking the tool-calling loop.
+ * <p>
+ * Multiple steers for the same session are concatenated with {@code \n}
+ * so the agent sees them as a single block, mirroring Hermes
+ * {@code _pending_steer} accumulation in {@code run_agent.py}.
  */
 @Component
 public class SteerBuffer {
@@ -18,17 +22,18 @@ public class SteerBuffer {
 
     /**
      * Inject a steer note for the given session.
-     * The note will be appended to the next tool result's content.
+     * If a steer is already pending, the new text is appended with a
+     * {@code \n} separator so multiple steers accumulate into one block.
      *
      * @param sessionId the session UUID
      * @param text      the steer text to inject
-     * @return true if the steer was accepted (session has an active turn)
+     * @return true if the steer was accepted
      */
     public boolean steer(UUID sessionId, String text) {
         if (text == null || text.isBlank()) {
             return false;
         }
-        pendingSteers.put(sessionId, text);
+        pendingSteers.merge(sessionId, text, (existing, newText) -> existing + "\n" + newText);
         return true;
     }
 

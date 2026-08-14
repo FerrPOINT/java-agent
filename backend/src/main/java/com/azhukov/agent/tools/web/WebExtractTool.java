@@ -9,13 +9,13 @@ import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.security.UrlSafety;
 import com.azhukov.agent.core.security.Redactor;
+import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import jakarta.annotation.PostConstruct;
@@ -45,14 +45,14 @@ public class WebExtractTool implements ToolHandler {
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         ExtractArgs args = ToolHandler.parseJson(arguments, ExtractArgs.class);
-        if (args.urls() == null || args.urls().isBlank()) {
+        if (args.urls() == null || args.urls().isEmpty()) {
             return ToolResult.fail("URLs are required");
         }
 
-        List<String> urls = Arrays.asList(args.urls().split("\\s*,\\s*"));
         StringBuilder sb = new StringBuilder();
-        for (String url : urls) {
+        for (String url : args.urls()) {
             String trimmed = url.trim();
+            if (trimmed.isBlank()) continue;
             sb.append("--- URL: ").append(trimmed).append(" ---\n");
             if (!urlSafety.isUrlAllowed(trimmed)) {
                 sb.append("URL blocked by safety policy\n\n");
@@ -73,11 +73,21 @@ public class WebExtractTool implements ToolHandler {
     }
 
     protected String extract(String url) throws IOException {
-        Document doc = Jsoup.connect(url)
+        Connection connection = Jsoup.connect(url)
             .userAgent("Mozilla/5.0 (compatible; JavaAgent/1.0)")
             .timeout(timeoutSeconds * 1000)
-            .followRedirects(false)
-            .get();
+            .followRedirects(false);
+
+        // M11: Check content-type before parsing — detect PDFs which jsoup can't handle
+        Connection.Response response = connection.execute();
+        String contentType = response.contentType();
+        if (contentType != null && contentType.toLowerCase().contains("application/pdf")) {
+            // No PDF parsing library available — return a helpful error
+            return "PDF content detected. This tool cannot extract text from PDF files. "
+                + "Use a file download tool or a dedicated PDF extraction tool instead.";
+        }
+
+        Document doc = response.parse();
 
         for (Element el : doc.select("script, style, nav, header, footer, aside, form")) {
             el.remove();
@@ -91,7 +101,8 @@ public class WebExtractTool implements ToolHandler {
         return "Title: " + title + "\n" + body;
     }
 
+    // M12: Changed from comma-separated String to List<String> for proper JSON array support
     public record ExtractArgs(
-        @ToolParam(description = "URL or comma-separated URLs to extract") String urls
+        @ToolParam(description = "List of URLs to extract content from") List<String> urls
     ) {}
 }

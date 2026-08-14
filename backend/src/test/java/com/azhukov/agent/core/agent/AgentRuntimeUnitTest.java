@@ -10,6 +10,7 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
+import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
@@ -39,7 +40,9 @@ class AgentRuntimeUnitTest {
     @Test
     void executesToolAndReturnsFinalAnswer() {
         ToolRegistry registry = mock(ToolRegistry.class);
-        when(registry.getDefinitions(any())).thenReturn(List.of());
+        when(registry.getDefinitions(any())).thenReturn(List.of(
+            new ToolDefinition("read_file", "reads a file", java.util.Map.of())
+        ));
         when(registry.getToolsets()).thenReturn(Set.of("core"));
         when(registry.execute(eq("read_file"), eq("call-1"), eq("{\"path\":\"/tmp/x.txt\",\"offset\":1,\"limit\":10}"), any(), any()))
             .thenReturn(ToolResult.ok("hello"));
@@ -70,7 +73,9 @@ class AgentRuntimeUnitTest {
     @Test
     void directAnswerWithoutToolCallsCompletesImmediately() {
         ToolRegistry registry = mock(ToolRegistry.class);
-        when(registry.getDefinitions(any())).thenReturn(List.of());
+        when(registry.getDefinitions(any())).thenReturn(List.of(
+            new ToolDefinition("read_file", "reads a file", java.util.Map.of())
+        ));
         when(registry.getToolsets()).thenReturn(Set.of("core"));
 
         AgentProperties properties = makeProperties();
@@ -96,7 +101,9 @@ class AgentRuntimeUnitTest {
     @Test
     void toolExecutionFailureReturnsErrorMessageInToolResult() {
         ToolRegistry registry = mock(ToolRegistry.class);
-        when(registry.getDefinitions(any())).thenReturn(List.of());
+        when(registry.getDefinitions(any())).thenReturn(List.of(
+            new ToolDefinition("failing_tool", "a failing tool", java.util.Map.of())
+        ));
         when(registry.getToolsets()).thenReturn(Set.of("core"));
         // Tool fails on all retry attempts
         when(registry.execute(eq("failing_tool"), eq("call-1"), eq("{}"), any(), any()))
@@ -127,7 +134,9 @@ class AgentRuntimeUnitTest {
     @Test
     void modelCallThrowsReturnsErrorTurnResult() {
         ToolRegistry registry = mock(ToolRegistry.class);
-        when(registry.getDefinitions(any())).thenReturn(List.of());
+        when(registry.getDefinitions(any())).thenReturn(List.of(
+            new ToolDefinition("read_file", "reads a file", java.util.Map.of())
+        ));
         when(registry.getToolsets()).thenReturn(Set.of("core"));
 
         // Model client that always throws
@@ -156,7 +165,7 @@ class AgentRuntimeUnitTest {
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
             new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter()
+            new TokenEstimator(), new ToolResultFormatter(), null, null
         );
 
         var result = runtime.runTurn(session, "hi");
@@ -195,7 +204,7 @@ class AgentRuntimeUnitTest {
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
             new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter()
+            new TokenEstimator(), new ToolResultFormatter(), null, null
         );
     }
 

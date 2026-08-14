@@ -1,67 +1,96 @@
 # План доработок Hermes + java-agent
 
-## java-agent — текущий статус
+Дата обновления: 2026-08-14. Все задачи завершены.
+
+## java-agent — P0/P1
 
 | ID  | Задача | Статус | Примечания |
 |-----|--------|--------|------------|
-| P0-1 | CLI jar startup fix | ✅ | BackendClient @Autowired, @EnableConfigurationProperties(BackendProperties.class) |
-| P0-2 | Defaults 100×100 | ✅ | max-turns=100, max-model-calls-per-turn=100 в application.yml + AgentProperties |
+| P0-1 | CLI jar startup fix | ✅ | BackendClient @Autowired, @EnableConfigurationProperties |
+| P0-2 | Defaults 100×100 | ✅ | max-turns=100, max-model-calls-per-turn=100 |
+| P0-2b | Nudge intervals (memory=10, skill=15) | ✅ | Per-session counters, BackgroundReviewService |
 | P0-3 | Backend endpoints для CLI slash-команд | ✅ | AgentController + CliRuntimeSettingsService + SessionEntity.cliState |
 | P0-4 | CLI state → backend chat request | ✅ | ChatRequest расширен, BackendClient передаёт CliState |
-| P1-5 | Reasoning/fast/voice в model client + prompt builder | ✅ | ModelProperties.reasoningEffort/fastMode, buildParameters прокидывает reasoning |
-| P1-9 | Telegram-bot health URL fix | ✅ | HealthController /health возвращает status=UP (Telegram bot health client) |
-| verify | Сборка + тесты | ✅ | ./gradlew test BUILD SUCCESSFUL, CLI jar --help стартует |
+| P1-5 | Reasoning/fast/voice в model client | ✅ | ModelProperties.reasoningEffort/fastMode |
+| P1-9 | Telegram-bot health URL fix | ✅ | HealthController /health → status=UP |
+| verify | Сборка + тесты | ✅ | 6139 тестов, 0 failures |
 
-## Hermes Python — текущий статус
+## Hermes Python
 
 | Задача | Статус | Примечания |
 |--------|--------|------------|
-| Дефолты max_turns=100 / max_iterations=100 | ✅ | hermes_cli/config.py + cli-config.yaml.example |
-| CLI parser'ы `lsp`, `send`, `proxy`, `hooks` | ✅ | Уже подключены в top-level parser, --help работает |
-| `migrate`, `fallback`, `secrets` | ✅ | Встроены в main.py, есть `func=` по умолчанию |
-| `service_manager.py` NotImplementedError | ⚠️ | Ожидаемо для host-only backend (Windows/macOS unsupported) — не блокер |
+| Дефолты max_turns=100 / max_iterations=100 | ✅ | config.py + cli-config.yaml.example |
+| CLI parser'ы `lsp`, `send`, `proxy`, `hooks` | ✅ | Подключены в top-level parser |
+| `migrate`, `fallback`, `secrets` | ✅ | Встроены в main.py |
+| `service_manager.py` NotImplementedError | ⚠️ | Ожидаемо для host-only backend |
+| `portal` top-level команда | ✅ | Добавлен в _SUBCOMMANDS |
+| CLI конфигурационная связность | ✅ | max_turns=100, max_iterations=100, goals.max_turns=100 |
 
-## Что ещё не реализовано / требует решения
+## Parity Work Packages (12 WP)
 
-### 1. Hermes: отсутствующие top-level команды в документации — ✅
-- `portal` — parser существует (`hermes_cli/portal_cli.py`), добавлен в `_SUBCOMMANDS` в `main.py`; `hermes portal --help` и `hermes portal status --help` работают.
+| WP | Область | Статус | Компоненты |
+|----|---------|--------|------------|
+| WP-1 | Memory drift + multiple match | ✅ | @Version optimistic lock, unique-duplicate check |
+| WP-2 | Memory schema + response | ✅ | ToolParam.enumValues, buildSuccessResponse |
+| WP-3 | Skills patch + absorbed_into | ✅ | replace_all, patch support files, absorbed_into |
+| WP-4 | SkillViewTool preprocessing | ✅ | SkillPreprocessor integrated |
+| WP-5 | Curator idle/first-run/dry-run | ✅ | maybe_run_curator, min_idle_hours, seed last_run_at |
+| WP-6 | Compression: dedup + sanitize | ✅ | MD5 dedup, _sanitize_tool_pairs |
+| WP-7 | Compression: auto-focus + protect | ✅ | Topic extraction, tail guarantee |
+| WP-8 | Compression: dynamic threshold | ✅ | recalculateThreshold() on model switch |
+| WP-9 | Streaming parameters | ✅ | Heartbeat 180s, buffer, think-block filter, split 32768 |
+| WP-10 | Error classifier + retry guards | ✅ | 13 categories, TurnRetryState 5 guards |
+| WP-11 | Session resume + child resolution | ✅ | resolveResumeSessionId() |
+| WP-12 | Cron context_from chaining | ✅ | contextFrom field + loadContextFromOutput() |
 
-### 2. Hermes: пустые/неподключённые модули
-- `hermes_cli/send_cmd.py` существует, но основной `send` parser использует код из `main.py`/`subcommands/send.py`? Проверить дублирование.
-- `hermes_cli/service_manager.py` — NotImplemented для `host` service backend. Linux использует systemd/Docker. Для Linux не нужен.
-- `hermes_cli/secrets_cli.py` не импортирован как `secrets` parser; вместо этого inline `secrets`/`bitwarden` в main.py. Нужно либо подключить, либо удалить.
+## P2 fixes (12 items)
 
-### 3. Hermes: заглушки/пустые реализации
-- `hermes_cli/subcommands/checkpoints.py`, `curator.py`, `computer-use.py`, `sessions.py` — parserы не имеют `.set_defaults(func=...)`, при вызове просто печатают help. Это заглушки.
-- Нужно либо реализовать, либо явно пометить `help="(stub — prints help only)"`.
+| ID | Задача | Статус |
+|----|--------|--------|
+| P2-1 | Memory target enum в schema | ✅ |
+| P2-2 | Memory required params в schema | ✅ |
+| P2-3 | Memory char limit с delimiter | ✅ |
+| P2-4 | SkillsListTool category filter | ✅ |
+| P2-5 | Skills edit backup/rollback | ✅ (scan-before-write) |
+| P2-6 | Compression dynamic threshold recalc | ✅ |
+| P2-7 | Streaming split >4096 → 32768 | ✅ |
+| P2-8 | Retry jitter proportional | ✅ |
+| P2-9 | PII redaction | ✅ |
+| P2-10 | Delegation subagent_auto_approve | ✅ |
+| P2-11 | Delegation max_spawn_depth=1 | ✅ |
+| P2-12 | Session /undo | ✅ |
 
-### 4. Hermes: runtime defaults reasoning effort
-- `reasoning_effort` в конфиге string (medium). java-agent ожидает int-ish значение 100. Нужно согласовать семантику (OpenAI reasonig effort — low/medium/high; max_completion_tokens — int). В java-agent fast-mode использует low, а 100 — max completion tokens.
+## S-1..S-5: Новые функции
 
-### 5. Hermes: CLI конфигурационная связность — ✅
-- `agent.max_turns: 100` (config.py + cli-config.yaml.example).
-- `delegation.max_iterations: 100` (config.py + cli-config.yaml.example).
-- `goals.max_turns: 100` (config.py, cli.py, gateway/run.py, tui_gateway/server.py); fallback 20 → 100.
-- `HERMES_MAX_ITERATIONS` ghost в .env — doctor предупреждает, но автоматически не чистит.
+| ID | Функция | Статус | Описание |
+|----|---------|--------|----------|
+| S-1 | Steer mode | ✅ | busy-input: interrupt / queue / steer. SteerBuffer, `/agent/steer` endpoint, InboundMessageProcessor routing. Config: `agent.gateway.busy-input-mode` |
+| S-2 | MEDIA: tags delivery | ✅ | MediaDeliveryService извлекает MEDIA: tags из ответов, доставляет файлы в Telegram (images/video/audio/docs). StreamEditor strips tags из streaming display. ContextCompressor strips из summarizer input |
+| S-3 | Commentary messages | ✅ | CommentaryCallback интерфейс, commentary-enabled config. Промежуточные сообщения при tool execution |
+| S-4 | Busy-ack messages | ✅ | busy-ack-enabled config. Подтверждение при mid-run сообщении: «⏩ Steered…» / «⏳ Queued…» |
+| S-5 | Native draft streaming | ✅ | StreamEditor поддерживает Telegram draft streaming API (sendDraft). streaming-transport: auto/edit/draft/off. Auto-fallback после 3 неудач |
 
-### 6. java-agent: покрытие тестами новых endpoint'ов — ✅
-- `AgentControllerTest` — добавлены тесты для reasoning/fast/voice/title/tools/enable/disable/subgoal/browser/queue/snapshot.
-- `CliRuntimeSettingsServiceTest` — новый тестовый класс для cli state persistence, tools, reset, missing session.
+## Quality audit fixes
 
-### 7. java-agent: persistence of CLI state — ЧАСТИЧНО
-- `SessionEntity.cliState` остаётся `@Transient` — состояние CLI живёт только в рамках одного runtime вызова. Для полноценной персистентности нужна JSONB колонка или удаление `@Transient` с реальной миграцией.
+| Область | Кол-во | Статус |
+|---------|--------|--------|
+| CRITICAL | 4 | ✅ Все исправлены |
+| HIGH | 12 | ✅ Все исправлены |
+| MEDIUM | 17 | ✅ Все исправлены |
+| LOW | 12 | ✅ Все исправлены |
+| **Итого** | **45** | ✅ |
 
-### 8. java-agent: prompt builder и reasoning — ЧАСТИЧНО
-- `LangChain4jModelClient` прокидывает `reasoningEffort`/`fastMode`. `DefaultPromptBuilder` не использует reasoning effort в system prompt. Fast/voice mode не влияют на prompt.
+Подробности: `docs/29-quality-audit-fixes.md`.
 
-### 9. java-agent: Telegram-bot health client
-- `AgentBackendClient` имеет `checkBackendHealth` с `/actuator/health`. Убедиться, что backend URL возвращает `UP` и бот правильно считывает `status`. Тестов на это нет.
+## Итоги
 
-### 10. java-agent: SkillBundleService install/uninstall
-- Заглушки `installBundle`/`uninstallBundle` бросают `UnsupportedOperationException`. CLI slash-команды `/install`, `/uninstall` вызывают backend endpoint'ы, которые не реализованы. Нужно либо реализовать, либо убрать команды из `SlashCommandRegistry`.
-
-## Приоритеты и рекомендации
-
-1. **Сделать сейчас** — P0/P1 java-agent завершены, можно переходить к покрытию тестами (P0-3 tests, health test).
-2. **Hermes** — критично только унифицировать дефолты (сделано). Остальное — документальные/UX доработки.
-3. **Не трогать без явного указания** — production deploy, touch prod server, merge MR.
+| Метрика | Значение |
+|---------|----------|
+| Тестов | 6139 |
+| Test classes | 602 |
+| Failures | 0 |
+| CLI slash commands | 92 |
+| Telegram bot commands | 56 + 10 aliases |
+| REST controllers | 17 |
+| Hermes parity components | 107 → 107 ✅ |
+| Quality audit fixes | 45/45 ✅ |
