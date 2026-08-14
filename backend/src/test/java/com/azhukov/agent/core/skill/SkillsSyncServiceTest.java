@@ -12,7 +12,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * P2-14: Tests for SkillsSyncService — bundled skills auto-copy on first run.
+ * P2-14 / H10: Tests for SkillsSyncService — manifest-based bundled skills sync.
  */
 class SkillsSyncServiceTest {
 
@@ -39,7 +39,7 @@ class SkillsSyncServiceTest {
 
         int copied = service.syncFromClasspath(skillsDir);
 
-        // Should have copied the 5 bundled skills
+        // Should have copied the bundled skills
         assertThat(copied).isGreaterThan(0);
         assertThat(Files.isDirectory(skillsDir)).isTrue();
 
@@ -66,29 +66,25 @@ class SkillsSyncServiceTest {
     }
 
     @Test
-    void syncFromClasspath_doesNothing_whenDirHasSkills() throws IOException {
+    void syncFromClasspath_doesNotCopy_whenDirHasSkillsFromManifest() throws IOException {
         SkillsSyncService service = createService();
 
-        // Create skills dir with an existing skill
+        // First sync: copy all bundled skills
         Path skillsDir = tempDir.resolve("skills");
-        Path existingSkillDir = skillsDir.resolve("my-existing-skill");
-        Files.createDirectories(existingSkillDir);
-        Files.writeString(existingSkillDir.resolve("SKILL.md"),
-            "---\nname: my-existing-skill\ndescription: \"Existing skill\"\n---\n# Existing\n");
+        int firstCopy = service.syncFromClasspath(skillsDir);
+        assertThat(firstCopy).isGreaterThan(0);
 
-        int copied = service.syncFromClasspath(skillsDir);
+        // Second sync: should not copy anything (all in manifest, unchanged)
+        int secondCopy = service.syncFromClasspath(skillsDir);
+        assertThat(secondCopy).isZero();
 
-        // Should not copy anything since dir already has skills
-        assertThat(copied).isZero();
-
-        // Verify existing skill is still there
+        // Verify skills are still there
         List<Path> skillFiles = SkillUtils.iterSkillIndexFiles(skillsDir, "SKILL.md");
-        assertThat(skillFiles).hasSize(1);
-        assertThat(skillFiles.get(0).getParent().getFileName().toString()).isEqualTo("my-existing-skill");
+        assertThat(skillFiles).isNotEmpty();
     }
 
     @Test
-    void syncFromClasspath_doesNotOverwriteExistingFiles() throws IOException {
+    void syncFromClasspath_doesNotOverwriteUserModifiedFiles() throws IOException {
         SkillsSyncService service = createService();
 
         // First copy: should copy all bundled skills
@@ -105,7 +101,7 @@ class SkillsSyncServiceTest {
         String modifiedContent = originalContent + "\n<!-- user customization -->\n";
         Files.writeString(firstSkill, modifiedContent);
 
-        // Second copy: should NOT overwrite anything
+        // Second copy: should NOT overwrite anything (hash differs → user modified)
         int secondCopy = service.syncFromClasspath(skillsDir);
         assertThat(secondCopy).isZero();
 
@@ -124,7 +120,7 @@ class SkillsSyncServiceTest {
         int firstCopy = service.syncFromClasspath(skillsDir);
         assertThat(firstCopy).isGreaterThan(0);
 
-        // Second sync — should do nothing since dir now has skills
+        // Second sync — should do nothing since all skills are in manifest and unchanged
         int secondCopy = service.syncFromClasspath(skillsDir);
         assertThat(secondCopy).isZero();
     }
@@ -179,5 +175,100 @@ class SkillsSyncServiceTest {
         Path skillsDir = tempDir.resolve("skills");
         List<Path> skillFiles = SkillUtils.iterSkillIndexFiles(skillsDir, "SKILL.md");
         assertThat(skillFiles).isNotEmpty();
+    }
+
+    // ── H10: Manifest-based sync tests ──
+
+    @Test
+    void syncFromClasspath_writesManifestAfterSync() throws IOException {
+        SkillsSyncService service = createService();
+
+        Path skillsDir = tempDir.resolve("skills");
+        service.syncFromClasspath(skillsDir);
+
+        Path manifest = skillsDir.resolve(".bundled-manifest");
+        assertThat(Files.exists(manifest)).isTrue();
+        String manifestContent = Files.readString(manifest);
+        assertThat(manifestContent).isNotEmpty();
+        // Manifest should be valid JSON (contains at least one entry)
+        assertThat(manifestContent).contains("\"");
+    }
+
+    @Test
+    void syncFromClasspath_doesNotReAddUserDeletedSkills() throws IOException {
+        SkillsSyncService service = createService();
+
+        Path skillsDir = tempDir.resolve("skills");
+
+        // First sync: copy all bundled skills
+        int firstCopy = service.syncFromClasspath(skillsDir);
+        assertThat(firstCopy).isGreaterThan(0);
+
+        // Delete one skill file (simulate user deletion)
+        List<Path> skillFiles = SkillUtils.iterSkillIndexFiles(skillsDir, "SKILL.md");
+        assertThat(skillFiles).isNotEmpty();
+        Path skillToDelete = skillFiles.get(0);
+        Files.delete(skillToDelete);
+        assertThat(Files.exists(skillToDelete)).isFalse();
+
+        // Second sync: should NOT re-add the deleted skill
+        int secondCopy = service.syncFromClasspath(skillsDir);
+        assertThat(secondCopy).isZero();
+
+        // Verify the deleted file was not re-created
+        assertThat(Files.exists(skillToDelete)).isFalse();
+    }
+
+    @Test
+    void syncFromClasspath_copiesNewBundledSkillsAddedLater() throws IOException {
+        SkillsSyncService service = createService();
+
+        Path skillsDir = tempDir.resolve("skills");
+
+        // First sync: copy all bundled skills
+        int firstCopy = service.syncFromClasspath(skillsDir);
+        assertThat(firstCopy).isGreaterThan(0);
+
+        // Simulate adding a new bundled skill by creating a file that's not in manifest
+        // (This tests the "not in manifest, not on disk → copy" path indirectly)
+        // Since we can't add to classpath at runtime, we verify the manifest logic:
+        // Delete manifest → re-run sync → all existing files are treated as non-manifest → skip
+        Files.delete(skillsDir.resolve(".bundled-manifest"));
+
+        // Delete one skill to simulate a new one needing copy
+        List<Path> skillFiles = SkillUtils.iterSkillIndexFiles(skillsDir, "SKILL.md");
+        Path skillToReadd = skillFiles.get(0);
+        String skillRelativePath = skillsDir.relativize(skillToReadd).toString();
+        Files.delete(skillToReadd);
+
+        // Re-sync: the deleted skill is not in manifest (we deleted it) and not on disk → copy
+        int reCopy = service.syncFromClasspath(skillsDir);
+        assertThat(reCopy).isEqualTo(1);
+        assertThat(Files.exists(skillToReadd)).isTrue();
+    }
+
+    @Test
+    void syncFromClasspath_preservesUserCreatedSkills() throws IOException {
+        SkillsSyncService service = createService();
+
+        Path skillsDir = tempDir.resolve("skills");
+
+        // First sync
+        service.syncFromClasspath(skillsDir);
+
+        // User creates their own skill (not in manifest)
+        Path userSkillDir = skillsDir.resolve("my-custom-skill");
+        Files.createDirectories(userSkillDir);
+        Path userSkillFile = userSkillDir.resolve("SKILL.md");
+        String userContent = "---\nname: my-custom-skill\ndescription: \"Custom\"\n---\n# Custom\n";
+        Files.writeString(userSkillFile, userContent);
+
+        // Second sync: should not overwrite or delete the user's custom skill
+        int secondCopy = service.syncFromClasspath(skillsDir);
+        // It might copy 0 new skills since user skill is not in bundled resources
+        assertThat(secondCopy).isZero();
+
+        // User skill should still be intact
+        assertThat(Files.readString(userSkillFile)).isEqualTo(userContent);
     }
 }

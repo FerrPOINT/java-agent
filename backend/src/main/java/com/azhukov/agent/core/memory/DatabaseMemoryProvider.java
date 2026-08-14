@@ -1,27 +1,100 @@
 package com.azhukov.agent.core.memory;
 
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MemoryEntity;
 import com.azhukov.agent.persistence.repository.MemoryRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
+/**
+ * Database-backed memory provider using PostgreSQL full-text search.
+ * <p>
+ * H1: Char limits are configurable via {@link AgentProperties.MemoryProperties}.
+ * H2: Content is trimmed before saving (parity with Hermes + MemoryStore).
+ * H3: Threat scanning is performed before store/replace (parity with MemoryStore).
+ * H5: replace()/remove() are wrapped in {@link Transactional} for atomicity.
+ * M1: maxFactsPerUser is enforced in store(); maxFactsPerQuery is the default
+ *     limit in recall().
+ * M4: read() returns plain entries joined by delimiter (no category prefixes
+ *     or § header), matching {@link MemoryStore#read(String)}.
+ * M6: Content is trimmed before dedup check.
+ */
 @Slf4j
-@RequiredArgsConstructor
 public class DatabaseMemoryProvider implements MemoryProvider {
 
     private final MemoryRepository memoryRepository;
+    private final AgentProperties agentProperties;
+    private final MemoryThreatScanner threatScanner;
 
-    private static final int MEMORY_CHAR_LIMIT = 2200;
-    private static final int USER_CHAR_LIMIT = 1375;
     private static final String DELIMITER = "\n§\n";
+    private static final int DEFAULT_MEMORY_CHAR_LIMIT = 2200;
+    private static final int DEFAULT_USER_CHAR_LIMIT = 1375;
+
+    /**
+     * Creates a provider with configurable char limits and threat scanning.
+     *
+     * @param memoryRepository the JPA repository
+     * @param agentProperties  config for char limits and max-facts enforcement
+     * @param threatScanner    scans content for prompt injection / exfiltration
+     */
+    public DatabaseMemoryProvider(MemoryRepository memoryRepository,
+                                  AgentProperties agentProperties,
+                                  MemoryThreatScanner threatScanner) {
+        this.memoryRepository = memoryRepository;
+        this.agentProperties = agentProperties;
+        this.threatScanner = threatScanner;
+    }
+
+    /**
+     * Backward-compatible constructor without threat scanning (for unit tests).
+     */
+    public DatabaseMemoryProvider(MemoryRepository memoryRepository) {
+        this(memoryRepository, null, null);
+    }
+
+    /**
+     * Constructor with properties but without threat scanner (for unit tests).
+     */
+    public DatabaseMemoryProvider(MemoryRepository memoryRepository, AgentProperties agentProperties) {
+        this(memoryRepository, agentProperties, null);
+    }
+
+    private int memoryCharLimit() {
+        if (agentProperties != null) {
+            return agentProperties.getMemory().getMemoryCharLimit();
+        }
+        return DEFAULT_MEMORY_CHAR_LIMIT;
+    }
+
+    private int userCharLimit() {
+        if (agentProperties != null) {
+            return agentProperties.getMemory().getUserCharLimit();
+        }
+        return DEFAULT_USER_CHAR_LIMIT;
+    }
+
+    private int maxFactsPerUser() {
+        if (agentProperties != null) {
+            return agentProperties.getMemory().getMaxFactsPerUser();
+        }
+        return 1000; // default from AgentProperties.MemoryProperties
+    }
+
+    private int maxFactsPerQuery() {
+        if (agentProperties != null) {
+            return agentProperties.getMemory().getMaxFactsPerQuery();
+        }
+        return 10; // default from AgentProperties.MemoryProperties
+    }
 
     /**
      * Drift error message — equivalent to Hermes _drift_error().
@@ -46,7 +119,7 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     }
 
     private int charLimitFor(String target) {
-        return "user".equalsIgnoreCase(target) ? USER_CHAR_LIMIT : MEMORY_CHAR_LIMIT;
+        return "user".equalsIgnoreCase(target) ? userCharLimit() : memoryCharLimit();
     }
 
     /**
@@ -61,15 +134,46 @@ public class DatabaseMemoryProvider implements MemoryProvider {
         return null;
     }
 
+    /**
+     * Scan content for threats (H3). Returns an error message if blocked, or null if safe.
+     */
+    private String scanForThreats(String content) {
+        if (threatScanner == null || content == null) {
+            return null;
+        }
+        Optional<String> threat = threatScanner.scan(content);
+        return threat.orElse(null);
+    }
+
     @Override
     public String name() {
         return "builtin";
     }
 
+    /**
+     * Full-text recall. Uses FTS when the query is non-empty, falls back to
+     * non-FTS listing when the query is blank.
+     * <p>
+     * M1: Uses {@link AgentProperties.MemoryProperties#getMaxFactsPerQuery()} as
+     * the default limit when the caller passes 0 or a negative limit.
+     *
+     * @param userId the user ID
+     * @param query  the search query (may be empty for a non-FTS listing)
+     * @param limit  max results (0 or negative → uses maxFactsPerQuery config)
+     */
     @Override
     public List<String> recall(String userId, String query, int limit) {
-        return memoryRepository.searchByUserId(userId, query, limit).stream()
-            .map(e -> "[" + e.getCategory() + "] " + e.getFact())
+        int effectiveLimit = limit > 0 ? limit : maxFactsPerQuery();
+        if (query == null || query.isBlank()) {
+            // C1: Use non-FTS query when the search string is empty
+            return memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, "memory")
+                .stream()
+                .limit(effectiveLimit)
+                .map(MemoryEntity::getFact)
+                .toList();
+        }
+        return memoryRepository.searchByUserId(userId, query, effectiveLimit).stream()
+            .map(MemoryEntity::getFact)
             .toList();
     }
 
@@ -79,47 +183,88 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     }
 
     @Override
+    @Transactional
     public void store(String userId, String target, String category, String fact) {
+        // H2: Trim content before saving
+        String trimmedFact = fact != null ? fact.trim() : fact;
+        if (trimmedFact == null || trimmedFact.isBlank()) {
+            return;
+        }
+
+        // H3: Threat scan before storing
+        String threatMsg = scanForThreats(trimmedFact);
+        if (threatMsg != null) {
+            throw new IllegalStateException("Blocked: " + threatMsg);
+        }
+
         // Drift signal #2: entry-size overflow check (parity with Hermes _detect_external_drift)
-        String sizeError = checkFactSize(target, fact);
+        String sizeError = checkFactSize(target, trimmedFact);
         if (sizeError != null) {
             throw new IllegalStateException(sizeError);
         }
+
+        String effectiveTarget = target != null ? target : "memory";
+
         // Overflow check: total store chars must not exceed limit after adding
         // Parity with Hermes add() lines 328-341
-        int limit = charLimitFor(target);
-        List<String> existingFacts = memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, target)
+        int limit = charLimitFor(effectiveTarget);
+        List<String> existingFacts = memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, effectiveTarget)
             .stream().map(MemoryEntity::getFact).toList();
-        // Dedup: if exact duplicate, no-op (parity with Hermes add())
-        if (existingFacts.contains(fact)) {
+
+        // M6: Trim before dedup check
+        if (existingFacts.stream().anyMatch(e -> e != null && e.trim().equals(trimmedFact))) {
             return;
         }
+
+        // M1: Enforce maxFactsPerUser
+        int maxFacts = maxFactsPerUser();
+        if (maxFacts > 0 && existingFacts.size() >= maxFacts) {
+            throw new IllegalStateException(
+                "Memory store '" + effectiveTarget + "' has reached the maximum of "
+                + maxFacts + " facts per user. Remove stale entries before adding new ones."
+            );
+        }
+
         int currentChars = existingFacts.isEmpty() ? 0 : String.join(DELIMITER, existingFacts).length();
-        int newTotal = currentChars + fact.length() + (existingFacts.isEmpty() ? 0 : DELIMITER.length());
+        int newTotal = currentChars + trimmedFact.length() + (existingFacts.isEmpty() ? 0 : DELIMITER.length());
         if (newTotal > limit) {
             throw new IllegalStateException(
                 "Memory at " + currentChars + "/" + limit + " chars. "
-                + "Adding this entry (" + fact.length() + " chars) would exceed the limit. "
+                + "Adding this entry (" + trimmedFact.length() + " chars) would exceed the limit. "
                 + "Consolidate now: use 'replace' to merge overlapping entries into shorter ones "
                 + "or 'remove' stale or less important entries, then retry this add — all in this turn."
             );
         }
+
         MemoryEntity e = new MemoryEntity();
         e.setUserId(userId);
         e.setCategory(category);
-        e.setFact(fact);
-        e.setTarget(target != null ? target : "memory");
+        e.setFact(trimmedFact);
+        e.setTarget(effectiveTarget);
         e.setCreatedAt(Instant.now());
         e.setUpdatedAt(Instant.now());
         try {
             memoryRepository.save(e);
         } catch (ObjectOptimisticLockingFailureException ex) {
-            throw new IllegalStateException(driftErrorFromLock(target), ex);
+            throw new IllegalStateException(driftErrorFromLock(effectiveTarget), ex);
         }
     }
 
     @Override
+    @Transactional
     public String replace(String userId, String target, String oldText, String newText) {
+        // H2: Trim new content before saving
+        String trimmedNewText = newText != null ? newText.trim() : newText;
+        if (trimmedNewText == null || trimmedNewText.isBlank()) {
+            return "content is required";
+        }
+
+        // H3: Threat scan before replacing
+        String threatMsg = scanForThreats(trimmedNewText);
+        if (threatMsg != null) {
+            return "Blocked: " + threatMsg;
+        }
+
         // Parity with Hermes: substring match (contains), not exact equals
         List<MemoryEntity> all = memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, target);
         List<MemoryEntity> matches = all.stream()
@@ -146,7 +291,7 @@ public class DatabaseMemoryProvider implements MemoryProvider {
             // All identical — safe to replace first
         }
         // Drift signal #2: entry-size overflow check on new content
-        String sizeError = checkFactSize(target, newText);
+        String sizeError = checkFactSize(target, trimmedNewText);
         if (sizeError != null) {
             return sizeError;
         }
@@ -156,7 +301,7 @@ public class DatabaseMemoryProvider implements MemoryProvider {
         List<String> allFacts = all.stream().map(MemoryEntity::getFact).toList();
         int replaceIdx = all.indexOf(matches.get(0));
         List<String> testEntries = new java.util.ArrayList<>(allFacts);
-        testEntries.set(replaceIdx, newText);
+        testEntries.set(replaceIdx, trimmedNewText);
         int newTotal = String.join(DELIMITER, testEntries).length();
         if (newTotal > limit) {
             int current = String.join(DELIMITER, allFacts).length();
@@ -165,7 +310,7 @@ public class DatabaseMemoryProvider implements MemoryProvider {
                 + "to make room, then retry — all in this turn.";
         }
         MemoryEntity e = matches.get(0);
-        e.setFact(newText);
+        e.setFact(trimmedNewText);
         e.setUpdatedAt(Instant.now());
         try {
             memoryRepository.save(e);
@@ -178,6 +323,7 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     }
 
     @Override
+    @Transactional
     public String remove(String userId, String target, String oldText) {
         // Parity with Hermes: substring match (contains), not exact equals
         List<MemoryEntity> all = memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, target);
@@ -235,23 +381,18 @@ public class DatabaseMemoryProvider implements MemoryProvider {
         return getRawEntries(userId, target).size();
     }
 
+    /**
+     * M4: Returns plain entries joined by delimiter (matching {@link MemoryStore#read(String)}).
+     * No category prefixes, no § header.
+     */
     @Override
     public String read(String userId, String target) {
         List<MemoryEntity> entries = memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, target);
         if (entries.isEmpty()) {
             return "";
         }
-        StringBuilder sb = new StringBuilder();
-        sb.append("§ ").append(target.toUpperCase()).append("\n");
-        for (MemoryEntity e : entries) {
-            sb.append("[").append(e.getCategory()).append("] ").append(e.getFact()).append(DELIMITER);
-        }
-        // Remove trailing delimiter
-        String result = sb.toString();
-        if (result.endsWith(DELIMITER)) {
-            result = result.substring(0, result.length() - DELIMITER.length());
-        }
-        return result.trim();
+        List<String> facts = entries.stream().map(MemoryEntity::getFact).toList();
+        return String.join(DELIMITER, facts);
     }
 
     @Override

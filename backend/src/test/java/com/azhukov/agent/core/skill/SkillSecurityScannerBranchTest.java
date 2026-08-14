@@ -336,15 +336,12 @@ class SkillSecurityScannerBranchTest {
     @Test
     void scanContent_detectsForkBomb() {
         // The fork bomb pattern :(){ :|:& };: is matched by the fork_bomb regex
-        // Using a slightly different content that still triggers the pattern
         String content = ":(){ :|:& };:";
         List<SkillSecurityScanner.Finding> findings = SkillSecurityScanner.scanContent(content, "SKILL.md");
-        // If the fork bomb regex matches, it should be critical
-        // If not, it might match the reverse_shell pattern for nc/socat
-        // Just verify findings is not empty if the pattern matched
-        if (!findings.isEmpty()) {
-            assertThat(findings.stream().anyMatch(f -> f.severity().equals("critical"))).isTrue();
-        }
+        // The fork bomb pattern should be detected as a finding
+        assertThat(findings).isNotEmpty();
+        // Fork bomb is classified as critical severity
+        assertThat(findings.stream().anyMatch(f -> f.severity().equals("critical"))).isTrue();
     }
 
     @Test

@@ -21,7 +21,7 @@ import static org.mockito.Mockito.*;
  * Tests for {@link MemoryManager} — S1/S4 fixes.
  */
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
+@MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class MemoryManagerTest {
 
     private MemoryManager manager;
@@ -34,7 +34,6 @@ class MemoryManagerTest {
     @Test
     void addBuiltinProvider_isRegistered() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("builtin");
         manager.addBuiltinProvider(provider);
         assertThat(manager.getProviders()).hasSize(1);
         assertThat(manager.hasProviders()).isTrue();
@@ -43,7 +42,6 @@ class MemoryManagerTest {
     @Test
     void addExternalProvider_isRegistered() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("external-db");
         manager.addProvider(provider, "external-db");
         assertThat(manager.getProviders()).hasSize(1);
         assertThat(manager.hasProviders()).isTrue();
@@ -52,9 +50,7 @@ class MemoryManagerTest {
     @Test
     void secondExternalProvider_isRejected() {
         MemoryProvider first = mock(MemoryProvider.class);
-        when(first.name()).thenReturn("external-a");
         MemoryProvider second = mock(MemoryProvider.class);
-        when(second.name()).thenReturn("external-b");
         manager.addProvider(first, "external-a");
         manager.addProvider(second, "external-b");
         // Only the first external provider should be registered
@@ -64,9 +60,7 @@ class MemoryManagerTest {
     @Test
     void builtinAndExternal_bothRegistered() {
         MemoryProvider builtin = mock(MemoryProvider.class);
-        when(builtin.name()).thenReturn("builtin");
         MemoryProvider external = mock(MemoryProvider.class);
-        when(external.name()).thenReturn("external");
         manager.addBuiltinProvider(builtin);
         manager.addProvider(external, "external");
         assertThat(manager.getProviders()).hasSize(2);
@@ -75,9 +69,7 @@ class MemoryManagerTest {
     @Test
     void getPrimaryProvider_returnsFirst() {
         MemoryProvider first = mock(MemoryProvider.class);
-        when(first.name()).thenReturn("builtin");
         MemoryProvider second = mock(MemoryProvider.class);
-        when(second.name()).thenReturn("external");
         manager.addBuiltinProvider(first);
         manager.addProvider(second, "external");
         assertThat(manager.getPrimaryProvider()).isSameAs(first);
@@ -117,10 +109,8 @@ class MemoryManagerTest {
     @Test
     void prefetchAll_returnsMergedText() {
         MemoryProvider p1 = mock(MemoryProvider.class);
-        when(p1.name()).thenReturn("builtin");
         when(p1.prefetch("query", "session-1")).thenReturn("context from p1");
         MemoryProvider p2 = mock(MemoryProvider.class);
-        when(p2.name()).thenReturn("ext");
         when(p2.prefetch("query", "session-1")).thenReturn("context from p2");
         manager.addBuiltinProvider(p1);
         manager.addProvider(p2, "ext");
@@ -132,10 +122,8 @@ class MemoryManagerTest {
     @Test
     void prefetchAll_providerFailure_doesNotBlockOthers() {
         MemoryProvider p1 = mock(MemoryProvider.class);
-        when(p1.name()).thenReturn("builtin");
         doThrow(new RuntimeException("fail")).when(p1).prefetch(any(), any());
         MemoryProvider p2 = mock(MemoryProvider.class);
-        when(p2.name()).thenReturn("ext");
         when(p2.prefetch("query", "session-1")).thenReturn("ok");
         manager.addBuiltinProvider(p1);
         manager.addProvider(p2, "ext");
@@ -156,7 +144,6 @@ class MemoryManagerTest {
     @Test
     void queuePrefetchAll_callsQueuePrefetch() throws Exception {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("builtin");
         manager.addBuiltinProvider(provider);
         manager.queuePrefetchAll("query", "session-1");
         // S4: Should call queuePrefetch(), not prefetch()
@@ -171,7 +158,6 @@ class MemoryManagerTest {
     @Test
     void syncAll_submitsBackgroundWork() throws Exception {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("builtin");
         manager.addBuiltinProvider(provider);
         List<Message> messages = List.of(Message.user("hello"), Message.assistant("hi", 0));
         manager.syncAll("session-1", messages);
@@ -185,7 +171,6 @@ class MemoryManagerTest {
     @Test
     void onTurnStart_triggersPrefetchAndProviderNotification() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("builtin");
         when(provider.prefetch(any(), any())).thenReturn("");
         manager.addBuiltinProvider(provider);
         manager.onTurnStart("session-1", "what is my name?");
@@ -196,7 +181,6 @@ class MemoryManagerTest {
     @Test
     void onSessionSwitch_notifiesProviders() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("builtin");
         manager.addBuiltinProvider(provider);
         manager.onSessionSwitch("old-session", "new-session");
         verify(provider).onSessionEnd("old-session");
@@ -206,7 +190,6 @@ class MemoryManagerTest {
     @Test
     void onSessionSwitch_nullOldSession_skipsEnd() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("builtin");
         manager.addBuiltinProvider(provider);
         manager.onSessionSwitch(null, "new-session");
         verify(provider, never()).onSessionEnd(any());
@@ -216,7 +199,6 @@ class MemoryManagerTest {
     @Test
     void onPreCompress_forwardsToProviders() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("builtin");
         when(provider.onPreCompress(any(), any())).thenReturn("extract from p1");
         manager.addBuiltinProvider(provider);
         List<Message> messages = List.of(Message.user("hello"), Message.assistant("hi", 0));
@@ -229,7 +211,6 @@ class MemoryManagerTest {
     @Test
     void onPreCompress_passesActualMessagesToProvider() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("builtin");
         when(provider.onPreCompress(any(), any())).thenReturn("summary");
         manager.addBuiltinProvider(provider);
         List<Message> messages = List.of(
@@ -244,7 +225,6 @@ class MemoryManagerTest {
     @Test
     void onPreCompress_emptyMessages_doesNotThrow() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("builtin");
         when(provider.onPreCompress(any(), any())).thenReturn("");
         manager.addBuiltinProvider(provider);
         String result = manager.onPreCompress("session-1", List.of());
@@ -254,7 +234,6 @@ class MemoryManagerTest {
     @Test
     void onDelegation_forwardsToProviders() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("builtin");
         manager.addBuiltinProvider(provider);
         manager.onDelegation("session-1", "do something");
         verify(provider).onDelegation(eq("do something"), eq(""), eq("session-1"));
@@ -285,9 +264,7 @@ class MemoryManagerTest {
     @Test
     void shutdown_drainsAndShutsDownProviders() throws Exception {
         MemoryProvider builtin = mock(MemoryProvider.class);
-        when(builtin.name()).thenReturn("builtin");
         MemoryProvider external = mock(MemoryProvider.class);
-        when(external.name()).thenReturn("ext");
         manager.addBuiltinProvider(builtin);
         manager.addProvider(external, "ext");
         manager.queuePrefetchAll("query", "session-1");
@@ -309,7 +286,6 @@ class MemoryManagerTest {
     @Test
     void buildSystemPrompt_collectsFromProviders() {
         MemoryProvider p1 = mock(MemoryProvider.class);
-        when(p1.name()).thenReturn("builtin");
         when(p1.systemPromptBlock()).thenReturn("Memory system v2");
         manager.addBuiltinProvider(p1);
         String prompt = manager.buildSystemPrompt();
@@ -326,7 +302,6 @@ class MemoryManagerTest {
     @Test
     void getToolSchemas_collectsFromProviders() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("ext");
         ToolDefinition td = new ToolDefinition("memory_search", "Search memory",
             Map.of("type", "object"));
         when(provider.getToolSchemas()).thenReturn(List.of(td));
@@ -345,7 +320,6 @@ class MemoryManagerTest {
     @Test
     void injectTools_addsNewTools() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("ext");
         ToolDefinition td = new ToolDefinition("memory_search", "Search memory",
             Map.of("type", "object"));
         when(provider.getToolSchemas()).thenReturn(List.of(td));
@@ -414,7 +388,6 @@ class MemoryManagerTest {
     @Test
     void handleToolCall_routedTool_delegatesToProvider() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("ext");
         ToolDefinition td = new ToolDefinition("memory_search", "Search memory",
             Map.of("type", "object"));
         when(provider.getToolSchemas()).thenReturn(List.of(td));
@@ -429,7 +402,6 @@ class MemoryManagerTest {
     @Test
     void hasTool_returnsTrueForRegisteredTool() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("ext");
         ToolDefinition td = new ToolDefinition("memory_search", "Search memory",
             Map.of("type", "object"));
         when(provider.getToolSchemas()).thenReturn(List.of(td));
@@ -441,7 +413,6 @@ class MemoryManagerTest {
     @Test
     void getAllToolNames_returnsAllRegisteredTools() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("ext");
         ToolDefinition td1 = new ToolDefinition("tool_a", "A", Map.of());
         ToolDefinition td2 = new ToolDefinition("tool_b", "B", Map.of());
         when(provider.getToolSchemas()).thenReturn(List.of(td1, td2));
@@ -454,7 +425,6 @@ class MemoryManagerTest {
     @Test
     void addProvider_coreToolName_isRejected() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("ext");
         ToolDefinition coreTool = new ToolDefinition("clarify", "Core tool clone", Map.of());
         ToolDefinition normalTool = new ToolDefinition("memory_search", "Search memory", Map.of());
         when(provider.getToolSchemas()).thenReturn(List.of(coreTool, normalTool));
@@ -468,7 +438,6 @@ class MemoryManagerTest {
     @Test
     void addProvider_multipleCoreToolNames_allRejected() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("ext");
         ToolDefinition td1 = new ToolDefinition("terminal", "Clone", Map.of());
         ToolDefinition td2 = new ToolDefinition("read_file", "Clone", Map.of());
         ToolDefinition td3 = new ToolDefinition("web_search", "Clone", Map.of());
@@ -482,7 +451,6 @@ class MemoryManagerTest {
     @Test
     void addProvider_nonCoreName_isRegistered() {
         MemoryProvider provider = mock(MemoryProvider.class);
-        when(provider.name()).thenReturn("ext");
         ToolDefinition td = new ToolDefinition("custom_memory_tool", "Custom", Map.of());
         when(provider.getToolSchemas()).thenReturn(List.of(td));
         manager.addProvider(provider, "ext");
@@ -494,15 +462,16 @@ class MemoryManagerTest {
     @Test
     void addProvider_duplicateToolName_secondProviderNotIndexed() {
         MemoryProvider first = mock(MemoryProvider.class);
-        when(first.name()).thenReturn("first");
         ToolDefinition td = new ToolDefinition("shared_tool", "Shared", Map.of());
         when(first.getToolSchemas()).thenReturn(List.of(td));
         manager.addProvider(first, "first");
 
+        // Register a second external provider — rejected because only one
+        // external provider is allowed. The duplicate tool name scenario
+        // (both providers registering the same tool) is therefore blocked
+        // at the provider level, not the tool level. The tool should route
+        // to the first provider only.
         MemoryProvider second = mock(MemoryProvider.class);
-        when(second.name()).thenReturn("second");
-        ToolDefinition tdDup = new ToolDefinition("shared_tool", "Shared dup", Map.of());
-        when(second.getToolSchemas()).thenReturn(List.of(tdDup));
         manager.addProvider(second, "second");
 
         // The tool should route to the first provider, not the second
@@ -518,9 +487,7 @@ class MemoryManagerTest {
     @Test
     void initializeAll_callsAllProviders() {
         MemoryProvider p1 = mock(MemoryProvider.class);
-        when(p1.name()).thenReturn("builtin");
         MemoryProvider p2 = mock(MemoryProvider.class);
-        when(p2.name()).thenReturn("ext");
         manager.addBuiltinProvider(p1);
         manager.addProvider(p2, "ext");
         manager.initializeAll("session-1", Map.of());
@@ -531,7 +498,6 @@ class MemoryManagerTest {
     @Test
     void flushPending_callsAllProviders() {
         MemoryProvider p1 = mock(MemoryProvider.class);
-        when(p1.name()).thenReturn("builtin");
         manager.addBuiltinProvider(p1);
         manager.flushPending(1000L);
         verify(p1).flushPending(1000L);

@@ -127,6 +127,11 @@ tasks.named('test') {
     }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
     maxHeapSize = '3g'
+    // Workaround for Gradle 9.x EOFException in test result serialization
+    reports {
+        junitXml.required = true
+        html.required = false
+    }
     finalizedBy jacocoTestReport
 }
 

@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Memory tool — save durable information to persistent memory.
@@ -61,6 +62,9 @@ import java.util.Map;
 @Slf4j
 public class MemoryTool implements ToolHandler {
 
+    /** H4: Valid target values for memory writes. */
+    private static final Set<String> VALID_TARGETS = Set.of("memory", "user");
+
     private final MemoryProvider memoryProvider;
     private final WriteApprovalGate writeApprovalGate;
 
@@ -79,6 +83,11 @@ public class MemoryTool implements ToolHandler {
         MemoryArgs args = ToolHandler.parseJson(arguments, MemoryArgs.class);
         String target = args.target() != null && !args.target().isBlank() ? args.target() : "memory";
 
+        // H4: Validate target against allowed enum
+        if (!VALID_TARGETS.contains(target.toLowerCase())) {
+            return ToolResult.fail("Invalid target: '" + target + "'. Must be one of: " + VALID_TARGETS);
+        }
+
         // S7: Build provenance metadata from WriteContext (empty for foreground writes)
         Map<String, String> provenance = WriteContext.buildProvenance();
         if (!provenance.isEmpty()) {
@@ -89,7 +98,6 @@ public class MemoryTool implements ToolHandler {
             case "add" -> doAdd(session, target, args, provenance);
             case "replace" -> doReplace(session, target, args, provenance);
             case "remove" -> doRemove(session, target, args, provenance);
-            case "read" -> doRead(session, target, args);
             default -> ToolResult.fail("Unknown action: " + args.action());
         };
     }
@@ -164,19 +172,12 @@ public class MemoryTool implements ToolHandler {
         return buildSuccessResponse(session, target, "Entry removed.");
     }
 
-    private ToolResult doRead(Session session, String target, MemoryArgs args) {
-        String facts = memoryProvider.read(session.userId(), target);
-        if (facts == null || facts.isBlank()) {
-            return ToolResult.ok("No entries in " + target + " store.");
-        }
-        return ToolResult.ok(facts);
-    }
-
     /**
      * Build a success response with usage info (parity with Hermes _success_response).
      * Returns: message, usage (percentage + chars/limit), entry_count.
      * Fix 1: Uses getCharCount() which counts pure entries joined by delimiter,
      * NOT read() which includes headers and category prefixes.
+     * M3: Numbers formatted with comma grouping (e.g. "1,200").
      */
     private ToolResult buildSuccessResponse(Session session, String target, String message) {
         int limit = "user".equalsIgnoreCase(target) ? 1375 : 2200;
@@ -189,8 +190,9 @@ public class MemoryTool implements ToolHandler {
         if (message != null) {
             sb.append(message).append("\n");
         }
-        sb.append("usage: ").append(pct).append("% — ").append(currentChars).append("/").append(limit).append(" chars");
-        sb.append(" | entry_count: ").append(entryCount);
+        sb.append("usage: ").append(pct).append("% — ").append(formatNumber(currentChars)).append("/")
+          .append(formatNumber(limit)).append(" chars");
+        sb.append(" | entry_count: ").append(formatNumber(entryCount));
         return ToolResult.ok(sb.toString());
     }
 
@@ -198,6 +200,8 @@ public class MemoryTool implements ToolHandler {
      * Build an error response with usage info (parity with Hermes error responses).
      * Fix 4: Hermes returns structured error with current_entries and usage.
      * Java returns the error message plus current usage stats.
+     * L3: Always append usage info to error responses (not just when error contains keywords).
+     * M3: Numbers formatted with comma grouping (e.g. "1,200").
      */
     private ToolResult buildErrorResponse(Session session, String target, String error) {
         int limit = "user".equalsIgnoreCase(target) ? 1375 : 2200;
@@ -207,18 +211,24 @@ public class MemoryTool implements ToolHandler {
 
         StringBuilder sb = new StringBuilder();
         sb.append(error);
-        // Append usage info if the error is about overflow or limits
-        if (error.contains("limit") || error.contains("chars") || error.contains("exceed")) {
-            sb.append("\nCurrent: ").append(pct).append("% — ").append(currentChars).append("/").append(limit)
-              .append(" chars, ").append(entryCount).append(" entries.");
-            sb.append("\nConsolidate now: use 'replace' to merge entries or 'remove' stale ones.");
-        }
+        // L3: Always append usage info to error responses
+        sb.append("\nCurrent: ").append(pct).append("% — ").append(formatNumber(currentChars)).append("/")
+          .append(formatNumber(limit))
+          .append(" chars, ").append(formatNumber(entryCount)).append(" entries.");
+        sb.append("\nConsolidate now: use 'replace' to merge entries or 'remove' stale ones.");
         return ToolResult.fail(sb.toString());
+    }
+
+    /**
+     * M3: Format a number with comma grouping (e.g. 1200 → "1,200").
+     */
+    private static String formatNumber(int value) {
+        return String.format(java.util.Locale.US, "%,d", value);
     }
 
     public record MemoryArgs(
         @ToolParam(description = "The action to perform.", enumValues = {"add", "replace", "remove"}) String action,
-        @ToolParam(description = "Which memory store: 'memory' for personal notes, 'user' for user profile.", enumValues = {"memory", "user"}) String target,
+        @ToolParam(description = "Which memory store: 'memory' for personal notes, 'user' for user profile.", enumValues = {"memory", "user"}, required = true) String target,
         @ToolParam(description = "The entry content. Required for 'add' and 'replace'.", required = false) String content,
         @ToolParam(description = "Short unique substring identifying the entry to replace or remove.", required = false) String old_text,
         @ToolParam(description = "Max results for read", required = false) int limit

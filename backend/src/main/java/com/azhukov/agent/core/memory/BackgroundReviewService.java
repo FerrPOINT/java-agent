@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * S1/S3/S7: Self-improvement background review service.
  * <p>
- * After each turn, forks a mini conversation loop (up to 5 turns) with a
+ * After each turn, forks a mini conversation loop (up to 8 turns, configurable) with a
  * tool whitelist (memory + skill tools only) to analyze the conversation
  * and save durable facts to memory or update skills.
  * <p>
@@ -55,7 +55,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequiredArgsConstructor
 public class BackgroundReviewService {
 
- private static final int MAX_REVIEW_TURNS = 5;
+ private static final int DEFAULT_MAX_REVIEW_TURNS = 8;
 
  // S1: Tool whitelist — only memory and skill tools are allowed
  private static final Set<String> REVIEW_TOOL_WHITELIST = Set.of(
@@ -89,9 +89,27 @@ public class BackgroundReviewService {
   * Runs asynchronously with a configurable delay.
   *
   * S7: Uses per-turn prompt selection based on conversation content.
+  * C3: Uses the parent session's userId for the review session so memory
+  * writes are attributed to the actual user.
+  */
+ public void reviewTurn(UUID sessionId, List<Message> messages, String parentUserId) {
+     reviewTurn(sessionId, messages, parentUserId, true, true);
+ }
+
+ /**
+  * Backward-compatible overload — defaults parentUserId to null (falls back
+  * to "review-bot" in {@link #doReview}).
   */
  public void reviewTurn(UUID sessionId, List<Message> messages) {
-     reviewTurn(sessionId, messages, true, true);
+     reviewTurn(sessionId, messages, null, true, true);
+ }
+
+ /**
+  * Backward-compatible nudge-gated overload — defaults parentUserId to null.
+  */
+ public void reviewTurn(UUID sessionId, List<Message> messages,
+                        boolean reviewMemory, boolean reviewSkills) {
+     reviewTurn(sessionId, messages, null, reviewMemory, reviewSkills);
  }
 
  /**
@@ -100,10 +118,14 @@ public class BackgroundReviewService {
   * which receives review_memory and review_skills booleans and picks the
   * prompt accordingly.
   *
+  * C3: Uses the parent session's userId for the review session so memory
+  * writes are attributed to the actual user, not a throwaway "review-bot".
+  *
   * @param reviewMemory  true if the memory nudge counter triggered
   * @param reviewSkills   true if the skill nudge counter triggered
   */
- public void reviewTurn(UUID sessionId, List<Message> messages, boolean reviewMemory, boolean reviewSkills) {
+ public void reviewTurn(UUID sessionId, List<Message> messages, String parentUserId,
+                        boolean reviewMemory, boolean reviewSkills) {
      if (!properties.getMemory().getBackgroundReview().isEnabled()) {
          return;
      }
@@ -117,7 +139,7 @@ public class BackgroundReviewService {
      int delayMs = properties.getMemory().getBackgroundReview().getDelayMs();
      executor.schedule(() -> {
          try {
-             doReview(sessionId, messages, reviewMemory, reviewSkills);
+             doReview(sessionId, messages, parentUserId, reviewMemory, reviewSkills);
          } catch (Exception e) {
              log.error("Background review failed for session {}: {}", sessionId, e.getMessage());
          }
@@ -169,7 +191,8 @@ public class BackgroundReviewService {
   * Nudge-gated: picks the review prompt based on which nudge triggered,
   * mirroring Hermes spawn_background_review_thread prompt selection.
   */
- private void doReview(UUID sessionId, List<Message> messages, boolean reviewMemory, boolean reviewSkills) {
+ private void doReview(UUID sessionId, List<Message> messages, String parentUserId,
+                       boolean reviewMemory, boolean reviewSkills) {
      log.debug("Starting background review for session {} (memory={}, skills={})",
          sessionId, reviewMemory, reviewSkills);
 
@@ -210,17 +233,25 @@ public class BackgroundReviewService {
  // S3: Tool definitions with full JSON Schema parameters (not empty Map.of())
  List<ToolDefinition> tools = ReviewToolSchemas.build();
 
- // S1: Create review session
- Session reviewSession = Session.create("review-bot", "openai-compatible", "");
+ // S1: Create review session — use the parent session's userId so memory
+ // writes are attributed to the actual user, not a throwaway "review-bot".
+ String reviewUserId = parentUserId != null ? parentUserId : "review-bot";
+ Session reviewSession = Session.create(reviewUserId, "openai-compatible", "");
  boolean memoryUpdated = false;
  List<String> actions = new ArrayList<>();
 
  // S7: Set WriteContext for this review thread — all writes tagged as BACKGROUND_REVIEW
  WriteContext.setReviewContext(sessionId.toString(), null, "background-review");
 
+ // M9: Configurable max review turns (default 8, via AgentProperties)
+ int maxReviewTurns = properties.getMemory().getBackgroundReview().getMaxReviewTurns();
+ if (maxReviewTurns <= 0) {
+     maxReviewTurns = DEFAULT_MAX_REVIEW_TURNS;
+ }
+
  try {
- // S1: Mini conversation loop (up to 5 turns)
- for (int turn = 0; turn < MAX_REVIEW_TURNS; turn++) {
+ // S1: Mini conversation loop (up to maxReviewTurns turns)
+ for (int turn = 0; turn < maxReviewTurns; turn++) {
  ChatResponse response = modelClient.complete(reviewMessages, tools);
 
  if (!response.hasToolCalls()) {
@@ -285,8 +316,12 @@ public class BackgroundReviewService {
  // S3: Build and store the ReviewSummary for user notification
  ReviewSummary summary = ReviewSummary.of(memoryUpdated, actions);
  reviewSummaries.put(sessionId, summary);
+ // H9: Log the formatted summary so the review result is surfaced (not dead code).
  log.info("Background review completed for session {}: memoryUpdated={}, actions={}",
  sessionId, memoryUpdated, actions);
+ if (summary.hasActions() && !summary.formattedSummary().isBlank()) {
+     log.info("Background review summary for session {}: {}", sessionId, summary.formattedSummary());
+ }
  } else {
  log.debug("Background review found nothing to save for session {}", sessionId);
  }

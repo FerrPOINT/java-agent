@@ -85,10 +85,10 @@ class DefaultIterationBudgetTest {
     }
 
     @Test
-    void defaultSkillCreationNudgeIntervalIs15() {
-        // Hermes default: skills.creation_nudge_interval = 15 (review every 15 tool-calling iterations)
+    void defaultSkillCreationNudgeIntervalIs10() {
+        // L5: Hermes default: skills.creation_nudge_interval = 10 (review every 10 tool-calling iterations)
         AgentProperties.SkillsProperties defaultSkills = new AgentProperties.SkillsProperties();
-        assertThat(defaultSkills.getCreationNudgeInterval()).isEqualTo(15);
+        assertThat(defaultSkills.getCreationNudgeInterval()).isEqualTo(10);
     }
 
     @Test

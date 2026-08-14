@@ -107,16 +107,15 @@ class MemoryToolsUnitTest {
     }
 
     @Test
-    void memoryToolReadsFacts() {
+    void memoryToolRejectsReadAction() {
         MemoryTool tool = new MemoryTool(memoryProvider);
-        when(memoryProvider.read(USER_ID, "memory")).thenReturn("§ MEMORY\n[auto] Fact 1\n[auto] Fact 2");
         String args = "{\"action\":\"read\",\"target\":\"memory\"}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
-        assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("Fact 1");
-        verify(memoryProvider).read(USER_ID, "memory");
+        // L1: "read" case has been removed — should return "Unknown action"
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Unknown action");
     }
 
     @Test
@@ -171,7 +170,8 @@ class MemoryToolsUnitTest {
 
         assertThat(result.success()).isTrue();
         // Should show 20 (pure chars), not the length of read() which includes headers
-        assertThat(result.content()).contains("20/2200");
+        // M3: numbers formatted with commas
+        assertThat(result.content()).contains("20/2,200");
         assertThat(result.content()).contains("entry_count: 2");
     }
 
@@ -190,9 +190,10 @@ class MemoryToolsUnitTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("exceed the limit");
-        // Fix 4: should include current usage info
+        // L3: should always include current usage info
         assertThat(result.error()).contains("Current:");
-        assertThat(result.error()).contains("2000/2200");
+        // M3: numbers formatted with commas (2000 → "2,000")
+        assertThat(result.error()).contains("2,000/2,200");
         assertThat(result.error()).contains("3 entries");
         assertThat(result.error()).contains("Consolidate now");
     }
@@ -210,9 +211,10 @@ class MemoryToolsUnitTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("Replacement would put memory at");
-        // Fix 4: should include current usage info
+        // L3: should always include current usage info
         assertThat(result.error()).contains("Current:");
-        assertThat(result.error()).contains("2000/2200");
+        // M3: numbers formatted with commas (2000 → "2,000")
+        assertThat(result.error()).contains("2,000/2,200");
         assertThat(result.error()).contains("Consolidate now");
     }
 

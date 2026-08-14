@@ -104,7 +104,8 @@ public class MemoryStore {
                 + "or 'remove' stale or less important entries, then retry this add — all in this turn.";
         }
         store.add(trimmed);
-        invalidateSnapshot();
+        // M2: Do NOT invalidate snapshot — snapshot is frozen per session.
+        // Only new sessions get a fresh snapshot.
         return null;
     }
 
@@ -170,7 +171,7 @@ public class MemoryStore {
                 + "to make room, then retry — all in this turn.";
         }
         store.set(idx, newText.trim());
-        invalidateSnapshot();
+        // M2: Do NOT invalidate snapshot — snapshot is frozen per session.
         return null;
     }
 
@@ -214,7 +215,7 @@ public class MemoryStore {
             // All identical — safe to remove first
         }
         store.remove(matchIndices.get(0).intValue());
-        invalidateSnapshot();
+        // M2: Do NOT invalidate snapshot — snapshot is frozen per session.
         return null;
     }
 

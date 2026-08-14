@@ -148,44 +148,23 @@ class MemoryTodoBranchTest {
     }
 
     @Test
-    void memoryTool_readNullFacts_returnsOkWithEmptyMessage() {
-        when(memoryProvider.read(USER_ID, "memory")).thenReturn(null);
+    void memoryTool_readAction_rejectedAsUnknown() {
+        // L1: "read" case removed from MemoryTool — it's not in the schema enum
         MemoryTool tool = new MemoryTool(memoryProvider);
         ToolResult result = tool.execute(
             "{\"action\":\"read\",\"target\":\"memory\"}", LAST_MESSAGE, SESSION);
-        assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("No entries");
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Unknown action");
     }
 
     @Test
-    void memoryTool_readBlankFacts_returnsOkWithEmptyMessage() {
-        when(memoryProvider.read(USER_ID, "memory")).thenReturn("   ");
-        MemoryTool tool = new MemoryTool(memoryProvider);
-        ToolResult result = tool.execute(
-            "{\"action\":\"read\",\"target\":\"memory\"}", LAST_MESSAGE, SESSION);
-        assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("No entries");
-    }
-
-    @Test
-    void memoryTool_readWithNullTarget_defaultsToMemory() {
-        when(memoryProvider.read(USER_ID, "memory")).thenReturn("fact1");
+    void memoryTool_readActionWithNullTarget_rejectedAsUnknown() {
+        // L1: "read" case removed — regardless of target, should fail
         MemoryTool tool = new MemoryTool(memoryProvider);
         ToolResult result = tool.execute(
             "{\"action\":\"read\"}", LAST_MESSAGE, SESSION);
-        assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("fact1");
-        verify(memoryProvider).read(USER_ID, "memory");
-    }
-
-    @Test
-    void memoryTool_readWithBlankTarget_defaultsToMemory() {
-        when(memoryProvider.read(USER_ID, "memory")).thenReturn("fact1");
-        MemoryTool tool = new MemoryTool(memoryProvider);
-        ToolResult result = tool.execute(
-            "{\"action\":\"read\",\"target\":\"  \"}", LAST_MESSAGE, SESSION);
-        assertThat(result.success()).isTrue();
-        verify(memoryProvider).read(USER_ID, "memory");
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Unknown action");
     }
 
     @Test

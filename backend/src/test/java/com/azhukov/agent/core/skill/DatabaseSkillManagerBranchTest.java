@@ -430,10 +430,18 @@ class DatabaseSkillManagerBranchTest {
         when(repo.findByName("test-skill")).thenReturn(Optional.of(existing));
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         mgr.saveSkill("test-skill", VALID_FRONTMATTER);
-        // The saveSkill method preserves existing trust level if it's already set (even if invalid)
-        // because determineTrustLevelForSave catches the IllegalArgumentException and returns AGENT_CREATED,
-        // but the saveSkill method only sets trustLevel if it's null
-        verify(repo).save(any(SkillEntity.class));
+        // The saveSkill method calls determineTrustLevelForSave which catches the
+        // IllegalArgumentException from TrustLevel.valueOf("INVALID_LEVEL") and
+        // defaults to AGENT_CREATED. The trustLevel is only set if null on the entity,
+        // but since it's already "INVALID_LEVEL" (non-null), it stays. However, the
+        // security scan uses determineTrustLevelForSave which returns AGENT_CREATED.
+        // Verify what was actually saved using ArgumentCaptor.
+        org.mockito.ArgumentCaptor<SkillEntity> captor = org.mockito.ArgumentCaptor.forClass(SkillEntity.class);
+        verify(repo).save(captor.capture());
+        SkillEntity saved = captor.getValue();
+        // The existing entity's trust level is non-null ("INVALID_LEVEL"), so saveSkill
+        // preserves it — it only sets trustLevel when it's null.
+        assertThat(saved.getTrustLevel()).isEqualTo("INVALID_LEVEL");
     }
 
     // ─── validateFrontmatter edge cases ───
@@ -550,27 +558,39 @@ class DatabaseSkillManagerBranchTest {
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
 
-        // DB skill
+        // DB skill with one body
+        String dbContent = """
+            ---
+            name: ambig
+            description: DB version of the skill.
+            ---
+            This is the database version of the skill body.
+            """;
         SkillEntity e = new SkillEntity();
         e.setName("ambig");
-        e.setContent(VALID_FRONTMATTER.replace("test-skill", "ambig"));
+        e.setContent(dbContent);
         when(repo.findByName("ambig")).thenReturn(Optional.of(e));
 
-        // Also create a filesystem skill with the same directory name
+        // Also create a filesystem skill with DIFFERENT content to force collision
+        String fsContent = """
+            ---
+            name: ambig
+            description: Filesystem version of the skill.
+            ---
+            This is the filesystem version of the skill body — different from DB.
+            """;
         Path skillDir = tempDir.resolve("skills").resolve("ambig");
         Files.createDirectories(skillDir);
-        Files.writeString(skillDir.resolve("SKILL.md"), VALID_FRONTMATTER.replace("test-skill", "ambig"));
+        Files.writeString(skillDir.resolve("SKILL.md"), fsContent);
 
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         var result = mgr.getSkillInfoMultiStrategy("ambig");
-        // The DB and filesystem entries may or may not be "equal" depending on content.
-        // If they're different, collision is detected. If same content, no collision.
-        // Here we use different content to force collision.
-        // (Actually the content is the same, so they might dedup. Let's verify.)
-        // Since both have the same content, the equals() check on SkillInfo will dedup them.
-        // So either we get one result (no collision) or a collision.
-        // Let's just verify it doesn't crash.
-        assertThat(result).isNotNull();
+        // Different content means the two candidates are not equal, so collision
+        // detection should fire and return an error with collisionPaths.
+        assertThat(result.error()).isNotNull();
+        assertThat(result.error()).contains("Ambiguous");
+        assertThat(result.collisionPaths()).isNotEmpty();
+        assertThat(result.info()).isNull();
     }
 
     @Test

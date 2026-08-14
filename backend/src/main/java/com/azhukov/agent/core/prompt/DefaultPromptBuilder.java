@@ -198,6 +198,11 @@ public class DefaultPromptBuilder implements PromptBuilder {
     private final MemoryProvider memoryProvider;
     private final SkillManager skillManager;
 
+    // C2: Per-session memory snapshot cache — frozen for the session lifetime.
+    // Only refreshed on new session or when the PromptCacheTracker is invalidated
+    // (e.g. context compression events).
+    private final java.util.concurrent.ConcurrentHashMap<String, String> memoryPrefixCache = new java.util.concurrent.ConcurrentHashMap<>();
+
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry) {
         this(properties, toolRegistry, new DefaultAgentConstants(), null, null, null, null);
     }
@@ -720,16 +725,53 @@ public class DefaultPromptBuilder implements PromptBuilder {
 
     /**
      * Build a memory prefix that is prepended to the system prompt.
-     * The three-tier prompt is cached separately via {@link PromptCacheTracker} and
-     * remains byte-stable; this prefix is fetched fresh each turn and prepended after
-     * the cache lookup, so prompt cache is preserved when memory content is unchanged.
+     * <p>
+     * C1: Uses {@link MemoryProvider#getRawEntries(String, String)} (non-FTS)
+     * instead of {@link MemoryProvider#recall(String, String, int)} (FTS with
+     * empty query returns nothing). The memory target "memory" is queried for
+     * system-prompt injection.
+     * <p>
+     * C2: The memory prefix is cached per session and only refreshed on new
+     * session or when {@link #invalidateMemoryPrefix(String)} is called
+     * (e.g. context compression). This preserves prompt caching stability.
      */
     public String buildMemoryPrefix(Session session) {
         if (session == null || session.id() == null || memoryProvider == null) {
             return "";
         }
+        String sessionId = String.valueOf(session.id());
+        // C2: Return cached prefix if available (frozen per session)
+        String cached = memoryPrefixCache.get(sessionId);
+        if (cached != null) {
+            return cached;
+        }
+        // C1: Use non-FTS retrieval (getRawEntries) instead of recall with empty query
+        String prefix = buildMemoryPrefixInternal(session);
+        // C2: Cache the prefix for this session
+        if (!prefix.isEmpty()) {
+            memoryPrefixCache.putIfAbsent(sessionId, prefix);
+        }
+        return prefix;
+    }
+
+    /**
+     * C2: Invalidate the cached memory prefix for a session.
+     * Called on context compression or new session events.
+     */
+    public void invalidateMemoryPrefix(String sessionId) {
+        if (sessionId != null) {
+            memoryPrefixCache.remove(sessionId);
+        }
+    }
+
+    /**
+     * Internal method that builds the memory prefix from the provider.
+     * C1: Uses getRawEntries (non-FTS) instead of recall (FTS with empty query).
+     */
+    private String buildMemoryPrefixInternal(Session session) {
         try {
-            var memories = memoryProvider.recall(session.userId(), "", 20);
+            // C1: Use getRawEntries (non-FTS) for system-prompt injection
+            var memories = memoryProvider.getRawEntries(session.userId(), "memory");
             if (memories == null || memories.isEmpty()) {
                 return "";
             }

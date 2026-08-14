@@ -1,6 +1,8 @@
 package com.azhukov.agent.core.skill;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -11,23 +13,28 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 
 /**
- * P2-14: Skills auto-copy on first run.
+ * P2-14 / H10: Skills auto-sync on startup using a manifest-based approach.
  * <p>
  * Mirrors Hermes' {@code tools/skills_sync.py} behavior: on application startup,
- * if the user's skills directory is empty or missing, copies bundled skills from
- * classpath resources ({@code bundled-skills/}) into the user's skills directory.
- * <p>
- * Properties:
+ * copies bundled skills from classpath resources ({@code bundled-skills/}) into
+ * the user's skills directory. Uses a manifest file ({@code skills/.bundled-manifest})
+ * to track which bundled skills have been synced and their origin hashes, so:
  * <ul>
- *   <li>Idempotent — if the skills directory already has skills, does nothing.</li>
- *   <li>Non-destructive — never overwrites existing files.</li>
- *   <li>Logs how many skills were copied.</li>
+ *   <li>New bundled skills are copied on first run.</li>
+ *   <li>Unchanged bundled skills are skipped.</li>
+ *   <li>Skills the user has modified (hash differs from bundled) are preserved.</li>
+ *   <li>Skills the user has deleted are not re-added.</li>
  * </ul>
  */
 @Component
@@ -36,12 +43,14 @@ import java.util.List;
 public class SkillsSyncService {
 
     private static final String BUNDLED_SKILLS_CLASSPATH = "classpath*:bundled-skills/**/SKILL.md";
+    private static final String MANIFEST_FILENAME = ".bundled-manifest";
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final AgentProperties properties;
 
     /**
-     * On startup, check if the skills directory is empty/missing and seed it
-     * with bundled skills from classpath resources.
+     * On startup, sync bundled skills using manifest-based logic.
      */
     @PostConstruct
     void syncBundledSkills() {
@@ -50,10 +59,8 @@ public class SkillsSyncService {
             int copied = syncFromClasspath(skillsDir);
             if (copied > 0) {
                 log.info("SkillsSyncService: copied {} bundled skill(s) to {}", copied, skillsDir);
-            } else if (isDirEmpty(skillsDir)) {
-                log.warn("SkillsSyncService: no bundled skills found on classpath and skills directory is empty at {}", skillsDir);
             } else {
-                log.debug("SkillsSyncService: skills directory already populated at {}, skipping sync", skillsDir);
+                log.debug("SkillsSyncService: no new bundled skills to copy to {}", skillsDir);
             }
         } catch (IOException e) {
             log.warn("SkillsSyncService: failed to sync bundled skills to {}: {}", skillsDir, e.getMessage());
@@ -61,17 +68,31 @@ public class SkillsSyncService {
     }
 
     /**
-     * Copy bundled SKILL.md files from classpath resources into the target skills directory.
-     * Only copies if the target directory is empty or missing. Never overwrites existing files.
+     * H10: Manifest-based sync of bundled SKILL.md files from classpath resources.
+     * <p>
+     * Algorithm:
+     * <ol>
+     *   <li>Read existing manifest (if any) from {@code skillsDir/.bundled-manifest}</li>
+     *   <li>Discover all bundled skills on classpath</li>
+     *   <li>For each bundled skill:
+     *     <ul>
+     *       <li>Compute its origin hash (SHA-256 of bundled content)</li>
+     *       <li>If not in manifest and not on disk → copy (new)</li>
+     *       <li>If in manifest and hash matches → skip (unchanged)</li>
+     *       <li>If in manifest but hash differs → skip (user modified)</li>
+     *       <li>If not in manifest but exists on disk → skip (user created or different)</li>
+     *     </ul>
+     *   </li>
+     *   <li>For skills in manifest but not bundled → skip (user deleted, don't re-add)</li>
+     *   <li>Write updated manifest with current bundled hashes</li>
+     * </ol>
      *
      * @param skillsDir the target skills directory
-     * @return number of skill files copied
+     * @return number of new skill files copied
      */
     int syncFromClasspath(Path skillsDir) throws IOException {
-        // If the directory already has SKILL.md files, do nothing (idempotent)
-        if (!isDirEmpty(skillsDir)) {
-            return 0;
-        }
+        // Read existing manifest
+        Map<String, String> existingManifest = readManifest(skillsDir);
 
         // Discover bundled SKILL.md files on the classpath
         List<Resource> bundledResources = discoverBundledSkills();
@@ -83,7 +104,10 @@ public class SkillsSyncService {
         // Create the skills directory if it doesn't exist
         Files.createDirectories(skillsDir);
 
+        // Build the new manifest and perform sync
+        Map<String, String> newManifest = new HashMap<>();
         int copied = 0;
+
         for (Resource resource : bundledResources) {
             // Extract the relative path: bundled-skills/<category>/<name>/SKILL.md
             String resourceUrl = resource.getURL().toString();
@@ -94,23 +118,79 @@ public class SkillsSyncService {
             }
             String relativePath = resourceUrl.substring(idx + "bundled-skills/".length());
 
-            Path target = skillsDir.resolve(relativePath);
-
-            // Never overwrite existing files (non-destructive)
-            if (Files.exists(target)) {
-                log.debug("SkillsSyncService: skipping existing file: {}", target);
-                continue;
-            }
-
-            // Create parent directories and copy
-            Files.createDirectories(target.getParent());
+            // Read bundled content and compute hash
+            String bundledContent;
             try (InputStream is = resource.getInputStream()) {
-                Files.copy(is, target);
-                copied++;
-                log.debug("SkillsSyncService: copied bundled skill: {}", relativePath);
+                bundledContent = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            }
+            String originHash = sha256Hex(bundledContent);
+
+            // Use relativePath as the manifest key (e.g. "category/name/SKILL.md")
+            newManifest.put(relativePath, originHash);
+
+            Path target = skillsDir.resolve(relativePath);
+            String existingHash = existingManifest.get(relativePath);
+
+            if (Files.exists(target)) {
+                // File already exists on disk
+                if (existingHash == null) {
+                    // Not in manifest — could be user-created or pre-existing. Skip.
+                    log.debug("SkillsSyncService: skipping existing non-manifest file: {}", relativePath);
+                } else if (existingHash.equals(originHash)) {
+                    // In manifest and hash matches — unchanged, skip
+                    log.debug("SkillsSyncService: skipping unchanged bundled skill: {}", relativePath);
+                } else {
+                    // In manifest but hash differs — user modified. Skip (preserve user changes).
+                    log.debug("SkillsSyncService: skipping user-modified skill: {}", relativePath);
+                }
+            } else {
+                // File doesn't exist on disk
+                if (existingHash == null) {
+                    // Not in manifest → new bundled skill → copy
+                    Files.createDirectories(target.getParent());
+                    Files.writeString(target, bundledContent, StandardCharsets.UTF_8);
+                    copied++;
+                    log.info("SkillsSyncService: copied new bundled skill: {}", relativePath);
+                } else {
+                    // In manifest but not on disk → user deleted. Skip (don't re-add).
+                    log.debug("SkillsSyncService: skipping user-deleted skill: {}", relativePath);
+                }
             }
         }
+
+        // Write updated manifest
+        writeManifest(skillsDir, newManifest);
+
         return copied;
+    }
+
+    /**
+     * Read the manifest file from the skills directory.
+     * Returns an empty map if the file doesn't exist or can't be parsed.
+     */
+    private Map<String, String> readManifest(Path skillsDir) {
+        Path manifestPath = skillsDir.resolve(MANIFEST_FILENAME);
+        if (!Files.exists(manifestPath)) {
+            return new HashMap<>();
+        }
+        try {
+            String json = Files.readString(manifestPath, StandardCharsets.UTF_8);
+            Map<String, String> manifest = objectMapper.readValue(json, new TypeReference<Map<String, String>>() {});
+            return manifest != null ? manifest : new HashMap<>();
+        } catch (IOException e) {
+            log.warn("SkillsSyncService: failed to read manifest at {}: {}", manifestPath, e.getMessage());
+            return new HashMap<>();
+        }
+    }
+
+    /**
+     * Write the manifest file to the skills directory.
+     */
+    private void writeManifest(Path skillsDir, Map<String, String> manifest) throws IOException {
+        Files.createDirectories(skillsDir);
+        Path manifestPath = skillsDir.resolve(MANIFEST_FILENAME);
+        String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(manifest);
+        Files.writeString(manifestPath, json, StandardCharsets.UTF_8);
     }
 
     /**
@@ -133,15 +213,16 @@ public class SkillsSyncService {
     }
 
     /**
-     * Check if a directory is empty or doesn't exist.
-     * A directory is considered empty if it has no SKILL.md files anywhere inside it.
+     * Compute SHA-256 hash of a string, returning a hex string.
      */
-    private boolean isDirEmpty(Path dir) throws IOException {
-        if (!Files.isDirectory(dir)) {
-            return true;
+    private static String sha256Hex(String content) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(content.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to compute SHA-256 hash", e);
         }
-        // Check for any SKILL.md files (nested or flat)
-        return SkillUtils.iterSkillIndexFiles(dir, "SKILL.md").isEmpty();
     }
 
     /**

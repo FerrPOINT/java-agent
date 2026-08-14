@@ -148,6 +148,7 @@ agent:
     background-review:
       enabled: ${AGENT_MEMORY_BACKGROUND_REVIEW_ENABLED:true}
       delay-ms: ${AGENT_MEMORY_BACKGROUND_REVIEW_DELAY_MS:2000}
+      max-review-turns: ${AGENT_MEMORY_BACKGROUND_REVIEW_MAX_TURNS:8}
   
   # ─── Skills ───
   skills:
@@ -156,7 +157,7 @@ agent:
     max-chars-per-skill: ${AGENT_SKILLS_MAX_CHARS_PER_SKILL:4000}
     inline-shell: ${AGENT_SKILLS_INLINE_SHELL:true}
     inline-shell-timeout: ${AGENT_SKILLS_INLINE_SHELL_TIMEOUT:30}
-    creation-nudge-interval: ${AGENT_SKILLS_CREATION_NUDGE_INTERVAL:15}
+    creation-nudge-interval: ${AGENT_SKILLS_CREATION_NUDGE_INTERVAL:10}
     default-toolsets:
       - web
       - file

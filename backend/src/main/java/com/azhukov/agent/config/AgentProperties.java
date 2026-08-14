@@ -189,6 +189,8 @@ public class AgentProperties {
     public static class BackgroundReviewProperties {
         private boolean enabled = true;
         private int delayMs = 2000;
+        /** Maximum number of review turns for the background review mini-conversation (default 8). */
+        private int maxReviewTurns = 8;
     }
 
     @Getter @Setter
@@ -211,8 +213,8 @@ public class AgentProperties {
         private boolean inlineShell = true;
         // S2: Inline shell timeout in seconds
         private int inlineShellTimeout = 30;
-        /** How many tool-calling iterations between skill reviews (0 = disabled, default 15). */
-        private int creationNudgeInterval = 15;
+        /** How many tool-calling iterations between skill reviews (0 = disabled, default 10). */
+        private int creationNudgeInterval = 10;
         /** Require approval before writing skill files (default false). */
         private boolean writeApproval = false;
         /** Extra security checks for agent-created skills (default false). */

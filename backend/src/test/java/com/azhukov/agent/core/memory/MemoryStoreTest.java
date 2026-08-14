@@ -68,8 +68,6 @@ class MemoryStoreTest {
         assertThat(snap1.get("memory")).contains("Fact A");
 
         // Snapshot for this session is cached — subsequent calls return same snapshot
-        // even after invalidate (the cache was populated, computeIfAbsent won't recompute)
-        // unless invalidateSnapshot is called
         Map<String, String> snap2 = store.getSnapshot(sessionId);
         assertThat(snap2).isEqualTo(snap1);
 
@@ -77,6 +75,13 @@ class MemoryStoreTest {
         store.add("memory", "Fact B");
         Map<String, String> snap3 = store.getSnapshot(UUID.randomUUID());
         assertThat(snap3.get("memory")).contains("Fact A").contains("Fact B");
+
+        // Invalidate the snapshot cache — the next call for the original session
+        // should now return updated content including "Fact B"
+        store.invalidateSnapshot();
+        Map<String, String> snap4 = store.getSnapshot(sessionId);
+        assertThat(snap4.get("memory")).contains("Fact A").contains("Fact B");
+        assertThat(snap4).isNotEqualTo(snap1);
     }
 
     @Test

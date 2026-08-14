@@ -24,7 +24,7 @@ class DatabaseMemoryProviderTest {
         e.setFact("fact");
         when(repo.searchByUserId("u", "q", 3)).thenReturn(List.of(e));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
-        assertThat(p.recall("u", "q", 3)).containsExactly("[c] fact");
+        assertThat(p.recall("u", "q", 3)).containsExactly("fact");
     }
 
     @Test
@@ -43,8 +43,19 @@ class DatabaseMemoryProviderTest {
         e.setFact("fact text");
         when(repo.searchByUserId("u", "q", 5)).thenReturn(List.of(e));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
-        // The format is "[" + category + "] " + fact — null category renders as "null"
-        assertThat(p.recall("u", "q", 5)).containsExactly("[null] fact text");
+        // M4: recall returns plain fact text, no category prefix
+        assertThat(p.recall("u", "q", 5)).containsExactly("fact text");
+    }
+
+    @Test
+    void storeTrimsContentBeforeSaving() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+        // H2: Content should be trimmed before saving
+        p.store("user-1", "cat", "  fact with spaces  ");
+        verify(repo).save(argThat(e ->
+            e.getFact().equals("fact with spaces")
+        ));
     }
 
     @Test
@@ -52,7 +63,7 @@ class DatabaseMemoryProviderTest {
         MemoryRepository repo = mock(MemoryRepository.class);
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String specialFact = "He said \"hello\" & <script>alert('xss')</script> — café ☕";
-        String specialCategory = "cät-égorÿ/with;special";
+        String specialCategory = "cät-egorÿ/with;special";
         p.store("user-1", specialCategory, specialFact);
         verify(repo).save(argThat(e ->
             e.getUserId().equals("user-1") &&
@@ -220,7 +231,7 @@ class DatabaseMemoryProviderTest {
     }
 
     @Test
-    void readFormatsEntriesWithTargetHeader() {
+    void readReturnsPlainEntriesJoinedByDelimiter() {
         MemoryRepository repo = mock(MemoryRepository.class);
         MemoryEntity e1 = new MemoryEntity();
         e1.setCategory("auto");
@@ -232,9 +243,12 @@ class DatabaseMemoryProviderTest {
             .thenReturn(List.of(e1, e2));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String result = p.read("u", "memory");
-        assertThat(result).startsWith("§ MEMORY");
-        assertThat(result).contains("[auto] Fact one");
-        assertThat(result).contains("[manual] Fact two");
+        // M4: read() returns plain entries joined by delimiter (no § header, no [category] prefix)
+        assertThat(result).doesNotContain("§ MEMORY");
+        assertThat(result).doesNotContain("[auto]");
+        assertThat(result).doesNotContain("[manual]");
+        assertThat(result).contains("Fact one");
+        assertThat(result).contains("Fact two");
     }
 
     @Test
@@ -253,8 +267,9 @@ class DatabaseMemoryProviderTest {
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         var snapshot = p.getSnapshot("u");
         assertThat(snapshot).containsKeys("memory", "user");
-        assertThat(snapshot.get("memory")).contains("[cat] mem fact");
-        assertThat(snapshot.get("user")).contains("[info] user fact");
+        // M4: snapshot uses plain entries, no category prefix
+        assertThat(snapshot.get("memory")).contains("mem fact");
+        assertThat(snapshot.get("user")).contains("user fact");
     }
 
     // S4: syncTurn no longer writes facts — just logs for audit

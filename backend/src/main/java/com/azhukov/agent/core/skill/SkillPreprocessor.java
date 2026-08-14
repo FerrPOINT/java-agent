@@ -1,7 +1,9 @@
 package com.azhukov.agent.core.skill;
 
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.tools.terminal.CommandGuard;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -23,18 +25,35 @@ import java.util.regex.Pattern;
 @Component
 public class SkillPreprocessor {
 
- // S2: Template variable patterns — template convention uses HERMES_ prefix
- private static final Pattern TEMPLATE_VAR_RE = Pattern.compile("\\$\\{(HERMES_SKILL_DIR|HERMES_SESSION_ID|SESSION_ID|SKILL_DIR)\\}");
- private static final Pattern INLINE_SHELL_RE = Pattern.compile("!`([^`\n]+)`");
+    @Autowired(required = false)
+    private AgentProperties agentProperties;
 
- // Cap inline shell output
- private static final int INLINE_SHELL_MAX_OUTPUT = 4000;
- private static final int INLINE_SHELL_TIMEOUT_SECONDS = 10;
+    // S2: Template variable patterns — template convention uses HERMES_ prefix
+    private static final Pattern TEMPLATE_VAR_RE = Pattern.compile("\\$\\{(HERMES_SKILL_DIR|HERMES_SESSION_ID|SESSION_ID|SKILL_DIR)\\}");
+    private static final Pattern INLINE_SHELL_RE = Pattern.compile("!`([^`\n]+)`");
 
- private volatile boolean enabled = true;
- private volatile boolean inlineShellEnabled = false;
- private volatile int inlineShellTimeout = INLINE_SHELL_TIMEOUT_SECONDS;
- private volatile CommandGuard commandGuard = new CommandGuard(List.of(), false);
+    // Cap inline shell output
+    private static final int INLINE_SHELL_MAX_OUTPUT = 4000;
+    private static final int INLINE_SHELL_TIMEOUT_SECONDS = 10;
+
+    private volatile boolean enabled = true;
+    private volatile boolean inlineShellEnabled = false;
+    private volatile int inlineShellTimeout = INLINE_SHELL_TIMEOUT_SECONDS;
+    private volatile CommandGuard commandGuard = new CommandGuard(List.of(), false);
+
+    /**
+     * H8: Read inline shell settings from AgentProperties.skills.
+     * Wired as @PostConstruct so the Spring-managed bean picks up config on startup.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    @jakarta.annotation.PostConstruct
+    void init() {
+        if (agentProperties != null && agentProperties.getSkills() != null) {
+            AgentProperties.SkillsProperties skills = agentProperties.getSkills();
+            this.inlineShellEnabled = skills.isInlineShell();
+            this.inlineShellTimeout = skills.getInlineShellTimeout();
+        }
+    }
 
  /**
   * Set the CommandGuard used to validate inline shell commands before execution.

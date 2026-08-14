@@ -227,8 +227,10 @@ public class AgentConfig {
     @Bean
     @ConditionalOnProperty(name = "agent.memory.enabled", havingValue = "true", matchIfMissing = true)
     @ConditionalOnMissingBean(MemoryProvider.class)
-    public MemoryProvider memoryProvider(MemoryRepository memoryRepository) {
-        return new DatabaseMemoryProvider(memoryRepository);
+    public MemoryProvider memoryProvider(MemoryRepository memoryRepository,
+                                          AgentProperties agentProperties,
+                                          MemoryThreatScanner memoryThreatScanner) {
+        return new DatabaseMemoryProvider(memoryRepository, agentProperties, memoryThreatScanner);
     }
 
     @Bean

@@ -201,8 +201,8 @@ class DatabaseMemoryProviderContainsMatchTest {
         int charCount = p.getCharCount("u", "memory");
         // Should be "Fact one\n§\nFact two".length() = 9 + 3 + 8 = 20
         assertThat(charCount).isEqualTo("Fact one\n§\nFact two".length());
-        // NOT the length of read() which includes headers and category prefixes
-        assertThat(charCount).isNotEqualTo(p.read("u", "memory").length());
+        // M4: read() now returns the same plain format, so char count equals read().length()
+        assertThat(charCount).isEqualTo(p.read("u", "memory").length());
     }
 
     @Test

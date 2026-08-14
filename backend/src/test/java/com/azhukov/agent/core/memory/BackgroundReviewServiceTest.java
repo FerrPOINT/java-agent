@@ -60,6 +60,8 @@ class BackgroundReviewServiceTest {
         when(memProps.getBackgroundReview()).thenReturn(reviewProps);
         when(reviewProps.isEnabled()).thenReturn(true);
         when(reviewProps.getDelayMs()).thenReturn(0);
+        // M9: Stub maxReviewTurns (default 8)
+        when(reviewProps.getMaxReviewTurns()).thenReturn(8);
     }
 
     @AfterEach
@@ -269,12 +271,28 @@ class BackgroundReviewServiceTest {
 
     @Test
     void clearFlag_alsoClearsReviewSummary() {
+        // First, trigger a review that produces a summary
+        String toolArguments = "{\"action\":\"add\",\"content\":\"User prefers Java\"}";
+        ChatResponse response = new ChatResponse("", List.of(
+            new ToolCall("call_1", "memory", toolArguments)
+        ));
+        when(modelClient.complete(any(), any())).thenReturn(response, new ChatResponse("Done", List.of()));
+        when(memoryTool.execute(any(), any(), any()))
+            .thenReturn(ToolResult.ok("Added to memory store."));
+
         var svc = createService();
         UUID sessionId = UUID.randomUUID();
-        // Simulate a completed review
-        // After clearFlag, summary should be gone
+        svc.reviewTurn(sessionId, List.of(Message.user("I like Java"), Message.assistant("Great!", 0)));
+
+        // Wait for the review to complete and produce a summary
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+            assertThat(svc.hasReviewSummary(sessionId)).isTrue()
+        );
+
+        // Now clearFlag should remove the summary
         svc.clearFlag(sessionId);
         assertThat(svc.hasReviewSummary(sessionId)).isFalse();
+        assertThat(svc.wasMemoryUpdated(sessionId)).isFalse();
         svc.shutdown();
     }
 
@@ -465,16 +483,12 @@ class BackgroundReviewServiceTest {
 
         Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() -> {
             // The tool was executed (tool dispatch happens regardless of stale filtering),
-            // but the stale action should not be tracked in the summary
-            // The action tracking is separate from tool execution
+            // but the stale action should NOT be tracked in the summary.
+            // The tool result "Added to memory store." matches the prior conversation's
+            // tool result content, so StaleActionFilter.isStale() returns true and
+            // the action is filtered out — getReviewActions should be empty.
             List<String> actions = svc.getReviewActions(sessionId);
-            // If the tool result content matches the prior conversation's tool result,
-            // it's considered stale and not added to actions
-            if (actions != null && !actions.isEmpty()) {
-                // It's ok if actions are present — the tool was still executed, just the
-                // stale check applies to the review agent's own tool results that match
-                // prior conversation tool results by callId
-            }
+            assertThat(actions).noneMatch(a -> a.contains("User prefers Java"));
         });
         svc.shutdown();
     }
@@ -584,12 +598,10 @@ class BackgroundReviewServiceTest {
         }
         assertThat(lastUserMsg).isNotNull();
         // When both nudges fired, the prompt is selected by ReviewPromptSelector
-        // (which may be combined, memory-only, or skill-only depending on conversation content)
-        assertThat(lastUserMsg.content()).isIn(
-            ReviewPrompts.COMBINED_REVIEW_PROMPT,
-            ReviewPrompts.MEMORY_REVIEW_PROMPT,
-            ReviewPrompts.SKILL_REVIEW_PROMPT
-        );
+        // The conversation includes both memory ("I prefer concise answers") and
+        // skill ("debugging workflow") signals, so ReviewPromptSelector should
+        // select the COMBINED prompt — not memory-only or skill-only.
+        assertThat(lastUserMsg.content()).isEqualTo(ReviewPrompts.COMBINED_REVIEW_PROMPT);
         svc.shutdown();
     }
 

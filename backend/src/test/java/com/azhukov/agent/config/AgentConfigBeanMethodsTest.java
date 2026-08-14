@@ -158,7 +158,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void memoryProvider_bean() {
-        assertThat(config.memoryProvider(mock(MemoryRepository.class))).isNotNull();
+        assertThat(config.memoryProvider(mock(MemoryRepository.class), new AgentProperties(), new com.azhukov.agent.core.memory.MemoryThreatScanner())).isNotNull();
     }
 
     @Test

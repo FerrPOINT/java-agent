@@ -111,7 +111,8 @@ class DefaultPromptBuilderTest {
         when(registry.getDefinitions()).thenReturn(List.of());
         DefaultAgentConstants constants = new DefaultAgentConstants();
         MemoryProvider memoryProvider = mock(MemoryProvider.class);
-        when(memoryProvider.recall(eq("user-1"), anyString(), anyInt()))
+        // C1: buildMemoryPrefix now uses getRawEntries (non-FTS) instead of recall
+        when(memoryProvider.getRawEntries(eq("user-1"), eq("memory")))
             .thenReturn(List.of("User prefers dark mode", "User works with Python"));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(
@@ -138,7 +139,8 @@ class DefaultPromptBuilderTest {
         when(registry.getDefinitions()).thenReturn(List.of());
         DefaultAgentConstants constants = new DefaultAgentConstants();
         MemoryProvider memoryProvider = mock(MemoryProvider.class);
-        when(memoryProvider.recall(anyString(), anyString(), anyInt()))
+        // C1: buildMemoryPrefix uses getRawEntries
+        when(memoryProvider.getRawEntries(anyString(), anyString()))
             .thenReturn(List.of());
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(
@@ -181,7 +183,8 @@ class DefaultPromptBuilderTest {
             properties, registry, new DefaultAgentConstants(), null, null, memoryProvider);
 
         assertThat(builder.buildMemoryPrefix(null)).isEmpty();
-        verify(memoryProvider, never()).recall(anyString(), anyString(), anyInt());
+        // C1: should not call getRawEntries when session is null
+        verify(memoryProvider, never()).getRawEntries(anyString(), anyString());
     }
 
     @Test
@@ -189,7 +192,8 @@ class DefaultPromptBuilderTest {
         AgentProperties properties = new AgentProperties();
         ToolRegistry registry = mock(ToolRegistry.class);
         MemoryProvider memoryProvider = mock(MemoryProvider.class);
-        when(memoryProvider.recall(anyString(), anyString(), anyInt()))
+        // C1: buildMemoryPrefix uses getRawEntries
+        when(memoryProvider.getRawEntries(anyString(), anyString()))
             .thenThrow(new RuntimeException("DB down"));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(
@@ -200,11 +204,12 @@ class DefaultPromptBuilderTest {
     }
 
     @Test
-    void memoryPrefixRecallsWithCorrectUserIdAndLimit() {
+    void memoryPrefixRecallsWithCorrectUserId() {
         AgentProperties properties = new AgentProperties();
         ToolRegistry registry = mock(ToolRegistry.class);
         MemoryProvider memoryProvider = mock(MemoryProvider.class);
-        when(memoryProvider.recall(eq("user-42"), anyString(), eq(20)))
+        // C1: buildMemoryPrefix uses getRawEntries (non-FTS)
+        when(memoryProvider.getRawEntries(eq("user-42"), eq("memory")))
             .thenReturn(List.of("Fact A"));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(
@@ -214,7 +219,7 @@ class DefaultPromptBuilderTest {
         String prefix = builder.buildMemoryPrefix(session);
 
         assertThat(prefix).contains("Fact A");
-        verify(memoryProvider).recall(eq("user-42"), anyString(), eq(20));
+        verify(memoryProvider).getRawEntries(eq("user-42"), eq("memory"));
     }
 
     // ── Developer role tests (GPT-5 / Codex) ─────────────────────────────

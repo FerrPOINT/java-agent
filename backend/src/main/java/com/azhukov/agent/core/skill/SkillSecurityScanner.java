@@ -148,6 +148,9 @@ public final class SkillSecurityScanner {
  "attempts to extract the system prompt"),
 
  // ── Destructive operations ──
+ tp(":\\(\\)\\s*\\{\\s*:\\|:&\\s*\\}\\s*;\\s*:",
+ "fork_bomb", "critical", "destructive",
+ "fork bomb pattern"),
  tp("rm\\s+-rf\\s+/",
  "destructive_root_rm", "critical", "destructive",
  "recursive delete from root"),
