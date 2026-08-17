@@ -29,7 +29,10 @@ class ReadWriteFileToolsTest {
         ReadFileTool t = new ReadFileTool(props());
         ToolResult r = t.execute("{\"path\":\"" + f + "\",\"offset\":1,\"limit\":2}", null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).isEqualTo("1|a\n2|b\n");
+        assertThat(r.content()).contains("1|a");
+        assertThat(r.content()).contains("2|b");
+        // With limit=2, truncation marker should appear since file has more lines
+        assertThat(r.content()).contains("[truncated:");
     }
 
     @Test

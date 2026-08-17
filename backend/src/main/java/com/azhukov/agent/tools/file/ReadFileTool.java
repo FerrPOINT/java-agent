@@ -71,7 +71,11 @@ public class ReadFileTool implements ToolHandler {
         }
 
         try {
-            List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+            // h55: Detect UTF-16 BOM and transcode to UTF-8 before processing.
+            byte[] rawBytes = Files.readAllBytes(path);
+            String content = transcodeUtf16IfBom(rawBytes);
+
+            List<String> lines = content.isEmpty() ? List.of() : List.of(content.split("\n", -1));
             int offset = Math.max(1, args.offset());
             int start = offset - 1;
             int limit = args.limit() > 0 ? args.limit() : Integer.MAX_VALUE;
@@ -86,8 +90,20 @@ public class ReadFileTool implements ToolHandler {
                 sb.append(i + 1).append("|").append(lines.get(i)).append("\n");
             }
 
-            // Char cap truncation
+            // Remove trailing newline
             String result = sb.toString();
+            if (result.endsWith("\n")) {
+                result = result.substring(0, result.length() - 1);
+            }
+
+            // p10: Truncation UX — when output is truncated by limit, show remaining lines count.
+            if (end < lines.size()) {
+                int shown = end - start;
+                int remaining = lines.size() - end;
+                result += "\n[truncated: showing lines " + offset + "-" + (start + shown) + " of " + lines.size() + " total, " + remaining + " remaining]";
+            }
+
+            // Char cap truncation
             if (result.length() > MAX_READ_CHARS) {
                 result = result.substring(0, MAX_READ_CHARS) + "\n[... file truncated at " + MAX_READ_CHARS + " chars]";
             }
@@ -95,6 +111,26 @@ public class ReadFileTool implements ToolHandler {
         } catch (IOException e) {
             return ToolResult.fail("Failed to read file: " + e.getMessage());
         }
+    }
+
+    /**
+     * h55: Detect UTF-16 BOM (FF FE for UTF-16LE or FE FF for UTF-16BE)
+     * and transcode the raw bytes to UTF-8. If no BOM is found, decode as UTF-8.
+     */
+    private static String transcodeUtf16IfBom(byte[] rawBytes) {
+        if (rawBytes.length >= 2) {
+            int b0 = rawBytes[0] & 0xFF;
+            int b1 = rawBytes[1] & 0xFF;
+            // UTF-16LE BOM: FF FE
+            if (b0 == 0xFF && b1 == 0xFE) {
+                return new String(rawBytes, 2, rawBytes.length - 2, StandardCharsets.UTF_16LE);
+            }
+            // UTF-16BE BOM: FE FF
+            if (b0 == 0xFE && b1 == 0xFF) {
+                return new String(rawBytes, 2, rawBytes.length - 2, StandardCharsets.UTF_16BE);
+            }
+        }
+        return new String(rawBytes, StandardCharsets.UTF_8);
     }
 
     private boolean isBinaryFile(Path path) {

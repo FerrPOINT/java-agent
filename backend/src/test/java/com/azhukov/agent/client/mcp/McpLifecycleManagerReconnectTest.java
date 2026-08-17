@@ -3,6 +3,11 @@ package com.azhukov.agent.client.mcp;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.security.McpResponseScanner;
+import com.azhukov.agent.security.McpToolDefinitionScanner;
+import com.azhukov.agent.security.SlidingWindowRateLimiter;
+import com.azhukov.agent.security.ToolArgumentInjectionScanner;
+import com.azhukov.agent.security.ToolFingerprintStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -32,7 +37,10 @@ class McpLifecycleManagerReconnectTest {
         props.getMcp().setEnabled(true);
 
         ApplicationContext ctx = mock(ApplicationContext.class);
-        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx,
+            new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(),
+            new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()),
+            new SlidingWindowRateLimiter());
 
         // Use reflection to put a mock state into the clients map
         var clientsField = McpLifecycleManager.class.getDeclaredField("clients");

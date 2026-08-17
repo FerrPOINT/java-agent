@@ -18,7 +18,7 @@ class McpLifecycleManagerExtraTest {
         AgentProperties properties = new AgentProperties();
         properties.getMcp().setEnabled(false);
 
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
         manager.connectConfiguredServers();
 
         assertThat(manager.listServers()).isEmpty();
@@ -30,7 +30,7 @@ class McpLifecycleManagerExtraTest {
         AgentProperties properties = new AgentProperties();
         properties.getMcp().setEnabled(true);
 
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
         assertThat(manager.listServers()).isEmpty();
         assertThat(manager.listDiscoveredTools()).isEmpty();
     }
@@ -38,7 +38,7 @@ class McpLifecycleManagerExtraTest {
     @Test
     void readResourceThrowsWhenServerNotConnected() {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
 
         assertThatThrownBy(() -> manager.readResource("missing", "resource://foo"))
             .isInstanceOf(IllegalStateException.class)
@@ -48,7 +48,7 @@ class McpLifecycleManagerExtraTest {
     @Test
     void executeToolThrowsWhenServerNotConnected() {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
 
         assertThatThrownBy(() -> manager.executeTool("missing", "tool", "{}"))
             .isInstanceOf(IllegalStateException.class)

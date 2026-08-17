@@ -224,12 +224,23 @@ public class SkillUtils {
  * Returns a FrontmatterResult containing the parsed frontmatter map and the remaining body.
  */
  public static FrontmatterResult parseFrontmatter(String content) {
- Map<String, Object> frontmatter = new LinkedHashMap<>();
- String body = content;
+     Map<String, Object> frontmatter = new LinkedHashMap<>();
+     String body = content;
 
- if (content == null || !content.startsWith("---")) {
- return new FrontmatterResult(frontmatter, body);
- }
+     if (content == null) {
+         return new FrontmatterResult(frontmatter, body);
+     }
+
+     // h79: Strip a leading UTF-8 BOM (\uFEFF) before parsing frontmatter.
+     // Some editors add a BOM to SKILL.md files, which would cause the
+     // "---" frontmatter start check to fail silently.
+     if (content.startsWith("\uFEFF")) {
+         content = content.substring(1);
+     }
+
+     if (!content.startsWith("---")) {
+         return new FrontmatterResult(frontmatter, body);
+     }
 
  // Find closing ---
  Pattern endPattern = Pattern.compile("\\n---\\s*\\n");

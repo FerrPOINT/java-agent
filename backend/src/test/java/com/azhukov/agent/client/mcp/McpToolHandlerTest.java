@@ -4,6 +4,11 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.security.McpResponseScanner;
+import com.azhukov.agent.security.McpToolDefinitionScanner;
+import com.azhukov.agent.security.SlidingWindowRateLimiter;
+import com.azhukov.agent.security.ToolArgumentInjectionScanner;
+import com.azhukov.agent.security.ToolFingerprintStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -24,7 +29,13 @@ class McpToolHandlerTest {
     @Test
     void executeReturnsOkOnSuccess() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        ObjectMapper objectMapper = new ObjectMapper();
+        McpLifecycleManager manager = new McpLifecycleManager(properties, objectMapper, null,
+            new McpToolDefinitionScanner(objectMapper),
+            new McpResponseScanner(),
+            new ToolArgumentInjectionScanner(),
+            new ToolFingerprintStore(objectMapper),
+            new SlidingWindowRateLimiter());
 
         McpSyncClient client = mock(McpSyncClient.class);
         McpSchema.CallToolResult result = new McpSchema.CallToolResult(
@@ -42,7 +53,13 @@ class McpToolHandlerTest {
     @Test
     void executeReturnsFailOnException() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        ObjectMapper objectMapper = new ObjectMapper();
+        McpLifecycleManager manager = new McpLifecycleManager(properties, objectMapper, null,
+            new McpToolDefinitionScanner(objectMapper),
+            new McpResponseScanner(),
+            new ToolArgumentInjectionScanner(),
+            new ToolFingerprintStore(objectMapper),
+            new SlidingWindowRateLimiter());
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("boom"));

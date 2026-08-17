@@ -21,7 +21,7 @@ class McpLifecycleManagerStateTest {
     void listServersReturnsConnectedInfo() throws Exception {
         AgentProperties properties = new AgentProperties();
         properties.getMcp().setEnabled(true);
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         McpSchema.Tool tool = McpSchema.Tool.builder("test").title("t").description("d").inputSchema(Map.of()).build();
@@ -36,7 +36,7 @@ class McpLifecycleManagerStateTest {
     @Test
     void listDiscoveredToolsReturnsDefinitions() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         McpSchema.Tool tool = McpSchema.Tool.builder("tool1").title("t").description("d").inputSchema(Map.of()).build();
@@ -50,7 +50,7 @@ class McpLifecycleManagerStateTest {
     @Test
     void readResourceJoinsContents() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.readResource(any(McpSchema.ReadResourceRequest.class))).thenReturn(new McpSchema.ReadResourceResult(List.of(new McpSchema.TextResourceContents("uri", "text/plain", "hello"))));
@@ -63,7 +63,7 @@ class McpLifecycleManagerStateTest {
     @Test
     void executeToolCallsClient() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         McpSchema.CallToolResult callResult = new McpSchema.CallToolResult(List.of(new McpSchema.TextContent(null, "done")), false, null, null);
@@ -77,7 +77,7 @@ class McpLifecycleManagerStateTest {
     @Test
     void closeAllClosesClients() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         injectClient(manager, "srv", client, List.of());

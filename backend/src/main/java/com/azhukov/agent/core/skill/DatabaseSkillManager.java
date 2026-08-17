@@ -628,10 +628,14 @@ public class DatabaseSkillManager implements SkillManager {
  * Returns error message or {@code null} if valid.
  */
  private static String validateFrontmatter(String content) {
- if (content == null || content.isBlank()) {
- return "Content cannot be empty.";
- }
- if (!content.startsWith("---")) {
+     if (content == null || content.isBlank()) {
+         return "Content cannot be empty.";
+     }
+     // h79: Strip a leading UTF-8 BOM (\uFEFF) before validating frontmatter.
+     if (content.startsWith("\uFEFF")) {
+         content = content.substring(1);
+     }
+     if (!content.startsWith("---")) {
  return "SKILL.md must start with YAML frontmatter (---). See existing skills for format.";
  }
  // Find closing ---

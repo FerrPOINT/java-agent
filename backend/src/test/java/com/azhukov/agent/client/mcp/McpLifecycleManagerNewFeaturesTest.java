@@ -3,6 +3,11 @@ package com.azhukov.agent.client.mcp;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.security.McpResponseScanner;
+import com.azhukov.agent.security.McpToolDefinitionScanner;
+import com.azhukov.agent.security.SlidingWindowRateLimiter;
+import com.azhukov.agent.security.ToolArgumentInjectionScanner;
+import com.azhukov.agent.security.ToolFingerprintStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -132,7 +137,7 @@ class McpLifecycleManagerNewFeaturesTest {
         ApplicationContext ctx = mock(ApplicationContext.class);
         when(ctx.getBean(ToolRegistry.class)).thenReturn(registry);
 
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx, new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(), new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()), new SlidingWindowRateLimiter());
 
         // Inject a client with initial tools
         McpSyncClient client = mock(McpSyncClient.class);
@@ -162,7 +167,7 @@ class McpLifecycleManagerNewFeaturesTest {
         ApplicationContext ctx = mock(ApplicationContext.class);
         when(ctx.getBean(ToolRegistry.class)).thenReturn(registry);
 
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx, new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(), new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()), new SlidingWindowRateLimiter());
 
         McpSyncClient client = mock(McpSyncClient.class);
         McpSchema.Tool tool1 = McpSchema.Tool.builder("tool1").title("t").description("d").inputSchema(Map.of()).build();
@@ -181,7 +186,7 @@ class McpLifecycleManagerNewFeaturesTest {
     @Test
     void refreshTools_handlesMissingServerGracefully() {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
 
         // Should not throw
         manager.refreshTools("nonexistent");
@@ -200,7 +205,7 @@ class McpLifecycleManagerNewFeaturesTest {
         ApplicationContext ctx = mock(ApplicationContext.class);
         when(ctx.getBean(ToolRegistry.class)).thenReturn(mock(ToolRegistry.class));
 
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx, new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(), new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()), new SlidingWindowRateLimiter());
 
         // Inject existing client
         McpSyncClient client = mock(McpSyncClient.class);
@@ -217,7 +222,7 @@ class McpLifecycleManagerNewFeaturesTest {
     @Test
     void reconnect_unknownServerLogsWarning() {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
 
         // Should not throw
         manager.reconnect("nonexistent");
@@ -226,7 +231,10 @@ class McpLifecycleManagerNewFeaturesTest {
     @Test
     void mcpToolHandlerStripsCredentialsFromError() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null,
+            new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(),
+            new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()),
+            new SlidingWindowRateLimiter());
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("Bearer sk-secret123456 failed"));
@@ -243,7 +251,7 @@ class McpLifecycleManagerNewFeaturesTest {
     @Test
     void executeToolStripsCredentialsFromError() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("key=supersecret leaked"));
@@ -261,7 +269,7 @@ class McpLifecycleManagerNewFeaturesTest {
     @Test
     void readResourceStripsCredentialsFromError() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.readResource(any(McpSchema.ReadResourceRequest.class))).thenThrow(new RuntimeException("password=hunter2 error"));

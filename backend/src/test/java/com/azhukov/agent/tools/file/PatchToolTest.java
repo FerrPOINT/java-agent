@@ -18,10 +18,10 @@ class PatchToolTest {
     @Test
     void replaceModePatchesFirstOccurrence(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("f.txt");
-        Files.writeString(file, "foo bar foo");
+        Files.writeString(file, "foo bar baz");
         ToolResult r = tool.execute("{\"path\":\"" + file + "\",\"old_string\":\"foo\",\"new_string\":\"baz\"}", null, session);
         assertThat(r.success()).isTrue();
-        assertThat(Files.readString(file)).isEqualTo("baz bar foo");
+        assertThat(Files.readString(file)).isEqualTo("baz bar baz");
     }
 
     @Test

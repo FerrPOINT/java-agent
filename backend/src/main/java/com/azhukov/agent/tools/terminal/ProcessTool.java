@@ -111,8 +111,35 @@ public class ProcessTool implements ToolHandler {
         return ToolResult.ok(String.join("\n", lines));
     }
 
+    /**
+     * h51: Look up a process by full session ID or a unique ID prefix.
+     * E.g. "abc123" matches session "abc12345-...". Returns the matching
+     * ManagedProcess, or null if no match is found or the prefix is ambiguous.
+     */
+    private ManagedProcess findProcess(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return null;
+        }
+        // Fast path: exact match
+        ManagedProcess exact = processes.get(sessionId);
+        if (exact != null) {
+            return exact;
+        }
+        // Prefix match: find all processes whose ID starts with the given prefix
+        List<ManagedProcess> matches = new ArrayList<>();
+        for (Map.Entry<String, ManagedProcess> entry : processes.entrySet()) {
+            if (entry.getKey().startsWith(sessionId)) {
+                matches.add(entry.getValue());
+            }
+        }
+        if (matches.size() == 1) {
+            return matches.get(0);
+        }
+        return null; // no match or ambiguous
+    }
+
     private ToolResult poll(String sessionId) {
-        ManagedProcess p = processes.get(sessionId);
+        ManagedProcess p = findProcess(sessionId);
         if (p == null) {
             return ToolResult.fail("Process not found: " + sessionId);
         }
@@ -120,7 +147,7 @@ public class ProcessTool implements ToolHandler {
     }
 
     private ToolResult log(String sessionId, int offset, int limit) {
-        ManagedProcess p = processes.get(sessionId);
+        ManagedProcess p = findProcess(sessionId);
         if (p == null) {
             return ToolResult.fail("Process not found: " + sessionId);
         }
@@ -135,7 +162,7 @@ public class ProcessTool implements ToolHandler {
     }
 
     private ToolResult waitFor(String sessionId, int timeout) {
-        ManagedProcess p = processes.get(sessionId);
+        ManagedProcess p = findProcess(sessionId);
         if (p == null) {
             return ToolResult.fail("Process not found: " + sessionId);
         }
@@ -153,16 +180,17 @@ public class ProcessTool implements ToolHandler {
     }
 
     private ToolResult kill(String sessionId) {
-        ManagedProcess p = processes.remove(sessionId);
+        ManagedProcess p = findProcess(sessionId);
         if (p == null) {
             return ToolResult.fail("Process not found: " + sessionId);
         }
+        processes.remove(p.id);
         p.destroy();
-        return ToolResult.ok("Killed process " + sessionId);
+        return ToolResult.ok("Killed process " + p.id);
     }
 
     private ToolResult writeStdin(String sessionId, String data) {
-        ManagedProcess p = processes.get(sessionId);
+        ManagedProcess p = findProcess(sessionId);
         if (p == null) {
             return ToolResult.fail("Process not found: " + sessionId);
         }
@@ -175,7 +203,7 @@ public class ProcessTool implements ToolHandler {
     }
 
     private ToolResult closeStdin(String sessionId) {
-        ManagedProcess p = processes.get(sessionId);
+        ManagedProcess p = findProcess(sessionId);
         if (p == null) {
             return ToolResult.fail("Process not found: " + sessionId);
         }

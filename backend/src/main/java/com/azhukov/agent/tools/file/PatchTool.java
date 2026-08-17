@@ -67,6 +67,35 @@ public class PatchTool implements ToolHandler {
 
     private ToolResult replace(Path path, String oldString, String newString, boolean replaceAll) throws IOException {
         String content = Files.readString(path, StandardCharsets.UTF_8);
+
+        // p7: Check if new_string is already present in the file content.
+        // If so, the patch was likely already applied — return success with info.
+        if (!replaceAll && content.contains(newString) && !content.contains(oldString)) {
+            return ToolResult.ok("[info: new_string already present, no changes needed]");
+        }
+
+        // p11: Multi-match detection — before applying patch, check if old_string
+        // appears more than once in the file. If so (and replaceAll is not set
+        // and old_string != new_string), return an error instead of silently
+        // replacing only the first occurrence.
+        // When old_string == new_string, multi-match is a no-op (same string),
+        // so we skip the check and let it proceed to the normal patch logic.
+        if (!replaceAll && !oldString.equals(newString)) {
+            int firstIdx = content.indexOf(oldString);
+            if (firstIdx >= 0) {
+                int secondIdx = content.indexOf(oldString, firstIdx + 1);
+                if (secondIdx >= 0) {
+                    // Count total occurrences for the error message
+                    int count = 1;
+                    int idx = firstIdx;
+                    while ((idx = content.indexOf(oldString, idx + 1)) >= 0) {
+                        count++;
+                    }
+                    return ToolResult.fail("[error: old_string matches " + count + " times — must be unique. Use replace_all=true to replace all occurrences]");
+                }
+            }
+        }
+
         // Strategy 0: exact match — use indexOf to check existence before replacing.
         // This correctly handles the edge case where oldString.equals(newString):
         // replaceFirst/replace would produce identical content, but the string WAS

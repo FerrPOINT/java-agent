@@ -178,7 +178,7 @@ class McpLifecycleManagerBranchTest {
     void reconnect_unknownServer_doesNothing() {
         AgentProperties props = new AgentProperties();
         ApplicationContext ctx = mock(ApplicationContext.class);
-        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx, null, null, null, null, null);
         // Should not throw — unknown server is just logged
         mgr.reconnect("unknown-server");
         assertThat(mgr.listServers()).isEmpty();
@@ -188,7 +188,7 @@ class McpLifecycleManagerBranchTest {
     void refreshTools_notConnected_doesNothing() {
         AgentProperties props = new AgentProperties();
         ApplicationContext ctx = mock(ApplicationContext.class);
-        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx, null, null, null, null, null);
         // Should not throw — just returns
         mgr.refreshTools("not-connected");
     }

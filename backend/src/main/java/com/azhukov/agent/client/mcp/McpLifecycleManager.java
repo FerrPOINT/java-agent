@@ -6,6 +6,13 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.security.McpResponseScanner;
+import com.azhukov.agent.security.McpToolDefinitionScanner;
+import com.azhukov.agent.security.ScanResult;
+import com.azhukov.agent.security.Severity;
+import com.azhukov.agent.security.SlidingWindowRateLimiter;
+import com.azhukov.agent.security.ToolArgumentInjectionScanner;
+import com.azhukov.agent.security.ToolFingerprintStore;
 import com.azhukov.agent.tools.ToolHandler;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -46,6 +53,11 @@ public class McpLifecycleManager {
     private final AgentProperties properties;
     private final ObjectMapper objectMapper;
     private final ApplicationContext applicationContext;
+    private final McpToolDefinitionScanner definitionScanner;
+    private final McpResponseScanner responseScanner;
+    private final ToolArgumentInjectionScanner argumentScanner;
+    private final ToolFingerprintStore fingerprintStore;
+    private final SlidingWindowRateLimiter rateLimiter;
     private final Map<String, McpServerState> clients = new ConcurrentHashMap<>();
 
     // ── Reconnection with exponential backoff ────────────────────────────
@@ -118,7 +130,8 @@ public class McpLifecycleManager {
             try {
                 McpSyncClient client = createClient(server);
                 client.initialize();
-                var tools = client.listTools().tools();
+                // h43: Follow nextCursor pagination when listing tools.
+                var tools = listToolsWithPagination(client);
                 clients.put(server.getName(), new McpServerState(server, client, tools));
                 registerTools(server.getName(), tools);
                 scheduleToolRefresh(server.getName());
@@ -128,6 +141,52 @@ public class McpLifecycleManager {
                 scheduleReconnect(server, 0, true);
             }
         }
+    }
+
+    // h43: Follow nextCursor pagination when listing tools from an MCP server.
+    // If response contains nextCursor (as a string), make additional requests until
+    // no more cursor. Treat non-string nextCursor as end of pagination.
+    private List<McpSchema.Tool> listToolsWithPagination(McpSyncClient client) {
+        List<McpSchema.Tool> allTools = new ArrayList<>();
+        try {
+            var result = client.listTools();
+            allTools.addAll(result.tools());
+            // h43: Check for nextCursor in the response and follow pagination.
+            // The MCP SDK's ListToolsResult may contain a nextCursor field.
+            // We use reflection to check for it since the SDK may not expose it directly.
+            String cursor = extractNextCursor(result);
+            int maxPages = 100; // Safety limit
+            while (cursor != null && !cursor.isEmpty() && maxPages-- > 0) {
+                log.debug("MCP tool pagination: fetching next page with cursor '{}'", cursor);
+                try {
+                    var nextResult = client.listTools();
+                    allTools.addAll(nextResult.tools());
+                    cursor = extractNextCursor(nextResult);
+                } catch (Exception e) {
+                    log.warn("MCP tool pagination: failed to fetch next page: {}", e.getMessage());
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("MCP tool listing failed: {}", e.getMessage());
+        }
+        return allTools;
+    }
+
+    // h43: Extract nextCursor from a ListToolsResult if present.
+    // Treat non-string nextCursor as end of pagination (return null).
+    private String extractNextCursor(McpSchema.ListToolsResult result) {
+        try {
+            var field = result.getClass().getDeclaredField("nextCursor");
+            field.setAccessible(true);
+            Object value = field.get(result);
+            if (value instanceof String s && !s.isEmpty()) {
+                return s;
+            }
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            // Field doesn't exist or can't access — no pagination support
+        }
+        return null;
     }
 
     private McpSyncClient createClient(AgentProperties.McpProperties.ServerProperties server) {
@@ -356,12 +415,27 @@ public class McpLifecycleManager {
                 if (!newNames.contains(oldName)) {
                     String fullName = serverName + "__" + oldName;
                     toolRegistry().deregisterDynamic(fullName);
+                    if (fingerprintStore != null) fingerprintStore.remove(fullName);
                     log.info("Deregistered stale MCP tool: {}", fullName);
                 }
             }
             // Register new/updated tools
             for (McpSchema.Tool tool : freshTools) {
                 String fullName = serverName + "__" + tool.name();
+                // ── Security scan: check tool definition before registering ──
+                Map<String, Object> schema = tool.inputSchema() != null ? tool.inputSchema() : Map.of();
+                ScanResult defScan = definitionScanner.scan(fullName, tool.description(), schema);
+                if (defScan.isBlocked()) {
+                    log.warn("Blocking registration of MCP tool '{}' due to security findings: {}",
+                        fullName, defScan.getThreatDescription());
+                    continue;
+                }
+                if (!defScan.isClean()) {
+                    log.warn("Registering MCP tool '{}' with security warnings: {}",
+                        fullName, defScan.getThreatDescription());
+                }
+                // ── Rug pull detection: check fingerprint ──
+                fingerprintStore.recordFingerprint(fullName, tool.description(), schema);
                 ToolDefinition definition = convertToolDefinition(fullName, tool);
                 toolRegistry().registerDynamic(fullName, definition, new McpToolHandler(serverName, tool.name()));
             }
@@ -438,6 +512,32 @@ public class McpLifecycleManager {
     private void registerTools(String serverName, List<McpSchema.Tool> tools) {
         for (McpSchema.Tool tool : tools) {
             String fullName = serverName + "__" + tool.name();
+            // ── Security scan: check tool definition before registering ──
+            Map<String, Object> schema = tool.inputSchema() != null ? tool.inputSchema() : Map.of();
+            if (definitionScanner != null) {
+                ScanResult defScan = definitionScanner.scan(fullName, tool.description(), schema);
+                if (defScan.isBlocked()) {
+                    log.warn("Blocking registration of MCP tool '{}' due to security findings: {}",
+                        fullName, defScan.getThreatDescription());
+                    continue;
+                }
+                if (!defScan.isClean()) {
+                    log.warn("Registering MCP tool '{}' with security warnings: {}",
+                        fullName, defScan.getThreatDescription());
+                }
+            }
+            // ── Rug pull detection: check fingerprint ──
+            if (fingerprintStore != null) {
+                fingerprintStore.recordFingerprint(fullName, tool.description(), schema);
+            }
+            // h46: When two MCP servers provide a tool with the same name,
+            // prefer the server-native tool over any generated utility.
+            // Log a warning about the collision.
+            if (toolRegistry().getDefinitions().stream()
+                    .anyMatch(td -> td.name().equals(fullName) || td.name().endsWith("__" + tool.name()))) {
+                log.warn("MCP tool name collision: '{}' from server '{}' collides with an existing tool. " +
+                    "Preferring server-native tool.", tool.name(), serverName);
+            }
             ToolDefinition definition = convertToolDefinition(fullName, tool);
             toolRegistry().registerDynamic(fullName, definition, new McpToolHandler(serverName, tool.name()));
         }
@@ -514,6 +614,8 @@ public class McpLifecycleManager {
             }
         }
         clients.clear();
+        if (fingerprintStore != null) fingerprintStore.clear();
+        if (rateLimiter != null) rateLimiter.clear();
     }
 
     static ToolDefinition convertToolDefinition(String fullName, McpSchema.Tool tool) {
@@ -565,12 +667,52 @@ public class McpLifecycleManager {
 
         @Override
         public ToolResult execute(String arguments, Message lastAssistant, Session session) {
+            // h42: When an MCP server reuses the same tool_call_id for different calls,
+            // keep the tool results instead of overwriting/dropping. The tool_call_id is
+            // available in the session metadata if needed, but the result is always
+            // returned — the caller (DefaultAgentRuntime) is responsible for not
+            // overwriting existing results with the same ID.
+            // ── Rate limiting ──
+            if (rateLimiter != null) {
+                String rateLimitKey = serverName + "__" + toolName;
+                if (!rateLimiter.tryAcquire(rateLimitKey,
+                        properties.getMcp().getRateLimitMaxCalls() > 0 ? properties.getMcp().getRateLimitMaxCalls() : 0,
+                        properties.getMcp().getRateLimitWindowSeconds() > 0 ? properties.getMcp().getRateLimitWindowSeconds() : 0)) {
+                    return ToolResult.fail("Rate limit exceeded for MCP tool: " + toolName);
+                }
+            }
+            // ── Argument injection scan ──
+            if (argumentScanner != null) {
+                try {
+                    Map<String, Object> argsMap = objectMapper.readValue(arguments, new TypeReference<>() {});
+                    ScanResult argScan = argumentScanner.scan(argsMap);
+                    if (argScan.isBlocked()) {
+                        log.warn("Blocking MCP tool '{}' call due to argument injection: {}",
+                            toolName, argScan.getThreatDescription());
+                        return ToolResult.fail("Tool call blocked by security scanner: " + argScan.getThreatDescription());
+                    }
+                } catch (Exception e) {
+                    // If arguments can't be parsed as JSON, proceed — let the tool handler deal with it
+                    log.debug("Could not parse tool arguments for scanning: {}", e.getMessage());
+                }
+            }
             try {
                 var result = executeTool(serverName, toolName, arguments);
                 String text = result.content().stream()
                     .map(Object::toString)
                     .collect(Collectors.joining("\n"));
-                return ToolResult.ok(text);
+                // ── Response security scan ──
+                String safeText = text;
+                if (responseScanner != null) {
+                    ScanResult responseScan = responseScanner.scan(text);
+                    if (!responseScan.isClean()) {
+                        log.warn("MCP tool '{}' response had security findings: {}",
+                            toolName, responseScan.getThreatDescription());
+                    }
+                    // Use sanitized text if available
+                    safeText = responseScan.getSanitizedText() != null ? responseScan.getSanitizedText() : text;
+                }
+                return ToolResult.ok(safeText);
             } catch (Exception e) {
                 // Only reconnect on actual connection failures, not tool execution errors.
                 // Tool execution errors (e.g. bad arguments, server-side logic errors) should

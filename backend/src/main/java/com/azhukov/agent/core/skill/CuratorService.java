@@ -409,11 +409,20 @@ public class CuratorService {
  List<SkillEntity> modifiedSkills = new ArrayList<>();
 
  for (SkillEntity skill : allSkills) {
- // S5: Pinned skill bypass — skip pinned skills in archival
- if (isPinned(skill) || isProtected(skill.getName())) {
- active.add(skill.getName());
- continue;
- }
+     // S5: Pinned skill bypass — skip pinned skills in archival
+     if (isPinned(skill) || isProtected(skill.getName())) {
+         active.add(skill.getName());
+         continue;
+     }
+
+     // h78: Guard manual skills — refuse to archive/modify manually authored skills.
+     // If the skill has a 'manual' or 'user' writeOrigin, skip it.
+     if (isManuallyAuthored(skill)) {
+         log.debug("Skipping manually authored skill '{}' (writeOrigin={}) in curator cycle",
+             skill.getName(), skill.getWriteOrigin());
+         active.add(skill.getName());
+         continue;
+     }
 
  Instant lastActivity = skill.getLastActivityAt();
  // If never active, treat createdAt as anchor
@@ -513,10 +522,20 @@ public class CuratorService {
  // ── S5: Pinned skill check ───────────────────────────────────────────
 
  /**
- * S5: Check if a skill is pinned (bypasses all auto-transitions).
- */
+  * S5: Check if a skill is pinned (bypasses all auto-transitions).
+  */
  private boolean isPinned(SkillEntity skill) {
- return skill != null && skill.isPinned();
+     return skill != null && skill.isPinned();
+ }
+
+ // h78: Check if a skill was manually authored (has a 'manual' or 'user' writeOrigin).
+ // Manually authored skills should not be archived or modified by the curator.
+ boolean isManuallyAuthored(SkillEntity skill) {
+     if (skill == null || skill.getWriteOrigin() == null) {
+         return false;
+     }
+     String origin = skill.getWriteOrigin().toLowerCase();
+     return origin.equals("manual") || origin.equals("user");
  }
 
  // ── S5: LLM-driven consolidation ─────────────────────────────────────

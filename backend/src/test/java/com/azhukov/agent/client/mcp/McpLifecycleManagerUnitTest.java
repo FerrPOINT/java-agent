@@ -3,6 +3,11 @@ package com.azhukov.agent.client.mcp;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.security.McpResponseScanner;
+import com.azhukov.agent.security.McpToolDefinitionScanner;
+import com.azhukov.agent.security.SlidingWindowRateLimiter;
+import com.azhukov.agent.security.ToolArgumentInjectionScanner;
+import com.azhukov.agent.security.ToolFingerprintStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
@@ -48,7 +53,7 @@ class McpLifecycleManagerUnitTest {
         ToolRegistry registry = mock(ToolRegistry.class);
         ApplicationContext ctx = mock(ApplicationContext.class);
         when(ctx.getBean(ToolRegistry.class)).thenReturn(registry);
-        McpLifecycleManager mgr = new McpLifecycleManager(props, mapper, ctx);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, mapper, ctx, null, null, null, null, null);
 
         assertThatThrownBy(() -> mgr.executeTool("missing", "tool", "{}"))
             .isInstanceOf(IllegalStateException.class)
@@ -62,7 +67,7 @@ class McpLifecycleManagerUnitTest {
         ToolRegistry registry = mock(ToolRegistry.class);
         ApplicationContext ctx = mock(ApplicationContext.class);
         when(ctx.getBean(ToolRegistry.class)).thenReturn(registry);
-        McpLifecycleManager mgr = new McpLifecycleManager(props, mapper, ctx);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, mapper, ctx, null, null, null, null, null);
 
         assertThatThrownBy(() -> mgr.readResource("missing", "file://x"))
             .isInstanceOf(IllegalStateException.class)
@@ -73,7 +78,7 @@ class McpLifecycleManagerUnitTest {
     void listDiscoveredToolsIsEmptyWhenNoClients() {
         AgentProperties props = new AgentProperties();
         ApplicationContext ctx = mock(ApplicationContext.class);
-        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx, null, null, null, null, null);
         assertThat(mgr.listDiscoveredTools()).isEmpty();
     }
 
@@ -82,7 +87,7 @@ class McpLifecycleManagerUnitTest {
         AgentProperties props = new AgentProperties();
         props.getMcp().setEnabled(false);
         ApplicationContext ctx = mock(ApplicationContext.class);
-        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx, null, null, null, null, null);
         mgr.connectConfiguredServers();
         assertThat(mgr.listServers()).isEmpty();
     }
@@ -91,7 +96,7 @@ class McpLifecycleManagerUnitTest {
     void closeAllClearsClients() {
         AgentProperties props = new AgentProperties();
         ApplicationContext ctx = mock(ApplicationContext.class);
-        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx, null, null, null, null, null);
         mgr.closeAll();
         assertThat(mgr.listServers()).isEmpty();
     }
@@ -100,7 +105,10 @@ class McpLifecycleManagerUnitTest {
     void mcpToolHandlerExecuteDelegates() {
         AgentProperties props = new AgentProperties();
         ApplicationContext ctx = mock(ApplicationContext.class);
-        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx);
+        McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx,
+            new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(),
+            new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()),
+            new SlidingWindowRateLimiter());
         var handler = mgr.new McpToolHandler("srv", "tool");
         var r = handler.execute("{}", null, com.azhukov.agent.core.model.Session.create("u","noop",""));
         assertThat(r.success()).isFalse();

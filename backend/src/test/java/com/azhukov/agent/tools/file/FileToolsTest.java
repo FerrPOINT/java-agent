@@ -35,7 +35,9 @@ class FileToolsTest {
         Files.writeString(file, "a\nb\nc\nd\n");
 
         var result = readTool.execute("{\"path\":\"" + file + "\",\"offset\":2,\"limit\":2}", null, null);
-        assertThat(result.content()).isEqualTo("2|b\n3|c\n");
+        assertThat(result.content()).contains("2|b", "3|c");
+        // With limit=2 and more lines remaining, truncation marker is shown
+        assertThat(result.content()).contains("[truncated:");
     }
 
     @Test

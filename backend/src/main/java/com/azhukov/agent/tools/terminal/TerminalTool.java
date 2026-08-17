@@ -124,15 +124,24 @@ public class TerminalTool implements ToolHandler {
                 pb = new ProcessBuilder("bash", "-c", command);
             }
             // Set working directory if provided
+            // h49: If the configured workdir doesn't exist or isn't a directory,
+            // fall back to /tmp or user home instead of hard-failing.
+            String actualCwd = null;
             if (workdir != null && !workdir.isBlank()) {
                 java.io.File dir = new java.io.File(workdir);
-                if (!dir.exists()) {
-                    return ToolResult.fail("Working directory does not exist: " + workdir);
+                if (dir.isDirectory()) {
+                    pb.directory(dir);
+                    actualCwd = dir.getAbsolutePath();
+                } else {
+                    // Fallback: resolve an accessible directory
+                    java.io.File fallback = TerminalOutputEnhancer.resolveWorkdirFile(workdir);
+                    if (fallback != null) {
+                        pb.directory(fallback);
+                        actualCwd = fallback.getAbsolutePath();
+                        log.warn("Configured workdir '{}' is not accessible, using '{}' instead", workdir, actualCwd);
+                    }
+                    // If even fallback is null, pb.directory stays at JVM default
                 }
-                if (!dir.isDirectory()) {
-                    return ToolResult.fail("Working directory path is not a directory: " + workdir);
-                }
-                pb.directory(dir);
             }
             pb.redirectErrorStream(true);
             process = pb.start();
@@ -183,7 +192,14 @@ public class TerminalTool implements ToolHandler {
 
             if (!finished) {
                 process.destroyForcibly();
-                return ToolResult.fail("Command timed out after " + timeoutSeconds + " seconds");
+                // Wait briefly for the output reader to drain any remaining output
+                if (outputReader != null) {
+                    outputReader.join(2000);
+                }
+                String partialOutput = redact(stripTrailingNewline(outputBuffer.toString(), usePty));
+                String enhanced = TerminalOutputEnhancer.enhance(
+                    partialOutput, -1, workdir, true, actualCwd);
+                return ToolResult.fail("Command timed out after " + timeoutSeconds + " seconds" + enhanced);
             }
 
             // Wait for the output reader thread to finish draining the stream
@@ -192,21 +208,19 @@ public class TerminalTool implements ToolHandler {
             }
 
             String output = outputBuffer.toString();
-            // Remove trailing newline added by the reader loop
-            if (output.endsWith("\n")) {
-                output = output.substring(0, output.length() - 1);
-            }
-            // PTY output contains \r\n line endings — normalize to \n
-            if (usePty) {
-                output = output.replace("\r\n", "\n").replace("\r", "\n");
-            }
+            output = stripTrailingNewline(output, usePty);
             String redactedOutput = redact(output);
 
             // Finding 1.3: Call notifyPostExecution after process completes
             int exitCode = process.exitValue();
             guard.notifyPostExecution(command, exitCode, redactedOutput);
 
-            return ToolResult.ok(redactedOutput);
+            // p4/p5/h47/h48: Enhance output with CWD echo, error hints, signal info,
+            // and masked-failure warnings.
+            String enhanced = TerminalOutputEnhancer.enhance(
+                redactedOutput, exitCode, workdir, false, actualCwd);
+
+            return ToolResult.ok(enhanced);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             if (process != null) {
@@ -227,6 +241,23 @@ public class TerminalTool implements ToolHandler {
 
     private String redact(String output) {
         return redactor.redact(output);
+    }
+
+    /**
+     * Strips the trailing newline added by the reader loop and normalises
+     * PTY {@code \r\n} line endings to {@code \n}.
+     */
+    private static String stripTrailingNewline(String output, boolean usePty) {
+        if (output == null || output.isEmpty()) {
+            return output;
+        }
+        if (usePty) {
+            output = output.replace("\r\n", "\n").replace("\r", "\n");
+        }
+        if (output.endsWith("\n")) {
+            output = output.substring(0, output.length() - 1);
+        }
+        return output;
     }
 
     /**

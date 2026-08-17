@@ -39,7 +39,10 @@ public class ErrorClassifier {
         LONG_CONTEXT_TIER,             // 429 with "extra usage" or "long context" — tier gate
         LLAMA_CPP_GRAMMAR,             // 400 with grammar pattern — llama.cpp json-schema-to-grammar rejection
         // MULTIMODAL_TOOL_CONTENT — stripped from FORMAT_ERROR; models that reject list-type tool content
-        MULTIMODAL_TOOL_CONTENT         // 400 — provider rejected list-type content in tool messages
+        MULTIMODAL_TOOL_CONTENT,        // 400 — provider rejected list-type content in tool messages
+        // h81: Empty-response advisory — model returned a deterministic empty response.
+        // This is advisory only — it should NOT trigger compression or retry.
+        EMPTY_RESPONSE
     }
 
     /**
@@ -75,6 +78,10 @@ public class ErrorClassifier {
         }
         public static RecoveryHints fallback() {
             return new RecoveryHints(false, false, false, true);
+        }
+        // h81: Advisory-only — no retry, no compression, no fallback, no credential rotation.
+        public static RecoveryHints advisory() {
+            return new RecoveryHints(false, false, false, false);
         }
     }
 
@@ -210,6 +217,7 @@ public class ErrorClassifier {
         }
 
         // ── 8. Context overflow — compress and retry ──
+        // h82: Also match Z.AI GLM token-limit messages as context overflow.
         if (lowerMessage.contains("context length") || lowerMessage.contains("context window")
             || lowerMessage.contains("maximum context") || lowerMessage.contains("token limit exceeded")
             || lowerMessage.contains("context_length_exceeded")
@@ -218,7 +226,11 @@ public class ErrorClassifier {
             || lowerMessage.contains("prompt is too long") || lowerMessage.contains("prompt exceeds max length")
             || lowerMessage.contains("max_model_len") || lowerMessage.contains("prompt length")
             || lowerMessage.contains("input is too long") || lowerMessage.contains("maximum model length")
-            || lowerMessage.contains("context length exceeded")) {
+            || lowerMessage.contains("context length exceeded")
+            // h82: Z.AI GLM token-limit messages
+            || lowerMessage.contains("token limit reached")
+            || lowerMessage.contains("maximum context length")
+            || lowerMessage.contains("input too long")) {
             return new ClassificationResult(ErrorType.CONTEXT_OVERFLOW, RecoveryHints.compressAndRetry());
         }
 
@@ -340,8 +352,22 @@ public class ErrorClassifier {
         }
 
         // ── 21. Connection issues ──
-        if (lowerMessage.contains("connection") || lowerMessage.contains("refused") || lowerMessage.contains("reset")) {
+        // h80: Match on message content for connect/DNS failures on generic exception types,
+        // not just specific exception classes.
+        if (lowerMessage.contains("connection") || lowerMessage.contains("refused") || lowerMessage.contains("reset")
+            || lowerMessage.contains("connection refused")
+            || lowerMessage.contains("unknown host")
+            || lowerMessage.contains("network is unreachable")
+            || lowerMessage.contains("no route to host")) {
             return new ClassificationResult(ErrorType.RETRYABLE, RecoveryHints.canRetry());
+        }
+
+        // ── h81: Empty-response advisory ──
+        // If the exception message indicates a deterministic empty response (not an error),
+        // classify as EMPTY_RESPONSE with advisory hints — no compression, no retry.
+        if (lowerMessage.contains("empty response") || lowerMessage.contains("empty content")
+            || lowerMessage.contains("no content returned") || lowerMessage.contains("response was empty")) {
+            return new ClassificationResult(ErrorType.EMPTY_RESPONSE, RecoveryHints.advisory());
         }
 
         // ── 22. Default: safer to retry ──

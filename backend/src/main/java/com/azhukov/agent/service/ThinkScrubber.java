@@ -161,21 +161,30 @@ public class ThinkScrubber {
     /**
      * Called at end of stream. Returns any remaining buffered visible content.
      * If still inside a think block (unclosed), the buffered content is discarded.
+     * h67: After flush, re-arm the think scrubber boundary so it correctly
+     * processes the next chunk (reset lastEmittedEndedNewline to true).
      */
     public String flush() {
         if (inBlock) {
             buffer.setLength(0);
             inBlock = false;
+            // h67: Re-arm boundary after flush
+            lastEmittedEndedNewline = true;
             return "";
         }
         String remaining = buffer.toString();
         buffer.setLength(0);
         if (remaining.isEmpty()) {
+            // h67: Re-arm boundary even when nothing to emit
+            lastEmittedEndedNewline = true;
             return "";
         }
         remaining = stripOrphanCloseTags(remaining);
         if (!remaining.isEmpty()) {
             lastEmittedEndedNewline = remaining.endsWith("\n");
+        } else {
+            // h67: Re-arm boundary after stripping
+            lastEmittedEndedNewline = true;
         }
         return remaining;
     }

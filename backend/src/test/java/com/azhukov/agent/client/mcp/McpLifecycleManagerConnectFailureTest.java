@@ -24,7 +24,7 @@ class McpLifecycleManagerConnectFailureTest {
         ApplicationContext ctx = mock(ApplicationContext.class);
         when(ctx.getBean(ToolRegistry.class)).thenReturn(mock(ToolRegistry.class));
 
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx, null, null, null, null, null);
         manager.connect(server);
 
         // No exception expected; client not connected.

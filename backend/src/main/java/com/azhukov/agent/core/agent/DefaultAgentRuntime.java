@@ -526,6 +526,16 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     && !containsAnyThinkTag(rawContent);
                 boolean prefillExhausted = thinkingPrefillRetries >= 2;
                 if (isTrulyEmpty && (!containsAnyThinkTag(rawContent) || prefillExhausted)) {
+                    // h63: When the model returns a deterministic empty response (not an error, just empty),
+                    // don't retry it — return immediately with a message, unless config overrides.
+                    if (!properties.getCore().isEmptyResponseRetry()) {
+                        log.warn("Empty response (no content) — returning immediately (agent.empty-response.retry=false)");
+                        turnMessages.add(Message.assistant("(No response generated)", turnIndex));
+                        if (turnFinalizer != null) {
+                            turnFinalizer.finalize(session.id(), turnMessages, true, TurnExitReason.EMPTY_RESPONSE);
+                        }
+                        return new TurnResult(turnMessages, true, null);
+                    }
                     int emptyRetries = retryStateEmptyResponse;  // read current value
                     if (emptyRetries < 3) {
                         emptyRetries++;
@@ -625,18 +635,34 @@ public class DefaultAgentRuntime implements AgentRuntime {
             List<String> nameErrors = ToolCallValidator.validateToolNames(toolCalls, registeredToolNames);
             if (!nameErrors.isEmpty()) {
                 log.warn("Invalid tool calls detected: {}", nameErrors);
-                // Return error tool results for all calls (model can self-correct next turn)
+                // h53: When the LLM returns a batch of tool calls where some have valid names
+                // and some have invalid (non-existent) names, execute the valid ones and return
+                // errors for the invalid ones, instead of failing the entire batch.
+                List<ToolCall> validCalls = new ArrayList<>();
                 List<Message> errorResults = new ArrayList<>();
                 for (ToolCall tc : toolCalls) {
-                    boolean isInvalid = !registeredToolNames.contains(tc.name());
-                    String content = isInvalid
-                        ? nameErrors.get(0) // "Tool '...' does not exist. Available tools: ..."
-                        : "Skipped: another tool call in this turn used an invalid name. Please retry this tool call.";
-                    errorResults.add(Message.toolResult(tc.id(), content, currentTurnIndex));
+                    if (registeredToolNames.contains(tc.name())) {
+                        validCalls.add(tc);
+                    } else {
+                        // Invalid tool name — return error for this specific call
+                        errorResults.add(Message.toolResult(tc.id(),
+                            "Tool '" + tc.name() + "' does not exist. Available tools: "
+                            + String.join(", ", new java.util.TreeSet<>(registeredToolNames)),
+                            currentTurnIndex));
+                    }
                 }
+                // If there are valid calls, execute them
+                if (!validCalls.isEmpty()) {
+                    toolCalls = validCalls;
+                    // Continue to normal execution path below, but add error results after
+                } else {
+                    // All calls are invalid — return all errors and continue
+                    turnMessages.addAll(errorResults);
+                    turnIndex++;
+                    continue;
+                }
+                // Add error results for invalid calls before proceeding with valid ones
                 turnMessages.addAll(errorResults);
-                turnIndex++;
-                continue;
             }
 
             // 2. Validate JSON arguments — detect truncation and invalid JSON
@@ -1290,6 +1316,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
             activeModelClient = fallbackClient;
             log.info("🔄 Switched to fallback model: {} via {}",
                 fallbackManager.getCurrentModel(), fallbackManager.getCurrentProvider());
+            // h60: Reset compression failure cooldown when model switches.
+            if (contextCompressor instanceof DefaultContextCompressor dcc) {
+                dcc.resetCompressionFailureCooldown(
+                    fallbackManager.getCurrentProvider() + "/" + fallbackManager.getCurrentModel());
+            }
             return true;
         } catch (Exception e) {
             log.error("Failed to create fallback model client for {}/{}: {}",
@@ -1682,6 +1713,20 @@ public class DefaultAgentRuntime implements AgentRuntime {
         }
         if (backgroundReviewService == null) {
             return;
+        }
+        // h64: Skip the automatic background review when running inside a delegation subagent.
+        // delegationDepth > 0 means we're in a child subagent, so don't trigger review.
+        String delegationDepthMeta = session.getMetadata("delegation_depth");
+        if (delegationDepthMeta != null) {
+            try {
+                int delegationDepth = Integer.parseInt(delegationDepthMeta.trim());
+                if (delegationDepth > 0) {
+                    log.debug("Skipping background review for subagent (delegationDepth={})", delegationDepth);
+                    return;
+                }
+            } catch (NumberFormatException e) {
+                // Ignore — treat as depth 0
+            }
         }
 
         int memNudge = properties.getMemory().getNudgeInterval();

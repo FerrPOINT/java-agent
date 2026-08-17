@@ -330,6 +330,10 @@ public class AgentProperties {
         private boolean enabled = false;
         /** Feature 4: OSV malware check before launching MCP servers (default true). */
         private boolean osvCheckEnabled = true;
+        /** Max calls per window per tool (0 = no limit). */
+        private int rateLimitMaxCalls = 0;
+        /** Rate limit window in seconds (0 = no limit). */
+        private long rateLimitWindowSeconds = 0;
         private final List<ServerProperties> servers = new ArrayList<>();
         private final Server server = new Server();
 
@@ -428,6 +432,8 @@ public class AgentProperties {
         private String httpUserAgent = "AzhukovAgent/1.0";
         /** Finding 10.1: Configurable SOUL.md path (default: ~/.hermes/soul.md). */
         private String soulMdPath = "";
+        // h63: Whether to retry on empty responses (default false — return immediately).
+        private boolean emptyResponseRetry = false;
 
         public int getMaxTotalChars() { return 64000; }
     }

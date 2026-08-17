@@ -42,7 +42,7 @@ class ReadFileToolTest {
         assertThat(r.success()).isTrue();
         assertThat(r.content()).contains("2|b");
         assertThat(r.content()).contains("3|c");
-        assertThat(r.content()).doesNotContain("a");
+        assertThat(r.content()).doesNotContain("1|a");
         assertThat(r.content()).doesNotContain("4|d");
     }
 

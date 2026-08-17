@@ -470,11 +470,22 @@ public class MemoryManager {
  // ── Shutdown drain ─────────────────────────────────────────────────
 
  /**
- * S4: Shutdown the background executor and all providers in reverse order.
- * Drains the executor first (bounded by SYNC_DRAIN_TIMEOUT_S), then
- * calls shutdown() on each provider in reverse registration order.
- */
+  * S4: Shutdown the background executor and all providers in reverse order.
+  * Drains the executor first (bounded by SYNC_DRAIN_TIMEOUT_S), then
+  * calls shutdown() on each provider in reverse registration order.
+  * h86: @PreDestroy method that flushes any pending writes before shutdown.
+  */
+ @jakarta.annotation.PreDestroy
  public void shutdown() {
+ // h86: Flush all pending writes from providers before draining the executor.
+ // This ensures queued writes are not lost on shutdown.
+ for (MemoryProvider provider : providers) {
+     try {
+         provider.flushPending(SYNC_DRAIN_TIMEOUT_S * 1000);
+     } catch (Exception e) {
+         log.warn("Memory provider '{}' flushPending on shutdown failed: {}", provider.name(), e.getMessage());
+     }
+ }
  // S4: Drain the executor first
  ExecutorService executor = syncExecutor;
  if (executor != null) {

@@ -135,13 +135,13 @@ public final class CommandGuard {
 
         // 1. Block sudo as a leading token if configured
         if (blockSudo && startsWithSudo(normalised)) {
-            return "Blocked: 'sudo' is not allowed";
+            return "Blocked: 'sudo' is not allowed" + suggestAlternative("sudo");
         }
 
         // 2. Check regex patterns against the full normalised command
         for (Pattern p : compiledPatterns) {
             if (p.matcher(normalised).find()) {
-                return "Blocked dangerous command pattern: " + p.pattern();
+                return "Blocked dangerous command pattern: " + p.pattern() + suggestAlternative(rawCommand);
             }
         }
 
@@ -151,7 +151,7 @@ public final class CommandGuard {
         for (String token : tokens) {
             for (Pattern p : compiledPatterns) {
                 if (p.matcher(token).matches()) {
-                    return "Blocked dangerous command token: " + token;
+                    return "Blocked dangerous command token: " + token + suggestAlternative(rawCommand);
                 }
             }
         }
@@ -160,11 +160,59 @@ public final class CommandGuard {
         if (shellHookManager != null) {
             ShellHookManager.HookResponse hookResponse = shellHookManager.invokePreToolCall("terminal", rawCommand);
             if (hookResponse != null && hookResponse.blocked()) {
-                return "Blocked by shell hook: " + hookResponse.message();
+                return "Blocked by shell hook: " + hookResponse.message() + suggestAlternative(rawCommand);
             }
         }
 
         return null;
+    }
+
+    /**
+     * p12: Suggest alternative commands when a command is blocked.
+     * Returns a formatted suggestion string appended to the block message.
+     */
+    private static String suggestAlternative(String rawCommand) {
+        if (rawCommand == null) {
+            return "";
+        }
+        String lower = rawCommand.toLowerCase().trim();
+        StringBuilder sb = new StringBuilder();
+
+        // rm -rf blocking → suggest trash or mv to /tmp
+        if (lower.matches(".*\\brm\\s+(-\\S*\\s+)*-[a-z]*r[a-z]*f[a-z]*\\b.*|.*\\brm\\s+(-\\S*\\s+)*-[a-z]*f[a-z]*r[a-z]*\\b.*|.*\\brm\\s+(-\\S*\\s+)*--recursive\\b.*|.*\\brm\\s+(-\\S*\\s+)*--force\\b.*")) {
+            sb.append(" — consider using 'trash' for safer deletion, or 'mv <file> /tmp/' to move to temp instead.");
+        }
+        // curl blocking (if blocked by user patterns) → suggest web_search tool
+        if (lower.startsWith("curl ") || lower.startsWith("wget ")) {
+            sb.append(" — consider using the web_search or web_extract tool instead.");
+        }
+        // shutdown/reboot/halt/poweroff → no real alternative but explain
+        if (lower.matches(".*\\b(shutdown|reboot|halt|poweroff)\\b.*")) {
+            sb.append(" — system power commands are blocked for safety.");
+        }
+        // mkfs → explain
+        if (lower.startsWith("mkfs")) {
+            sb.append(" — filesystem formatting is blocked. Use a loopback device or container if you need to test mkfs.");
+        }
+        // dd to block device → suggest writing to a file
+        if (lower.startsWith("dd ") && (lower.contains("of=/dev/") || lower.contains("if=/dev/"))) {
+            sb.append(" — consider writing to a regular file (e.g. of=/tmp/disk.img) instead of a block device.");
+        }
+        // kill -9 -1 → suggest killing specific PIDs
+        if (lower.matches(".*\\bkill\\s+-9\\s+-1\\b.*")) {
+            sb.append(" — consider killing specific process IDs instead of all processes.");
+        }
+        // iptables -F → explain
+        if (lower.contains("iptables") && lower.contains("-f")) {
+            sb.append(" — flushing firewall rules is blocked. Consider saving current rules with 'iptables-save' first.");
+        }
+
+        // Generic suggestion if nothing matched
+        if (sb.isEmpty() && lower.startsWith("sudo ")) {
+            sb.append(" — run the command without 'sudo' if the user has the required permissions.");
+        }
+
+        return sb.toString();
     }
 
     /**

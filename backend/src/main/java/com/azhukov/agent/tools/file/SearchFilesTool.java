@@ -113,6 +113,14 @@ public class SearchFilesTool implements ToolHandler {
         if (skipped[0] > 0) {
             result += "\n\n[Hint: Results truncated. Use offset=" + (offset + matches.size()) + " to see more, or narrow with a more specific pattern or file_glob.]";
         }
+        // p8: Zero-match hint — when no matches found, probe case-insensitively.
+        // If case-insensitive finds matches, append a helpful hint.
+        if (found[0] == 0) {
+            int ciCount = countCaseInsensitiveMatches(base, pattern, fileGlob);
+            if (ciCount > 0) {
+                result += "\n[hint: 0 case-sensitive matches, but " + ciCount + " case-insensitive matches found — try with case-insensitive flag]";
+            }
+        }
         return ToolResult.ok(result);
     }
 
@@ -145,6 +153,32 @@ public class SearchFilesTool implements ToolHandler {
             return ToolResult.ok("No matches found.");
         }
         return ToolResult.ok(String.join("\n", counts));
+    }
+
+    /**
+     * p8: Count case-insensitive matches for the zero-match hint.
+     * Uses the same pattern but with CASE_INSENSITIVE flag.
+     */
+    private int countCaseInsensitiveMatches(Path base, String pattern, String fileGlob) throws IOException {
+        if (pattern == null || pattern.isBlank()) {
+            return 0;
+        }
+        Pattern ciRegex = Pattern.compile(pattern, Pattern.CASE_INSENSITIVE);
+        int count = 0;
+        try (Stream<Path> stream = Files.walk(base)) {
+            Iterable<Path> files = () -> stream.filter(p -> Files.isRegularFile(p)
+                && (fileGlob == null || fileGlob.isBlank() || p.getFileName().toString().matches(globToRegex(fileGlob))))
+                .iterator();
+            for (Path file : files) {
+                List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+                for (String line : lines) {
+                    if (ciRegex.matcher(line).find()) {
+                        count++;
+                    }
+                }
+            }
+        }
+        return count;
     }
 
     private String globToRegex(String glob) {

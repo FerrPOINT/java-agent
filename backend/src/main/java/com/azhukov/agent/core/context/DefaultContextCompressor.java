@@ -41,6 +41,14 @@ public class DefaultContextCompressor implements ContextCompressor {
  private static final String SUMMARY_END_MARKER =
  "\n--- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---";
 
+ // h57: Affirm tool use is still active after compression.
+ private static final String TOOL_USE_HANDOFF_PREFIX =
+ "[Tool use remains active — continue using tools as needed.]\n\n";
+
+ // h59: Instruction for pruned skills after compression.
+ private static final String PRUNED_SKILL_INSTRUCTION =
+ "\n[Skills may have been pruned during compression — use skill_view to reload needed skills.]";
+
  private static final int TOOL_OUTPUT_MAX_CHARS = 500;
  private static final int TOOL_OUTPUT_KEEP_HEAD = 200;
  private static final int TOOL_OUTPUT_KEEP_TAIL = 200;
@@ -152,6 +160,11 @@ public class DefaultContextCompressor implements ContextCompressor {
  /** Result of a session rotation — carries the new session ID for downstream consumers. */
  public record SessionRotationResult(UUID newSessionId, String newTitle) {}
 
+ // h60: Compression failure cooldown — tracks the model/provider for which the cooldown was set.
+ // When the model switches, the cooldown is reset so the new model gets a fresh start.
+ private volatile String compressionCooldownModelKey;
+ private volatile long compressionFailureCooldownUntil;
+
  /** Sets the SessionRepository — called by the @Bean factory after construction. */
  public void setSessionRepository(SessionRepository sessionRepository) {
      this.sessionRepository = sessionRepository;
@@ -191,6 +204,10 @@ public class DefaultContextCompressor implements ContextCompressor {
          log.debug("recalculateThreshold: ignoring non-positive context window size {}", newContextWindowSize);
          return;
      }
+     // h60: Reset compression failure cooldown when the model/context switches.
+     // The model key is derived from the context window size — if it changed,
+     // the cooldown should reset.
+     resetCompressionFailureCooldown("ctx-" + newContextWindowSize);
      // Apply 64K floor (mirrors Hermes: max(int(ctx * threshold_percent), MINIMUM_CONTEXT_LENGTH))
      int thresholdTokens = Math.max(
          (int) (newContextWindowSize * COMPRESSION_THRESHOLD_FRACTION),
@@ -319,6 +336,27 @@ public class DefaultContextCompressor implements ContextCompressor {
  public void resetAntiThrashing() {
      this.consecutiveLowSavings = 0;
      this.lastCompressionSavingsPct = 100.0;
+ }
+
+ // h60: Reset compression failure cooldown when the runtime/model switches.
+ // If user changes model, don't carry over the old model's compression failure cooldown.
+ public void resetCompressionFailureCooldown(String modelKey) {
+     if (modelKey == null || !modelKey.equals(this.compressionCooldownModelKey)) {
+         this.compressionCooldownModelKey = modelKey;
+         this.compressionFailureCooldownUntil = 0;
+         log.debug("Compression failure cooldown reset for model key: {}", modelKey);
+     }
+ }
+
+ // h60: Check if compression is in a failure cooldown.
+ public boolean isCompressionFailureCooldownActive() {
+     return compressionFailureCooldownUntil > 0
+         && System.currentTimeMillis() < compressionFailureCooldownUntil;
+ }
+
+ // h60: Set the compression failure cooldown for the current model.
+ public void setCompressionFailureCooldown(long durationMs) {
+     this.compressionFailureCooldownUntil = System.currentTimeMillis() + durationMs;
  }
 
  /**

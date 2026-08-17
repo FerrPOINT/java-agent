@@ -54,10 +54,27 @@ public class WriteFileTool implements ToolHandler {
             }
             Files.writeString(path, args.content(), StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-            return ToolResult.ok("Wrote " + args.content().length() + " characters to " + path);
+
+            // p9: Verification echo — include first and last line of the written content.
+            String verification = buildVerificationEcho(args.content());
+            return ToolResult.ok("Wrote " + args.content().length() + " characters to " + path + "\n" + verification);
         } catch (IOException e) {
             return ToolResult.fail("Failed to write file: " + e.getMessage());
         }
+    }
+
+    /**
+     * p9: Build a verification echo string containing the first and last line
+     * of the written content. Handles single-line and empty content.
+     */
+    private static String buildVerificationEcho(String content) {
+        if (content == null || content.isEmpty()) {
+            return "[verified: first line: \"\", last line: \"\"]";
+        }
+        String[] lines = content.split("\n", -1);
+        String firstLine = lines[0];
+        String lastLine = lines[lines.length - 1];
+        return "[verified: first line: \"" + firstLine + "\", last line: \"" + lastLine + "\"]";
     }
 
     private boolean isBlocked(Path path) {

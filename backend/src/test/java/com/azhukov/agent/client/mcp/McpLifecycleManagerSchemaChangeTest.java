@@ -2,6 +2,11 @@ package com.azhukov.agent.client.mcp;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.security.McpResponseScanner;
+import com.azhukov.agent.security.McpToolDefinitionScanner;
+import com.azhukov.agent.security.SlidingWindowRateLimiter;
+import com.azhukov.agent.security.ToolArgumentInjectionScanner;
+import com.azhukov.agent.security.ToolFingerprintStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -45,7 +50,10 @@ class McpLifecycleManagerSchemaChangeTest {
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         when(ctx.getBean(ToolRegistry.class)).thenReturn(toolRegistry);
 
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx,
+            new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(),
+            new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()),
+            new SlidingWindowRateLimiter());
 
         // Initial tools with one schema
         McpSchema.Tool initialTool = McpSchema.Tool.builder("tool1")
@@ -79,7 +87,10 @@ class McpLifecycleManagerSchemaChangeTest {
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         when(ctx.getBean(ToolRegistry.class)).thenReturn(toolRegistry);
 
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx,
+            new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(),
+            new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()),
+            new SlidingWindowRateLimiter());
 
         // Tools with same names and same schemas
         McpSchema.Tool tool1 = McpSchema.Tool.builder("tool1")

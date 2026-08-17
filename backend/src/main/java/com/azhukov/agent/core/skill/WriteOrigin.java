@@ -7,5 +7,8 @@ public enum WriteOrigin {
     FOREGROUND,
     BACKGROUND_REVIEW,
     CURATOR,
-    HUB_INSTALL
+    HUB_INSTALL,
+    // h78: Manual/user-authored skills — protected from curator modifications.
+    MANUAL,
+    USER
 }
