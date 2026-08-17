@@ -786,4 +786,111 @@ class DelegateTaskToolTest {
         // The default should be 1 (matches Hermes MAX_DEPTH), not 3
         assertThat(props.getDelegation().getMaxSpawnDepth()).isEqualTo(1);
     }
+
+    // ── Subagent interrupt / pause tests (Finding 3.2) ──────────────────
+
+    @Test
+    void interruptSubagentSetsFlag() throws Exception {
+        AgentProperties props = defaultProperties();
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+
+        // The interrupt map is populated during runSingleChild, but we can test
+        // the interrupt mechanism directly by injecting into the map.
+        // First, verify that interruptSubagent returns false for unknown id.
+        assertThat(tool.interruptSubagent("unknown-id")).isFalse();
+
+        // Simulate an active subagent by registering it via a task execution.
+        // We use a blocking runtime to keep the subagent alive, then interrupt.
+        // However, for a unit test, we can directly test the flag mechanism:
+        // Register a subagent ID manually via a CountDownLatch.
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch finish = new java.util.concurrent.CountDownLatch(1);
+
+        when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
+            .thenAnswer(inv -> {
+                started.countDown();
+                finish.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                return completedResult("done");
+            });
+
+        DelegateTaskTool tool2 = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+        Session session = defaultSession();
+
+        java.util.concurrent.CompletableFuture<ToolResult> future =
+            java.util.concurrent.CompletableFuture.supplyAsync(() ->
+                tool2.execute("{\"goal\":\"long task\"}", null, session));
+
+        // Wait for the subagent to start
+        started.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        Thread.sleep(100); // give time for subagentInterrupts map to be populated
+
+        // Get the active subagent ID
+        String subagentId = tool2.listActiveSubagents().isEmpty() ? null
+            : tool2.listActiveSubagents().get(0).subagentId();
+        assertThat(subagentId).isNotNull();
+
+        // Interrupt it
+        assertThat(tool2.interruptSubagent(subagentId)).isTrue();
+        assertThat(tool2.isSubagentInterrupted(subagentId)).isTrue();
+
+        // Let the task finish
+        finish.countDown();
+        future.join();
+    }
+
+    @Test
+    void pauseSpawnRejectsNewTasks() {
+        AgentProperties props = defaultProperties();
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+        Session session = defaultSession();
+
+        // Pause spawning
+        tool.setSpawnPaused(true);
+        assertThat(tool.isSpawnPaused()).isTrue();
+
+        // Delegation should fail because spawning is paused
+        // The error comes from runSingleChild → "Subagent spawning is paused"
+        // which is wrapped in the result JSON
+        ToolResult result = tool.execute("{\"goal\":\"test paused\"}", null, session);
+
+        // The result should indicate an error
+        assertThat(result.success()).isTrue(); // tool execution itself succeeds, returns JSON
+        com.fasterxml.jackson.databind.JsonNode node;
+        try {
+            node = MAPPER.readTree(result.content());
+            assertThat(node.get("results").get(0).get("status").asText()).isEqualTo("error");
+            assertThat(node.get("results").get(0).get("error").asText()).contains("paused");
+        } catch (Exception e) {
+            // If JSON parsing fails, check the raw content
+            assertThat(result.content()).contains("paused");
+        }
+
+        // Resume for cleanup
+        tool.setSpawnPaused(false);
+    }
+
+    @Test
+    void resumeSpawnAllowsNewTasks() throws Exception {
+        AgentProperties props = defaultProperties();
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        when(runtime.runTurn(any(Session.class), any(String.class), eq(List.of()), any()))
+            .thenReturn(completedResult("resumed task done"));
+
+        DelegateTaskTool tool = new DelegateTaskTool(props, runtimeProvider(runtime), toolRegistry(DEFAULT_PARENT_TOOLSETS));
+        Session session = defaultSession();
+
+        // Pause then resume
+        tool.setSpawnPaused(true);
+        tool.setSpawnPaused(false);
+        assertThat(tool.isSpawnPaused()).isFalse();
+
+        // Delegation should work now
+        ToolResult result = tool.execute("{\"goal\":\"test resumed\"}", null, session);
+
+        assertThat(result.success()).isTrue();
+        JsonNode node = MAPPER.readTree(result.content());
+        assertThat(node.get("results").get(0).get("status").asText()).isEqualTo("completed");
+    }
 }

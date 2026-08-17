@@ -58,4 +58,53 @@ class BrowserSnapshotToolTest {
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("Browser snapshot failed").contains("CDP socket closed");
     }
+
+    // ── Accessibility full parameter tests ──────────────────────────────
+
+    @Test
+    void browserSnapshotToolPassesFullParameterTrue() throws Exception {
+        BrowserSnapshotTool tool = new BrowserSnapshotTool(browserService);
+        when(browserService.accessibilitySnapshot(true)).thenReturn("full snapshot");
+
+        ToolResult result = tool.execute("{\"full\":true}", lastAssistant, session);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).isEqualTo("full snapshot");
+        verify(browserService).accessibilitySnapshot(true);
+    }
+
+    @Test
+    void browserSnapshotToolPassesFullParameterFalse() throws Exception {
+        BrowserSnapshotTool tool = new BrowserSnapshotTool(browserService);
+        when(browserService.accessibilitySnapshot(false)).thenReturn("compact snapshot");
+
+        ToolResult result = tool.execute("{\"full\":false}", lastAssistant, session);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).isEqualTo("compact snapshot");
+        verify(browserService).accessibilitySnapshot(false);
+    }
+
+    @Test
+    void browserSnapshotToolDefaultsFullToFalse() throws Exception {
+        BrowserSnapshotTool tool = new BrowserSnapshotTool(browserService);
+        when(browserService.accessibilitySnapshot(false)).thenReturn("default snapshot");
+
+        ToolResult result = tool.execute("{}", lastAssistant, session);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).isEqualTo("default snapshot");
+        verify(browserService).accessibilitySnapshot(false);
+    }
+
+    @Test
+    void browserSnapshotToolEmptyTreeReturnsEmpty() throws Exception {
+        BrowserSnapshotTool tool = new BrowserSnapshotTool(browserService);
+        when(browserService.accessibilitySnapshot(false)).thenReturn("");
+
+        ToolResult result = tool.execute("{}", lastAssistant, session);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).isEmpty();
+    }
 }

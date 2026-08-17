@@ -93,4 +93,44 @@ class BrowserToolsTest {
         ToolResult r = t.execute("{}", null, session);
         assertThat(r.success()).isTrue();
     }
+
+    // ── BrowserDialogTool with CDP tests ────────────────────────────────
+
+    @Test
+    void browserDialogToolAcceptsWithPromptText() {
+        when(service.handleDialog(true, "hello")).thenReturn("accepted");
+        BrowserDialogTool t = new BrowserDialogTool(service);
+        ToolResult r = t.execute("{\"action\":\"accept\",\"text\":\"hello\"}", null, session);
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).isEqualTo("accepted");
+        verify(service).handleDialog(true, "hello");
+    }
+
+    @Test
+    void browserDialogToolDismissesWithoutPromptText() {
+        when(service.handleDialog(false, null)).thenReturn("dismissed");
+        BrowserDialogTool t = new BrowserDialogTool(service);
+        ToolResult r = t.execute("{\"action\":\"dismiss\"}", null, session);
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).isEqualTo("dismissed");
+        verify(service).handleDialog(false, null);
+    }
+
+    @Test
+    void browserDialogToolUnknownActionReturnsFail() {
+        BrowserDialogTool t = new BrowserDialogTool(service);
+        ToolResult r = t.execute("{\"action\":\"bogus\"}", null, session);
+        assertThat(r.success()).isFalse();
+        assertThat(r.error()).contains("Unknown dialog action");
+    }
+
+    @Test
+    void browserDialogToolServiceErrorReturnsFail() {
+        when(service.handleDialog(true, null)).thenThrow(new RuntimeException("CDP connection lost"));
+        BrowserDialogTool t = new BrowserDialogTool(service);
+        ToolResult r = t.execute("{\"action\":\"accept\"}", null, session);
+        assertThat(r.success()).isFalse();
+        assertThat(r.error()).contains("Browser dialog failed");
+        assertThat(r.error()).contains("CDP connection lost");
+    }
 }

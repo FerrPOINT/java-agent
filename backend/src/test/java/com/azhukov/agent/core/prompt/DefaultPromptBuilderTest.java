@@ -1505,4 +1505,107 @@ class DefaultPromptBuilderTest {
         assertThat(index).contains("skill_view(name)");
         assertThat(index).contains("Only proceed without loading a skill");
     }
+
+    // ── SOUL.md configurable path tests (Finding 10.1) ──────────────────
+
+    @Test
+    void soulMdUsesConfiguredPathWhenSet(@TempDir Path tempDir) throws Exception {
+        // Create a custom SOUL.md file in a temp directory
+        Path soulFile = tempDir.resolve("custom_soul.md");
+        String personaContent = "I am a custom persona from configured path.";
+        Files.writeString(soulFile, personaContent);
+
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getCore().setSoulMdPath(soulFile.toString());
+        properties.getModel().setModelName("llama-3");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
+            new DefaultAgentConstants(), null, null, null, null);
+
+        // loadSoulMd() should load from the configured path
+        String soulContent = builder.loadSoulMd();
+        assertThat(soulContent).contains("custom persona from configured path");
+
+        // buildSystemMessage should include the custom persona
+        Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+        assertThat(msg.content()).contains("custom persona from configured path");
+        // Should NOT contain the default hardcoded identity
+        assertThat(msg.content()).doesNotContain("You are Agent, an autonomous AI agent");
+    }
+
+    @Test
+    void soulMdConfiguredPathBlankFallsBackToDefault() {
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        // soulMdPath defaults to "" (blank)
+        properties.getModel().setModelName("llama-3");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
+            new DefaultAgentConstants(), null, null, null, null);
+
+        // With blank path, loadSoulMd() should use DEFAULT_SOUL_MD_PATH
+        // which is ~/.hermes/soul.md — likely doesn't exist in test env, so returns null
+        // and falls back to the hardcoded identity
+        Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+        // Should use the default hardcoded identity
+        assertThat(msg.content()).contains("You are Agent");
+    }
+
+    // ── Parent dir walk tests (Finding 10.2) ────────────────────────────
+
+    @Test
+    void contextFilesWalksUpToParentDirectory(@TempDir Path tempDir) throws Exception {
+        // Create structure: TempDir/AGENTS.md, TempDir/subdir/
+        Path agentsFile = tempDir.resolve("AGENTS.md");
+        Files.writeString(agentsFile, "# Project Guide\nUse Java 25 and Spring Boot.");
+
+        Path subdir = tempDir.resolve("subdir");
+        Files.createDirectories(subdir);
+
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getModel().setModelName("llama-3");
+        // Set working directory to subdir — AGENTS.md is in parent
+        properties.getCore().setWorkingDirectory(subdir.toString());
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
+            new DefaultAgentConstants(), null, null, null, null);
+
+        // buildContextFilesPrompt should walk up and find AGENTS.md in parent
+        String contextFiles = builder.buildContextFilesPrompt();
+        assertThat(contextFiles).contains("Project Guide");
+        assertThat(contextFiles).contains("Use Java 25 and Spring Boot");
+        assertThat(contextFiles).contains("AGENTS.md");
+    }
+
+    @Test
+    void contextFilesReturnsEmptyWhenNoFileInAnyParent(@TempDir Path tempDir) throws Exception {
+        // Create a deep directory with no context files
+        Path deepDir = tempDir.resolve("a").resolve("b").resolve("c");
+        Files.createDirectories(deepDir);
+
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getModel().setModelName("llama-3");
+        properties.getCore().setWorkingDirectory(deepDir.toString());
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
+            new DefaultAgentConstants(), null, null, null, null);
+
+        String contextFiles = builder.buildContextFilesPrompt();
+        assertThat(contextFiles).isEmpty();
+    }
 }

@@ -136,4 +136,51 @@ class TerminalToolExtraTest {
         assertThat(r.success()).isFalse();
         assertThat(r.error()).contains("not a tty");
     }
+
+    // ── Workdir parameter tests ─────────────────────────────────────────
+
+    @Test
+    void executeWithValidWorkdirChangesDirectory() {
+        AgentProperties props = new AgentProperties();
+        Redactor redactor = new DefaultRedactor(props);
+        TerminalTool tool = new TerminalTool(null, props, redactor, mockCheckpointManager(), interruptToken());
+        ToolResult r = tool.execute("{\"command\":\"pwd\",\"workdir\":\"/tmp\"}", null, Session.create("u","noop",""));
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("/tmp");
+    }
+
+    @Test
+    void executeWithNonExistentWorkdirReturnsFail() {
+        AgentProperties props = new AgentProperties();
+        Redactor redactor = new DefaultRedactor(props);
+        TerminalTool tool = new TerminalTool(null, props, redactor, mockCheckpointManager(), interruptToken());
+        ToolResult r = tool.execute("{\"command\":\"pwd\",\"workdir\":\"/nonexistent/path/that/does/not/exist\"}", null, Session.create("u","noop",""));
+        assertThat(r.success()).isFalse();
+        assertThat(r.error()).contains("does not exist");
+    }
+
+    @Test
+    void executeWithWorkdirNotDirectoryReturnsFail() throws Exception {
+        AgentProperties props = new AgentProperties();
+        Redactor redactor = new DefaultRedactor(props);
+        TerminalTool tool = new TerminalTool(null, props, redactor, mockCheckpointManager(), interruptToken());
+        // Create a temporary file and use it as workdir
+        java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("workdir_test", ".txt");
+        tempFile.toFile().deleteOnExit();
+        String args = "{\"command\":\"pwd\",\"workdir\":\"" + tempFile.toString() + "\"}";
+        ToolResult r = tool.execute(args, null, Session.create("u","noop",""));
+        assertThat(r.success()).isFalse();
+        assertThat(r.error()).contains("not a directory");
+    }
+
+    @Test
+    void executeWithBlankWorkdirIgnoresParameter() {
+        AgentProperties props = new AgentProperties();
+        Redactor redactor = new DefaultRedactor(props);
+        TerminalTool tool = new TerminalTool(null, props, redactor, mockCheckpointManager(), interruptToken());
+        // Blank workdir should be ignored — command should run normally
+        ToolResult r = tool.execute("{\"command\":\"echo hello\",\"workdir\":\"  \"}", null, Session.create("u","noop",""));
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("hello");
+    }
 }

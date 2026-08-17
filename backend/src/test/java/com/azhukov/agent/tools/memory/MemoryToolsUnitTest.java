@@ -574,4 +574,58 @@ class MemoryToolsUnitTest {
         assertThat(result.success()).isFalse();
         assertThat(result.error()).isEqualTo("Unknown action: rename");
     }
+
+    // ── Provenance through MemoryProvider tests (Finding 4.1 / S7) ───────
+
+    @Test
+    void memoryToolStorePassesProvenanceMap() {
+        // Execute add, capture the provenance Map arg, verify it's not null
+        MemoryTool tool = new MemoryTool(memoryProvider);
+        String args = "{\"action\":\"add\",\"target\":\"memory\",\"content\":\"test fact\"}";
+
+        tool.execute(args, LAST_MESSAGE, SESSION);
+
+        // Capture the 5th argument (provenance map) from the 5-arg store call
+        org.mockito.ArgumentCaptor<java.util.Map<String, String>> captor =
+            org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(memoryProvider).store(eq(USER_ID), eq("memory"), eq("auto"), eq("test fact"), captor.capture());
+
+        // The provenance map should not be null (it's always passed, even if empty)
+        assertThat(captor.getValue()).isNotNull();
+    }
+
+    @Test
+    void memoryToolReplacePassesProvenanceMap() {
+        // Execute replace, verify provenance passed
+        MemoryTool tool = new MemoryTool(memoryProvider);
+        when(memoryProvider.replace(eq(USER_ID), eq("memory"), eq("old"), eq("new"), anyMap()))
+            .thenReturn(null);
+        String args = "{\"action\":\"replace\",\"target\":\"memory\",\"old_text\":\"old\",\"content\":\"new\"}";
+
+        tool.execute(args, LAST_MESSAGE, SESSION);
+
+        // Capture the provenance map from the 5-arg replace call
+        org.mockito.ArgumentCaptor<java.util.Map<String, String>> captor =
+            org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(memoryProvider).replace(eq(USER_ID), eq("memory"), eq("old"), eq("new"), captor.capture());
+
+        assertThat(captor.getValue()).isNotNull();
+    }
+
+    @Test
+    void memoryProviderDefaultStoreIgnoresProvenance() {
+        // Call 5-arg store on a mock with only 4-arg stub, verify 4-arg called
+        // This tests the default method on MemoryProvider interface
+        MemoryProvider provider = mock(MemoryProvider.class, org.mockito.Mockito.withSettings()
+            .defaultAnswer(org.mockito.Mockito.CALLS_REAL_METHODS));
+
+        // The default 5-arg store delegates to the 4-arg store
+        // Since we used CALLS_REAL_METHODS, the default method should fire
+        // and call the 4-arg store (which is also a default — it calls the 3-arg)
+        // We need to stub the 3-arg store to verify the chain
+        provider.store(USER_ID, "memory", "auto", "test fact", java.util.Map.of("key", "val"));
+
+        // The default 5-arg → 4-arg → 3-arg chain means store(3-arg) should be called
+        verify(provider).store(USER_ID, "auto", "test fact");
+    }
 }
