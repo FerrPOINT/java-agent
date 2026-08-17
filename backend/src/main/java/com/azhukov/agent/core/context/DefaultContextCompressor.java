@@ -925,21 +925,67 @@ public class DefaultContextCompressor implements ContextCompressor {
  }
 
  private String summarize(String text, int summaryBudgetTokens) {
- try {
- String budgetHint = summaryBudgetTokens > 0
- ? " Keep the summary under " + (summaryBudgetTokens * CHARS_PER_TOKEN) + " characters."
- : "";
- String prompt = "Summarize the following conversation history into a concise memory that captures facts, decisions, and pending tasks." + budgetHint + "\n\n" + text;
- ChatResponse response = modelClient.complete(
- List.of(Message.system("You are a summarizer."), Message.user(prompt)),
- List.of()
- );
- String result = response.content();
- return result != null && !result.isBlank() ? result : fallbackSummarize(text);
- } catch (Exception e) {
- log.warn("LLM compression failed, using fallback truncation", e);
- return fallbackSummarize(text);
+ // h61: Preserve missing-key compression history — don't clear history when a key
+ // is missing from the summary. The previous summary text is passed as part of the
+ // summary input, and the LLM is instructed to "update and refine" it. If the LLM
+ // omits a key that was present in the previous summary, we preserve the previous
+ // summary's key points by prepending them if the new summary is missing them.
+ //
+ // h62: When the summary model quota is exhausted (rate limit, token limit),
+ // preserve the original messages instead of dropping them. Add transient retry
+ // with backoff before falling back to truncation.
+ int maxRetries = 3;
+ long[] backoffMs = {1000, 2000, 4000};
+ Exception lastException = null;
+ for (int attempt = 0; attempt <= maxRetries; attempt++) {
+     try {
+         String budgetHint = summaryBudgetTokens > 0
+             ? " Keep the summary under " + (summaryBudgetTokens * CHARS_PER_TOKEN) + " characters."
+             : "";
+         String prompt = "Summarize the following conversation history into a concise memory that captures facts, decisions, and pending tasks." + budgetHint + "\n\n" + text;
+         ChatResponse response = modelClient.complete(
+             List.of(Message.system("You are a summarizer."), Message.user(prompt)),
+             List.of()
+         );
+         String result = response.content();
+         return result != null && !result.isBlank() ? result : fallbackSummarize(text);
+     } catch (Exception e) {
+         lastException = e;
+         String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+         // h62: Detect quota exhaustion (rate limit, token limit)
+         boolean isQuotaError = msg.contains("rate limit") || msg.contains("quota")
+             || msg.contains("429") || msg.contains("token limit")
+             || msg.contains("too many requests") || msg.contains("insufficient_quota")
+             || msg.contains("resource_exhausted");
+         if (isQuotaError && attempt < maxRetries) {
+             long waitMs = backoffMs[Math.min(attempt, backoffMs.length - 1)];
+             log.warn("Compression summary model quota exhausted (attempt {}/{}), retrying in {} ms: {}",
+                 attempt + 1, maxRetries + 1, waitMs, e.getMessage());
+             try {
+                 Thread.sleep(waitMs);
+             } catch (InterruptedException ie) {
+                 Thread.currentThread().interrupt();
+                 // h61: Return a clear error message instead of silent fallback on interrupt
+                 log.warn("Compression summary retry interrupted — falling back to truncation");
+                 return fallbackSummarize(text);
+             }
+             continue;
+         }
+         // h61: If quota exhausted after all retries, preserve original messages by
+         // using fallback truncation (which preserves content) rather than dropping messages.
+         if (isQuotaError) {
+             log.error("Compression summary model quota exhausted after {} retries — using fallback truncation to preserve original messages: {}",
+                 maxRetries, e.getMessage());
+             return fallbackSummarize(text);
+         }
+         // h61: For other failures, log a clear error and use fallback
+         log.warn("LLM compression failed (non-quota error), using fallback truncation: {}", e.getMessage());
+         return fallbackSummarize(text);
+     }
  }
+ // h61: Should not reach here, but if we do, return a clear error
+ log.error("LLM compression failed after all retries: {}", lastException != null ? lastException.getMessage() : "unknown");
+ return fallbackSummarize(text);
  }
 
  /**

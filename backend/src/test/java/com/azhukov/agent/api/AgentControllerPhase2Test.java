@@ -49,6 +49,7 @@ class AgentControllerPhase2Test {
     @Mock private AgentStreamingService streamingService;
     @Mock private MemoryProvider memoryProvider;
     @Mock private SkillManager skillManager;
+    @Mock private com.azhukov.agent.persistence.repository.SkillAuditLogRepository skillAuditLogRepository;
     @Mock private CheckpointManager checkpointManager;
     @Mock private TtsService ttsService;
     @Mock private TranscriptionService transcriptionService;
@@ -76,7 +77,7 @@ class AgentControllerPhase2Test {
     }
 
     private MockMvc skillMockMvc() {
-        SkillController controller = new SkillController(skillManager, agentRuntimeService);
+        SkillController controller = new SkillController(skillManager, agentRuntimeService, skillAuditLogRepository);
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

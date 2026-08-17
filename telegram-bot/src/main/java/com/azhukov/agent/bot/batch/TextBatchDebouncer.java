@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
+import java.util.function.Predicate;
 
 /**
  * Buffers rapid text messages per chat, merging them with newline separators,
@@ -31,6 +32,14 @@ public class TextBatchDebouncer {
     private final Map<Long, BatchEntry> buffers = new ConcurrentHashMap<>();
     private final Map<Long, ScheduledFuture<?>> timers = new ConcurrentHashMap<>();
     private final List<java.util.function.Consumer<UpdateEvent>> dispatchers = new CopyOnWriteArrayList<>();
+
+    /**
+     * Optional predicate checked after the debounce timer fires, before dispatching.
+     * If set and returns {@code false} for the given chatId, the batched event is
+     * silently dropped (not dispatched). Allows checking if the chat is still
+     * active/paused before sending.
+     */
+    private volatile Predicate<Long> shouldDispatch;
 
     /**
      * Offer a text event to the debouncer. If this is the first message in a quiet
@@ -81,6 +90,17 @@ public class TextBatchDebouncer {
     }
 
     /**
+     * Set a predicate that is checked after the debounce timer fires, before dispatching.
+     * If the predicate returns {@code false} for a chatId, the batched event is dropped.
+     * Pass {@code null} to disable re-validation (dispatch always).
+     *
+     * @param predicate chatId → should-dispatch check, or null to clear
+     */
+    public void setShouldDispatch(Predicate<Long> predicate) {
+        this.shouldDispatch = predicate;
+    }
+
+    /**
      * Compute adaptive delay based on accumulated text length.
      */
     long computeDelay(int totalLength) {
@@ -97,6 +117,13 @@ public class TextBatchDebouncer {
         BatchEntry entry = buffers.remove(chatId);
         timers.remove(chatId);
         if (entry == null) return;
+
+        // P34: Post-debounce re-validation — check if chat is still active/paused
+        Predicate<Long> guard = shouldDispatch;
+        if (guard != null && !guard.test(chatId)) {
+            log.debug("Dropping batched text for chat {} — shouldDispatch returned false", chatId);
+            return;
+        }
 
         String mergedText = entry.mergedText();
         if (mergedText == null || mergedText.isBlank()) return;

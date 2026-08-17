@@ -260,7 +260,11 @@ public final class CommandGuard {
      * and common shell operators (|, &, ;, &&, ||, >, >>, <).
      */
     static String[] shellTokens(String normalised) {
-        String[] parts = normalised.split("[\\s|;&<>]+");
+        // h92: Be quote-aware when splitting — metacharacters inside single or double
+        // quotes are literal, not operators. We strip quoted segments before splitting
+        // so that quoted metacharacters don't create spurious token boundaries.
+        String unquoted = stripQuotedSegments(normalised);
+        String[] parts = unquoted.split("[\\s|;&<>]+");
         List<String> result = new ArrayList<>();
         for (String part : parts) {
             if (!part.isBlank()) {
@@ -268,5 +272,55 @@ public final class CommandGuard {
             }
         }
         return result.toArray(new String[0]);
+    }
+
+    /**
+     * h92: Remove quoted segments from a command string, replacing them with
+     * placeholders so that metacharacters inside quotes are not treated as
+     * shell operators. Single-quoted and double-quoted segments are replaced
+     * with a simple placeholder that preserves token boundaries.
+     * <p>
+     * E.g. {@code grep 'a|b' file} → {@code grep _QUOTE_ file}
+     * so the pipe inside the quotes is not treated as an operator.
+     *
+     * @param command the normalised command string
+     * @return the command with quoted segments replaced by placeholders
+     */
+    static String stripQuotedSegments(String command) {
+        if (command == null || command.isEmpty()) {
+            return command;
+        }
+        StringBuilder result = new StringBuilder();
+        int len = command.length();
+        int i = 0;
+        while (i < len) {
+            char c = command.charAt(i);
+            if (c == '\'') {
+                // Single-quoted: everything until the closing ' is literal
+                i++; // skip opening quote
+                while (i < len && command.charAt(i) != '\'') {
+                    i++;
+                }
+                if (i < len) i++; // skip closing quote
+                result.append("_QUOTE_");
+            } else if (c == '"') {
+                // Double-quoted: everything until the closing " is literal
+                i++; // skip opening quote
+                while (i < len && command.charAt(i) != '"') {
+                    // Handle escaped quotes inside double quotes
+                    if (command.charAt(i) == '\\' && i + 1 < len) {
+                        i += 2;
+                    } else {
+                        i++;
+                    }
+                }
+                if (i < len) i++; // skip closing quote
+                result.append("_QUOTE_");
+            } else {
+                result.append(c);
+                i++;
+            }
+        }
+        return result.toString();
     }
 }

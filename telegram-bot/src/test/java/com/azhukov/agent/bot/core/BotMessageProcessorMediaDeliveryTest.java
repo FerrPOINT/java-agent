@@ -19,6 +19,7 @@ import com.azhukov.agent.bot.reaction.ReactionManager;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
 import com.azhukov.agent.bot.session.BusySessionHandler;
+import com.azhukov.agent.bot.session.EditCaptureService;
 import com.azhukov.agent.bot.streaming.StreamEditor;
 import com.azhukov.agent.bot.typing.TypingManager;
 import org.junit.jupiter.api.AfterEach;
@@ -81,6 +82,7 @@ class BotMessageProcessorMediaDeliveryTest {
     private SlashAccessPolicy slashAccessPolicy;
     private ResponseFilter responseFilter;
     private GoalAutoContinueService goalAutoContinueService;
+    private EditCaptureService editCaptureService;
 
     private BotMessageProcessor processor;
 
@@ -112,6 +114,7 @@ class BotMessageProcessorMediaDeliveryTest {
         slashAccessPolicy = mock(SlashAccessPolicy.class);
         responseFilter = mock(ResponseFilter.class);
         goalAutoContinueService = mock(GoalAutoContinueService.class);
+        editCaptureService = mock(EditCaptureService.class);
 
         // Default stubs
         when(authorizationService.isAuthorized(any(UpdateEvent.class))).thenReturn(true);
@@ -126,6 +129,7 @@ class BotMessageProcessorMediaDeliveryTest {
         doNothing().when(streamEditor).clearStream(anyLong());
         when(responseFilter.shouldFilter(anyString())).thenReturn(false);
         when(slashAccessPolicy.canRun(anyLong(), anyString())).thenReturn(true);
+        when(editCaptureService.getCapture(anyLong())).thenReturn(null);
 
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
@@ -142,7 +146,8 @@ class BotMessageProcessorMediaDeliveryTest {
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
             properties, streamEditor, inboundMediaHandler, mediaDeliveryService,
             runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
-            groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService);
+            groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
+            editCaptureService);
     }
 
     @AfterEach

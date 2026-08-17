@@ -19,6 +19,7 @@ import com.azhukov.agent.bot.reaction.ReactionManager;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
 import com.azhukov.agent.bot.session.BusySessionHandler;
+import com.azhukov.agent.bot.session.EditCaptureService;
 import com.azhukov.agent.bot.streaming.StreamEditor;
 import com.azhukov.agent.bot.typing.TypingManager;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,6 +58,7 @@ class BotMessageProcessorDrainQueueLockTest {
     private SlashAccessPolicy slashAccessPolicy;
     private ResponseFilter responseFilter;
     private GoalAutoContinueService goalAutoContinueService;
+    private EditCaptureService editCaptureService;
     private BotMessageProcessor processor;
 
     @BeforeEach
@@ -86,12 +88,14 @@ class BotMessageProcessorDrainQueueLockTest {
         slashAccessPolicy = mock(SlashAccessPolicy.class);
         responseFilter = mock(ResponseFilter.class);
         goalAutoContinueService = mock(GoalAutoContinueService.class);
+        editCaptureService = mock(EditCaptureService.class);
 
         when(authorizationService.isAuthorized(any())).thenReturn(true);
         when(groupMessageFilter.shouldProcess(any())).thenReturn(true);
         when(responseFilter.shouldFilter(anyString())).thenReturn(false);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("");
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(1L));
+        when(editCaptureService.getCapture(anyLong())).thenReturn(null);
 
         BotSessionEntity session = mock(BotSessionEntity.class);
         when(session.getBackendSessionId()).thenReturn(null);
@@ -103,7 +107,8 @@ class BotMessageProcessorDrainQueueLockTest {
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
             properties, streamEditor, inboundMediaHandler, mediaDeliveryService, runtimeFooter,
             reactionManager, textBatchDebouncer, photoBatchDebouncer,
-            groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService
+            groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
+            editCaptureService
         );
         processor.init();
     }

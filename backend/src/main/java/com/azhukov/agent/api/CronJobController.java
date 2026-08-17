@@ -1,6 +1,8 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.persistence.entity.CronExecutionLogEntity;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
+import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.azhukov.agent.service.CronJobService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +20,7 @@ import java.util.UUID;
 public class CronJobController {
 
     private final CronJobService cronJobService;
+    private final CronExecutionLogRepository cronExecutionLogRepository;
 
     @PostMapping
     public CronJobEntity create(@Valid @RequestBody CreateCronRequest request) {
@@ -53,6 +56,12 @@ public class CronJobController {
     @PostMapping("/{id}/run")
     public CronJobEntity runNow(@PathVariable UUID id) {
         return cronJobService.runNow(id);
+    }
+
+    // h72: Cron execution ledger — list execution history for a job.
+    @GetMapping("/{id}/executions")
+    public List<CronExecutionLogEntity> listExecutions(@PathVariable UUID id) {
+        return cronExecutionLogRepository.findByJobIdOrderByStartedAtDesc(id);
     }
 
     public record CreateCronRequest(

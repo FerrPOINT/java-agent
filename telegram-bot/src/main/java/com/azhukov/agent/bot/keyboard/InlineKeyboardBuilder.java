@@ -68,6 +68,37 @@ public class InlineKeyboardBuilder {
         return sb.toString();
     }
 
+    /**
+     * P37: Build an approval keyboard for exec-approval prompts.
+     * <p>
+     * When {@code canExecute} is {@code true}, includes the full set of buttons:
+     * Execute (once), Execute (session), Execute (always), and Deny.
+     * When {@code canExecute} is {@code false} (user lacks execute permission),
+     * only the Deny button is shown.
+     *
+     * @param approvalId the integer approval ID from {@link ApprovalStateStore}
+     * @param canExecute whether the user has permission to approve execution
+     * @return JSON string for reply_markup
+     */
+    public String buildApprovalKeyboard(int approvalId, boolean canExecute) {
+        List<List<KeyboardButton>> rows = new java.util.ArrayList<>();
+        if (canExecute) {
+            rows.add(List.of(
+                new KeyboardButton("✅ Execute once", "ea:once:" + approvalId),
+                new KeyboardButton("✅ Execute (session)", "ea:session:" + approvalId)
+            ));
+            rows.add(List.of(
+                new KeyboardButton("✅ Execute (always)", "ea:always:" + approvalId),
+                new KeyboardButton("❌ Deny", "ea:deny:" + approvalId)
+            ));
+        } else {
+            rows.add(List.of(
+                new KeyboardButton("❌ Deny", "ea:deny:" + approvalId)
+            ));
+        }
+        return build(rows);
+    }
+
     private String escapeJson(String value) {
         if (value == null) {
             return "null";

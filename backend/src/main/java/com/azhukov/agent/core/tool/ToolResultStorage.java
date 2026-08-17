@@ -10,7 +10,12 @@ import com.azhukov.agent.core.model.ToolResult;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Feature 8: Tool result persistence — spills large outputs to disk.
@@ -28,6 +33,61 @@ public class ToolResultStorage {
 
     private final AgentProperties properties;
     private static final int PREVIEW_CHARS = 2000;
+
+    // h42: When an MCP server reuses the same tool_call_id for different calls,
+    // keep all tool results instead of overwriting/dropping. Store results in a
+    // Map<String, List<ToolResult>> that preserves all results per tool_call_id.
+    private final Map<String, List<ToolResult>> resultsByCallId = new ConcurrentHashMap<>();
+
+    /**
+     * h42: Store a tool result indexed by tool_call_id. If the same tool_call_id
+     * is reused (e.g. by an MCP server), the new result is appended to the list
+     * rather than overwriting the previous one.
+     *
+     * @param toolCallId the tool call ID (may be reused by MCP servers)
+     * @param result the tool result to store
+     */
+    public void storeResult(String toolCallId, ToolResult result) {
+        if (toolCallId == null || result == null) {
+            return;
+        }
+        resultsByCallId.computeIfAbsent(toolCallId, k -> new ArrayList<>()).add(result);
+    }
+
+    /**
+     * h42: Retrieve all tool results for a given tool_call_id. Returns an empty
+     * list if no results have been stored for this ID.
+     *
+     * @param toolCallId the tool call ID
+     * @return list of all results stored for this call ID (preserves insertion order)
+     */
+    public List<ToolResult> getResults(String toolCallId) {
+        if (toolCallId == null) {
+            return List.of();
+        }
+        return List.copyOf(resultsByCallId.getOrDefault(toolCallId, List.of()));
+    }
+
+    /**
+     * h42: Check if any results have been stored for the given tool_call_id.
+     *
+     * @param toolCallId the tool call ID
+     * @return true if at least one result exists for this call ID
+     */
+    public boolean hasResults(String toolCallId) {
+        return toolCallId != null && resultsByCallId.containsKey(toolCallId);
+    }
+
+    /**
+     * h42: Clear stored results for a specific tool_call_id.
+     *
+     * @param toolCallId the tool call ID to clear
+     */
+    public void clearResults(String toolCallId) {
+        if (toolCallId != null) {
+            resultsByCallId.remove(toolCallId);
+        }
+    }
 
     /**
      * Persist oversized tool result to a temp file, return preview + path.

@@ -2,7 +2,9 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.persistence.entity.CronExecutionLogEntity;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
+import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.azhukov.agent.persistence.repository.CronJobRepository;
 import com.cronutils.model.Cron;
 import com.cronutils.model.CronType;
@@ -53,6 +55,8 @@ public class CronJobService {
     private final ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider;
     private final AgentProperties properties;
     private final SkillManager skillManager;
+    // h72: Cron execution ledger repository.
+    private final CronExecutionLogRepository cronExecutionLogRepository;
 
     // Daemon thread factory so cron threads don't prevent JVM shutdown
     private static final ThreadFactory DAEMON_THREAD_FACTORY = r -> {
@@ -87,6 +91,11 @@ public class CronJobService {
     // Cron expression: 5+ space-separated fields of digits/specials
     private static final Pattern CRON_FIELD_PATTERN = Pattern.compile("^[\\d*/,-]+$");
 
+    // h74: Maximum consecutive failures before backing off significantly.
+    private static final int MAX_CONSECUTIVE_FAILURES = 5;
+    // h74: Base backoff seconds for backend unavailability.
+    private static final long BACKEND_UNAVAILABLE_BACKOFF_SECONDS = 300; // 5 minutes
+
     @PostConstruct
     public void init() {
         if (!properties.getCron().isEnabled()) {
@@ -95,6 +104,17 @@ public class CronJobService {
         }
         log.info("Initializing cron jobs...");
         List<CronJobEntity> jobs = cronJobRepository.findByEnabledTrue();
+        // h71: Re-arm recurring cron jobs stuck in stale last_status=error.
+        // Don't let a permanent error state block future executions.
+        for (CronJobEntity job : jobs) {
+            if ("error".equals(job.getLastStatus()) && job.isEnabled()) {
+                log.info("Re-arming cron job '{}' stuck in error state for next tick", job.getName());
+                job.setLastStatus(null);
+                job.setLastError(null);
+                job.setConsecutiveFailures(0);
+                cronJobRepository.save(job);
+            }
+        }
         for (CronJobEntity job : jobs) {
             scheduleJob(job);
         }
@@ -337,6 +357,23 @@ public class CronJobService {
             try {
                 CronJobEntity job = cronJobRepository.findById(jobId).orElse(null);
                 if (job == null || !job.isEnabled()) return;
+
+                // h74: Check if we should back off due to consecutive failures.
+                // If the backend has been unavailable, increase the delay before next attempt.
+                if (job.getConsecutiveFailures() >= MAX_CONSECUTIVE_FAILURES) {
+                    long backoff = BACKEND_UNAVAILABLE_BACKOFF_SECONDS * (1L << Math.min(
+                        job.getConsecutiveFailures() - MAX_CONSECUTIVE_FAILURES, 5));
+                    log.warn("Cron job {} backing off {}s due to {} consecutive failures (backend unavailability)",
+                        job.getName(), backoff, job.getConsecutiveFailures());
+                    long delaySeconds = Math.max(backoff, calculateDelaySeconds(job.getSchedule()));
+                    ScheduledFuture<?> future = scheduler.schedule(
+                        () -> executeAndReschedule(jobId), delaySeconds, TimeUnit.SECONDS);
+                    scheduledTasks.put(jobId, future);
+                    job.setNextRunAt(Instant.now().plusSeconds(delaySeconds));
+                    cronJobRepository.save(job);
+                    return;
+                }
+
                 executeJob(job);
 
                 // ── Fix 2: Repeat count auto-delete ──
@@ -356,6 +393,12 @@ public class CronJobService {
                     cronJobRepository.save(job);
                 }
 
+                // h71: Reset consecutive failures on successful execution
+                if (job.getConsecutiveFailures() > 0) {
+                    job.setConsecutiveFailures(0);
+                    cronJobRepository.save(job);
+                }
+
                 // Reschedule (one-shot jobs with repeatCount=1 are already deleted above)
                 scheduleJob(job);
             } finally {
@@ -364,7 +407,17 @@ public class CronJobService {
                 jobLocks.remove(jobId, lock);
             }
         } catch (Exception e) {
-            log.error("Error executing cron job {}: {}", jobId, e.getMessage());
+            log.error("Error executing cron job {}: {} — job will be rescheduled", jobId, e.getMessage());
+            // h71: Re-arm the job even if the outer catch fires — don't let a
+            // permanent error state block future executions.
+            try {
+                CronJobEntity job = cronJobRepository.findById(jobId).orElse(null);
+                if (job != null && job.isEnabled()) {
+                    scheduleJob(job);
+                }
+            } catch (Exception retryEx) {
+                log.error("Failed to re-schedule cron job {} after error: {}", jobId, retryEx.getMessage());
+            }
         }
     }
 
@@ -374,12 +427,17 @@ public class CronJobService {
         log.info("Executing cron job: {} (deliverTo: {}, skills: {}, noAgent: {}, script: {})",
             job.getName(), job.getDeliverTo(), job.getSkills(), job.isNoAgent(), job.getScript());
 
+        // h72: Record execution start in the ledger.
+        Instant startedAt = Instant.now();
+
         try {
             // ── Fix 4: no_agent mode ──
             // Skip the LLM entirely. Run script, deliver stdout verbatim.
             if (job.isNoAgent()) {
                 executeNoAgentJob(job);
                 job.setLastRunAt(Instant.now());
+                job.setLastStatus("success");
+                job.setLastError(null);
                 cronJobRepository.save(job);
                 return;
             }
@@ -463,9 +521,54 @@ public class CronJobService {
                 log.warn("AgentRuntimeService not available, skipping cron job execution: {}", job.getName());
             }
             job.setLastRunAt(Instant.now());
+            job.setLastStatus("success");
+            job.setLastError(null);
             cronJobRepository.save(job);
+            // h72: Record successful execution in the ledger.
+            recordExecution(job.getId(), startedAt, Instant.now(), "success", null);
         } catch (Exception e) {
             log.error("Failed to execute cron job {}: {} — job will be rescheduled", job.getName(), e.getMessage());
+            // h71/h74: Record the error status and increment consecutive failures.
+            // h74: Detect backend unavailability (connection refused) for backoff.
+            String errorMsg = e.getMessage() != null ? e.getMessage() : "unknown error";
+            boolean isBackendUnavailable = isBackendUnavailable(errorMsg);
+            job.setLastStatus("error");
+            job.setLastError(errorMsg);
+            job.setLastErrorAt(Instant.now());
+            if (isBackendUnavailable) {
+                job.setConsecutiveFailures(job.getConsecutiveFailures() + 1);
+                log.warn("Cron job '{}' detected backend unavailability (consecutive failures: {})",
+                    job.getName(), job.getConsecutiveFailures());
+            }
+            cronJobRepository.save(job);
+            // h72: Record failed execution in the ledger.
+            String status = errorMsg.toLowerCase().contains("timeout") ? "timeout" : "failure";
+            recordExecution(job.getId(), startedAt, Instant.now(), status, errorMsg);
+            // h71: Re-arm: clear the error status so the job can run on the next tick.
+            // The error is recorded for audit but doesn't permanently block execution.
+            // The scheduleJob call in executeAndReschedule will still fire.
+        }
+    }
+
+    // ── h72: Cron execution ledger ──
+
+    /**
+     * h72: Record a cron job execution in the execution ledger.
+     *
+     * @param jobId the job ID
+     * @param startedAt when the execution started
+     * @param finishedAt when the execution finished
+     * @param status "success", "failure", or "timeout"
+     * @param errorMessage error message if failed, null if succeeded
+     */
+    private void recordExecution(UUID jobId, Instant startedAt, Instant finishedAt, String status, String errorMessage) {
+        try {
+            if (cronExecutionLogRepository != null) {
+                CronExecutionLogEntity logEntry = new CronExecutionLogEntity(jobId, startedAt, finishedAt, status, errorMessage);
+                cronExecutionLogRepository.save(logEntry);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to record cron execution log for job {}: {}", jobId, e.getMessage());
         }
     }
 
@@ -647,6 +750,35 @@ public class CronJobService {
         if (future != null) {
             future.cancel(false);
         }
+    }
+
+    // ── h74: Backend unavailability detection ──
+
+    /**
+     * h74: Detect if the gateway/backend is deliberately stopped or unavailable.
+     * Checks for connection refused, timeout, and similar network-level errors
+     * that indicate the backend is down, not just a transient error.
+     *
+     * @param errorMsg the error message from the failed execution
+     * @return true if the error indicates backend unavailability
+     */
+    static boolean isBackendUnavailable(String errorMsg) {
+        if (errorMsg == null || errorMsg.isBlank()) {
+            return false;
+        }
+        String lower = errorMsg.toLowerCase();
+        return lower.contains("connection refused")
+            || lower.contains("connection reset")
+            || lower.contains("connection closed")
+            || lower.contains("connection timed out")
+            || lower.contains("connectexception")
+            || lower.contains("unknownhostexception")
+            || lower.contains("no route to host")
+            || lower.contains("network is unreachable")
+            || lower.contains("service unavailable")
+            || lower.contains("503")
+            || lower.contains("gateway")
+            && lower.contains("502");
     }
 
     // ── Schedule parsing ──

@@ -3,6 +3,7 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.persistence.repository.CronJobRepository;
+import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,6 +24,7 @@ import static org.mockito.Mockito.*;
 class CronJobServiceTest {
 
     @Mock private CronJobRepository cronJobRepository;
+    @Mock private CronExecutionLogRepository cronExecutionLogRepository;
     @Mock private org.springframework.beans.factory.ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider;
     @Mock private AgentRuntimeService agentRuntimeService;
     @Mock private com.azhukov.agent.core.skill.SkillManager skillManager;
@@ -35,7 +37,7 @@ class CronJobServiceTest {
         properties = new AgentProperties();
         properties.getCron().setEnabled(false); // Disable scheduling for tests
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager);
+        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository);
     }
 
     @Test

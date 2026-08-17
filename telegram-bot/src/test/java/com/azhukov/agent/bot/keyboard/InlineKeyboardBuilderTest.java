@@ -112,4 +112,54 @@ class InlineKeyboardBuilderTest {
 
         assertThat(json).contains("\\n");
     }
+
+    // ─── P37: Permission-Aware Keyboard tests ─────────────────────
+
+    @Test
+    void buildApprovalKeyboard_canExecuteTrue_includesAllButtons() throws Exception {
+        String json = builder.buildApprovalKeyboard(42, true);
+
+        var node = new ObjectMapper().readTree(json);
+        assertThat(node.has("inline_keyboard")).isTrue();
+        var keyboard = node.get("inline_keyboard");
+        assertThat(keyboard.size()).isEqualTo(2); // two rows
+
+        // Row 1: Execute once + Execute (session)
+        assertThat(keyboard.get(0).size()).isEqualTo(2);
+        assertThat(keyboard.get(0).get(0).get("text").asText()).contains("Execute once");
+        assertThat(keyboard.get(0).get(0).get("callback_data").asText()).isEqualTo("ea:once:42");
+        assertThat(keyboard.get(0).get(1).get("callback_data").asText()).isEqualTo("ea:session:42");
+
+        // Row 2: Execute (always) + Deny
+        assertThat(keyboard.get(1).size()).isEqualTo(2);
+        assertThat(keyboard.get(1).get(0).get("callback_data").asText()).isEqualTo("ea:always:42");
+        assertThat(keyboard.get(1).get(1).get("text").asText()).contains("Deny");
+        assertThat(keyboard.get(1).get(1).get("callback_data").asText()).isEqualTo("ea:deny:42");
+    }
+
+    @Test
+    void buildApprovalKeyboard_canExecuteFalse_onlyDenyButton() throws Exception {
+        String json = builder.buildApprovalKeyboard(99, false);
+
+        var node = new ObjectMapper().readTree(json);
+        assertThat(node.has("inline_keyboard")).isTrue();
+        var keyboard = node.get("inline_keyboard");
+        assertThat(keyboard.size()).isEqualTo(1); // one row
+
+        // Only one button: Deny
+        assertThat(keyboard.get(0).size()).isEqualTo(1);
+        assertThat(keyboard.get(0).get(0).get("text").asText()).contains("Deny");
+        assertThat(keyboard.get(0).get(0).get("callback_data").asText()).isEqualTo("ea:deny:99");
+    }
+
+    @Test
+    void buildApprovalKeyboard_canExecuteFalse_doesNotContainExecute() {
+        String json = builder.buildApprovalKeyboard(77, false);
+
+        assertThat(json).doesNotContain("Execute");
+        assertThat(json).doesNotContain("ea:once:77");
+        assertThat(json).doesNotContain("ea:session:77");
+        assertThat(json).doesNotContain("ea:always:77");
+        assertThat(json).contains("ea:deny:77");
+    }
 }

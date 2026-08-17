@@ -86,4 +86,19 @@ public class CronJobEntity {
 
     @Column(name = "next_run_at")
     private Instant nextRunAt;
+
+    // h71/h74: Track last execution status to detect stale error states and
+    // prevent permanent error from blocking future executions.
+    @Column(name = "last_status")
+    private String lastStatus;
+
+    @Column(name = "last_error")
+    private String lastError;
+
+    @Column(name = "last_error_at")
+    private Instant lastErrorAt;
+
+    // h74: Consecutive failure count for backoff during backend unavailability.
+    @Column(name = "consecutive_failures")
+    private int consecutiveFailures = 0;
 }

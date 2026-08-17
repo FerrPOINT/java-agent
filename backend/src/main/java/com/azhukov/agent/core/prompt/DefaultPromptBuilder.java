@@ -167,6 +167,15 @@ public class DefaultPromptBuilder implements PromptBuilder {
     static final List<String> CONTEXT_FILE_NAMES = List.of("AGENTS.md", "CLAUDE.md", ".cursorrules");
 
     /**
+     * h90: Override file name — if present in the working directory, its content
+     * is loaded and appended to the system prompt as an override section.
+     */
+    static final String OVERRIDE_FILE_NAME = "AGENTS.override.md";
+
+    /** Maximum total characters for override file content. */
+    static final int OVERRIDE_FILE_MAX_CHARS = 20_000;
+
+    /**
      * Operational guidance for OpenAI models (GPT, o1/o3, Codex).
      * Injected into the system prompt when the configured model belongs to the OpenAI family.
      */
@@ -577,6 +586,47 @@ public class DefaultPromptBuilder implements PromptBuilder {
     // ── Fix 4: Context files (AGENTS.md, CLAUDE.md, .cursorrules) ──
 
     /**
+     * h90: Load AGENTS.override.md from the working directory.
+     * If present, its content is loaded, scanned for injection patterns, and truncated.
+     * The content is returned as an override section to append to the system prompt.
+     *
+     * @return the override content, or empty string if no override file found
+     */
+    String loadOverrideFile() {
+        String workingDir = properties.getCore().getWorkingDirectory();
+        if (workingDir == null || workingDir.isBlank()) {
+            workingDir = System.getProperty("user.dir");
+        }
+        if (workingDir == null || workingDir.isBlank()) {
+            return "";
+        }
+
+        Path cwdPath = Path.of(workingDir);
+        if (!Files.isDirectory(cwdPath)) {
+            return "";
+        }
+
+        Path overridePath = cwdPath.resolve(OVERRIDE_FILE_NAME);
+        if (!Files.isRegularFile(overridePath)) {
+            return "";
+        }
+
+        try {
+            String content = Files.readString(overridePath).strip();
+            if (content.isEmpty()) {
+                return "";
+            }
+            content = stripYamlFrontmatter(content);
+            content = scanContextContent(content, OVERRIDE_FILE_NAME);
+            content = truncateContent(content, OVERRIDE_FILE_NAME, OVERRIDE_FILE_MAX_CHARS);
+            return "## Override Instructions (AGENTS.override.md)\n\n" + content;
+        } catch (IOException e) {
+            log.debug("Could not read override file {}: {}", overridePath, e.getMessage());
+            return "";
+        }
+    }
+
+    /**
      * Build context files prompt by reading AGENTS.md, CLAUDE.md, and .cursorrules
      * from the working directory. First match wins (only one project context file is loaded).
      * Each file is scanned for injection patterns and truncated.
@@ -891,6 +941,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
         String contextFiles = buildContextFilesPrompt();
         if (!contextFiles.isEmpty()) {
             contextTier.append(contextFiles).append("\n\n");
+        }
+
+        // h90: AGENTS.override.md — if present, append as override section to system prompt.
+        String overrideContent = loadOverrideFile();
+        if (!overrideContent.isEmpty()) {
+            contextTier.append(overrideContent).append("\n\n");
         }
 
         // Available toolsets and tools

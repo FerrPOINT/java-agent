@@ -21,6 +21,7 @@ import com.azhukov.agent.bot.reaction.ReactionManager;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
 import com.azhukov.agent.bot.session.BusySessionHandler;
+import com.azhukov.agent.bot.session.EditCaptureService;
 import com.azhukov.agent.bot.streaming.StreamEditor;
 import com.azhukov.agent.bot.typing.TypingManager;
 import org.junit.jupiter.api.BeforeEach;
@@ -75,6 +76,7 @@ class BotMessageProcessorTest {
     private SlashAccessPolicy slashAccessPolicy;
     private ResponseFilter responseFilter;
     private GoalAutoContinueService goalAutoContinueService;
+    private EditCaptureService editCaptureService;
 
     private BotMessageProcessor processor;
 
@@ -105,6 +107,7 @@ class BotMessageProcessorTest {
         slashAccessPolicy = mock(SlashAccessPolicy.class);
         responseFilter = mock(ResponseFilter.class);
         goalAutoContinueService = mock(GoalAutoContinueService.class);
+        editCaptureService = mock(EditCaptureService.class);
 
         // Default stubs
         when(authorizationService.isAuthorized(any(UpdateEvent.class))).thenReturn(true);
@@ -119,6 +122,7 @@ class BotMessageProcessorTest {
         doNothing().when(streamEditor).clearStream(anyLong());
         when(responseFilter.shouldFilter(anyString())).thenReturn(false);
         when(slashAccessPolicy.canRun(anyLong(), anyString())).thenReturn(true);
+        when(editCaptureService.getCapture(anyLong())).thenReturn(null);
 
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
@@ -133,7 +137,8 @@ class BotMessageProcessorTest {
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
             properties, streamEditor, inboundMediaHandler, mediaDeliveryService,
             runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
-            groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService);
+            groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
+            editCaptureService);
     }
 
     // ─── Helper methods ──────────────────────────────────────────
@@ -211,6 +216,39 @@ class BotMessageProcessorTest {
             "testuser", null, null, null, null,
             null, null, null, false, null, null,
             100 + (int) updateId, null, 0);
+    }
+
+    // ─── P35: Edit-Capture Mode integration tests ──────────────────
+
+    @Test
+    void textMessageInCaptureMode_routesToCaptureHandler_notNormalProcessing() {
+        long chatId = 700L;
+        EditCaptureService.CaptureContext ctx =
+            new EditCaptureService.CaptureContext(55, System.currentTimeMillis());
+        when(editCaptureService.getCapture(chatId)).thenReturn(ctx);
+
+        processor.accept(textEvent(1, chatId, "edited content here"));
+
+        // Should send the capture confirmation message
+        verify(telegramClient).sendMessage(eq(chatId), contains("captured for approval #55"));
+        // Should NOT call the backend (normal processing should be skipped)
+        verify(backendClient, never()).chatStream(anyString(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient, never()).chat(anyString(), any(), any());
+        // Should end the capture
+        verify(editCaptureService).endCapture(chatId);
+    }
+
+    @Test
+    void textMessageNoCaptureMode_processesNormally() {
+        long chatId = 800L;
+        when(editCaptureService.getCapture(chatId)).thenReturn(null);
+
+        processor.accept(textEvent(1, chatId, "normal message"));
+
+        // Should NOT send a capture confirmation
+        verify(telegramClient, never()).sendMessage(eq(chatId), contains("captured for approval"));
+        // Should call the backend (normal processing)
+        verify(backendClient, atLeastOnce()).chatStream(anyString(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @SuppressWarnings("unchecked")

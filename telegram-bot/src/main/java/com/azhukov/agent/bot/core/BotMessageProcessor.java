@@ -23,6 +23,7 @@ import com.azhukov.agent.bot.reaction.ReactionManager;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
 import com.azhukov.agent.bot.session.BusySessionHandler;
+import com.azhukov.agent.bot.session.EditCaptureService;
 import com.azhukov.agent.bot.session.PiiRedactor;
 import com.azhukov.agent.bot.streaming.StreamEditor;
 import com.azhukov.agent.bot.typing.TypingManager;
@@ -82,6 +83,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  private final SlashAccessPolicy slashAccessPolicy;
  private final ResponseFilter responseFilter;
  private final GoalAutoContinueService goalAutoContinueService;
+ private final EditCaptureService editCaptureService;
 
  /**
   * Per-chat locks to prevent concurrent processing of messages within the same chat.
@@ -112,6 +114,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
  case CALLBACK_QUERY -> handleCallbackQuery(event);
  case COMMAND -> handleCommand(event);
  case TEXT -> {
+ // P35: Edit-capture mode — if chat has active capture, route to capture handler
+ if (editCaptureService.getCapture(event.chatId()) != null) {
+     handleEditCapture(event);
+     return;
+ }
  // B1.3: Text batch/debounce
  if (properties.getTextBatch() != null && offerTextBatch(event)) {
  return; // Buffered, will be dispatched later
@@ -221,7 +228,28 @@ public class BotMessageProcessor implements Consumer<UpdateEvent> {
 
  // ─── Text / Media ──────────────────────────────────────────────
 
- private void handleTextOrMedia(UpdateEvent event) {
+    /**
+     * P35: Handle a text message when the chat is in edit-capture mode.
+     * <p>
+     * The message text is treated as edited content for the pending approval.
+     * The capture is ended (consumed) and a confirmation is sent to the user.
+     *
+     * @param event the inbound text event
+     */
+    private void handleEditCapture(UpdateEvent event) {
+        long chatId = event.chatId();
+        EditCaptureService.CaptureContext ctx = editCaptureService.getCapture(chatId);
+        if (ctx == null) return;
+
+        String text = event.text();
+        editCaptureService.endCapture(chatId);
+        log.info("Edit-capture for chat {}: approvalId={}, textLen={}",
+            chatId, ctx.approvalId(), text != null ? text.length() : 0);
+        telegramClient.sendMessage(chatId,
+            "✅ Edited content captured for approval #" + ctx.approvalId());
+    }
+
+    private void handleTextOrMedia(UpdateEvent event) {
  long chatId = event.chatId();
  ReentrantLock lock = locks.computeIfAbsent(chatId, k -> new ReentrantLock());
  lock.lock();

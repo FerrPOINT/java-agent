@@ -267,6 +267,53 @@ public class McpLifecycleManager {
     );
 
     /**
+     * h92: Remove quoted segments from a command string, replacing them with
+     * placeholders so that metacharacters inside quotes are not treated as
+     * shell operators. Single-quoted and double-quoted segments are replaced
+     * with a simple placeholder.
+     * <p>
+     * E.g. {@code grep 'a|b' file} → {@code grep _QUOTE_ file}
+     * so the pipe inside the quotes is not treated as an operator.
+     *
+     * @param command the command string
+     * @return the command with quoted segments replaced by placeholders
+     */
+    static String stripQuotedSegments(String command) {
+        if (command == null || command.isEmpty()) {
+            return command;
+        }
+        StringBuilder result = new StringBuilder();
+        int len = command.length();
+        int i = 0;
+        while (i < len) {
+            char c = command.charAt(i);
+            if (c == '\'') {
+                i++;
+                while (i < len && command.charAt(i) != '\'') {
+                    i++;
+                }
+                if (i < len) i++;
+                result.append("_QUOTE_");
+            } else if (c == '"') {
+                i++;
+                while (i < len && command.charAt(i) != '"') {
+                    if (command.charAt(i) == '\\' && i + 1 < len) {
+                        i += 2;
+                    } else {
+                        i++;
+                    }
+                }
+                if (i < len) i++;
+                result.append("_QUOTE_");
+            } else {
+                result.append(c);
+                i++;
+            }
+        }
+        return result.toString();
+    }
+
+    /**
      * Validates an MCP server stdio command before spawning a subprocess.
      * <p>
      * Checks:
@@ -286,9 +333,13 @@ public class McpLifecycleManager {
             return "Command is null or empty";
         }
         String trimmed = command.trim();
-        // Check for shell metacharacters
+        // h92: Be quote-aware when checking for shell metacharacters —
+        // metacharacters inside single or double quotes are literal, not operators.
+        // E.g. grep 'a|b' file should NOT be flagged as containing a pipe operator.
+        String unquoted = stripQuotedSegments(trimmed);
+        // Check for shell metacharacters in the unquoted version
         for (String metachar : SHELL_METACHARACTERS) {
-            if (trimmed.contains(metachar)) {
+            if (unquoted.contains(metachar)) {
                 return "Command contains forbidden shell metacharacter: '" + metachar + "'";
             }
         }

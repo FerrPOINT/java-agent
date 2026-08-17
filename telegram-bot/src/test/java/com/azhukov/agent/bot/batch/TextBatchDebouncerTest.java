@@ -60,4 +60,52 @@ class TextBatchDebouncerTest {
         // Conservative: if any message is long, use newline
         assertThat(pending).contains("\n");
     }
+
+    // ─── P34: Post-Debounce Re-Validation tests ─────────────────────
+
+    @Test
+    void shouldDispatch_false_dropsBatch() {
+        long chatId = 400L;
+        java.util.List<UpdateEvent> dispatched = new java.util.ArrayList<>();
+        debouncer.onDispatch(dispatched::add);
+
+        // Set predicate that denies dispatch for chatId 400
+        debouncer.setShouldDispatch(id -> id != 400L);
+
+        debouncer.offer(textEvent(1, chatId, "hello world"));
+        debouncer.flushAll();
+
+        assertThat(dispatched).isEmpty();
+        assertThat(debouncer.hasPending(chatId)).isFalse();
+    }
+
+    @Test
+    void shouldDispatch_true_dispatchesNormally() {
+        long chatId = 500L;
+        java.util.List<UpdateEvent> dispatched = new java.util.ArrayList<>();
+        debouncer.onDispatch(dispatched::add);
+
+        // Set predicate that allows dispatch for chatId 500
+        debouncer.setShouldDispatch(id -> id == 500L);
+
+        debouncer.offer(textEvent(1, chatId, "hello world"));
+        debouncer.flushAll();
+
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.get(0).text()).isEqualTo("hello world");
+    }
+
+    @Test
+    void shouldDispatch_null_dispatchesAll() {
+        long chatId = 600L;
+        java.util.List<UpdateEvent> dispatched = new java.util.ArrayList<>();
+        debouncer.onDispatch(dispatched::add);
+
+        // No predicate set — dispatch should proceed normally
+        debouncer.offer(textEvent(1, chatId, "test message"));
+        debouncer.flushAll();
+
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.get(0).text()).isEqualTo("test message");
+    }
 }

@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.service.CronJobService;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
+import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,11 +29,12 @@ class CronJobControllerTest {
     private ObjectMapper objectMapper;
 
     @Mock private CronJobService cronJobService;
+    @Mock private CronExecutionLogRepository cronExecutionLogRepository;
 
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
-        CronJobController controller = new CronJobController(cronJobService);
+        CronJobController controller = new CronJobController(cronJobService, cronExecutionLogRepository);
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 

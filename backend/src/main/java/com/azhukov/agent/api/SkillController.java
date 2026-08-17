@@ -1,6 +1,8 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.persistence.entity.SkillAuditLogEntity;
+import com.azhukov.agent.persistence.repository.SkillAuditLogRepository;
 import com.azhukov.agent.service.AgentRuntimeService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +28,7 @@ public class SkillController {
 
     private final SkillManager skillManager;
     private final AgentRuntimeService agentRuntimeService;
+    private final SkillAuditLogRepository skillAuditLogRepository;
 
     @Operation(summary = "List all skill names")
     @GetMapping("/agent/skills")
@@ -42,6 +45,12 @@ public class SkillController {
             return Map.of("ok", false, "error", "Skill not found: " + name);
         }
         return Map.of("ok", true, "name", name, "content", content);
+    }
+
+    // h77: Curator audit ledger — list audit history for a skill.
+    @GetMapping("/agent/skills/{name}/audit")
+    public List<SkillAuditLogEntity> getSkillAudit(@PathVariable String name) {
+        return skillAuditLogRepository.findBySkillNameOrderByTimestampDesc(name);
     }
 
     // ── Reload skills ──

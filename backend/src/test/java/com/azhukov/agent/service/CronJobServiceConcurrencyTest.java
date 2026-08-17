@@ -4,6 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.persistence.repository.CronJobRepository;
+import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,6 +31,7 @@ import static org.mockito.Mockito.*;
 class CronJobServiceConcurrencyTest {
 
     @Mock private CronJobRepository cronJobRepository;
+    @Mock private CronExecutionLogRepository cronExecutionLogRepository;
     @Mock private ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider;
     @Mock private AgentRuntimeService agentRuntimeService;
     @Mock private SkillManager skillManager;
@@ -42,7 +44,7 @@ class CronJobServiceConcurrencyTest {
         properties = new AgentProperties();
         properties.getCron().setEnabled(false);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager);
+        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository);
     }
 
     @Test

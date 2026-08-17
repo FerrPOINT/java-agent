@@ -191,14 +191,36 @@ public final class ToolParallelSafety {
         // Expand ~ (user home)
         String expanded = expandUserHome(rawPath);
 
+        // h69: Canonicalise paths to detect and prevent same-file concurrent mutation.
+        // Use Path.normalize() first (removes . and .. without filesystem access),
+        // then try Path.toRealPath() for full canonicalisation (resolves symlinks).
+        // If toRealPath() fails (file doesn't exist), fall back to normalize().
         Path path = Path.of(expanded);
         if (path.isAbsolute()) {
-            return path.toAbsolutePath().normalize();
+            return canonicalise(path.toAbsolutePath());
         }
 
         // Resolve against CWD without calling resolve() to avoid checking existence
         Path cwd = Path.of(System.getProperty("user.dir"));
-        return cwd.resolve(path).toAbsolutePath().normalize();
+        return canonicalise(cwd.resolve(path).toAbsolutePath());
+    }
+
+    /**
+     * h69: Canonicalise a path to its real filesystem path to detect
+     * same-file concurrent mutation. Tries {@link Path#toRealPath()} first
+     * (resolves symlinks, requires file to exist), falls back to
+     * {@link Path#normalize()} for non-existent paths.
+     *
+     * @param path the absolute path to canonicalise
+     * @return the canonicalised path
+     */
+    static Path canonicalise(Path path) {
+        try {
+            return path.toRealPath();
+        } catch (java.io.IOException e) {
+            // File doesn't exist yet or symlink can't be resolved — use normalize
+            return path.normalize();
+        }
     }
 
     /**
