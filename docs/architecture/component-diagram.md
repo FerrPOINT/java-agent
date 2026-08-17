@@ -11,7 +11,7 @@
 graph TB
     subgraph "Gradle Multi-Project"
         subgraph backend["backend module"]
-            AC[AgentController<br/>McpController<br/>86 REST endpoints]
+            AC[AgentController<br/>McpController<br/>114 REST endpoints]
             ARS[AgentRuntimeService<br/>AgentStreamingService]
             DAR[DefaultAgentRuntime<br/>Turn loop, retry, tool dispatch]
             TE[ToolExecutionService<br/>Virtual thread executor]
@@ -45,7 +45,7 @@ graph TB
 
         subgraph cli["cli module"]
             REPL[ReplLoop<br/>JLine interactive]
-            SCR[SlashCommandRegistry<br/>74 commands]
+            SCR[SlashCommandRegistry<br/>92 commands]
             BC[BackendClient<br/>REST + SSE to backend]
             MD[MarkdownRenderer<br/>ANSI]
             SC[SlashCompleter<br/>SlashAutoSuggest]

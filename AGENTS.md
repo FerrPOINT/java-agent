@@ -2,13 +2,13 @@
 
 ## Project Overview
 
-Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-project: `backend` (REST API, LLM, tools) + `telegram-bot` (58 команд, streaming, polling).
+Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-project: `backend` (REST API, LLM, tools) + `telegram-bot` (56 команд, streaming, polling) + `cli` (92 slash commands, REPL).
 
 ## Build & Test
 
 ```bash
 cd /opt/dev/java-agent
-./gradlew check                # 5229 tests, 0 failures
+./gradlew check                # 6386 tests, 0 failures
 ./gradlew compileJava          # compile only
 ./gradlew bootJar              # build JAR
 ./gradlew slowTest             # @Tag("slow") integration tests
@@ -52,7 +52,7 @@ java -jar build/libs/java-agent-cli-0.0.1-SNAPSHOT.jar \
 ```
 
 CLI — отдельный Spring Boot модуль, не зависит от backend кода.
-74 slash commands: `/new`, `/status`, `/compress`, `/undo`, `/checkpoint`,
+92 slash commands: `/new`, `/status`, `/compress`, `/undo`, `/checkpoint`,
 `/rollback`, `/memory`, `/skills`, `/help`, `/exit`, `/diff`, `/credits`,
 `/curator`, `/codex_runtime`, etc.
 SSE streaming для real-time token output. JLine autocomplete.
@@ -193,7 +193,7 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 
 ### 5. Testing
 
-- **5229 тестов**, 425 test files, 0 failures.
+- **6386 тестов**, 515 test files, 0 failures.
 - Coverage gate: LINE ≥ 80%.
 - Маппер-тесты: `Mappers.getMapper(X.class)`, edge cases (nulls, enums, empty collections).
 - Service-тесты с `new`: вызывать `init()` после конструирования (для `@PostConstruct`).
@@ -228,11 +228,11 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 - Curator config: `agent.curator.*` in `application.yml` controls the auto-curated kanban board (columns, WIP limits, labels).
 - Memory limits: `agent.memory.char-limit` and `agent.user.char-limit` in `application.yml` cap memory and user input sizes.
 - Profiles: `dev` (Ollama Cloud), `noop` (H2 + mock LLM), `cli` (REPL), `prod` (production).
-- Flyway migrations: `backend/src/main/resources/db/migration/` — 23 migrations (V1–V23).
+- Flyway migrations: `backend/src/main/resources/db/migration/` — 26 migrations (V1–V26).
 
 ### 9. Bot Architecture
 
-- 58 commands, each `@Component` implementing `CommandHandler` interface.
+- 56 commands, each `@Component` implementing `CommandHandler` interface.
 - `CommandRegistry` — maps command names to handlers, resolves 10 aliases.
 - `GoalAutoContinueService` — automatically continues goal-driven agent loops until completion or user interrupt.
 - `BotMessageProcessor` — central message dispatch (18 dependencies, `@PostConstruct` for debouncer wiring).
@@ -246,16 +246,16 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 
 | Metric | Value |
 |--------|-------|
-| Java source files | 468 |
-| Test files | 425 |
-| `@RequiredArgsConstructor` | 159 files |
-| `@Slf4j` | 88 files |
-| `@Data` (JPA) | 16 files |
+| Java source files | 490 |
+| Test files | 515 |
+| `@RequiredArgsConstructor` | 192 files |
+| `@Slf4j` | 165 files |
+| `@Data` (JPA) | 19 files |
 | MapStruct mappers | 5 |
-| Bot commands | 58 (+ 10 aliases) |
-| CLI slash commands | 74 |
-| Backend endpoints | 103 |
-| Flyway migrations | 23 (V1–V23) |
+| Bot commands | 56 (+ 10 aliases) |
+| CLI slash commands | 92 |
+| Backend endpoints | 114 |
+| Flyway migrations | 26 (V1–V26) |
 | Gradle modules | 3 (backend, telegram-bot, cli) |
 
 ## Project Structure
@@ -295,7 +295,7 @@ cli/src/main/java/com/azhukov/agent/cli/
 ├── CliReplRunner.java         # CommandLineRunner entry
 ├── ReplLoop.java              # JLine interactive REPL
 ├── MarkdownRenderer.java      # ANSI color markdown
-├── SlashCommandRegistry.java  # 74 slash commands
+├── SlashCommandRegistry.java  # 92 slash commands
 ├── SlashCompleter.java        # JLine autocomplete
 └── SlashAutoSuggest.java      # Inline suggestions
 ```

@@ -1,23 +1,33 @@
 # Recent Commits and Work-in-Progress — java-agent
 
-> Session: 2026-08-11. Captures the state of the working tree and recent history for context on future sessions.
+> Session: 2026-08-17. Captures the state of the working tree and recent history for context on future sessions.
 
 ---
 
-## Uncommitted Changes (WIP)
+## Current State (as of commit d86c593, 2026-08-17)
 
-### Modified files (not staged)
-- `CheckpointEntity.java` — +3 lines
-- `CheckpointManager.java` — +2 lines
-- `CronJobService.java` — +47 lines
-- `CheckpointJsonSerializationTest.java` — +38 / −2 lines
-- `CronJobServiceTest.java` — +82 lines
+- **209 commits** total, latest: `d86c593` — chore: commit bundled skills
+- **490 Java source files**, **515 test files**, **6386 tests**, 0 failures
+- **26 Flyway migrations** (V1–V26)
+- **36 tools** implemented (browser_*, web_*, terminal, read_file, write_file, patch, search_files, memory, skill_*, todo, cronjob, delegate_task, clarify, vision_analyze, image_generate, text_to_speech, send_message, session_search, process, execute_code, delete_file, mcp_tool)
+- **56 bot commands** (+ 10 aliases) in telegram-bot
+- **92 CLI slash commands** in cli module
+- **114 REST endpoints** in backend
+- **Coverage: 85.3%** (69221/81166 lines)
+- **Hermes parity: 94%** (101/107 features), 6 consciously absent (P3 platform tools)
+- **BUILD SUCCESSFUL**, 0 test failures
 
-### Untracked files
-- `V20__todos_nullable_session_id.sql` — Flyway migration making `session_id` nullable in todos table
-- `FullApiE2ETest.java` — new end-to-end API test class
-
-**Interpretation:** A partial feature is in progress around cron jobs and checkpoints (likely session/cronjob checkpointing), plus a new Flyway migration for nullable `session_id` in todos, and a new E2E test.
+### Key classes added since last update:
+- `SteerBuffer` — mid-turn message injection buffer
+- `CommentaryCallback` — intermediate tool execution messages
+- `MediaDeliveryService` — automatic file delivery (images, video, audio, documents)
+- `BusySessionHandler` — busy-ack + queue/steer/interrupt modes
+- `MidTurnPersistenceService` — persistence of mid-turn state
+- `ImageShrinker` — image compression for vision tools
+- `SkillsSyncService` — skill synchronization between filesystem and DB
+- `FallbackManager` — LLM model fallback chain
+- `ToolCallValidator` — tool call validation and security
+- `SessionLineageService` — session branching/lineage tracking
 
 ---
 
@@ -25,21 +35,21 @@
 
 | Commit | Summary |
 |--------|---------|
-| `cf98472` | fix: UndoRequest.turns changed from int to Integer with effectiveTurns() default |
-| `3e89f3b` | fix: 5 E2E bugs found via real API testing with kimi-k2.6 |
-| `2f22380` | fix: reasoningEffort numeric→string mapping for Ollama Cloud compatibility |
-| `c52c31d` | feat: full compression session rotation |
-| `02a2e53` | test: branch coverage push round 2 — +594 new tests across 20 test files |
-| `cfe1800` | feat: curator forked agent loop with iterative tool-use |
-| `bee3aeb` | fix: MessageEntity content/toolCallArguments/toolCallId use TEXT columnDefinition — fixes H2 VARCHAR(255) overflow on system prompt persistence |
-| `6824d7b` | chore: clean upstream traces from 47 source files — comments and javadoc neutralized |
-| `a9045a0` | test: branch coverage push — +515 new tests across 22 test files |
-| `8a41479` | feat: architecture documentation + Docker prod compose + enhanced E2E smoke |
-| `d6a605b` | feat: large gap fixes from Hermes audit |
-| `b9d757c` | feat: medium gap fixes from Hermes audit |
-| `cc8997e` | feat: 7 quick-win gap fixes from Hermes audit |
-| `c8e7a22` | feat: security hardening, streaming interrupt, checkpoint restore, session search FTS, terminal guardrails, MCP OAuth, delegate task, context compressor, skill security scanner, bot approval store |
-| `cf4275f` | fix: McpServerAutoConfiguration uses @ConditionalOnProperty — bean only created when agent.mcp.server.enabled=true AND transport=sse, prevents null servlet crash |
+| `d86c593` | chore: commit bundled skills (arxiv, plan, simplify-code, systematic-debugging, test-driven-development) |
+| `572be53` | Memory + self-improvement audit: 39 issues found and fixed (5 CRITICAL, 12 HIGH, 13 MEDIUM, 9 LOW) |
+| `e4eceec` | Hermes parity: S1-S5 features + P1/P2 fixes + quality audit (45 issues fixed) |
+| `914bf1a` | Fix iteration budget + context 0% display |
+| `29b96b8` | Fix all 31 remaining audit issues + write tests for each |
+| `8c3e3cf` | Align Telegram output with Hermes: 12 behavior fixes |
+| `3861923` | Match Hermes Telegram output + fix remaining audit bugs |
+| `0bf3f1e` | Fix 6 CRITICAL + 10 HIGH bugs from thorough audit |
+| `35628ac` | Fix text-cannot-be-null + SSE error handling + 34 logging fixes |
+| `abe4735` | Fix health indicators (UP when not configured), SSE LazyInitializationException, CDP URL validation |
+| `827ee98` | Fix slow tests + write 8 new test suites for new components |
+| `5a5f981` | Fix session history: bot now captures and reuses backend session ID |
+| `8d5939a` | Retry hardening: fix 4 HIGH + 6 MEDIUM retry issues |
+| `6847f43` | Fix LLM retry, 409 conflict handling, and disable backend long-polling |
+| `68850c5` | Enterprise hardening: 27 fixes across architecture, security, DB, ops, docs |
 
 ---
 
@@ -49,3 +59,5 @@
 2. **Real LLM E2E testing** (`kimi-k2.6`) is used to find integration bugs that mocks miss.
 3. **H2/PostgreSQL drift** is a recurring source of bugs; TEXT columnDefinitions are required for large fields.
 4. **Configuration safety** uses `@ConditionalOnProperty` with multiple required properties to prevent null-bean crashes.
+5. **Hermes parity audits** drive feature completeness — 94% parity achieved (101/107 features), with 6 P3 platform tools consciously deferred.
+6. **Memory + self-improvement** system actively audits and fixes issues (39 issues in latest pass).

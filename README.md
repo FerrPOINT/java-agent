@@ -245,7 +245,7 @@ docker compose -f docker-compose.local.yml up --build  # local dev, порты 1
 
 ```bash
 cd /opt/dev/java-agent
-./gradlew build -x slowTest   # 6139 тестов, 602 test classes, 0 failures
+./gradlew build -x slowTest   # 6386 tests, 515 test files, 0 failures
 ./gradlew slowTest            # @Tag("slow") integration tests
 ./gradlew jacocoTestReport    # coverage report
 ./gradlew bootJar             # собрать jar

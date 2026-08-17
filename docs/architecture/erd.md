@@ -1,6 +1,6 @@
 # Entity-Relationship Diagram
 
-> Derived from JPA entities (`persistence/entity/`) and Flyway migrations (V1–V23).
+> Derived from JPA entities (`persistence/entity/`) and Flyway migrations (V1–V26).
 > Mermaid ER diagram syntax.
 
 ---
@@ -226,6 +226,9 @@ erDiagram
 | V21 | FK constraints (sessions.parent_session_id, usage_log.session_id) |
 | V22 | Composite indexes (todos, messages, usage_log, memory_pending, skills, cron_jobs, bot_sessions) |
 | V23 | Dead table cleanup (dropped: gateway_routing, context_references, approvals, session_model_usage) |
+| V24 | Memory version (version column on memory table) |
+| V25 | Cron context_from (context_from column on cron_jobs) |
+| V26 | Cron full fields (additional cron job metadata columns) |
 
 ---
 
@@ -248,6 +251,6 @@ erDiagram
 | `CuratorSnapshotEntity` | `curator_snapshots` | V13 |
 | `CompressionLockEntity` | `compression_locks` | V2 |
 
-Total: **14 JPA entities**, **23 Flyway migrations**.
+Total: **14 JPA entities**, **26 Flyway migrations**.
 
 Dropped tables (V23): `gateway_routing`, `context_references`, `approvals`, `session_model_usage`.

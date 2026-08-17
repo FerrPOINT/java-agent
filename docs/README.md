@@ -48,7 +48,8 @@ The `backend/` directory is the actual application. The `docs/` directory is the
 - **Phase 1.5**: real `LangChain4jModelClient`, JPA persistence, tool skeletons, CLI REPL, gateway `/v1/chat/completions`, approvals gate ✅
 - **Phase 2**: browser/vision tools, MCP client, skill/memory tools, delegation ✅
 - **Phase 3**: tests, NoOp profiles, docs, production readiness, CLI hardening ✅
-- **Phase 4 (current)**: Telegram gateway (webhook + long-polling + auth), docs update, E2E hardening
+- **Phase 4**: Telegram gateway (webhook + long-polling + auth), E2E hardening ✅
+- **Phase 5 (current)**: Hermes parity (94%), memory + self-improvement, 36 tools, 26 migrations, 6386 tests, 85.3% coverage
 
 ## 4. Quick Decisions
 

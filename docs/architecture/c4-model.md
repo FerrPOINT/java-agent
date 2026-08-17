@@ -60,7 +60,7 @@ graph TB
     subgraph "Java Agent System"
         BE[Backend<br/>Spring Boot 4.1<br/>REST API + Agent Runtime<br/>Port 8090]
         BOT[Telegram Bot<br/>Spring Boot app<br/>56 commands + streaming<br/>Shared PostgreSQL]
-        CLI[CLI<br/>Spring Boot (non-web)<br/>JLine REPL<br/>74 slash commands]
+        CLI[CLI<br/>Spring Boot (non-web)<br/>JLine REPL<br/>92 slash commands]
     end
 
     PG[(PostgreSQL 16<br/>Shared database)]
@@ -88,9 +88,9 @@ graph TB
 
 | Container | Type | Tech | Description |
 |-----------|------|------|-------------|
-| **Backend** | Spring Boot web app | Java 25, Spring Boot 4.1, LangChain4j 1.18, MCP SDK 2.0 | Core agent runtime: LLM orchestration, tool execution, context management, memory, skills, compression, streaming, 86 REST endpoints |
+| **Backend** | Spring Boot web app | Java 25, Spring Boot 4.1, LangChain4j 1.18, MCP SDK 2.0 | Core agent runtime: LLM orchestration, tool execution, context management, memory, skills, compression, streaming, 114 REST endpoints |
 | **Telegram Bot** | Spring Boot app | Java 25, Spring Boot 4.1, Telegram API | 56 commands, long-polling + webhook, SSE streaming from backend, media handling, session management, shared PostgreSQL |
-| **CLI** | Spring Boot (non-web) | Java 25, Spring Boot 4.1, JLine 3 | Interactive REPL with 74 slash commands, SSE streaming from backend, JLine autocomplete, ANSI markdown rendering |
+| **CLI** | Spring Boot (non-web) | Java 25, Spring Boot 4.1, JLine 3 | Interactive REPL with 92 slash commands, SSE streaming from backend, JLine autocomplete, ANSI markdown rendering |
 
 ---
 
@@ -101,7 +101,7 @@ The backend module broken into its internal component packages.
 ```mermaid
 graph TB
     subgraph "Backend Module"
-        API[api/<br/>Controllers + DTOs<br/>86 REST endpoints]
+        API[api/<br/>Controllers + DTOs<br/>114 REST endpoints]
         SVC[service/<br/>RuntimeService,<br/>StreamingService,<br/>CheckpointManager,<br/>UsageTracker, CronService]
         CORE[core/<br/>AgentRuntime, ToolRegistry,<br/>ContextEngine, Memory,<br/>Skills, State, Budget]
         CLIENT[client/<br/>LangChain4j client,<br/>NoOp client, MCP client]

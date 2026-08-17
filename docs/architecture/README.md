@@ -35,12 +35,12 @@ All diagrams use **Mermaid** syntax (renders inline in GitLab/GitHub).
 
 | Metric | Value |
 |--------|-------|
-| Java source files | 468 |
-| Test files | 425 |
-| REST endpoints | 103 |
-| CLI slash commands | 74 |
-| Bot commands | 58 (+ 10 aliases) |
-| Flyway migrations | 23 (V1–V23) |
+| Java source files | 490 |
+| Test files | 515 |
+| REST endpoints | 114 |
+| CLI slash commands | 92 |
+| Bot commands | 56 (+ 10 aliases) |
+| Flyway migrations | 26 (V1–V26) |
 | Gradle modules | 3 (backend, telegram-bot, cli) |
 | MapStruct mappers | 5 |
 
