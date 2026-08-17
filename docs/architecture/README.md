@@ -35,9 +35,9 @@ All diagrams use **Mermaid** syntax (renders inline in GitLab/GitHub).
 
 | Metric | Value |
 |--------|-------|
-| Java source files | 490 |
+| Java source files | 494 |
 | Test files | 515 |
-| REST endpoints | 114 |
+| REST endpoints | 132 |
 | CLI slash commands | 92 |
 | Bot commands | 56 (+ 10 aliases) |
 | Flyway migrations | 26 (V1–V26) |

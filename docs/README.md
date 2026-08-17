@@ -49,7 +49,8 @@ The `backend/` directory is the actual application. The `docs/` directory is the
 - **Phase 2**: browser/vision tools, MCP client, skill/memory tools, delegation ✅
 - **Phase 3**: tests, NoOp profiles, docs, production readiness, CLI hardening ✅
 - **Phase 4**: Telegram gateway (webhook + long-polling + auth), E2E hardening ✅
-- **Phase 5 (current)**: Hermes parity (94%), memory + self-improvement, 36 tools, 26 migrations, 6386 tests, 85.3% coverage
+- **Phase 5**: Hermes parity (94%), memory + self-improvement, 36 tools, 26 migrations, 6386 tests, 85.3% coverage ✅
+- **Phase 6**: Deep code quality audit — 32 findings (1 CRITICAL, 5 HIGH, 16 MEDIUM, 10 LOW) identified and ALL fixed (commit e7197a1). Browser security (XSS/injection fixes via JSON.stringify), CDP dialog/snapshot fixes, terminal PTY mode + workdir, process notify-on-exit, per-session locks, MCP schema change detection + health monitoring, memory provenance, configurable SOUL.md path, parent-dir context file walk, image placeholder in compression, delegate blocked toolsets + subagent interrupt/pause + per-task timeout. 37 files changed, +722/-175 lines. 6393 tests, 494 source files.
 
 ## 4. Quick Decisions
 

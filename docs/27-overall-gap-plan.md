@@ -13,7 +13,7 @@
 | P0-4 | CLI state → backend chat request | ✅ | ChatRequest расширен, BackendClient передаёт CliState |
 | P1-5 | Reasoning/fast/voice в model client | ✅ | ModelProperties.reasoningEffort/fastMode |
 | P1-9 | Telegram-bot health URL fix | ✅ | HealthController /health → status=UP |
-| verify | Сборка + тесты | ✅ | 6386 тестов, 0 failures |
+| verify | Сборка + тесты | ✅ | 6393 тестов, 0 failures |
 
 ## Hermes Python
 
@@ -86,11 +86,12 @@
 
 | Метрика | Значение |
 |---------|----------|
-| Тестов | 6386 |
+| Тестов | 6393 |
 | Test classes | 515 |
 | Failures | 0 |
 | CLI slash commands | 92 |
 | Telegram bot commands | 56 + 10 aliases |
-| REST controllers | 17 |
+| REST controllers | 18 |
 | Hermes parity components | 107 → 107 ✅ |
 | Quality audit fixes | 45/45 ✅ |
+| Deep code quality audit | 32/32 ✅ (commit e7197a1) |

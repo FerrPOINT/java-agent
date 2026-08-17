@@ -32,7 +32,7 @@ Spring Boot 4.1 + Java 25 + Gradle 9.6.1 (Groovy DSL) + Groovy 5 — Java-аге
 java-agent/
 ├── backend/                    # Backend: REST API, LLM client, tools, persistence
 │   └── src/main/java/com/azhukov/agent/
-│       ├── api/                # REST controllers (17) + DTO + mappers
+│       ├── api/                # REST controllers (18) + DTO + mappers
 │       ├── cli/                # Picocli / JLine REPL
 │       ├── client/             # LLM clients (LangChain4j, NoOp) + MCP client
 │       ├── config/             # AgentProperties, MapStructConfig, beans
@@ -76,7 +76,7 @@ java-agent/
 ### LLM и инструменты
 
 - OpenAI-compatible API (streaming, tool calls, reasoning effort)
-- 36+ встроенных инструментов (file, terminal, web, browser, memory, skills, cron, delegation, TTS, image-gen, и др.)
+- 36+ встроенных инструментов (file, terminal с PTY mode, web, browser, memory, skills, cron, delegation, TTS, image-gen, и др.)
 - MCP client + server (MCP Java SDK 2.0.0)
 - LangChain4j integration с fallback model support
 - Context compression (tool dedup, sanitize, auto-focus, protect)
@@ -245,7 +245,7 @@ docker compose -f docker-compose.local.yml up --build  # local dev, порты 1
 
 ```bash
 cd /opt/dev/java-agent
-./gradlew build -x slowTest   # 6386 tests, 515 test files, 0 failures
+./gradlew build -x slowTest   # 6393 tests, 515 test files, 0 failures
 ./gradlew slowTest            # @Tag("slow") integration tests
 ./gradlew jacocoTestReport    # coverage report
 ./gradlew bootJar             # собрать jar
@@ -290,6 +290,7 @@ cd /opt/dev/java-agent
 - `docs/27-overall-gap-plan.md` — план доработок
 - `docs/28-hermes-parity-audit.md` — parity аудит
 - `docs/29-quality-audit-fixes.md` — quality аудит (45 исправлений)
+- `docs/31-code-quality-audit.md` — deep code quality аудит (32 finding, ALL RESOLVED)
 - `backend/docs/09-builtin-tools.md` — встроенные инструменты
 - `backend/docs/10-production-readiness.md` — production readiness
 - `backend/docs/11-chromium.md` — Chromium auto-install

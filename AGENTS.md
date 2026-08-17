@@ -8,7 +8,7 @@ Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-pr
 
 ```bash
 cd /opt/dev/java-agent
-./gradlew check                # 6386 tests, 0 failures
+./gradlew check                # 6393 tests, 0 failures
 ./gradlew compileJava          # compile only
 ./gradlew bootJar              # build JAR
 ./gradlew slowTest             # @Tag("slow") integration tests
@@ -193,7 +193,7 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 
 ### 5. Testing
 
-- **6386 тестов**, 515 test files, 0 failures.
+- **6393 тестов**, 515 test files, 0 failures.
 - Coverage gate: LINE ≥ 80%.
 - Маппер-тесты: `Mappers.getMapper(X.class)`, edge cases (nulls, enums, empty collections).
 - Service-тесты с `new`: вызывать `init()` после конструирования (для `@PostConstruct`).
@@ -205,6 +205,8 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 
 - Virtual threads для tool execution (`Executors.newVirtualThreadPerTaskExecutor()`).
 - `ConcurrentHashMap` для session-scoped state (interrupts, steer buffers, typing).
+- Per-session `ReentrantLock` в `DefaultAgentRuntime` для concurrent turn protection.
+- `ConcurrentLinkedDeque` для process output buffers (ProcessTool).
 - `ScheduledExecutorService` для background tasks (review, typing, reconnect) — daemon threads.
 - `TransactionTemplate` для programmatic transactions в streaming (не `@Transactional` — self-invocation).
 
@@ -227,6 +229,7 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 - `CreditsDto` — DTO for the `/credits` endpoint, reports token/credit usage per session.
 - Curator config: `agent.curator.*` in `application.yml` controls the auto-curated kanban board (columns, WIP limits, labels).
 - Memory limits: `agent.memory.char-limit` and `agent.user.char-limit` in `application.yml` cap memory and user input sizes.
+- SOUL.md path: `agent.soul-md-path` in `application.yml` — configurable path to the soul/personality file (defaults to `~/.hermes/soul.md`).
 - Profiles: `dev` (Ollama Cloud), `noop` (H2 + mock LLM), `cli` (REPL), `prod` (production).
 - Flyway migrations: `backend/src/main/resources/db/migration/` — 26 migrations (V1–V26).
 
@@ -246,15 +249,15 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 
 | Metric | Value |
 |--------|-------|
-| Java source files | 490 |
+| Java source files | 494 |
 | Test files | 515 |
-| `@RequiredArgsConstructor` | 192 files |
+| `@RequiredArgsConstructor` | 193 files |
 | `@Slf4j` | 165 files |
-| `@Data` (JPA) | 19 files |
+| `@Data` (JPA) | 14 files |
 | MapStruct mappers | 5 |
 | Bot commands | 56 (+ 10 aliases) |
 | CLI slash commands | 92 |
-| Backend endpoints | 114 |
+| Backend endpoints | 132 |
 | Flyway migrations | 26 (V1–V26) |
 | Gradle modules | 3 (backend, telegram-bot, cli) |
 
