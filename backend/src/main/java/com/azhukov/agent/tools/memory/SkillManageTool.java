@@ -48,7 +48,8 @@ public class SkillManageTool implements ToolHandler {
                 }
                 case "update" -> {
                     validateSkillName(args.name());
-                    skillManager.saveSkill(args.name(), args.content(), origin);
+                    // Finding 4.4: Pass absorbed_into to saveSkill in update action
+                    skillManager.saveSkill(args.name(), args.content(), origin, args.absorbed_into());
                     yield ToolResult.ok("Skill " + args.name() + " updated.");
                 }
                 case "delete" -> {
@@ -166,31 +167,22 @@ public class SkillManageTool implements ToolHandler {
         return frontmatter + content;
     }
 
-    static class SkillManageArgs {
+    record SkillManageArgs(
         @ToolParam(description = "Action: create, update, delete, patch, write_file, remove_file", required = true)
-        private String action;
+        String action,
         @ToolParam(description = "Skill name (lowercase, hyphens)", required = true)
-        private String name;
+        String name,
         @ToolParam(description = "Skill markdown content (required for create/update/patch)", required = false)
-        private String content;
+        String content,
         @ToolParam(description = "Text to find and replace (for patch action)", required = false)
-        private String old_text;
+        String old_text,
         @ToolParam(description = "Replacement text (for patch action)", required = false)
-        private String new_text;
+        String new_text,
         @ToolParam(description = "File path under references/, templates/, or scripts/ (for write_file/remove_file/patch with file)", required = false)
-        private String file_path;
+        String file_path,
         @ToolParam(description = "Replace all occurrences (default false = first only) (for patch action)", required = false)
-        private Boolean replace_all;
+        Boolean replace_all,
         @ToolParam(description = "Skill name that absorbs this skill during deletion (for delete action, optional)", required = false)
-        private String absorbed_into;
-
-        public String action() { return action; }
-        public String name() { return name; }
-        public String content() { return content; }
-        public String old_text() { return old_text; }
-        public String new_text() { return new_text; }
-        public String file_path() { return file_path; }
-        public Boolean replace_all() { return replace_all; }
-        public String absorbed_into() { return absorbed_into; }
-    }
+        String absorbed_into
+    ) {}
 }

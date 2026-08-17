@@ -26,7 +26,7 @@ class BrowserServiceMissingEndpointTest {
 
         String result = service.navigate("https://example.com");
 
-        assertThat(result).contains("Navigation error").contains("No targets available");
+        assertThat(result).contains("Navigation error").contains("Cannot reconnect");
     }
 
     static class ThrowingCdpClient extends CdpClient {

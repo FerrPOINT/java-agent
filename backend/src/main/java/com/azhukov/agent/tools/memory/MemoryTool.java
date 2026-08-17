@@ -117,7 +117,8 @@ public class MemoryTool implements ToolHandler {
             return ToolResult.ok("Staged for approval (id: " + id + ")");
         }
         try {
-            memoryProvider.store(session.userId(), target, "auto", args.content());
+            // Finding 4.1: Pass provenance to the provider
+            memoryProvider.store(session.userId(), target, "auto", args.content(), provenance);
         } catch (IllegalStateException ex) {
             // Fix 4: structured error response with usage info (parity with Hermes)
             return buildErrorResponse(session, target, ex.getMessage());
@@ -142,7 +143,8 @@ public class MemoryTool implements ToolHandler {
             );
             return ToolResult.ok("Staged for approval (id: " + id + ")");
         }
-        String error = memoryProvider.replace(session.userId(), target, args.old_text(), args.content());
+        // Finding 4.1: Pass provenance to the provider
+        String error = memoryProvider.replace(session.userId(), target, args.old_text(), args.content(), provenance);
         if (error != null) {
             // Fix 4: structured error response with usage info (parity with Hermes)
             return buildErrorResponse(session, target, error);
@@ -164,7 +166,8 @@ public class MemoryTool implements ToolHandler {
             );
             return ToolResult.ok("Staged for approval (id: " + id + ")");
         }
-        String error = memoryProvider.remove(session.userId(), target, args.old_text());
+        // Finding 4.1: Pass provenance to the provider
+        String error = memoryProvider.remove(session.userId(), target, args.old_text(), provenance);
         if (error != null) {
             // Fix 4: structured error response with usage info (parity with Hermes)
             return buildErrorResponse(session, target, error);

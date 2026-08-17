@@ -14,6 +14,8 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class BrowserService {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     private final CdpClient cdpClient;
     private final Supplier<String> cdpUrlSupplier;
     private final UrlSafety urlSafety;
@@ -36,6 +38,10 @@ public class BrowserService {
     }
 
     public String navigate(String url) {
+        return navigate(url, 30);
+    }
+
+    public String navigate(String url, int waitSeconds) {
         if (!urlSafety.isUrlAllowed(url)) {
             return "URL blocked by safety policy: " + url;
         }
@@ -44,7 +50,7 @@ public class BrowserService {
         } catch (Exception e) {
             return "Navigation error: " + e.getMessage();
         }
-        ObjectNode params = new ObjectMapper().createObjectNode();
+        ObjectNode params = MAPPER.createObjectNode();
         params.put("url", url);
         try {
             JsonNode result = cdpClient.send("Page.navigate", params).get(120, TimeUnit.SECONDS);
@@ -53,22 +59,75 @@ public class BrowserService {
             if (error != null && !error.isNull()) {
                 return "Navigation error: " + error.asText();
             }
-            waitForLoad();
+            waitForLoad(waitSeconds);
             return "Navigated to " + url + " (frameId=" + (frameId != null ? frameId.asText() : "?") + ")";
         } catch (Exception e) {
             return "Navigation error: " + e.getMessage();
         }
     }
 
+    /** Handle a JavaScript dialog (alert/confirm/prompt) via CDP Page.handleJavaScriptDialog */
+    public String handleDialog(boolean accept, String promptText) {
+        try {
+            ensureConnected();
+        } catch (Exception e) {
+            return "Dialog error: " + e.getMessage();
+        }
+        ObjectNode params = MAPPER.createObjectNode();
+        params.put("accept", accept);
+        if (promptText != null && !promptText.isBlank()) {
+            params.put("promptText", promptText);
+        }
+        try {
+            cdpClient.send("Page.handleJavaScriptDialog", params).get(30, TimeUnit.SECONDS);
+            return accept ? "Dialog accepted" : "Dialog dismissed";
+        } catch (Exception e) {
+            return "Dialog error: " + e.getMessage();
+        }
+    }
+
+    /** Get a full accessibility tree snapshot via CDP Accessibility.getFullAXTree */
+    public String accessibilitySnapshot(boolean full) throws Exception {
+        ensureConnected();
+        ObjectNode params = MAPPER.createObjectNode();
+        JsonNode result = cdpClient.send("Accessibility.getFullAXTree", params).get(60, TimeUnit.SECONDS);
+        JsonNode nodes = result.path("nodes");
+        if (nodes.isMissingNode() || !nodes.isArray()) {
+            return "Snapshot failed: no accessibility tree";
+        }
+        StringBuilder sb = new StringBuilder();
+        int maxNodes = full ? 500 : 80;
+        int count = 0;
+        for (JsonNode node : nodes) {
+            if (count >= maxNodes) {
+                sb.append("... (truncated, ").append(nodes.size()).append(" total nodes)\n");
+                break;
+            }
+            String role = node.path("role").path("value").asText("");
+            String name = node.path("name").path("value").asText("");
+            String ignored = node.path("ignored").asBoolean(false) ? " [ignored]" : "";
+            // Only include meaningful nodes in compact mode
+            if (!full && (role.isEmpty() || role.equals("generic") || role.equals("None"))) {
+                continue;
+            }
+            if (!name.isBlank() || !role.isBlank()) {
+                sb.append("[").append(role).append("] ");
+                if (!name.isBlank()) {
+                    sb.append(name);
+                }
+                sb.append(ignored).append("\n");
+                count++;
+            }
+        }
+        return sb.toString();
+    }
+
     public String click(String selector) throws Exception {
         ensureConnected();
-        // Use DOM API (DOM.querySelector + DOM.querySelector nodeId) instead of JS eval
-        // to prevent CSS selector injection through JavaScript evaluation
         JsonNode document = cdpClient.send("DOM.getDocument", null).get(60, TimeUnit.SECONDS);
         int rootNodeId = document.path("root").path("nodeId").asInt();
 
-        ObjectMapper mapper = new ObjectMapper();
-        ObjectNode params = mapper.createObjectNode();
+        ObjectNode params = MAPPER.createObjectNode();
         params.put("nodeId", rootNodeId);
         params.put("selector", selector);
         JsonNode result = cdpClient.send("DOM.querySelector", params).get(60, TimeUnit.SECONDS);
@@ -77,19 +136,14 @@ public class BrowserService {
             return "Element not found: " + selector;
         }
 
-        // Use DOM.performScrollIntoView + DOM.focus + DOM.dispatchKey for click
-        // Or use Runtime.evaluate with a safe, JSON.stringify-quoted selector
-        // The safest approach: use DOM.resolveNode to get a RemoteObjectId, then
-        // use DOM.focus and simulate a click via Input.dispatchMouseEvent
-        // For simplicity and safety, use JSON.stringify to properly escape the selector
-        String safeSelector = mapper.writeValueAsString(selector);
+        String safeSelector = MAPPER.writeValueAsString(selector);
         String expression = "document.querySelector(" + safeSelector + ")?.click()";
         return evaluate(expression);
     }
 
     public String screenshot() throws Exception {
         ensureConnected();
-        ObjectNode params = new ObjectMapper().createObjectNode();
+        ObjectNode params = MAPPER.createObjectNode();
         params.put("format", "png");
         JsonNode result = cdpClient.send("Page.captureScreenshot", params).get(120, TimeUnit.SECONDS);
         JsonNode data = result.get("data");
@@ -101,7 +155,7 @@ public class BrowserService {
 
     public String evaluate(String expression) throws Exception {
         ensureConnected();
-        ObjectNode params = new ObjectMapper().createObjectNode();
+        ObjectNode params = MAPPER.createObjectNode();
         params.put("expression", expression);
         params.put("returnByValue", true);
         JsonNode result = cdpClient.send("Runtime.evaluate", params).get(60, TimeUnit.SECONDS);
@@ -111,11 +165,20 @@ public class BrowserService {
 
     private void ensureConnected() throws Exception {
         if (!cdpClient.isConnected()) {
-            cdpClient.connect(cdpUrl());
+            try {
+                cdpClient.connect(cdpUrl());
+            } catch (Exception e) {
+                // If already had a previous URL, try reconnect before giving up
+                cdpClient.reconnect();
+            }
         }
     }
 
     private void waitForLoad() throws Exception {
-        cdpClient.waitForEvent("Page.loadEventFired", 30).get(30, TimeUnit.SECONDS);
+        waitForLoad(30);
+    }
+
+    private void waitForLoad(int timeoutSeconds) throws Exception {
+        cdpClient.waitForEvent("Page.loadEventFired", timeoutSeconds).get(timeoutSeconds, TimeUnit.SECONDS);
     }
 }

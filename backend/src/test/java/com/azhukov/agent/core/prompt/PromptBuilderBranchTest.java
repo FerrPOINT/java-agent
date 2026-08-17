@@ -9,7 +9,9 @@ import com.azhukov.agent.core.state.DefaultAgentConstants;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -406,9 +408,11 @@ class PromptBuilderBranchTest {
     }
 
     @Test
-    void buildSystemMessage_systemMessageOverrideBlank_notInjected() {
+    void buildSystemMessage_systemMessageOverrideBlank_notInjected(@TempDir Path tempDir) {
         AgentProperties props = new AgentProperties();
         props.setName("Agent");
+        // Use tempDir to avoid picking up AGENTS.md from the project directory
+        props.getCore().setWorkingDirectory(tempDir.toString());
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of());
         when(registry.getDefinitions()).thenReturn(List.of());

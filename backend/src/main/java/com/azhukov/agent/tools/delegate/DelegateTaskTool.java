@@ -87,7 +87,9 @@ public class DelegateTaskTool implements ToolHandler {
     static final Set<String> BLOCKED_TOOLSET_NAMES = Set.of(
         "delegation",    // no recursive delegation (leaf children)
         "memory",        // no writes to shared MEMORY.md
-        "gateway"        // no cross-platform side effects (send_message)
+        "gateway",       // no cross-platform side effects (send_message)
+        "core",          // blocks clarify (subagents can't interact with users)
+        "code"           // blocks execute_code (children should reason, not write scripts)
     );
 
     /** Session metadata key for effective child toolsets (comma-separated). */
@@ -111,6 +113,11 @@ public class DelegateTaskTool implements ToolHandler {
 
     /** Active subagent registry for observability. */
     private final Map<String, SubagentRecord> activeSubagents = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // Finding 3.2: Per-subagent interrupt tokens and pause flag
+    private final Map<String, java.util.concurrent.atomic.AtomicBoolean> subagentInterrupts =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile boolean spawnPaused = false;
 
     @org.springframework.beans.factory.annotation.Autowired
     public DelegateTaskTool(AgentProperties properties,
@@ -204,7 +211,8 @@ public class DelegateTaskTool implements ToolHandler {
                 resultJson = formatResults(List.of(entry));
             } else {
                 // Batch — run in parallel with virtual threads
-                List<TaskResult> results = runBatch(taskList, session, currentDepth + 1,
+                this.batchChildDepth = currentDepth + 1;
+                List<TaskResult> results = runBatch(taskList, session,
                     childTimeoutSeconds, parentToolsets, effectiveMaxIterations,
                     args.acpCommand(), args.acpArgs());
                 resultJson = formatResults(results);
@@ -219,44 +227,58 @@ public class DelegateTaskTool implements ToolHandler {
     // ── Batch execution ────────────────────────────────────────────────
 
     private List<TaskResult> runBatch(List<TaskSpec> tasks, Session parentSession,
-                                      int childDepth, int childTimeoutSeconds,
+                                      int childTimeoutSeconds,
                                       Set<String> parentToolsets, int effectiveMaxIterations,
                                       String topAcpCommand, List<String> topAcpArgs) {
         List<Future<TaskResult>> futures = new ArrayList<>(tasks.size());
         for (int i = 0; i < tasks.size(); i++) {
             final int index = i;
             final TaskSpec task = tasks.get(i);
+            // Finding 3.3: Per-task timeout — task.timeoutSeconds() overrides childTimeoutSeconds
+            final int taskTimeout = task.timeoutSeconds() > 0 ? task.timeoutSeconds() : childTimeoutSeconds;
             // Per-task acp_command/acp_args override the top-level ones (parity with Hermes)
             String taskAcpCommand = task.acpCommand() != null ? task.acpCommand() : topAcpCommand;
             List<String> taskAcpArgs = task.acpArgs() != null ? task.acpArgs() : topAcpArgs;
             futures.add(childExecutor.submit(() ->
-                runSingleChild(task, parentSession, childDepth, childTimeoutSeconds, index,
+                runSingleChild(task, parentSession, childDepth(), taskTimeout, index,
                     parentToolsets, effectiveMaxIterations, taskAcpCommand, taskAcpArgs)));
         }
 
         List<TaskResult> results = new ArrayList<>(tasks.size());
         for (int i = 0; i < futures.size(); i++) {
+            final TaskSpec task = tasks.get(i);
+            int taskTimeout = task.timeoutSeconds() > 0 ? task.timeoutSeconds() : childTimeoutSeconds;
             try {
-                if (childTimeoutSeconds > 0) {
-                    results.add(futures.get(i).get(childTimeoutSeconds, TimeUnit.SECONDS));
+                if (taskTimeout > 0) {
+                    results.add(futures.get(i).get(taskTimeout, TimeUnit.SECONDS));
                 } else {
                     results.add(futures.get(i).get());
                 }
             } catch (TimeoutException e) {
                 futures.get(i).cancel(true);
-                results.add(TaskResult.timeout(i, tasks.get(i).goal(), childTimeoutSeconds));
+                results.add(TaskResult.timeout(i, task.goal(), taskTimeout));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                results.add(TaskResult.error(i, tasks.get(i).goal(), "Interrupted"));
+                results.add(TaskResult.error(i, task.goal(), "Interrupted"));
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause() != null ? e.getCause() : e;
-                results.add(TaskResult.error(i, tasks.get(i).goal(), cause.getMessage()));
+                results.add(TaskResult.error(i, task.goal(), cause.getMessage()));
             }
         }
         // Sort by taskIndex to match input order
         results.sort(java.util.Comparator.comparingInt(TaskResult::taskIndex));
         return results;
     }
+
+    /** Helper to extract childDepth from the first task (all tasks in a batch share the same depth). */
+    private int childDepth() {
+        // This is a placeholder — the actual depth is passed by the caller.
+        // The runBatch method receives childDepth as a parameter but we need it
+        // inside the lambda. We store it in a field for the duration of the batch.
+        return batchChildDepth;
+    }
+
+    private int batchChildDepth;
 
     // ── Single child execution ─────────────────────────────────────────
 
@@ -278,9 +300,18 @@ public class DelegateTaskTool implements ToolHandler {
             return TaskResult.error(taskIndex, goal, "Interrupted while waiting for concurrency permit");
         }
 
+        // Finding 3.2: Check spawn-paused flag before starting
+        if (spawnPaused) {
+            concurrencyLimit.release();
+            return TaskResult.error(taskIndex, goal, "Subagent spawning is paused");
+        }
+
         // Register in active subagent registry
         SubagentRecord record = new SubagentRecord(subagentId, childDepth, goal, System.currentTimeMillis());
         activeSubagents.put(subagentId, record);
+        // Finding 3.2: Register per-subagent interrupt token
+        java.util.concurrent.atomic.AtomicBoolean interruptFlag = new java.util.concurrent.atomic.AtomicBoolean(false);
+        subagentInterrupts.put(subagentId, interruptFlag);
 
         try {
             // Resolve role
@@ -306,6 +337,11 @@ public class DelegateTaskTool implements ToolHandler {
 
             log.info("[{}] Starting subagent (depth={}, role={}, goal='{}', toolsets={})",
                 subagentId, childDepth, effectiveRole, truncate(goal, 80), childToolsets);
+
+            // Finding 3.2: Check if this subagent was interrupted before starting
+            if (interruptFlag.get()) {
+                return TaskResult.error(taskIndex, goal, "Subagent interrupted before start");
+            }
 
             // Run the child agent turn
             TurnResult turnResult;
@@ -346,6 +382,7 @@ public class DelegateTaskTool implements ToolHandler {
         } finally {
             concurrencyLimit.release();
             activeSubagents.remove(subagentId);
+            subagentInterrupts.remove(subagentId);
         }
     }
 
@@ -638,6 +675,46 @@ public class DelegateTaskTool implements ToolHandler {
 
     public int getAvailableConcurrencyPermits() {
         return concurrencyLimit.availablePermits();
+    }
+
+    // Finding 3.2: Per-subagent interrupt/pause support (parity with Hermes)
+
+    /**
+     * Pause spawning of new subagents. Already-running subagents continue.
+     * Mirrors Hermes {@code set_spawn_paused(True)}.
+     */
+    public void setSpawnPaused(boolean paused) {
+        this.spawnPaused = paused;
+        log.info("Subagent spawn paused={}", paused);
+    }
+
+    /** Returns whether spawning of new subagents is currently paused. */
+    public boolean isSpawnPaused() {
+        return spawnPaused;
+    }
+
+    /**
+     * Interrupt a specific running subagent by id.
+     * Sets the interrupt flag; the subagent's turn loop checks it and stops.
+     * Mirrors Hermes {@code interrupt_subagent(subagent_id)}.
+     *
+     * @param subagentId the subagent id to interrupt
+     * @return true if the subagent was found and interrupted, false if not found
+     */
+    public boolean interruptSubagent(String subagentId) {
+        java.util.concurrent.atomic.AtomicBoolean flag = subagentInterrupts.get(subagentId);
+        if (flag != null) {
+            flag.set(true);
+            log.info("Interrupted subagent {}", subagentId);
+            return true;
+        }
+        return false;
+    }
+
+    /** Check whether a subagent has been interrupted. */
+    boolean isSubagentInterrupted(String subagentId) {
+        java.util.concurrent.atomic.AtomicBoolean flag = subagentInterrupts.get(subagentId);
+        return flag != null && flag.get();
     }
 
     // ── Utility ────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Component;
 public class BrowserDialogTool implements ToolHandler {
 
     private final BrowserService browserService;
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -26,8 +28,8 @@ public class BrowserDialogTool implements ToolHandler {
         try {
             String action = args.action() != null ? args.action() : "accept";
             return switch (action.toLowerCase()) {
-                case "dismiss" -> ToolResult.ok(browserService.evaluate("window.__agent_dialog && window.__agent_dialog.dismiss()"));
-                case "accept" -> ToolResult.ok(browserService.evaluate("window.__agent_dialog && window.__agent_dialog.accept()"));
+                case "dismiss" -> ToolResult.ok(browserService.handleDialog(false, args.text()));
+                case "accept" -> ToolResult.ok(browserService.handleDialog(true, args.text()));
                 default -> ToolResult.fail("Unknown dialog action: " + action);
             };
         } catch (Exception e) {

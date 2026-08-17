@@ -104,9 +104,26 @@ public class DatabaseSkillManager implements SkillManager {
  e.setLastActivityAt(Instant.now());
  // S12: Default trust level for agent-created skills
  if (e.getTrustLevel() == null) {
- e.setTrustLevel(TrustLevel.AGENT_CREATED.name());
+     e.setTrustLevel(TrustLevel.AGENT_CREATED.name());
  }
  skillRepository.save(e);
+ }
+
+ /**
+  * Finding 4.4: Save skill with absorbedInto metadata.
+  */
+ @Override
+ public void saveSkill(String name, String content, WriteOrigin origin, String absorbedInto) {
+     // Reuse the existing saveSkill logic by calling the 3-arg version,
+     // then set absorbedInto if provided. We need to find the entity again
+     // since the 3-arg version already saved it.
+     saveSkill(name, content, origin);
+     if (absorbedInto != null && !absorbedInto.isBlank()) {
+         skillRepository.findByName(name).ifPresent(e -> {
+             e.setAbsorbedInto(absorbedInto);
+             skillRepository.save(e);
+         });
+     }
  }
 
  @Override

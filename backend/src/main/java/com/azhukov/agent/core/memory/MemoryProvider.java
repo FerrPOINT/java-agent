@@ -42,17 +42,44 @@ public interface MemoryProvider {
 
  // ── Two-store methods (backward-compatible defaults) ────────────────
 
- default void store(String userId, String target, String category, String fact) {
- store(userId, category, fact);
- }
+    default void store(String userId, String target, String category, String fact) {
+        store(userId, category, fact);
+    }
 
- default String replace(String userId, String target, String oldText, String newText) {
- throw new UnsupportedOperationException("replace not supported");
- }
+    /**
+     * Finding 4.1: Store with provenance metadata.
+     * Default implementation ignores provenance and delegates to the 4-arg store.
+     */
+    default void store(String userId, String target, String category, String fact,
+                       java.util.Map<String, String> provenance) {
+        store(userId, target, category, fact);
+    }
 
- default String remove(String userId, String target, String oldText) {
- throw new UnsupportedOperationException("remove not supported");
- }
+    default String replace(String userId, String target, String oldText, String newText) {
+        throw new UnsupportedOperationException("replace not supported");
+    }
+
+    /**
+     * Finding 4.1: Replace with provenance metadata.
+     * Default implementation ignores provenance and delegates to the 4-arg replace.
+     */
+    default String replace(String userId, String target, String oldText, String newText,
+                           java.util.Map<String, String> provenance) {
+        return replace(userId, target, oldText, newText);
+    }
+
+    default String remove(String userId, String target, String oldText) {
+        throw new UnsupportedOperationException("remove not supported");
+    }
+
+    /**
+     * Finding 4.1: Remove with provenance metadata.
+     * Default implementation ignores provenance and delegates to the 4-arg remove.
+     */
+    default String remove(String userId, String target, String oldText,
+                          java.util.Map<String, String> provenance) {
+        return remove(userId, target, oldText);
+    }
 
  default String read(String userId, String target) {
      List<String> facts = recall(userId, "", 100);

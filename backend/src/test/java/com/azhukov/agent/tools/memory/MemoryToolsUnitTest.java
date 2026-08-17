@@ -26,6 +26,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -68,7 +69,7 @@ class MemoryToolsUnitTest {
 
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("Entry added");
-        verify(memoryProvider).store(USER_ID, "memory", "auto", "User prefers dark mode");
+        verify(memoryProvider).store(eq(USER_ID), eq("memory"), eq("auto"), eq("User prefers dark mode"), anyMap());
     }
 
     @Test
@@ -79,31 +80,31 @@ class MemoryToolsUnitTest {
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        verify(memoryProvider).store(USER_ID, "user", "auto", "Name is Alice");
+        verify(memoryProvider).store(eq(USER_ID), eq("user"), eq("auto"), eq("Name is Alice"), anyMap());
     }
 
     @Test
     void memoryToolReplacesFact() {
         MemoryTool tool = new MemoryTool(memoryProvider);
-        when(memoryProvider.replace(USER_ID, "memory", "dark mode", "User prefers light mode")).thenReturn(null);
+        when(memoryProvider.replace(eq(USER_ID), eq("memory"), eq("dark mode"), eq("User prefers light mode"), anyMap())).thenReturn(null);
         String args = "{\"action\":\"replace\",\"target\":\"memory\",\"old_text\":\"dark mode\",\"content\":\"User prefers light mode\"}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        verify(memoryProvider).replace(USER_ID, "memory", "dark mode", "User prefers light mode");
+        verify(memoryProvider).replace(eq(USER_ID), eq("memory"), eq("dark mode"), eq("User prefers light mode"), anyMap());
     }
 
     @Test
     void memoryToolRemovesFact() {
         MemoryTool tool = new MemoryTool(memoryProvider);
-        when(memoryProvider.remove(USER_ID, "memory", "dark mode")).thenReturn(null);
+        when(memoryProvider.remove(eq(USER_ID), eq("memory"), eq("dark mode"), anyMap())).thenReturn(null);
         String args = "{\"action\":\"remove\",\"target\":\"memory\",\"old_text\":\"dark mode\"}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        verify(memoryProvider).remove(USER_ID, "memory", "dark mode");
+        verify(memoryProvider).remove(eq(USER_ID), eq("memory"), eq("dark mode"), anyMap());
     }
 
     @Test
@@ -131,7 +132,7 @@ class MemoryToolsUnitTest {
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("Staged for approval");
         verify(gate).stageWrite(eq(USER_ID), eq("add"), eq("memory"), eq("test fact"), any(), any(), any());
-        verify(memoryProvider, never()).store(any(), any(), any(), any());
+        verify(memoryProvider, never()).store(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -153,7 +154,7 @@ class MemoryToolsUnitTest {
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        verify(memoryProvider).store(USER_ID, "memory", "auto", "test fact");
+        verify(memoryProvider).store(eq(USER_ID), eq("memory"), eq("auto"), eq("test fact"), anyMap());
     }
 
     // ── Fix 1: Char count uses getCharCount() not read().length() ──
@@ -183,7 +184,7 @@ class MemoryToolsUnitTest {
         when(memoryProvider.getCharCount(USER_ID, "memory")).thenReturn(2000);
         when(memoryProvider.getEntryCount(USER_ID, "memory")).thenReturn(3);
         doThrow(new IllegalStateException("Memory at 2000/2200 chars. Adding this entry (300 chars) would exceed the limit."))
-            .when(memoryProvider).store(USER_ID, "memory", "auto", "x".repeat(300));
+            .when(memoryProvider).store(eq(USER_ID), eq("memory"), eq("auto"), eq("x".repeat(300)), anyMap());
         String args = "{\"action\":\"add\",\"target\":\"memory\",\"content\":\"" + "x".repeat(300) + "\"}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
@@ -203,7 +204,7 @@ class MemoryToolsUnitTest {
         MemoryTool tool = new MemoryTool(memoryProvider);
         when(memoryProvider.getCharCount(USER_ID, "memory")).thenReturn(2000);
         when(memoryProvider.getEntryCount(USER_ID, "memory")).thenReturn(2);
-        when(memoryProvider.replace(USER_ID, "memory", "old", "x".repeat(500)))
+        when(memoryProvider.replace(eq(USER_ID), eq("memory"), eq("old"), eq("x".repeat(500)), anyMap()))
             .thenReturn("Replacement would put memory at 2400/2200 chars. Shorten the new content.");
         String args = "{\"action\":\"replace\",\"target\":\"memory\",\"old_text\":\"old\",\"content\":\"" + "x".repeat(500) + "\"}";
 
@@ -223,7 +224,7 @@ class MemoryToolsUnitTest {
         MemoryTool tool = new MemoryTool(memoryProvider);
         when(memoryProvider.getCharCount(USER_ID, "memory")).thenReturn(50);
         when(memoryProvider.getEntryCount(USER_ID, "memory")).thenReturn(2);
-        when(memoryProvider.replace(USER_ID, "memory", "common", "new"))
+        when(memoryProvider.replace(eq(USER_ID), eq("memory"), eq("common"), eq("new"), anyMap()))
             .thenReturn("Multiple entries match 'common'. Be more specific:\n1. First common entry\n2. Second common entry");
         String args = "{\"action\":\"replace\",\"target\":\"memory\",\"old_text\":\"common\",\"content\":\"new\"}";
 
@@ -535,7 +536,7 @@ class MemoryToolsUnitTest {
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("updated");
         // S3: Update calls 3-arg saveSkill with WriteOrigin.FOREGROUND
-        verify(skillManager).saveSkill(eq("testing"), eq("# Testing Guide\nUse AssertJ."), eq(WriteOrigin.FOREGROUND));
+        verify(skillManager).saveSkill(eq("testing"), eq("# Testing Guide\nUse AssertJ."), eq(WriteOrigin.FOREGROUND), any());
     }
 
     @Test

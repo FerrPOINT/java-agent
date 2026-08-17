@@ -6,6 +6,7 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -19,14 +20,19 @@ import org.springframework.stereotype.Component;
 public class BrowserTypeTool implements ToolHandler {
 
     private final BrowserService browserService;
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         TypeArgs args = ToolHandler.parseJson(arguments, TypeArgs.class);
         try {
             String selector = args.selector() != null ? args.selector() : "document.activeElement";
-            String text = args.text().replace("'", "\\'");
-            String script = "const el = " + selector + "; if (el) { el.value += '" + text + "'; el.dispatchEvent(new Event('input', { bubbles: true })); return 'typed'; } return 'no element';";
+            // Safely escape both selector and text using JSON.stringify to prevent JS injection
+            String safeSelector = MAPPER.writeValueAsString(selector);
+            String safeText = MAPPER.writeValueAsString(args.text());
+            String clearPrefix = args.clear() ? "el.value = ''; " : "";
+            String script = "const el = " + safeSelector + "; if (el) { " + clearPrefix
+                + "el.value += " + safeText + "; el.dispatchEvent(new Event('input', { bubbles: true })); return 'typed'; } return 'no element';";
             return ToolResult.ok(browserService.evaluate(script));
         } catch (Exception e) {
             return ToolResult.fail("Browser type failed: " + e.getMessage());

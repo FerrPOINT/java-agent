@@ -87,6 +87,7 @@ public class CdpClient {
             @Override
             public void onClose(int code, String reason, boolean remote) {
                 CdpClient.this.connected = false;
+                log.info("CDP websocket closed (code={}, reason='{}', remote={})", code, reason, remote);
             }
             @Override
             public void onError(Exception ex) {
@@ -186,5 +187,24 @@ public class CdpClient {
 
     public boolean isConnected() {
         return connected;
+    }
+
+    /**
+     * Force reconnection — disconnect and reconnect with the last known CDP URL.
+     * Called by BrowserService when the WebSocket appears stale.
+     */
+    public synchronized void reconnect() throws Exception {
+        disconnect();
+        if (webSocketUrl != null) {
+            // Reconnect using the existing WebSocket URL
+            connectWebSocket();
+            send("Page.enable", null).get(60, TimeUnit.SECONDS);
+            send("Runtime.enable", null).get(60, TimeUnit.SECONDS);
+            send("DOM.enable", null).get(60, TimeUnit.SECONDS);
+            connected = true;
+            log.info("CDP reconnected successfully");
+        } else {
+            throw new IllegalStateException("Cannot reconnect: no previous CDP URL stored");
+        }
     }
 }

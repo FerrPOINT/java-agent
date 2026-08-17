@@ -1,5 +1,6 @@
 package com.azhukov.agent.tools.memory;
 
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.skill.SkillManager.LinkedFiles;
 import com.azhukov.agent.core.skill.SkillManager.SkillInfo;
@@ -57,9 +58,17 @@ public class SkillViewTool implements ToolHandler {
 
     private final SkillManager skillManager;
     private SkillPreprocessor skillPreprocessor;
+    private final AgentProperties agentProperties;
 
     public SkillViewTool(SkillManager skillManager) {
         this.skillManager = skillManager;
+        this.agentProperties = null;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public SkillViewTool(SkillManager skillManager, AgentProperties agentProperties) {
+        this.skillManager = skillManager;
+        this.agentProperties = agentProperties;
     }
 
     @Autowired(required = false)
@@ -252,11 +261,17 @@ public class SkillViewTool implements ToolHandler {
     /**
      * Resolve the filesystem directory for a skill (for ${HERMES_SKILL_DIR} substitution).
      * Returns null if skills are DB-only with no filesystem representation.
+     * Finding 4.3: Uses the configured working directory instead of hardcoded "skills" path.
      */
     private String resolveSkillDir(String skillName) {
         try {
-            // Attempt to find the skill directory on disk
+            // Finding 4.3: Use the configured working directory from AgentProperties
             String workingDir = System.getProperty("user.dir");
+            if (agentProperties != null && agentProperties.getCore() != null
+                && agentProperties.getCore().getWorkingDirectory() != null
+                && !agentProperties.getCore().getWorkingDirectory().isBlank()) {
+                workingDir = agentProperties.getCore().getWorkingDirectory();
+            }
             java.nio.file.Path candidate = java.nio.file.Path.of(workingDir, "skills", skillName);
             if (java.nio.file.Files.isDirectory(candidate)) {
                 return candidate.toString();

@@ -117,6 +117,9 @@ public class DefaultContextCompressor implements ContextCompressor {
  private final CompressionLockRepository lockRepository;
  private final AgentProperties properties;
  /** SessionRepository for session rotation — non-final to avoid breaking existing constructor signature. */
+ // Finding 5.1: Kept as non-final with setter because adding to the @RequiredArgsConstructor
+ // would break ~49 test call sites that use the 3-arg constructor. The setter is called
+ // by the @Bean factory after construction. This is a known trade-off documented in the audit.
  private SessionRepository sessionRepository;
  private final ConcurrentHashMap<String, Integer> inMemoryLocks = new ConcurrentHashMap<>();
 
@@ -424,6 +427,17 @@ public class DefaultContextCompressor implements ContextCompressor {
                  detail.append("]");
              }
              content = detail.toString();
+         }
+         // Finding 5.3: Replace image content with a placeholder during summarization.
+         // Mirrors Hermes which replaces image parts with a [image: N images] placeholder.
+         int imgCount = m.imageCount() != null ? m.imageCount() : 0;
+         if (imgCount > 0) {
+             String imagePlaceholder = "[image: " + imgCount + " image" + (imgCount > 1 ? "s" : "") + " attached]";
+             if (content == null || content.isBlank()) {
+                 content = imagePlaceholder;
+             } else {
+                 content = content + " " + imagePlaceholder;
+             }
          }
          if (content != null && !content.isBlank()) {
              content = MEDIA_DIRECTIVE_RE.matcher(content).replaceAll("").strip();

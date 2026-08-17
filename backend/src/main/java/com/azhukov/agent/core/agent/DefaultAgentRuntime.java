@@ -115,12 +115,24 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ConcurrentHashMap<UUID, AtomicInteger> turnsSinceMemory = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, AtomicInteger> itersSinceSkill = new ConcurrentHashMap<>();
 
+    // Per-session locks to prevent concurrent turns on the same session (parity with Hermes _session_locks).
+    // Serializes turn execution so that messages, turn state, and DB writes don't interleave.
+    private final ConcurrentHashMap<UUID, java.util.concurrent.locks.ReentrantLock> sessionLocks = new ConcurrentHashMap<>();
+
     @PreDestroy
     void shutdown() {
-        memorySyncExecutor.shutdown();
+        // Finding 6.2: Use shutdownNow() to cancel pending tasks and log uncompleted ones,
+        // preventing silent data loss on JVM shutdown.
+        List<Runnable> pending = memorySyncExecutor.shutdownNow();
+        if (!pending.isEmpty()) {
+            log.warn("Memory sync: {} pending task(s) cancelled on shutdown (data may be lost)", pending.size());
+        }
         try {
             if (!memorySyncExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                memorySyncExecutor.shutdownNow();
+                List<Runnable> stillPending = memorySyncExecutor.shutdownNow();
+                if (!stillPending.isEmpty()) {
+                    log.warn("Memory sync: {} task(s) still running after forced shutdown", stillPending.size());
+                }
             }
         } catch (InterruptedException e) {
             memorySyncExecutor.shutdownNow();
@@ -150,7 +162,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
     public TurnResult runTurn(Session session, String userInput, List<String> references,
                               ModelRequestOptions options) {
         ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
-        return runTurnInternal(session, userInput, references, effectiveOptions);
+        // Acquire per-session lock to prevent concurrent turns on the same session
+        UUID sid = session.id();
+        java.util.concurrent.locks.ReentrantLock lock = sessionLocks.computeIfAbsent(sid, k -> new java.util.concurrent.locks.ReentrantLock());
+        lock.lock();
+        try {
+            return runTurnInternal(session, userInput, references, effectiveOptions);
+        } finally {
+            lock.unlock();
+        }
     }
 
     private TurnResult runTurnInternal(Session session, String userInput, List<String> references,
@@ -205,12 +225,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // M8: Hydrate from history — count prior user turns and initialize
                 // to priorUserTurns % nudgeInterval so the counter reflects the
                 // actual conversation progress.
+                // Finding 5.2: Use countPriorUserMessages instead of the expensive
+                // prepareContext call that triggers full context building and
+                // potentially compression side effects.
                 if (memNudge > 0) {
                     try {
-                        List<Message> history = contextEngine.prepareContext(session, List.of());
-                        long priorUserTurns = history.stream()
-                            .filter(m -> m.role() == Role.USER)
-                            .count();
+                        long priorUserTurns = contextEngine.countPriorUserMessages(sessionIdUuid);
                         int initial = (int) (priorUserTurns % memNudge);
                         log.debug("M8: Hydrated turnsSinceMemory for session {} from history: {} prior user turns, initial={}",
                             sessionIdUuid, priorUserTurns, initial);

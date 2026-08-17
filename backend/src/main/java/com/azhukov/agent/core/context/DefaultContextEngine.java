@@ -246,6 +246,27 @@ public class DefaultContextEngine implements ContextEngine {
  }
 
  /**
+  * Finding 5.2: Count prior user messages directly from the repository
+  * instead of calling prepareContext (which triggers full context building,
+  * history loading, compression checks, etc.).
+  */
+ @Override
+ public long countPriorUserMessages(UUID sessionId) {
+     try {
+         // Query all messages for the session and count user-role ones.
+         // This is much cheaper than prepareContext which loads skills,
+         // checks compression, builds system prompt, etc.
+         List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+         return messages.stream()
+             .filter(m -> "user".equalsIgnoreCase(m.getRole()))
+             .count();
+     } catch (Exception e) {
+         log.debug("Failed to count prior user messages for session {}: {}", sessionId, e.getMessage());
+         return 0;
+     }
+ }
+
+ /**
   * Returns the current context window size in tokens.
   * Used by the proactive compression check in DefaultAgentRuntime.
   */

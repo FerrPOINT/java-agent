@@ -23,6 +23,15 @@ public interface SkillManager {
         saveSkill(name, content);
     }
 
+    /**
+     * Finding 4.4: Save with provenance and optional absorbedInto metadata.
+     * When absorbedInto is non-null and non-blank, it sets the absorbedInto field
+     * on the skill entity (used by the update action).
+     */
+    default void saveSkill(String name, String content, WriteOrigin origin, String absorbedInto) {
+        saveSkill(name, content, origin);
+    }
+
     // S7: Telemetry — increment view count
     default void incrementViewCount(String name) {}
 

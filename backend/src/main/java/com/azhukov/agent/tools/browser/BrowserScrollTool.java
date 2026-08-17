@@ -24,9 +24,9 @@ public class BrowserScrollTool implements ToolHandler {
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         ScrollArgs args = ToolHandler.parseJson(arguments, ScrollArgs.class);
         try {
-            int x = args.x() != null ? args.x() : 0;
-            int y = args.y() != null ? args.y() : 0;
-            String script = "window.scrollBy(" + x + ", " + y + "); return { x: window.scrollX, y: window.scrollY };";
+            int x = args.x() != null ? Math.max(-100000, Math.min(100000, args.x())) : 0;
+            int y = args.y() != null ? Math.max(-100000, Math.min(100000, args.y())) : 0;
+            String script = "window.scrollBy(" + x + ", " + y + "); return JSON.stringify({ x: window.scrollX, y: window.scrollY });";
             return ToolResult.ok(browserService.evaluate(script));
         } catch (Exception e) {
             return ToolResult.fail("Browser scroll failed: " + e.getMessage());

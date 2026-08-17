@@ -520,9 +520,9 @@ class DelegateTaskToolTest {
         Set<String> parent = Set.of("web", "file", "terminal", "coding", "memory", "gateway", "delegation", "core");
         List<String> child = tool.resolveChildToolsets(null, parent, "leaf");
 
-        // Should inherit parent's toolsets minus blocked ones (delegation, memory, gateway)
-        assertThat(child).contains("web", "file", "terminal", "coding", "core");
-        assertThat(child).doesNotContain("delegation", "memory", "gateway");
+        // Should inherit parent's toolsets minus blocked ones (delegation, memory, gateway, core, code)
+        assertThat(child).contains("web", "file", "terminal", "coding");
+        assertThat(child).doesNotContain("delegation", "memory", "gateway", "core", "code");
     }
 
     @Test

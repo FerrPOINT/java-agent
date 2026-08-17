@@ -18,6 +18,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -111,7 +112,7 @@ class MemoryTodoBranchTest {
 
     @Test
     void memoryTool_replaceProviderReturnsError_returnsFail() {
-        when(memoryProvider.replace(USER_ID, "memory", "old", "new")).thenReturn("Item not found");
+        when(memoryProvider.replace(eq(USER_ID), eq("memory"), eq("old"), eq("new"), anyMap())).thenReturn("Item not found");
         MemoryTool tool = new MemoryTool(memoryProvider);
         ToolResult result = tool.execute(
             "{\"action\":\"replace\",\"old_text\":\"old\",\"content\":\"new\"}", LAST_MESSAGE, SESSION);
@@ -139,7 +140,7 @@ class MemoryTodoBranchTest {
 
     @Test
     void memoryTool_removeProviderReturnsError_returnsFail() {
-        when(memoryProvider.remove(USER_ID, "memory", "old")).thenReturn("Not found");
+        when(memoryProvider.remove(eq(USER_ID), eq("memory"), eq("old"), anyMap())).thenReturn("Not found");
         MemoryTool tool = new MemoryTool(memoryProvider);
         ToolResult result = tool.execute(
             "{\"action\":\"remove\",\"old_text\":\"old\"}", LAST_MESSAGE, SESSION);
@@ -178,7 +179,7 @@ class MemoryTodoBranchTest {
             "{\"action\":\"replace\",\"old_text\":\"old\",\"content\":\"new\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("Staged for approval");
-        verify(memoryProvider, never()).replace(any(), any(), any(), any());
+        verify(memoryProvider, never()).replace(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -192,7 +193,7 @@ class MemoryTodoBranchTest {
             "{\"action\":\"remove\",\"old_text\":\"old\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("Staged for approval");
-        verify(memoryProvider, never()).remove(any(), any(), any());
+        verify(memoryProvider, never()).remove(any(), any(), any(), any());
     }
 
     @Test
@@ -203,7 +204,7 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"add\",\"content\":\"test\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
-        verify(memoryProvider).store(USER_ID, "memory", "auto", "test");
+        verify(memoryProvider).store(eq(USER_ID), eq("memory"), eq("auto"), eq("test"), anyMap());
     }
 
     @Test

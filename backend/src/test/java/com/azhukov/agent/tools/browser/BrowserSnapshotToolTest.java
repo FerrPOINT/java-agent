@@ -9,6 +9,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -33,7 +34,7 @@ class BrowserSnapshotToolTest {
             Inputs:
             input#search[name=q] | search text
             """;
-        when(browserService.evaluate(org.mockito.ArgumentMatchers.anyString())).thenReturn(snapshot);
+        when(browserService.accessibilitySnapshot(anyBoolean())).thenReturn(snapshot);
 
         ToolResult result = tool.execute("{}", lastAssistant, session);
 
@@ -43,14 +44,13 @@ class BrowserSnapshotToolTest {
             .contains("Links:")
             .contains("Inputs:")
             .contains("https://example.com/");
-        verify(browserService).evaluate(org.mockito.ArgumentMatchers.contains("document.title"));
-        verify(browserService).evaluate(org.mockito.ArgumentMatchers.contains("document.querySelectorAll('a')"));
+        verify(browserService).accessibilitySnapshot(anyBoolean());
     }
 
     @Test
     void returnsFailureWhenEvaluateThrows() throws Exception {
         BrowserSnapshotTool tool = new BrowserSnapshotTool(browserService);
-        when(browserService.evaluate(org.mockito.ArgumentMatchers.anyString()))
+        when(browserService.accessibilitySnapshot(anyBoolean()))
             .thenThrow(new RuntimeException("CDP socket closed"));
 
         ToolResult result = tool.execute("{}", lastAssistant, session);

@@ -56,4 +56,16 @@ public interface ContextEngine {
     default java.time.Instant getLastCompressionAt(java.util.UUID sessionId) {
         return null;
     }
+
+    /**
+     * Finding 5.2: Count prior user messages for a session directly from the
+     * repository, avoiding the expensive full {@link #prepareContext} call.
+     * Used by the memory nudge counter to hydrate on session restart.
+     *
+     * @param sessionId the session UUID
+     * @return the number of prior user messages, or 0 if unavailable
+     */
+    default long countPriorUserMessages(java.util.UUID sessionId) {
+        return 0;
+    }
 }

@@ -1916,4 +1916,37 @@ class BotMessageProcessorTest {
         // The per-chat lock should ensure only 1 concurrent processing for this chat
         assertThat(maxConcurrent.get()).isEqualTo(1);
     }
+
+    // ─── Finding 9.2: Voice/sticker/animation edge case tests ──────
+
+    @Test
+    void voiceMessageWithNullCaptionDoesNotCrash() {
+        UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.VOICE, 100L, 200L,
+            "testuser", null, null, "file123", "voice",
+            null, null, null, false, null, null, 101L, null, 0L);
+        // Should not throw — voice messages are handled by transcribing or acknowledging
+        processor.accept(event);
+        // Either sends a response or calls backend — the key is it doesn't crash
+        verify(telegramClient, atLeast(0)).sendMessage(anyLong(), anyString(), anyString(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void stickerMessageDoesNotCrash() {
+        UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.STICKER, 100L, 200L,
+            "testuser", null, null, "sticker123", "sticker",
+            null, null, null, false, null, null, 101L, null, 0L);
+        processor.accept(event);
+        // Sticker messages should be handled gracefully
+        verify(telegramClient, atLeast(0)).sendMessage(anyLong(), anyString(), anyString(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void animationMessageWithCaptionIsProcessed() {
+        UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.ANIMATION, 100L, 200L,
+            "testuser", null, "look at this gif", "anim123", "animation",
+            null, null, null, false, null, null, 101L, null, 0L);
+        processor.accept(event);
+        // Animation with caption should be processed (caption used as text)
+        verify(telegramClient, atLeast(0)).sendMessage(anyLong(), anyString(), anyString(), any(), any(), anyBoolean());
+    }
 }

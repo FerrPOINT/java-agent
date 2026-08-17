@@ -2,6 +2,7 @@ package com.azhukov.agent.tools.browser;
 
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
+import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
@@ -21,18 +22,19 @@ public class BrowserSnapshotTool implements ToolHandler {
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
+        SnapshotArgs args = ToolHandler.parseJson(arguments, SnapshotArgs.class);
         try {
-            String script = """
-                const title = document.title;
-                const links = Array.from(document.querySelectorAll('a')).slice(0, 30).map(a => a.href + ' | ' + a.innerText.trim()).join('\\n');
-                const inputs = Array.from(document.querySelectorAll('input, textarea, select, button')).slice(0, 20)
-                  .map(el => (el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (el.name ? '[name=' + el.name + ']' : '') + ' | ' + (el.placeholder || el.value || '')))
-                  .join('\\n');
-                return 'Title: ' + title + '\\n\\nLinks:\\n' + links + '\\n\\nInputs:\\n' + inputs;
-                """;
-            return ToolResult.ok(browserService.evaluate(script));
+            boolean full = args.isFull();
+            String result = browserService.accessibilitySnapshot(full);
+            return ToolResult.ok(result);
         } catch (Exception e) {
             return ToolResult.fail("Browser snapshot failed: " + e.getMessage());
         }
+    }
+
+    public record SnapshotArgs(
+        @ToolParam(description = "if true, return complete page content; if false, compact view", required = false) Boolean full
+    ) {
+        public boolean isFull() { return full != null && full; }
     }
 }

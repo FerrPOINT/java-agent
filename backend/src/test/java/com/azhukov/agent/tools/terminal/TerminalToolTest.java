@@ -12,6 +12,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -73,7 +74,7 @@ class TerminalToolTest {
             }
         };
 
-        when(processTool.spawn(any(), anyInt())).thenReturn(managed);
+        when(processTool.spawn(any(), anyInt(), anyBoolean(), any())).thenReturn(managed);
         lenient().when(properties.getTerminal()).thenReturn(terminal);
         lenient().when(properties.getSecurity()).thenReturn(security);
         lenient().when(properties.getCheckpoints()).thenReturn(checkpoints);

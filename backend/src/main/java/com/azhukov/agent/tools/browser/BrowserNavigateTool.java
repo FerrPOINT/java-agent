@@ -24,7 +24,8 @@ public class BrowserNavigateTool implements ToolHandler {
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         NavigateArgs args = ToolHandler.parseJson(arguments, NavigateArgs.class);
         try {
-            String result = browserService.navigate(args.url());
+            int waitSeconds = args.waitSeconds() > 0 ? args.waitSeconds() : 30;
+            String result = browserService.navigate(args.url(), waitSeconds);
             return ToolResult.ok(result);
         } catch (Exception e) {
             return ToolResult.fail("Browser navigate failed: " + e.getMessage());

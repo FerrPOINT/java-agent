@@ -70,7 +70,7 @@ public class TerminalTool implements ToolHandler {
 
         if (args.background()) {
             try {
-                ProcessTool.ManagedProcess mp = processTool.spawn(command, timeout);
+                ProcessTool.ManagedProcess mp = processTool.spawn(command, timeout, args.pty(), null);
                 return ToolResult.ok(String.format(
                     "Background process started\nsession_id: %s\npid: %s",
                     mp.id, mp.pid
@@ -81,12 +81,17 @@ public class TerminalTool implements ToolHandler {
         }
 
         UUID sessionId = session != null ? session.id() : null;
-        return runCommand(command, timeout, sessionId, args.pty());
+        return runCommand(command, timeout, sessionId, args.pty(), args.workdir(), guard);
     }
 
-    private ToolResult runCommand(String command, int timeoutSeconds, UUID sessionId, boolean usePty) {
+    private ToolResult runCommand(String command, int timeoutSeconds, UUID sessionId, boolean usePty, String workdir,
+                                  CommandGuard guard) {
         Process process = null;
         AtomicBoolean interrupted = new AtomicBoolean(false);
+        // Read output concurrently with waitFor() to avoid losing buffered data
+        // when the PTY closes the stream before all output is flushed (Finding 1.4).
+        StringBuilder outputBuffer = new StringBuilder();
+        Thread outputReader = null;
         try {
             ProcessBuilder pb;
             if (usePty) {
@@ -97,8 +102,36 @@ public class TerminalTool implements ToolHandler {
             } else {
                 pb = new ProcessBuilder("bash", "-c", command);
             }
+            // Set working directory if provided
+            if (workdir != null && !workdir.isBlank()) {
+                java.io.File dir = new java.io.File(workdir);
+                if (!dir.exists()) {
+                    return ToolResult.fail("Working directory does not exist: " + workdir);
+                }
+                if (!dir.isDirectory()) {
+                    return ToolResult.fail("Working directory path is not a directory: " + workdir);
+                }
+                pb.directory(dir);
+            }
             pb.redirectErrorStream(true);
             process = pb.start();
+
+            // Start reading output in a separate thread concurrent with waitFor()
+            // to avoid losing buffered data when the stream closes (Finding 1.4).
+            final Process procForReader = process;
+            outputReader = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(procForReader.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        outputBuffer.append(line).append('\n');
+                    }
+                } catch (java.io.IOException e) {
+                    // Stream closed — expected when process exits
+                }
+            }, "terminal-output-" + process.pid());
+            outputReader.setDaemon(true);
+            outputReader.start();
 
             // Register a cancellation callback so that if the user interrupts
             // during this long-running command, the process is killed immediately.
@@ -131,13 +164,28 @@ public class TerminalTool implements ToolHandler {
                 process.destroyForcibly();
                 return ToolResult.fail("Command timed out after " + timeoutSeconds + " seconds");
             }
-            String output = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))
-                .lines().collect(java.util.stream.Collectors.joining("\n"));
+
+            // Wait for the output reader thread to finish draining the stream
+            if (outputReader != null) {
+                outputReader.join(5000);
+            }
+
+            String output = outputBuffer.toString();
+            // Remove trailing newline added by the reader loop
+            if (output.endsWith("\n")) {
+                output = output.substring(0, output.length() - 1);
+            }
             // PTY output contains \r\n line endings — normalize to \n
             if (usePty) {
                 output = output.replace("\r\n", "\n").replace("\r", "\n");
             }
-            return ToolResult.ok(redact(output));
+            String redactedOutput = redact(output);
+
+            // Finding 1.3: Call notifyPostExecution after process completes
+            int exitCode = process.exitValue();
+            guard.notifyPostExecution(command, exitCode, redactedOutput);
+
+            return ToolResult.ok(redactedOutput);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             if (process != null) {
@@ -160,7 +208,8 @@ public class TerminalTool implements ToolHandler {
         return redactor.redact(output);
     }
 
-    record TerminalArgs(String command, int timeout, boolean background, boolean pty) {
+    record TerminalArgs(String command, int timeout, boolean background, boolean pty,
+                        String workdir) {
         TerminalArgs {
             if (command == null) command = "";
             if (timeout < 0) timeout = 0;

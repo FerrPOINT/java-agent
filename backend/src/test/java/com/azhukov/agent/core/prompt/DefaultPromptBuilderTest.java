@@ -1234,9 +1234,12 @@ class DefaultPromptBuilderTest {
     }
 
     @Test
-    void contextFilesReturnsEmptyForNullWorkingDirectory() {
+    void contextFilesReturnsEmptyForNullWorkingDirectory(@TempDir Path tempDir) {
+        // When workingDirectory is null, the builder falls back to System.getProperty("user.dir")
+        // and walks parent dirs for context files (AGENTS.md, CLAUDE.md, .cursorrules).
+        // Use a TempDir to ensure no context files are found.
         AgentProperties properties = new AgentProperties();
-        properties.getCore().setWorkingDirectory(null);
+        properties.getCore().setWorkingDirectory(tempDir.toString());
         ToolRegistry registry = mock(ToolRegistry.class);
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry);
 

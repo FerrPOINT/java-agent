@@ -22,7 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 @AgentTool(
     name = "process",
@@ -55,16 +57,36 @@ public class ProcessTool implements ToolHandler {
 
     /**
      * Spawn a tracked background process. Called by TerminalTool when background=true.
+     *
+     * @param command       the shell command to run
+     * @param timeoutSeconds the timeout in seconds (informational; enforcement is up to the caller)
+     * @param usePty        when true, allocate a pseudo-terminal via {@code script -qec} (Finding 1.6)
+     * @param notifyOnExit  optional callback fired when the process exits; receives the process id (Finding 1.2)
      */
-    public ManagedProcess spawn(String command, int timeoutSeconds) throws IOException {
+    public ManagedProcess spawn(String command, int timeoutSeconds, boolean usePty,
+                                Consumer<String> notifyOnExit) throws IOException {
         String id = "proc_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-        ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
+        ProcessBuilder pb;
+        if (usePty) {
+            // Finding 1.6: PTY mode for background processes (interactive tools)
+            pb = new ProcessBuilder("script", "-qec", command, "/dev/null");
+        } else {
+            pb = new ProcessBuilder("bash", "-c", command);
+        }
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
-        ManagedProcess managed = new ManagedProcess(id, command, process, timeoutSeconds);
+        ManagedProcess managed = new ManagedProcess(id, command, process, timeoutSeconds, notifyOnExit);
         processes.put(id, managed);
         return managed;
+    }
+
+    /**
+     * Spawn a tracked background process without PTY or notification callback.
+     * Equivalent to {@code spawn(command, timeoutSeconds, false, null)}.
+     */
+    public ManagedProcess spawn(String command, int timeoutSeconds) throws IOException {
+        return spawn(command, timeoutSeconds, false, null);
     }
 
     private ToolResult listProcesses() {
@@ -179,19 +201,55 @@ public class ProcessTool implements ToolHandler {
         final Process process;
         final long pid;
         final Instant startedAt;
-        private final List<String> outputBuffer = new ArrayList<>();
+        // Finding 1.5: ConcurrentLinkedDeque is thread-safe and avoids O(n) remove(0) shifts.
+        private final ConcurrentLinkedDeque<String> outputBuffer = new ConcurrentLinkedDeque<>();
         private final Thread readerThread;
+        private final Thread exitWatcherThread;
         private OutputStreamWriter stdinWriter;
+        // Finding 1.2: optional callback fired when the process exits
+        private final Consumer<String> notifyOnExit;
+        // Rolling buffer limit
+        private static final int MAX_LINES = 2000;
 
         ManagedProcess(String id, String command, Process process, int timeoutSeconds) {
+            this(id, command, process, timeoutSeconds, null);
+        }
+
+        ManagedProcess(String id, String command, Process process, int timeoutSeconds,
+                       Consumer<String> notifyOnExit) {
             this.id = id;
             this.command = command;
             this.process = process;
             this.pid = process.pid();
             this.startedAt = Instant.now();
+            this.notifyOnExit = notifyOnExit;
             this.readerThread = new Thread(this::readOutput, "process-reader-" + id);
             this.readerThread.setDaemon(true);
             this.readerThread.start();
+            // Finding 1.2: watch for process exit and fire the notification callback
+            this.exitWatcherThread = new Thread(() -> {
+                try {
+                    process.waitFor();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                // Wait briefly for the reader thread to drain remaining output
+                try {
+                    readerThread.join(3000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                if (notifyOnExit != null) {
+                    try {
+                        notifyOnExit.accept(id);
+                    } catch (Exception e) {
+                        // Callback failures must not propagate into the watcher thread
+                    }
+                }
+            }, "process-exit-watcher-" + id);
+            this.exitWatcherThread.setDaemon(true);
+            this.exitWatcherThread.start();
         }
 
         private void readOutput() {
@@ -199,12 +257,11 @@ public class ProcessTool implements ToolHandler {
                     new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    synchronized (outputBuffer) {
-                        outputBuffer.add(line);
-                        // rolling buffer: keep last 2000 lines
-                        if (outputBuffer.size() > 2000) {
-                            outputBuffer.remove(0);
-                        }
+                    outputBuffer.addLast(line);
+                    // Rolling buffer: prune oldest entries when exceeding the limit.
+                    // ConcurrentLinkedDeque peek/remove are O(1) — no array shifts.
+                    while (outputBuffer.size() > MAX_LINES) {
+                        outputBuffer.pollFirst();
                     }
                 }
             } catch (IOException ignored) {
@@ -212,22 +269,25 @@ public class ProcessTool implements ToolHandler {
         }
 
         String getOutput() {
-            synchronized (outputBuffer) {
-                return String.join("\n", outputBuffer);
-            }
+            return String.join("\n", outputBuffer);
         }
 
         String getRecentOutput(int maxLines) {
-            synchronized (outputBuffer) {
-                int start = Math.max(0, outputBuffer.size() - maxLines);
-                return String.join("\n", outputBuffer.subList(start, outputBuffer.size()));
+            int size = outputBuffer.size();
+            int start = Math.max(0, size - maxLines);
+            List<String> recent = new ArrayList<>();
+            int i = 0;
+            for (String line : outputBuffer) {
+                if (i >= start) {
+                    recent.add(line);
+                }
+                i++;
             }
+            return String.join("\n", recent);
         }
 
         List<String> getOutputLines() {
-            synchronized (outputBuffer) {
-                return new ArrayList<>(outputBuffer);
-            }
+            return new ArrayList<>(outputBuffer);
         }
 
         void writeStdin(String data) {
@@ -272,6 +332,11 @@ public class ProcessTool implements ToolHandler {
             }
             try {
                 readerThread.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            try {
+                exitWatcherThread.join(1000);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }

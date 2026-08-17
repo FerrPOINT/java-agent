@@ -329,13 +329,20 @@ public class McpLifecycleManager {
         }
         try {
             var freshTools = state.client().listTools().tools();
-            // Detect changes
+            // Finding 8.1: Compare tool inputSchema JSON, not just names.
+            // A schema change (e.g. new required parameter) with the same name
+            // must trigger re-registration to avoid stale schemas being sent to the model.
+            boolean schemasChanged = schemasDiffer(state.tools(), freshTools);
             Set<String> oldNames = state.tools().stream().map(McpSchema.Tool::name).collect(Collectors.toSet());
             Set<String> newNames = freshTools.stream().map(McpSchema.Tool::name).collect(Collectors.toSet());
-            if (oldNames.equals(newNames)) {
+            if (oldNames.equals(newNames) && !schemasChanged) {
                 return; // No changes detected
             }
-            log.info("MCP server {} tool list changed: {} -> {} tools", serverName, oldNames.size(), newNames.size());
+            if (schemasChanged && oldNames.equals(newNames)) {
+                log.info("MCP server {} tool schema changed (names unchanged): {} tools", serverName, newNames.size());
+            } else {
+                log.info("MCP server {} tool list changed: {} -> {} tools", serverName, oldNames.size(), newNames.size());
+            }
             // Deregister stale tools
             for (String oldName : oldNames) {
                 if (!newNames.contains(oldName)) {
@@ -350,8 +357,11 @@ public class McpLifecycleManager {
                 ToolDefinition definition = convertToolDefinition(fullName, tool);
                 toolRegistry().registerDynamic(fullName, definition, new McpToolHandler(serverName, tool.name()));
             }
-            // Update state in-place
-            clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools));
+            // Update state atomically (Finding 8.3: synchronize replacement to prevent
+            // in-flight tool calls from referencing stale tool definitions)
+            synchronized (clients) {
+                clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools));
+            }
             Set<String> added = newNames.stream().filter(n -> !oldNames.contains(n)).collect(Collectors.toSet());
             Set<String> removed = oldNames.stream().filter(n -> !newNames.contains(n)).collect(Collectors.toSet());
             if (!added.isEmpty()) {
@@ -362,6 +372,58 @@ public class McpLifecycleManager {
             }
         } catch (Exception e) {
             log.warn("Failed to refresh tools from MCP server {}: {}", serverName, e.getMessage());
+            // Finding 8.2: A failed tool refresh may indicate the server is unhealthy.
+            // Trigger a reconnect if the error looks like a connection failure.
+            String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+            boolean isConnectionError = msg.contains("connection") || msg.contains("closed")
+                || msg.contains("disconnected") || msg.contains("refused")
+                || msg.contains("reset") || msg.contains("timeout");
+            if (isConnectionError) {
+                log.info("MCP server {} tool refresh failed with connection error, triggering reconnect", serverName);
+                properties.getMcp().getServers().stream()
+                    .filter(s -> s.getName().equals(serverName))
+                    .findFirst()
+                    .ifPresent(server -> {
+                        clients.remove(serverName);
+                        ScheduledFuture<?> oldRefresh = toolRefreshFutures.remove(serverName);
+                        if (oldRefresh != null) {
+                            oldRefresh.cancel(false);
+                        }
+                        scheduleReconnect(server, 0, false);
+                    });
+            }
+        }
+    }
+
+    /**
+     * Finding 8.1: Compare tool inputSchema JSON between old and fresh tool lists.
+     * Returns true if any tool's schema has changed (even if the name is the same).
+     */
+    private boolean schemasDiffer(List<McpSchema.Tool> oldTools, List<McpSchema.Tool> freshTools) {
+        Map<String, String> oldSchemas = new LinkedHashMap<>();
+        for (McpSchema.Tool t : oldTools) {
+            oldSchemas.put(t.name(), schemaToComparableJson(t));
+        }
+        for (McpSchema.Tool t : freshTools) {
+            String oldJson = oldSchemas.get(t.name());
+            if (oldJson == null) continue; // new tool — handled by name diff
+            String freshJson = schemaToComparableJson(t);
+            if (!oldJson.equals(freshJson)) {
+                log.debug("Schema changed for tool {}: old={}, new={}", t.name(), oldJson, freshJson);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Convert a tool's inputSchema to a comparable JSON string. */
+    private String schemaToComparableJson(McpSchema.Tool tool) {
+        try {
+            Map<String, Object> schema = tool.inputSchema() != null ? tool.inputSchema() : Map.of();
+            return objectMapper.writeValueAsString(schema);
+        } catch (Exception e) {
+            // If serialization fails, compare by toString as fallback
+            return String.valueOf(tool.inputSchema());
         }
     }
 

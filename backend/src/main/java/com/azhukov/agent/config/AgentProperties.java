@@ -409,6 +409,8 @@ public class AgentProperties {
         private int maxReferenceFileBytes = 100_000;
         private String workingDirectory = System.getProperty("user.dir");
         private String httpUserAgent = "AzhukovAgent/1.0";
+        /** Finding 10.1: Configurable SOUL.md path (default: ~/.hermes/soul.md). */
+        private String soulMdPath = "";
 
         public int getMaxTotalChars() { return 64000; }
     }

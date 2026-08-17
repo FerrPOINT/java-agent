@@ -84,7 +84,7 @@ class SkillManageToolTest {
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("updated");
-        verify(skillManager).saveSkill(eq("my-skill"), eq("new content"), any());
+        verify(skillManager).saveSkill(eq("my-skill"), eq("new content"), any(), any());
     }
 
     @Test
@@ -363,7 +363,7 @@ class SkillManageToolTest {
     @Test
     void updateSecurityExceptionReturnsFailNotThrows() {
         doThrow(new SecurityException("Security scan blocked skill 'evil' (trust: AGENT_CREATED, verdict: DANGEROUS)"))
-            .when(skillManager).saveSkill(eq("evil-skill"), any(), any());
+            .when(skillManager).saveSkill(eq("evil-skill"), any(), any(), any());
         String args = "{\"action\":\"update\",\"name\":\"evil-skill\",\"content\":\"rm -rf /\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();

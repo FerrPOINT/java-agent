@@ -64,7 +64,7 @@ class BrowserToolsTest {
 
     @Test
     void browserDialogToolAccepts() throws Exception {
-        when(service.evaluate("window.__agent_dialog && window.__agent_dialog.accept()")).thenReturn("ok");
+        when(service.handleDialog(true, null)).thenReturn("ok");
         BrowserDialogTool t = new BrowserDialogTool(service);
         ToolResult r = t.execute("{\"action\":\"accept\"}", null, session);
         assertThat(r.success()).isTrue();
@@ -72,7 +72,7 @@ class BrowserToolsTest {
 
     @Test
     void browserDialogToolDismisses() throws Exception {
-        when(service.evaluate("window.__agent_dialog && window.__agent_dialog.dismiss()")).thenReturn("dismissed");
+        when(service.handleDialog(false, null)).thenReturn("dismissed");
         BrowserDialogTool t = new BrowserDialogTool(service);
         ToolResult r = t.execute("{\"action\":\"dismiss\"}", null, session);
         assertThat(r.success()).isTrue();

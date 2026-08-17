@@ -10,6 +10,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -27,19 +29,19 @@ class BrowserNavigateToolTest {
     @Test
     void delegatesToBrowserService() throws Exception {
         BrowserNavigateTool tool = new BrowserNavigateTool(browserService);
-        when(browserService.navigate(EXAMPLE_URL)).thenReturn("Navigated to https://example.com (frameId=abc123)");
+        when(browserService.navigate(anyString(), anyInt())).thenReturn("Navigated to https://example.com (frameId=abc123)");
 
         ToolResult result = tool.execute("{\"url\":\"" + EXAMPLE_URL + "\"}", lastAssistant, session);
 
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("Navigated to https://example.com").contains("abc123");
-        verify(browserService).navigate(EXAMPLE_URL);
+        verify(browserService).navigate(EXAMPLE_URL, 30);
     }
 
     @Test
     void returnsFailureWhenServiceThrows() throws Exception {
         BrowserNavigateTool tool = new BrowserNavigateTool(browserService);
-        when(browserService.navigate(any())).thenThrow(new RuntimeException("Connection refused"));
+        when(browserService.navigate(anyString(), anyInt())).thenThrow(new RuntimeException("Connection refused"));
 
         ToolResult result = tool.execute("{\"url\":\"https://no-such-host.example\"}", lastAssistant, session);
 

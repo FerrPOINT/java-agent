@@ -370,6 +370,11 @@ public class DefaultPromptBuilder implements PromptBuilder {
      * @return the SOUL.md content, or null if the file doesn't exist or is empty
      */
     String loadSoulMd() {
+        // Finding 10.1: Use configured SOUL.md path if available, otherwise default
+        String configuredPath = properties.getCore().getSoulMdPath();
+        if (configuredPath != null && !configuredPath.isBlank()) {
+            return loadSoulMd(configuredPath);
+        }
         return loadSoulMd(DEFAULT_SOUL_MD_PATH);
     }
 
@@ -592,23 +597,36 @@ public class DefaultPromptBuilder implements PromptBuilder {
             return "";
         }
 
-        // Priority-based: first match wins
-        for (String fileName : CONTEXT_FILE_NAMES) {
-            Path candidate = cwdPath.resolve(fileName);
-            if (Files.isRegularFile(candidate)) {
-                try {
-                    String content = Files.readString(candidate).strip();
-                    if (content.isEmpty()) {
-                        continue;
+        // Finding 10.2: Walk up the directory tree to find context files
+        // (AGENTS.md, CLAUDE.md, .cursorrules), like Hermes does.
+        // First match wins at each level; if not found at the current level,
+        // check the parent directory, up to the filesystem root.
+        Path searchDir = cwdPath;
+        while (searchDir != null) {
+            // Priority-based: first match wins at this level
+            for (String fileName : CONTEXT_FILE_NAMES) {
+                Path candidate = searchDir.resolve(fileName);
+                if (Files.isRegularFile(candidate)) {
+                    try {
+                        String content = Files.readString(candidate).strip();
+                        if (content.isEmpty()) {
+                            continue;
+                        }
+                        content = stripYamlFrontmatter(content);
+                        content = scanContextContent(content, fileName);
+                        content = truncateContent(content, fileName, CONTEXT_FILE_MAX_CHARS);
+                        return "## " + fileName + "\n\n" + content;
+                    } catch (IOException e) {
+                        log.debug("Could not read context file {}: {}", candidate, e.getMessage());
                     }
-                    content = stripYamlFrontmatter(content);
-                    content = scanContextContent(content, fileName);
-                    content = truncateContent(content, fileName, CONTEXT_FILE_MAX_CHARS);
-                    return "## " + fileName + "\n\n" + content;
-                } catch (IOException e) {
-                    log.debug("Could not read context file {}: {}", candidate, e.getMessage());
                 }
             }
+            // Move to parent directory
+            Path parent = searchDir.getParent();
+            if (parent == null || parent.equals(searchDir)) {
+                break; // reached filesystem root
+            }
+            searchDir = parent;
         }
 
         return "";
