@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 @AgentTool(
     name = "terminal",
-    description = "Run a shell command locally and return stdout/stderr. For long-lived processes use background=true to get a session_id, then manage it with the process tool. Dangerous commands (rm -rf /, mkfs, dd, sudo, fork bombs, etc.) are blocked using regex patterns; the blocked list is configurable via agent.security.blocked-commands and agent.terminal.block-sudo.",
+    description = "Run a shell command locally and return stdout/stderr. For long-lived processes use background=true to get a session_id, then manage it with the process tool. Dangerous commands (rm -rf /, mkfs, dd, sudo, fork bombs, etc.) are blocked using regex patterns; the blocked list is configurable via agent.security.blocked-commands and agent.terminal.block-sudo. Set pty=true for interactive CLI tools (Codex, Claude Code, Python REPL) — they hang without a pseudo-terminal. Do NOT use vim/nano/interactive editors without pty=true.",
     toolset = "terminal"
 )
 @Component
@@ -81,14 +81,22 @@ public class TerminalTool implements ToolHandler {
         }
 
         UUID sessionId = session != null ? session.id() : null;
-        return runCommand(command, timeout, sessionId);
+        return runCommand(command, timeout, sessionId, args.pty());
     }
 
-    private ToolResult runCommand(String command, int timeoutSeconds, UUID sessionId) {
+    private ToolResult runCommand(String command, int timeoutSeconds, UUID sessionId, boolean usePty) {
         Process process = null;
         AtomicBoolean interrupted = new AtomicBoolean(false);
         try {
-            ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
+            ProcessBuilder pb;
+            if (usePty) {
+                // PTY mode: use 'script' to allocate a pseudo-terminal.
+                // 'script -qec "command" /dev/null' runs the command in a PTY
+                // silently (quiet, no typescript file to /dev/null).
+                pb = new ProcessBuilder("script", "-qec", command, "/dev/null");
+            } else {
+                pb = new ProcessBuilder("bash", "-c", command);
+            }
             pb.redirectErrorStream(true);
             process = pb.start();
 
@@ -125,6 +133,10 @@ public class TerminalTool implements ToolHandler {
             }
             String output = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))
                 .lines().collect(java.util.stream.Collectors.joining("\n"));
+            // PTY output contains \r\n line endings — normalize to \n
+            if (usePty) {
+                output = output.replace("\r\n", "\n").replace("\r", "\n");
+            }
             return ToolResult.ok(redact(output));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -148,7 +160,7 @@ public class TerminalTool implements ToolHandler {
         return redactor.redact(output);
     }
 
-    record TerminalArgs(String command, int timeout, boolean background) {
+    record TerminalArgs(String command, int timeout, boolean background, boolean pty) {
         TerminalArgs {
             if (command == null) command = "";
             if (timeout < 0) timeout = 0;

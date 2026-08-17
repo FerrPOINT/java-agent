@@ -102,4 +102,38 @@ class TerminalToolExtraTest {
         assertThat(r.success()).isFalse();
         assertThat(r.error()).contains("Interrupted by user");
     }
+
+    @Test
+    void ptyModeRunsCommandInPseudoTerminal() {
+        AgentProperties props = new AgentProperties();
+        Redactor redactor = new DefaultRedactor(props);
+        TerminalTool tool = new TerminalTool(null, props, redactor, mockCheckpointManager(), interruptToken());
+        // 'tty' command in PTY mode should report /dev/pts/N instead of "not a tty"
+        ToolResult r = tool.execute("{\"command\":\"tty\",\"pty\":true}", null, Session.create("u","noop",""));
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("/dev/pts/");
+    }
+
+    @Test
+    void ptyModeNormalizesCarriageReturns() {
+        AgentProperties props = new AgentProperties();
+        Redactor redactor = new DefaultRedactor(props);
+        TerminalTool tool = new TerminalTool(null, props, redactor, mockCheckpointManager(), interruptToken());
+        // PTY output has \r\n — verify it's normalized to \n
+        ToolResult r = tool.execute("{\"command\":\"echo hello\",\"pty\":true}", null, Session.create("u","noop",""));
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("hello");
+        assertThat(r.content()).doesNotContain("\r");
+    }
+
+    @Test
+    void ptyFalseUsesBashDirectly() {
+        AgentProperties props = new AgentProperties();
+        Redactor redactor = new DefaultRedactor(props);
+        TerminalTool tool = new TerminalTool(null, props, redactor, mockCheckpointManager(), interruptToken());
+        // Without pty, 'tty' should report "not a tty"
+        ToolResult r = tool.execute("{\"command\":\"tty\",\"pty\":false}", null, Session.create("u","noop",""));
+        assertThat(r.success()).isFalse();
+        assertThat(r.error()).contains("not a tty");
+    }
 }
