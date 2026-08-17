@@ -262,13 +262,10 @@ public class AgentConfig {
     public BackgroundReviewService backgroundReviewService(ModelClient modelClient,
                                                             MemoryProvider memoryProvider,
                                                             WriteApprovalGate writeApprovalGate,
-                                                            MemoryTool memoryTool,
-                                                            SkillManageTool skillManageTool,
-                                                            SkillsListTool skillsListTool,
-                                                            SkillViewTool skillViewTool,
+                                                            com.azhukov.agent.core.memory.ReviewToolProvider reviewToolProvider,
                                                             AgentProperties properties) {
-        return new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate, memoryTool,
-                                            skillManageTool, skillsListTool, skillViewTool, properties);
+        return new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate,
+                                            reviewToolProvider, properties);
     }
 
     @Bean

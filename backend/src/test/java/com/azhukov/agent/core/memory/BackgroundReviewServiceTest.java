@@ -2,6 +2,7 @@ package com.azhukov.agent.core.memory;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.memory.ReviewToolProvider;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ToolCall;
@@ -39,6 +40,7 @@ class BackgroundReviewServiceTest {
     private SkillManageTool skillManageTool;
     private SkillsListTool skillsListTool;
     private SkillViewTool skillViewTool;
+    private ReviewToolProvider reviewToolProvider;
     private AgentProperties properties;
     private AgentProperties.MemoryProperties memProps;
     private AgentProperties.BackgroundReviewProperties reviewProps;
@@ -52,6 +54,21 @@ class BackgroundReviewServiceTest {
         skillManageTool = mock(SkillManageTool.class);
         skillsListTool = mock(SkillsListTool.class);
         skillViewTool = mock(SkillViewTool.class);
+        reviewToolProvider = mock(ReviewToolProvider.class);
+        // Delegate reviewToolProvider calls to the individual tool mocks
+        when(reviewToolProvider.execute(eq("memory"), any(), any()))
+            .thenAnswer(inv -> memoryTool.execute(inv.getArgument(1), null, inv.getArgument(2)));
+        when(reviewToolProvider.execute(eq("skill_manage"), any(), any()))
+            .thenAnswer(inv -> skillManageTool.execute(inv.getArgument(1), null, inv.getArgument(2)));
+        when(reviewToolProvider.execute(eq("skills_list"), any(), any()))
+            .thenAnswer(inv -> skillsListTool.execute(inv.getArgument(1), null, inv.getArgument(2)));
+        when(reviewToolProvider.execute(eq("skill_view"), any(), any()))
+            .thenAnswer(inv -> skillViewTool.execute(inv.getArgument(1), null, inv.getArgument(2)));
+        when(reviewToolProvider.isReviewTool(any())).thenAnswer(inv -> {
+            String name = inv.getArgument(0);
+            return "memory".equals(name) || "skill_manage".equals(name)
+                || "skills_list".equals(name) || "skill_view".equals(name);
+        });
         properties = mock(AgentProperties.class);
         memProps = mock(AgentProperties.MemoryProperties.class);
         reviewProps = mock(AgentProperties.BackgroundReviewProperties.class);
@@ -71,7 +88,7 @@ class BackgroundReviewServiceTest {
 
     private BackgroundReviewService createService() {
         return new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate,
-            memoryTool, skillManageTool, skillsListTool, skillViewTool, properties);
+            reviewToolProvider, properties);
     }
 
     @Test

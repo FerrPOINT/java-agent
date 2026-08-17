@@ -9,10 +9,7 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.skill.SkillManager;
-import com.azhukov.agent.tools.memory.MemoryTool;
-import com.azhukov.agent.tools.memory.SkillManageTool;
-import com.azhukov.agent.tools.memory.SkillsListTool;
-import com.azhukov.agent.tools.memory.SkillViewTool;
+import com.azhukov.agent.core.memory.ReviewToolProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -65,10 +62,7 @@ public class BackgroundReviewService {
  private final ModelClient modelClient;
  private final MemoryProvider memoryProvider;
  private final WriteApprovalGate writeApprovalGate;
- private final MemoryTool memoryTool;
- private final SkillManageTool skillManageTool;
- private final SkillsListTool skillsListTool;
- private final SkillViewTool skillViewTool;
+ private final ReviewToolProvider reviewToolProvider;
  private final AgentProperties properties;
 
  private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -342,10 +336,10 @@ public class BackgroundReviewService {
  private ToolResult executeWhitelistedTool(ToolCall call, Session session) {
  try {
  return switch (call.name()) {
- case "memory" -> memoryTool.execute(call.arguments(), null, session);
- case "skill_manage" -> skillManageTool.execute(call.arguments(), null, session);
- case "skills_list" -> skillsListTool.execute(call.arguments(), null, session);
- case "skill_view" -> skillViewTool.execute(call.arguments(), null, session);
+ case "memory" -> reviewToolProvider.execute("memory", call.arguments(), session);
+ case "skill_manage" -> reviewToolProvider.execute("skill_manage", call.arguments(), session);
+ case "skills_list" -> reviewToolProvider.execute("skills_list", call.arguments(), session);
+ case "skill_view" -> reviewToolProvider.execute("skill_view", call.arguments(), session);
  default -> ToolResult.fail("Tool not in whitelist: " + call.name());
  };
  } catch (Exception e) {
