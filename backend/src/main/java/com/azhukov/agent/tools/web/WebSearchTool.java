@@ -43,12 +43,16 @@ public class WebSearchTool implements ToolHandler {
     private final ObjectMapper objectMapper;
     private final UrlSafety urlSafety;
     private final Redactor redactor;
-
-
+    private SearXngSearchProvider searXngProvider;
 
     @PostConstruct
     void init() {
         configuredLimit = agentProperties.getWeb().getSearchResults();
+        // Feature 1: SearXNG provider — if searxng-url is set, use it; fall back to DuckDuckGo
+        String searxngUrl = agentProperties.getWeb().getSearxngUrl();
+        if (searxngUrl != null && !searxngUrl.isBlank()) {
+            searXngProvider = new SearXngSearchProvider(searxngUrl, urlSafety);
+        }
     }
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -64,7 +68,13 @@ public class WebSearchTool implements ToolHandler {
         );
 
         try {
-            List<Map<String, String>> results = search(query, limit);
+            List<Map<String, String>> results;
+            // Feature 1: Use SearXNG if configured, otherwise fall back to DuckDuckGo
+            if (searXngProvider != null && searXngProvider.isAvailable()) {
+                results = searXngProvider.search(query, limit);
+            } else {
+                results = searchDuckDuckGo(query, limit);
+            }
             if (results.isEmpty()) {
                 return ToolResult.ok("No results found.");
             }
@@ -74,7 +84,7 @@ public class WebSearchTool implements ToolHandler {
         }
     }
 
-    private List<Map<String, String>> search(String query, int limit) throws IOException {
+    private List<Map<String, String>> searchDuckDuckGo(String query, int limit) throws IOException {
         String url = DUCKDUCKGO_HTML + "?q=" + URLEncoder.encode(query, StandardCharsets.UTF_8);
         if (!urlSafety.isUrlAllowed(url)) {
             throw new IOException("URL is not allowed by safety policy: " + url);

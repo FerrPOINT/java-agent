@@ -121,6 +121,8 @@ agent:
     extract-timeout-seconds: ${AGENT_WEB_EXTRACT_TIMEOUT_SECONDS:120}
     extract-max-chars: ${AGENT_WEB_EXTRACT_MAX_CHARS:100000}
     search-provider: ${AGENT_WEB_SEARCH_PROVIDER:ddg}
+    # Feature 1: SearXNG instance URL — if set, web_search uses SearXNG instead of DuckDuckGo
+    searxng-url: ${AGENT_WEB_SEARXNG_URL:}
   
   # ─── Terminal ───
   terminal:
@@ -181,6 +183,14 @@ agent:
     truncate-warning-chars: ${AGENT_TOOL_OUTPUT_TRUNCATE_WARNING_CHARS:12000}
     timeout-seconds: ${AGENT_TOOL_OUTPUT_TIMEOUT_SECONDS:300}
     include-timestamps: ${AGENT_TOOL_OUTPUT_INCLUDE_TIMESTAMPS:true}
+    # Feature 7: Configurable tool-output limits
+    terminal-max-chars: ${AGENT_TOOL_OUTPUT_TERMINAL_MAX_CHARS:50000}
+    read-file-max-lines: ${AGENT_TOOL_OUTPUT_READ_FILE_MAX_LINES:2000}
+    per-line-max-chars: ${AGENT_TOOL_OUTPUT_PER_LINE_MAX_CHARS:2000}
+    web-extract-max-chars: ${AGENT_TOOL_OUTPUT_WEB_EXTRACT_MAX_CHARS:5000}
+    # Feature 8: Tool result persistence
+    persist-threshold-bytes: ${AGENT_TOOL_OUTPUT_PERSIST_THRESHOLD_BYTES:51200}
+    turn-budget-bytes: ${AGENT_TOOL_OUTPUT_TURN_BUDGET_BYTES:204800}
   
   # ─── Context ───
   context:
@@ -211,6 +221,8 @@ agent:
   # ─── MCP ───
   mcp:
     enabled: ${AGENT_MCP_ENABLED:false}
+    # Feature 4: OSV malware check before launching MCP servers (default true)
+    osv-check-enabled: ${AGENT_MCP_OSV_CHECK_ENABLED:true}
     servers: []
     # MCP server mode: expose agent tools to external MCP clients
     server:
@@ -347,6 +359,11 @@ agent:
     dry-run: ${AGENT_CURATOR_DRY_RUN:false}
     backup-keep: ${AGENT_CURATOR_BACKUP_KEEP:5}
     prune-builtins: ${AGENT_CURATOR_PRUNE_BUILTINS:true}
+  
+  # ─── Profile (Feature 10) ───
+  profile:
+    name: ${AGENT_PROFILE_NAME:default}
+    base-dir: ${AGENT_PROFILE_BASE_DIR:}
 
 management:
   endpoints:

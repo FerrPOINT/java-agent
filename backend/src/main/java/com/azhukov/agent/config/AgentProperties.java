@@ -44,6 +44,7 @@ public class AgentProperties {
     private final TranscriptionProperties transcription = new TranscriptionProperties();
     private final CronProperties cron = new CronProperties();
     private final ErrorProperties error = new ErrorProperties();
+    private final ProfileProperties profile = new ProfileProperties();
 
     // ── Commentary (interim assistant messages) ──
     // Mirrors Hermes interim_assistant_messages config (default true).
@@ -140,6 +141,8 @@ public class AgentProperties {
         private int extractTimeoutSeconds = 120;
         private int extractMaxChars = 100000;
         private String searchProvider = "ddg";
+        /** Feature 1: SearXNG instance URL. If set, web_search uses SearXNG instead of DuckDuckGo. */
+        private String searxngUrl = "";
         private final List<String> allowedDomains = new ArrayList<>();
         private final List<String> blockedDomains = new ArrayList<>();
     }
@@ -236,6 +239,18 @@ public class AgentProperties {
         private int truncateWarningChars = 12000;
         private int timeoutSeconds = 300;
         private boolean includeTimestamps = true;
+        /** Feature 7: Terminal output max chars (default 50000). */
+        private int terminalMaxChars = 50000;
+        /** Feature 7: Read file max lines (default 2000). */
+        private int readFileMaxLines = 2000;
+        /** Feature 7: Per-line max chars (default 2000). */
+        private int perLineMaxChars = 2000;
+        /** Feature 7: Web extract max chars (default 5000). */
+        private int webExtractMaxChars = 5000;
+        /** Feature 8: Tool result persistence threshold in bytes (default 51200 = 50KB). */
+        private int persistThresholdBytes = 51200;
+        /** Feature 8: Per-turn aggregate budget in bytes (default 204800 = 200KB). */
+        private int turnBudgetBytes = 204800;
 
         public int getTimeoutSecondsOrDefault(int fallback) { return timeoutSeconds > 0 ? timeoutSeconds : fallback; }
     }
@@ -313,6 +328,8 @@ public class AgentProperties {
     @Getter @Setter
     public static class McpProperties {
         private boolean enabled = false;
+        /** Feature 4: OSV malware check before launching MCP servers (default true). */
+        private boolean osvCheckEnabled = true;
         private final List<ServerProperties> servers = new ArrayList<>();
         private final Server server = new Server();
 
@@ -531,5 +548,13 @@ public class AgentProperties {
         private int backupKeep = 5;
         /** Maximum iterations for the curator agent loop (default 10). */
         private int maxCuratorIterations = 10;
+    }
+
+    @Getter @Setter
+    public static class ProfileProperties {
+        /** Feature 10: Active profile name (default "default"). */
+        private String name = "default";
+        /** Feature 10: Base directory for profiles (default ~/.java-agent/profiles/). */
+        private String baseDir = "";
     }
 }

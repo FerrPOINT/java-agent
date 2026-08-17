@@ -10,6 +10,8 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.Redactor;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -71,11 +73,29 @@ public class TerminalTool implements ToolHandler {
         if (args.background()) {
             try {
                 // BUG 4: Pass workdir to spawn() — was previously ignored for background processes
-                ProcessTool.ManagedProcess mp = processTool.spawn(command, timeout, args.pty(), null, args.workdir());
-                return ToolResult.ok(String.format(
+                // Feature 3: Pass notifyOnComplete callback when notify_on_complete=true
+                java.util.function.Consumer<String> notifyCallback = null;
+                if (args.notifyOnComplete()) {
+                    notifyCallback = processId -> {
+                        log.info("Background process {} completed (notify_on_complete)", processId);
+                        // The actual notification delivery is handled by ProcessTool's exit watcher;
+                        // this callback ensures the process is tracked for completion notifications.
+                    };
+                }
+                ProcessTool.ManagedProcess mp = processTool.spawn(command, timeout, args.pty(), notifyCallback, args.workdir());
+                String result = String.format(
                     "Background process started\nsession_id: %s\npid: %s",
                     mp.id, mp.pid
-                ));
+                );
+                // Feature 3: If watch_patterns are specified, start a pattern monitor
+                if (args.watchPatterns() != null && !args.watchPatterns().isEmpty()) {
+                    result += "\nwatch_patterns: " + String.join(", ", args.watchPatterns());
+                    startWatchPatternMonitor(mp, args.watchPatterns());
+                }
+                if (args.notifyOnComplete()) {
+                    result += "\nnotify_on_complete: enabled";
+                }
+                return ToolResult.ok(result);
             } catch (Exception e) {
                 return ToolResult.fail("Failed to start background process: " + e.getMessage());
             }
@@ -209,11 +229,48 @@ public class TerminalTool implements ToolHandler {
         return redactor.redact(output);
     }
 
+    /**
+     * Feature 3: Monitor a background process output for watch patterns.
+     * When any pattern is found in the output, logs a notification.
+     * Rate-limited to 1 notification per 15 seconds per process.
+     */
+    private void startWatchPatternMonitor(ProcessTool.ManagedProcess mp, List<String> patterns) {
+        Thread monitor = new Thread(() -> {
+            long lastNotifyTime = 0;
+            long startTime = System.currentTimeMillis();
+            long maxDuration = 30 * 60 * 1000L; // 30 minutes max monitoring
+            while (mp.process.isAlive() && (System.currentTimeMillis() - startTime) < maxDuration) {
+                try {
+                    Thread.sleep(500); // Poll every 500ms
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                String recentOutput = mp.getRecentOutput(500);
+                for (String pattern : patterns) {
+                    if (recentOutput.contains(pattern)) {
+                        long now = System.currentTimeMillis();
+                        if (now - lastNotifyTime > 15_000) { // 15s rate limit
+                            log.info("Watch pattern '{}' matched in process {} output", pattern, mp.id);
+                            lastNotifyTime = now;
+                        }
+                        break; // One pattern match per poll cycle
+                    }
+                }
+            }
+        }, "watch-pattern-" + mp.id);
+        monitor.setDaemon(true);
+        monitor.start();
+    }
+
     record TerminalArgs(String command, int timeout, boolean background, boolean pty,
-                        String workdir) {
+                        String workdir,
+                        @JsonProperty("notify_on_complete") @JsonAlias("notify-on-complete") boolean notifyOnComplete,
+                        @JsonProperty("watch_patterns") @JsonAlias("watch-patterns") List<String> watchPatterns) {
         TerminalArgs {
             if (command == null) command = "";
             if (timeout < 0) timeout = 0;
+            if (watchPatterns == null) watchPatterns = List.of();
         }
     }
 }
