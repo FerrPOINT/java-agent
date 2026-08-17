@@ -166,10 +166,18 @@ public class BrowserService {
     private void ensureConnected() throws Exception {
         if (!cdpClient.isConnected()) {
             try {
+                // Always re-discover the WebSocket URL from the HTTP endpoint — the browser
+                // may have been restarted, making the old webSocketUrl stale (BUG 2).
                 cdpClient.connect(cdpUrl());
             } catch (Exception e) {
-                // If already had a previous URL, try reconnect before giving up
-                cdpClient.reconnect();
+                // If connect fails and we had a previous connection, try reconnect as a fallback.
+                // reconnect() reuses the last known WebSocket URL, which may still be valid
+                // if only the HTTP endpoint was temporarily unavailable.
+                if (cdpClient.isConnected()) {
+                    cdpClient.reconnect();
+                } else {
+                    throw e;
+                }
             }
         }
     }

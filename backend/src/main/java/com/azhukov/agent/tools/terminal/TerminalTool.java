@@ -70,7 +70,8 @@ public class TerminalTool implements ToolHandler {
 
         if (args.background()) {
             try {
-                ProcessTool.ManagedProcess mp = processTool.spawn(command, timeout, args.pty(), null);
+                // BUG 4: Pass workdir to spawn() — was previously ignored for background processes
+                ProcessTool.ManagedProcess mp = processTool.spawn(command, timeout, args.pty(), null, args.workdir());
                 return ToolResult.ok(String.format(
                     "Background process started\nsession_id: %s\npid: %s",
                     mp.id, mp.pid

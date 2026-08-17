@@ -288,8 +288,14 @@ public class DatabaseSkillManager implements SkillManager {
          List<String> tags = extractTags(fm);
          List<String> relatedSkills = extractRelatedSkills(fm);
 
-         // Check disabled
-         boolean disabled = isSkillDisabled(skillName);
+         // BUG 6: Check frontmatter disabled: true for filesystem skills.
+         // Previously isSkillDisabled() always returned false, ignoring the frontmatter field.
+         // Now we parse the frontmatter directly, same as toSkillInfo() does for DB skills.
+         boolean disabled = false;
+         Object disabledObj = fm.get("disabled");
+         if (disabledObj != null) {
+             disabled = Boolean.TRUE.equals(disabledObj) || "true".equals(String.valueOf(disabledObj));
+         }
 
          // List linked files from filesystem
          LinkedFiles linkedFiles = listLinkedFilesFromFilesystem(skillFile.getParent());

@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -204,17 +205,39 @@ public class DelegateTaskTool implements ToolHandler {
         try {
             String resultJson;
             if (taskList.size() == 1) {
-                // Single task — run directly (no thread pool overhead)
-                TaskResult entry = runSingleChild(taskList.get(0), session, currentDepth + 1,
-                    childTimeoutSeconds, 0, parentToolsets, effectiveMaxIterations,
-                    args.acpCommand(), args.acpArgs());
+                // Single task — run directly (no thread pool overhead) but with a timeout
+                // to prevent blocking forever if the model hangs (BUG 3b).
+                final int childDepth = currentDepth + 1;
+                TaskResult entry;
+                if (childTimeoutSeconds > 0) {
+                    try {
+                        entry = CompletableFuture.supplyAsync(
+                            () -> runSingleChild(taskList.get(0), session, childDepth,
+                                childTimeoutSeconds, 0, parentToolsets, effectiveMaxIterations,
+                                args.acpCommand(), args.acpArgs()),
+                            childExecutor
+                        ).get(childTimeoutSeconds, TimeUnit.SECONDS);
+                    } catch (TimeoutException e) {
+                        entry = TaskResult.timeout(0, taskList.get(0).goal(), childTimeoutSeconds);
+                    } catch (ExecutionException e) {
+                        Throwable cause = e.getCause() != null ? e.getCause() : e;
+                        entry = TaskResult.error(0, taskList.get(0).goal(), cause.getMessage());
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        entry = TaskResult.error(0, taskList.get(0).goal(), "Interrupted");
+                    }
+                } else {
+                    entry = runSingleChild(taskList.get(0), session, childDepth,
+                        childTimeoutSeconds, 0, parentToolsets, effectiveMaxIterations,
+                        args.acpCommand(), args.acpArgs());
+                }
                 resultJson = formatResults(List.of(entry));
             } else {
                 // Batch — run in parallel with virtual threads
-                this.batchChildDepth = currentDepth + 1;
+                final int childDepth = currentDepth + 1;
                 List<TaskResult> results = runBatch(taskList, session,
                     childTimeoutSeconds, parentToolsets, effectiveMaxIterations,
-                    args.acpCommand(), args.acpArgs());
+                    args.acpCommand(), args.acpArgs(), childDepth);
                 resultJson = formatResults(results);
             }
             return ToolResult.ok(resultJson);
@@ -229,7 +252,8 @@ public class DelegateTaskTool implements ToolHandler {
     private List<TaskResult> runBatch(List<TaskSpec> tasks, Session parentSession,
                                       int childTimeoutSeconds,
                                       Set<String> parentToolsets, int effectiveMaxIterations,
-                                      String topAcpCommand, List<String> topAcpArgs) {
+                                      String topAcpCommand, List<String> topAcpArgs,
+                                      int childDepth) {
         List<Future<TaskResult>> futures = new ArrayList<>(tasks.size());
         for (int i = 0; i < tasks.size(); i++) {
             final int index = i;
@@ -240,7 +264,7 @@ public class DelegateTaskTool implements ToolHandler {
             String taskAcpCommand = task.acpCommand() != null ? task.acpCommand() : topAcpCommand;
             List<String> taskAcpArgs = task.acpArgs() != null ? task.acpArgs() : topAcpArgs;
             futures.add(childExecutor.submit(() ->
-                runSingleChild(task, parentSession, childDepth(), taskTimeout, index,
+                runSingleChild(task, parentSession, childDepth, taskTimeout, index,
                     parentToolsets, effectiveMaxIterations, taskAcpCommand, taskAcpArgs)));
         }
 
@@ -269,16 +293,6 @@ public class DelegateTaskTool implements ToolHandler {
         results.sort(java.util.Comparator.comparingInt(TaskResult::taskIndex));
         return results;
     }
-
-    /** Helper to extract childDepth from the first task (all tasks in a batch share the same depth). */
-    private int childDepth() {
-        // This is a placeholder — the actual depth is passed by the caller.
-        // The runBatch method receives childDepth as a parameter but we need it
-        // inside the lambda. We store it in a field for the duration of the batch.
-        return batchChildDepth;
-    }
-
-    private int batchChildDepth;
 
     // ── Single child execution ─────────────────────────────────────────
 
@@ -339,6 +353,11 @@ public class DelegateTaskTool implements ToolHandler {
                 subagentId, childDepth, effectiveRole, truncate(goal, 80), childToolsets);
 
             // Finding 3.2: Check if this subagent was interrupted before starting
+            // WARNING 5: Interrupt is only checked before the turn starts. If the subagent
+            // is already inside runTurn(), the interrupt flag is not checked until the next
+            // turn iteration. A full fix would register the subagent's interrupt flag with
+            // the InterruptToken mechanism so DefaultAgentRuntime checks it during the turn
+            // loop. For now, this is a known limitation documented here.
             if (interruptFlag.get()) {
                 return TaskResult.error(taskIndex, goal, "Subagent interrupted before start");
             }

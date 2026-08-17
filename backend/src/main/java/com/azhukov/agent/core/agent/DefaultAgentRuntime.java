@@ -1825,4 +1825,24 @@ public class DefaultAgentRuntime implements AgentRuntime {
         }
         return chars / 4 + 1;
     }
+
+    /**
+     * WARNING 1: Clean up per-session state maps to prevent memory leaks.
+     * <p>
+     * Removes entries from {@code sessionLocks}, {@code turnsSinceMemory}, and
+     * {@code itersSinceSkill} for the given session. This should be called when a
+     * session is deleted, rotated, or otherwise no longer needs runtime tracking.
+     * <p>
+     * If no session-deletion/rotation hook exists yet, callers should wire this into
+     * their session lifecycle management (e.g. TurnFinalizer or session deletion endpoints).
+     *
+     * @param sessionId the UUID of the session to clean up
+     */
+    public void cleanupSession(UUID sessionId) {
+        if (sessionId == null) return;
+        sessionLocks.remove(sessionId);
+        turnsSinceMemory.remove(sessionId);
+        itersSinceSkill.remove(sessionId);
+        log.debug("Cleaned up runtime state maps for session {}", sessionId);
+    }
 }

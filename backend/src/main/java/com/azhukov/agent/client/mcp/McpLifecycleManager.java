@@ -108,20 +108,25 @@ public class McpLifecycleManager {
     }
 
     public void connect(AgentProperties.McpProperties.ServerProperties server) {
-        if (clients.containsKey(server.getName())) {
-            return;
-        }
-        try {
-            McpSyncClient client = createClient(server);
-            client.initialize();
-            var tools = client.listTools().tools();
-            clients.put(server.getName(), new McpServerState(server, client, tools));
-            registerTools(server.getName(), tools);
-            scheduleToolRefresh(server.getName());
-            log.info("Connected to MCP server {} ({}) with {} tools", server.getName(), server.getTransport(), tools.size());
-        } catch (Exception e) {
-            log.warn("Failed to connect to MCP server {}: {}", server.getName(), e.getMessage());
-            scheduleReconnect(server, 0, true);
+        // WARNING 4: Wrap the entire read-compare-register-write in synchronized block
+        // to make the check-then-act atomic. Previously only the put was thread-safe,
+        // but the containsKey + put sequence could race, allowing duplicate connections.
+        synchronized (clients) {
+            if (clients.containsKey(server.getName())) {
+                return;
+            }
+            try {
+                McpSyncClient client = createClient(server);
+                client.initialize();
+                var tools = client.listTools().tools();
+                clients.put(server.getName(), new McpServerState(server, client, tools));
+                registerTools(server.getName(), tools);
+                scheduleToolRefresh(server.getName());
+                log.info("Connected to MCP server {} ({}) with {} tools", server.getName(), server.getTransport(), tools.size());
+            } catch (Exception e) {
+                log.warn("Failed to connect to MCP server {}: {}", server.getName(), e.getMessage());
+                scheduleReconnect(server, 0, true);
+            }
         }
     }
 
@@ -264,7 +269,10 @@ public class McpLifecycleManager {
                 McpSyncClient client = createClient(server);
                 client.initialize();
                 var tools = client.listTools().tools();
-                clients.put(server.getName(), new McpServerState(server, client, tools));
+                // WARNING 4: Synchronize the read-compare-write to prevent duplicate registrations
+                synchronized (clients) {
+                    clients.put(server.getName(), new McpServerState(server, client, tools));
+                }
                 registerTools(server.getName(), tools);
                 scheduleToolRefresh(server.getName());
                 log.info("Reconnected to MCP server {} with {} tools", server.getName(), tools.size());

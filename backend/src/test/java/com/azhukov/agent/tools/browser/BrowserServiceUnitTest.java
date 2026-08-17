@@ -29,14 +29,14 @@ class BrowserServiceUnitTest {
         CdpClient client = mock(CdpClient.class);
         when(client.isConnected()).thenReturn(false);
         doThrow(new RuntimeException("connection refused")).when(client).connect(anyString());
-        // ensureConnected now tries reconnect() after connect() fails
-        doThrow(new IllegalStateException("Cannot reconnect: no previous CDP URL stored")).when(client).reconnect();
 
         UrlSafety safety = mock(UrlSafety.class);
         when(safety.isUrlAllowed(anyString())).thenReturn(true);
 
         BrowserService service = new BrowserService(client, () -> "http://localhost:9222", safety);
-        assertThat(service.navigate("http://example.com")).contains("Cannot reconnect");
+        // BUG 2 fix: when connect() fails and we're not connected, the original exception
+        // is re-thrown (no stale reconnect attempt). The error message from connect() is surfaced.
+        assertThat(service.navigate("http://example.com")).contains("connection refused");
     }
 
     @Test

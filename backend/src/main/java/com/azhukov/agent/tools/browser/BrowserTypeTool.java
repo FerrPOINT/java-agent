@@ -26,13 +26,21 @@ public class BrowserTypeTool implements ToolHandler {
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         TypeArgs args = ToolHandler.parseJson(arguments, TypeArgs.class);
         try {
-            String selector = args.selector() != null ? args.selector() : "document.activeElement";
-            // Safely escape both selector and text using JSON.stringify to prevent JS injection
-            String safeSelector = MAPPER.writeValueAsString(selector);
             String safeText = MAPPER.writeValueAsString(args.text());
             String clearPrefix = args.clear() ? "el.value = ''; " : "";
-            String script = "const el = " + safeSelector + "; if (el) { " + clearPrefix
-                + "el.value += " + safeText + "; el.dispatchEvent(new Event('input', { bubbles: true })); return 'typed'; } return 'no element';";
+            String script;
+            if (args.selector() != null && !args.selector().isBlank()) {
+                // CSS selector path: use querySelector with JSON.stringify for safe escaping
+                String safeSelector = MAPPER.writeValueAsString(args.selector());
+                script = "const el = document.querySelector(" + safeSelector + "); if (el) { "
+                    + clearPrefix + "el.value += " + safeText
+                    + "; el.dispatchEvent(new Event('input', { bubbles: true })); return 'typed'; } return 'no element';";
+            } else {
+                // Default: use focused element (no selector injection risk)
+                script = "const el = document.activeElement; if (el) { "
+                    + clearPrefix + "el.value += " + safeText
+                    + "; el.dispatchEvent(new Event('input', { bubbles: true })); return 'typed'; } return 'no element';";
+            }
             return ToolResult.ok(browserService.evaluate(script));
         } catch (Exception e) {
             return ToolResult.fail("Browser type failed: " + e.getMessage());

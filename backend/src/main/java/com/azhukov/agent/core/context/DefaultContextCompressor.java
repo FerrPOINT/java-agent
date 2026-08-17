@@ -120,7 +120,9 @@ public class DefaultContextCompressor implements ContextCompressor {
  // Finding 5.1: Kept as non-final with setter because adding to the @RequiredArgsConstructor
  // would break ~49 test call sites that use the 3-arg constructor. The setter is called
  // by the @Bean factory after construction. This is a known trade-off documented in the audit.
- private SessionRepository sessionRepository;
+ // WARNING 2: volatile — the setter is called from a different thread (Spring @Bean factory)
+ // than the readers (turn loop threads), so visibility must be guaranteed.
+ private volatile SessionRepository sessionRepository;
  private final ConcurrentHashMap<String, Integer> inMemoryLocks = new ConcurrentHashMap<>();
 
  /**

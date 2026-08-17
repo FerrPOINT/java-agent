@@ -6,7 +6,6 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -20,7 +19,6 @@ import org.springframework.stereotype.Component;
 public class BrowserDialogTool implements ToolHandler {
 
     private final BrowserService browserService;
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

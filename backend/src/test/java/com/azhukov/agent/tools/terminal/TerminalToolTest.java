@@ -74,7 +74,7 @@ class TerminalToolTest {
             }
         };
 
-        when(processTool.spawn(any(), anyInt(), anyBoolean(), any())).thenReturn(managed);
+        when(processTool.spawn(any(), anyInt(), anyBoolean(), any(), any())).thenReturn(managed);
         lenient().when(properties.getTerminal()).thenReturn(terminal);
         lenient().when(properties.getSecurity()).thenReturn(security);
         lenient().when(properties.getCheckpoints()).thenReturn(checkpoints);

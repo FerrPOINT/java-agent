@@ -600,9 +600,35 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // Finding 10.2: Walk up the directory tree to find context files
         // (AGENTS.md, CLAUDE.md, .cursorrules), like Hermes does.
         // First match wins at each level; if not found at the current level,
-        // check the parent directory, up to the filesystem root.
+        // check the parent directory.
+        // WARNING 3: Bounded walk — max 5 levels up, or stop when .git directory is found,
+        // to prevent unbounded traversal on deeply nested or unusual filesystem layouts.
         Path searchDir = cwdPath;
-        while (searchDir != null) {
+        int depth = 0;
+        final int MAX_PARENT_DEPTH = 5;
+        while (searchDir != null && depth <= MAX_PARENT_DEPTH) {
+            // Stop walking up if we've reached a .git directory — this is the project root
+            if (Files.isDirectory(searchDir.resolve(".git"))) {
+                // Still check the current directory for context files before stopping
+                for (String fileName : CONTEXT_FILE_NAMES) {
+                    Path candidate = searchDir.resolve(fileName);
+                    if (Files.isRegularFile(candidate)) {
+                        try {
+                            String content = Files.readString(candidate).strip();
+                            if (content.isEmpty()) {
+                                continue;
+                            }
+                            content = stripYamlFrontmatter(content);
+                            content = scanContextContent(content, fileName);
+                            content = truncateContent(content, fileName, CONTEXT_FILE_MAX_CHARS);
+                            return "## " + fileName + "\n\n" + content;
+                        } catch (IOException e) {
+                            log.debug("Could not read context file {}: {}", candidate, e.getMessage());
+                        }
+                    }
+                }
+                break; // .git found — stop walking up
+            }
             // Priority-based: first match wins at this level
             for (String fileName : CONTEXT_FILE_NAMES) {
                 Path candidate = searchDir.resolve(fileName);
@@ -627,6 +653,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
                 break; // reached filesystem root
             }
             searchDir = parent;
+            depth++;
         }
 
         return "";

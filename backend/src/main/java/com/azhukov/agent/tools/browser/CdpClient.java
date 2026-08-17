@@ -86,7 +86,12 @@ public class CdpClient {
             }
             @Override
             public void onClose(int code, String reason, boolean remote) {
-                CdpClient.this.connected = false;
+                // Only mark as disconnected if this WebSocket is still the current one.
+                // This prevents an async onClose callback from an old connection racing
+                // with reconnect() setting connected=true on a new connection.
+                if (CdpClient.this.webSocketClient == this) {
+                    connected = false;
+                }
                 log.info("CDP websocket closed (code={}, reason='{}', remote={})", code, reason, remote);
             }
             @Override
@@ -101,6 +106,12 @@ public class CdpClient {
 
     public synchronized void disconnect() {
         connected = false;
+        // Fail all pending futures before closing the WebSocket to prevent memory leaks.
+        // Any request that was in-flight will get an exception instead of hanging forever.
+        for (CompletableFuture<JsonNode> future : pending.values()) {
+            future.completeExceptionally(new IllegalStateException("CDP client disconnected"));
+        }
+        pending.clear();
         if (webSocketClient != null) {
             try {
                 webSocketClient.close();

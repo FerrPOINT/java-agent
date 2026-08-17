@@ -24,6 +24,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 @AgentTool(
@@ -62,9 +63,10 @@ public class ProcessTool implements ToolHandler {
      * @param timeoutSeconds the timeout in seconds (informational; enforcement is up to the caller)
      * @param usePty        when true, allocate a pseudo-terminal via {@code script -qec} (Finding 1.6)
      * @param notifyOnExit  optional callback fired when the process exits; receives the process id (Finding 1.2)
+     * @param workdir       working directory for the process, or null for the current directory
      */
     public ManagedProcess spawn(String command, int timeoutSeconds, boolean usePty,
-                                Consumer<String> notifyOnExit) throws IOException {
+                                Consumer<String> notifyOnExit, String workdir) throws IOException {
         String id = "proc_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         ProcessBuilder pb;
         if (usePty) {
@@ -72,6 +74,17 @@ public class ProcessTool implements ToolHandler {
             pb = new ProcessBuilder("script", "-qec", command, "/dev/null");
         } else {
             pb = new ProcessBuilder("bash", "-c", command);
+        }
+        // BUG 4: Set working directory if provided (was previously ignored for background processes)
+        if (workdir != null && !workdir.isBlank()) {
+            java.io.File dir = new java.io.File(workdir);
+            if (!dir.exists()) {
+                throw new IOException("Working directory does not exist: " + workdir);
+            }
+            if (!dir.isDirectory()) {
+                throw new IOException("Working directory path is not a directory: " + workdir);
+            }
+            pb.directory(dir);
         }
         pb.redirectErrorStream(true);
         Process process = pb.start();
@@ -82,11 +95,11 @@ public class ProcessTool implements ToolHandler {
     }
 
     /**
-     * Spawn a tracked background process without PTY or notification callback.
-     * Equivalent to {@code spawn(command, timeoutSeconds, false, null)}.
+     * Spawn a tracked background process without PTY, notification callback, or workdir.
+     * Equivalent to {@code spawn(command, timeoutSeconds, false, null, null)}.
      */
     public ManagedProcess spawn(String command, int timeoutSeconds) throws IOException {
-        return spawn(command, timeoutSeconds, false, null);
+        return spawn(command, timeoutSeconds, false, null, null);
     }
 
     private ToolResult listProcesses() {
@@ -113,6 +126,10 @@ public class ProcessTool implements ToolHandler {
         }
         List<String> lines = p.getOutputLines();
         int start = Math.max(0, offset);
+        // BUG 5a: Guard against IndexOutOfBoundsException when offset >= lines.size()
+        if (start >= lines.size()) {
+            return ToolResult.ok("");
+        }
         int end = Math.min(lines.size(), start + (limit > 0 ? limit : 200));
         return ToolResult.ok(String.join("\n", lines.subList(start, end)));
     }
@@ -203,6 +220,8 @@ public class ProcessTool implements ToolHandler {
         final Instant startedAt;
         // Finding 1.5: ConcurrentLinkedDeque is thread-safe and avoids O(n) remove(0) shifts.
         private final ConcurrentLinkedDeque<String> outputBuffer = new ConcurrentLinkedDeque<>();
+        // BUG 5b: AtomicInteger for O(1) size checks instead of ConcurrentLinkedDeque.size() which is O(n)
+        private final AtomicInteger lineCount = new AtomicInteger(0);
         private final Thread readerThread;
         private final Thread exitWatcherThread;
         private OutputStreamWriter stdinWriter;
@@ -258,10 +277,16 @@ public class ProcessTool implements ToolHandler {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     outputBuffer.addLast(line);
+                    lineCount.incrementAndGet();
                     // Rolling buffer: prune oldest entries when exceeding the limit.
                     // ConcurrentLinkedDeque peek/remove are O(1) — no array shifts.
-                    while (outputBuffer.size() > MAX_LINES) {
-                        outputBuffer.pollFirst();
+                    // BUG 5b: Use AtomicInteger lineCount instead of O(n) outputBuffer.size()
+                    while (lineCount.get() > MAX_LINES) {
+                        if (outputBuffer.pollFirst() != null) {
+                            lineCount.decrementAndGet();
+                        } else {
+                            break;
+                        }
                     }
                 }
             } catch (IOException ignored) {
@@ -273,7 +298,8 @@ public class ProcessTool implements ToolHandler {
         }
 
         String getRecentOutput(int maxLines) {
-            int size = outputBuffer.size();
+            // BUG 5b: Use AtomicInteger lineCount instead of O(n) outputBuffer.size()
+            int size = lineCount.get();
             int start = Math.max(0, size - maxLines);
             List<String> recent = new ArrayList<>();
             int i = 0;
