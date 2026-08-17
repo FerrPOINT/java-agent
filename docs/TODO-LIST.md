@@ -1,8 +1,7 @@
-# Java-Agent TODO List — Architecture + Port + Hermes Sync
+# Java-Agent TODO List — Architecture + Port + Hermes Sync + Multi-User
 
-**Created:** 2026-08-15  
-**Total active:** 88 items (47 cancelled/filtered out)  
-**Categories:** CRITICAL (8), HIGH (9), MEDIUM (11), LOW (8), PORT (20), HERMES-sync (32)
+**Updated:** 2026-08-15  
+**Total active:** 111 items (38 cancelled/filtered out)  
 
 ---
 
@@ -17,164 +16,94 @@
 7. **c7** Split BackendClient (CLI, 1888 LOC) → transport + formatter, or per-domain API classes
 8. **c8** Split SlashCommandRegistry.registerAll() (800 LOC) → grouped command classes
 
-## HIGH — Architecture (9)
+## HIGH — Architecture (10)
 
 9. **h9** Remove phantom project(':backend') from telegram-bot/build.gradle
 10. **h10** Create shared module — API DTOs, SharedObjectMapper, base REST client
 11. **h11** Consolidate duplicate security/ packages — merge security/ + core/security/
-12. **h13** Break core.memory ↔ tools.memory cycle — abstract behind ToolSchemaProvider
-13. **h14** Split AgentConfig (68 imports) → ModelClientConfig, MemoryConfig, SecurityConfig, etc.
-14. **h15** Split AgentBackendClient (bot, 1474 LOC) → per-domain delegate classes + typed DTOs
-15. **h16** Make CliState/SessionStore/DestructiveCommandConfirmation Spring beans
-16. **h17** Delete ReplLoop — dead code
-17. **h18** Break core.agent ↔ core.context cycle
+12. **h12** ★RESTORED: Introduce repository ports in core — justified for multi-user: per-user filtering abstraction
+13. **h13** Break core.memory ↔ tools.memory cycle — abstract behind ToolSchemaProvider
+14. **h14** Split AgentConfig (68 imports) → ModelClientConfig, MemoryConfig, SecurityConfig, etc.
+15. **h15** Split AgentBackendClient (bot, 1474 LOC) → per-domain delegate classes + typed DTOs
+16. **h16** Make CliState/SessionStore/DestructiveCommandConfirmation Spring beans
+17. **h17** Delete ReplLoop — dead code
+18. **h18** Break core.agent ↔ core.context cycle
 
 ## MEDIUM — Architecture (11)
 
-18. **m19** Unify health/ + api/health/ packages
-19. **m20** Introduce CLI sub-packages (repl, command, backend, render, state)
-20. **m21** Move inline controller records (StopRequest, SteerRequest, TtsRequest) to api/dto/
-21. **m22** Move OsvCheckService from client/mcp to security
-22. **m23** Move MidTurnPersistenceService and MessagePersistenceService to service or persistence/service
-23. **m24** Fix BotMessageProcessor double-lock dead code in handleTextOrMediaInternal
-24. **m25** Make RichMessageSupport a Spring bean
-25. **m26** Remove duplicate CLI commands (/handoff, /gquota, /platforms, /quit)
-26. **m27** Remove System.exit(0) from CLI command lambdas — use signal/exception
-27. **m28** Replace shell-out curl in ContextReferenceExpander with RestClient
-28. **m31** Remove backend/settings.gradle (ignored, misleading)
+19-29. (m19–m31, excluding m29/m30 cancelled) — package cleanup, moves, dead code fixes
 
 ## LOW — Architecture (8)
 
-29. **l32** Rename ManagedToolGateway to avoid gateway package collision
-30. **l33** Rename ImageShrinker to ImageShrinkerService
-31. **l34** Rename BackendProperties to CliProperties
-32. **l35** Rename codex_runtime command to codex-runtime (kebab-case)
-33. **l36** Remove SlashCommand.description() dead code method
-34. **l37** Consolidate single-class packages (lock, footer, monitor, reaction)
-35. **l38** Replace double-brace init in BotConfig with explicit bean
-36. **l39** Merge metrics package (1 file) into existing package
+30-37. (l32–l39) — renames, consolidation, cosmetic
 
 ## PORT — From Hermes ecosystem (20)
 
 ### Security/MCP (5)
-37. **p1** MCP Tool Definition Scanner — hidden instructions, invisible unicode, encoded payloads (~450 LOC)
-38. **p2** MCP Response Scanner — prompt injection, exfiltration URLs in tool output (~250 LOC)
-39. **p3** Tool Argument Injection Scanner — recursive arg scanning for injection (~100 LOC)
-40. **p30** Sliding-Window Rate Limiter — per-tool/per-server rate limiting for MCP (~150 LOC)
-41. **p31** MCP Rug Pull Detection — SHA-256 fingerprinting, alert on silent change (~120 LOC)
+MCP Tool Definition Scanner, MCP Response Scanner, Tool Argument Injection Scanner, Sliding-Window Rate Limiter, MCP Rug Pull Detection
 
-### Tool UX improvements (9)
-42. **p4** Terminal CWD echo — show working directory after each command (~10 LOC)
-43. **p5** Terminal error hints — 'command not found' → suggest install (~80 LOC)
-44. **p6** Terminal timeout clarity — guide toward background=true (~5 LOC)
-45. **p7** Patch already-applied no-op — check if new_string already present (~10 LOC)
-46. **p8** Search zero-match hints — case-insensitive probe on 0-match (~15 LOC)
-47. **p9** Write-file verification echo — first/last line preview (~10 LOC)
-48. **p10** Read_file truncation UX — show remaining lines count (~5 LOC)
-49. **p11** Patch multi-match detection — warn if old_string not unique (~15 LOC)
-50. **p12** Blocked-command recovery hint — suggest alternative (~15 LOC)
+### Tool UX (9)
+Terminal CWD echo, Terminal error hints, Terminal timeout clarity, Patch already-applied, Search zero-match hints, Write-file verification echo, Read_file truncation UX, Patch multi-match detection, Blocked-command recovery
 
-### Bot improvements (5)
-51. **p32** Approval TTL Expiration Sweep — background sweeper (~25 LOC)
-52. **p33** Approval Auto-Supersede — new approval removes prior pending (~10 LOC)
-53. **p34** Post-Debounce Re-Validation — re-check chat state after debounce (~10 LOC)
-54. **p35** Edit-Capture Mode — next message = override for approval (~35 LOC)
-55. **p36** Per-Action Owner Auth — verify callback user = approval owner (~15 LOC)
-56. **p37** Permission-Aware Keyboard — conditionally include/exclude buttons (~10 LOC)
+### Bot (6)
+Approval TTL, Approval Auto-Supersede, Post-Debounce Re-Validation, Edit-Capture Mode, Per-Action Owner Auth, Permission-Aware Keyboard
 
 ### Utility (1)
-57. **p20** Robust JSON Extraction from LLM output — balanced-brace parser (~40 LOC)
+Robust JSON Extraction
 
-## HERMES-SYNC — Bug fixes from Hermes commits last month (32)
+## HERMES-SYNC — Bug fixes (32)
 
-### MCP (5)
-58. **h42** MCP tool_call_id reuse — keep results when server reuses IDs (0b8fd04b)
-59. **h43** MCP nextCursor pagination — follow in discovery, non-string = end (6030ca8c, a8ec4153)
-60. **h44** MCP tool-result _meta — surface to model, minus protocol-reserved keys (c031fec3)
-61. **h45** Strip invisible Unicode TAG chars from MCP content (8bbda8ff)
-62. **h46** MCP name collision — prefer server-native tool over generated utility (d6f18cd7)
+### MCP (5): tool_call_id reuse, nextCursor pagination, tool-result _meta, Unicode TAG strip, name collision
+### Terminal (3): signal-termination exit codes, exit_code 0 masks piped, cwd unenterable
+### Tools (3): process unique ID prefixes, mixed valid/invalid calls, UTF-16 reading
+### Compression (5): handoff prefix, timeout budget, cooldown reset, failure feedback, quota exhaustion
+### Agent (4): empty-response guard, timezone in prompt, think scrubber re-arm, parallel-batch path canonicalisation
+### Cron (4): persisted-state recovery ★, retry storm suppression, execution ledger ★RESTORED, self-context ★RESTORED, nudge failing ★RESTORED
+### Skills (3): BOM stripping, curator guard, curator audit ledger ★RESTORED
+### Error classifier (3): connect/DNS, empty-response advisory, GLM token-limit
+### Memory (1): drain queued writes
+### Misc (5): AGENTS.override.md, auto-title, reject answer-shaped, session handles ★RESTORED, approval coalesce ★RESTORED, /worktree ★RESTORED, session pin/unpin ★RESTORED
 
-### Terminal (3)
-63. **h47** Signal-termination exit codes — interpret for the model (204302bd)
-64. **h48** exit_code 0 masks piped failure — warn (8ad05541)
-65. **h49** cwd unenterable fallback — not just missing (71252f0d)
+## ★ NEW — MULTI-USER (14)
 
-### Tools (3)
-66. **h51** Process tool unique ID prefixes — accept in lookups (2e4d771c)
-67. **h53** Mixed valid/invalid tool calls — execute valid in mixed batches (348e9912)
-68. **h55** UTF-16 text file reading — transcode to UTF-8 (341d5aeb)
+1. **mu1** Add userId to CronJobEntity — cron jobs must be user-scoped. Migration V27.
+2. **mu2** Add userId to SkillEntity — personal vs shared skills. Migration V27.
+3. **mu3** Add userId to CheckpointEntity — checkpoints user-scoped. Migration V27.
+4. **mu4** Add userId to AuditLogEntity — audit logs user-scoped. Migration V27.
+5. **mu5** Add userId filtering to ALL repository queries — every query must filter by userId
+6. **mu6** Add userId to ChatRequest DTO + propagate through AgentRuntimeService → all entities inherit user ID
+7. **mu7** Per-user API keys — UserEntity + UserApiKeyEntity, replace single global key. Migration V28.
+8. **mu8** RBAC on API endpoints — admin vs user role, endpoint-level access control
+9. **mu9** Bot AuthorizationService — admin/user/visitor roles, command-level access
+10. **mu10** Session isolation — users only see/access own sessions
+11. **mu11** Memory isolation — users only read/write own memory
+12. **mu12** Cron job isolation — users only manage own cron jobs
+13. **mu13** Usage tracking per-user — aggregation endpoint with per-user breakdown
+14. **mu14** Skill isolation — shared vs personal, enforce in CuratorService/DatabaseSkillManager
 
-### Compression (5)
-69. **h57** Handoff prefix — affirm tool use stays active (c7205040)
-70. **h58** Timeout budget — fallback candidates get own timeout (bd7e4802)
-71. **h60** Failure cooldown reset — reset on runtime switch (bcce7007)
-72. **h61** Failure feedback — harden + preserve missing-key history (1e895f4c, 577beeb9)
-73. **h62** Quota exhaustion — preserve messages when summary quota exhausted (c72f4576, 202ad1b8)
+## Restored from cancelled (8 — justified by multi-user)
 
-### Agent core (4)
-74. **h63** Empty-response guard — stop re-billing deterministic empty responses (ac06c2ff, d10f8724)
-75. **h65** Timezone in system prompt — include timezone and UTC offset (da392043)
-76. **h67** Think scrubber boundary re-arm — after stream flush (a569f244)
-77. **h69** Parallel-batch path canonicalisation — prevent same-file concurrent mutation (9a21d0e3)
+| ID | Was cancelled because | Restored because |
+|----|----------------------|------------------|
+| h12 | Over-engineering DDD ports | Multi-user needs per-user query abstraction in core |
+| h72 | Over-engineering cron ledger | Multi-user needs per-user cron execution audit trail |
+| h77 | Over-engineering curator audit | Multi-user needs per-user skill change attribution |
+| h75 | New feature, not requested | Multi-user: each user's cron jobs need own context |
+| h76 | New feature, not requested | Multi-user: notify owning user about failing jobs |
+| h85 | Gateway approval specific | Multi-user: simultaneous approvals from different users |
+| h88 | Java GC handles DB | Multi-user: more session contention, need handle cleanup |
+| h94 | New feature, not requested | Multi-user: each user needs isolated git worktree |
+| h95 | New feature, not requested | Multi-user: users need to organize own session lists |
 
-### Cron (2)
-78. **h71** Persisted-state recovery — re-arms recurring job stuck in stale error (122bfad5)
-79. **h74** Retry storm suppression — stop when gateway deliberately stopped (48221569)
+## Still cancelled (38)
 
-### Skills (2)
-80. **h78** Curator guard background review against manually authored skills (62364122)
-81. **h79** SKILL.md BOM stripping — strip UTF-8 BOM before parsing frontmatter (a4ecb3da)
-
-### Error classifier (3)
-82. **h80** Connect/DNS failure on generic exception types (75336301)
-83. **h81** Empty-response advisory → stop triggering compression (032a424f)
-84. **h82** GLM token-limit → classify as context overflow (174fc958)
-
-### Memory (1)
-85. **h86** Drain queued writes on shutdown (c356752b)
-
-### Misc (4)
-86. **h90** AGENTS.override.md — support context override file (a8d5e16c)
-87. **h91** Auto-title — avoid overwriting manual titles + atomic write (f725cf83, d05cd7c1)
-88. **h93** Reject answer-shaped auto-title output (d5167831)
-
----
-
-## Cancelled (47 — not applicable)
-
-| ID | Reason |
-|----|--------|
-| h12 | Over-engineering: DDD ports pattern for Spring Boot JPA |
-| m29 | Documentation task, both gateway impls serve different purposes |
-| m30 | Cosmetic: mixed v1/v2 is fine |
-| p13 | Too niche, low value |
-| p14-p19 | Skill evolution system: 1140 LOC unrequested massive feature |
-| p21 | Session mining: 300 LOC niche, depends on conversation history |
-| p22-p28 | Compression eval harness: 525 LOC testing tool, not a feature |
-| p29 | Cross-Server Attack Detection: only with multiple MCP servers |
-| p38-p40 | LLM utilities: not critical for current priorities |
-| h41 | MCP stateless protocol: SDK handles versioning |
-| h50 | Duplicate of p8 |
-| h52 | Tool call dedup: REVERTED in Hermes, was problematic |
-| h54 | Reject masked verification: unclear, low priority |
-| h56 | Compression rotation tail clone: Python-specific |
-| h59 | Pruned-skill reload: Hermes skill system specific |
-| h64 | Background review cost controls: refinements, not bugs |
-| h66 | Worker finalization: Hermes worker model, Java uses virtual threads |
-| h68 | UTF-16 surrogates in guardrail hashing: edge case |
-| h70 | Cron EMFILE: Java has higher FD limits |
-| h72 | Cron execution ledger: over-engineering |
-| h73 | Cron stale claim reap: Hermes claim system specific |
-| h75 | Cron self-context: new feature, not requested |
-| h76 | Cron nudge failing jobs: new feature, not requested |
-| h77 | Curator audit ledger: over-engineering for current scale |
-| h83 | Delegation stateless channel: Hermes delegation model |
-| h84 | Delegation pinned provider: Hermes delegation model |
-| h85 | Approval coalesce: gateway approval flow specific |
-| h87 | Memory fail-fast external prefetch: not applicable |
-| h88 | State DB handles: Java GC + connection pool handles this |
-| h89 | Config parse literals: Java uses YAML, different parsing |
-| h92 | Quoted shell metacharacters: Hermes allowlist specific |
-| h94 | /worktree: new feature, not requested |
-| h95 | Session pin/unpin: new feature, not requested |
-| h96 | /rollback hand-edits: low priority behavior change |
+| Category | Count | Reason |
+|----------|-------|--------|
+| Skill evolution system | 6 | 1140 LOC research-grade optimization pipeline — separate project |
+| Compression eval harness | 7 | 525 LOC testing tool — not a feature |
+| Python-specific | 6 | EMFILE, UTF-16 surrogates, rotation tail clone, config parsing, worker model, pruned-skill reload |
+| Hermes-architecture-specific | 5 | Delegation stateless/pinned, memory prefetch, config literals, shell metacharacters |
+| Niche/low value | 4 | Cross-server detection, structured LLM call, concurrent dispatch, token-overlap |
+| Duplicate/reverted | 3 | h50=p8, h52 reverted, h41 SDK handles |
+| New feature, not multi-user relevant | 4 | /rollback hand-edits, session mining, skill_view dedup, reject masked verification |
+| Cosmetic/docs | 3 | API versioning, gateway/telegram docs, background review cost controls |
