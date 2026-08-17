@@ -2,6 +2,7 @@ package com.azhukov.agent.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,8 +18,12 @@ import java.util.Map;
  * <p>
  * Persists session metadata (ID, title, timestamps, message count) to
  * {@code ~/.java-agent-cli/sessions.json}. Loaded on startup for /sessions browsing.
+ * <p>
+ * c16: Registered as a Spring {@code @Component}. The default no-arg constructor
+ * uses the shared {@link SharedObjectMapper} and the standard store file.
  */
 @Slf4j
+@Component
 public class SessionStore {
 
     private static final Path STORE_DIR = Path.of(System.getProperty("user.home"), ".java-agent-cli");

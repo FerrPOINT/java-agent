@@ -2,6 +2,7 @@ package com.azhukov.agent.cli;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.stereotype.Component;
 
 /**
  * Local CLI state storage for settings that don't have dedicated backend endpoints.
@@ -10,7 +11,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * when sending messages to the backend.
  * <p>
  * P1-4: Used by /verbose, /yolo, /reasoning, /fast, /voice, /busy, /tools, /personality.
+ * <p>
+ * c16: Registered as a Spring {@code @Component} so it can be injected into
+ * command group classes and the registry.
  */
+@Component
 public class CliState {
 
     public enum VerboseMode { OFF, NEW, ALL, VERBOSE }

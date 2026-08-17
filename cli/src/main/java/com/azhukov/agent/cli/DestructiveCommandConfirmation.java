@@ -2,6 +2,7 @@ package com.azhukov.agent.cli;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.stereotype.Component;
 
 /**
  * P1-3: Destructive command confirmation state machine.
@@ -15,7 +16,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * Inline-skip tokens: {@code now}, {@code --yes}, {@code -y} bypass the
  * confirmation (same as the original project).
+ * <p>
+ * c16: Registered as a Spring {@code @Component} so it can be injected into
+ * the registry and command group classes.
  */
+@Component
 public class DestructiveCommandConfirmation {
 
  private static final Set<String> DESTRUCTIVE_COMMANDS = Set.of(

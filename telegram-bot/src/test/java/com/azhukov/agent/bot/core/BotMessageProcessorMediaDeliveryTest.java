@@ -141,13 +141,19 @@ class BotMessageProcessorMediaDeliveryTest {
         // Default streaming result — will be overridden per test
         stubStreamingResult("response", true);
 
+        // c5: construct the extracted collaborators with the same mocked deps
+        UpdateDispatcher updateDispatcher = new UpdateDispatcher(
+            properties, editCaptureService, textBatchDebouncer, photoBatchDebouncer);
+        StreamingOrchestrator streamingOrchestrator = new StreamingOrchestrator(
+            backendClient, streamEditor, busyHandler, runtimeFooter, properties, mediaDeliveryService);
+
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
             properties, streamEditor, inboundMediaHandler, mediaDeliveryService,
             runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
-            editCaptureService);
+            editCaptureService, updateDispatcher, streamingOrchestrator);
     }
 
     @AfterEach

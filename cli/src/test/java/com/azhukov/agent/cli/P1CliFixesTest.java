@@ -30,7 +30,7 @@ class P1CliFixesTest {
     }
 
     // ── P1-1: Multi-line input ──
-    // (JLine configuration — tested via ReplLoop integration; no unit test needed
+    // (JLine configuration — tested via CliReplRunner integration; no unit test needed
     //  since BRACKETED_PASTE is a JLine option)
 
     @Test

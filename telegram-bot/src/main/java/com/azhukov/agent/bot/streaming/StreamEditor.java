@@ -12,13 +12,11 @@ import org.springframework.stereotype.Service;
 
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -28,12 +26,19 @@ import jakarta.annotation.PreDestroy;
  * as more content arrives. Throttles edits to {@code streamEditInterval}
  * to avoid hitting Telegram's rate limits.
  *
- * <p>B5: Adaptive rate limiting — the edit interval increases exponentially
- * on 429 flood errors (×1.5, cap 5000ms) and decreases gradually on successful
- * edits (×0.9, min 1500ms). After 5 consecutive floods, streaming edits are
- * stopped and all content is buffered for the final send.
+ * <p>c6: Per-chat streaming state has been extracted into {@link StreamSession},
+ * replacing the 17 parallel {@code ConcurrentHashMap}s that previously lived
+ * in this class. A single {@code ConcurrentHashMap<Long, StreamSession>} now
+ * holds all per-chat state. Public methods retain their {@code chatId}-keyed
+ * signatures for backward compatibility and internally look up the session;
+ * {@code StreamSession}-keyed overloads are provided for callers that already
+ * hold the session.
  *
- * <p>B6: Think-block filtering — {@code <think>} tags (and variants
+ * <p>B5: Adaptive rate limiting — the edit interval increases exponentially
+ * on 429 flood errors (×2, cap 10000ms). After 3 consecutive floods, streaming
+ * edits are stopped and all content is buffered for the final send.
+ *
+ * <p>B6: Think-block filtering — {@code Ӥ tags (and variants
  * like {@code <thinking>}, {@code <reasoning>}) are stripped from streamed
  * output before sending to Telegram. Handles split chunks where the opening
  * or closing tag spans multiple stream deltas.
@@ -66,9 +71,6 @@ import jakarta.annotation.PreDestroy;
  * <p>400 vs 429: distinguishes "message too long" (400) from rate limit (429).
  * 400 does NOT increment flood strikes — just truncates and retries.
  *
- * <p>Per-chat adaptive rate limit: the edit interval is tracked per-chat in
- * a {@code ConcurrentHashMap<Long, AtomicLong>}, not a single shared field.
- *
  * <p>finalizeStream fallback: if editMessageText returns false, tries
  * sendMessage as a new message.
  *
@@ -84,32 +86,19 @@ public class StreamEditor {
     private final BotProperties properties;
     private final MediaDeliveryService mediaDeliveryService;
     private String parseMode;
-    private final Map<Long, AtomicLong> editIntervalMap = new ConcurrentHashMap<>();
     private long minIntervalMs; // Configured minimum interval (from streamEditInterval)
-    private final Map<Long, Long> lastEditTime = new ConcurrentHashMap<>();
+
+    // c6: All per-chat streaming state consolidated into a single map.
+    private final ConcurrentHashMap<Long, StreamSession> sessions = new ConcurrentHashMap<>();
 
     // B5: Adaptive rate limiting — Hermes uses x2 multiplier, 10s max, 3 strikes
     private static final long MAX_INTERVAL_MS = 10000;
     private static final double FLOOD_MULTIPLIER = 2.0;
     private static final int MAX_FLOOD_STRIKES = 3;
     private static final int FLOOD_WARN_THRESHOLD = 3;
-    private final Map<Long, Integer> floodStrikes = new ConcurrentHashMap<>();
-    private final Map<Long, Boolean> streamingDisabled = new ConcurrentHashMap<>();
-
-    // P2-16: Flood fallback buffer — when streaming is disabled due to flood,
-    // buffer the formatted content and send it as a new message on finalize.
-    private final Map<Long, StringBuilder> floodFallbackBuffer = new ConcurrentHashMap<>();
-
-    // P2-16: Redundant edit skip — track the last text that was actually
-    // sent to Telegram per chat, so we can skip edits where the content
-    // hasn't changed.
-    private final Map<Long, String> lastSentText = new ConcurrentHashMap<>();
 
     // B7: Silent notification config
     private boolean streamingSilent;
-
-    // B6: Think-block scrubber (stateful, per-chat)
-    private final Map<Long, ThinkScrubber> thinkScrubbers = new ConcurrentHashMap<>();
 
     // P1: Rich message support for final delivery
     private RichMessageSupport richMessageSupport;
@@ -124,10 +113,6 @@ public class StreamEditor {
         t.setDaemon(true);
         return t;
     });
-    // Per-chat heartbeat state: start time, last token time, heartbeat future
-    private final Map<Long, Long> streamStartTime = new ConcurrentHashMap<>();
-    private final Map<Long, Long> lastTokenTime = new ConcurrentHashMap<>();
-    private final Map<Long, ScheduledFuture<?>> heartbeatFutures = new ConcurrentHashMap<>();
 
     // Fresh-final
     private long freshFinalTimeoutMs;
@@ -136,29 +121,12 @@ public class StreamEditor {
     // since last edit, even if the interval hasn't elapsed.
     private int bufferThreshold;
 
-    // Per-chat buffer tracking: chars accumulated since last edit
-    private final Map<Long, Integer> charsSinceLastEdit = new ConcurrentHashMap<>();
-
-    // Per-chat current tool name (for heartbeat display)
-    private final Map<Long, String> currentToolName = new ConcurrentHashMap<>();
-
-    // Split during streaming: track current message id per chat
-    private final Map<Long, AtomicLong> currentMessageId = new ConcurrentHashMap<>();
     private int streamingMaxChars;
 
-    // S5: Native draft streaming state (per-chat)
+    // S5: Native draft streaming transport
     // transport: "auto" (prefer draft, fallback to edit), "draft" (explicit),
     // "edit" (legacy default), "off" (no streaming)
     private String streamingTransport;
-    // Per-chat draft streaming resolution: true when draft streaming is active
-    private final Map<Long, Boolean> useDraftStreaming = new ConcurrentHashMap<>();
-    // Monotonic draft id counter — increments on segment break so the next
-    // text segment animates as a fresh preview
-    private final Map<Long, Integer> draftIdMap = new ConcurrentHashMap<>();
-    // Per-chat draft failure count — after 2 failures, fall back to edit-based
-    private final Map<Long, Integer> draftFailures = new ConcurrentHashMap<>();
-    // Per-chat chat type ("dm", "group", etc.) — set when stream starts
-    private final Map<Long, String> chatTypeMap = new ConcurrentHashMap<>();
     // Class-wide monotonic counter for draft ids (mirrors Hermes _draft_id_counter)
     private static final AtomicInteger draftIdCounter = new AtomicInteger(0);
 
@@ -182,6 +150,28 @@ public class StreamEditor {
     @PreDestroy
     void destroy() {
         heartbeatExecutor.shutdownNow();
+    }
+
+    // ─── c6: session lookup helpers ───────────────────────────────
+
+    /**
+     * Get the {@link StreamSession} for a chat, creating a fresh one if absent.
+     * @param chatId target chat id
+     * @return the session (never null)
+     */
+    StreamSession sessionFor(long chatId) {
+        return sessions.computeIfAbsent(chatId, k -> new StreamSession());
+    }
+
+    /**
+     * Remove the {@link StreamSession} for a chat (full cleanup).
+     * @param chatId target chat id
+     */
+    void removeSession(long chatId) {
+        StreamSession s = sessions.remove(chatId);
+        if (s != null && s.heartbeatFuture != null) {
+            s.heartbeatFuture.cancel(false);
+        }
     }
 
     /**
@@ -211,83 +201,75 @@ public class StreamEditor {
      * @return the message id wrapped in Optional, or empty if the send failed or draft streaming is active
      */
     public Optional<Long> startStream(long chatId, String initialText, String chatType) {
+        StreamSession session = sessionFor(chatId);
+        return startStream(chatId, initialText, chatType, session);
+    }
+
+    Optional<Long> startStream(long chatId, String initialText, String chatType, StreamSession session) {
         // S5: "off" transport — no streaming, just record start time and return.
         // Content will be buffered by the caller and sent on finalizeStream.
         if ("off".equals(streamingTransport)) {
             long now = System.currentTimeMillis();
-            streamStartTime.put(chatId, now);
-            lastTokenTime.put(chatId, now);
-            thinkScrubbers.put(chatId, new ThinkScrubber());
+            session.streamStartTime = now;
+            session.lastTokenTime = now;
+            session.thinkScrubber = new ThinkScrubber();
             log.debug("Streaming transport is 'off' for chat {}, no initial message", chatId);
             return Optional.empty();
         }
 
         // S5: Store chat type and resolve draft streaming
-        chatTypeMap.put(chatId, chatType != null ? chatType.toLowerCase() : "dm");
-        boolean useDraft = resolveDraftStreaming(chatId);
-        useDraftStreaming.put(chatId, useDraft);
-        draftFailures.remove(chatId);
+        session.chatType = chatType != null ? chatType.toLowerCase() : "dm";
+        boolean useDraft = resolveDraftStreaming(session);
+        session.useDraftStreaming = useDraft;
+        session.draftFailures = 0;
 
         if (useDraft) {
             // Assign a fresh draft id for this run
             int draftId = draftIdCounter.incrementAndGet();
-            draftIdMap.put(chatId, draftId);
+            session.draftId = draftId;
             log.debug("Draft streaming enabled for chat {} (draftId={})", chatId, draftId);
 
             // Record start time for heartbeat and fresh-final
             long now = System.currentTimeMillis();
-            streamStartTime.put(chatId, now);
-            lastTokenTime.put(chatId, now);
+            session.streamStartTime = now;
+            session.lastTokenTime = now;
             // Start heartbeat — it will use currentMessageId if available
-            startHeartbeat(chatId);
+            startHeartbeat(chatId, session);
 
             // If we have initial text, send the first draft frame
             if (initialText != null && !initialText.isBlank()) {
-                String scrubbed = scrubThink(chatId, initialText);
+                String scrubbed = scrubThink(session, initialText);
                 String formatted = formatForTelegram(scrubbed);
                 if (!formatted.isEmpty() && formatted.length() >= 4) {
-                    boolean draftOk = sendDraftFrame(chatId, formatted);
+                    boolean draftOk = sendDraftFrame(chatId, formatted, session);
                     if (!draftOk) {
                         // Draft failed on first attempt — fall back to edit-based
                         log.info("First draft frame failed for chat {}, falling back to edit-based", chatId);
-                        useDraftStreaming.put(chatId, false);
+                        session.useDraftStreaming = false;
                         // Continue with regular startStream path below
                     } else {
                         // Draft streaming active — no message id (drafts have no message_id)
-                        thinkScrubbers.put(chatId, new ThinkScrubber());
+                        session.thinkScrubber = new ThinkScrubber();
                         return Optional.empty();
                     }
                 } else {
                     // Not enough text yet — draft streaming will start on first editStream
-                    thinkScrubbers.put(chatId, new ThinkScrubber());
+                    session.thinkScrubber = new ThinkScrubber();
                     return Optional.empty();
                 }
             } else {
                 // No initial text — draft streaming will start on first editStream
-                thinkScrubbers.put(chatId, new ThinkScrubber());
+                session.thinkScrubber = new ThinkScrubber();
                 return Optional.empty();
             }
         }
 
-        // B5: Reset flood state
-        floodStrikes.remove(chatId);
-        streamingDisabled.remove(chatId);
-        // P2-16: Reset flood fallback buffer and redundant edit skip state
-        floodFallbackBuffer.remove(chatId);
-        lastSentText.remove(chatId);
-        // Reset per-chat interval
-        editIntervalMap.remove(chatId);
-        // Reset current message id
-        currentMessageId.remove(chatId);
-        // Reset buffer threshold tracking
-        charsSinceLastEdit.remove(chatId);
-        // Reset tool name
-        currentToolName.remove(chatId);
-        // M27: Don't remove thinkScrubber yet — move to after successful send
-        // But we need a fresh scrubber for the new stream — replace explicitly
-        thinkScrubbers.put(chatId, new ThinkScrubber());
+        // B5: Reset flood state for the new stream
+        session.resetForNewStream();
+        // M27: fresh scrubber for the new stream
+        session.thinkScrubber = new ThinkScrubber();
 
-        String scrubbed = scrubThink(chatId, initialText);
+        String scrubbed = scrubThink(session, initialText);
         String formatted = formatForTelegram(scrubbed);
 
         // Hermes: if initial text is empty or too short (<4 chars), don't send a message yet.
@@ -295,10 +277,10 @@ public class StreamEditor {
         if (formatted.isEmpty() || formatted.length() < 4) {
             // Record start time for heartbeat and fresh-final even without a message
             long now = System.currentTimeMillis();
-            streamStartTime.put(chatId, now);
-            lastTokenTime.put(chatId, now);
+            session.streamStartTime = now;
+            session.lastTokenTime = now;
             // Start heartbeat — it will use currentMessageId if available
-            startHeartbeat(chatId);
+            startHeartbeat(chatId, session);
             log.debug("Started stream for chat {} with no initial message (waiting for >=4 chars)", chatId);
             return Optional.empty();
         }
@@ -306,19 +288,19 @@ public class StreamEditor {
         // B7: Initial message — silent if configured
         Optional<Long> messageId = sendMessageWithNotification(chatId, formatted, false);
         if (messageId.isPresent()) {
-            lastEditTime.put(chatId, System.currentTimeMillis());
+            session.lastEditTime = System.currentTimeMillis();
             // Record start time for heartbeat and fresh-final
             long now = System.currentTimeMillis();
-            streamStartTime.put(chatId, now);
-            lastTokenTime.put(chatId, now);
-            currentMessageId.put(chatId, new AtomicLong(messageId.get()));
+            session.streamStartTime = now;
+            session.lastTokenTime = now;
+            session.currentMessageId.set(messageId.get());
             // Start heartbeat
-            startHeartbeat(chatId);
+            startHeartbeat(chatId, session);
             // M27: thinkScrubber is already set up — keep it for the active stream
             log.debug("Started stream for chat {}, messageId={}", chatId, messageId.get());
         } else {
             // M27: Send failed — clean up the think scrubber we created
-            thinkScrubbers.remove(chatId);
+            session.thinkScrubber = null;
             log.warn("Failed to start stream for chat {}", chatId);
         }
         return messageId;
@@ -330,7 +312,7 @@ public class StreamEditor {
      * are silently skipped.
      *
      * <p>B5: On 429 flood error, increases the interval exponentially.
-     * After 5 consecutive floods, streaming edits are disabled and content
+     * After 3 consecutive floods, streaming edits are disabled and content
      * is buffered for the final send.
      *
      * <p>Streaming cursor: appends the configured cursor character to the
@@ -346,67 +328,59 @@ public class StreamEditor {
      * @return {@code true} if the edit was sent, {@code false} if throttled or failed
      */
     public boolean editStream(long chatId, long messageId, String text) {
+        StreamSession session = sessionFor(chatId);
+        return editStream(chatId, messageId, text, session);
+    }
+
+    boolean editStream(long chatId, long messageId, String text, StreamSession session) {
         // Update last token time (token arrived)
-        lastTokenTime.put(chatId, System.currentTimeMillis());
+        session.lastTokenTime = System.currentTimeMillis();
 
         // S5: "off" transport — buffer content, no streaming edits
         if ("off".equals(streamingTransport)) {
-            String scrubbed = scrubThink(chatId, text);
+            String scrubbed = scrubThink(session, text);
             String formatted = formatForTelegram(scrubbed);
-            floodFallbackBuffer.compute(chatId, (k, sb) -> {
-                if (sb == null) sb = new StringBuilder();
-                sb.setLength(0);
-                sb.append(formatted);
-                return sb;
-            });
+            session.floodFallbackBuffer.setLength(0);
+            session.floodFallbackBuffer.append(formatted);
             return false;
         }
 
         // S5: Native draft streaming — route mid-stream frames through sendDraft.
-        // The final answer is delivered via regular sendMessage on finalizeStream.
-        // Skip when:
-        //   * draft streaming is not active for this chat
-        //   * streaming has been disabled due to flood limits (fall through to edit path)
-        if (Boolean.TRUE.equals(useDraftStreaming.get(chatId))
-            && !Boolean.TRUE.equals(streamingDisabled.get(chatId))) {
+        if (session.useDraftStreaming && !session.streamingDisabled) {
             // Check failure threshold — after 2 failures, fall back to edit-based
-            int failures = draftFailures.getOrDefault(chatId, 0);
-            if (failures >= 2) {
-                log.info("Draft streaming disabled for chat {} after {} failures, falling back to edit-based", chatId, failures);
-                useDraftStreaming.put(chatId, false);
+            if (session.draftFailures >= 2) {
+                log.info("Draft streaming disabled for chat {} after {} failures, falling back to edit-based", chatId, session.draftFailures);
+                session.useDraftStreaming = false;
                 // Fall through to edit-based path below
             } else {
-                return editStreamDraft(chatId, text);
+                return editStreamDraft(chatId, text, session);
             }
         }
 
         // B5: Check if streaming has been disabled due to flood limits
-        if (Boolean.TRUE.equals(streamingDisabled.get(chatId))) {
+        if (session.streamingDisabled) {
             // P2-16: Buffer content in fallback mode — will be sent as a new message on finalize
-            String scrubbedFallback = scrubThink(chatId, text);
+            String scrubbedFallback = scrubThink(session, text);
             String formattedFallback = formatForTelegram(scrubbedFallback);
-            floodFallbackBuffer.compute(chatId, (k, sb) -> {
-                if (sb == null) sb = new StringBuilder();
-                sb.setLength(0);
-                sb.append(formattedFallback);
-                return sb;
-            });
+            session.floodFallbackBuffer.setLength(0);
+            session.floodFallbackBuffer.append(formattedFallback);
             log.debug("Streaming edits disabled for chat {} due to flood limits, buffering ({} chars)", chatId, formattedFallback.length());
             return false;
         }
 
         // Hermes: if no message was sent yet (startStream returned empty because
         // initial text was <4 chars), check if we now have >=4 chars to send the first message.
-        AtomicLong currentMsgId = currentMessageId.get(chatId);
-        if (currentMsgId == null && text.length() >= 4) {
-            String scrubbed = scrubThink(chatId, text);
+        long currentMsg = session.currentMessageId.get();
+        boolean noMsgYet = currentMsg < 0;
+        if (noMsgYet && text.length() >= 4) {
+            String scrubbed = scrubThink(session, text);
             String formatted = formatForTelegram(scrubbed);
             if (!formatted.isEmpty() && formatted.length() >= 4) {
                 Optional<Long> newMsgId = sendMessageWithNotification(chatId, formatted + streamCursor, false);
                 if (newMsgId.isPresent()) {
-                    currentMessageId.put(chatId, new AtomicLong(newMsgId.get()));
-                    lastEditTime.put(chatId, System.currentTimeMillis());
-                    floodStrikes.remove(chatId);
+                    session.currentMessageId.set(newMsgId.get());
+                    session.lastEditTime = System.currentTimeMillis();
+                    session.floodStrikes = 0;
                     log.debug("Sent first streaming message for chat {} (delayed start), messageId={}", chatId, newMsgId.get());
                     return true;
                 }
@@ -415,33 +389,33 @@ public class StreamEditor {
             return false;
         }
         // If still not enough chars, skip
-        if (currentMsgId == null) {
+        if (noMsgYet) {
             return false;
         }
 
         // Use the internal currentMessageId (may differ from messageId parameter after segment break)
-        long effectiveMessageId = currentMsgId.get();
+        long effectiveMessageId = session.currentMessageId.get();
 
         long now = System.currentTimeMillis();
-        Long last = lastEditTime.get(chatId);
+        long last = session.lastEditTime;
         // B5: Use adaptive interval (may have been adjusted by flood handling)
-        long currentInterval = getEffectiveInterval(chatId);
-        
+        long currentInterval = getEffectiveInterval(session);
+
         // Buffer threshold: Hermes measures TOTAL accumulated text length (not delta since last edit).
         // The accumulated text is the full scrubbed text passed to editStream.
         int charsAccumulated = text.length();
-        
-        boolean intervalElapsed = last == null || (now - last) >= currentInterval;
+
+        boolean intervalElapsed = last == 0 || (now - last) >= currentInterval;
         boolean thresholdReached = bufferThreshold > 0 && charsAccumulated >= bufferThreshold;
-        
+
         if (!intervalElapsed && !thresholdReached) {
             log.trace("Throttled edit for chat {} ({}ms since last, interval={}, charsAccumulated={}, threshold={})",
-                chatId, last != null ? now - last : 0, currentInterval, charsAccumulated, bufferThreshold);
+                chatId, last != 0 ? now - last : 0, currentInterval, charsAccumulated, bufferThreshold);
             return false;
         }
 
         // B6: Strip think blocks
-        String scrubbed = scrubThink(chatId, text);
+        String scrubbed = scrubThink(session, text);
         String formatted = formatForTelegram(scrubbed);
 
         // Append streaming cursor
@@ -449,7 +423,7 @@ public class StreamEditor {
 
         // P2-16: Redundant edit skip — if the new text (with cursor) is identical
         // to what was last sent to Telegram, skip the edit to avoid unnecessary API calls.
-        String lastSent = lastSentText.get(chatId);
+        String lastSent = session.lastSentText;
         if (lastSent != null && lastSent.equals(withCursor)) {
             log.trace("Skipping redundant edit for chat {} (content unchanged)", chatId);
             return true;
@@ -457,7 +431,7 @@ public class StreamEditor {
 
         // Split if text exceeds max chars
         if (streamingMaxChars > 0 && withCursor.length() > streamingMaxChars) {
-            return editStreamSplit(chatId, effectiveMessageId, withCursor);
+            return editStreamSplit(chatId, effectiveMessageId, withCursor, session);
         }
 
         // B7: Silent notification during streaming
@@ -469,25 +443,23 @@ public class StreamEditor {
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
                 // 429 from editMessageText — apply adaptive flood handling.
-                // callApi already set lastApiErrorCode=429 before throwing,
-                // so handleEditFailure will see the correct error code.
-                success = handleEditFailure(chatId, effectiveMessageId, formatted);
+                success = handleEditFailure(chatId, effectiveMessageId, formatted, session);
             } else {
                 throw e;
             }
         }
 
         if (success) {
-            lastEditTime.put(chatId, now);
+            session.lastEditTime = now;
             // P2-16: Track last sent text for redundant edit skip
-            lastSentText.put(chatId, withCursor);
+            session.lastSentText = withCursor;
             // Hermes: on success, only reset flood strikes — interval stays at backoff level
-            floodStrikes.remove(chatId);
+            session.floodStrikes = 0;
         } else {
             // B5: Edit failed — check error code. handleEditFailure may
             // do a truncated retry for 400 errors; if the retry succeeds,
             // treat the overall editStream as successful.
-            success = handleEditFailure(chatId, effectiveMessageId, formatted);
+            success = handleEditFailure(chatId, effectiveMessageId, formatted, session);
         }
         return success;
     }
@@ -496,7 +468,7 @@ public class StreamEditor {
      * Handle splitting during streaming: edit current message with first
      * portion, send remaining as new messages (threaded as replies).
      */
-    private boolean editStreamSplit(long chatId, long messageId, String withCursor) {
+    private boolean editStreamSplit(long chatId, long messageId, String withCursor, StreamSession session) {
         // First portion: first streamingMaxChars chars (minus cursor space)
         int firstLen = streamingMaxChars - streamCursor.length();
         if (firstLen <= 0) firstLen = streamingMaxChars;
@@ -510,7 +482,7 @@ public class StreamEditor {
             success = telegramClient.editMessageText(chatId, messageId, firstPart, null, disableNotification);
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
-                success = handleEditFailure(chatId, messageId, firstPart);
+                handleEditFailure(chatId, messageId, firstPart, session);
                 return false;
             } else {
                 throw e;
@@ -518,10 +490,10 @@ public class StreamEditor {
         }
 
         if (success) {
-            lastEditTime.put(chatId, System.currentTimeMillis());
-            floodStrikes.remove(chatId);
+            session.lastEditTime = System.currentTimeMillis();
+            session.floodStrikes = 0;
         } else {
-            handleEditFailure(chatId, messageId, firstPart);
+            handleEditFailure(chatId, messageId, firstPart, session);
             return false;
         }
 
@@ -537,7 +509,7 @@ public class StreamEditor {
                     chatId, chunk, null, prevMsgId, null);
                 if (newMsgId.isPresent()) {
                     prevMsgId = newMsgId.get();
-                    currentMessageId.put(chatId, new AtomicLong(prevMsgId));
+                    session.currentMessageId.set(prevMsgId);
                 }
                 pos = end;
             }
@@ -568,23 +540,28 @@ public class StreamEditor {
      * @return {@code true} if the edit succeeded
      */
     public boolean finalizeStream(long chatId, long messageId, String finalText) {
+        StreamSession session = sessionFor(chatId);
+        return finalizeStream(chatId, messageId, finalText, session);
+    }
+
+    boolean finalizeStream(long chatId, long messageId, String finalText, StreamSession session) {
         // Stop heartbeat
-        stopHeartbeat(chatId);
+        stopHeartbeat(session);
 
         // S5: Draft streaming — the draft is "committed" by sending the final
         // text as a regular sendMessage. Drafts have no message_id to edit or
         // delete; the draft preview clears naturally on the client when the
         // real message arrives. Try rich message delivery first (same as the
         // edit-based finalize path), then fall back to MarkdownV2 sendMessage.
-        if (Boolean.TRUE.equals(useDraftStreaming.get(chatId))) {
-            String scrubbed = scrubThinkFinal(chatId, finalText);
+        if (session.useDraftStreaming) {
+            String scrubbed = scrubThinkFinal(session, finalText);
 
             // P1: Try rich message delivery first
             if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
                 Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null, null);
                 if (richMsgId.isPresent()) {
                     log.debug("Draft finalized via rich message for chat {}", chatId);
-                    cleanupStream(chatId);
+                    removeSession(chatId);
                     return true;
                 }
                 log.debug("Rich message delivery failed for chat {}, falling back to MarkdownV2", chatId);
@@ -593,7 +570,7 @@ public class StreamEditor {
             // Send the final text as a regular message (commits the draft)
             String formatted = formatForTelegram(scrubbed);
             Optional<Long> finalMsgId = sendFormattedMessage(chatId, formatted);
-            cleanupStream(chatId);
+            removeSession(chatId);
             if (finalMsgId.isPresent()) {
                 log.debug("Draft finalized for chat {}, messageId={}", chatId, finalMsgId.get());
                 return true;
@@ -605,20 +582,20 @@ public class StreamEditor {
 
         // P2-16: If we were in flood fallback mode, send the buffered content
         // as a new message (or continuation messages) instead of editing.
-        StringBuilder buffer = floodFallbackBuffer.get(chatId);
-        if (buffer != null && buffer.length() > 0) {
+        StringBuilder buffer = session.floodFallbackBuffer;
+        if (buffer.length() > 0) {
             log.info("Flood fallback mode: sending buffered content ({} chars) as new message for chat {}", buffer.length(), chatId);
             String bufferedContent = buffer.toString();
-            floodFallbackBuffer.remove(chatId);
+            session.floodFallbackBuffer.setLength(0);
             // Delete the old streaming message if it exists
-            AtomicLong currentMsgId = currentMessageId.get(chatId);
-            long oldMsgId = currentMsgId != null ? currentMsgId.get() : messageId;
+            long currentMsg = session.currentMessageId.get();
+            long oldMsgId = currentMsg >= 0 ? currentMsg : messageId;
             if (oldMsgId > 0) {
                 telegramClient.deleteMessage(chatId, oldMsgId);
             }
             // Send the buffered content as a new message (with parse_mode for formatting)
             Optional<Long> newMsgId = sendFormattedMessage(chatId, bufferedContent);
-            cleanupStream(chatId);
+            removeSession(chatId);
             if (newMsgId.isPresent()) {
                 log.debug("Flood fallback sent for chat {}, new messageId={}", chatId, newMsgId.get());
                 return true;
@@ -630,16 +607,16 @@ public class StreamEditor {
 
         // Use internal currentMessageId if available (may differ from messageId
         // parameter after a segment break created a new message).
-        AtomicLong currentMsgId = currentMessageId.get(chatId);
-        long effectiveMessageId = currentMsgId != null ? currentMsgId.get() : messageId;
+        long currentMsg = session.currentMessageId.get();
+        long effectiveMessageId = currentMsg >= 0 ? currentMsg : messageId;
 
         // B6: Final scrub — also flush any remaining think-block state
-        String scrubbed = scrubThinkFinal(chatId, finalText);
+        String scrubbed = scrubThinkFinal(session, finalText);
 
         // Check fresh-final: if streaming exceeded timeout, delete old message
         // and send a new one
-        Long startTime = streamStartTime.get(chatId);
-        boolean freshFinal = startTime != null
+        long startTime = session.streamStartTime;
+        boolean freshFinal = startTime != 0
             && (System.currentTimeMillis() - startTime) > freshFinalTimeoutMs;
 
         if (freshFinal) {
@@ -650,7 +627,7 @@ public class StreamEditor {
                 Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null, null);
                 if (richMsgId.isPresent()) {
                     telegramClient.deleteMessage(chatId, effectiveMessageId);
-                    cleanupStream(chatId);
+                    removeSession(chatId);
                     return true;
                 }
             }
@@ -658,7 +635,7 @@ public class StreamEditor {
             telegramClient.deleteMessage(chatId, effectiveMessageId);
             String formatted = formatForTelegram(scrubbed);
             Optional<Long> newMsgId = sendFormattedMessage(chatId, formatted);
-            cleanupStream(chatId);
+            removeSession(chatId);
             if (newMsgId.isPresent()) {
                 log.debug("Fresh-final sent for chat {}, new messageId={}", chatId, newMsgId.get());
                 return true;
@@ -675,7 +652,7 @@ public class StreamEditor {
                 // Rich message sent successfully — delete the old streaming message
                 log.debug("Finalized stream via rich message for chat {}, deleting old msg {}", chatId, effectiveMessageId);
                 telegramClient.deleteMessage(chatId, effectiveMessageId);
-                cleanupStream(chatId);
+                removeSession(chatId);
                 return true;
             }
             // Rich failed — fall through to MarkdownV2 edit
@@ -705,13 +682,13 @@ public class StreamEditor {
             if (fallbackMsgId.isPresent()) {
                 // Optionally delete the old stale message
                 telegramClient.deleteMessage(chatId, effectiveMessageId);
-                cleanupStream(chatId);
+                removeSession(chatId);
                 log.debug("Finalize fallback succeeded for chat {}, new messageId={}", chatId, fallbackMsgId.get());
                 return true;
             }
         }
 
-        cleanupStream(chatId);
+        removeSession(chatId);
         if (success) {
             log.debug("Finalized stream for chat {}, messageId={}", chatId, effectiveMessageId);
         } else {
@@ -720,52 +697,13 @@ public class StreamEditor {
         return success;
     }
 
-    /** Clean up streaming state for a chat. */
-    private void cleanupStream(long chatId) {
-        lastEditTime.remove(chatId);
-        floodStrikes.remove(chatId);
-        streamingDisabled.remove(chatId);
-        thinkScrubbers.remove(chatId);
-        editIntervalMap.remove(chatId);
-        streamStartTime.remove(chatId);
-        lastTokenTime.remove(chatId);
-        currentMessageId.remove(chatId);
-        charsSinceLastEdit.remove(chatId);
-        currentToolName.remove(chatId);
-        floodFallbackBuffer.remove(chatId);
-        lastSentText.remove(chatId);
-        // S5: Clean up draft streaming state
-        useDraftStreaming.remove(chatId);
-        draftIdMap.remove(chatId);
-        draftFailures.remove(chatId);
-        chatTypeMap.remove(chatId);
-        stopHeartbeat(chatId);
-    }
-
     /**
      * Clears throttle state for a chat (e.g. after an error or session reset).
      *
      * @param chatId target chat id
      */
     public void clearStream(long chatId) {
-        lastEditTime.remove(chatId);
-        floodStrikes.remove(chatId);
-        streamingDisabled.remove(chatId);
-        thinkScrubbers.remove(chatId);
-        editIntervalMap.remove(chatId);
-        streamStartTime.remove(chatId);
-        lastTokenTime.remove(chatId);
-        currentMessageId.remove(chatId);
-        charsSinceLastEdit.remove(chatId);
-        currentToolName.remove(chatId);
-        floodFallbackBuffer.remove(chatId);
-        lastSentText.remove(chatId);
-        // S5: Clean up draft streaming state
-        useDraftStreaming.remove(chatId);
-        draftIdMap.remove(chatId);
-        draftFailures.remove(chatId);
-        chatTypeMap.remove(chatId);
-        stopHeartbeat(chatId);
+        removeSession(chatId);
     }
 
     // ─── S5: Native draft streaming ───────────────────────────────
@@ -773,27 +711,18 @@ public class StreamEditor {
     /**
      * S5: Resolve whether native draft streaming should be used for this chat.
      *
-     * <p>Honors {@code streamingTransport}:
-     * <ul>
-     *   <li>{@code "edit"} — never use drafts (legacy progressive-edit path)</li>
-     *   <li>{@code "off"} — no streaming (treated as edit defensively)</li>
-     *   <li>{@code "draft"} — require draft support; gracefully fall back to edit</li>
-     *   <li>{@code "auto"} — use drafts when the adapter supports them for this chat type</li>
-     * </ul>
-     *
-     * @param chatId the target chat id
+     * @param session the per-chat session
      * @return {@code true} if draft streaming should be used
      */
-    private boolean resolveDraftStreaming(long chatId) {
+    private boolean resolveDraftStreaming(StreamSession session) {
         if ("edit".equals(streamingTransport) || "off".equals(streamingTransport)) {
             return false;
         }
-        String chatType = chatTypeMap.getOrDefault(chatId, "dm");
+        String chatType = session.chatType != null ? session.chatType : "dm";
         boolean supported = telegramClient.supportsDraftStreaming(chatType);
         if (!supported) {
             if ("draft".equals(streamingTransport)) {
-                log.debug("Draft streaming requested but unsupported (chat={}, type={}) — falling back to edit",
-                    chatId, chatType);
+                log.debug("Draft streaming requested but unsupported (type={}) — falling back to edit", chatType);
             }
             return false;
         }
@@ -803,29 +732,26 @@ public class StreamEditor {
     /**
      * S5: Send a single draft frame for the current accumulated text.
      *
-     * <p>Uses the per-chat draft id to animate the preview. On failure,
-     * increments the failure counter and disables draft streaming after
-     * 2 failures.
-     *
      * @param chatId target chat id
      * @param text   the formatted text to display as a draft
+     * @param session the per-chat session
      * @return {@code true} if the draft frame was successfully sent
      */
-    private boolean sendDraftFrame(long chatId, String text) {
-        Integer draftId = draftIdMap.get(chatId);
-        if (draftId == null) {
+    private boolean sendDraftFrame(long chatId, String text, StreamSession session) {
+        int draftId = session.draftId;
+        if (draftId == 0) {
             // Defensive: should never happen — draft id is set in startStream
-            useDraftStreaming.put(chatId, false);
+            session.useDraftStreaming = false;
             return false;
         }
         boolean ok = telegramClient.sendDraft(chatId, text, draftId);
         if (!ok) {
-            int failures = draftFailures.merge(chatId, 1, Integer::sum);
-            log.debug("Draft frame failed for chat {} (failures={})", chatId, failures);
-            if (failures >= 2) {
+            session.draftFailures = session.draftFailures + 1;
+            log.debug("Draft frame failed for chat {} (failures={})", chatId, session.draftFailures);
+            if (session.draftFailures >= 2) {
                 log.info("Disabling draft streaming for chat {} after {} failures, falling back to edit-based",
-                    chatId, failures);
-                useDraftStreaming.put(chatId, false);
+                    chatId, session.draftFailures);
+                session.useDraftStreaming = false;
             }
         }
         return ok;
@@ -835,44 +761,42 @@ public class StreamEditor {
      * S5: Draft-based editStream — sends the accumulated text as a draft frame
      * instead of editing a message. Throttled to the same per-chat edit interval.
      *
-     * <p>No streaming cursor is appended (the draft animation itself provides
-     * visual feedback). No message_id is needed (drafts have no message_id).
-     *
      * @param chatId target chat id
      * @param text   the full accumulated text to display
+     * @param session the per-chat session
      * @return {@code true} if the draft frame was sent, {@code false} if throttled or failed
      */
-    private boolean editStreamDraft(long chatId, String text) {
+    private boolean editStreamDraft(long chatId, String text, StreamSession session) {
         // Throttle draft frames the same way as edits
         long now = System.currentTimeMillis();
-        Long last = lastEditTime.get(chatId);
-        long currentInterval = getEffectiveInterval(chatId);
+        long last = session.lastEditTime;
+        long currentInterval = getEffectiveInterval(session);
         int charsAccumulated = text.length();
-        boolean intervalElapsed = last == null || (now - last) >= currentInterval;
+        boolean intervalElapsed = last == 0 || (now - last) >= currentInterval;
         boolean thresholdReached = bufferThreshold > 0 && charsAccumulated >= bufferThreshold;
         if (!intervalElapsed && !thresholdReached) {
             log.trace("Throttled draft frame for chat {} ({}ms since last, interval={})",
-                chatId, last != null ? now - last : 0, currentInterval);
+                chatId, last != 0 ? now - last : 0, currentInterval);
             return false;
         }
 
         // Scrub think blocks and format
-        String scrubbed = scrubThink(chatId, text);
+        String scrubbed = scrubThink(session, text);
         String formatted = formatForTelegram(scrubbed);
 
         // Skip if content is unchanged
-        String lastSent = lastSentText.get(chatId);
+        String lastSent = session.lastSentText;
         if (lastSent != null && lastSent.equals(formatted)) {
             log.trace("Skipping redundant draft frame for chat {} (content unchanged)", chatId);
             return true;
         }
 
         // Send the draft frame
-        boolean ok = sendDraftFrame(chatId, formatted);
+        boolean ok = sendDraftFrame(chatId, formatted, session);
         if (ok) {
-            lastEditTime.put(chatId, now);
-            lastSentText.put(chatId, formatted);
-            floodStrikes.remove(chatId);
+            session.lastEditTime = now;
+            session.lastSentText = formatted;
+            session.floodStrikes = 0;
         }
         return ok;
     }
@@ -885,7 +809,12 @@ public class StreamEditor {
      * message but NOT in the streaming text (tool_progress: off).
      */
     public void setCurrentToolName(long chatId, String toolName) {
-        currentToolName.put(chatId, toolName);
+        StreamSession session = sessionFor(chatId);
+        setCurrentToolName(toolName, session);
+    }
+
+    void setCurrentToolName(String toolName, StreamSession session) {
+        session.currentToolName = toolName;
     }
 
     /**
@@ -896,9 +825,14 @@ public class StreamEditor {
      * without showing tool progress in the stream.
      */
     public void onSegmentBreak(long chatId, long messageId, String accumulatedText) {
+        StreamSession session = sessionFor(chatId);
+        onSegmentBreak(chatId, messageId, accumulatedText, session);
+    }
+
+    void onSegmentBreak(long chatId, long messageId, String accumulatedText, StreamSession session) {
         if (accumulatedText == null || accumulatedText.isBlank()) {
             // No text accumulated yet — just clear the tool name
-            currentToolName.remove(chatId);
+            session.currentToolName = null;
             return;
         }
 
@@ -906,26 +840,26 @@ public class StreamEditor {
         // text segment animates as a fresh preview. The accumulated text
         // from this segment is committed as a regular sendMessage (drafts
         // have no message_id to edit or finalize in-place).
-        if (Boolean.TRUE.equals(useDraftStreaming.get(chatId))) {
+        if (session.useDraftStreaming) {
             // Send the accumulated text as a real message (committing the draft)
-            String scrubbed = scrubThink(chatId, accumulatedText);
+            String scrubbed = scrubThink(session, accumulatedText);
             String formatted = formatForTelegram(scrubbed);
             sendFormattedMessage(chatId, formatted);
             // Bump draftId for the next segment
             int newDraftId = draftIdCounter.incrementAndGet();
-            draftIdMap.put(chatId, newDraftId);
+            session.draftId = newDraftId;
             // Reset buffer tracking for the new segment
-            charsSinceLastEdit.remove(chatId);
-            lastEditTime.remove(chatId);
-            lastSentText.remove(chatId);
-            currentToolName.remove(chatId);
+            session.charsSinceLastEdit = 0;
+            session.lastEditTime = 0;
+            session.lastSentText = null;
+            session.currentToolName = null;
             log.debug("Segment break for chat {} — draft committed, new draftId={}", chatId, newDraftId);
             return;
         }
 
         // Finalize the current message with what we have (no cursor, no silent)
         // Hermes: raw text (no parse_mode) during streaming
-        String scrubbed = scrubThink(chatId, accumulatedText);
+        String scrubbed = scrubThink(session, accumulatedText);
         String formatted = scrubbed; // Raw text during streaming — no formatForTelegram
         try {
             telegramClient.editMessageText(chatId, messageId, formatted, null, false);
@@ -936,50 +870,48 @@ public class StreamEditor {
             log.debug("Segment break edit 429 rate limited for chat {}, skipping", chatId);
         }
         // Clear the tool name since the tool is done
-        currentToolName.remove(chatId);
+        session.currentToolName = null;
         // Reset buffer tracking for the new segment
-        charsSinceLastEdit.remove(chatId);
-        lastEditTime.put(chatId, System.currentTimeMillis());
+        session.charsSinceLastEdit = 0;
+        session.lastEditTime = System.currentTimeMillis();
         // Hermes: reset currentMessageId to null so the next editStream call
         // creates a NEW message (text after tool call appears below as a new message).
         // Track the old message ID for reply threading.
-        currentMessageId.remove(chatId);
+        session.currentMessageId.set(-1L);
     }
 
     // ─── Heartbeat ───────────────────────────────────────────────
 
-    private void startHeartbeat(long chatId) {
-        stopHeartbeat(chatId); // Cancel any existing
+    private void startHeartbeat(long chatId, StreamSession session) {
+        stopHeartbeat(session); // Cancel any existing
         int interval = heartbeatIntervalSeconds > 0 ? heartbeatIntervalSeconds : 60;
         ScheduledFuture<?> future = heartbeatExecutor.scheduleAtFixedRate(() -> {
             try {
-                checkHeartbeat(chatId);
+                checkHeartbeat(chatId, session);
             } catch (Exception e) {
                 log.warn("Heartbeat error for chat {}: {}", chatId, e.getMessage());
             }
         }, interval, interval, TimeUnit.SECONDS);
-        heartbeatFutures.put(chatId, future);
+        session.heartbeatFuture = future;
     }
 
-    private void stopHeartbeat(long chatId) {
-        ScheduledFuture<?> future = heartbeatFutures.remove(chatId);
+    void stopHeartbeat(StreamSession session) {
+        ScheduledFuture<?> future = session.heartbeatFuture;
         if (future != null) {
             future.cancel(false);
+            session.heartbeatFuture = null;
         }
     }
 
-    private void checkHeartbeat(long chatId) {
-        Long startTime = streamStartTime.get(chatId);
-        Long lastToken = lastTokenTime.get(chatId);
-        AtomicLong msgIdRef = currentMessageId.get(chatId);
+    private void checkHeartbeat(long chatId, StreamSession session) {
+        long startTime = session.streamStartTime;
+        long lastToken = session.lastTokenTime;
+        long msgId = session.currentMessageId.get();
         // M5: For draft streaming, currentMessageId is null (no edit message to update).
-        // Use useDraftStreaming to check if draft streaming is active — if so, skip
-        // the heartbeat since there's no message to edit. Draft streaming uses
-        // setMessageStreamingProgress instead of editMessageText.
-        Boolean draftActive = useDraftStreaming.get(chatId);
-        if (startTime == null || lastToken == null || msgIdRef == null) {
+        boolean draftActive = session.useDraftStreaming;
+        if (startTime == 0 || lastToken == 0 || msgId < 0) {
             // M5: If draft streaming is active but no messageId, still can't edit — skip
-            if (draftActive == null || !draftActive) {
+            if (!draftActive) {
                 return;
             }
             return;
@@ -998,8 +930,7 @@ public class StreamEditor {
             return; // Less than 1 minute, don't show heartbeat yet
         }
 
-        long msgId = msgIdRef.get();
-        String toolName = currentToolName.get(chatId);
+        String toolName = session.currentToolName;
         String heartbeatText = "⏳ Working — " + elapsedMinutes + " min";
         if (toolName != null && !toolName.isBlank()) {
             heartbeatText += " — " + toolName;
@@ -1020,22 +951,23 @@ public class StreamEditor {
 
     // ─── B5: Adaptive rate limiting ──────────────────────────────
 
-    private long getEffectiveInterval(long chatId) {
-        AtomicLong interval = editIntervalMap.get(chatId);
-        if (interval == null) {
+    private long getEffectiveInterval(StreamSession session) {
+        long interval = session.editInterval.get();
+        if (interval == 0L) {
             return minIntervalMs;
         }
-        return interval.get();
+        return interval;
     }
 
-    private void increaseInterval(long chatId) {
-        AtomicLong interval = editIntervalMap.computeIfAbsent(chatId, k -> new AtomicLong(minIntervalMs));
-        long current = interval.get();
+    private void increaseInterval(StreamSession session) {
+        long current = session.editInterval.get();
+        if (current == 0L) {
+            current = minIntervalMs;
+        }
         long newInterval = Math.min((long) (current * FLOOD_MULTIPLIER), MAX_INTERVAL_MS);
         if (newInterval != current) {
-            log.info("Increasing edit interval from {}ms to {}ms due to flood (chat {})",
-                current, newInterval, chatId);
-            interval.set(newInterval);
+            log.info("Increasing edit interval from {}ms to {}ms due to flood", current, newInterval);
+            session.editInterval.set(newInterval);
         }
     }
 
@@ -1054,7 +986,7 @@ public class StreamEditor {
      * @return true if the failure was handled successfully (e.g. truncated retry
      *         succeeded), false otherwise
      */
-    private boolean handleEditFailure(long chatId, long messageId, String formatted) {
+    private boolean handleEditFailure(long chatId, long messageId, String formatted, StreamSession session) {
         int errorCode = telegramClient.getLastApiErrorCode();
 
         if (errorCode == 400) {
@@ -1078,30 +1010,30 @@ public class StreamEditor {
                 throw retryEx;
             }
             if (retried) {
-                lastEditTime.put(chatId, System.currentTimeMillis());
-                floodStrikes.remove(chatId);
+                session.lastEditTime = System.currentTimeMillis();
+                session.floodStrikes = 0;
             }
             return retried;
         }
 
         // 429 or other failure — increment flood strikes
-        int strikes = floodStrikes.merge(chatId, 1, Integer::sum);
+        int strikes = session.floodStrikes = session.floodStrikes + 1;
         log.debug("Edit failure (errorCode={}) for chat {}, flood strikes: {}", errorCode, chatId, strikes);
 
         // Increase interval on flood
-        increaseInterval(chatId);
+        increaseInterval(session);
 
         if (strikes >= FLOOD_WARN_THRESHOLD) {
             log.warn("Flood strike threshold ({}) reached for chat {}, current interval: {}ms",
-                strikes, chatId, getEffectiveInterval(chatId));
+                strikes, chatId, getEffectiveInterval(session));
         }
 
         if (strikes >= MAX_FLOOD_STRIKES) {
             log.warn("Max flood strikes ({}) exceeded for chat {}, disabling streaming edits — buffering until final",
                 MAX_FLOOD_STRIKES, chatId);
-            streamingDisabled.put(chatId, true);
+            session.streamingDisabled = true;
             // P2-16: Initialize the flood fallback buffer with the current formatted content
-            floodFallbackBuffer.computeIfAbsent(chatId, k -> new StringBuilder()).append(formatted);
+            session.floodFallbackBuffer.append(formatted);
         }
         return false;
     }
@@ -1109,7 +1041,7 @@ public class StreamEditor {
     // ─── B6: Think-block filtering ───────────────────────────────
 
     /**
-     * Stateful scrubber for {@code <think>} blocks.
+     * Stateful scrubber for {@code Ӥ blocks.
      * Handles split chunks where the opening or closing tag spans
      * multiple stream deltas.
      *
@@ -1126,7 +1058,7 @@ public class StreamEditor {
 
         // Exact tag lists — case-sensitive, matching Hermes behavior.
         // Using \u003C and \u003E for angle brackets to avoid encoding issues.
-        // Hermes uses: <REASONING_SCRATCHPAD>, <think>, <reasoning>, <THINKING>, <thinking>, <thought>
+        // Hermes uses: <REASONING_SCRATCHPAD>, Ӥ, <reasoning>, <THINKING>, <thinking>, <thought>
         // Also includes <antml:thinking> which some models emit.
         // Lowercase <reasoning_scratchpad> included for compatibility with models that emit it.
         private static final String[] OPENING_TAGS = {
@@ -1149,7 +1081,7 @@ public class StreamEditor {
 
         /**
          * Process a text chunk, removing any think-block content.
-         * Stateful: if a {@code <think>} tag opens but no closing tag is seen,
+         * Stateful: if a {@code Ӥ tag opens but no closing tag is seen,
          * all subsequent content is suppressed until the closing tag arrives.
          *
          * <p>Matches Hermes behavior:
@@ -1367,7 +1299,19 @@ public class StreamEditor {
         if (text == null || text.isEmpty()) {
             return "";
         }
-        ThinkScrubber scrubber = thinkScrubbers.computeIfAbsent(chatId, k -> new ThinkScrubber());
+        StreamSession session = sessionFor(chatId);
+        return scrubThink(session, text);
+    }
+
+    String scrubThink(StreamSession session, String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        ThinkScrubber scrubber = session.thinkScrubber;
+        if (scrubber == null) {
+            scrubber = new ThinkScrubber();
+            session.thinkScrubber = scrubber;
+        }
         String result = scrubber.scrub(text);
         // S-2: Strip MEDIA: tags from streaming display
         result = mediaDeliveryService.stripMediaTagsForDisplay(result);
@@ -1385,7 +1329,15 @@ public class StreamEditor {
         if (text == null || text.isEmpty()) {
             return "";
         }
-        ThinkScrubber scrubber = thinkScrubbers.get(chatId);
+        StreamSession session = sessionFor(chatId);
+        return scrubThinkFinal(session, text);
+    }
+
+    String scrubThinkFinal(StreamSession session, String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        ThinkScrubber scrubber = session.thinkScrubber;
         if (scrubber == null) {
             // No scrubber exists (e.g. finalizeStream called without prior startStream).
             // Create a temporary one to scrub the final text.
@@ -1484,7 +1436,8 @@ public class StreamEditor {
      * @return {@code true} if draft streaming is currently active
      */
     public boolean isDraftStreamingActive(long chatId) {
-        return Boolean.TRUE.equals(useDraftStreaming.get(chatId));
+        StreamSession session = sessions.get(chatId);
+        return session != null && session.useDraftStreaming;
     }
 
     /**
@@ -1494,5 +1447,18 @@ public class StreamEditor {
      */
     public boolean isStreamingOff() {
         return "off".equals(streamingTransport);
+    }
+
+    // ─── c6: Session accessors for testing ────────────────────────
+
+    /**
+     * c6: Get the {@link StreamSession} for a chat (without creating one).
+     * Package-private for testing.
+     *
+     * @param chatId target chat id
+     * @return the session, or null if absent
+     */
+    StreamSession getSession(long chatId) {
+        return sessions.get(chatId);
     }
 }

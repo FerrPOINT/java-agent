@@ -102,13 +102,19 @@ class BotMessageProcessorDrainQueueLockTest {
         when(session.getUserId()).thenReturn("123");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), any())).thenReturn(session);
 
+        // c5: construct the extracted collaborators with the same mocked deps
+        UpdateDispatcher updateDispatcher = new UpdateDispatcher(
+            properties, editCaptureService, textBatchDebouncer, photoBatchDebouncer);
+        StreamingOrchestrator streamingOrchestrator = new StreamingOrchestrator(
+            backendClient, streamEditor, busyHandler, runtimeFooter, properties, mediaDeliveryService);
+
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
             properties, streamEditor, inboundMediaHandler, mediaDeliveryService, runtimeFooter,
             reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
-            editCaptureService
+            editCaptureService, updateDispatcher, streamingOrchestrator
         );
         processor.init();
     }

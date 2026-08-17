@@ -132,13 +132,19 @@ class BotMessageProcessorTest {
         when(textBatchDebouncer.offer(any())).thenReturn(false);
         when(photoBatchDebouncer.offer(any())).thenReturn(false);
 
+        // c5: construct the extracted collaborators with the same mocked deps
+        UpdateDispatcher updateDispatcher = new UpdateDispatcher(
+            properties, editCaptureService, textBatchDebouncer, photoBatchDebouncer);
+        StreamingOrchestrator streamingOrchestrator = new StreamingOrchestrator(
+            backendClient, streamEditor, busyHandler, runtimeFooter, properties, mediaDeliveryService);
+
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
             properties, streamEditor, inboundMediaHandler, mediaDeliveryService,
             runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
-            editCaptureService);
+            editCaptureService, updateDispatcher, streamingOrchestrator);
     }
 
     // ─── Helper methods ──────────────────────────────────────────
