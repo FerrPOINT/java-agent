@@ -212,7 +212,7 @@ class AgentControllerTest {
 
     private MockMvc sessionMockMvc() {
         SessionController controller = new SessionController(
-            agentRuntimeService, domainDtoMapper, agentProperties, checkpointManager
+            agentRuntimeService, domainDtoMapper, agentProperties, checkpointManager, todoService
         );
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())

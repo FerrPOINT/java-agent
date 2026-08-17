@@ -182,64 +182,7 @@ class P2MissingCommandsTest {
         assertThat(content).contains("session");
     }
 
-    // ── /import ──
-
-    @Test
-    void importCommandIsRegistered() {
-        assertThat(registry.getCommandNames()).contains("import");
-    }
-
-    @Test
-    void importCommandNoArgsShowsUsage() {
-        String result = registry.execute("/import", client, "sid");
-        assertThat(result).contains("Usage: /import");
-    }
-
-    @Test
-    void importCommandWithInlineJsonCallsBackend() {
-        when(client.importSession("{\"session\":\"test\"}")).thenReturn("Session imported.");
-        String result = registry.execute("/import {\"session\":\"test\"}", client, "sid");
-        assertThat(result).contains("Session imported");
-    }
-
-    @Test
-    void importCommandWithFileCallsBackend() throws Exception {
-        java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("test-import-", ".json");
-        tempFile.toFile().deleteOnExit();
-        java.nio.file.Files.writeString(tempFile, "{\"session\":\"from-file\"}");
-        when(client.importSession("{\"session\":\"from-file\"}")).thenReturn("Session imported.");
-        String result = registry.execute("/import " + tempFile.toString(), client, "sid");
-        assertThat(result).contains("Session imported");
-    }
-
-    // ── /sweep ──
-
-    @Test
-    void sweepCommandIsRegistered() {
-        assertThat(registry.getCommandNames()).contains("sweep");
-    }
-
-    @Test
-    void sweepCommandCallsBackendWithDefaultDays() {
-        when(client.sweepSessions("default", 30)).thenReturn("Sweep complete. Removed 5 old sessions.");
-        String result = registry.execute("/sweep", client, "sid");
-        assertThat(result).contains("Sweep complete");
-    }
-
-    @Test
-    void sweepCommandWithCustomDays() {
-        when(client.sweepSessions("default", 7)).thenReturn("Sweep complete. Removed 2 old sessions.");
-        String result = registry.execute("/sweep 7", client, "sid");
-        assertThat(result).contains("Sweep complete");
-    }
-
-    @Test
-    void sweepCommandInvalidDaysShowsError() {
-        String result = registry.execute("/sweep abc", client, "sid");
-        assertThat(result).contains("Invalid number of days");
-    }
-
-    // ── /handoff ──
+    // ── /export ──
 
     @Test
     void handoffCommandIsRegistered() {
@@ -266,92 +209,6 @@ class P2MissingCommandsTest {
         String result = registry.execute("/handoff gpt-4o openai", client, "sid");
         assertThat(result).contains("Handoff");
         assertThat(result).contains("openai");
-    }
-
-    // ── /suggestions ──
-
-    @Test
-    void suggestionsCommandIsRegistered() {
-        assertThat(registry.getCommandNames()).contains("suggestions");
-    }
-
-    @Test
-    void suggestionsListCallsBackend() {
-        ArrayNode arr = mapper.createArrayNode();
-        ObjectNode s1 = mapper.createObjectNode();
-        s1.put("id", "sugg-1");
-        s1.put("text", "Automate daily summary");
-        arr.add(s1);
-        when(client.getSuggestions()).thenReturn(arr);
-        when(client.prettyPrint(any(JsonNode.class))).thenAnswer(inv -> 
-            new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(inv.getArgument(0)));
-        String result = registry.execute("/suggestions", client, "sid");
-        assertThat(result).contains("Automate daily summary");
-    }
-
-    @Test
-    void suggestionsDismissCallsBackend() {
-        when(client.dismissSuggestion("sugg-1")).thenReturn("Suggestion dismissed: sugg-1");
-        String result = registry.execute("/suggestions dismiss sugg-1", client, "sid");
-        assertThat(result).contains("dismissed");
-    }
-
-    @Test
-    void suggestionsDismissWithoutIdShowsUsage() {
-        String result = registry.execute("/suggestions dismiss", client, "sid");
-        assertThat(result).contains("Usage: /suggestions dismiss");
-    }
-
-    @Test
-    void suggestionsAliasWorks() {
-        ArrayNode arr = mapper.createArrayNode();
-        when(client.getSuggestions()).thenReturn(arr);
-        when(client.prettyPrint(any(JsonNode.class))).thenAnswer(inv -> 
-            new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(inv.getArgument(0)));
-        String result = registry.execute("/suggest", client, "sid");
-        // Should resolve via alias
-        assertThat(result).isNotNull();
-    }
-
-    // ── /annotate ──
-
-    @Test
-    void annotateCommandIsRegistered() {
-        assertThat(registry.getCommandNames()).contains("annotate");
-    }
-
-    @Test
-    void annotateCommandNoArgsShowsUsage() {
-        String result = registry.execute("/annotate", client, "sid");
-        assertThat(result).contains("Usage: /annotate");
-    }
-
-    @Test
-    void annotateCommandWithNoteCallsBackend() {
-        when(client.annotateSession("sid", "This is a note")).thenReturn("Annotation saved.");
-        String result = registry.execute("/annotate This is a note", client, "sid");
-        assertThat(result).contains("Annotation saved");
-    }
-
-    // ── /replay ──
-
-    @Test
-    void replayCommandIsRegistered() {
-        assertThat(registry.getCommandNames()).contains("replay");
-    }
-
-    @Test
-    void replayCommandCallsBackend() {
-        when(client.replaySession("sid", null)).thenReturn("Replay started.");
-        String result = registry.execute("/replay", client, "sid");
-        assertThat(result).contains("Replay started");
-    }
-
-    @Test
-    void replayCommandWithFromPointCallsBackend() {
-        when(client.replaySession("sid", "msg-5")).thenReturn("Replay started from msg-5.");
-        String result = registry.execute("/replay msg-5", client, "sid");
-        assertThat(result).contains("Replay started");
     }
 
     // ── /redraw ──
@@ -480,19 +337,18 @@ class P2MissingCommandsTest {
     // ── Command count ──
 
     @Test
-    void registersAtLeast85Commands() {
-        List<String> names = registry.getCommandNames();
-        assertThat(names).hasSizeGreaterThanOrEqualTo(85);
-    }
-
-    @Test
     void allNewCommandsAreRegistered() {
         List<String> names = registry.getCommandNames();
         assertThat(names).contains(
-            "profile", "toolsets", "debug", "plan", "export", "import",
-            "sweep", "handoff", "suggestions", "annotate", "replay",
-            "redraw", "image", "whoami", "statusbar", "gquota",
+            "profile", "toolsets", "debug", "plan", "export",
+            "handoff", "redraw", "image", "whoami", "statusbar", "gquota",
             "platforms", "editor"
         );
+    }
+
+    @Test
+    void registersAtLeast79Commands() {
+        List<String> names = registry.getCommandNames();
+        assertThat(names).hasSizeGreaterThanOrEqualTo(79);
     }
 }

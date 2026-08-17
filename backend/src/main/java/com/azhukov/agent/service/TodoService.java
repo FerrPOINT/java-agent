@@ -27,6 +27,12 @@ public class TodoService {
             .toList();
     }
 
+    public List<TodoDto> listBySessionId(UUID sessionId) {
+        return todoRepository.findBySessionId(sessionId).stream()
+            .map(TodoService::toDto)
+            .toList();
+    }
+
     public TodoDto add(String userId, String text) {
         if (text == null || text.isBlank()) {
             throw new IllegalArgumentException("Task text is required");

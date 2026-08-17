@@ -1115,12 +1115,6 @@ public class BackendClient {
         }
     }
 
-    /** @deprecated use {@link #diff(String, String)} — scope was never used by backend */
-    @Deprecated(since = "0.0.1", forRemoval = true)
-    public String diff(String leftId, String rightId, String scope) {
-        return diff(leftId, rightId);
-    }
-
     public String getCredits() {
         try {
             String json = restClient.get()
@@ -1793,47 +1787,6 @@ public class BackendClient {
     }
 
     /**
-     * Import a session from JSON data.
-     */
-    public String importSession(String jsonData) {
-        try {
-            String json = restClient.post()
-                .uri("/api/v1/agent/session/import")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(jsonData)
-                .retrieve()
-                .body(String.class);
-            if (json == null || json.isBlank()) return "Session imported.";
-            JsonNode node = objectMapper.readTree(json);
-            return node.path("message").asText("Session imported.");
-        } catch (Exception e) {
-            return handleErr("importSession", e);
-        }
-    }
-
-    /**
-     * Sweep (clean up) old sessions for a user.
-     * @param userId the user ID
-     * @param olderThanDays remove sessions older than this many days (0 = use default)
-     */
-    public String sweepSessions(String userId, int olderThanDays) {
-        try {
-            String json = restClient.delete()
-                .uri(uriBuilder -> uriBuilder.path("/api/v1/agent/sessions/{userId}")
-                    .queryParam("sweep", true)
-                    .queryParam("olderThanDays", olderThanDays)
-                    .build(userId))
-                .retrieve()
-                .body(String.class);
-            if (json == null || json.isBlank()) return "Sweep complete.";
-            JsonNode node = objectMapper.readTree(json);
-            return node.path("message").asText("Sweep complete.");
-        } catch (Exception e) {
-            return handleErr("sweepSessions", e);
-        }
-    }
-
-    /**
      * List available toolsets (groups of tools).
      */
     public JsonNode listToolsets() {
@@ -1908,84 +1861,6 @@ public class BackendClient {
             return "Plan: " + plan.asText();
         } catch (Exception e) {
             return handleErr("getPlan", e);
-        }
-    }
-
-    /**
-     * Get suggestions for the current session.
-     */
-    public JsonNode getSuggestions() {
-        try {
-            String json = restClient.get()
-                .uri("/api/v1/agent/suggestions")
-                .retrieve()
-                .body(String.class);
-            if (json == null || json.isBlank()) return objectMapper.createArrayNode();
-            return objectMapper.readTree(json);
-        } catch (Exception e) {
-            log.error("getSuggestions failed: {}", e.getMessage());
-            return objectMapper.createArrayNode();
-        }
-    }
-
-    /**
-     * Dismiss a suggestion by ID.
-     */
-    public String dismissSuggestion(String suggestionId) {
-        try {
-            restClient.delete()
-                .uri("/api/v1/agent/suggestions/{id}", suggestionId)
-                .retrieve()
-                .toBodilessEntity();
-            return "Suggestion dismissed: " + suggestionId;
-        } catch (Exception e) {
-            return handleErr("dismissSuggestion", e);
-        }
-    }
-
-    /**
-     * Annotate a session with a note.
-     */
-    public String annotateSession(String sessionId, String note) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("sessionId", sessionId);
-        body.put("note", note);
-        try {
-            String json = restClient.post()
-                .uri("/api/v1/agent/session/annotate")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(String.class);
-            if (json == null || json.isBlank()) return "Annotation saved.";
-            JsonNode node = objectMapper.readTree(json);
-            return node.path("message").asText("Annotation saved.");
-        } catch (Exception e) {
-            return handleErr("annotateSession", e);
-        }
-    }
-
-    /**
-     * Replay a session from a specific point.
-     */
-    public String replaySession(String sessionId, String fromPoint) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("sessionId", sessionId);
-        if (fromPoint != null && !fromPoint.isBlank()) {
-            body.put("from", fromPoint);
-        }
-        try {
-            String json = restClient.post()
-                .uri("/api/v1/agent/session/replay")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(String.class);
-            if (json == null || json.isBlank()) return "Replay started.";
-            JsonNode node = objectMapper.readTree(json);
-            return node.path("message").asText("Replay started.");
-        } catch (Exception e) {
-            return handleErr("replaySession", e);
         }
     }
 

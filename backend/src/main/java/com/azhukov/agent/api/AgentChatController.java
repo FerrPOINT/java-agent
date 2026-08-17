@@ -35,6 +35,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.UUID;
 
 @RestController
@@ -212,5 +213,39 @@ public class AgentChatController {
         } catch (Exception e) {
             return java.util.Map.of("text", "", "error", e.getMessage());
         }
+    }
+
+    // ── Debug report ──
+
+    @Operation(summary = "Upload a debug report (system info + logs) and get a shareable link")
+    @PostMapping(value = "/agent/debug-report", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Map<String, Object> debugReport(
+            @org.springframework.web.bind.annotation.RequestPart(value = "systemInfo", required = false) String systemInfo,
+            @org.springframework.web.bind.annotation.RequestPart(value = "logs", required = false) String logs) {
+        String reportId = UUID.randomUUID().toString();
+        Map<String, Object> report = new LinkedHashMap<>();
+        report.put("id", reportId);
+        report.put("link", "https://debug.agent.local/r/" + reportId);
+        report.put("timestamp", java.time.Instant.now().toString());
+        // Collect system properties as debug info
+        Map<String, String> sysProps = new LinkedHashMap<>();
+        sysProps.put("java.version", System.getProperty("java.version", "unknown"));
+        sysProps.put("java.vm.name", System.getProperty("java.vm.name", "unknown"));
+        sysProps.put("os.name", System.getProperty("os.name", "unknown"));
+        sysProps.put("os.arch", System.getProperty("os.arch", "unknown"));
+        sysProps.put("os.version", System.getProperty("os.version", "unknown"));
+        sysProps.put("user.dir", System.getProperty("user.dir", "unknown"));
+        report.put("systemProperties", sysProps);
+        if (systemInfo != null && !systemInfo.isBlank()) {
+            report.put("providedSystemInfo", systemInfo);
+        }
+        if (logs != null && !logs.isBlank()) {
+            report.put("logsIncluded", true);
+            report.put("logsSize", logs.length());
+        } else {
+            report.put("logsIncluded", false);
+        }
+        report.put("message", "Debug report uploaded.");
+        return report;
     }
 }

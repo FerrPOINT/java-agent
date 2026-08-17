@@ -48,27 +48,27 @@ public class CapabilitiesController {
         Map<String, Object> features = new LinkedHashMap<>();
         features.put("chat_completions", true);
         features.put("chat_completions_streaming", true);
-        features.put("responses_api", false);       // not yet implemented
-        features.put("responses_streaming", false);
-        features.put("run_submission", false);       // async runs not implemented
-        features.put("run_status", false);
-        features.put("run_events_sse", false);
-        features.put("run_stop", false);
-        features.put("run_approval_response", false);
+        features.put("responses_api", false);       // Responses API — deferred, not yet implemented
+        features.put("responses_streaming", false);  // Responses API streaming — deferred, not yet implemented
+        features.put("run_submission", false);       // Async runs — deferred, not yet implemented
+        features.put("run_status", false);           // Async runs — deferred, not yet implemented
+        features.put("run_events_sse", false);       // Async runs — deferred, not yet implemented
+        features.put("run_stop", false);             // Async runs — deferred, not yet implemented
+        features.put("run_approval_response", false); // Async runs — deferred, not yet implemented
         features.put("tool_progress_events", true);
         features.put("approval_events", true);
         features.put("session_resources", true);
         features.put("session_chat", true);
         features.put("session_chat_streaming", true);
         features.put("session_fork", true);
-        features.put("admin_config_rw", false);
+        features.put("admin_config_rw", false);      // Admin config RW — deferred, not yet implemented
         features.put("jobs_admin", properties.getCron() != null && properties.getCron().isEnabled());
         features.put("memory_write_api", true);
         features.put("skills_api", true);
         features.put("audio_api", ttsService != null || transcriptionService != null);
-        features.put("realtime_voice", false);
+        features.put("realtime_voice", false);       // Realtime voice — deferred, not yet implemented
         features.put("session_continuity_header", "X-Session-Id");
-        features.put("cors", false);
+        features.put("cors", false);                 // CORS — deferred, not yet implemented
 
         Map<String, Object> endpoints = new LinkedHashMap<>();
         endpoints.put("health", Map.of("method", "GET", "path", "/api/v1/health"));

@@ -938,37 +938,6 @@ public class SlashCommandRegistry {
             }
         });
 
-        // /import — import a session from JSON
-        register("import", "Import a session from JSON: /import <file-or-json>", (args, client, sessionId) -> {
-            if (args.isBlank()) return "Usage: /import <file-path-or-json-data>";
-            String jsonData;
-            // Try reading from file first
-            try {
-                java.nio.file.Path path = java.nio.file.Path.of(args.strip());
-                if (java.nio.file.Files.exists(path)) {
-                    jsonData = java.nio.file.Files.readString(path);
-                } else {
-                    jsonData = args.strip(); // Treat as inline JSON
-                }
-            } catch (Exception e) {
-                jsonData = args.strip(); // Fallback: treat as inline JSON
-            }
-            return client.importSession(jsonData);
-        });
-
-        // /sweep — clean up old sessions
-        register("sweep", "Clean up old sessions: /sweep [days] (default: 30)", (args, client, sessionId) -> {
-            int days = 30;
-            if (!args.isBlank()) {
-                try {
-                    days = Integer.parseInt(args.strip());
-                } catch (NumberFormatException e) {
-                    return "Invalid number of days: " + args;
-                }
-            }
-            return client.sweepSessions("default", days);
-        });
-
         // /handoff — hand off to a different model
         register("handoff", "Hand off to a different model: /handoff <model> [provider]", (args, client, sessionId) -> {
             if (args.isBlank()) return "Usage: /handoff <model> [provider]";
@@ -977,30 +946,6 @@ public class SlashCommandRegistry {
             String provider = parts.length > 1 ? parts[1] : null;
             return client.handoffModel(sessionId, model, provider);
         });
-
-        // /suggestions — show or dismiss suggestions
-        register("suggestions", "Show or dismiss suggestions: /suggestions [dismiss <id>]", (args, client, sessionId) -> {
-            if (args.isBlank()) {
-                JsonNode suggestions = client.getSuggestions();
-                return client.prettyPrint(suggestions);
-            }
-            String[] parts = args.split("\\s+", 2);
-            if ("dismiss".equalsIgnoreCase(parts[0])) {
-                if (parts.length < 2) return "Usage: /suggestions dismiss <id>";
-                return client.dismissSuggestion(parts[1].strip());
-            }
-            return "Usage: /suggestions [dismiss <id>]";
-        });
-
-        // /annotate — annotate the current session with a note
-        register("annotate", "Annotate the current session: /annotate <note>", (args, client, sessionId) -> {
-            if (args.isBlank()) return "Usage: /annotate <note>";
-            return client.annotateSession(sessionId, args.strip());
-        });
-
-        // /replay — replay the current session from a point
-        register("replay", "Replay the current session: /replay [from-point]", (args, client, sessionId) ->
-            client.replaySession(sessionId, args.isBlank() ? null : args.strip()));
 
         // /redraw — force a full UI repaint (recovers from terminal drift)
         register("redraw", "Force a full UI repaint (recovers from terminal drift)", (args, client, sessionId) -> {
@@ -1069,7 +1014,6 @@ public class SlashCommandRegistry {
         // Additional aliases from Hermes
         registerAlias("v", "version");
         registerAlias("sb", "statusbar");
-        registerAlias("suggest", "suggestions");
 
         log.info("SlashCommandRegistry initialized with {} commands, {} aliases",
             commands.size(), aliases.size());

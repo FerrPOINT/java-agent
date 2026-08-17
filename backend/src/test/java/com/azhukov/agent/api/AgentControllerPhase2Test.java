@@ -57,6 +57,7 @@ class AgentControllerPhase2Test {
     @Mock private RuntimeConfigService runtimeConfigService;
     @Mock private com.azhukov.agent.service.CliRuntimeSettingsService cliRuntimeSettingsService;
     @Mock private com.azhukov.agent.security.UrlSafetyHandler urlSafetyHandler;
+    @Mock private com.azhukov.agent.service.TodoService todoService;
 
     @BeforeEach
     void setUp() {
@@ -83,7 +84,7 @@ class AgentControllerPhase2Test {
 
     private MockMvc sessionMockMvc() {
         SessionController controller = new SessionController(
-            agentRuntimeService, domainDtoMapper, agentProperties, checkpointManager
+            agentRuntimeService, domainDtoMapper, agentProperties, checkpointManager, todoService
         );
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())

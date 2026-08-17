@@ -12,6 +12,8 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.CheckpointManager;
+import com.azhukov.agent.service.TodoService;
+import com.azhukov.agent.api.dto.TodoDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -41,6 +43,7 @@ public class SessionController {
     private final DomainDtoMapper domainDtoMapper;
     private final AgentProperties properties;
     private final CheckpointManager checkpointManager;
+    private final TodoService todoService;
 
     @Operation(summary = "List all sessions")
     @GetMapping("/sessions")
@@ -177,5 +180,17 @@ public class SessionController {
     @PostMapping("/agent/session/{sessionId}/branch")
     public SessionSummaryDto branchSession(@PathVariable UUID sessionId, @RequestParam(required = false) String name) {
         return agentRuntimeService.branchSession(sessionId, name);
+    }
+
+    // ── Plan (todo list for session) ──
+
+    @Operation(summary = "Get the current plan (todo list) for a session")
+    @GetMapping("/agent/session/{sessionId}/plan")
+    public Map<String, Object> getPlan(@PathVariable UUID sessionId) {
+        List<TodoDto> todos = todoService.listBySessionId(sessionId);
+        return Map.of(
+            "session_id", sessionId.toString(),
+            "todos", todos
+        );
     }
 }
