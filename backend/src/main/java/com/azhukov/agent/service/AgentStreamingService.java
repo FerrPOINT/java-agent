@@ -57,6 +57,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.TimeoutException;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 
@@ -93,6 +94,26 @@ public class AgentStreamingService {
     private final ModelMetadataService modelMetadataService;
     private final MidTurnPersistenceCallback midTurnPersistenceCallback;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
+
+    // ── Shared turn-execution logic (c2: extracted with DefaultAgentRuntime) ──
+    // TurnExecutor contains the shared model-call-with-retry, tool execution,
+    // think-block stripping, and context-compression-check logic. The streaming
+    // path delegates error classification + backoff calculation to it via
+    // classifyForRetry(), and uses its static estimateResponseTokens helper.
+    // Constructed from existing dependencies in @PostConstruct to preserve the
+    // @RequiredArgsConstructor signature (tests construct this class positionally).
+    // The deps not available here (contextCompressor, approvalQueue,
+    // memoryNudgeManager) are passed as null — they are only used by
+    // callModelWithRetry/executeToolBatch which the streaming path doesn't call.
+    private com.azhukov.agent.core.agent.TurnExecutor turnExecutor;
+
+    @PostConstruct
+    void initTurnExecutor() {
+        this.turnExecutor = new com.azhukov.agent.core.agent.TurnExecutor(
+            errorClassifier, properties, null, contextEngine,
+            toolExecutionService, toolResultFormatter, tokenEstimator,
+            interruptToken, null, null, steerBuffer);
+    }
 
     private static final int MAX_STREAM_RETRIES = 5;
     private static final int MAX_CONTINUATION_ATTEMPTS = 1;
@@ -322,18 +343,30 @@ public class AgentStreamingService {
                 if (capturedError.get() != null) {
                     Throwable error = capturedError.get();
                     if (streamRetries < MAX_STREAM_RETRIES) {
-                        ErrorClassifier.ErrorType errorType = error instanceof Exception
-                            ? errorClassifier.classify((Exception) error)
-                            : ErrorClassifier.ErrorType.RETRYABLE;
-                        if (errorType == ErrorClassifier.ErrorType.RETRYABLE
-                            || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
-                            // Exponential backoff: base*2^n capped, with jitter
+                        // ── c2: delegate error classification + backoff to TurnExecutor ──
+                        // The streaming path can't reuse callModelWithRetry directly (it
+                        // streams tokens via a handler), but the error classification and
+                        // backoff-delay calculation are shared logic that TurnExecutor owns.
+                        ErrorClassifier.ErrorType errorType;
+                        long delayMs;
+                        if (error instanceof Exception exc) {
+                            com.azhukov.agent.core.agent.TurnExecutor.RetryClassification rc =
+                                turnExecutor.classifyForRetry(exc, streamRetries);
+                            errorType = rc.errorType();
+                            delayMs = rc.backoffMs();
+                            // Preserve the streaming path's jitter: add 0-500ms on top of
+                            // the computed backoff (the synchronous path's jitter is already
+                            // included in computeBackoffMs for non-RATE_LIMIT/OVERLOADED types).
+                            delayMs += ThreadLocalRandom.current().nextLong(0, 500);
+                        } else {
+                            errorType = ErrorClassifier.ErrorType.RETRYABLE;
                             long baseMs = properties.getError().getRetryDelayMs();
                             long capMs = properties.getError().getRetryCapMs();
-                            long delayMs = Math.min(
-                                baseMs * (1L << streamRetries),
-                                capMs);
+                            delayMs = Math.min(baseMs * (1L << streamRetries), capMs);
                             delayMs += ThreadLocalRandom.current().nextLong(0, 500);
+                        }
+                        if (errorType == ErrorClassifier.ErrorType.RETRYABLE
+                            || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
                             String retryMsg = "⏳ Model overloaded, retrying (attempt "
                                 + (streamRetries + 1) + "/" + MAX_STREAM_RETRIES
                                 + ") in " + (delayMs / 1000) + "s...";
@@ -625,14 +658,8 @@ public class AgentStreamingService {
     }
 
     private int estimateResponseTokens(String content, List<ToolCall> toolCalls) {
-        int chars = content != null ? content.length() : 0;
-        if (toolCalls != null) {
-            for (ToolCall tc : toolCalls) {
-                chars += tc.arguments() != null ? tc.arguments().length() : 0;
-                chars += tc.name() != null ? tc.name().length() : 0;
-            }
-        }
-        return chars / 4 + 1;
+        // c2: delegate to TurnExecutor's shared static helper
+        return com.azhukov.agent.core.agent.TurnExecutor.estimateResponseTokens(content, toolCalls);
     }
 
     private void persistTurn(Session session, List<Message> turnMessages, boolean isNew) {
