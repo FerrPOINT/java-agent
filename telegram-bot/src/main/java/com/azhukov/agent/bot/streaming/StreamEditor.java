@@ -829,6 +829,20 @@ public class StreamEditor {
         onSegmentBreak(chatId, messageId, accumulatedText, session);
     }
 
+    /**
+     * Send a short progress message (tool call bubble) as a separate Telegram message.
+     * Mirrors Hermes tool progress: each tool call gets its own message like "🔎 session_search..."
+     * Not accumulated into the main streaming text.
+     */
+    public void sendProgressMessage(long chatId, String text) {
+        try {
+            String formatted = formatForTelegram(text);
+            sendMessageWithNotification(chatId, formatted, streamingSilent);
+        } catch (Exception e) {
+            log.debug("Failed to send progress message for chat {}: {}", chatId, e.getMessage());
+        }
+    }
+
     void onSegmentBreak(long chatId, long messageId, String accumulatedText, StreamSession session) {
         if (accumulatedText == null || accumulatedText.isBlank()) {
             // No text accumulated yet — just clear the tool name

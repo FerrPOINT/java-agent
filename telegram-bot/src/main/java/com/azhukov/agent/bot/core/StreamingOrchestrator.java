@@ -110,13 +110,18 @@ public class StreamingOrchestrator {
                     streamEditor.editStream(chatId, Math.max(0, messageId[0]), accumulated.toString());
                 },
                 // toolCallConsumer — called when backend emits tool_calls event
-                // Show tool call with emoji icon in the streaming message (like Hermes).
+                // Hermes parity: send tool call as a separate short message (progress bubble),
+                // not accumulated in the main text. This keeps the chat clean and readable.
                 toolCall -> {
                     streamEditor.setCurrentToolName(chatId, toolCall);
-                    // Show "⚙️ tool_name: \"preview\"" in the stream
+                    // Finalize current streaming message with accumulated text (if any)
+                    if (accumulated.length() > 0 && messageId[0] >= 0) {
+                        streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
+                        accumulated.setLength(0);
+                    }
+                    // Send tool call as a separate message (progress bubble)
                     String toolDisplay = ToolEmojiMap.formatToolCall(toolCall, null);
-                    accumulated.append("\n").append(toolDisplay).append("\n");
-                    streamEditor.editStream(chatId, Math.max(0, messageId[0]), accumulated.toString());
+                    streamEditor.sendProgressMessage(chatId, toolDisplay);
                 },
                 // toolResultConsumer — called when backend emits tool_result event
                 (toolName, toolResultPreview) -> {
