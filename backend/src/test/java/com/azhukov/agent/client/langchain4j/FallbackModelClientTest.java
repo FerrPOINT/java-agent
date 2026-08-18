@@ -8,7 +8,6 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ToolDefinition;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse.Builder;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -36,14 +35,15 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class FallbackModelClientTest {
 
+    // Must mock OpenAiChatModel (not just ChatModel) because build() returns OpenAiChatModel
     @Mock
-    private ChatModel chatModel;
+    private OpenAiChatModel mockOpenAiModel;
 
     /**
-     * Helper: intercept the static OpenAiChatModel.builder() chain to inject a mock ChatModel.
+     * Helper: intercept the static OpenAiChatModel.builder() chain to inject a mock model.
      * The FallbackModelClient constructor calls builder().baseUrl().apiKey().modelName()
      * .timeout().maxRetries().temperature().build() — we mock all builder methods to return
-     * the mock builder, then return our mock ChatModel from build().
+     * the mock builder, then return our mock OpenAiChatModel from build().
      */
     @SuppressWarnings("unchecked")
     private FallbackModelClient createClientWithMockedModel() {
@@ -54,8 +54,7 @@ class FallbackModelClientTest {
         when(mockBuilder.timeout(any(Duration.class))).thenReturn(mockBuilder);
         when(mockBuilder.maxRetries(anyInt())).thenReturn(mockBuilder);
         when(mockBuilder.temperature(anyDouble())).thenReturn(mockBuilder);
-        // build() returns OpenAiChatModel; use thenAnswer to return a ChatModel mock
-        when(mockBuilder.build()).thenAnswer(inv -> chatModel);
+        when(mockBuilder.build()).thenReturn(mockOpenAiModel);
 
         try (MockedStatic<OpenAiChatModel> staticMock = mockStatic(OpenAiChatModel.class)) {
             staticMock.when(OpenAiChatModel::builder).thenReturn(mockBuilder);
@@ -72,7 +71,7 @@ class FallbackModelClientTest {
         AiMessage aiMessage = AiMessage.from("Hello, world!");
         dev.langchain4j.model.chat.response.ChatResponse lcResponse =
             new Builder().aiMessage(aiMessage).build();
-        when(chatModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
+        when(mockOpenAiModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
 
         List<Message> messages = List.of(Message.user("Hi"));
         ChatResponse result = client.complete(messages, List.of(), ModelRequestOptions.empty());
@@ -87,11 +86,11 @@ class FallbackModelClientTest {
     void shouldReturnEmptyTextWhenAiMessageTextIsNull() {
         FallbackModelClient client = createClientWithMockedModel();
 
-        // AiMessage with only tool execution requests has null text
-        AiMessage aiMessage = AiMessage.from(List.<ToolExecutionRequest>of());
+        // AiMessage with null text and no tool execution requests
+        AiMessage aiMessage = AiMessage.builder().build();
         dev.langchain4j.model.chat.response.ChatResponse lcResponse =
             new Builder().aiMessage(aiMessage).build();
-        when(chatModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
+        when(mockOpenAiModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
 
         List<Message> messages = List.of(Message.user("Hi"));
         ChatResponse result = client.complete(messages, List.of(), ModelRequestOptions.empty());
@@ -111,7 +110,7 @@ class FallbackModelClientTest {
         AiMessage aiMessage = AiMessage.from(List.of(toolReq));
         dev.langchain4j.model.chat.response.ChatResponse lcResponse =
             new Builder().aiMessage(aiMessage).build();
-        when(chatModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
+        when(mockOpenAiModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
 
         List<Message> messages = List.of(Message.user("Search for test"));
         ChatResponse result = client.complete(messages, List.of(), ModelRequestOptions.empty());
@@ -135,7 +134,7 @@ class FallbackModelClientTest {
         AiMessage aiMessage = AiMessage.from("Let me run a command.", List.of(toolReq));
         dev.langchain4j.model.chat.response.ChatResponse lcResponse =
             new Builder().aiMessage(aiMessage).build();
-        when(chatModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
+        when(mockOpenAiModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
 
         List<Message> messages = List.of(Message.user("Run something"));
         ChatResponse result = client.complete(messages, List.of(), ModelRequestOptions.empty());
@@ -158,7 +157,7 @@ class FallbackModelClientTest {
         AiMessage aiMessage = AiMessage.from("", List.of(toolReq));
         dev.langchain4j.model.chat.response.ChatResponse lcResponse =
             new Builder().aiMessage(aiMessage).build();
-        when(chatModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
+        when(mockOpenAiModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
 
         List<Message> messages = List.of(Message.user("Read a file"));
         ChatResponse result = client.complete(messages, List.of(), ModelRequestOptions.empty());
@@ -173,7 +172,7 @@ class FallbackModelClientTest {
     void shouldRethrowExceptionFromChatModel() {
         FallbackModelClient client = createClientWithMockedModel();
 
-        when(chatModel.chat(any(ChatRequest.class)))
+        when(mockOpenAiModel.chat(any(ChatRequest.class)))
             .thenThrow(new RuntimeException("Connection refused"));
 
         List<Message> messages = List.of(Message.user("Hi"));
@@ -199,7 +198,7 @@ class FallbackModelClientTest {
         AiMessage aiMessage = AiMessage.from("Response with no tools");
         dev.langchain4j.model.chat.response.ChatResponse lcResponse =
             new Builder().aiMessage(aiMessage).build();
-        when(chatModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
+        when(mockOpenAiModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
 
         List<Message> messages = List.of(Message.user("Hi"));
         // Pass null tools — should be handled by the null check in complete()
@@ -221,7 +220,7 @@ class FallbackModelClientTest {
         AiMessage aiMessage = AiMessage.from(List.of(req1, req2));
         dev.langchain4j.model.chat.response.ChatResponse lcResponse =
             new Builder().aiMessage(aiMessage).build();
-        when(chatModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
+        when(mockOpenAiModel.chat(any(ChatRequest.class))).thenReturn(lcResponse);
 
         List<Message> messages = List.of(Message.user("Do two things"));
         ChatResponse result = client.complete(messages, List.of(), ModelRequestOptions.empty());
@@ -253,7 +252,7 @@ class FallbackModelClientTest {
         when(mockBuilder.timeout(any(Duration.class))).thenReturn(mockBuilder);
         when(mockBuilder.maxRetries(anyInt())).thenReturn(mockBuilder);
         when(mockBuilder.temperature(anyDouble())).thenReturn(mockBuilder);
-        when(mockBuilder.build()).thenAnswer(inv -> chatModel);
+        when(mockBuilder.build()).thenReturn(mockOpenAiModel);
 
         try (MockedStatic<OpenAiChatModel> staticMock = mockStatic(OpenAiChatModel.class)) {
             staticMock.when(OpenAiChatModel::builder).thenReturn(mockBuilder);

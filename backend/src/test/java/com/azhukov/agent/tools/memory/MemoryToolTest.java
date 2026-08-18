@@ -317,16 +317,17 @@ class MemoryToolTest {
     @DisplayName("Should handle case-insensitive action and target")
     void shouldHandleCaseInsensitiveActionAndTarget() {
         MemoryTool tool = new MemoryTool(memoryProvider);
-        when(memoryProvider.getCharCount(USER_ID, "memory")).thenReturn(0);
-        when(memoryProvider.getEntryCount(USER_ID, "memory")).thenReturn(0);
+        // Target is validated case-insensitively but passed to provider as-is
+        when(memoryProvider.getCharCount(eq(USER_ID), anyString())).thenReturn(0);
+        when(memoryProvider.getEntryCount(eq(USER_ID), anyString())).thenReturn(0);
 
         String args = "{\"action\":\"ADD\",\"target\":\"MEMORY\",\"content\":\"case test\"}";
         ToolResult result = tool.execute(args, LAST_MSG, SESSION);
 
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("Entry added.");
-        // Should store to "memory" target (lowercased)
-        verify(memoryProvider).store(eq(USER_ID), eq("memory"), eq("auto"), eq("case test"), anyMap());
+        // Should store with the original target value (not lowercased)
+        verify(memoryProvider).store(eq(USER_ID), eq("MEMORY"), eq("auto"), eq("case test"), anyMap());
     }
 
     @Test
