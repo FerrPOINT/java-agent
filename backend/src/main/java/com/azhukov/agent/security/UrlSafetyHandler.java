@@ -1,7 +1,7 @@
 package com.azhukov.agent.security;
 
 import com.azhukov.agent.config.AgentProperties;
-import com.azhukov.agent.core.security.UrlSafety;
+import com.azhukov.agent.security.UrlSafety;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;

@@ -9,7 +9,6 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
-import com.azhukov.agent.core.agent.SessionLineageService;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -40,11 +39,11 @@ public class DefaultContextEngine implements ContextEngine {
  private final ModelMetadataService modelMetadataService;
 
  /**
-  * Session lineage service for loading ancestor messages after compression rotation.
+  * Session lineage port for loading ancestor messages after compression rotation.
   * Optional — set via {@link #setSessionLineageService} after construction.
   * When null, falls back to loading current-session-only history.
   */
- private SessionLineageService sessionLineageService;
+ private SessionLineagePort sessionLineageService;
 
  private final Map<UUID, Map<String, String>> snapshotCache = new ConcurrentHashMap<>();
  private final Map<UUID, String> lastMemoryHash = new ConcurrentHashMap<>();
@@ -100,14 +99,14 @@ public class DefaultContextEngine implements ContextEngine {
  }
 
  /**
- * Inject the {@link SessionLineageService} for loading ancestor messages
+ * Inject the {@link SessionLineagePort} for loading ancestor messages
  * after compression rotation. Called by the Spring {@code @Bean} factory
  * after construction. When not set, history loading falls back to
  * current-session-only queries.
  *
- * @param sessionLineageService the lineage service, or null to disable
+ * @param sessionLineageService the lineage port, or null to disable
  */
- public void setSessionLineageService(SessionLineageService sessionLineageService) {
+ public void setSessionLineageService(SessionLineagePort sessionLineageService) {
  this.sessionLineageService = sessionLineageService;
  }
 

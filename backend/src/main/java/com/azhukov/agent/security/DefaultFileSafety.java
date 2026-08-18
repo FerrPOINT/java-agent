@@ -1,4 +1,4 @@
-package com.azhukov.agent.core.security;
+package com.azhukov.agent.security;
 
 import com.azhukov.agent.config.AgentProperties;
 import org.springframework.stereotype.Component;

@@ -18,13 +18,13 @@ class AgentConfigNoDuplicateBeanTest {
 
         // The toolGuardrails method should exist
         assertThat(config.getClass().getMethod("toolGuardrails",
-            AgentProperties.class, com.azhukov.agent.core.security.ApprovalQueue.class))
+            AgentProperties.class, com.azhukov.agent.security.ApprovalQueue.class))
             .isNotNull();
 
         // The legacy duplicate method should NOT exist
         assertThatThrownBy(() ->
             config.getClass().getMethod("legacyToolGuardrails",
-                AgentProperties.class, com.azhukov.agent.core.security.ApprovalQueue.class))
+                AgentProperties.class, com.azhukov.agent.security.ApprovalQueue.class))
             .isInstanceOf(NoSuchMethodException.class);
     }
 
@@ -33,7 +33,7 @@ class AgentConfigNoDuplicateBeanTest {
         AgentConfig config = new AgentConfig();
         AgentProperties properties = new AgentProperties();
 
-        Object bean = config.toolGuardrails(properties, mock(com.azhukov.agent.core.security.ApprovalQueue.class));
-        assertThat(bean).isInstanceOf(com.azhukov.agent.core.security.DefaultToolGuardrails.class);
+        Object bean = config.toolGuardrails(properties, mock(com.azhukov.agent.security.ApprovalQueue.class));
+        assertThat(bean).isInstanceOf(com.azhukov.agent.security.DefaultToolGuardrails.class);
     }
 }

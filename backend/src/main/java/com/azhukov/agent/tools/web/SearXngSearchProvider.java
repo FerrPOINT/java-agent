@@ -1,6 +1,6 @@
 package com.azhukov.agent.tools.web;
 
-import com.azhukov.agent.core.security.UrlSafety;
+import com.azhukov.agent.security.UrlSafety;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;

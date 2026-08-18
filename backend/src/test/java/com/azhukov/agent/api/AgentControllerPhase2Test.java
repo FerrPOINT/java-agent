@@ -98,7 +98,7 @@ class AgentControllerPhase2Test {
             ttsService, transcriptionService,
             new com.azhukov.agent.core.agent.SteerBuffer(),
             new com.azhukov.agent.core.agent.InterruptToken(),
-            new com.azhukov.agent.core.security.ApprovalQueue(),
+            new com.azhukov.agent.security.ApprovalQueue(),
             agentProperties,
             null
         );

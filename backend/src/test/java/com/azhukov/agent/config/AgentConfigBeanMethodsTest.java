@@ -16,7 +16,7 @@ import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.BackgroundReviewService;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
-import com.azhukov.agent.core.security.*;
+import com.azhukov.agent.security.*;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.state.AgentConstants;
 import com.azhukov.agent.core.state.AgentState;
@@ -93,7 +93,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void agentRuntime_bean() {
-        assertThat(config.agentRuntime(mock(ModelClient.class), mock(ToolRegistry.class), mock(ToolExecutionService.class), mock(PromptBuilder.class), mock(ContextEngine.class), mock(MemoryProvider.class), mock(SkillManager.class), mock(IterationBudget.class), mock(MessageSanitizer.class), mock(ContextReferenceService.class), properties, mock(UserInputSanitizer.class), mock(ToolCallGuardrail.class), mock(TurnStateManager.class), mock(BackgroundReviewService.class), mock(InterruptToken.class), mock(TurnFinalizer.class), mock(com.azhukov.agent.core.agent.SteerBuffer.class), mock(ErrorClassifier.class), mock(ContextCompressor.class), mock(com.azhukov.agent.core.security.ApprovalQueue.class), mock(com.azhukov.agent.core.memory.MemoryManager.class), mock(com.azhukov.agent.core.agent.TokenEstimator.class), mock(com.azhukov.agent.core.agent.ToolResultFormatter.class), mock(com.azhukov.agent.core.agent.MidTurnPersistenceCallback.class), mock(com.azhukov.agent.core.agent.CommentaryCallback.class))).isNotNull();
+        assertThat(config.agentRuntime(mock(ModelClient.class), mock(ToolRegistry.class), mock(ToolExecutionService.class), mock(PromptBuilder.class), mock(ContextEngine.class), mock(MemoryProvider.class), mock(SkillManager.class), mock(IterationBudget.class), mock(MessageSanitizer.class), mock(ContextReferenceService.class), properties, mock(UserInputSanitizer.class), mock(ToolCallGuardrail.class), mock(TurnStateManager.class), mock(BackgroundReviewService.class), mock(InterruptToken.class), mock(TurnFinalizer.class), mock(com.azhukov.agent.core.agent.SteerBuffer.class), mock(ErrorClassifier.class), mock(ContextCompressor.class), mock(com.azhukov.agent.security.ApprovalQueue.class), mock(com.azhukov.agent.core.memory.MemoryManager.class), mock(com.azhukov.agent.core.agent.TokenEstimator.class), mock(com.azhukov.agent.core.agent.ToolResultFormatter.class), mock(com.azhukov.agent.core.agent.MidTurnPersistenceCallback.class), mock(com.azhukov.agent.core.agent.CommentaryCallback.class))).isNotNull();
     }
 
     @Test
@@ -148,12 +148,12 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void toolGuardrails_bean() {
-        assertThat(config.toolGuardrails(properties, mock(com.azhukov.agent.core.security.ApprovalQueue.class))).isNotNull();
+        assertThat(config.toolGuardrails(properties, mock(com.azhukov.agent.security.ApprovalQueue.class))).isNotNull();
     }
 
     @Test
     void contextEngine_bean() {
-        assertThat(config.contextEngine(mock(MemoryProvider.class), mock(SkillManager.class), mock(MessageRepository.class), mock(ContextCompressor.class), properties, mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class))).isNotNull();
+        assertThat(config.contextEngine(mock(MemoryProvider.class), mock(SkillManager.class), mock(MessageRepository.class), mock(ContextCompressor.class), properties, mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.SessionLineagePort.class))).isNotNull();
     }
 
     @Test

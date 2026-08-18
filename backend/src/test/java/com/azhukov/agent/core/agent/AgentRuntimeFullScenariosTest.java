@@ -115,7 +115,7 @@ class AgentRuntimeFullScenariosTest {
             new SteerBuffer(),
             new ErrorClassifier(),
             null,
-            new com.azhukov.agent.core.security.ApprovalQueue(),
+            new com.azhukov.agent.security.ApprovalQueue(),
             null,
             new TokenEstimator(),
             new ToolResultFormatter(), null, null
@@ -144,7 +144,7 @@ class AgentRuntimeFullScenariosTest {
             new SteerBuffer(),
             new ErrorClassifier(),
             null,
-            new com.azhukov.agent.core.security.ApprovalQueue(),
+            new com.azhukov.agent.security.ApprovalQueue(),
             null,
             new TokenEstimator(),
             new ToolResultFormatter(), null, null

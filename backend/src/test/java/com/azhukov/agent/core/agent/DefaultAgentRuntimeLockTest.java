@@ -121,7 +121,7 @@ class DefaultAgentRuntimeLockTest {
             messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, new ErrorClassifier(), null,
-            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new com.azhukov.agent.security.ApprovalQueue(), null,
             new TokenEstimator(), new ToolResultFormatter(), null, null);
     }
 

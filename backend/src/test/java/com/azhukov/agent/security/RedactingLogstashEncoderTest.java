@@ -1,4 +1,4 @@
-package com.azhukov.agent.core.security;
+package com.azhukov.agent.security;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;

@@ -1,4 +1,4 @@
-package com.azhukov.agent.core.security;
+package com.azhukov.agent.security;
 
 import ch.qos.logback.classic.PatternLayout;
 import ch.qos.logback.classic.spi.ILoggingEvent;

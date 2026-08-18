@@ -1,4 +1,4 @@
-package com.azhukov.agent.core.security;
+package com.azhukov.agent.security;
 
 public interface Redactor {
 

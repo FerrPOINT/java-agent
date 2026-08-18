@@ -1,6 +1,6 @@
 package com.azhukov.agent.tools.browser;
 
-import com.azhukov.agent.core.security.UrlSafety;
+import com.azhukov.agent.security.UrlSafety;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;

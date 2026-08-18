@@ -1,9 +1,9 @@
 package com.azhukov.agent.tools.browser;
 
-import com.azhukov.agent.core.security.UrlSafety;
-import com.azhukov.agent.core.security.Redactor;
-import com.azhukov.agent.core.security.DefaultUrlSafety;
-import com.azhukov.agent.core.security.DefaultRedactor;
+import com.azhukov.agent.security.UrlSafety;
+import com.azhukov.agent.security.Redactor;
+import com.azhukov.agent.security.DefaultUrlSafety;
+import com.azhukov.agent.security.DefaultRedactor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;

@@ -1,8 +1,8 @@
 package com.azhukov.agent.tools.web;
 
 import com.azhukov.agent.config.AgentProperties;
-import com.azhukov.agent.core.security.Redactor;
-import com.azhukov.agent.core.security.UrlSafety;
+import com.azhukov.agent.security.Redactor;
+import com.azhukov.agent.security.UrlSafety;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jsoup.Connection;

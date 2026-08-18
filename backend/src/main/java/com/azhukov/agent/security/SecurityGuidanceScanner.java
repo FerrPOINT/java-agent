@@ -1,4 +1,4 @@
-package com.azhukov.agent.core.security;
+package com.azhukov.agent.security;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

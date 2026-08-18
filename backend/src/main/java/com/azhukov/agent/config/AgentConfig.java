@@ -45,14 +45,14 @@ import com.azhukov.agent.core.state.AgentConstants;
 import com.azhukov.agent.core.state.AgentState;
 import com.azhukov.agent.core.state.DefaultAgentConstants;
 import com.azhukov.agent.core.state.DefaultAgentState;
-import com.azhukov.agent.core.security.DefaultFileSafety;
-import com.azhukov.agent.core.security.DefaultRedactor;
-import com.azhukov.agent.core.security.DefaultToolGuardrails;
-import com.azhukov.agent.core.security.DefaultUrlSafety;
-import com.azhukov.agent.core.security.FileSafety;
-import com.azhukov.agent.core.security.Redactor;
-import com.azhukov.agent.core.security.ToolGuardrails;
-import com.azhukov.agent.core.security.UrlSafety;
+import com.azhukov.agent.security.DefaultFileSafety;
+import com.azhukov.agent.security.DefaultRedactor;
+import com.azhukov.agent.security.DefaultToolGuardrails;
+import com.azhukov.agent.security.DefaultUrlSafety;
+import com.azhukov.agent.security.FileSafety;
+import com.azhukov.agent.security.Redactor;
+import com.azhukov.agent.security.ToolGuardrails;
+import com.azhukov.agent.security.UrlSafety;
 import com.azhukov.agent.core.skill.DatabaseSkillManager;
 import com.azhukov.agent.core.skill.NoOpSkillManager;
 import com.azhukov.agent.core.skill.SkillManager;
@@ -146,7 +146,7 @@ public class AgentConfig {
                                      com.azhukov.agent.core.agent.SteerBuffer steerBuffer,
                                      ErrorClassifier errorClassifier,
                                      ContextCompressor contextCompressor,
-                                     com.azhukov.agent.core.security.ApprovalQueue approvalQueue,
+                                     com.azhukov.agent.security.ApprovalQueue approvalQueue,
                                      com.azhukov.agent.core.memory.MemoryManager memoryManager,
                                      com.azhukov.agent.core.agent.TokenEstimator tokenEstimator,
                                      com.azhukov.agent.core.agent.ToolResultFormatter toolResultFormatter,
@@ -218,7 +218,7 @@ public class AgentConfig {
                                        ContextCompressor contextCompressor,
                                        AgentProperties properties,
                                        com.azhukov.agent.core.prompt.PromptCacheTracker cacheTracker,
-                                       com.azhukov.agent.core.agent.SessionLineageService sessionLineageService) {
+                                       com.azhukov.agent.core.context.SessionLineagePort sessionLineageService) {
         DefaultContextEngine engine = new DefaultContextEngine(memoryProvider, skillManager, messageRepository, contextCompressor, properties, cacheTracker);
         engine.setSessionLineageService(sessionLineageService);
         return engine;
@@ -303,7 +303,7 @@ public class AgentConfig {
     @Bean
     @ConditionalOnMissingBean(ToolGuardrails.class)
     public ToolGuardrails toolGuardrails(AgentProperties properties,
-                                         com.azhukov.agent.core.security.ApprovalQueue approvalQueue) {
+                                         com.azhukov.agent.security.ApprovalQueue approvalQueue) {
         return new DefaultToolGuardrails(properties, approvalQueue);
     }
 

@@ -4,7 +4,7 @@
 
     <springProfile name="prod">
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-            <encoder class="com.azhukov.agent.core.security.RedactingLogstashEncoder"/>
+            <encoder class="com.azhukov.agent.security.RedactingLogstashEncoder"/>
         </appender>
         <appender name="ASYNC_CONSOLE" class="ch.qos.logback.classic.AsyncAppender">
             <appender-ref ref="CONSOLE"/>
@@ -16,7 +16,7 @@
 
     <springProfile name="!prod">
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-            <layout class="com.azhukov.agent.core.security.RedactingLayout">
+            <layout class="com.azhukov.agent.security.RedactingLayout">
                 <pattern>${CONSOLE_LOG_PATTERN}</pattern>
             </layout>
         </appender>

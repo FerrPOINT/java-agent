@@ -86,7 +86,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final SteerBuffer steerBuffer;
     private final ErrorClassifier errorClassifier;
     private final ContextCompressor contextCompressor;
-    private final com.azhukov.agent.core.security.ApprovalQueue approvalQueue;
+    private final com.azhukov.agent.security.ApprovalQueue approvalQueue;
     private final MemoryManager memoryManager;
     private final TokenEstimator tokenEstimator;
     private final ToolResultFormatter toolResultFormatter;
