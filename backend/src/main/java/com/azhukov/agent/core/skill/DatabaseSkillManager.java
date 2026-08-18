@@ -595,13 +595,23 @@ public class DatabaseSkillManager implements SkillManager {
  }
 
  private Path getSkillsDir() {
- if (properties != null && properties.getCore() != null) {
- String wd = properties.getCore().getWorkingDirectory();
- if (wd != null && !wd.isBlank()) {
- return Path.of(wd, "skills");
- }
- }
- return Path.of("skills");
+     // Skills are stored in the project directory: <project>/skills/
+     // This keeps them versioned with the codebase and separate from Hermes.
+     if (properties != null && properties.getCore() != null) {
+         String wd = properties.getCore().getWorkingDirectory();
+         if (wd != null && !wd.isBlank()) {
+             return Path.of(wd, "skills");
+         }
+     }
+     // Fall back to user home ~/.java-agent/skills if workdir not set
+     String userHome = System.getProperty("user.home");
+     if (userHome != null && !userHome.isBlank()) {
+         Path agentSkills = Path.of(userHome, ".java-agent", "skills");
+         if (Files.isDirectory(agentSkills)) {
+             return agentSkills;
+         }
+     }
+     return Path.of("skills");
  }
 
  // ─── P1-9: Validation helpers (ported from the original project's skill_manager_tool.py) ───
