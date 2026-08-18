@@ -106,20 +106,17 @@ public class StreamingOrchestrator {
                         throw new StreamInterruptedException();
                     }
                     // Edit the message with accumulated text (throttled by StreamEditor)
-                    if (messageId[0] >= 0) {
-                        streamEditor.editStream(chatId, messageId[0], accumulated.toString());
-                    }
+                    // editStream handles both edit-based and draft streaming internally
+                    streamEditor.editStream(chatId, Math.max(0, messageId[0]), accumulated.toString());
                 },
                 // toolCallConsumer — called when backend emits tool_calls event
                 // Show tool call with emoji icon in the streaming message (like Hermes).
                 toolCall -> {
-                    if (messageId[0] >= 0) {
-                        streamEditor.setCurrentToolName(chatId, toolCall);
-                        // Show "⚙️ tool_name: \"preview\"" in the stream
-                        String toolDisplay = ToolEmojiMap.formatToolCall(toolCall, null);
-                        accumulated.append("\n").append(toolDisplay).append("\n");
-                        streamEditor.editStream(chatId, messageId[0], accumulated.toString());
-                    }
+                    streamEditor.setCurrentToolName(chatId, toolCall);
+                    // Show "⚙️ tool_name: \"preview\"" in the stream
+                    String toolDisplay = ToolEmojiMap.formatToolCall(toolCall, null);
+                    accumulated.append("\n").append(toolDisplay).append("\n");
+                    streamEditor.editStream(chatId, Math.max(0, messageId[0]), accumulated.toString());
                 },
                 // toolResultConsumer — called when backend emits tool_result event
                 (toolName, toolResultPreview) -> {
