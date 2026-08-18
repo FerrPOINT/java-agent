@@ -315,7 +315,10 @@ public class SessionSearchService {
         if (meta == null) return SearchResult.error("session_id not found: " + sessionId);
 
         List<MessageEntity> rows = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        List<ShapedMessage> shaped = rows.stream().map(m -> shapeMessage(m, null, 4000)).collect(Collectors.toList());
+        // H-SYNC: Limit content per message to prevent oversized tool output.
+        // Hermes uses max_content_len=4000 for anchor, 1200 for bookends.
+        // READ mode returns head+tail (30 messages) — use 2000 to keep total < 60KB.
+        List<ShapedMessage> shaped = rows.stream().map(m -> shapeMessage(m, null, 2000)).collect(Collectors.toList());
 
         int total = shaped.size();
         int head = 20, tail = 10;
@@ -378,7 +381,7 @@ public class SessionSearchService {
         int end = Math.min(allMessages.size(), anchorIdx + windowSize + 1);
 
         List<ShapedMessage> windowMsgs = allMessages.subList(start, end).stream()
-            .map(m -> shapeMessage(m, anchorId, 4000))
+            .map(m -> shapeMessage(m, anchorId, 2000))
             .collect(Collectors.toList());
 
         int messagesBefore = anchorIdx - start;
