@@ -563,6 +563,17 @@ public class DefaultPromptBuilder implements PromptBuilder {
         }
         hints.append("\n");
 
+        // Current date and timezone (Hermes parity)
+        java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+        java.time.ZonedDateTime now = java.time.ZonedDateTime.now();
+        String tzId = zone.getId();
+        int offsetHours = now.getOffset().getTotalSeconds() / 3600;
+        hints.append("Current date: ").append(now.format(java.time.format.DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy")))
+            .append(" (").append(tzId).append(", UTC")
+            .append(offsetHours >= 0 ? "+" : "")
+            .append(offsetHours)
+            .append(")\n");
+
         // User home directory
         String userHome = System.getProperty("user.home");
         if (userHome != null && !userHome.isBlank()) {

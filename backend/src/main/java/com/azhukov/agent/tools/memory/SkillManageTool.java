@@ -23,7 +23,7 @@ import static com.azhukov.agent.tools.ToolHandler.parseJson;
  * {@code BACKGROUND_REVIEW} instead of {@code FOREGROUND}.
  */
 @AgentTool(name = "skill_manage",
-    description = "Create, update, delete, patch a skill, or manage support files (references/, templates/, scripts/). Actions: create, update, delete, patch, write_file, remove_file.",
+    description = "Create, update, delete, patch a skill, or manage support files (references/, templates/, scripts/). Actions: create, update (alias: edit), delete, patch, write_file, remove_file.",
     toolset = "skills")
 @Component
 @Slf4j
@@ -46,9 +46,10 @@ public class SkillManageTool implements ToolHandler {
                     skillManager.saveSkill(args.name(), content, origin);
                     yield ToolResult.ok("Skill " + args.name() + " created.");
                 }
-                case "update" -> {
+                case "update", "edit" -> {
                     validateSkillName(args.name());
                     // Finding 4.4: Pass absorbed_into to saveSkill in update action
+                    // "edit" is the Hermes name for the same action (full SKILL.md rewrite)
                     skillManager.saveSkill(args.name(), args.content(), origin, args.absorbed_into());
                     yield ToolResult.ok("Skill " + args.name() + " updated.");
                 }
