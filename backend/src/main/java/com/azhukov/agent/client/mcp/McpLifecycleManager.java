@@ -752,6 +752,8 @@ public class McpLifecycleManager {
                 String text = result.content().stream()
                     .map(Object::toString)
                     .collect(Collectors.joining("\n"));
+                // H-SYNC: Strip invisible Unicode TAG characters from MCP tool output
+                text = com.azhukov.agent.security.UnicodeTagStripper.stripUnicodeTags(text);
                 // ── Response security scan ──
                 String safeText = text;
                 if (responseScanner != null) {
