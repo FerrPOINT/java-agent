@@ -18,16 +18,16 @@
 
 ## HIGH — Architecture (10)
 
-9. **h9** Remove phantom project(':backend') from telegram-bot/build.gradle
+9. ~~**h9** Remove phantom project(':backend') from telegram-bot/build.gradle~~ ✅ DONE (5d4e26b)
 10. **h10** Create shared module — API DTOs, SharedObjectMapper, base REST client
-11. **h11** Consolidate duplicate security/ packages — merge security/ + core/security/
+11. ~~**h11** Consolidate duplicate security/ packages — merge security/ + core/security/~~ ✅ DONE (5d4e26b)
 12. **h12** ★RESTORED: Introduce repository ports in core — justified for multi-user: per-user filtering abstraction
-13. **h13** Break core.memory ↔ tools.memory cycle — abstract behind ToolSchemaProvider
-14. **h14** Split AgentConfig (68 imports) → ModelClientConfig, MemoryConfig, SecurityConfig, etc.
+13. ~~**h13** Break core.memory ↔ tools.memory cycle — abstract behind ReviewToolProvider~~ ✅ DONE (2e37f4c)
+14. **h14** Split AgentConfig (76 imports, 365 LOC) → ModelClientConfig, MemoryConfig, SecurityConfig, etc.
 15. **h15** Split AgentBackendClient (bot, 1474 LOC) → per-domain delegate classes + typed DTOs
 16. **h16** Make CliState/SessionStore/DestructiveCommandConfirmation Spring beans
-17. **h17** Delete ReplLoop — dead code
-18. **h18** Break core.agent ↔ core.context cycle
+17. ~~**h17** Delete ReplLoop — dead code~~ ✅ DONE (087aca3)
+18. ~~**h18** Break core.agent ↔ core.context cycle~~ ✅ DONE (5d4e26b)
 
 ## MEDIUM — Architecture (11)
 
