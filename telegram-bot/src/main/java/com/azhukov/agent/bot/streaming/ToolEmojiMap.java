@@ -70,26 +70,61 @@ public final class ToolEmojiMap {
     }
 
     private static String buildPreview(String toolName, String args) {
-        if (args == null || args.isBlank() || args.equals("{}")) return null;
-        // Try to extract primary argument for common tools
+        if (args == null || args.isBlank() || args.equals("{}") || args.equals("null")) return null;
         try {
-            String lower = args.toLowerCase();
-            // Extract first string value from JSON args
-            int colonIdx = args.indexOf(':');
-            if (colonIdx < 0) return null;
-            int quoteStart = args.indexOf('"', colonIdx);
-            if (quoteStart < 0) return null;
-            int quoteEnd = args.indexOf('"', quoteStart + 1);
-            if (quoteEnd < 0) return null;
-            String value = args.substring(quoteStart + 1, quoteEnd);
-            if (value.isBlank()) return null;
-            // Truncate to 60 chars
-            if (value.length() > 60) {
-                value = value.substring(0, 57) + "...";
+            // Parse JSON args and extract primary argument per tool
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            com.fasterxml.jackson.databind.JsonNode node = mapper.readTree(args);
+            
+            // Map tool → primary argument field
+            String primaryField = switch (toolName) {
+                case "terminal", "process" -> "command";
+                case "web_search" -> "query";
+                case "web_extract" -> "urls";
+                case "read_file", "write_file", "patch" -> "path";
+                case "search_files" -> "pattern";
+                case "browser_navigate", "browser_exec" -> "url";
+                case "browser_type" -> "text";
+                case "vision_analyze" -> "question";
+                case "skill_view", "skill_manage" -> "name";
+                case "session_search" -> "query";
+                case "delegate_task" -> "goal";
+                case "clarify" -> "question";
+                case "cronjob" -> "action";
+                case "memory" -> "content";
+                case "todo" -> "todos";
+                default -> null;
+            };
+            
+            if (primaryField != null) {
+                com.fasterxml.jackson.databind.JsonNode val = node.get(primaryField);
+                if (val != null && !val.isNull()) {
+                    String text = val.isTextual() ? val.asText() : val.toString();
+                    if (!text.isBlank()) {
+                        // Truncate to 40 chars
+                        if (text.length() > 40) text = text.substring(0, 37) + "...";
+                        // Collapse newlines
+                        text = text.replaceAll("\\s+", " ").trim();
+                        return "\"" + text + "\"";
+                    }
+                }
             }
-            return "\"" + value + "\"";
+            
+            // Fallback: first string value in the JSON
+            var fields = node.fields();
+            while (fields.hasNext()) {
+                var entry = fields.next();
+                if (entry.getValue().isTextual()) {
+                    String text = entry.getValue().asText();
+                    if (!text.isBlank()) {
+                        if (text.length() > 40) text = text.substring(0, 37) + "...";
+                        return "\"" + text + "\"";
+                    }
+                }
+            }
         } catch (Exception e) {
-            return null;
+            // Not valid JSON — try raw extraction
         }
+        return null;
     }
 }

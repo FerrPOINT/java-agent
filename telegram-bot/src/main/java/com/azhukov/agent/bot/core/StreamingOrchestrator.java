@@ -113,14 +113,22 @@ public class StreamingOrchestrator {
                 // Hermes parity: send tool call as a separate short message (progress bubble),
                 // not accumulated in the main text. This keeps the chat clean and readable.
                 toolCall -> {
-                    streamEditor.setCurrentToolName(chatId, toolCall);
+                    // Parse "toolName\u0001args" format from MessageApiClient
+                    String toolName = toolCall;
+                    String toolArgs = null;
+                    int sep = toolCall.indexOf('\u0001');
+                    if (sep >= 0) {
+                        toolName = toolCall.substring(0, sep);
+                        toolArgs = toolCall.substring(sep + 1);
+                    }
+                    streamEditor.setCurrentToolName(chatId, toolName);
                     // Finalize current streaming message with accumulated text (if any)
                     if (accumulated.length() > 0 && messageId[0] >= 0) {
                         streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
                         accumulated.setLength(0);
                     }
-                    // Send tool call as a separate message (progress bubble)
-                    String toolDisplay = ToolEmojiMap.formatToolCall(toolCall, null);
+                    // Send tool call as a separate message (progress bubble) with args preview
+                    String toolDisplay = ToolEmojiMap.formatToolCall(toolName, toolArgs);
                     streamEditor.sendProgressMessage(chatId, toolDisplay);
                 },
                 // toolResultConsumer — called when backend emits tool_result event

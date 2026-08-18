@@ -217,7 +217,15 @@ public class MessageApiClient extends BaseBackendClient {
                                         if (toolCallsNode != null && toolCallsNode.isArray()) {
                                             for (JsonNode tc : toolCallsNode) {
                                                 String toolName = tc.path("name").asText("unknown");
-                                                toolCallConsumer.accept(toolName);
+                                                String toolArgs = tc.path("arguments").asText("");
+                                                if (toolArgs.isEmpty()) {
+                                                    // Try arguments as object
+                                                    JsonNode argsNode = tc.path("arguments");
+                                                    if (argsNode != null && !argsNode.isNull()) {
+                                                        toolArgs = argsNode.toString();
+                                                    }
+                                                }
+                                                toolCallConsumer.accept(toolName + "\u0001" + toolArgs);
                                             }
                                         }
                                         continue;
@@ -226,7 +234,14 @@ public class MessageApiClient extends BaseBackendClient {
                                     if ("tool_start".equalsIgnoreCase(type)) {
                                         String toolName = event.path("toolName").asText("");
                                         if (!toolName.isEmpty()) {
-                                            toolCallConsumer.accept(toolName);
+                                            String toolArgs = event.path("arguments").asText("");
+                                            if (toolArgs.isEmpty()) {
+                                                JsonNode argsNode = event.path("arguments");
+                                                if (argsNode != null && !argsNode.isNull()) {
+                                                    toolArgs = argsNode.toString();
+                                                }
+                                            }
+                                            toolCallConsumer.accept(toolName + "\u0001" + toolArgs);
                                         }
                                         continue;
                                     }
