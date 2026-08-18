@@ -44,26 +44,26 @@ public class SessionSearchTool implements ToolHandler {
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        SearchArgs args = ToolHandler.parseJson(arguments, SearchArgs.class);
-        UUID currentSessionId = session != null ? session.id() : null;
-
-        SessionSearchService.SearchResult result = sessionSearchService.search(
-            args.query(), args.roleFilter(), args.limit(),
-            args.sessionId(), args.aroundMessageId(), args.window(),
-            args.sort(), args.detail(), args.profile(),
-            currentSessionId
-        );
-
-        if (!result.success) {
-            return ToolResult.fail(result.error != null ? result.error : "Session search failed");
-        }
-
         try {
+            SearchArgs args = ToolHandler.parseJson(arguments, SearchArgs.class);
+            UUID currentSessionId = session != null ? session.id() : null;
+
+            SessionSearchService.SearchResult result = sessionSearchService.search(
+                args.query(), args.roleFilter(), args.limit(),
+                args.sessionId(), args.aroundMessageId(), args.window(),
+                args.sort(), args.detail(), args.profile(),
+                currentSessionId
+            );
+
+            if (!result.success) {
+                return ToolResult.fail(result.error != null ? result.error : "Session search failed");
+            }
+
             String json = buildJsonResponse(result, args);
             return ToolResult.ok(json);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize session search result", e);
-            return ToolResult.fail("Failed to serialize search results");
+        } catch (Exception e) {
+            log.error("SessionSearchTool error — args: [{}], error: {}", arguments, e.toString(), e);
+            return ToolResult.fail("Session search error: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 

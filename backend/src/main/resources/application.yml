@@ -197,7 +197,7 @@ agent:
     max-tokens: ${AGENT_CONTEXT_MAX_TOKENS:16000}
     target-tokens: ${AGENT_CONTEXT_TARGET_TOKENS:12000}
     summary-chunk-tokens: ${AGENT_CONTEXT_SUMMARY_CHUNK_TOKENS:2000}
-    max-context-messages: ${AGENT_CONTEXT_MAX_CONTEXT_MESSAGES:50}
+    max-context-messages: ${AGENT_CONTEXT_MAX_CONTEXT_MESSAGES:10000}
   
   # ─── Compression ───
   compression:

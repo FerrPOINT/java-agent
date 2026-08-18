@@ -371,8 +371,8 @@ public class DefaultContextEngine implements ContextEngine {
              if (lineageMessages != null && !lineageMessages.isEmpty()) {
                  // Apply the same maxMessages limit as the paginated path.
                  int maxMessages = contextProps.getMaxContextMessages();
-                 if (maxMessages <= 0) {
-                     maxMessages = 50;
+                 if (maxMessages <= 0 || maxMessages < 500) {
+                     maxMessages = 10000; // H-SYNC: effectively unlimited — let compression handle it
                  }
                  List<Message> recent;
                  if (lineageMessages.size() > maxMessages) {
