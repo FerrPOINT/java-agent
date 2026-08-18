@@ -113,6 +113,11 @@ public class StreamingOrchestrator {
                 // Hermes parity: send tool call as a separate short message (progress bubble),
                 // not accumulated in the main text. This keeps the chat clean and readable.
                 toolCall -> {
+                    // Check for interrupt before processing tool call
+                    if (busyHandler.isInterrupted(chatId)) {
+                        log.debug("Stream interrupted during tool call for chat {}", chatId);
+                        throw new StreamInterruptedException();
+                    }
                     // Parse "toolName\u0001args" format from MessageApiClient
                     String toolName = toolCall;
                     String toolArgs = null;
