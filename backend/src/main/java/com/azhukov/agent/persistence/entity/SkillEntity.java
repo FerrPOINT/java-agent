@@ -22,6 +22,9 @@ public class SkillEntity {
 
     private String name;
 
+    /** Multi-user: owner of this skill. Null = shared/global. */
+    private String userId;
+
     private String content;
 
     private String category;

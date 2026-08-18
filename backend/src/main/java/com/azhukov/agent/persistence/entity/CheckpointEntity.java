@@ -26,6 +26,9 @@ public class CheckpointEntity {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    /** Multi-user: owner of this checkpoint. */
+    private String userId;
+
     private String description;
 
     @Column(name = "file_count")

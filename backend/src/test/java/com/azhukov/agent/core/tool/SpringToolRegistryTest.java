@@ -9,231 +9,304 @@ import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationContext;
+import org.mockito.quality.Strictness;
+import org.mockito.junit.jupiter.MockitoSettings;
 
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-@ExtendWith(MockitoExtension.class)
+/**
+ * Unit tests for {@link SpringToolRegistry} — the production implementation of
+ * {@link ToolRegistry}. Covers all public methods: getDefinitions(), getDefinitions(Set),
+ * execute(), getToolsets(), registerDynamic(), deregisterDynamic(), and toolset filtering.
+ */
+@MockitoSettings(strictness = Strictness.LENIENT)
 class SpringToolRegistryTest {
 
-    private static final String USER_ID = "user-42";
-    private static final Session SESSION = Session.create(USER_ID, "noop", "default");
-    private static final Message LAST_MSG = Message.user("test");
-
-    @Mock
-    private ApplicationContext context;
-    @Mock
-    private ManagedToolGateway managedToolGateway;
-
+    private org.springframework.context.ApplicationContext context;
     private AgentProperties properties;
     private ObjectMapper objectMapper;
+    private ManagedToolGateway managedToolGateway;
+    private SpringToolRegistry registry;
+
+    // ── Test fixtures ──
+
+    /** A fake handler annotated with @AgentTool for the "core" toolset. */
+    @AgentTool(name = "core_tool", description = "A core tool", toolset = "core")
+    static class CoreToolHandler implements ToolHandler {
+        @Override
+        public ToolResult execute(String arguments, Message lastAssistant, Session session) {
+            return ToolResult.ok("core-result");
+        }
+    }
+
+    /** A fake handler annotated with @AgentTool for the "filesystem" toolset. */
+    @AgentTool(name = "fs_tool", description = "A filesystem tool", toolset = "filesystem")
+    static class FsToolHandler implements ToolHandler {
+        @Override
+        public ToolResult execute(String arguments, Message lastAssistant, Session session) {
+            return ToolResult.ok("fs-result");
+        }
+    }
+
+    /** A fake handler annotated with @AgentTool for a different toolset. */
+    @AgentTool(name = "web_tool", description = "A web tool", toolset = "web")
+    static class WebToolHandler implements ToolHandler {
+        @Override
+        public ToolResult execute(String arguments, Message lastAssistant, Session session) {
+            return ToolResult.ok("web-result");
+        }
+    }
+
+    /** A non-ToolHandler bean that should be skipped during registration. */
+    @AgentTool(name = "not_a_handler", description = "Should be skipped")
+    static class NotAHandler {
+    }
 
     @BeforeEach
     void setUp() {
+        context = mock(org.springframework.context.ApplicationContext.class);
         properties = new AgentProperties();
         objectMapper = new ObjectMapper();
+        managedToolGateway = new ManagedToolGateway(properties);
+
+        // Wire up three real ToolHandler beans + one non-handler bean
+        Map<String, Object> beans = new LinkedHashMap<>();
+        CoreToolHandler coreHandler = new CoreToolHandler();
+        FsToolHandler fsHandler = new FsToolHandler();
+        WebToolHandler webHandler = new WebToolHandler();
+        NotAHandler notHandler = new NotAHandler();
+        beans.put("coreTool", coreHandler);
+        beans.put("fsTool", fsHandler);
+        beans.put("webTool", webHandler);
+        beans.put("notHandler", notHandler);
+        when(context.getBeansWithAnnotation(AgentTool.class)).thenReturn(beans);
+
+        registry = new SpringToolRegistry(context, properties, objectMapper, managedToolGateway);
+        registry.registerBeans(); // manually trigger @PostConstruct
+    }
+
+    // ── getDefinitions() ──
+
+    @Test
+    void getDefinitions_returnsAllRegisteredTools() {
+        List<ToolDefinition> defs = registry.getDefinitions();
+
+        assertThat(defs).hasSize(3); // NotAHandler is skipped
+        assertThat(defs).extracting(ToolDefinition::name)
+            .containsExactlyInAnyOrder("core_tool", "fs_tool", "web_tool");
     }
 
     @Test
-    @DisplayName("Should register bean annotated with @AgentTool and list its definition")
-    void shouldRegisterAnnotatedBean() {
-        // Use a real annotated handler so registerBeans() picks it up
-        TestToolHandler handler = new TestToolHandler();
-        when(context.getBeansWithAnnotation(AgentTool.class))
-            .thenReturn(Map.of("testTool", handler));
-        when(managedToolGateway.isEnabled("test_tool")).thenReturn(true);
+    void getDefinitions_returnsNewListOnEachCall() {
+        List<ToolDefinition> first = registry.getDefinitions();
+        List<ToolDefinition> second = registry.getDefinitions();
 
-        SpringToolRegistry registry = new SpringToolRegistry(context, properties, objectMapper, managedToolGateway);
-        registry.registerBeans();
+        assertThat(first).isNotSameAs(second);
+        assertThat(first).hasSameSizeAs(second);
+    }
 
-        List<ToolDefinition> defs = registry.getDefinitions();
+    // ── getDefinitions(Set<String> toolsets) ──
+
+    @Test
+    void getDefinitions_withToolsetFilter_returnsOnlyMatchingTools() {
+        List<ToolDefinition> defs = registry.getDefinitions(Set.of("core"));
+
         assertThat(defs).hasSize(1);
-        assertThat(defs.get(0).name()).isEqualTo("test_tool");
-        assertThat(defs.get(0).description()).isNotBlank();
+        assertThat(defs.get(0).name()).isEqualTo("core_tool");
     }
 
     @Test
-    @DisplayName("Should execute registered tool and return its result")
-    void shouldExecuteRegisteredTool() {
-        TestToolHandler handler = new TestToolHandler();
-        when(context.getBeansWithAnnotation(AgentTool.class))
-            .thenReturn(Map.of("testTool", handler));
-        when(managedToolGateway.isEnabled("test_tool")).thenReturn(true);
+    void getDefinitions_withMultipleToolsets_returnsMatchingTools() {
+        List<ToolDefinition> defs = registry.getDefinitions(Set.of("core", "web"));
 
-        SpringToolRegistry registry = new SpringToolRegistry(context, properties, objectMapper, managedToolGateway);
-        registry.registerBeans();
-
-        ToolResult result = registry.execute("test_tool", "call-1", "{}", LAST_MSG, SESSION);
-
-        assertThat(result.success()).isTrue();
-        assertThat(result.content()).isEqualTo("test-ok");
+        assertThat(defs).hasSize(2);
+        assertThat(defs).extracting(ToolDefinition::name)
+            .containsExactlyInAnyOrder("core_tool", "web_tool");
     }
 
     @Test
-    @DisplayName("Should return fail for unknown tool")
-    void shouldReturnFailForUnknownTool() {
-        when(context.getBeansWithAnnotation(AgentTool.class))
-            .thenReturn(Map.of());
+    void getDefinitions_withEmptyToolsetSet_returnsAllTools() {
+        List<ToolDefinition> defs = registry.getDefinitions(Set.of());
 
-        SpringToolRegistry registry = new SpringToolRegistry(context, properties, objectMapper, managedToolGateway);
-        registry.registerBeans();
-
-        ToolResult result = registry.execute("nonexistent", "call-2", "{}", LAST_MSG, SESSION);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Unknown tool");
-        assertThat(result.error()).contains("nonexistent");
+        assertThat(defs).hasSize(3);
     }
 
     @Test
-    @DisplayName("Should filter definitions by toolset")
-    void shouldFilterDefinitionsByToolset() {
-        TestToolHandler handler = new TestToolHandler();
-        when(context.getBeansWithAnnotation(AgentTool.class))
-            .thenReturn(Map.of("testTool", handler));
-        when(managedToolGateway.isEnabled("test_tool")).thenReturn(true);
+    void getDefinitions_withNullToolsetSet_returnsAllTools() {
+        List<ToolDefinition> defs = registry.getDefinitions(null);
 
-        SpringToolRegistry registry = new SpringToolRegistry(context, properties, objectMapper, managedToolGateway);
-        registry.registerBeans();
-
-        // Matching toolset
-        List<ToolDefinition> matching = registry.getDefinitions(Set.of("test-toolset"));
-        assertThat(matching).hasSize(1);
-
-        // Non-matching toolset
-        List<ToolDefinition> nonMatching = registry.getDefinitions(Set.of("other"));
-        assertThat(nonMatching).isEmpty();
+        assertThat(defs).hasSize(3);
     }
 
     @Test
-    @DisplayName("Should return all definitions when toolset filter is null or empty")
-    void shouldReturnAllDefinitionsWhenToolsetFilterNullOrEmpty() {
-        TestToolHandler handler = new TestToolHandler();
-        when(context.getBeansWithAnnotation(AgentTool.class))
-            .thenReturn(Map.of("testTool", handler));
-        when(managedToolGateway.isEnabled("test_tool")).thenReturn(true);
+    void getDefinitions_withNonMatchingToolset_returnsEmptyList() {
+        List<ToolDefinition> defs = registry.getDefinitions(Set.of("nonexistent"));
 
-        SpringToolRegistry registry = new SpringToolRegistry(context, properties, objectMapper, managedToolGateway);
-        registry.registerBeans();
-
-        // Null toolset
-        List<ToolDefinition> nullResult = registry.getDefinitions((Set<String>) null);
-        assertThat(nullResult).hasSize(1);
-
-        // Empty toolset
-        List<ToolDefinition> emptyResult = registry.getDefinitions(Set.of());
-        assertThat(emptyResult).hasSize(1);
-    }
-
-    @Test
-    @DisplayName("Should collect toolsets from registered tools")
-    void shouldCollectToolsets() {
-        TestToolHandler handler = new TestToolHandler();
-        when(context.getBeansWithAnnotation(AgentTool.class))
-            .thenReturn(Map.of("testTool", handler));
-        when(managedToolGateway.isEnabled("test_tool")).thenReturn(true);
-
-        SpringToolRegistry registry = new SpringToolRegistry(context, properties, objectMapper, managedToolGateway);
-        registry.registerBeans();
-
-        Set<String> toolsets = registry.getToolsets();
-        assertThat(toolsets).contains("test-toolset");
-    }
-
-    @Test
-    @DisplayName("Should skip tools disabled by ManagedToolGateway")
-    void shouldSkipToolsDisabledByGateway() {
-        TestToolHandler handler = new TestToolHandler();
-        when(context.getBeansWithAnnotation(AgentTool.class))
-            .thenReturn(Map.of("testTool", handler));
-        when(managedToolGateway.isEnabled("test_tool")).thenReturn(false);
-
-        SpringToolRegistry registry = new SpringToolRegistry(context, properties, objectMapper, managedToolGateway);
-        registry.registerBeans();
-
-        List<ToolDefinition> defs = registry.getDefinitions();
         assertThat(defs).isEmpty();
     }
 
+    // ── execute() ──
+
     @Test
-    @DisplayName("Should register and execute dynamic tool")
-    void shouldRegisterAndExecuteDynamicTool() {
-        when(context.getBeansWithAnnotation(AgentTool.class))
-            .thenReturn(Map.of());
+    void execute_knownTool_delegatesToHandler() {
+        ToolResult result = registry.execute("core_tool", "call-1", "{}", null, null);
 
-        SpringToolRegistry registry = new SpringToolRegistry(context, properties, objectMapper, managedToolGateway);
-        registry.registerBeans();
-
-        // Initially empty
-        assertThat(registry.getDefinitions()).isEmpty();
-
-        // Register dynamic tool
-        ToolDefinition dynDef = new ToolDefinition("dyn_tool", "dynamic tool",
-            Map.of("type", "object", "properties", Map.of(), "required", List.of()));
-        registry.registerDynamic("dyn_tool", dynDef, new TestToolHandler());
-
-        // Should appear in definitions
-        List<ToolDefinition> defs = registry.getDefinitions();
-        assertThat(defs).hasSize(1);
-        assertThat(defs.get(0).name()).isEqualTo("dyn_tool");
-
-        // Should be executable
-        ToolResult result = registry.execute("dyn_tool", "call-3", "{}", LAST_MSG, SESSION);
         assertThat(result.success()).isTrue();
+        assertThat(result.content()).isEqualTo("core-result");
     }
 
     @Test
-    @DisplayName("Should deregister dynamic tool")
-    void shouldDeregisterDynamicTool() {
-        when(context.getBeansWithAnnotation(AgentTool.class))
-            .thenReturn(Map.of());
+    void execute_unknownTool_returnsFailResult() {
+        ToolResult result = registry.execute("nonexistent_tool", "call-1", "{}", null, null);
 
-        SpringToolRegistry registry = new SpringToolRegistry(context, properties, objectMapper, managedToolGateway);
-        registry.registerBeans();
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Unknown tool");
+        assertThat(result.error()).contains("nonexistent_tool");
+    }
 
-        ToolDefinition dynDef = new ToolDefinition("dyn_tool", "dynamic tool",
-            Map.of("type", "object", "properties", Map.of(), "required", List.of()));
-        registry.registerDynamic("dyn_tool", dynDef, new TestToolHandler());
-        assertThat(registry.getDefinitions()).hasSize(1);
+    @Test
+    void execute_filesystemTool_delegatesCorrectly() {
+        ToolResult result = registry.execute("fs_tool", "call-2", "{}", null, null);
 
-        registry.deregisterDynamic("dyn_tool");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).isEqualTo("fs-result");
+    }
 
-        assertThat(registry.getDefinitions()).isEmpty();
-        ToolResult result = registry.execute("dyn_tool", "call-4", "{}", LAST_MSG, SESSION);
+    // ── getToolsets() ──
+
+    @Test
+    void getToolsets_returnsAllDistinctToolsets() {
+        Set<String> toolsets = registry.getToolsets();
+
+        assertThat(toolsets).containsExactlyInAnyOrder("core", "filesystem", "web");
+    }
+
+    // ── registerDynamic() / deregisterDynamic() ──
+
+    @Test
+    void registerDynamic_addsToolAccessibleByAllMethods() {
+        ToolDefinition dynDef = new ToolDefinition("dyn_tool", "Dynamic tool", Map.of("type", "object"));
+        ToolHandler dynHandler = (args, lastAssistant, session) -> ToolResult.ok("dyn-result");
+
+        registry.registerDynamic("dyn_tool", dynDef, dynHandler);
+
+        // Visible in getDefinitions
+        List<ToolDefinition> defs = registry.getDefinitions();
+        assertThat(defs).extracting(ToolDefinition::name).contains("dyn_tool");
+
+        // Executable
+        ToolResult result = registry.execute("dyn_tool", "call-3", "{}", null, null);
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).isEqualTo("dyn-result");
+    }
+
+    @Test
+    void registerDynamic_toolWithoutToolsetAnnotation_appearsInAllToolsetFilters() {
+        ToolDefinition dynDef = new ToolDefinition("dyn_no_toolset", "Dynamic no toolset", Map.of("type", "object"));
+        ToolHandler dynHandler = (args, lastAssistant, session) -> ToolResult.ok("ok");
+
+        registry.registerDynamic("dyn_no_toolset", dynDef, dynHandler);
+
+        // Dynamic tools have annotation=null, so the filter `e.annotation() == null` matches
+        List<ToolDefinition> defs = registry.getDefinitions(Set.of("any_random_toolset"));
+        assertThat(defs).extracting(ToolDefinition::name).contains("dyn_no_toolset");
+    }
+
+    @Test
+    void deregisterDynamic_removesToolFromRegistry() {
+        // First register a dynamic tool
+        ToolDefinition dynDef = new ToolDefinition("to_remove", "Temp tool", Map.of("type", "object"));
+        ToolHandler dynHandler = (args, lastAssistant, session) -> ToolResult.ok("temp");
+        registry.registerDynamic("to_remove", dynDef, dynHandler);
+        assertThat(registry.getDefinitions()).extracting(ToolDefinition::name).contains("to_remove");
+
+        // Deregister it
+        registry.deregisterDynamic("to_remove");
+
+        // No longer in definitions
+        assertThat(registry.getDefinitions()).extracting(ToolDefinition::name).doesNotContain("to_remove");
+
+        // Execution fails
+        ToolResult result = registry.execute("to_remove", "call-4", "{}", null, null);
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("Unknown tool");
     }
 
     @Test
-    @DisplayName("Should return empty definitions and toolsets when no beans registered")
-    void shouldReturnEmptyWhenNoBeans() {
-        when(context.getBeansWithAnnotation(AgentTool.class))
-            .thenReturn(Map.of());
-
-        SpringToolRegistry registry = new SpringToolRegistry(context, properties, objectMapper, managedToolGateway);
-        registry.registerBeans();
-
-        assertThat(registry.getDefinitions()).isEmpty();
-        assertThat(registry.getToolsets()).isEmpty();
+    void deregisterDynamic_nonExistentTool_doesNotThrow() {
+        // Should be a no-op, not throw
+        registry.deregisterDynamic("never_registered");
+        // Other tools still present
+        assertThat(registry.getDefinitions()).hasSize(3);
     }
 
-    // ── Test fixture: a real @AgentTool-annotated handler ──
+    @Test
+    void registerDynamic_overwritesExistingToolWithSameName() {
+        // Register initial dynamic tool
+        ToolDefinition def1 = new ToolDefinition("override_tool", "V1", Map.of("type", "object"));
+        ToolHandler handler1 = (args, lastAssistant, session) -> ToolResult.ok("v1");
+        registry.registerDynamic("override_tool", def1, handler1);
 
-    @AgentTool(name = "test_tool", description = "A test tool for unit testing.", toolset = "test-toolset")
-    static class TestToolHandler implements ToolHandler {
-        @Override
-        public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-            return ToolResult.ok("test-ok");
-        }
+        // Overwrite with new handler
+        ToolDefinition def2 = new ToolDefinition("override_tool", "V2", Map.of("type", "object"));
+        ToolHandler handler2 = (args, lastAssistant, session) -> ToolResult.ok("v2");
+        registry.registerDynamic("override_tool", def2, handler2);
+
+        // Only one entry with that name, and it uses the new handler
+        List<ToolDefinition> defs = registry.getDefinitions();
+        long count = defs.stream().filter(d -> d.name().equals("override_tool")).count();
+        assertThat(count).isEqualTo(1);
+
+        ToolResult result = registry.execute("override_tool", "call-5", "{}", null, null);
+        assertThat(result.content()).isEqualTo("v2");
+    }
+
+    // ── Tool definition structure ──
+
+    @Test
+    void getDefinitions_includesCorrectNameAndDescription() {
+        List<ToolDefinition> defs = registry.getDefinitions();
+        ToolDefinition coreDef = defs.stream()
+            .filter(d -> d.name().equals("core_tool"))
+            .findFirst().orElseThrow();
+
+        assertThat(coreDef.name()).isEqualTo("core_tool");
+        assertThat(coreDef.description()).isEqualTo("A core tool");
+        assertThat(coreDef.parameters()).containsKey("type");
+        assertThat(coreDef.parameters().get("type")).isEqualTo("object");
+    }
+
+    // ── ManagedToolGateway integration ──
+
+    @Test
+    void registerBeans_skipsToolsDisabledByGateway() {
+        // Enable managed gateway and register a check that disables "web_tool"
+        properties.getTools().setManagedGatewayEnabled(true);
+        managedToolGateway.registerTool("web_tool", name -> false);
+
+        // Re-create registry with the same context — web_tool should be filtered out
+        SpringToolRegistry filteredRegistry = new SpringToolRegistry(context, properties, objectMapper, managedToolGateway);
+        filteredRegistry.registerBeans();
+
+        List<ToolDefinition> defs = filteredRegistry.getDefinitions();
+        assertThat(defs).extracting(ToolDefinition::name)
+            .containsExactlyInAnyOrder("core_tool", "fs_tool");
+        assertThat(defs).extracting(ToolDefinition::name).doesNotContain("web_tool");
+    }
+
+    @Test
+    void registerBeans_skipsBeansThatAreNotToolHandlers() {
+        // NotAHandler is annotated with @AgentTool but doesn't implement ToolHandler
+        List<ToolDefinition> defs = registry.getDefinitions();
+        assertThat(defs).extracting(ToolDefinition::name).doesNotContain("not_a_handler");
     }
 }

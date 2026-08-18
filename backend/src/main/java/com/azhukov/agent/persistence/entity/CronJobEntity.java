@@ -19,6 +19,8 @@ public class CronJobEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
+    /** Multi-user: owner of this cron job. */
+    private String userId;
 
     private String name;
 

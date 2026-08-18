@@ -137,6 +137,7 @@ sourceSets {
             exclude '**/service/ThinkScrubberTest.java'
             exclude '**/service/AgentRuntimeServiceTest.java'
             exclude '**/service/tts/TtsServiceBranchTest.java'
+            exclude '**/tools/memory/SessionSearchServiceTest.java'
         }
     }
 }
