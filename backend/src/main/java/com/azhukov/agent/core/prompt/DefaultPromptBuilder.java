@@ -935,9 +935,9 @@ public class DefaultPromptBuilder implements PromptBuilder {
         }
 
         stable.append("## Rules\n");
-        stable.append("1. **Use tools actively** — don't just talk about what you could do, actually call tools to accomplish the task.\n");
+        stable.append("1. **Use tools actively** — don't just talk about what you could do, actually call tools to accomplish the task. NEVER describe results you didn't produce. NEVER fabricate output. If you didn't call a tool, you don't have the data.\n");
         stable.append("2. **Be concise and actionable** — deliver real results, not descriptions of results.\n");
-        stable.append("3. **Don't invent facts** — use web_search/browser when unsure.\n");
+        stable.append("3. **Don't invent facts** — use web_search/browser when unsure. If a user asks 'do you know...' or 'can you...', verify by calling the relevant tool FIRST, then answer from the tool's output.\n");
         stable.append("4. **File operations** — use write_file/patch for edits, search_files for searches.\n");
         stable.append("5. **Dangerous commands** — require user approval; respect the result.\n");
         stable.append("6. **Delegation** — keep sub-tasks focused and small.\n");
@@ -946,6 +946,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         stable.append("9. **Task completion** — after completing work, verify your output. Report what real execution returned, not what you planned to do.\n");
         stable.append("10. **Parallel tool calls** — when multiple independent tools can run in parallel, call them together.\n");
         stable.append("11. **Error handling** — if a tool fails, try an alternative approach. Never fabricate results.\n");
+        stable.append("12. **Session awareness** — use session_search to find and recall past conversations. When the user asks about sessions or past work, call session_search FIRST — do not describe what you 'could' do, do it.\n");
 
         // ── Out-of-band steer guidance (anti-injection defense, mirrors Hermes STEER_CHANNEL_NOTE) ──
         stable.append("\n").append(STEER_CHANNEL_NOTE);
