@@ -158,9 +158,9 @@ public class CliReplRunner implements CommandLineRunner {
 
                 if (line.startsWith("/")) {
                     // P1-3: Destructive command confirmation
-                    if (DestructiveCommandConfirmation.isDestructiveLine(line)) {
-                        var result = commandRegistry.getDestructiveConfirmation()
-                            .evaluateWithPrompt(line, p -> {
+                    DestructiveCommandConfirmation destructiveConf = commandRegistry.getDestructiveConfirmation();
+                    if (destructiveConf.isDestructiveLine(line)) {
+                        var result = destructiveConf.evaluateWithPrompt(line, p -> {
                                 try {
                                     System.out.print(p);
                                     return reader.readLine("");
@@ -173,10 +173,10 @@ public class CliReplRunner implements CommandLineRunner {
                             continue;
                         }
                         // Strip skip tokens from args
-                        if (DestructiveCommandConfirmation.hasSkipToken(
+                        if (destructiveConf.hasSkipToken(
                                 line.substring(1).strip())) {
-                            String cmdName = DestructiveCommandConfirmation.getCommandName(line);
-                            String cleanArgs = DestructiveCommandConfirmation.getCleanArgs(line);
+                            String cmdName = destructiveConf.getCommandName(line);
+                            String cleanArgs = destructiveConf.getCleanArgs(line);
                             line = "/" + cmdName + (cleanArgs.isBlank() ? "" : " " + cleanArgs);
                         }
                     }

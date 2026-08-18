@@ -130,7 +130,15 @@ public class CliState {
         return false;
     }
 
-    public static String[] getValidReasoningLevels() {
+    /**
+     * Returns the valid reasoning effort levels (defensive copy).
+     * <p>
+     * c16: Now an instance method so callers go through the injected
+     * Spring bean rather than static state. The backing array is a
+     * {@code static final} constant (immutable), so no mutable static
+     * state remains.
+     */
+    public String[] getValidReasoningLevels() {
         return REASONING_LEVELS.clone();
     }
 

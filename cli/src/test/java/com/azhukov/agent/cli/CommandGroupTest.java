@@ -30,7 +30,7 @@ class CommandGroupTest {
     @Test
     void allCommandGroupsImplementCommandGroup() {
         CliState cliState = new CliState();
-        SessionStore sessionStore = new SessionStore();
+        SessionStore sessionStore = new SessionStore(SharedObjectMapper.get(), SessionStore.defaultStorePath());
         assertThat(new SessionCommands(cliState, sessionStore)).isInstanceOf(CommandGroup.class);
         assertThat(new CronCommands()).isInstanceOf(CommandGroup.class);
         assertThat(new MemoryCommands()).isInstanceOf(CommandGroup.class);

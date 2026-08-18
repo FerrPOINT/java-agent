@@ -65,7 +65,7 @@ public class SlashCommandRegistry {
      */
     public SlashCommandRegistry() {
         this.cliState = new CliState();
-        this.sessionStore = new SessionStore();
+        this.sessionStore = new SessionStore(SharedObjectMapper.get(), SessionStore.defaultStorePath());
         this.destructiveConfirmation = new DestructiveCommandConfirmation();
         this.commandGroups = defaultCommandGroups(this.cliState, this.sessionStore);
         registerAll();
