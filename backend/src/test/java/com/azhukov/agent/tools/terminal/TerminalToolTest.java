@@ -114,12 +114,23 @@ class TerminalToolTest {
     void executeBackgroundModeSpawnsProcess() throws Exception {
         AgentProperties p = properties();
 
-        // Mock spawn to return a fake ManagedProcess
-        ProcessTool.ManagedProcess fakeMp = mock(ProcessTool.ManagedProcess.class);
-        when(fakeMp.id).thenReturn("proc_abc123");
-        when(fakeMp.pid).thenReturn(99999L);
-        when(processTool.spawn(anyString(), anyInt(), anyBoolean(), any(), any()))
-            .thenReturn(fakeMp);
+        // Create a real ManagedProcess with a mock Process that exits immediately,
+        // so TerminalTool can read .id and .pid fields directly.
+        java.io.ByteArrayInputStream emptyIn = new java.io.ByteArrayInputStream(new byte[0]);
+        java.io.ByteArrayOutputStream emptyOut = new java.io.ByteArrayOutputStream();
+        Process mockProcess = org.mockito.Mockito.mock(Process.class);
+        when(mockProcess.isAlive()).thenReturn(false);
+        when(mockProcess.exitValue()).thenReturn(0);
+        when(mockProcess.pid()).thenReturn(99999L);
+        when(mockProcess.getInputStream()).thenReturn(emptyIn);
+        when(mockProcess.getOutputStream()).thenReturn(emptyOut);
+
+        ProcessTool.ManagedProcess mp = new ProcessTool.ManagedProcess(
+            "proc_abc123", "echo bg", mockProcess, 30);
+
+        // Stub ProcessTool.spawn to return our ManagedProcess
+        org.mockito.Mockito.doReturn(mp).when(processTool)
+            .spawn(anyString(), anyInt(), anyBoolean(), any(), any());
 
         TerminalTool tool = newTool(p);
         ToolResult result = tool.execute(
@@ -129,6 +140,9 @@ class TerminalToolTest {
         assertThat(result.content()).contains("Background process started");
         assertThat(result.content()).contains("session_id: proc_abc123");
         assertThat(result.content()).contains("pid: 99999");
+
+        // Clean up the managed process threads
+        mp.destroy();
     }
 
     // ── 4. Error output — non-zero exit code still returns output ─────────
@@ -138,16 +152,13 @@ class TerminalToolTest {
         AgentProperties p = properties();
         TerminalTool tool = newTool(p);
 
-        // `false` always exits 1 with no output; `ls /nonexistent` exits 2 with stderr
+        // Write to stderr and exit non-zero — output is captured via redirectErrorStream
         ToolResult result = tool.execute(
-            "{\"command\":\"ls /nonexistent_dir_xyz\"}", null, session());
+            "{\"command\":\"echo error_msg_to_stderr 1>&2; exit 7\"}", null, session());
 
-        // Non-zero exit code → ToolResult.ok is returned (output captured), but
-        // the enhancer appends error hints. The tool returns ok() with the output.
-        // Actually, re-reading the source: it returns ToolResult.ok(enhanced) on
-        // any completed process regardless of exit code. Let's verify the output
-        // contains the error message from stderr.
-        assertThat(result.content()).contains("No such file");
+        // The tool returns ok() with the captured output regardless of exit code
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("error_msg_to_stderr");
     }
 
     // ── 5. CWD echo — workdir is echoed in output ─────────────────────────
