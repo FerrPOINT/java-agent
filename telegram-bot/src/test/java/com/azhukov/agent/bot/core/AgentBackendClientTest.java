@@ -74,8 +74,20 @@ class AgentBackendClientTest {
         objectMapper = new ObjectMapper();
         properties = new BotProperties();
         properties.setBackendUrl("http://localhost:8090");
-        client = new AgentBackendClient(restClient, objectMapper, properties);
-        client.init();
+        // Construct the per-domain delegates with the shared mocked RestClient,
+        // then wrap them in the facade. ModelApiClient.init() is invoked so the
+        // base URL is populated (mirrors the @PostConstruct lifecycle).
+        SessionApiClient sessions = new SessionApiClient(restClient, objectMapper);
+        MessageApiClient messages = new MessageApiClient(restClient, objectMapper);
+        ToolApiClient tools = new ToolApiClient(restClient, objectMapper);
+        SkillApiClient skillClient = new SkillApiClient(restClient, objectMapper);
+        MemoryApiClient memoryClient = new MemoryApiClient(restClient, objectMapper);
+        CronApiClient cronClient = new CronApiClient(restClient, objectMapper);
+        ApprovalApiClient approvals = new ApprovalApiClient(restClient, objectMapper);
+        ModelApiClient modelClient = new ModelApiClient(restClient, objectMapper, properties);
+        modelClient.init();
+        client = new AgentBackendClient(sessions, messages, tools, skillClient,
+            memoryClient, cronClient, approvals, modelClient);
     }
 
     // ─── Helper ────────────────────────────────────────────────────
