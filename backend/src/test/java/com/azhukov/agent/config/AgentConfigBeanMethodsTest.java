@@ -8,7 +8,7 @@ import com.azhukov.agent.config.split.ContextConfig;
 import com.azhukov.agent.config.split.MemoryConfig;
 import com.azhukov.agent.config.split.ModelClientConfig;
 import com.azhukov.agent.config.split.PromptConfig;
-import com.azhukov.agent.config.split.SecurityConfig;
+import com.azhukov.agent.config.split.AgentSecurityConfig;
 import com.azhukov.agent.config.split.SessionConfig;
 import com.azhukov.agent.config.split.SkillConfig;
 import com.azhukov.agent.core.agent.AgentRuntime;
@@ -60,7 +60,7 @@ class AgentConfigBeanMethodsTest {
     private final ContextConfig contextConfig = new ContextConfig();
     private final MemoryConfig memoryConfig = new MemoryConfig();
     private final SkillConfig skillConfig = new SkillConfig();
-    private final SecurityConfig securityConfig = new SecurityConfig();
+    private final AgentSecurityConfig securityConfig = new AgentSecurityConfig();
     private final SessionConfig sessionConfig = new SessionConfig();
     private final AgentProperties properties = initProperties();
 

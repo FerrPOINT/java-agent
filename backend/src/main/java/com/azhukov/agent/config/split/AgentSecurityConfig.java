@@ -28,7 +28,7 @@ import org.springframework.context.annotation.Configuration;
  * approval manager, SSRF-safe HTTP client.
  */
 @Configuration
-public class SecurityConfig {
+public class AgentSecurityConfig {
 
     @Bean
     public MessageSanitizer messageSanitizer(SecretRedactor redactor) {

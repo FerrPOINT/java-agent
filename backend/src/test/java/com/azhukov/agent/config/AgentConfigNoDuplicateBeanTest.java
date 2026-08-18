@@ -1,6 +1,6 @@
 package com.azhukov.agent.config;
 
-import com.azhukov.agent.config.split.SecurityConfig;
+import com.azhukov.agent.config.split.AgentSecurityConfig;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -15,7 +15,7 @@ class AgentConfigNoDuplicateBeanTest {
 
     @Test
     void onlyOneToolGuardrailsBeanMethodExists() throws NoSuchMethodException {
-        SecurityConfig config = new SecurityConfig();
+        AgentSecurityConfig config = new AgentSecurityConfig();
 
         // The toolGuardrails method should exist
         assertThat(config.getClass().getMethod("toolGuardrails",
@@ -31,7 +31,7 @@ class AgentConfigNoDuplicateBeanTest {
 
     @Test
     void toolGuardrails_bean_returnsDefaultToolGuardrails() {
-        SecurityConfig config = new SecurityConfig();
+        AgentSecurityConfig config = new AgentSecurityConfig();
         AgentProperties properties = new AgentProperties();
 
         Object bean = config.toolGuardrails(properties, mock(com.azhukov.agent.security.ApprovalQueue.class));

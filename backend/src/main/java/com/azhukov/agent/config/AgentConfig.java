@@ -4,7 +4,7 @@ import com.azhukov.agent.config.split.ContextConfig;
 import com.azhukov.agent.config.split.MemoryConfig;
 import com.azhukov.agent.config.split.ModelClientConfig;
 import com.azhukov.agent.config.split.PromptConfig;
-import com.azhukov.agent.config.split.SecurityConfig;
+import com.azhukov.agent.config.split.AgentSecurityConfig;
 import com.azhukov.agent.config.split.SessionConfig;
 import com.azhukov.agent.config.split.SkillConfig;
 import com.azhukov.agent.config.split.ToolConfig;
@@ -69,7 +69,7 @@ import org.springframework.context.annotation.Import;
     ContextConfig.class,
     MemoryConfig.class,
     SkillConfig.class,
-    SecurityConfig.class,
+    AgentSecurityConfig.class,
     ToolConfig.class,
     SessionConfig.class
 })
