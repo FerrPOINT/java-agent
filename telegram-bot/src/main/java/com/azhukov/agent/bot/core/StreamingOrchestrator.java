@@ -6,6 +6,7 @@ import com.azhukov.agent.bot.media.MediaDeliveryService;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BusySessionHandler;
 import com.azhukov.agent.bot.streaming.StreamEditor;
+import com.azhukov.agent.bot.streaming.ToolEmojiMap;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -110,20 +111,19 @@ public class StreamingOrchestrator {
                     }
                 },
                 // toolCallConsumer — called when backend emits tool_calls event
-                // Tool progress is NOT shown in the streaming message (tool_progress: off).
-                // The current tool name is tracked for heartbeat display only.
+                // Show tool call with emoji icon in the streaming message (like Hermes).
                 toolCall -> {
                     if (messageId[0] >= 0) {
-                        // Track current tool name for heartbeat, but don't show in stream
                         streamEditor.setCurrentToolName(chatId, toolCall);
+                        // Show "⚙️ tool_name: \"preview\"" in the stream
+                        String toolDisplay = ToolEmojiMap.formatToolCall(toolCall, null);
+                        accumulated.append("\n").append(toolDisplay).append("\n");
+                        streamEditor.editStream(chatId, messageId[0], accumulated.toString());
                     }
                 },
                 // toolResultConsumer — called when backend emits tool_result event
-                // Tool results are NOT shown in the streaming message (tool_progress: off).
                 (toolName, toolResultPreview) -> {
                     if (messageId[0] >= 0) {
-                        // Send a new message to create a segment break after tool execution,
-                        // so the response continues in a fresh message.
                         streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
                     }
                 },
