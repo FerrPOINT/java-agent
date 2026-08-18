@@ -1,5 +1,6 @@
 package com.azhukov.agent.config;
 
+import com.azhukov.agent.config.split.ModelClientConfig;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,7 +23,7 @@ class SharedObjectMapperTest {
 
     @Test
     void objectMapper_bean_usesSharedSingleton() {
-        AgentConfig config = new AgentConfig();
+        ModelClientConfig config = new ModelClientConfig();
         assertThat(config.objectMapper()).isSameAs(SharedObjectMapper.get());
     }
 }

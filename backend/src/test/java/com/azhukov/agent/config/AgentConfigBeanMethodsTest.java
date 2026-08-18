@@ -4,6 +4,13 @@ import com.azhukov.agent.client.langchain4j.ErrorClassifier;
 import com.azhukov.agent.client.langchain4j.LangChain4jModelClient;
 import com.azhukov.agent.client.langchain4j.RateLimitTracker;
 import com.azhukov.agent.client.NoOpModelClient;
+import com.azhukov.agent.config.split.ContextConfig;
+import com.azhukov.agent.config.split.MemoryConfig;
+import com.azhukov.agent.config.split.ModelClientConfig;
+import com.azhukov.agent.config.split.PromptConfig;
+import com.azhukov.agent.config.split.SecurityConfig;
+import com.azhukov.agent.config.split.SessionConfig;
+import com.azhukov.agent.config.split.SkillConfig;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.TurnFinalizer;
@@ -14,7 +21,6 @@ import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.context.ContextReferenceService;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.BackgroundReviewService;
-import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.security.*;
 import com.azhukov.agent.core.skill.SkillManager;
@@ -23,14 +29,11 @@ import com.azhukov.agent.core.state.AgentState;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.tool.ToolExecutionService;
-import com.azhukov.agent.gateway.BasePlatformAdapter;
 import com.azhukov.agent.gateway.GatewayRoutingService;
-import com.azhukov.agent.gateway.InboundMessageProcessor;
 import com.azhukov.agent.gateway.SessionResolver;
 import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.persistence.MessagePersistenceService;
 import com.azhukov.agent.persistence.repository.*;
-import com.azhukov.agent.security.*;
 import com.azhukov.agent.service.ImageShrinker;
 import com.azhukov.agent.service.TurnUsageCollector;
 import io.github.resilience4j.retry.RetryRegistry;
@@ -44,9 +47,21 @@ import java.util.function.Consumer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
+/**
+ * Verifies that every @Bean method previously defined in AgentConfig still
+ * produces a non-null bean. Methods have been moved into domain-specific
+ * split config classes; this test instantiates each split config directly.
+ */
 class AgentConfigBeanMethodsTest {
 
     private final AgentConfig config = new AgentConfig();
+    private final ModelClientConfig modelClientConfig = new ModelClientConfig();
+    private final PromptConfig promptConfig = new PromptConfig();
+    private final ContextConfig contextConfig = new ContextConfig();
+    private final MemoryConfig memoryConfig = new MemoryConfig();
+    private final SkillConfig skillConfig = new SkillConfig();
+    private final SecurityConfig securityConfig = new SecurityConfig();
+    private final SessionConfig sessionConfig = new SessionConfig();
     private final AgentProperties properties = initProperties();
 
     private static AgentProperties initProperties() {
@@ -62,33 +77,33 @@ class AgentConfigBeanMethodsTest {
 
         @Test
     void noopModelClient_bean() {
-        assertThat(config.noopModelClient()).isNotNull();
+        assertThat(modelClientConfig.noopModelClient()).isNotNull();
     }
 
     @Test
     void openAiCompatibleModelClient_bean() {
         properties.getModel().setProvider("openai-compatible");
-        assertThat(config.openAiCompatibleModelClient(properties, mock(TurnUsageCollector.class), new ErrorClassifier(), new RateLimitTracker(), new ImageShrinker(properties))).isInstanceOfAny(LangChain4jModelClient.class, ModelClient.class);
+        assertThat(modelClientConfig.openAiCompatibleModelClient(properties, mock(TurnUsageCollector.class), new ErrorClassifier(), new RateLimitTracker(), new ImageShrinker(properties))).isInstanceOfAny(LangChain4jModelClient.class, ModelClient.class);
     }
 
     @Test
     void objectMapper_bean() {
-        assertThat(config.objectMapper()).isNotNull();
+        assertThat(modelClientConfig.objectMapper()).isNotNull();
     }
 
     @Test
     void iterationBudget_bean() {
-        assertThat(config.iterationBudget(properties)).isNotNull();
+        assertThat(modelClientConfig.iterationBudget(properties)).isNotNull();
     }
 
     @Test
     void contextCompressor_bean() {
-        assertThat(config.contextCompressor(mock(ModelClient.class), mock(CompressionLockRepository.class), properties, mock(SessionRepository.class))).isNotNull();
+        assertThat(contextConfig.contextCompressor(mock(ModelClient.class), mock(CompressionLockRepository.class), properties, mock(SessionRepository.class))).isNotNull();
     }
 
     @Test
     void contextReferenceService_bean() {
-        assertThat(config.contextReferenceService(properties, mock(SkillManager.class))).isNotNull();
+        assertThat(contextConfig.contextReferenceService(properties, mock(SkillManager.class))).isNotNull();
     }
 
     @Test
@@ -98,42 +113,42 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void promptBuilder_bean() {
-        assertThat(config.promptBuilder(properties, mock(ToolRegistry.class), mock(AgentConstants.class), mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.CodingContextDetector.class), mock(MemoryProvider.class), mock(com.azhukov.agent.core.skill.SkillManager.class))).isNotNull();
+        assertThat(promptConfig.promptBuilder(properties, mock(ToolRegistry.class), mock(AgentConstants.class), mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.CodingContextDetector.class), mock(MemoryProvider.class), mock(com.azhukov.agent.core.skill.SkillManager.class))).isNotNull();
     }
 
     @Test
     void messageSanitizer_bean() {
-        assertThat(config.messageSanitizer(mock(SecretRedactor.class))).isNotNull();
+        assertThat(securityConfig.messageSanitizer(mock(SecretRedactor.class))).isNotNull();
     }
 
     @Test
     void userInputSanitizer_bean() {
-        assertThat(config.userInputSanitizer()).isNotNull();
+        assertThat(securityConfig.userInputSanitizer()).isNotNull();
     }
 
     @Test
     void secretRedactor_bean() {
-        assertThat(config.secretRedactor(properties)).isNotNull();
+        assertThat(securityConfig.secretRedactor(properties)).isNotNull();
     }
 
     @Test
     void fileSafetyValidator_bean() {
-        assertThat(config.fileSafetyValidator(properties)).isNotNull();
+        assertThat(securityConfig.fileSafetyValidator(properties)).isNotNull();
     }
 
     @Test
     void urlSafetyHandler_bean() {
-        assertThat(config.urlSafetyHandler(properties, new DefaultUrlSafety(properties))).isNotNull();
+        assertThat(securityConfig.urlSafetyHandler(properties, new DefaultUrlSafety(properties))).isNotNull();
     }
 
     @Test
     void ssrfSafeHttpClient_bean() {
-        assertThat(config.ssrfSafeHttpClient(mock(UrlSafetyHandler.class), mock(SecretRedactor.class), properties)).isNotNull();
+        assertThat(securityConfig.ssrfSafeHttpClient(mock(UrlSafetyHandler.class), mock(SecretRedactor.class), properties)).isNotNull();
     }
 
     @Test
     void commandApprovalManager_bean() {
-        assertThat(config.commandApprovalManager(properties)).isNotNull();
+        assertThat(securityConfig.commandApprovalManager(properties)).isNotNull();
     }
 
     @Test
@@ -143,52 +158,52 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void toolCallGuardrail_bean() {
-        assertThat(config.toolCallGuardrail(properties)).isNotNull();
+        assertThat(securityConfig.toolCallGuardrail(properties)).isNotNull();
     }
 
     @Test
     void toolGuardrails_bean() {
-        assertThat(config.toolGuardrails(properties, mock(com.azhukov.agent.security.ApprovalQueue.class))).isNotNull();
+        assertThat(securityConfig.toolGuardrails(properties, mock(com.azhukov.agent.security.ApprovalQueue.class))).isNotNull();
     }
 
     @Test
     void contextEngine_bean() {
-        assertThat(config.contextEngine(mock(MemoryProvider.class), mock(SkillManager.class), mock(MessageRepository.class), mock(ContextCompressor.class), properties, mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.SessionLineagePort.class))).isNotNull();
+        assertThat(contextConfig.contextEngine(mock(MemoryProvider.class), mock(SkillManager.class), mock(MessageRepository.class), mock(ContextCompressor.class), properties, mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.SessionLineagePort.class))).isNotNull();
     }
 
     @Test
     void memoryProvider_bean() {
-        assertThat(config.memoryProvider(mock(MemoryRepository.class), new AgentProperties(), new com.azhukov.agent.core.memory.MemoryThreatScanner())).isNotNull();
+        assertThat(memoryConfig.memoryProvider(mock(MemoryRepository.class), new AgentProperties(), new com.azhukov.agent.core.memory.MemoryThreatScanner())).isNotNull();
     }
 
     @Test
     void noOpMemoryProvider_bean() {
-        assertThat(config.noOpMemoryProvider()).isNotNull();
+        assertThat(memoryConfig.noOpMemoryProvider()).isNotNull();
     }
 
     @Test
     void skillManager_bean() {
-        assertThat(config.skillManager(mock(SkillRepository.class), new AgentProperties())).isNotNull();
+        assertThat(skillConfig.skillManager(mock(SkillRepository.class), new AgentProperties())).isNotNull();
     }
 
     @Test
     void noOpSkillManager_bean() {
-        assertThat(config.noOpSkillManager()).isNotNull();
+        assertThat(skillConfig.noOpSkillManager()).isNotNull();
     }
 
     @Test
     void fileSafety_bean() {
-        assertThat(config.fileSafety(properties)).isNotNull();
+        assertThat(securityConfig.fileSafety(properties)).isNotNull();
     }
 
     @Test
     void urlSafety_bean() {
-        assertThat(config.urlSafety(properties)).isNotNull();
+        assertThat(securityConfig.urlSafety(properties)).isNotNull();
     }
 
     @Test
     void redactor_bean() {
-        assertThat(config.redactor(properties)).isNotNull();
+        assertThat(securityConfig.redactor(properties)).isNotNull();
     }
 
     @Test
@@ -203,21 +218,21 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void gatewayMessageHandler_bean() {
-        assertThat(config.gatewayMessageHandler(mock(SessionResolver.class), mock(AgentRuntime.class), mock(ObjectProvider.class), mock(MessagePersistenceService.class), mock(com.azhukov.agent.core.agent.MidTurnPersistenceCallback.class), properties, mock(com.azhukov.agent.core.agent.SteerBuffer.class))).isNotNull();
+        assertThat(sessionConfig.gatewayMessageHandler(mock(SessionResolver.class), mock(AgentRuntime.class), mock(ObjectProvider.class), mock(MessagePersistenceService.class), mock(com.azhukov.agent.core.agent.MidTurnPersistenceCallback.class), properties, mock(com.azhukov.agent.core.agent.SteerBuffer.class))).isNotNull();
     }
 
     @Test
     void gatewayRoutingService_bean() {
-assertThat(config.gatewayRoutingService(java.util.Collections.emptyList(), (java.util.function.Consumer<MessageEvent>) mock(java.util.function.Consumer.class))).isNotNull();
+assertThat(sessionConfig.gatewayRoutingService(java.util.Collections.emptyList(), (java.util.function.Consumer<MessageEvent>) mock(java.util.function.Consumer.class))).isNotNull();
     }
 
     @Test
     void retryRegistry_bean() {
-        assertThat(config.retryRegistry()).isNotNull();
+        assertThat(modelClientConfig.retryRegistry()).isNotNull();
     }
 
     @Test
     void timeLimiterRegistry_bean() {
-        assertThat(config.timeLimiterRegistry()).isNotNull();
+        assertThat(modelClientConfig.timeLimiterRegistry()).isNotNull();
     }
 }

@@ -448,7 +448,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // ── Incomplete scratchpad handling (parity with Hermes conversation_loop.py:3584) ──
             // If response contains <REASONING_SCRATCHPAD> but NOT </REASONING_SCRATCHPAD>,
             // the model ran out of output tokens mid-reasoning — retry up to 2 times.
-            if (hasIncompleteScratchpad(response.content())) {
+            if (ThinkBlockProcessor.hasIncompleteScratchpad(response.content())) {
                 incompleteScratchpadRetries++;
                 log.warn("Incomplete <REASONING_SCRATCHPAD> detected (opened but never closed), retry {}/2",
                     incompleteScratchpadRetries);
@@ -476,8 +476,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // The model sees its own reasoning on the next iteration and produces visible text.
                 // Limit to 2 retries (matching Hermes _thinking_prefill_retries < 2).
                 if (response.content() != null
-                    && containsAnyThinkTag(response.content())
-                    && !hasContentAfterThinkBlock(response.content())
+                    && ThinkBlockProcessor.containsAnyThinkTag(response.content())
+                    && !ThinkBlockProcessor.hasContentAfterThinkBlock(response.content())
                     && thinkingPrefillRetries < 2) {
                     thinkingPrefillRetries++;
                     log.info("Thinking-only response (no visible content) — prefilling to continue ({}/2)",
@@ -495,7 +495,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // are exhausted (thinkingPrefillRetries >= 2), matching Hermes where
                 // _thinking_prefill_retries < 2 guards the prefill path and the exhausted
                 // check is in the truncation handler.
-                if (isThinkingBudgetExhausted(response) && thinkingPrefillRetries >= 2) {
+                if (ThinkBlockProcessor.isThinkingBudgetExhausted(response) && thinkingPrefillRetries >= 2) {
                     String exhaustMsg = "⚠️ **Thinking Budget Exhausted**\n\n"
                         + "The model spent all its output tokens on reasoning "
                         + "and had none left for the actual response.\n\n"
@@ -517,15 +517,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 //   Attempt 1: add a "nudge" user message asking the model to respond
                 //   Attempt 2: add a prefill assistant message ("Let me continue...")
                 //   Attempt 3: treat as terminal — return EMPTY_RESPONSE_EXHAUSTED exit reason
-                String visibleContent = stripThinkBlocksFromString(response.content());
+                String visibleContent = ThinkBlockProcessor.stripThinkBlocksFromString(response.content());
                 if (visibleContent != null) {
                     visibleContent = visibleContent.strip();
                 }
                 String rawContent = response.content() != null ? response.content() : "";
                 boolean isTrulyEmpty = (visibleContent == null || visibleContent.isBlank())
-                    && !containsAnyThinkTag(rawContent);
+                    && !ThinkBlockProcessor.containsAnyThinkTag(rawContent);
                 boolean prefillExhausted = thinkingPrefillRetries >= 2;
-                if (isTrulyEmpty && (!containsAnyThinkTag(rawContent) || prefillExhausted)) {
+                if (isTrulyEmpty && (!ThinkBlockProcessor.containsAnyThinkTag(rawContent) || prefillExhausted)) {
                     // h63: When the model returns a deterministic empty response (not an error, just empty),
                     // don't retry it — return immediately with a message, unless config overrides.
                     if (!properties.getCore().isEmptyResponseRetry()) {
@@ -975,7 +975,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         && containsThinkingBlocks(currentContext)) {
                         retryState.setThinkingSigRetryAttempted(true);
                         log.info("THINKING_SIGNATURE error, stripping thinking blocks and retrying (one-shot guard)");
-                        currentContext = stripThinkingBlocks(currentContext);
+                        currentContext = ThinkBlockProcessor.stripThinkingBlocks(currentContext);
                         attempt--;
                         continue;
                     }
@@ -986,7 +986,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         && containsThinkingBlocks(currentContext)) {
                         retryState.setThinkingSigRetryAttempted(true);
                         log.info("FORMAT_ERROR with thinking blocks, stripping and retrying (one-shot guard)");
-                        currentContext = stripThinkingBlocks(currentContext);
+                        currentContext = ThinkBlockProcessor.stripThinkingBlocks(currentContext);
                         attempt--;
                         continue;
                     }
@@ -1020,7 +1020,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         && !retryState.isInvalidEncryptedContentRetryAttempted()) {
                         retryState.setInvalidEncryptedContentRetryAttempted(true);
                         log.info("INVALID_ENCRYPTED_CONTENT error, stripping encrypted reasoning and retrying (one-shot guard)");
-                        currentContext = stripThinkingBlocks(currentContext);
+                        currentContext = ThinkBlockProcessor.stripThinkingBlocks(currentContext);
                         attempt--;
                         continue;
                     }
@@ -1477,159 +1477,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
      */
     private boolean containsThinkingBlocks(List<Message> context) {
         return context.stream().anyMatch(m -> m.content() != null
-            && containsAnyThinkTag(m.content()));
-    }
-
-    /**
-     * Check if content contains any known think-block tag variant (case-insensitive).
-     * Mirrors Hermes {@code _has_inline_thinking} regex: {@code ⇋|<thinking>|<reasoning>}.
-     */
-    private boolean containsAnyThinkTag(String content) {
-        String lower = content.toLowerCase();
-        return lower.contains("<antml:thinking>")
-            || lower.contains("<thinking>")
-            || lower.contains("<reasoning>")
-            || lower.contains("<thought>")
-            || lower.contains("<reasoning_scratchpad>")
-            || lower.contains("⇋");
-    }
-
-    /**
-     * Strip thinking/reasoning blocks from all messages in the context.
-     * <p>
-     * Ported from Hermes {@code strip_think_blocks} (agent_runtime_helpers.py).
-     * Handles:
-     * <ol>
-     *   <li>Closed tag pairs — {@code ⇋…⇋}, {@code <thinking>…</thinking>},
-     *       {@code <reasoning>…</reasoning>}, {@code <thought>…</thought>},
-     *       {@code <REASONING_SCRATCHPAD>…</REASONING_SCRATCHPAD>},
-     *       {@code <antml:thinking>…</antml:thinking>}</li>
-     *   <li>Unterminated open tag at a block boundary (start of text or after
-     *       a newline) — strips from the tag to end of string</li>
-     *   <li>Stray orphan open/close tags</li>
-     * </ol>
-     * All matching is case-insensitive.
-     */
-    private List<Message> stripThinkingBlocks(List<Message> context) {
-        return context.stream().map(m -> {
-            if (m.content() == null) return m;
-            String stripped = stripThinkBlocksFromString(m.content()).trim();
-            return new Message(m.role(), stripped, m.toolCall(), m.toolCalls(),
-                m.toolCallId(), m.turnIndex(), m.imageCount());
-        }).toList();
-    }
-
-    /**
-     * Strip all thinking/reasoning block variants from a content string.
-     * Case-insensitive, matching Hermes {@code strip_think_blocks}.
-     *
-     * @param content the content to strip; null/empty returns ""
-     * @return content with all think blocks removed
-     */
-    static String stripThinkBlocksFromString(String content) {
-        if (content == null || content.isEmpty()) {
-            return "";
-        }
-        String result = content;
-
-        // 1. Closed tag pairs (case-insensitive, non-greedy)
-        result = result.replaceAll("(?is)⇋.*?⇋", "");
-        result = result.replaceAll("(?is)<antml:thinking>.*?</antml:thinking>", "");
-        result = result.replaceAll("(?is)<thinking>.*?</thinking>", "");
-        result = result.replaceAll("(?is)<reasoning>.*?</reasoning>", "");
-        result = result.replaceAll("(?is)<thought>.*?</thought>", "");
-        result = result.replaceAll("(?is)<REASONING_SCRATCHPAD>.*?</REASONING_SCRATCHPAD>", "");
-
-        // 2. Unterminated reasoning block — open tag at a block boundary
-        //    (start of text or after a newline) with no matching close.
-        //    Strip from the tag to end of string.
-        //    Tag variants: think, thinking, reasoning, thought, REASONING_SCRATCHPAD
-        result = result.replaceAll(
-            "(?is)(?:^|\\n)[ \\t]*<(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)\\b[^>]*>.*$",
-            "");
-
-        // 3. Stray orphan open/close tags that slipped through.
-        result = result.replaceAll(
-            "(?is)</?(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>\\s*",
-            "");
-
-        // 3b. Stray antml:thinking tags
-        result = result.replaceAll("(?is)</?antml:thinking>\\s*", "");
-
-        return result;
-    }
-
-    /**
-     * Check if content has actual visible text after stripping think blocks.
-     * Mirrors Hermes {@code _has_content_after_think_block}.
-     *
-     * @param content the content to check
-     * @return true if there's meaningful (non-whitespace) content after think blocks
-     */
-    static boolean hasContentAfterThinkBlock(String content) {
-        if (content == null || content.isEmpty()) {
-            return false;
-        }
-        String cleaned = stripThinkBlocksFromString(content);
-        return !cleaned.strip().isEmpty();
-    }
-
-    /**
-     * Check if content contains an incomplete {@code <REASONING_SCRATCHPAD>}
-     * (opened but never closed) — the model ran out of output tokens mid-reasoning.
-     * Mirrors Hermes {@code has_incomplete_scratchpad} (trajectory.py).
-     */
-    static boolean hasIncompleteScratchpad(String content) {
-        if (content == null || content.isEmpty()) {
-            return false;
-        }
-        return content.contains("<REASONING_SCRATCHPAD>")
-            && !content.contains("</REASONING_SCRATCHPAD>");
-    }
-
-    /**
-     * Detect thinking-budget exhaustion: the model spent ALL output tokens on
-     * reasoning and had none left for the actual response.
-     * <p>
-     * Mirrors Hermes {@code _thinking_exhausted} (conversation_loop.py:1540).
-     * A response is "thinking exhausted" only when:
-     * <ul>
-     *   <li>It has no tool calls (the model was not in the middle of a tool call)</li>
-     *   <li>It contains think tags</li>
-     *   <li>There is no visible text after the think blocks (or content is null)</li>
-     * </ul>
-     *
-     * @param response the model response
-     * @return true if this looks like thinking-budget exhaustion
-     */
-    static boolean isThinkingBudgetExhausted(ChatResponse response) {
-        if (response == null) {
-            return false;
-        }
-        // Must not have tool calls — thinking exhaustion is about text-only responses
-        if (response.hasToolCalls()) {
-            return false;
-        }
-        String content = response.content();
-        if (content == null) {
-            return true; // null content with no tool calls
-        }
-        // Must contain think tags
-        if (!containsAnyThinkTagStatic(content)) {
-            return false;
-        }
-        // No visible text after think blocks
-        return !hasContentAfterThinkBlock(content);
-    }
-
-    private static boolean containsAnyThinkTagStatic(String content) {
-        String lower = content.toLowerCase();
-        return lower.contains("<antml:thinking>")
-            || lower.contains("<thinking>")
-            || lower.contains("<reasoning>")
-            || lower.contains("<thought>")
-            || lower.contains("<reasoning_scratchpad>")
-            || lower.contains("⇋");
+            && ThinkBlockProcessor.containsAnyThinkTag(m.content()));
     }
 
     private boolean containsImageContent(List<Message> context) {
