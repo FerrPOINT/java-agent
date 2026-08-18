@@ -24,7 +24,7 @@
 12. **h12** ★RESTORED: Introduce repository ports in core — justified for multi-user
 13. ~~**h13** Break core.memory ↔ tools.memory cycle~~ ✅ DONE (2e37f4c)
 14. ~~**h14** Split AgentConfig into domain-specific @Configuration classes~~ ✅ DONE (a2ece7b)
-15. **h15** Split AgentBackendClient (bot, 1474 LOC) → per-domain delegate classes
+15. ~~**h15** Split AgentBackendClient (bot, 1474 LOC) → per-domain delegate classes~~ ✅ DONE (f8610ca)
 16. ~~**h16** Make CliState/SessionStore/DestructiveCommandConfirmation Spring beans~~ ✅ DONE (70faf14)
 17. ~~**h17** Delete ReplLoop — dead code~~ ✅ DONE (087aca3)
 18. ~~**h18** Break core.agent ↔ core.context cycle~~ ✅ DONE (5d4e26b)
