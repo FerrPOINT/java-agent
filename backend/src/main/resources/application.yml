@@ -179,7 +179,7 @@ agent:
   
   # ─── Tool output ───
   tool-output:
-    max-chars: ${AGENT_TOOL_OUTPUT_MAX_CHARS:16000}
+    max-chars: ${AGENT_TOOL_OUTPUT_MAX_CHARS:50000}
     truncate-warning-chars: ${AGENT_TOOL_OUTPUT_TRUNCATE_WARNING_CHARS:12000}
     timeout-seconds: ${AGENT_TOOL_OUTPUT_TIMEOUT_SECONDS:300}
     include-timestamps: ${AGENT_TOOL_OUTPUT_INCLUDE_TIMESTAMPS:true}

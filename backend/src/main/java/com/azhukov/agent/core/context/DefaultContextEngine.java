@@ -296,8 +296,8 @@ public class DefaultContextEngine implements ContextEngine {
 
  private List<Message> trimToFit(List<Message> context) {
  int maxMessages = contextProps.getMaxContextMessages();
- if (maxMessages <= 0) {
- maxMessages = 50;
+ if (maxMessages <= 0 || maxMessages < 500) {
+     maxMessages = 10000; // H-SYNC: effectively unlimited — compression handles trimming
  }
  int maxChars = contextProps.getMaxTokens() * charsPerToken();
  int targetChars = contextProps.getTargetTokens() * charsPerToken();
