@@ -42,7 +42,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 
 import java.util.ArrayList;
@@ -97,16 +96,19 @@ public class DefaultAgentRuntime implements AgentRuntime {
     // TurnExecutor contains the shared model-call-with-retry, tool execution,
     // think-block stripping, and context-compression-check logic that was
     // previously duplicated between DefaultAgentRuntime and AgentStreamingService.
-    // Constructed from existing dependencies in @PostConstruct to preserve the
-    // @RequiredArgsConstructor signature (tests construct this class positionally).
+    // Lazily initialized from existing dependencies to preserve the
+    // @RequiredArgsConstructor signature (tests construct this class positionally
+    // without going through Spring's @PostConstruct lifecycle).
     private TurnExecutor turnExecutor;
 
-    @PostConstruct
-    void initTurnExecutor() {
-        this.turnExecutor = new TurnExecutor(
-            errorClassifier, properties, contextCompressor, contextEngine,
-            toolExecutionService, toolResultFormatter, tokenEstimator,
-            interruptToken, approvalQueue, memoryNudgeManager, steerBuffer);
+    private TurnExecutor turnExecutor() {
+        if (turnExecutor == null) {
+            turnExecutor = new TurnExecutor(
+                errorClassifier, properties, contextCompressor, contextEngine,
+                toolExecutionService, toolResultFormatter, tokenEstimator,
+                interruptToken, approvalQueue, memoryNudgeManager, steerBuffer);
+        }
+        return turnExecutor;
     }
 
     // Fallback manager — created per-turn, manages mid-turn model switching.
@@ -232,11 +234,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
         if (effectiveToolsets.contains("memory") && memoryNudgeManager != null) {
             try {
                 long priorUserTurns = contextEngine.countPriorUserMessages(sessionIdUuid);
-                memoryNudgeManager.initMemoryCounter(sessionIdUuid, priorUserTurns);
+                if (memoryNudgeManager != null) memoryNudgeManager.initMemoryCounter(sessionIdUuid, priorUserTurns);
             } catch (Exception e) {
-                memoryNudgeManager.initMemoryCounter(sessionIdUuid, 0);
+                if (memoryNudgeManager != null) memoryNudgeManager.initMemoryCounter(sessionIdUuid, 0);
             }
-            memoryNudgeManager.incrementMemoryTurns(sessionIdUuid);
+            if (memoryNudgeManager != null) memoryNudgeManager.incrementMemoryTurns(sessionIdUuid);
         }
 
         // S14: MemoryManager lifecycle hook — on_turn_start
@@ -380,7 +382,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // is incremented at the start of each loop iteration.
             // H6: Only increment if the skills toolset is actually available.
             if (effectiveToolsets.contains("skills") && memoryNudgeManager != null) {
-                memoryNudgeManager.incrementSkillIters(session.id());
+                if (memoryNudgeManager != null) memoryNudgeManager.incrementSkillIters(session.id());
             }
 
             if (guardrail.isHalted(session.id())) {
@@ -405,7 +407,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // H7: Fire background review on budget-exhausted path too.
                 boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
                 if (memoryNudgeManager != null) {
-                    memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+                    if (memoryNudgeManager != null) memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
                 }
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, true, TurnExitReason.BUDGET_EXHAUSTED);
@@ -426,8 +428,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 log.debug("Turn {} model returned in {} ms: toolCalls={}, content length={}",
                     i, duration, response.toolCalls() != null ? response.toolCalls().size() : 0,
                     response.content() != null ? response.content().length() : 0);
-            } catch (ContentPolicyException e) {
+            } catch (TurnExecutor.ContentPolicyException e) {
                 // ── Part F: Content policy handling — user-friendly message, terminal ──
+                // Catches TurnExecutor.ContentPolicyException which is what
+                // callModelWithRetry throws. DefaultAgentRuntime.ContentPolicyException
+                // extends it, so this catch covers both types.
                 log.warn("Content policy block: {}", e.getMessage());
                 turnMessages.add(Message.assistant(e.getMessage(), turnIndex));
                 if (turnFinalizer != null) {
@@ -574,7 +579,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // Mirrors Hermes: memory review every N user turns, skill review every M tool iterations.
                 boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
                 if (memoryNudgeManager != null) {
-                    memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+                    if (memoryNudgeManager != null) memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
                 }
                 TurnExitReason reason = (visibleContent == null || visibleContent.isBlank())
                     ? TurnExitReason.EMPTY_RESPONSE : TurnExitReason.COMPLETED;
@@ -700,7 +705,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // interrupt checks, approval flow, memory-nudge counter resets,
             // sequential/parallel execution, and steer-note injection.
             boolean skipApproval = "true".equals(session.getMetadata("subagent_auto_approve"));
-            TurnExecutor.ToolBatchResult batchResult = turnExecutor.executeToolBatch(
+            TurnExecutor.ToolBatchResult batchResult = turnExecutor().executeToolBatch(
                 toolCalls, registeredToolNames, session, turnState, currentTurnIndex, skipApproval);
             if (batchResult.isInterrupted()) {
                 turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
@@ -733,13 +738,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // Mirrors Hermes conversation_loop.py:3960-3998: after each tool batch,
             // before the next model call, check if compression should be triggered.
             // This is IN ADDITION to the existing reactive compression on CONTEXT_OVERFLOW.
-            turnExecutor.checkProactiveCompression(turnMessages);
+            turnExecutor().checkProactiveCompression(turnMessages);
         }
 
         // H7: Fire background review on max-turns-reached path too.
         boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
         if (memoryNudgeManager != null) {
-            memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+            if (memoryNudgeManager != null) memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
         }
 
         if (turnFinalizer != null) {
@@ -765,7 +770,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         TurnExecutor.FallbackContext fallbackCtx = new TurnExecutor.FallbackContext(modelClient);
         fallbackCtx.setFallbackManager(fallbackManager);
         fallbackCtx.setActiveModelClient(activeModelClient);
-        ChatResponse response = turnExecutor.callModelWithRetry(context, tools, session, options, fallbackCtx);
+        ChatResponse response = turnExecutor().callModelWithRetry(context, tools, session, options, fallbackCtx);
         // Propagate any model swap done by TurnExecutor back to this runtime's fields
         activeModelClient = fallbackCtx.getActiveModelClient();
         return response;
@@ -880,7 +885,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
      */
     private List<Message> executeToolsInParallel(List<ToolCall> toolCalls, Session session,
                                                   TurnState turnState, int currentTurnIndex) {
-        return turnExecutor.executeToolsInParallel(toolCalls, session, turnState, currentTurnIndex);
+        return turnExecutor().executeToolsInParallel(toolCalls, session, turnState, currentTurnIndex);
     }
 
     /**
@@ -906,7 +911,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         if (sessionId == null) return;
         sessionLocks.remove(sessionId);
         if (memoryNudgeManager != null) {
-            memoryNudgeManager.clearSession(sessionId);
+            if (memoryNudgeManager != null) memoryNudgeManager.clearSession(sessionId);
         }
         log.debug("Cleaned up runtime state maps for session {}", sessionId);
     }

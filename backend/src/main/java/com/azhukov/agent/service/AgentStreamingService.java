@@ -57,7 +57,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.TimeoutException;
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 
@@ -100,19 +99,22 @@ public class AgentStreamingService {
     // think-block stripping, and context-compression-check logic. The streaming
     // path delegates error classification + backoff calculation to it via
     // classifyForRetry(), and uses its static estimateResponseTokens helper.
-    // Constructed from existing dependencies in @PostConstruct to preserve the
-    // @RequiredArgsConstructor signature (tests construct this class positionally).
+    // Lazily initialized from existing dependencies to preserve the
+    // @RequiredArgsConstructor signature (tests construct this class positionally
+    // without going through Spring's @PostConstruct lifecycle).
     // The deps not available here (contextCompressor, approvalQueue,
     // memoryNudgeManager) are passed as null — they are only used by
     // callModelWithRetry/executeToolBatch which the streaming path doesn't call.
     private com.azhukov.agent.core.agent.TurnExecutor turnExecutor;
 
-    @PostConstruct
-    void initTurnExecutor() {
-        this.turnExecutor = new com.azhukov.agent.core.agent.TurnExecutor(
-            errorClassifier, properties, null, contextEngine,
-            toolExecutionService, toolResultFormatter, tokenEstimator,
-            interruptToken, null, null, steerBuffer);
+    private com.azhukov.agent.core.agent.TurnExecutor turnExecutor() {
+        if (turnExecutor == null) {
+            turnExecutor = new com.azhukov.agent.core.agent.TurnExecutor(
+                errorClassifier, properties, null, contextEngine,
+                toolExecutionService, toolResultFormatter, tokenEstimator,
+                interruptToken, null, null, steerBuffer);
+        }
+        return turnExecutor;
     }
 
     private static final int MAX_STREAM_RETRIES = 5;
@@ -351,7 +353,7 @@ public class AgentStreamingService {
                         long delayMs;
                         if (error instanceof Exception exc) {
                             com.azhukov.agent.core.agent.TurnExecutor.RetryClassification rc =
-                                turnExecutor.classifyForRetry(exc, streamRetries);
+                                turnExecutor().classifyForRetry(exc, streamRetries);
                             errorType = rc.errorType();
                             delayMs = rc.backoffMs();
                             // Preserve the streaming path's jitter: add 0-500ms on top of
