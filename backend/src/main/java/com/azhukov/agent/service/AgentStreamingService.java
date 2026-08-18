@@ -526,8 +526,9 @@ public class AgentStreamingService {
                     if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                     return;
                 }
-                send(emitter, new StreamEvent("tool_start", null, null, null,
-                    null, null, null, call.name(), null), streamCtx);
+                send(emitter, new StreamEvent("tool_start", null,
+                    java.util.List.of(new com.azhukov.agent.core.model.ToolCall(call.id(), call.name(), call.arguments())),
+                    null, null, null, null, call.name(), null), streamCtx);
 
                 long toolStart = System.currentTimeMillis();
                 ToolResult result = toolExecutionService.execute(

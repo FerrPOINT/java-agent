@@ -833,11 +833,12 @@ public class StreamEditor {
      * Send a short progress message (tool call bubble) as a separate Telegram message.
      * Mirrors Hermes tool progress: each tool call gets its own message like "🔎 session_search..."
      * Not accumulated into the main streaming text.
+     * Sent as PLAIN TEXT (no MarkdownV2 escaping) — tool args may contain regex/special chars.
      */
     public void sendProgressMessage(long chatId, String text) {
         try {
-            String formatted = formatForTelegram(text);
-            sendMessageWithNotification(chatId, formatted, streamingSilent);
+            // Hermes: raw text (no parse_mode) for tool progress — avoids escaping issues
+            sendMessageWithNotification(chatId, text, streamingSilent);
         } catch (Exception e) {
             log.debug("Failed to send progress message for chat {}: {}", chatId, e.getMessage());
         }

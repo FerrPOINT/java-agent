@@ -234,11 +234,17 @@ public class MessageApiClient extends BaseBackendClient {
                                     if ("tool_start".equalsIgnoreCase(type)) {
                                         String toolName = event.path("toolName").asText("");
                                         if (!toolName.isEmpty()) {
-                                            String toolArgs = event.path("arguments").asText("");
-                                            if (toolArgs.isEmpty()) {
-                                                JsonNode argsNode = event.path("arguments");
-                                                if (argsNode != null && !argsNode.isNull()) {
-                                                    toolArgs = argsNode.toString();
+                                            // Extract arguments from toolCalls array (added in AgentStreamingService)
+                                            String toolArgs = "";
+                                            JsonNode toolCallsNode = event.get("toolCalls");
+                                            if (toolCallsNode != null && toolCallsNode.isArray() && toolCallsNode.size() > 0) {
+                                                JsonNode tc = toolCallsNode.get(0);
+                                                toolArgs = tc.path("arguments").asText("");
+                                                if (toolArgs.isEmpty()) {
+                                                    JsonNode argsNode = tc.path("arguments");
+                                                    if (argsNode != null && !argsNode.isNull()) {
+                                                        toolArgs = argsNode.toString();
+                                                    }
                                                 }
                                             }
                                             toolCallConsumer.accept(toolName + "\u0001" + toolArgs);
