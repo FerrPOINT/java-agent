@@ -1,4 +1,4 @@
-package com.azhukov.agent.api.health;
+package com.azhukov.agent.health;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.tools.browser.ChromiumAutoStart;

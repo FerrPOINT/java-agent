@@ -1,4 +1,4 @@
-package com.azhukov.agent.api.health;
+package com.azhukov.agent.health;
 
 import org.junit.jupiter.api.Test;
 

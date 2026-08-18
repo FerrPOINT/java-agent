@@ -1,4 +1,4 @@
-package com.azhukov.agent.api.health;
+package com.azhukov.agent.health;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
