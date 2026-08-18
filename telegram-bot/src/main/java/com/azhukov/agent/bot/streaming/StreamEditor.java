@@ -925,13 +925,14 @@ public class StreamEditor {
             return; // Tokens are arriving, no need for heartbeat
         }
 
-        long elapsedMinutes = (now - startTime) / 60000;
-        if (elapsedMinutes < 1) {
-            return; // Less than 1 minute, don't show heartbeat yet
+        long elapsedSeconds = (now - startTime) / 1000;
+        if (elapsedSeconds < 10) {
+            return; // Less than 10 seconds, don't show heartbeat yet
         }
 
         String toolName = session.currentToolName;
-        String heartbeatText = "⏳ Working — " + elapsedMinutes + " min";
+        long elapsedMinutes = elapsedSeconds / 60;
+        String heartbeatText = "⏳ Working — " + (elapsedMinutes >= 1 ? elapsedMinutes + " min" : elapsedSeconds + "s");
         if (toolName != null && !toolName.isBlank()) {
             heartbeatText += " — " + toolName;
         }
