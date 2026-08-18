@@ -26,5 +26,11 @@ public interface SessionEntityMapper {
     @Mapping(target = "cliState", ignore = true)
     @Mapping(target = "parentSessionId", ignore = true)
     @Mapping(target = "sessionStatus", ignore = true)
+    @Mapping(target = "source", ignore = true)
+    @Mapping(target = "endReason", ignore = true)
+    @Mapping(target = "preview", ignore = true)
+    @Mapping(target = "lastActive", ignore = true)
+    @Mapping(target = "messageCount", ignore = true)
+    @Mapping(target = "subgoal", ignore = true)
     SessionEntity toEntity(Session session);
 }

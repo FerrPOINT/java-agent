@@ -108,12 +108,40 @@ public class DefaultPromptBuilder implements PromptBuilder {
         Write memories as declarative facts, not instructions to yourself.
         'User prefers concise responses' ✓ — 'Always respond concisely' ✗.""";
 
-    /** Guidance injected when the `session_search` tool is available. */
+    /** Guidance injected when the `session_search` tool is available. Ported from Hermes. */
     static final String SESSION_SEARCH_GUIDANCE = """
         ## Session Search Guidance
         When the user references something from a past conversation or you suspect
         relevant cross-session context exists, use session_search to recall it before
-        asking them to repeat themselves.""";
+        asking them to repeat themselves.
+
+        session_search has four calling shapes (inferred from args, no mode parameter):
+
+        1) DISCOVERY — pass `query`: FTS + lineage dedup + adaptive detail + bookends.
+           session_search(query="auth refactor", limit=3)
+           The top-ranked result carries full context (bookends + ±5 message window).
+           Lower-ranked results stay compact (anchor message only).
+           Pass detail="full" to fully hydrate every result.
+
+        2) SCROLL — pass `session_id` + `around_message_id`: ±N window around anchor.
+           session_search(session_id="...", around_message_id=12345, window=10)
+           To scroll FORWARD: pass messages[-1].id back as around_message_id.
+           To scroll BACKWARD: pass messages[0].id back as around_message_id.
+
+        3) READ — pass `session_id` only (no anchor): dump whole session.
+           session_search(session_id="...", profile="work")
+           Returns first 20 + last 10 messages when large. Use to resolve
+           an @session:<profile>/<id> link the user dropped into the chat.
+
+        4) BROWSE — no args: recent sessions chronologically.
+           session_search()
+           Use when the user asks "what was I working on" without naming a topic.
+
+        When you refer the user to a session, write its `link` value inline:
+        @session:default/<session_id>. Copy it verbatim; do not reformat it as
+        a markdown link or wrap it in backticks. Use it as a noun mid-sentence
+        ("that's @session:default/... — want me to pick it up?"), never alone
+        on its own line, and never alongside the title/id/date spelled out.""";
 
     /** Guidance injected when `skill_view`/`skills_list`/`skill_manage` tools are available. */
     static final String SKILLS_GUIDANCE = """

@@ -82,6 +82,9 @@ public class AgentSessionResolver {
         e.setTitle("New chat");
         e.setCreatedAt(Instant.now());
         e.setUpdatedAt(Instant.now());
+        e.setSource("cli");
+        e.setLastActive(Instant.now());
+        e.setMessageCount(0);
         SessionEntity saved = transactionTemplate.execute(status -> sessionRepository.save(e));
         return sessionMapper.toDomain(saved);
     }

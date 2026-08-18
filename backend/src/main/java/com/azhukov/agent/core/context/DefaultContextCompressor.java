@@ -696,6 +696,9 @@ public class DefaultContextCompressor implements ContextCompressor {
          childSession.setCreatedAt(Instant.now());
          childSession.setUpdatedAt(Instant.now());
          childSession.setSessionStatus("active");
+         childSession.setSource(oldSession.getSource());
+         childSession.setLastActive(Instant.now());
+         childSession.setMessageCount(0);
          sessionRepository.save(childSession);
 
          log.info("Session rotation complete: parent={}, child={}, title='{}'",

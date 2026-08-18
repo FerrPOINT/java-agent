@@ -83,6 +83,8 @@ public class MessagePersistenceService {
         entity.setToolCallArguments(toolCallArguments);
         entity.setTurnIndex(turnIndex);
         entity.setCreatedAt(Instant.now());
+        entity.setActive(true);
+        entity.setCompacted(false);
         messageRepository.save(entity);
     }
 

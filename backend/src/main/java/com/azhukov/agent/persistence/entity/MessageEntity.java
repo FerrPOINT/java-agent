@@ -37,5 +37,11 @@ public class MessageEntity {
 
     private Integer turnIndex;
 
+    /** Whether the message is in live context (false after compaction archive). */
+    private Boolean active = true;
+
+    /** Whether the message was archived by compaction (active=false, compacted=true). */
+    private Boolean compacted = false;
+
     private Instant createdAt;
 }
