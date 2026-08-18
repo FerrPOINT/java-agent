@@ -93,7 +93,7 @@ class DefaultAgentRuntimeSharedExecutorTest {
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
             new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null);
+            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
     }
 
     @Test

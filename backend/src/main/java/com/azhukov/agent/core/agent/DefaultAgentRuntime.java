@@ -18,7 +18,6 @@ import com.azhukov.agent.core.context.DefaultContextReferenceService;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.MemoryManager;
 import com.azhukov.agent.core.memory.BackgroundReviewService;
-import com.azhukov.agent.core.memory.ReviewSummary;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
@@ -59,7 +58,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @Component
@@ -92,6 +90,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ToolResultFormatter toolResultFormatter;
     private final MidTurnPersistenceCallback midTurnPersistenceCallback;
     private final CommentaryCallback commentaryCallback;
+    private final MemoryNudgeManager memoryNudgeManager;
 
     // Fallback manager — created per-turn, manages mid-turn model switching.
     // Mirrors Hermes _fallback_chain / _fallback_index / _fallback_activated.
@@ -108,12 +107,6 @@ public class DefaultAgentRuntime implements AgentRuntime {
     // M17: Shared executor for parallel tool execution — avoids creating a new executor per batch
     private final ExecutorService parallelToolExecutor = Executors.newThreadPerTaskExecutor(
         Thread.ofVirtual().name("tool-parallel-", 0).factory());
-
-    // Nudge counters — per-session, mirroring Hermes _turns_since_memory / _iters_since_skill.
-    // Memory review fires every N user turns; skill review fires every M tool-calling iterations.
-    // Skill counter resets to 0 whenever skill_manage is actually called.
-    private final ConcurrentHashMap<UUID, AtomicInteger> turnsSinceMemory = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<UUID, AtomicInteger> itersSinceSkill = new ConcurrentHashMap<>();
 
     // Per-session locks to prevent concurrent turns on the same session (parity with Hermes _session_locks).
     // Serializes turn execution so that messages, turn state, and DB writes don't interleave.
@@ -213,35 +206,20 @@ public class DefaultAgentRuntime implements AgentRuntime {
             effectiveToolsets = new HashSet<>(properties.getSkills().getDefaultToolsets());
         }
 
-        // Nudge: increment per-session memory turn counter
+        // Nudge: initialize + increment per-session memory turn counter
         // H6: Only increment if the memory toolset is actually available to the session.
         // M8: On first turn for a session (restart), hydrate the counter from prior
         // user turns in the conversation history so the nudge interval is preserved
         // across restarts. Mirrors Hermes which initializes _turns_since_memory from
         // the persisted conversation length on session load.
-        if (effectiveToolsets.contains("memory")) {
-            int memNudge = properties.getMemory().getNudgeInterval();
-            AtomicInteger memCounter = turnsSinceMemory.computeIfAbsent(sessionIdUuid, k -> {
-                // M8: Hydrate from history — count prior user turns and initialize
-                // to priorUserTurns % nudgeInterval so the counter reflects the
-                // actual conversation progress.
-                // Finding 5.2: Use countPriorUserMessages instead of the expensive
-                // prepareContext call that triggers full context building and
-                // potentially compression side effects.
-                if (memNudge > 0) {
-                    try {
-                        long priorUserTurns = contextEngine.countPriorUserMessages(sessionIdUuid);
-                        int initial = (int) (priorUserTurns % memNudge);
-                        log.debug("M8: Hydrated turnsSinceMemory for session {} from history: {} prior user turns, initial={}",
-                            sessionIdUuid, priorUserTurns, initial);
-                        return new AtomicInteger(initial);
-                    } catch (Exception e) {
-                        log.debug("M8: Failed to hydrate turnsSinceMemory from history: {}", e.getMessage());
-                    }
-                }
-                return new AtomicInteger(0);
-            });
-            memCounter.incrementAndGet();
+        if (effectiveToolsets.contains("memory") && memoryNudgeManager != null) {
+            try {
+                long priorUserTurns = contextEngine.countPriorUserMessages(sessionIdUuid);
+                memoryNudgeManager.initMemoryCounter(sessionIdUuid, priorUserTurns);
+            } catch (Exception e) {
+                memoryNudgeManager.initMemoryCounter(sessionIdUuid, 0);
+            }
+            memoryNudgeManager.incrementMemoryTurns(sessionIdUuid);
         }
 
         // S14: MemoryManager lifecycle hook — on_turn_start
@@ -384,8 +362,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // tool-calling iterations. Mirrors Hermes _iters_since_skill which
             // is incremented at the start of each loop iteration.
             // H6: Only increment if the skills toolset is actually available.
-            if (effectiveToolsets.contains("skills")) {
-                itersSinceSkill.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).incrementAndGet();
+            if (effectiveToolsets.contains("skills") && memoryNudgeManager != null) {
+                memoryNudgeManager.incrementSkillIters(session.id());
             }
 
             if (guardrail.isHalted(session.id())) {
@@ -409,7 +387,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 turnMessages.add(Message.assistant(budgetMsg, turnIndex));
                 // H7: Fire background review on budget-exhausted path too.
                 boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
-                triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+                if (memoryNudgeManager != null) {
+                    memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+                }
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, true, TurnExitReason.BUDGET_EXHAUSTED);
                 }
@@ -576,7 +556,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // Nudge-gated background review — only fire when counters hit thresholds.
                 // Mirrors Hermes: memory review every N user turns, skill review every M tool iterations.
                 boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
-                triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+                if (memoryNudgeManager != null) {
+                    memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+                }
                 TurnExitReason reason = (visibleContent == null || visibleContent.isBlank())
                     ? TurnExitReason.EMPTY_RESPONSE : TurnExitReason.COMPLETED;
                 if (turnFinalizer != null) {
@@ -756,13 +738,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     long toolStart = System.currentTimeMillis();
                     // L6: Reset skill counter BEFORE execution (parity with Hermes
                     // which resets _iters_since_skill before the tool runs, not after).
-                    if ("skill_manage".equals(call.name())) {
-                        itersSinceSkill.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).set(0);
+                    if ("skill_manage".equals(call.name()) && memoryNudgeManager != null) {
+                        memoryNudgeManager.resetSkillIters(session.id());
                     }
                     // C4: Reset memory turn counter when the memory tool is called,
                     // so the next nudge interval starts fresh after actual memory use.
-                    if ("memory".equals(call.name())) {
-                        turnsSinceMemory.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).set(0);
+                    if ("memory".equals(call.name()) && memoryNudgeManager != null) {
+                        memoryNudgeManager.resetMemoryTurns(session.id());
                     }
                     ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState);
                     long duration = System.currentTimeMillis() - toolStart;
@@ -787,11 +769,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // In the parallel path, reset before executeToolsInParallel runs.
                 // C4: Also reset memory turn counter when the memory tool is called.
                 for (ToolCall call : toolCalls) {
-                    if ("skill_manage".equals(call.name())) {
-                        itersSinceSkill.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).set(0);
+                    if ("skill_manage".equals(call.name()) && memoryNudgeManager != null) {
+                        memoryNudgeManager.resetSkillIters(session.id());
                     }
-                    if ("memory".equals(call.name())) {
-                        turnsSinceMemory.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).set(0);
+                    if ("memory".equals(call.name()) && memoryNudgeManager != null) {
+                        memoryNudgeManager.resetMemoryTurns(session.id());
                     }
                 }
                 toolResults = executeToolsInParallel(toolCalls, session, turnState, currentTurnIndex);
@@ -873,7 +855,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
         // H7: Fire background review on max-turns-reached path too.
         boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
-        triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+        if (memoryNudgeManager != null) {
+            memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+        }
 
         if (turnFinalizer != null) {
             turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.MAX_TURNS_REACHED);
@@ -1543,120 +1527,6 @@ public class DefaultAgentRuntime implements AgentRuntime {
         return null;
     }
 
-    /**
-     * Nudge-gated background review trigger.
-     * Mirrors Hermes _turns_since_memory / _iters_since_skill:
-     * - Memory review fires when turnsSinceMemory >= memoryNudgeInterval (default 10)
-     * - Skill review fires when itersSinceSkill >= skillCreationNudgeInterval (default 10)
-     * - Skipped entirely if the turn was interrupted
-     * - Only fires if at least one nudge threshold is met
-     * - C3: Passes the parent session's userId to the review so memory writes
-     *   are attributed to the actual user.
-     * - C5: Passes the full conversation history (including prior session messages
-     *   loaded by the context engine) to the review, not just the current turn.
-     */
-    private void triggerNudgedBackgroundReview(Session session, List<Message> turnMessages, boolean interrupted) {
-        if (interrupted) {
-            return;
-        }
-        if (backgroundReviewService == null) {
-            return;
-        }
-        // h64: Skip the automatic background review when running inside a delegation subagent.
-        // delegationDepth > 0 means we're in a child subagent, so don't trigger review.
-        String delegationDepthMeta = session.getMetadata("delegation_depth");
-        if (delegationDepthMeta != null) {
-            try {
-                int delegationDepth = Integer.parseInt(delegationDepthMeta.trim());
-                if (delegationDepth > 0) {
-                    log.debug("Skipping background review for subagent (delegationDepth={})", delegationDepth);
-                    return;
-                }
-            } catch (NumberFormatException e) {
-                // Ignore — treat as depth 0
-            }
-        }
-
-        int memNudge = properties.getMemory().getNudgeInterval();
-        int skillNudge = properties.getSkills().getCreationNudgeInterval();
-
-        boolean shouldReviewMemory = false;
-        boolean shouldReviewSkills = false;
-
-        if (memNudge > 0) {
-            AtomicInteger turnsCounter = turnsSinceMemory.get(session.id());
-            if (turnsCounter != null && turnsCounter.get() >= memNudge) {
-                shouldReviewMemory = true;
-                turnsCounter.set(0);
-            }
-        }
-
-        if (skillNudge > 0) {
-            AtomicInteger itersCounter = itersSinceSkill.get(session.id());
-            if (itersCounter != null && itersCounter.get() >= skillNudge) {
-                shouldReviewSkills = true;
-                itersCounter.set(0);
-            }
-        }
-
-        if (!shouldReviewMemory && !shouldReviewSkills) {
-            return;
-        }
-
-        // C5: Build full conversation history (prior session messages + current turn)
-        // so the background review sees the complete context, not just the current turn.
-        List<Message> fullHistory;
-        try {
-            fullHistory = contextEngine.prepareContext(session, turnMessages);
-        } catch (Exception e) {
-            log.warn("Failed to prepare full context for background review, using turn messages: {}", e.getMessage());
-            fullHistory = turnMessages;
-        }
-
-        try {
-            backgroundReviewService.clearFlag(session.id());
-            // C3: Pass the parent session's userId so memory writes go to the actual user.
-            backgroundReviewService.reviewTurn(session.id(), fullHistory, session.userId(),
-                shouldReviewMemory, shouldReviewSkills);
-        } catch (Exception e) {
-            log.warn("Background review trigger failed: {}", e.getMessage());
-        }
-
-        // H9: Surface the review summary if one was produced by a prior review.
-        // The async review may not have completed yet, so this logs any pending
-        // summary from a previous turn's review. The current turn's review will
-        // be surfaced on the next turn.
-        try {
-            String summary = getReviewSummaryForSurface(session.id());
-            if (summary != null && !summary.isBlank()) {
-                log.info("Background review summary for session {}: {}", session.id(), summary);
-            }
-        } catch (Exception e) {
-            log.debug("No review summary to surface for session {}", session.id());
-        }
-    }
-
-    /**
-     * S3: Check if the background review produced a summary to surface to the user.
-     * Called by the turn finalizer or session-end hook.
-     */
-    public String getReviewSummaryForSurface(UUID sessionId) {
-        if (backgroundReviewService == null) {
-            return null;
-        }
-        if (!backgroundReviewService.hasReviewSummary(sessionId)) {
-            return null;
-        }
-        ReviewSummary summary = backgroundReviewService.getReviewSummary(sessionId);
-        if (summary == null || !summary.hasActions()) {
-            return null;
-        }
-        // Return the formatted summary and clear it so it's only surfaced once
-        String result = summary.formattedSummary();
-        backgroundReviewService.clearFlag(sessionId);
-        return result;
-    }
-
     private List<Message> executeToolsInParallel(List<ToolCall> toolCalls, Session session,
                                                   TurnState turnState, int currentTurnIndex) {
         List<CompletableFuture<ToolResult>> futures = new ArrayList<>();
@@ -1722,8 +1592,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
     /**
      * WARNING 1: Clean up per-session state maps to prevent memory leaks.
      * <p>
-     * Removes entries from {@code sessionLocks}, {@code turnsSinceMemory}, and
-     * {@code itersSinceSkill} for the given session. This should be called when a
+     * Removes entries from {@code sessionLocks} and the memory nudge manager for
+     * the given session. This should be called when a
      * session is deleted, rotated, or otherwise no longer needs runtime tracking.
      * <p>
      * If no session-deletion/rotation hook exists yet, callers should wire this into
@@ -1734,8 +1604,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
     public void cleanupSession(UUID sessionId) {
         if (sessionId == null) return;
         sessionLocks.remove(sessionId);
-        turnsSinceMemory.remove(sessionId);
-        itersSinceSkill.remove(sessionId);
+        if (memoryNudgeManager != null) {
+            memoryNudgeManager.clearSession(sessionId);
+        }
         log.debug("Cleaned up runtime state maps for session {}", sessionId);
     }
 }

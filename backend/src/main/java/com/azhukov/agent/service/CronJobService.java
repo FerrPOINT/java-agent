@@ -96,6 +96,11 @@ public class CronJobService {
     // h74: Base backoff seconds for backend unavailability.
     private static final long BACKEND_UNAVAILABLE_BACKOFF_SECONDS = 300; // 5 minutes
 
+    // HERMES-SYNC Bug 1: Cron nudge — "automation needs attention" message.
+    private static final String AUTOMATION_NEEDS_ATTENTION_MSG =
+        "⚠️ Automation needs attention: cron job '{}' has failed {} consecutive times. " +
+        "Last error: {}";
+
     @PostConstruct
     public void init() {
         if (!properties.getCron().isEnabled()) {
@@ -541,6 +546,23 @@ public class CronJobService {
                     job.getName(), job.getConsecutiveFailures());
             }
             cronJobRepository.save(job);
+
+            // HERMES-SYNC Bug 1: Cron nudge — when consecutiveFailures >= threshold,
+            // show a single "automation needs attention" message instead of per-error pings.
+            int nudgeThreshold = properties.getCron().getNudgeFailureThreshold();
+            if (nudgeThreshold > 0 && job.getConsecutiveFailures() >= nudgeThreshold) {
+                // Only log the nudge at the exact threshold to avoid repeating on every failure
+                if (job.getConsecutiveFailures() == nudgeThreshold) {
+                    log.warn(AUTOMATION_NEEDS_ATTENTION_MSG,
+                        job.getName(), job.getConsecutiveFailures(), errorMsg);
+                }
+                // Beyond the threshold, suppress per-error ping — the nudge has already fired.
+            } else {
+                // Below threshold — log the per-error detail as before
+                log.warn("Cron job '{}' execution failed (consecutive failures: {}): {}",
+                    job.getName(), job.getConsecutiveFailures(), errorMsg);
+            }
+
             // h72: Record failed execution in the ledger.
             String status = errorMsg.toLowerCase().contains("timeout") ? "timeout" : "failure";
             recordExecution(job.getId(), startedAt, Instant.now(), status, errorMsg);
@@ -548,6 +570,28 @@ public class CronJobService {
             // The error is recorded for audit but doesn't permanently block execution.
             // The scheduleJob call in executeAndReschedule will still fire.
         }
+    }
+
+    // ── HERMES-SYNC Bug 1: Cron nudge ──
+
+    /**
+     * HERMES-SYNC Bug 1: Check if a cron job needs attention due to consecutive failures.
+     * Returns true when consecutiveFailures >= nudgeFailureThreshold.
+     *
+     * @param job the cron job to check
+     * @return true if the job has reached the "needs attention" threshold
+     */
+    public boolean needsAttention(CronJobEntity job) {
+        if (job == null) return false;
+        int threshold = properties.getCron().getNudgeFailureThreshold();
+        return threshold > 0 && job.getConsecutiveFailures() >= threshold;
+    }
+
+    /**
+     * HERMES-SYNC Bug 1: Returns the configured nudge failure threshold.
+     */
+    public int getNudgeFailureThreshold() {
+        return properties.getCron().getNudgeFailureThreshold();
     }
 
     // ── h72: Cron execution ledger ──

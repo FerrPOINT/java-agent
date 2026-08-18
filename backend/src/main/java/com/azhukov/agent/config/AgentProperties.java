@@ -497,6 +497,8 @@ public class AgentProperties {
         private boolean enabled = false;
         private int maxParallelJobs = 10;
         private int dispatchIntervalSeconds = 60;
+        /** HERMES-SYNC: Consecutive failures before showing "needs attention" nudge (default 3). */
+        private int nudgeFailureThreshold = 3;
     }
 
     @Getter @Setter
@@ -524,6 +526,8 @@ public class AgentProperties {
         private boolean enabled = true;
         private int summaryChunkTokens = 2000;
         private boolean abortOnSummaryFailure = false;
+        /** HERMES-SYNC Bug 4: Compression summary timeout in seconds (default 120s). Prevents hang on slow LLM. */
+        private int summaryTimeoutSeconds = 120;
         private final SessionRotationProperties sessionRotation = new SessionRotationProperties();
 
         @Getter @Setter

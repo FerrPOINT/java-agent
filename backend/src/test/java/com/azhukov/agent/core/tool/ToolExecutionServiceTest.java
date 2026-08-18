@@ -180,12 +180,13 @@ class ToolExecutionServiceTest {
 
         when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
         when(toolRegistry.execute(toolName, "call-6", arguments, LAST_MSG, SESSION)).thenReturn(rawResult);
-        when(redactor.redact("written")).thenReturn("written");
         // afterCall blocks
         when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
             .thenReturn(GuardrailDecision.block(toolName, "post_block", "Post-call block"));
         // On block, the result error is redacted
         when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolResultClassifier.classify(any(ToolResult.class)))
+            .thenReturn(ToolResultClassifier.ResultType.FAILURE);
         when(toolOutputLimiter.truncate(any(ToolResult.class)))
             .thenAnswer(inv -> inv.getArgument(0));
 

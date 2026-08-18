@@ -8,6 +8,7 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.UUID;
@@ -22,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Ported from Hermes {@code _turns_since_memory} / {@code _iters_since_skill}.
  */
 @Slf4j
+@Component
 @RequiredArgsConstructor
 public class MemoryNudgeManager {
 
@@ -70,6 +72,20 @@ public class MemoryNudgeManager {
         AtomicInteger counter = itersSinceSkill.get(sessionId);
         if (counter != null) {
             counter.set(0);
+        }
+    }
+
+    /**
+     * Reset the memory turn counter to zero (called when the memory tool is invoked,
+     * so the next nudge interval starts fresh after actual memory use).
+     */
+    public void resetMemoryTurns(UUID sessionId) {
+        AtomicInteger counter = turnsSinceMemory.get(sessionId);
+        if (counter != null) {
+            counter.set(0);
+        } else {
+            // Ensure the counter exists even if initMemoryCounter was never called
+            turnsSinceMemory.computeIfAbsent(sessionId, k -> new AtomicInteger(0));
         }
     }
 

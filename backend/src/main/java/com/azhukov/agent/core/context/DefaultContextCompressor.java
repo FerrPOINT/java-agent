@@ -26,7 +26,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
 @Slf4j
@@ -495,7 +499,11 @@ public class DefaultContextCompressor implements ContextCompressor {
      // Compute a scaled summary budget proportional to the compressed content
      int summaryBudget = computeSummaryBudget(summaryInput.length());
 
-     String summary = summarize(summaryInput.toString(), summaryBudget);
+     // HERMES-SYNC Bug 4: Compression timeout budget — prevent hang during compression.
+     // Wrap the summarize() call in a CompletableFuture with a timeout. If the LLM
+     // summary generation takes longer than the configured budget, fall back to
+     // fallbackSummarize() to ensure compression completes without hanging.
+     String summary = summarizeWithTimeout(summaryInput.toString(), summaryBudget);
 
      List<Message> compressed = new ArrayList<>();
      // Preserve protected head messages (includes system message)
@@ -927,7 +935,47 @@ public class DefaultContextCompressor implements ContextCompressor {
  + m.content().substring(m.content().length() - TOOL_OUTPUT_KEEP_TAIL);
  }
 
- private String summarize(String text, int summaryBudgetTokens) {
+     /**
+     * HERMES-SYNC Bug 4: Wraps the summarize() call with a timeout budget.
+     * <p>
+     * If the LLM summary generation takes longer than the configured
+     * {@code agent.compression.summary-timeout-seconds} (default 120s), the method
+     * falls back to {@link #fallbackSummarize(String)} to ensure compression
+     * completes without hanging.
+     * <p>
+     * Uses {@link CompletableFuture#supplyAsync} to run the summary generation
+     * off the calling thread, with {@link CompletableFuture#orTimeout} to enforce
+     * the deadline. On timeout, the underlying LLM call is not cancelled (the
+     * HTTP client may continue), but the compression proceeds with the fallback.
+     *
+     * @param text the text to summarize
+     * @param summaryBudgetTokens the token budget for the summary
+     * @return the LLM-generated summary, or a fallback truncation if timed out
+     */
+    private String summarizeWithTimeout(String text, int summaryBudgetTokens) {
+        int timeoutSeconds = properties.getCompression().getSummaryTimeoutSeconds();
+        // If timeout is disabled (0 or negative), call summarize directly
+        if (timeoutSeconds <= 0) {
+            return summarize(text, summaryBudgetTokens);
+        }
+        try {
+            CompletableFuture<String> future = CompletableFuture.supplyAsync(
+                () -> summarize(text, summaryBudgetTokens));
+            return future.get(timeoutSeconds, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            log.warn("Compression summary timed out after {}s — falling back to truncation", timeoutSeconds);
+            return fallbackSummarize(text);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Compression summary interrupted — falling back to truncation");
+            return fallbackSummarize(text);
+        } catch (ExecutionException e) {
+            log.warn("Compression summary failed with execution exception — falling back: {}", e.getMessage());
+            return fallbackSummarize(text);
+        }
+    }
+
+    private String summarize(String text, int summaryBudgetTokens) {
  // h61: Preserve missing-key compression history — don't clear history when a key
  // is missing from the summary. The previous summary text is passed as part of the
  // summary input, and the LLM is instructed to "update and refine" it. If the LLM

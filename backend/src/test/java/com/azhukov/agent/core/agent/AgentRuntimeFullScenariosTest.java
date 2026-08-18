@@ -118,8 +118,7 @@ class AgentRuntimeFullScenariosTest {
             new com.azhukov.agent.security.ApprovalQueue(),
             null,
             new TokenEstimator(),
-            new ToolResultFormatter(), null, null
-        );
+            new ToolResultFormatter(), null, null, null);
     }
 
     private void useModelClient(ModelClient modelClient) {
@@ -147,8 +146,7 @@ class AgentRuntimeFullScenariosTest {
             new com.azhukov.agent.security.ApprovalQueue(),
             null,
             new TokenEstimator(),
-            new ToolResultFormatter(), null, null
-        );
+            new ToolResultFormatter(), null, null, null);
     }
 
     private void stubRunTurnMocks() {

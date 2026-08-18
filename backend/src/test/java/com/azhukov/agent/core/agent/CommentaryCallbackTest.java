@@ -123,7 +123,7 @@ class CommentaryCallbackTest {
             inputSanitizer, guardrail, turnStateManager, null,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
             new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, commentaryCallback);
+            new TokenEstimator(), new ToolResultFormatter(), null, commentaryCallback, null);
     }
 
     @Test

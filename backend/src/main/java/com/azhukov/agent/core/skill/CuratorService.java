@@ -12,7 +12,9 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.persistence.entity.SkillAuditLogEntity;
 import com.azhukov.agent.persistence.entity.SkillEntity;
+import com.azhukov.agent.persistence.repository.SkillAuditLogRepository;
 import com.azhukov.agent.persistence.repository.SkillRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -66,6 +68,11 @@ public class CuratorService {
  private final ToolExecutionService toolExecutionService;
  private final ToolRegistry toolRegistry;
  private final ObjectMapper objectMapper;
+
+ // HERMES-SYNC Bug 3: Curator audit ledger — records each skill mutation.
+ // Non-final with setter to avoid breaking existing constructors (same pattern as
+ // DefaultContextCompressor's sessionRepository field).
+ private volatile SkillAuditLogRepository auditLogRepository;
 
  private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
  Thread t = new Thread(r, "skill-curator");
@@ -174,8 +181,57 @@ public class CuratorService {
  // ── S5: State persistence ───────────────────────────────────────────
 
  /**
- * S5: Set the state file path for .curator_state persistence.
- */
+  * HERMES-SYNC Bug 3: Set the SkillAuditLogRepository — called by Spring DI
+  * or test setup after construction. Uses setter injection to avoid breaking
+  * existing constructors.
+  */
+ @org.springframework.beans.factory.annotation.Autowired
+ public void setAuditLogRepository(org.springframework.beans.factory.ObjectProvider<SkillAuditLogRepository> provider) {
+     this.auditLogRepository = provider != null ? provider.getIfAvailable() : null;
+ }
+
+ /** Test-friendly setter for direct injection. */
+ public void setAuditLogRepository(SkillAuditLogRepository auditLogRepository) {
+     this.auditLogRepository = auditLogRepository;
+ }
+
+ /**
+  * HERMES-SYNC Bug 3: Record a curator mutation to the audit ledger.
+  * Each mutation (archive, state transition) is persisted as a SkillAuditLogEntity.
+  *
+  * @param skillName the name of the skill being mutated
+  * @param action the action performed ("archive", "mark_stale", "reactivate")
+  * @param oldValue JSON describing the previous state, or null
+  * @param newValue JSON describing the new state, or null
+  */
+ void recordAudit(String skillName, String action, String oldValue, String newValue) {
+     if (auditLogRepository == null) {
+         log.debug("Audit log repository not available — skipping audit entry for '{}' ({})", skillName, action);
+         return;
+     }
+     try {
+         SkillAuditLogEntity entry = new SkillAuditLogEntity(skillName, action, "curator", oldValue, newValue);
+         auditLogRepository.save(entry);
+         log.debug("Curator audit: skill='{}' action='{}'", skillName, action);
+     } catch (Exception e) {
+         log.warn("Failed to write curator audit entry for '{}' ({}): {}", skillName, action, e.getMessage());
+     }
+ }
+
+ /** Helper to serialize a state value to a compact JSON string for the audit log. */
+ private String stateToJson(String lifecycleState, boolean archived) {
+     try {
+         return objectMapper.writeValueAsString(
+             Map.of("lifecycleState", lifecycleState != null ? lifecycleState : "active",
+                    "archived", archived));
+     } catch (Exception e) {
+         return "{\"lifecycleState\":\"" + lifecycleState + "\",\"archived\":" + archived + "}";
+     }
+ }
+
+ /**
+  * S5: Set the state file path for .curator_state persistence.
+  */
  public void setStateFile(Path stateFile) {
  this.stateFile = stateFile;
  }
@@ -435,29 +491,41 @@ public class CuratorService {
  // S5: Three-state lifecycle transitions
  if (anchor.isBefore(archiveBefore) && !STATE_ARCHIVED.equals(currentState)) {
  // Archive: older than archive_after_days
+ String oldStateJson = stateToJson(currentState, skill.isArchived());
  if (!dryRun) {
  skill.setArchived(true);
  skill.setLifecycleState(STATE_ARCHIVED);
  skill.setUpdatedAt(Instant.now());
  modifiedSkills.add(skill);
+ // HERMES-SYNC Bug 3: Audit ledger — record archive mutation
+ recordAudit(skill.getName(), "archive", oldStateJson,
+     stateToJson(STATE_ARCHIVED, true));
  }
  archived.add(skill.getName());
  stale.add(skill.getName());
  } else if (anchor.isBefore(staleBefore) && STATE_ACTIVE.equals(currentState)) {
  // Stale: older than stale_after_days but not yet archive-worthy
+ String oldStateJson = stateToJson(currentState, skill.isArchived());
  if (!dryRun) {
  skill.setLifecycleState(STATE_STALE);
  skill.setUpdatedAt(Instant.now());
  modifiedSkills.add(skill);
+ // HERMES-SYNC Bug 3: Audit ledger — record mark_stale mutation
+ recordAudit(skill.getName(), "mark_stale", oldStateJson,
+     stateToJson(STATE_STALE, skill.isArchived()));
  }
  stale.add(skill.getName());
  active.add(skill.getName());
  } else if (!anchor.isBefore(staleBefore) && STATE_STALE.equals(currentState)) {
  // S5: Reactivation: stale→active on skill use
+ String oldStateJson = stateToJson(currentState, skill.isArchived());
  if (!dryRun) {
  skill.setLifecycleState(STATE_ACTIVE);
  skill.setUpdatedAt(Instant.now());
  modifiedSkills.add(skill);
+ // HERMES-SYNC Bug 3: Audit ledger — record reactivate mutation
+ recordAudit(skill.getName(), "reactivate", oldStateJson,
+     stateToJson(STATE_ACTIVE, skill.isArchived()));
  }
  active.add(skill.getName());
  } else {

@@ -13,6 +13,7 @@ import com.azhukov.agent.core.agent.CommentaryCallback;
 import com.azhukov.agent.core.agent.DefaultAgentRuntime;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.MidTurnPersistenceCallback;
+import com.azhukov.agent.core.agent.MemoryNudgeManager;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.agent.TokenEstimator;
 import com.azhukov.agent.core.agent.ToolResultFormatter;
@@ -101,12 +102,13 @@ public class AgentConfig {
                                      TokenEstimator tokenEstimator,
                                      ToolResultFormatter toolResultFormatter,
                                      MidTurnPersistenceCallback midTurnPersistenceCallback,
-                                     CommentaryCallback commentaryCallback) {
+                                     CommentaryCallback commentaryCallback,
+                                     MemoryNudgeManager memoryNudgeManager) {
         return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
             memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService, interruptToken, turnFinalizer, steerBuffer,
             errorClassifier, contextCompressor, approvalQueue, memoryManager, tokenEstimator, toolResultFormatter,
-            midTurnPersistenceCallback, commentaryCallback);
+            midTurnPersistenceCallback, commentaryCallback, memoryNudgeManager);
     }
 
     @Bean

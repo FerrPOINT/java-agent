@@ -165,8 +165,7 @@ class AgentRuntimeUnitTest {
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
             new ErrorClassifier(), null, new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null
-        );
+            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
 
         var result = runtime.runTurn(session, "hi");
         assertThat(result.completed()).isFalse();
@@ -204,8 +203,7 @@ class AgentRuntimeUnitTest {
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
             new ErrorClassifier(), null, new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null
-        );
+            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
     }
 
     private static com.azhukov.agent.core.context.ContextReferenceService mockContextReferenceService() {

@@ -119,7 +119,7 @@ class DefaultAgentRuntimeRetryTest {
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
             new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null);
+            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
     }
 
     // ─── Retry on transient errors ───
@@ -432,7 +432,7 @@ class DefaultAgentRuntimeRetryTest {
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
             new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null);
+            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         customRuntime.runTurn(session, "Hello");
