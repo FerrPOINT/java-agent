@@ -131,7 +131,8 @@ public class AgentSessionResolver {
                 session = session.withMetadata("platform", e.getSource());
             }
             // Add userId as userDisplayName so the system prompt can include "User: ...".
-            if (e.getUserId() != null && !e.getUserId().isBlank() && !"user-1".equals(e.getUserId())) {
+            if (e.getUserId() != null && !e.getUserId().isBlank() && !"user-1".equals(e.getUserId())
+                    && (session.metadata() == null || !session.metadata().containsKey("userDisplayName"))) {
                 session = session.withMetadata("userDisplayName", e.getUserId());
             }
             if (e.getSubgoal() != null && !e.getSubgoal().isBlank()) {

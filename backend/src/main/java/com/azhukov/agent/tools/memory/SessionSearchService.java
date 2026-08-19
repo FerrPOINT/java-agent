@@ -60,6 +60,10 @@ public class SessionSearchService {
         String profile,
         UUID currentSessionId
     ) {
+        log.info("session_search called: query='{}', sessionId='{}', aroundMessageId='{}', currentSessionId={}",
+            query, sessionId, aroundMessageId, currentSessionId);
+
+        long startMs = System.currentTimeMillis();
         // Parse @session:profile/id link format
         String resolvedProfile = profile;
         String resolvedSessionId = sessionId;
