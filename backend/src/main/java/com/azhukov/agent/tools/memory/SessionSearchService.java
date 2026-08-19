@@ -552,11 +552,26 @@ public class SessionSearchService {
                                 List<ShapedMessage> bookendStart, List<ShapedMessage> bookendEnd) {}
     public record ShapedMessage(UUID id, String role, String content, String timestamp,
                                  String toolName, boolean contentTruncated, Integer originalContentChars, boolean anchor) {}
-    public record DiscoverResult(UUID sessionId, String when, String source, String model,
-                                  String title, String matchedRole, UUID matchMessageId, String snippet,
-                                  List<ShapedMessage> bookendStart, List<ShapedMessage> messages,
-                                  List<ShapedMessage> bookendEnd, int messagesBefore, int messagesAfter,
-                                  String detail, UUID parentSessionId, String link) {}
-    public record BrowseResult(UUID sessionId, String link, String title, String source,
-                                String startedAt, String lastActive, int messageCount, String preview) {}
+    public record DiscoverResult(
+        @com.fasterxml.jackson.annotation.JsonProperty("session_id") UUID sessionId,
+        String when, String source, String model,
+        String title,
+        @com.fasterxml.jackson.annotation.JsonProperty("matched_role") String matchedRole,
+        @com.fasterxml.jackson.annotation.JsonProperty("match_message_id") UUID matchMessageId,
+        String snippet,
+        @com.fasterxml.jackson.annotation.JsonProperty("bookend_start") List<ShapedMessage> bookendStart,
+        List<ShapedMessage> messages,
+        @com.fasterxml.jackson.annotation.JsonProperty("bookend_end") List<ShapedMessage> bookendEnd,
+        @com.fasterxml.jackson.annotation.JsonProperty("messages_before") int messagesBefore,
+        @com.fasterxml.jackson.annotation.JsonProperty("messages_after") int messagesAfter,
+        String detail,
+        @com.fasterxml.jackson.annotation.JsonProperty("parent_session_id") UUID parentSessionId,
+        String link) {}
+    public record BrowseResult(
+        @com.fasterxml.jackson.annotation.JsonProperty("session_id") UUID sessionId,
+        String link, String title, String source,
+        @com.fasterxml.jackson.annotation.JsonProperty("started_at") String startedAt,
+        @com.fasterxml.jackson.annotation.JsonProperty("last_active") String lastActive,
+        @com.fasterxml.jackson.annotation.JsonProperty("message_count") int messageCount,
+        String preview) {}
 }

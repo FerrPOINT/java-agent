@@ -118,7 +118,7 @@ public class AgentStreamingService {
     }
 
     private static final int MAX_STREAM_RETRIES = 5;
-    private static final int MAX_CONTINUATION_ATTEMPTS = 1;
+    private static final int MAX_CONTINUATION_ATTEMPTS = 3;
     // Backoff base/cap are now read from AgentProperties at runtime (see getRetryBackoffBase/Cap)
 
     // Dedicated executor for streaming tasks — avoids ForkJoinPool.commonPool() starvation
@@ -433,10 +433,14 @@ public class AgentStreamingService {
                 // Check for truncated response (empty content + no tool calls + no error)
                 boolean isEmpty = (contentBuilder.length() == 0) && collectedToolCalls.isEmpty();
                 if (isEmpty && continuationAttempts < MAX_CONTINUATION_ATTEMPTS) {
-                    log.warn("Truncated response detected (empty content, no tool calls), sending continuation prompt");
+                    log.warn("Truncated response detected (empty content, no tool calls), sending continuation prompt (attempt {}/{})",
+                        continuationAttempts + 1, MAX_CONTINUATION_ATTEMPTS);
                     send(emitter, new StreamEvent("continuation", null, null,
                         "Continuation prompt sent to model"), streamCtx);
                     continuationAttempts++;
+                    // Reset state for the retry — previous tool calls/content must not leak
+                    contentBuilder.setLength(0);
+                    collectedToolCalls.clear();
                     turnMessages.add(Message.assistant("", turnIndex));
                     turnMessages.add(Message.user("Пожалуйста, продолжи свой ответ на языке пользователя."));
                     context = contextEngine.prepareContext(session, turnMessages);

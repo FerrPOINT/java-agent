@@ -75,6 +75,14 @@ public class AgentSessionResolver {
      * @return the created domain session
      */
     public Session createSession(String userId, String provider, String modelName) {
+        return createSession(userId, provider, modelName, "cli");
+    }
+
+    /**
+     * Create a new session with a specific source (e.g. "telegram", "cli", "api_server").
+     * The source becomes the platform in the system prompt volatile tier.
+     */
+    public Session createSession(String userId, String provider, String modelName, String source) {
         SessionEntity e = new SessionEntity();
         e.setUserId(userId);
         e.setModelProvider(provider);
@@ -82,7 +90,7 @@ public class AgentSessionResolver {
         e.setTitle("New chat");
         e.setCreatedAt(Instant.now());
         e.setUpdatedAt(Instant.now());
-        e.setSource("cli");
+        e.setSource(source);
         e.setLastActive(Instant.now());
         e.setMessageCount(0);
         SessionEntity saved = transactionTemplate.execute(status -> sessionRepository.save(e));
@@ -123,7 +131,7 @@ public class AgentSessionResolver {
                 session = session.withMetadata("platform", e.getSource());
             }
             // Add userId as userDisplayName so the system prompt can include "User: ...".
-            if (e.getUserId() != null && !e.getUserId().isBlank()) {
+            if (e.getUserId() != null && !e.getUserId().isBlank() && !"user-1".equals(e.getUserId())) {
                 session = session.withMetadata("userDisplayName", e.getUserId());
             }
             if (e.getSubgoal() != null && !e.getSubgoal().isBlank()) {
