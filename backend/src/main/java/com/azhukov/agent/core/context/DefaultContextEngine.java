@@ -34,6 +34,11 @@ public class DefaultContextEngine implements ContextEngine {
  private final SkillManager skillManager;
  private final MessageRepository messageRepository;
  private final ContextCompressor contextCompressor;
+
+ /** Exposed for proactive compression checks from AgentStreamingService. */
+ public ContextCompressor getContextCompressor() {
+     return contextCompressor;
+ }
  private final AgentProperties.ContextProperties contextProps;
  private final PromptCacheTracker cacheTracker;
  private final ModelMetadataService modelMetadataService;

@@ -7,6 +7,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.context.ContextEngine;
+import com.azhukov.agent.core.context.DefaultContextEngine;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
@@ -646,6 +647,26 @@ public class AgentStreamingService {
                 // M6: Only advance cursor if persistence succeeded
                 if (midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
                     persistedUpTo = turnMessages.size();
+                }
+            }
+
+            // Proactive compression check after tool batch (Hermes parity).
+            // Hermes checks should_compress at 50% threshold after every tool batch.
+            // The non-streaming path uses TurnExecutor.checkProactiveCompression.
+            // Without this, context grows unbounded through tool results until
+            // a reactive CONTEXT_OVERFLOW error or provider 400 rejection.
+            if (contextEngine instanceof DefaultContextEngine dce) {
+                if (dce.shouldCompressPreflight(turnMessages)) {
+                    int targetChars = properties.getContext().getTargetTokens() * 4;
+                    List<Message> compressed = dce.getContextCompressor()
+                        .compress(turnMessages, targetChars);
+                    if (compressed.size() < turnMessages.size()) {
+                        log.info("Proactive compression after tool batch: {} → {} messages for session {}",
+                            turnMessages.size(), compressed.size(), session.id());
+                        turnMessages.clear();
+                        turnMessages.addAll(compressed);
+                        persistedUpTo = turnMessages.size();
+                    }
                 }
             }
 
