@@ -424,6 +424,13 @@ public class StreamEditor {
         String scrubbed = scrubThink(session, text);
         String formatted = scrubbed;
 
+        // Partial silence marker holdback: don't render a chunk that ends with an incomplete
+        // marker like "NO" / "NO_R" / "[SILE" / "**". Wait for the next chunk.
+        if (endsWithPartialSilenceMarker(formatted)) {
+            log.debug("Holding back partial silence marker for chat {}: '{}'", chatId, formatted);
+            return false;
+        }
+
         // Append streaming cursor
         String withCursor = formatted + streamCursor;
 
@@ -1480,6 +1487,21 @@ public class StreamEditor {
             idx += 3;
         }
         return count;
+    }
+
+    /**
+     * Check if text ends with a partial silence marker prefix. If we render these,
+     * the user sees "NO" / "NO_R" / "NO_RE" flash before the complete marker is scrubbed.
+     * Hermes holdback: wait for the next chunk if text ends with a silence-marker prefix.
+     */
+    private boolean endsWithPartialSilenceMarker(String text) {
+        if (text == null || text.isBlank()) return false;
+        String t = text.trim();
+        return t.endsWith("NO") || t.endsWith("NO_") || t.endsWith("NO_R") || t.endsWith("NO_RE")
+            || t.endsWith("NO_REPL") || t.endsWith("NO_REPLY")
+            || t.endsWith("[") || t.endsWith("[S") || t.endsWith("[SI") || t.endsWith("[SIL")
+            || t.endsWith("[SILE") || t.endsWith("[SILEN") || t.endsWith("[SILENT")
+            || t.endsWith("***") || t.endsWith("**");
     }
 
     /**

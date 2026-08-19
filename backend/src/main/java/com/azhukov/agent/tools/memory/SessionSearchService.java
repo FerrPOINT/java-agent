@@ -441,7 +441,7 @@ public class SessionSearchService {
         boolean isAnchor = anchorId != null && anchorId.equals(m.getId());
         return new ShapedMessage(m.getId(), m.getRole(), content,
             m.getCreatedAt() != null ? m.getCreatedAt().toString() : null,
-            m.getToolCallName(), truncated, originalChars, isAnchor);
+            m.getToolCallName(), m.getToolCallId(), truncated, originalChars, isAnchor);
     }
 
     private List<ShapedMessage> filterCompaction(List<ShapedMessage> messages) {
@@ -561,9 +561,19 @@ public class SessionSearchService {
     public record ShapedMessage(
         UUID id, String role, String content, String timestamp,
         @com.fasterxml.jackson.annotation.JsonProperty("tool_name") String toolName,
+        @com.fasterxml.jackson.annotation.JsonProperty("tool_call_id") String toolCallId,
         @com.fasterxml.jackson.annotation.JsonProperty("content_truncated") boolean contentTruncated,
         @com.fasterxml.jackson.annotation.JsonProperty("original_content_chars") Integer originalContentChars,
-        boolean anchor) {}
+        @com.fasterxml.jackson.annotation.JsonProperty("anchor") boolean anchor) {
+        @com.fasterxml.jackson.annotation.JsonGetter("tool_calls")
+        public List<Map<String, Object>> toolCalls() {
+            if (toolName == null || toolCallId == null) return null;
+            return List.of(Map.of(
+                "id", toolCallId,
+                "function", Map.of("name", toolName, "arguments", content)
+            ));
+        }
+    }
     public record DiscoverResult(
         @com.fasterxml.jackson.annotation.JsonProperty("session_id") UUID sessionId,
         String when, String source, String model,
