@@ -54,9 +54,16 @@ public final class MessageSplitter {
                 String prefix = "(" + (i + 1) + "/" + total + ") ";
                 int prefixLen = prefix.length();
                 String chunk = chunks.get(i);
-                // Shrink chunk so that prefix + chunk fits within maxLength
+                // Shrink chunk so that prefix + chunk fits within maxLength.
+                // BUG FIX (audit H15): back off one char when the cut point would
+                // split a surrogate pair — otherwise the chunk ends with a lone
+                // high surrogate and the emoji renders broken in Telegram.
                 if (chunk.length() > maxLength - prefixLen) {
-                    chunk = chunk.substring(0, maxLength - prefixLen);
+                    int cut = maxLength - prefixLen;
+                    if (cut > 0 && Character.isHighSurrogate(chunk.charAt(cut - 1))) {
+                        cut--;
+                    }
+                    chunk = chunk.substring(0, cut);
                 }
                 indexed.add(prefix + chunk);
             }
@@ -125,7 +132,13 @@ public final class MessageSplitter {
                 // Truncate formatted text if it still exceeds the limit with the prefix
                 int remaining = TELEGRAM_MAX_LENGTH - escapedIndicator.length();
                 if (formatted.length() > remaining) {
-                    formatted = formatted.substring(0, remaining);
+                    // BUG FIX (audit H15): avoid splitting a surrogate pair at the
+                    // cut point — a lone high surrogate breaks the emoji.
+                    int cut = remaining;
+                    if (cut > 0 && Character.isHighSurrogate(formatted.charAt(cut - 1))) {
+                        cut--;
+                    }
+                    formatted = formatted.substring(0, cut);
                 }
                 result.add(escapedIndicator + formatted);
             } else {

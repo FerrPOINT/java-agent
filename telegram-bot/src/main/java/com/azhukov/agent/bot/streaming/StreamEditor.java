@@ -1,6 +1,7 @@
 package com.azhukov.agent.bot.streaming;
 
 import com.azhukov.agent.bot.client.TelegramApiException;
+import com.azhukov.agent.bot.formatting.MessageSplitter;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.formatting.MarkdownConverter;
@@ -10,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -138,7 +140,15 @@ public class StreamEditor {
         streamCursor = properties.getStreamCursor();
         heartbeatIntervalSeconds = properties.getHeartbeatIntervalSeconds();
         freshFinalTimeoutMs = properties.getFreshFinalTimeoutMs();
-        streamingMaxChars = properties.getStreamingMaxChars();
+        // BUG FIX (audit H14): clamp the streaming split threshold to the Telegram
+        // editMessageText limit. streaming-max-chars is documented as a rich-message
+        // style limit (32768) but editStreamSplit uses it to chunk edited text —
+        // anything above 4096 makes Telegram reject every edit with 400 and the
+        // stream freezes until finalize.
+        int configuredMax = properties.getStreamingMaxChars();
+        streamingMaxChars = configuredMax > 0
+            ? Math.min(configuredMax, MessageSplitter.TELEGRAM_MAX_LENGTH)
+            : configuredMax;
         bufferThreshold = properties.getBufferThreshold();
         streamingTransport = properties.getStreamingTransport() != null
             ? properties.getStreamingTransport().toLowerCase() : "auto";
@@ -456,7 +466,7 @@ public class StreamEditor {
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
                 // 429 from editMessageText — apply adaptive flood handling.
-                success = handleEditFailure(chatId, effectiveMessageId, formatted, session);
+                success = handleEditFailure(chatId, effectiveMessageId, formatted, session, 429);
             } else {
                 throw e;
             }
@@ -469,10 +479,11 @@ public class StreamEditor {
             // Hermes: on success, only reset flood strikes — interval stays at backoff level
             session.floodStrikes = 0;
         } else {
-            // B5: Edit failed — check error code. handleEditFailure may
-            // do a truncated retry for 400 errors; if the retry succeeds,
-            // treat the overall editStream as successful.
-            success = handleEditFailure(chatId, effectiveMessageId, formatted, session);
+            // B5: Edit failed. BUG FIX: use the error code from the typed exception —
+            // TelegramClient.getLastApiErrorCode() is a shared mutable side-channel
+            // and races between concurrently streaming chats (wrong flood strikes).
+            success = handleEditFailure(chatId, effectiveMessageId, formatted, session,
+                telegramClient.getLastApiErrorCode());
         }
         return success;
     }
@@ -508,7 +519,7 @@ public class StreamEditor {
             success = telegramClient.editMessageText(chatId, messageId, firstPart, null, disableNotification);
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
-                handleEditFailure(chatId, messageId, firstPart, session);
+                handleEditFailure(chatId, messageId, firstPart, session, 429);
                 return false;
             } else {
                 throw e;
@@ -519,7 +530,7 @@ public class StreamEditor {
             session.lastEditTime = System.currentTimeMillis();
             session.floodStrikes = 0;
         } else {
-            handleEditFailure(chatId, messageId, firstPart, session);
+            handleEditFailure(chatId, messageId, firstPart, session, 400);
             return false;
         }
 
@@ -1055,14 +1066,17 @@ public class StreamEditor {
      * @return true if the failure was handled successfully (e.g. truncated retry
      *         succeeded), false otherwise
      */
-    private boolean handleEditFailure(long chatId, long messageId, String formatted, StreamSession session) {
-        int errorCode = telegramClient.getLastApiErrorCode();
-
+    private boolean handleEditFailure(long chatId, long messageId, String formatted, StreamSession session,
+                                      int errorCode) {
         if (errorCode == 400) {
-            // Message too long — don't increment flood strikes, just truncate and retry
+            // Message too long — don't increment flood strikes, just truncate and retry.
+            // BUG FIX (audit H14): the truncation target must respect the Telegram
+            // editMessageText limit (4096 UTF-16 units), NOT streamingMaxChars —
+            // the configured split threshold (32768) is a rich-message limit and
+            // exceeds what editMessageText accepts, so truncating to it was a no-op
+            // and the edit froze.
             log.debug("Edit failed with 400 (message too long) for chat {}, truncating and retrying", chatId);
-            // Truncate to a safe length and retry
-            int safeLen = streamingMaxChars > 0 ? streamingMaxChars : 4000;
+            int safeLen = Math.min(streamingMaxChars > 0 ? streamingMaxChars : 4000, 4000);
             String truncated = formatted.length() > safeLen ? formatted.substring(0, safeLen) : formatted;
             boolean disableNotification = streamingSilent;
             boolean retried;
@@ -1476,14 +1490,37 @@ public class StreamEditor {
      * flood fallback where the text has not been MarkdownV2-escaped.
      */
     public Optional<Long> sendPlainMessage(long chatId, String text) {
+        // BUG FIX (audit H14): split oversized finals — draft finalize / fresh-final /
+        // flood fallback send raw text that can exceed the Telegram 4096 limit.
+        if (text != null && text.length() > MessageSplitter.TELEGRAM_MAX_LENGTH) {
+            List<String> chunks = MessageSplitter.split(text);
+            Optional<Long> last = Optional.empty();
+            for (String chunk : chunks) {
+                if (chunk.isBlank()) continue;
+                last = telegramClient.sendMessage(chatId, chunk, null, null, null, false);
+            }
+            return last;
+        }
         return telegramClient.sendMessage(chatId, text, null, null, null, false);
     }
 
     /**
      * Send a formatted final message with parse_mode enabled.
      * Used by finalizeStream fallback paths where MarkdownV2 formatting is needed.
+     * BUG FIX (audit H14): text above the Telegram limit is split into chunks —
+     * previously a single oversized sendMessage failed with 400 and the final
+     * content was lost entirely.
      */
     public Optional<Long> sendFormattedMessage(long chatId, String text) {
+        if (text != null && text.length() > MessageSplitter.TELEGRAM_MAX_LENGTH) {
+            List<String> chunks = MessageSplitter.splitAndFormat(text, parseMode);
+            Optional<Long> last = Optional.empty();
+            for (String chunk : chunks) {
+                if (chunk.isBlank()) continue;
+                last = telegramClient.sendMessage(chatId, chunk, parseMode, null, null);
+            }
+            return last;
+        }
         return telegramClient.sendMessage(chatId, text, parseMode, null, null);
     }
 
