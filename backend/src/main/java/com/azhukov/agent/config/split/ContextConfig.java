@@ -45,10 +45,12 @@ public class ContextConfig {
                                        ContextCompressor contextCompressor,
                                        AgentProperties properties,
                                        PromptCacheTracker cacheTracker,
-                                       SessionLineagePort sessionLineageService) {
+                                       SessionLineagePort sessionLineageService,
+                                       SessionRepository sessionRepository) {
         DefaultContextEngine engine = new DefaultContextEngine(memoryProvider, skillManager, messageRepository,
             contextCompressor, properties, cacheTracker);
         engine.setSessionLineageService(sessionLineageService);
+        engine.setSessionRepository(sessionRepository);
         return engine;
     }
 }

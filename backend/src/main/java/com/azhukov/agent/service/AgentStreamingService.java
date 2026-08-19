@@ -51,6 +51,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -298,6 +299,7 @@ public class AgentStreamingService {
 
             // Prepare context (trimming/summarization as needed)
             List<Message> context = contextEngine.prepareContext(session, turnMessages);
+            session = resolveRotatedSession(session);
 
             // Call model — streaming tokens to SSE, with error recovery
             int streamRetries = 0;
@@ -513,6 +515,7 @@ public class AgentStreamingService {
                     lengthContext.add(Message.assistant(partialContent, turnIndex));
                     lengthContext.add(Message.user("Продолжи с того места, где ты остановился."));
                     context = contextEngine.prepareContext(session, lengthContext);
+                    session = resolveRotatedSession(session);
                     continue;
                 }
 
@@ -545,6 +548,7 @@ public class AgentStreamingService {
                         : "Пожалуйста, продолжи свой ответ на языке пользователя.";
                     continuationContext.add(Message.user(nudgeText));
                     context = contextEngine.prepareContext(session, continuationContext);
+                    session = resolveRotatedSession(session);
                     continue;
                 }
 
@@ -846,6 +850,18 @@ public class AgentStreamingService {
             }
         }
         return "New chat";
+    }
+
+    private Session resolveRotatedSession(Session session) {
+        if (contextEngine instanceof DefaultContextEngine dce) {
+            Optional<Session> rotated = dce.resolveRotatedSession(session);
+            if (rotated.isPresent()) {
+                Session ns = rotated.get();
+                log.info("Switching to rotated session: old={}, new={}", session.id(), ns.id());
+                return ns;
+            }
+        }
+        return session;
     }
 
     private void safeCompleteWithError(SseEmitter emitter, Throwable error) {

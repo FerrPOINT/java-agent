@@ -11,6 +11,7 @@ import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
@@ -18,6 +19,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -49,10 +51,35 @@ public class DefaultContextEngine implements ContextEngine {
   * When null, falls back to loading current-session-only history.
   */
  private SessionLineagePort sessionLineageService;
+ private SessionRepository sessionRepository;
 
  private final Map<UUID, Map<String, String>> snapshotCache = new ConcurrentHashMap<>();
+ private final Map<UUID, UUID> rotatedSessionIds = new ConcurrentHashMap<>();
  private final Map<UUID, String> lastMemoryHash = new ConcurrentHashMap<>();
  private final ConcurrentHashMap<UUID, Instant> lastCompressedAt = new ConcurrentHashMap<>();
+
+ /**
+  * If the given session was rotated during a recent prepareContext call, return the
+  * new child session entity loaded from the repository. Returns empty if no rotation
+  * happened or the child session cannot be found.
+  */
+ public Optional<Session> resolveRotatedSession(Session session) {
+     UUID childId = rotatedSessionIds.get(session.id());
+     if (childId == null) {
+         return Optional.empty();
+     }
+     return sessionRepository.findById(childId)
+         .map(entity -> new Session(
+             childId,
+             entity.getUserId(),
+             entity.getTitle(),
+             entity.getModelProvider(),
+             entity.getModelName(),
+             session.systemPrompt(),
+             session.metadata(), // propagate metadata (platform, source, etc.)
+             session.subgoal()
+         ));
+ }
 
  // Real token usage tracking (replaces chars/4 estimate)
  private volatile int lastPromptTokens = 0;
@@ -112,7 +139,11 @@ public class DefaultContextEngine implements ContextEngine {
  * @param sessionLineageService the lineage port, or null to disable
  */
  public void setSessionLineageService(SessionLineagePort sessionLineageService) {
- this.sessionLineageService = sessionLineageService;
+     this.sessionLineageService = sessionLineageService;
+ }
+
+ public void setSessionRepository(SessionRepository sessionRepository) {
+     this.sessionRepository = sessionRepository;
  }
 
  @Override
@@ -156,8 +187,10 @@ public class DefaultContextEngine implements ContextEngine {
          if (contextCompressor instanceof DefaultContextCompressor dcc) {
              var rotationResult = dcc.rotateSession(String.valueOf(session.id()));
              if (rotationResult.isPresent()) {
+                 UUID newId = rotationResult.get().newSessionId();
+                 rotatedSessionIds.put(session.id(), newId);
                  log.info("Session rotated: old={}, new={}, title='{}'",
-                         session.id(), rotationResult.get().newSessionId(), rotationResult.get().newTitle());
+                         session.id(), newId, rotationResult.get().newTitle());
              } else {
                  // Fall back to legacy compression boundary logging
                  dcc.logCompressionBoundary(String.valueOf(session.id()), ts -> {

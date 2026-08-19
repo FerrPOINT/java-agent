@@ -169,7 +169,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void contextEngine_bean() {
-        assertThat(contextConfig.contextEngine(mock(MemoryProvider.class), mock(SkillManager.class), mock(MessageRepository.class), mock(ContextCompressor.class), properties, mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.SessionLineagePort.class))).isNotNull();
+        assertThat(contextConfig.contextEngine(mock(MemoryProvider.class), mock(SkillManager.class), mock(MessageRepository.class), mock(ContextCompressor.class), properties, mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.SessionLineagePort.class), mock(com.azhukov.agent.persistence.repository.SessionRepository.class))).isNotNull();
     }
 
     @Test
