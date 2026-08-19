@@ -117,6 +117,15 @@ public class AgentSessionResolver {
             for (var entry : cliStateCopy.entrySet()) {
                 session = session.withMetadata(entry.getKey(), entry.getValue());
             }
+            // Add source as platform metadata so the system prompt builder
+            // can include "Platform: telegram" in the volatile tier.
+            if (e.getSource() != null && !e.getSource().isBlank()) {
+                session = session.withMetadata("platform", e.getSource());
+            }
+            // Add userId as userDisplayName so the system prompt can include "User: ...".
+            if (e.getUserId() != null && !e.getUserId().isBlank()) {
+                session = session.withMetadata("userDisplayName", e.getUserId());
+            }
             if (e.getSubgoal() != null && !e.getSubgoal().isBlank()) {
                 session = session.withMetadata("subgoal", e.getSubgoal());
             }

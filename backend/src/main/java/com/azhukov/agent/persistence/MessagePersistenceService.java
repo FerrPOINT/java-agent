@@ -6,6 +6,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,7 @@ import java.util.UUID;
 public class MessagePersistenceService {
 
     private final MessageRepository messageRepository;
+    private final SessionRepository sessionRepository;
 
     /**
      * P1-5: Persist only the user message before a turn starts.
@@ -86,6 +88,28 @@ public class MessagePersistenceService {
         entity.setActive(true);
         entity.setCompacted(false);
         messageRepository.save(entity);
+        // Update session stats (message_count, last_active, preview) so
+        // session_search browse mode shows meaningful data instead of zeros.
+        updateSessionStats(sessionId, role, content);
+    }
+
+    private void updateSessionStats(UUID sessionId, String role, String content) {
+        try {
+            long count = messageRepository.countBySessionId(sessionId);
+            String preview = "";
+            if (content != null && !content.isBlank()) {
+                // Use first 200 chars of user messages as preview
+                if ("user".equals(role)) {
+                    preview = content.length() > 200 ? content.substring(0, 197) + "..." : content;
+                }
+            }
+            sessionRepository.updateLastActiveAndMessageCount(sessionId, Instant.now(), (int) count);
+            if (!preview.isEmpty()) {
+                sessionRepository.updatePreview(sessionId, preview);
+            }
+        } catch (Exception e) {
+            log.debug("Failed to update session stats for {}: {}", sessionId, e.getMessage());
+        }
     }
 
     // Fully-qualified UUID import for saveMessage signature

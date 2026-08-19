@@ -1025,6 +1025,24 @@ public class DefaultPromptBuilder implements PromptBuilder {
         StringBuilder volatileTier = new StringBuilder();
         // Date-only (not minute-precision) so the system prompt is byte-stable for the full day
         volatileTier.append("Conversation started: ").append(java.time.LocalDate.now());
+        // Model and provider — helps the LLM know what model it is
+        if (session.modelName() != null) {
+            volatileTier.append("\nModel: ").append(session.modelName());
+        }
+        if (session.modelProvider() != null) {
+            volatileTier.append("\nProvider: ").append(session.modelProvider());
+        }
+        // Platform — tells the LLM which platform it's responding on
+        // (Telegram, Discord, CLI, etc.) so it can match the user's language and format.
+        String platform = session.getMetadata("platform");
+        if (platform != null && !platform.isBlank()) {
+            volatileTier.append("\nPlatform: ").append(platform);
+        }
+        // User display name — helps the LLM respond in the user's language
+        String userDisplayName = session.getMetadata("userDisplayName");
+        if (userDisplayName != null && !userDisplayName.isBlank()) {
+            volatileTier.append("\nUser: ").append(userDisplayName);
+        }
 
         return PromptCacheTracker.CachedSystemPrompt.of(
             stable.toString().trim(),

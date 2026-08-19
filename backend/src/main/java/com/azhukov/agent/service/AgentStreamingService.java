@@ -438,7 +438,7 @@ public class AgentStreamingService {
                         "Continuation prompt sent to model"), streamCtx);
                     continuationAttempts++;
                     turnMessages.add(Message.assistant("", turnIndex));
-                    turnMessages.add(Message.user("Please continue your response."));
+                    turnMessages.add(Message.user("Пожалуйста, продолжи свой ответ на языке пользователя."));
                     context = contextEngine.prepareContext(session, turnMessages);
                     continue;
                 }
