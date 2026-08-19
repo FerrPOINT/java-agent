@@ -1598,9 +1598,12 @@ class BotMessageProcessorTest {
                 Consumer<String> tokenConsumer = inv.getArgument(3);
                 tokenConsumer.accept("Here is the answer");
                 Consumer<String> toolCallConsumer = inv.getArgument(4);
-                toolCallConsumer.accept("search");
+                toolCallConsumer.accept("search\u0001{\"q\":\"test\"}");
                 BiConsumer<String, String> toolResultConsumer = inv.getArgument(5);
                 toolResultConsumer.accept("search", "results found");
+                // Post-tool tokens form the final segment (the tool-call consumer
+                // committed the previous segment and reset the accumulator).
+                tokenConsumer.accept("Here is the answer");
                 Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(7);
                 onComplete.accept(new AgentBackendClient.ChatResult("Here is the answer", "test-model", 100, 1000, true));
                 return new AgentBackendClient.ChatResult("Here is the answer", "test-model", 100, 1000, true);

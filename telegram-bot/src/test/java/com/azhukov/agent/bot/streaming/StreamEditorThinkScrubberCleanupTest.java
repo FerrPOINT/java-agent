@@ -43,26 +43,26 @@ class StreamEditorThinkScrubberCleanupTest {
     @Test
     void startStreamRemovesScrubberOnSendFailure() {
         // When sendMessage fails (returns empty), the scrubber should be cleaned up
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.empty());
 
         Optional<Long> result = editor.startStream(123L, "Hello world message");
 
         assertThat(result).isEmpty();
         // Verify sendMessage was attempted
-        verify(client).sendMessage(eq(123L), anyString(), any(), any(), any());
+        verify(client).sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean());
     }
 
     @Test
     void startStreamKeepsScrubberOnSendSuccess() {
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
 
         Optional<Long> result = editor.startStream(123L, "Hello world message");
 
         assertThat(result).isPresent();
         assertThat(result.get()).isEqualTo(42L);
-        verify(client).sendMessage(eq(123L), anyString(), any(), any(), any());
+        verify(client).sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -73,12 +73,12 @@ class StreamEditorThinkScrubberCleanupTest {
 
         assertThat(result).isEmpty();
         // No sendMessage should be called for short text
-        verify(client, never()).sendMessage(anyLong(), anyString(), any(), any(), any());
+        verify(client, never()).sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean());
     }
 
     @Test
     void startStreamCreatesFreshScrubber() {
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
 
         // First stream
@@ -86,7 +86,7 @@ class StreamEditorThinkScrubberCleanupTest {
         // Clear stream
         editor.clearStream(123L);
         // Second stream — should get a fresh scrubber
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(43L));
         Optional<Long> result = editor.startStream(123L, "New message text");
         assertThat(result).isPresent();

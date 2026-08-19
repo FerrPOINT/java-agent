@@ -265,10 +265,13 @@ class StreamingOrchestratorTest {
                 Consumer<String> tokenConsumer = inv.getArgument(3);
                 Consumer<String> toolCallConsumer = inv.getArgument(4);
                 tokenConsumer.accept("thinking");
-                toolCallConsumer.accept("WebSearch");
+                toolCallConsumer.accept("WebSearch\u0001{\"q\":\"x\"}");
+                // Post-tool tokens stream into a NEW segment (the tool-call consumer
+                // committed the previous segment and reset the accumulator).
+                tokenConsumer.accept("after tool");
                 Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(7);
-                onComplete.accept(new AgentBackendClient.ChatResult("thinking", "model", 1, 10, true));
-                return new AgentBackendClient.ChatResult("thinking", "model", 1, 10, true, false, null);
+                onComplete.accept(new AgentBackendClient.ChatResult("after tool", "model", 1, 10, true));
+                return new AgentBackendClient.ChatResult("after tool", "model", 1, 10, true, false, null);
             });
 
         orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
@@ -292,7 +295,10 @@ class StreamingOrchestratorTest {
 
         orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
 
-        verify(streamEditor).onSegmentBreak(eq(100L), eq(1L), eq("before tool"));
+        // Segment break no longer fires on tool_result — the live currentMessageId
+        // is read on the next token batch instead (ordering fix). Tool result only
+        // advances the accumulated text here.
+        verify(streamEditor, never()).onSegmentBreak(anyLong(), anyLong(), anyString());
     }
 
     @Test

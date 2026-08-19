@@ -65,6 +65,9 @@ class ProcessToolPrefixLookupTest {
         injectProcess(tool, managed);
 
         // Prefix lookup for log action
+        // The ManagedProcess reader thread reads the mocked stream asynchronously —
+        // wait for it to drain before asserting (same pattern as ProcessToolTest).
+        Thread.sleep(500);
         ToolResult r = tool.execute("{\"action\":\"log\",\"sessionId\":\"proc_xyz\"}", null, null);
         assertThat(r.success()).isTrue();
         assertThat(r.content()).contains("line1");

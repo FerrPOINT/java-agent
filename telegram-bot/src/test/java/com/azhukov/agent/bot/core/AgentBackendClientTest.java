@@ -408,7 +408,9 @@ class AgentBackendClientTest {
             completed::set,
             e -> {});
 
-        assertThat(toolCalls).containsExactly("search", "read_file");
+        // The tool_calls aggregate event is intentionally ignored — tool_start is
+        // the single bubble trigger (duplicate-bubble fix). No notification expected.
+        assertThat(toolCalls).isEmpty();
     }
 
     @Test
@@ -423,7 +425,8 @@ class AgentBackendClientTest {
         client.chatStream("Hi", "s1",
             t -> {}, toolCalls::add, (n, r) -> {}, r -> {}, e -> {});
 
-        assertThat(toolCalls).containsExactly("execute");
+        // tool_start carries "name\u0001args"; empty args -> trailing separator
+        assertThat(toolCalls).containsExactly("execute\u0001");
     }
 
     @Test

@@ -1476,7 +1476,7 @@ public class StreamEditor {
      * flood fallback where the text has not been MarkdownV2-escaped.
      */
     public Optional<Long> sendPlainMessage(long chatId, String text) {
-        return telegramClient.sendMessage(chatId, text, null, null, null);
+        return telegramClient.sendMessage(chatId, text, null, null, null, false);
     }
 
     /**
