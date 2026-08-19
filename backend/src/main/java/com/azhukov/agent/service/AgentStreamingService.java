@@ -393,13 +393,19 @@ public class AgentStreamingService {
                             send(emitter, new StreamEvent("retry", null, null,
                                 "Compressing context..."), streamCtx);
                             try {
-                                int targetChars = properties.getContext().getTargetTokens() * 4;
                                 List<Message> compressed = conversationCompressor.compress(context, null);
                                 if (compressed.size() < context.size()
                                     || (compressed.size() == context.size()
                                         && compressed.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum()
                                         < context.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum())) {
+                                    // Update BOTH context and turnMessages so compression persists
+                                    // across iterations (Hermes parity). Without updating turnMessages,
+                                    // prepareContext() on the next for-loop iteration would rebuild
+                                    // from the uncompressed turnMessages, discarding compression effort.
                                     context = compressed;
+                                    turnMessages.clear();
+                                    turnMessages.addAll(compressed);
+                                    persistedUpTo = turnMessages.size();
                                     log.info("Context compressed from {} to {} messages during streaming, retrying",
                                         turnMessages.size(), compressed.size());
                                     // Don't count this as a retry attempt — retry immediately
@@ -437,9 +443,13 @@ public class AgentStreamingService {
                     // Reset state for the retry — previous tool calls/content must not leak
                     contentBuilder.setLength(0);
                     collectedToolCalls.clear();
-                    turnMessages.add(Message.assistant("", turnIndex));
-                    turnMessages.add(Message.user("Пожалуйста, продолжи свой ответ на языке пользователя."));
-                    context = contextEngine.prepareContext(session, turnMessages);
+                    // Build a temporary context with continuation prompt WITHOUT polluting
+                    // turnMessages (Hermes marks synthetic messages and strips them before
+                    // finalization — we avoid pollution by using a separate list).
+                    List<Message> continuationContext = new ArrayList<>(turnMessages);
+                    continuationContext.add(Message.assistant("", turnIndex));
+                    continuationContext.add(Message.user("Пожалуйста, продолжи свой ответ на языке пользователя."));
+                    context = contextEngine.prepareContext(session, continuationContext);
                     continue;
                 }
 

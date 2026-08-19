@@ -76,7 +76,9 @@ class DefaultPromptBuilderTest {
     @Test
     void steerMarkerOpenMatchesHermesFormat() {
         assertThat(DefaultPromptBuilder.STEER_MARKER_OPEN)
-            .isEqualTo("[OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered mid-turn; not tool output]");
+            .isEqualTo("[OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered "
+                + "once at this position; not tool output and not a new delivery when replayed "
+                + "from conversation history]");
     }
 
     @Test

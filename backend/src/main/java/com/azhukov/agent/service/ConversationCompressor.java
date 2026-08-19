@@ -58,10 +58,12 @@ public class ConversationCompressor {
 
         List<Message> result = new ArrayList<>();
         if (systemMessage != null) {
-            // Append summary to system/developer message, preserving original role
-            String combined = systemMessage.content() + "\n\n[Conversation Summary]\n" + summary;
-            result.add(systemMessage.role() == com.azhukov.agent.core.model.Role.DEVELOPER
-                ? Message.developer(combined) : Message.system(combined));
+            // Preserve original system prompt UNCHANGED — do NOT append summary to it.
+            // Mutating the system prompt breaks per-conversation prompt caching (Hermes parity).
+            // Instead, create a SEPARATE system message for the summary (like DefaultContextCompressor).
+            result.add(systemMessage);
+            result.add(Message.system(
+                "[Earlier conversation (summarized)]\n" + summary));
         } else {
             result.add(Message.system("[Conversation Summary]\n" + summary));
         }
@@ -114,9 +116,10 @@ public class ConversationCompressor {
 
         List<Message> result = new ArrayList<>();
         if (systemMessage != null) {
-            String combined = systemMessage.content() + "\n\n[Earlier Conversation Summary]\n" + summary;
-            result.add(systemMessage.role() == com.azhukov.agent.core.model.Role.DEVELOPER
-                ? Message.developer(combined) : Message.system(combined));
+            // Preserve original system prompt UNCHANGED — do NOT append summary to it.
+            // Mutating the system prompt breaks per-conversation prompt caching (Hermes parity).
+            result.add(systemMessage);
+            result.add(Message.system("[Earlier Conversation Summary]\n" + summary));
         } else {
             result.add(Message.system("[Earlier Conversation Summary]\n" + summary));
         }
