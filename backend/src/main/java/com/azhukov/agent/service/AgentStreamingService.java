@@ -481,6 +481,10 @@ public class AgentStreamingService {
                 String finishReason = capturedFinishReason.get();
                 boolean hasContent = contentBuilder.length() > 0;
                 boolean hasToolCalls = !collectedToolCalls.isEmpty();
+                if (finishReason != null) {
+                    log.info("finish_reason={} for session {} (content={} chars, toolCalls={})",
+                        finishReason, session.id(), contentBuilder.length(), collectedToolCalls.size());
+                }
 
                 // CONTENT_FILTER: model declined due to content policy
                 if ("CONTENT_FILTER".equals(finishReason) && !hasToolCalls) {

@@ -65,7 +65,10 @@ public class MidTurnPersistenceService implements MidTurnPersistenceCallback {
             // browse mode shows accurate data even for mid-turn persisted sessions.
             try {
                 long count = messageRepository.countBySessionId(sessionId);
-                sessionRepository.updateLastActiveAndMessageCount(sessionId, Instant.now(), (int) count);
+                transactionTemplate.execute(status -> {
+                    sessionRepository.updateLastActiveAndMessageCount(sessionId, Instant.now(), (int) count);
+                    return null;
+                });
             } catch (Exception statEx) {
                 log.debug("Failed to update session stats after mid-turn persistence: {}", statEx.getMessage());
             }
