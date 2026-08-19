@@ -414,7 +414,7 @@ public class SessionSearchService {
         SessionEntity s = sessionRepository.findById(sessionId).orElse(null);
         if (s == null) return false;
         String endReason = s.getEndReason();
-        return "compression".equals(endReason) || FRESH_RESET_END_REASONS.contains(endReason);
+        return "compression".equals(endReason) || (endReason != null && FRESH_RESET_END_REASONS.contains(endReason));
     }
 
     private boolean isCompressionEnded(SessionEntity s) {
