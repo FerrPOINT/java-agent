@@ -7,9 +7,14 @@
 build/
 .gradle/
 *.class
+# Allow gradle-wrapper.jar despite *.jar exclusion below
+!gradle/wrapper/gradle-wrapper.jar
+!**/gradle/wrapper/gradle-wrapper.jar
 *.jar
 *.war
 *.ear
+!backend/gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.jar
 
 # IDEs
 .idea/

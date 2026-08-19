@@ -1,6 +1,8 @@
 package com.azhukov.agent.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 /**
  * Shared ObjectMapper singleton for reuse across the backend.
@@ -9,7 +11,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  */
 public final class SharedObjectMapper {
 
-    private static final ObjectMapper INSTANCE = new ObjectMapper();
+    private static final ObjectMapper INSTANCE = new ObjectMapper()
+        .registerModule(new JavaTimeModule())
+        .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     private SharedObjectMapper() {
     }

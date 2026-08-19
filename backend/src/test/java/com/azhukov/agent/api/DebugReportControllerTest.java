@@ -51,7 +51,7 @@ class DebugReportControllerTest {
             ttsService, transcriptionService,
             new SteerBuffer(),
             new InterruptToken(),
-            new com.azhukov.agent.security.ApprovalQueue(),
+            new com.azhukov.agent.core.security.ApprovalQueue(),
             agentProperties,
             agentMetrics
         );

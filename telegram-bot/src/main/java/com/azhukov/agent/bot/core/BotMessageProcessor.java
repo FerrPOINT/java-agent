@@ -747,8 +747,18 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
         String parseMode = properties.getParseMode();
         String formatted = textForDisplay;
+        // Audit M21: strip think blocks from non-streaming (fallback) path.
+        // StreamEditor strips them during streaming, but sendFormatted is used
+        // when streaming didn't finalize — without this, raw think tags reach the user.
+        formatted = StreamEditor.stripThinkTagsRegex(formatted);
         if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-            formatted = MarkdownConverter.convert(textForDisplay);
+            formatted = MarkdownConverter.convert(formatted);
+        } else if ("HTML".equalsIgnoreCase(parseMode)) {
+            // Audit M20: escape HTML-special characters in LLM output to prevent
+            // injection of <a>, <b>, <code> and other Telegram-allowed tags.
+            formatted = formatted.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
         }
 
         // B1.6: Thread reply mode — off/all/first

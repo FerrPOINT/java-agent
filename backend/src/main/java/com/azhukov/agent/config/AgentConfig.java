@@ -36,10 +36,10 @@ import com.azhukov.agent.core.state.DefaultAgentState;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
-import com.azhukov.agent.security.ApprovalQueue;
-import com.azhukov.agent.security.MessageSanitizer;
-import com.azhukov.agent.security.ToolCallGuardrail;
-import com.azhukov.agent.security.UserInputSanitizer;
+import com.azhukov.agent.core.security.ApprovalQueue;
+import com.azhukov.agent.core.security.MessageSanitizer;
+import com.azhukov.agent.core.security.ToolCallGuardrail;
+import com.azhukov.agent.core.security.UserInputSanitizer;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -102,13 +102,12 @@ public class AgentConfig {
                                      TokenEstimator tokenEstimator,
                                      ToolResultFormatter toolResultFormatter,
                                      MidTurnPersistenceCallback midTurnPersistenceCallback,
-                                     CommentaryCallback commentaryCallback,
-                                     MemoryNudgeManager memoryNudgeManager) {
+                                     CommentaryCallback commentaryCallback) {
         return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
             memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService, interruptToken, turnFinalizer, steerBuffer,
             errorClassifier, contextCompressor, approvalQueue, memoryManager, tokenEstimator, toolResultFormatter,
-            midTurnPersistenceCallback, commentaryCallback, memoryNudgeManager);
+            midTurnPersistenceCallback, commentaryCallback);
     }
 
     @Bean

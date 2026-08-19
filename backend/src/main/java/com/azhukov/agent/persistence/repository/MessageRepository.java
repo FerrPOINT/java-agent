@@ -42,12 +42,12 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
 
     /**
      * Full-text search on message content using PostgreSQL tsvector.
-     * Returns messages ranked by FTS relevance.
+     * Returns messages ranked by FTS relevance, limited to :limit results (H13).
      */
     @Query(value = "SELECT * FROM messages WHERE content_tsv @@ plainto_tsquery('english', :q) " +
-                   "ORDER BY ts_rank(content_tsv, plainto_tsquery('english', :q)) DESC",
+                   "ORDER BY ts_rank(content_tsv, plainto_tsquery('english', :q)) DESC LIMIT :limit",
            nativeQuery = true)
-    List<MessageEntity> searchByContentFts(@Param("q") String query);
+    List<MessageEntity> searchByContentFts(@Param("q") String query, @Param("limit") int limit);
 
     /**
      * Full-text search on message content excluding hidden session sources.

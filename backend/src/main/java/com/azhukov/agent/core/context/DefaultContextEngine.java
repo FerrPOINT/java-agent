@@ -450,4 +450,12 @@ public class DefaultContextEngine implements ContextEngine {
          log.debug("History load failed: {}", e.getMessage());
      }
  }
+
+    @Override
+    public void evict(UUID sessionId) {
+        if (sessionId == null) return;
+        snapshotCache.remove(sessionId);
+        lastMemoryHash.remove(sessionId);
+        lastCompressedAt.remove(sessionId);
+    }
 }

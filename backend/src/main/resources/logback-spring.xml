@@ -16,7 +16,7 @@
 
     <springProfile name="!prod">
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-            <layout class="com.azhukov.agent.security.RedactingLayout">
+            <layout class="com.azhukov.agent.core.security.RedactingLayout">
                 <pattern>${CONSOLE_LOG_PATTERN}</pattern>
             </layout>
         </appender>

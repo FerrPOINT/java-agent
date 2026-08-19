@@ -145,7 +145,14 @@ public record UpdateEvent(
             isCommand = true;
             int spaceIdx = text.indexOf(' ');
             if (spaceIdx > 0) {
-                commandName = text.substring(1, spaceIdx);
+                // Audit L11: strip @botname suffix even when there are arguments.
+                // Telegram groups add @botname to commands: /help@mybot args
+                int atIdx = text.indexOf('@');
+                if (atIdx > 0 && atIdx < spaceIdx) {
+                    commandName = text.substring(1, atIdx);
+                } else {
+                    commandName = text.substring(1, spaceIdx);
+                }
                 commandArgs = text.substring(spaceIdx + 1).trim();
             } else {
                 // Strip @botname suffix
@@ -157,6 +164,8 @@ public record UpdateEvent(
                 }
                 commandArgs = "";
             }
+            // Audit L12: case-insensitive command name (Telegram autocapitalizes)
+            commandName = commandName.toLowerCase();
         }
 
         // Message ID

@@ -1,6 +1,6 @@
 package com.azhukov.agent.tools.browser;
 
-import com.azhukov.agent.security.UrlSafety;
+import com.azhukov.agent.core.security.UrlSafety;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

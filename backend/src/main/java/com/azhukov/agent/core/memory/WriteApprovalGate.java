@@ -103,7 +103,12 @@ public class WriteApprovalGate {
             log.debug("Approved memory write {}: action={}, target={}", id, action, target);
             return true;
         } catch (Exception ex) {
+            // Audit H6: do not swallow exceptions inside @Transactional — mark
+            // the transaction for rollback so the pending status is NOT saved
+            // as "approved" while the memory write failed (breaks atomicity).
             log.error("Failed to apply approved write {}: {}", id, ex.getMessage());
+            org.springframework.transaction.interceptor.TransactionAspectSupport
+                .currentTransactionStatus().setRollbackOnly();
             return false;
         }
     }

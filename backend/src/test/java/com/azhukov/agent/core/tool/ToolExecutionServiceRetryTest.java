@@ -5,8 +5,8 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
-import com.azhukov.agent.security.DefaultToolCallGuardrail;
-import com.azhukov.agent.security.SecretRedactor;
+import com.azhukov.agent.core.security.DefaultToolCallGuardrail;
+import com.azhukov.agent.core.security.SecretRedactor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

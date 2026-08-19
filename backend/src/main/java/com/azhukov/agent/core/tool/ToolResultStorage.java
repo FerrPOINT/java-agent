@@ -222,4 +222,12 @@ public class ToolResultStorage {
         }
         return String.format("%.1f KB", kb);
     }
+
+    /**
+     * Audit H3: Clear all stored results to prevent unbounded memory growth.
+     * Called by the session lifecycle cleanup (SessionDeletedEvent listener).
+     */
+    public void clearAll() {
+        resultsByCallId.clear();
+    }
 }

@@ -22,9 +22,9 @@ import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
-import com.azhukov.agent.security.MessageSanitizer;
-import com.azhukov.agent.security.ToolCallGuardrail;
-import com.azhukov.agent.security.UserInputSanitizer;
+import com.azhukov.agent.core.security.MessageSanitizer;
+import com.azhukov.agent.core.security.ToolCallGuardrail;
+import com.azhukov.agent.core.security.UserInputSanitizer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -121,8 +121,8 @@ class DefaultAgentRuntimeThinkBlockTest {
             messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
-            new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
+            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter(), null, null);
     }
 
     // ── stripThinkBlocksFromString: tag variant tests ──────────────────
@@ -131,7 +131,7 @@ class DefaultAgentRuntimeThinkBlockTest {
     @DisplayName("stripThinkBlocksFromString strips ⇋...⇋ blocks")
     void stripThinkTagPair() {
         String input = "Hello ⇋internal reasoning⇋ World";
-        String result = ThinkBlockProcessor.stripThinkBlocksFromString(input);
+        String result = DefaultAgentRuntime.stripThinkBlocksFromString(input);
         assertThat(result).contains("Hello");
         assertThat(result).contains("World");
         assertThat(result).doesNotContain("internal reasoning");
@@ -141,7 +141,7 @@ class DefaultAgentRuntimeThinkBlockTest {
     @DisplayName("stripThinkBlocksFromString strips <thinking>...</thinking> blocks")
     void stripThinkingTagPair() {
         String input = "Hello <thinking>internal reasoning</thinking> World";
-        String result = ThinkBlockProcessor.stripThinkBlocksFromString(input);
+        String result = DefaultAgentRuntime.stripThinkBlocksFromString(input);
         assertThat(result).contains("Hello");
         assertThat(result).contains("World");
         assertThat(result).doesNotContain("internal reasoning");
@@ -151,7 +151,7 @@ class DefaultAgentRuntimeThinkBlockTest {
     @DisplayName("stripThinkBlocksFromString strips <reasoning>...</reasoning> blocks")
     void stripReasoningTagPair() {
         String input = "Hello <reasoning>step by step</reasoning> World";
-        String result = ThinkBlockProcessor.stripThinkBlocksFromString(input);
+        String result = DefaultAgentRuntime.stripThinkBlocksFromString(input);
         assertThat(result).contains("Hello");
         assertThat(result).contains("World");
         assertThat(result).doesNotContain("step by step");
@@ -161,7 +161,7 @@ class DefaultAgentRuntimeThinkBlockTest {
     @DisplayName("stripThinkBlocksFromString strips <thought>...</thought> blocks")
     void stripThoughtTagPair() {
         String input = "Hello <thought>my thoughts</thought> World";
-        String result = ThinkBlockProcessor.stripThinkBlocksFromString(input);
+        String result = DefaultAgentRuntime.stripThinkBlocksFromString(input);
         assertThat(result).contains("Hello");
         assertThat(result).contains("World");
         assertThat(result).doesNotContain("my thoughts");
@@ -171,7 +171,7 @@ class DefaultAgentRuntimeThinkBlockTest {
     @DisplayName("stripThinkBlocksFromString strips <REASONING_SCRATCHPAD>...</REASONING_SCRATCHPAD> blocks")
     void stripReasoningScratchpadTagPair() {
         String input = "Hello <REASONING_SCRATCHPAD>scratch content</REASONING_SCRATCHPAD> World";
-        String result = ThinkBlockProcessor.stripThinkBlocksFromString(input);
+        String result = DefaultAgentRuntime.stripThinkBlocksFromString(input);
         assertThat(result).contains("Hello");
         assertThat(result).contains("World");
         assertThat(result).doesNotContain("scratch content");
@@ -181,7 +181,7 @@ class DefaultAgentRuntimeThinkBlockTest {
     @DisplayName("stripThinkBlocksFromString strips <antml:thinking>...</antml:thinking> blocks")
     void stripAntmlThinkingTagPair() {
         String input = "Hello <antml:thinking>anthropic reasoning</antml:thinking> World";
-        String result = ThinkBlockProcessor.stripThinkBlocksFromString(input);
+        String result = DefaultAgentRuntime.stripThinkBlocksFromString(input);
         assertThat(result).contains("Hello");
         assertThat(result).contains("World");
         assertThat(result).doesNotContain("anthropic reasoning");
@@ -191,7 +191,7 @@ class DefaultAgentRuntimeThinkBlockTest {
     @DisplayName("stripThinkBlocksFromString is case-insensitive")
     void stripCaseInsensitive() {
         String input = "Hello <THINKING>internal</THINKING> World";
-        String result = ThinkBlockProcessor.stripThinkBlocksFromString(input);
+        String result = DefaultAgentRuntime.stripThinkBlocksFromString(input);
         assertThat(result).contains("Hello");
         assertThat(result).contains("World");
         assertThat(result).doesNotContain("internal");
@@ -201,7 +201,7 @@ class DefaultAgentRuntimeThinkBlockTest {
     @DisplayName("stripThinkBlocksFromString strips unterminated open tag at block boundary")
     void stripUnterminatedOpenTag() {
         String input = "Visible text\n<thinking>unterminated reasoning that runs to end";
-        String result = ThinkBlockProcessor.stripThinkBlocksFromString(input);
+        String result = DefaultAgentRuntime.stripThinkBlocksFromString(input);
         assertThat(result).contains("Visible text");
         assertThat(result).doesNotContain("unterminated reasoning");
     }
@@ -210,7 +210,7 @@ class DefaultAgentRuntimeThinkBlockTest {
     @DisplayName("stripThinkBlocksFromString strips stray orphan tags")
     void stripStrayOrphanTags() {
         String input = "Hello </thinking> World <thinking>";
-        String result = ThinkBlockProcessor.stripThinkBlocksFromString(input);
+        String result = DefaultAgentRuntime.stripThinkBlocksFromString(input);
         assertThat(result).contains("Hello");
         assertThat(result).contains("World");
         assertThat(result).doesNotContain("<thinking>");
@@ -221,7 +221,7 @@ class DefaultAgentRuntimeThinkBlockTest {
     @DisplayName("stripThinkBlocksFromString handles multiple think blocks in sequence")
     void stripMultipleThinkBlocks() {
         String input = "Start ⇋first⇋ middle ⇋second⇋ End";
-        String result = ThinkBlockProcessor.stripThinkBlocksFromString(input);
+        String result = DefaultAgentRuntime.stripThinkBlocksFromString(input);
         assertThat(result).contains("Start");
         assertThat(result).contains("middle");
         assertThat(result).contains("End");
@@ -232,8 +232,8 @@ class DefaultAgentRuntimeThinkBlockTest {
     @Test
     @DisplayName("stripThinkBlocksFromString returns empty for null/empty input")
     void stripNullEmpty() {
-        assertThat(ThinkBlockProcessor.stripThinkBlocksFromString(null)).isEmpty();
-        assertThat(ThinkBlockProcessor.stripThinkBlocksFromString("")).isEmpty();
+        assertThat(DefaultAgentRuntime.stripThinkBlocksFromString(null)).isEmpty();
+        assertThat(DefaultAgentRuntime.stripThinkBlocksFromString("")).isEmpty();
     }
 
     // ── hasContentAfterThinkBlock tests ──────────────────────────────
@@ -241,17 +241,17 @@ class DefaultAgentRuntimeThinkBlockTest {
     @Test
     @DisplayName("hasContentAfterThinkBlock returns true when there is visible text")
     void hasContentAfterThinkBlock_true() {
-        assertThat(ThinkBlockProcessor.hasContentAfterThinkBlock("⇋reasoning⇋ Hello World")).isTrue();
-        assertThat(ThinkBlockProcessor.hasContentAfterThinkBlock("<thinking>reasoning</thinking> visible")).isTrue();
+        assertThat(DefaultAgentRuntime.hasContentAfterThinkBlock("⇋reasoning⇋ Hello World")).isTrue();
+        assertThat(DefaultAgentRuntime.hasContentAfterThinkBlock("<thinking>reasoning</thinking> visible")).isTrue();
     }
 
     @Test
     @DisplayName("hasContentAfterThinkBlock returns false when only think blocks")
     void hasContentAfterThinkBlock_false() {
-        assertThat(ThinkBlockProcessor.hasContentAfterThinkBlock("⇋reasoning only⇋")).isFalse();
-        assertThat(ThinkBlockProcessor.hasContentAfterThinkBlock("<thinking>just reasoning</thinking>")).isFalse();
-        assertThat(ThinkBlockProcessor.hasContentAfterThinkBlock("")).isFalse();
-        assertThat(ThinkBlockProcessor.hasContentAfterThinkBlock(null)).isFalse();
+        assertThat(DefaultAgentRuntime.hasContentAfterThinkBlock("⇋reasoning only⇋")).isFalse();
+        assertThat(DefaultAgentRuntime.hasContentAfterThinkBlock("<thinking>just reasoning</thinking>")).isFalse();
+        assertThat(DefaultAgentRuntime.hasContentAfterThinkBlock("")).isFalse();
+        assertThat(DefaultAgentRuntime.hasContentAfterThinkBlock(null)).isFalse();
     }
 
     // ── hasIncompleteScratchpad tests ─────────────────────────────────
@@ -259,20 +259,20 @@ class DefaultAgentRuntimeThinkBlockTest {
     @Test
     @DisplayName("hasIncompleteScratchpad detects open without close")
     void hasIncompleteScratchpad_true() {
-        assertThat(ThinkBlockProcessor.hasIncompleteScratchpad(
+        assertThat(DefaultAgentRuntime.hasIncompleteScratchpad(
             "<REASONING_SCRATCHPAD>thinking about the problem")).isTrue();
-        assertThat(ThinkBlockProcessor.hasIncompleteScratchpad(
+        assertThat(DefaultAgentRuntime.hasIncompleteScratchpad(
             "text <REASONING_SCRATCHPAD>more thinking")).isTrue();
     }
 
     @Test
     @DisplayName("hasIncompleteScratchpad returns false for complete or absent")
     void hasIncompleteScratchpad_false() {
-        assertThat(ThinkBlockProcessor.hasIncompleteScratchpad(
+        assertThat(DefaultAgentRuntime.hasIncompleteScratchpad(
             "<REASONING_SCRATCHPAD>complete</REASONING_SCRATCHPAD>")).isFalse();
-        assertThat(ThinkBlockProcessor.hasIncompleteScratchpad("no scratchpad here")).isFalse();
-        assertThat(ThinkBlockProcessor.hasIncompleteScratchpad(null)).isFalse();
-        assertThat(ThinkBlockProcessor.hasIncompleteScratchpad("")).isFalse();
+        assertThat(DefaultAgentRuntime.hasIncompleteScratchpad("no scratchpad here")).isFalse();
+        assertThat(DefaultAgentRuntime.hasIncompleteScratchpad(null)).isFalse();
+        assertThat(DefaultAgentRuntime.hasIncompleteScratchpad("")).isFalse();
     }
 
     // ── isThinkingBudgetExhausted tests ──────────────────────────────
@@ -280,16 +280,16 @@ class DefaultAgentRuntimeThinkBlockTest {
     @Test
     @DisplayName("isThinkingBudgetExhausted returns true for think-only response without tool calls")
     void isThinkingBudgetExhausted_true() {
-        assertThat(ThinkBlockProcessor.isThinkingBudgetExhausted(
+        assertThat(DefaultAgentRuntime.isThinkingBudgetExhausted(
             ChatResponse.text("⇋all reasoning no visible text⇋"))).isTrue();
-        assertThat(ThinkBlockProcessor.isThinkingBudgetExhausted(
+        assertThat(DefaultAgentRuntime.isThinkingBudgetExhausted(
             ChatResponse.text("<thinking>only thinking</thinking>"))).isTrue();
     }
 
     @Test
     @DisplayName("isThinkingBudgetExhausted returns false for response with visible text")
     void isThinkingBudgetExhausted_false_hasVisible() {
-        assertThat(ThinkBlockProcessor.isThinkingBudgetExhausted(
+        assertThat(DefaultAgentRuntime.isThinkingBudgetExhausted(
             ChatResponse.text("⇋reasoning⇋ visible answer"))).isFalse();
     }
 
@@ -298,20 +298,20 @@ class DefaultAgentRuntimeThinkBlockTest {
     void isThinkingBudgetExhausted_false_hasToolCalls() {
         var response = ChatResponse.toolCalls(List.of(
             new ToolCall("c1", "weather", "{\"city\":\"London\"}")));
-        assertThat(ThinkBlockProcessor.isThinkingBudgetExhausted(response)).isFalse();
+        assertThat(DefaultAgentRuntime.isThinkingBudgetExhausted(response)).isFalse();
     }
 
     @Test
     @DisplayName("isThinkingBudgetExhausted returns false for response without think tags")
     void isThinkingBudgetExhausted_false_noThinkTags() {
-        assertThat(ThinkBlockProcessor.isThinkingBudgetExhausted(
+        assertThat(DefaultAgentRuntime.isThinkingBudgetExhausted(
             ChatResponse.text("just a normal response"))).isFalse();
     }
 
     @Test
     @DisplayName("isThinkingBudgetExhausted returns false for null response")
     void isThinkingBudgetExhausted_false_null() {
-        assertThat(ThinkBlockProcessor.isThinkingBudgetExhausted(null)).isFalse();
+        assertThat(DefaultAgentRuntime.isThinkingBudgetExhausted(null)).isFalse();
     }
 
     // ── Integration tests with the turn loop ─────────────────────────

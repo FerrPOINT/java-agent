@@ -20,9 +20,9 @@ import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
-import com.azhukov.agent.security.MessageSanitizer;
-import com.azhukov.agent.security.ToolCallGuardrail;
-import com.azhukov.agent.security.UserInputSanitizer;
+import com.azhukov.agent.core.security.MessageSanitizer;
+import com.azhukov.agent.core.security.ToolCallGuardrail;
+import com.azhukov.agent.core.security.UserInputSanitizer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -118,8 +118,8 @@ class DefaultAgentRuntimeRetryTest {
             messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
-            new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
+            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter(), null, null);
     }
 
     // ─── Retry on transient errors ───
@@ -431,8 +431,8 @@ class DefaultAgentRuntimeRetryTest {
             messageSanitizer, mock(ContextReferenceService.class), properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
-            new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
+            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter(), null, null);
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         customRuntime.runTurn(session, "Hello");

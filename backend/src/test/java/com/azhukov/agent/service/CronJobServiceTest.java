@@ -37,7 +37,7 @@ class CronJobServiceTest {
         properties = new AgentProperties();
         properties.getCron().setEnabled(false); // Disable scheduling for tests
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository);
+        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, new org.springframework.transaction.support.TransactionTemplate());
     }
 
     @Test
@@ -60,7 +60,7 @@ class CronJobServiceTest {
         CronJobEntity job = new CronJobEntity();
         job.setId(UUID.randomUUID());
         job.setName("job1");
-        when(cronJobRepository.findAll()).thenReturn(List.of(job));
+        when(cronJobRepository.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"))).thenReturn(List.of(job));
         List<CronJobEntity> jobs = service.list();
         assertThat(jobs).hasSize(1);
         assertThat(jobs.get(0).getName()).isEqualTo("job1");

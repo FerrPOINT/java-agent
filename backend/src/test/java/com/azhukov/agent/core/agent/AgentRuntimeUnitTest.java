@@ -19,10 +19,10 @@ import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
-import com.azhukov.agent.security.DefaultToolCallGuardrail;
-import com.azhukov.agent.security.MessageSanitizer;
-import com.azhukov.agent.security.SecretRedactor;
-import com.azhukov.agent.security.UserInputSanitizer;
+import com.azhukov.agent.core.security.DefaultToolCallGuardrail;
+import com.azhukov.agent.core.security.MessageSanitizer;
+import com.azhukov.agent.core.security.SecretRedactor;
+import com.azhukov.agent.core.security.UserInputSanitizer;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -164,8 +164,9 @@ class AgentRuntimeUnitTest {
             new MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
-            new ErrorClassifier(), null, new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
+            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter(), null, null
+        );
 
         var result = runtime.runTurn(session, "hi");
         assertThat(result.completed()).isFalse();
@@ -202,8 +203,9 @@ class AgentRuntimeUnitTest {
             new MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
-            new ErrorClassifier(), null, new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
+            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter(), null, null
+        );
     }
 
     private static com.azhukov.agent.core.context.ContextReferenceService mockContextReferenceService() {

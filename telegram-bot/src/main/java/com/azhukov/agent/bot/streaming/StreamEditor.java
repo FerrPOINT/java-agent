@@ -1444,7 +1444,7 @@ public class StreamEditor {
         Pattern.compile("</?(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>\\s*",
             Pattern.CASE_INSENSITIVE);
 
-    static String stripThinkTagsRegex(String content) {
+    public static String stripThinkTagsRegex(String content) {
         if (content == null || content.isEmpty()) {
             return "";
         }

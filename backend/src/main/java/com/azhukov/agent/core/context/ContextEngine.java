@@ -68,4 +68,12 @@ public interface ContextEngine {
     default long countPriorUserMessages(java.util.UUID sessionId) {
         return 0;
     }
+
+    /**
+     * Evict all per-session in-memory state for the given session.
+     * Called when a session is deleted (see SessionDeletedEvent) so that
+     * session-scoped caches do not accumulate forever. Default no-op.
+     */
+    default void evict(java.util.UUID sessionId) {
+    }
 }

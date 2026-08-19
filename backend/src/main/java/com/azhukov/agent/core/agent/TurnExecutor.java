@@ -82,7 +82,7 @@ public class TurnExecutor {
     private final ToolResultFormatter toolResultFormatter;
     private final TokenEstimator tokenEstimator;
     private final InterruptToken interruptToken;
-    private final com.azhukov.agent.security.ApprovalQueue approvalQueue;
+    private final com.azhukov.agent.core.security.ApprovalQueue approvalQueue;
     private final MemoryNudgeManager memoryNudgeManager;
     private final SteerBuffer steerBuffer;
 
@@ -102,7 +102,7 @@ public class TurnExecutor {
                          ToolResultFormatter toolResultFormatter,
                          TokenEstimator tokenEstimator,
                          InterruptToken interruptToken,
-                         com.azhukov.agent.security.ApprovalQueue approvalQueue,
+                         com.azhukov.agent.core.security.ApprovalQueue approvalQueue,
                          MemoryNudgeManager memoryNudgeManager,
                          SteerBuffer steerBuffer) {
         this.errorClassifier = errorClassifier;

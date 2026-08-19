@@ -57,6 +57,10 @@ public class CronJobService {
     private final SkillManager skillManager;
     // h72: Cron execution ledger repository.
     private final CronExecutionLogRepository cronExecutionLogRepository;
+    // Audit C4: programmatic transactions for scheduler-thread multi-write sequences
+    // (@Transactional would be bypassed here because executeAndReschedule is a
+    // self-invocation from the scheduler lambda).
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     // Daemon thread factory so cron threads don't prevent JVM shutdown
     private static final ThreadFactory DAEMON_THREAD_FACTORY = r -> {
@@ -217,7 +221,9 @@ public class CronJobService {
     }
 
     public List<CronJobEntity> list() {
-        return cronJobRepository.findAll();
+        // H13: Add deterministic sort to avoid unbounded unordered results.
+        return cronJobRepository.findAll(org.springframework.data.domain.Sort.by(
+            org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
     }
 
     // ── Update overloads (backward-compatible) ──
@@ -384,24 +390,39 @@ public class CronJobService {
                 // ── Fix 2: Repeat count auto-delete ──
                 // After each successful execution, increment repeatCompleted.
                 // If repeatCount is set and completed >= repeatCount, auto-delete.
+                // Audit C4: save + delete + reset are wrapped in one programmatic
+                // transaction so a DB failure mid-sequence cannot leave an orphaned
+                // fully-completed job that never runs again and never gets deleted.
                 if (job.getRepeatCount() != null) {
-                    job.setRepeatCompleted(job.getRepeatCompleted() + 1);
-                    if (job.getRepeatCompleted() >= job.getRepeatCount()) {
-                        log.info("Cron job '{}' reached repeat limit ({}/{}), auto-deleting",
-                            job.getName(), job.getRepeatCompleted(), job.getRepeatCount());
-                        cronJobRepository.save(job);
-                        cancelJob(jobId);
-                        cronJobRepository.deleteById(jobId);
+                    final CronJobEntity jobRef = job;
+                    boolean deleted = Boolean.TRUE.equals(transactionTemplate.execute(tx -> {
+                        jobRef.setRepeatCompleted(jobRef.getRepeatCompleted() + 1);
+                        if (jobRef.getRepeatCompleted() >= jobRef.getRepeatCount()) {
+                            log.info("Cron job '{}' reached repeat limit ({}/{}), auto-deleting",
+                                jobRef.getName(), jobRef.getRepeatCompleted(), jobRef.getRepeatCount());
+                            cronJobRepository.save(jobRef);
+                            cancelJob(jobId);
+                            cronJobRepository.deleteById(jobId);
+                            return true;
+                        }
+                        cronJobRepository.save(jobRef);
+                        // h71: Reset consecutive failures on successful execution (same tx)
+                        if (jobRef.getConsecutiveFailures() > 0) {
+                            jobRef.setConsecutiveFailures(0);
+                            cronJobRepository.save(jobRef);
+                        }
+                        return false;
+                    }));
+                    if (deleted) {
                         jobLocks.remove(jobId, lock);
                         return;
                     }
-                    cronJobRepository.save(job);
-                }
-
-                // h71: Reset consecutive failures on successful execution
-                if (job.getConsecutiveFailures() > 0) {
-                    job.setConsecutiveFailures(0);
-                    cronJobRepository.save(job);
+                } else if (job.getConsecutiveFailures() > 0) {
+                    // h71: Reset consecutive failures on successful execution
+                    transactionTemplate.executeWithoutResult(tx -> {
+                        job.setConsecutiveFailures(0);
+                        cronJobRepository.save(job);
+                    });
                 }
 
                 // Reschedule (one-shot jobs with repeatCount=1 are already deleted above)

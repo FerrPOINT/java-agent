@@ -41,24 +41,44 @@ public class ExecuteCodeTool implements ToolHandler {
     }
 
     private ToolResult runPython(String code, int timeoutSeconds) {
+        Path tempFile = null;
         try {
-            Path tempFile = Files.createTempFile("agent_code_", ".py");
+            tempFile = Files.createTempFile("agent_code_", ".py");
             Files.writeString(tempFile, code, StandardCharsets.UTF_8);
-            tempFile.toFile().deleteOnExit();
 
             var pb = createProcessBuilder(tempFile.toAbsolutePath().toString());
             pb.redirectErrorStream(true);
             Process process = pb.start();
+            // Audit C5: read the merged stdout/stderr on a separate thread WHILE
+            // waiting for the process. Reading only after waitFor deadlocks when the
+            // child fills the OS pipe buffer (~64KB) and blocks on write() forever.
+            var outputFuture = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try (var reader = new BufferedReader(
+                        new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                    return reader.lines().collect(java.util.stream.Collectors.joining("\n"));
+                } catch (IOException e) {
+                    return "";
+                }
+            });
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
+                outputFuture.cancel(true);
                 return ToolResult.fail("Code execution timed out after " + timeoutSeconds + " seconds");
             }
-            String output = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))
-                .lines().collect(java.util.stream.Collectors.joining("\n"));
+            String output = outputFuture.get(5, TimeUnit.SECONDS);
             return ToolResult.ok(output);
         } catch (Exception e) {
             return ToolResult.fail("Failed to execute code: " + e.getMessage());
+        } finally {
+            // Audit L2: delete the temp file eagerly instead of relying on
+            // deleteOnExit() which leaks files on kill -9 / crash.
+            if (tempFile != null) {
+                try {
+                    Files.deleteIfExists(tempFile);
+                } catch (IOException ignored) {
+                }
+            }
         }
     }
 

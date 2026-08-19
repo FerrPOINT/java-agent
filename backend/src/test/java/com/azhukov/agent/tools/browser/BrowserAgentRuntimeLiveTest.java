@@ -21,9 +21,9 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
-import com.azhukov.agent.security.DefaultToolCallGuardrail;
-import com.azhukov.agent.security.SecretRedactor;
-import com.azhukov.agent.security.UserInputSanitizer;
+import com.azhukov.agent.core.security.DefaultToolCallGuardrail;
+import com.azhukov.agent.core.security.SecretRedactor;
+import com.azhukov.agent.core.security.UserInputSanitizer;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
@@ -101,11 +101,12 @@ class BrowserAgentRuntimeLiveTest {
         DefaultAgentRuntime runtime = new DefaultAgentRuntime(
             model, registry, toolExecutionService, promptBuilder, contextEngine, memoryProvider, skillManager,
             new DefaultIterationBudget(properties),
-            new com.azhukov.agent.security.MessageSanitizer(new SecretRedactor(properties)),
+            new com.azhukov.agent.core.security.MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
-            new ErrorClassifier(), null, new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
+            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter(), null, null
+        );
 
         var result = runtime.runTurn(session, "navigate and screenshot");
         assertThat(result.completed()).isTrue();

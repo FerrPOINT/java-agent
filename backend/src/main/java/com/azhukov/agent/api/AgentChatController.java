@@ -10,7 +10,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.memory.MemoryProvider;
-import com.azhukov.agent.security.ApprovalQueue;
+import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.metrics.AgentMetrics;
 import com.azhukov.agent.service.AgentRuntimeService;

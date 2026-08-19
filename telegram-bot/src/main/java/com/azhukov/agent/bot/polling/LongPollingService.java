@@ -111,6 +111,11 @@ public class LongPollingService {
                     // fetchUpdates already triggered reconnect logic
                     return;
                 }
+                // Audit M22: reset backoff after successful fetch so that
+                // a temporary network error doesn't leave the bot at max delay.
+                if (!updates.isEmpty()) {
+                    reconnectWatcher.resetBackoff();
+                }
                 for (Map<String, Object> update : updates) {
                     try {
                         UpdateEvent event = UpdateEvent.from(update);

@@ -5,7 +5,7 @@ import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
-import com.azhukov.agent.security.Redactor;
+import com.azhukov.agent.core.security.Redactor;
 import com.azhukov.agent.service.CheckpointManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

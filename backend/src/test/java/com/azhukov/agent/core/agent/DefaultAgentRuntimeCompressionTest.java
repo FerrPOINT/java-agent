@@ -20,9 +20,9 @@ import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
-import com.azhukov.agent.security.MessageSanitizer;
-import com.azhukov.agent.security.ToolCallGuardrail;
-import com.azhukov.agent.security.UserInputSanitizer;
+import com.azhukov.agent.core.security.MessageSanitizer;
+import com.azhukov.agent.core.security.ToolCallGuardrail;
+import com.azhukov.agent.core.security.UserInputSanitizer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -118,8 +118,8 @@ class DefaultAgentRuntimeCompressionTest {
             messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, contextCompressor,
-            new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
+            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter(), null, null);
     }
 
     // ── Feature 6: Compression-disabled respect ──
@@ -165,8 +165,8 @@ class DefaultAgentRuntimeCompressionTest {
             messageSanitizer, mock(ContextReferenceService.class), props,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, contextCompressor,
-            new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
+            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter(), null, null);
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         TurnResult result = disabledRuntime.runTurn(session, "Hello");
@@ -219,8 +219,8 @@ class DefaultAgentRuntimeCompressionTest {
             messageSanitizer, mock(ContextReferenceService.class), props,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, contextCompressor,
-            new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
+            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter(), null, null);
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         TurnResult result = disabledRuntime.runTurn(session, "Hello");
@@ -285,8 +285,8 @@ class DefaultAgentRuntimeCompressionTest {
             messageSanitizer, mock(ContextReferenceService.class), props,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, contextCompressor,
-            new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
+            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter(), null, null);
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         TurnResult result = multiRuntime.runTurn(session, "Hello");
@@ -349,8 +349,8 @@ class DefaultAgentRuntimeCompressionTest {
             messageSanitizer, mock(ContextReferenceService.class), props,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, contextCompressor,
-            new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
+            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter(), null, null);
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         TurnResult result = tierRuntime.runTurn(session, "Hello");
@@ -401,8 +401,8 @@ class DefaultAgentRuntimeCompressionTest {
             messageSanitizer, mock(ContextReferenceService.class), props,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, contextCompressor,
-            new com.azhukov.agent.security.ApprovalQueue(), null,
-            new TokenEstimator(), new ToolResultFormatter(), null, null, null);
+            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new TokenEstimator(), new ToolResultFormatter(), null, null);
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");
         TurnResult result = disabledRuntime.runTurn(session, "Hello");
