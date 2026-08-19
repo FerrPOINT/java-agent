@@ -157,6 +157,14 @@ public class StreamingOrchestrator {
                 },
                 // onComplete
                 result -> {
+                    // If messageId is still -1 (startStream didn't send initial text because
+                    // it was < 4 chars), but we have accumulated text, send it as a new message
+                    // before finalizing. Hermes handles this via the 'off' transport fallback.
+                    if (messageId[0] < 0 && accumulated.length() > 0) {
+                        String display = accumulated.toString();
+                        messageId[0] = streamEditor.startStream(chatId, display)
+                            .orElse(-1L);
+                    }
                     if (messageId[0] >= 0 && accumulated.length() > 0) {
                         // Append footer to the streaming message before finalizing
                         String footer = runtimeFooter.format(

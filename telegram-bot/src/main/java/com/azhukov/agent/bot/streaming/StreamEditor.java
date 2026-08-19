@@ -886,12 +886,12 @@ public class StreamEditor {
             effectiveMessageId = messageId;
         }
 
-        // Finalize the current message with what we have (no cursor, no silent)
-        // Hermes: raw text (no parse_mode) during streaming
+        // Finalize the current message with MarkdownV2 formatting (Hermes parity).
+        // Hermes sends segment breaks with finalize=True (MarkdownV2 formatted).
         String scrubbed = scrubThink(session, accumulatedText);
-        String formatted = scrubbed; // Raw text during streaming — no formatForTelegram
+        String formatted = formatForTelegram(scrubbed);
         try {
-            telegramClient.editMessageText(chatId, effectiveMessageId, formatted, null, false);
+            telegramClient.editMessageText(chatId, effectiveMessageId, formatted, "MarkdownV2", false);
         } catch (TelegramApiException e) {
             if (!e.isRateLimit()) {
                 throw e;
@@ -1130,6 +1130,14 @@ public class StreamEditor {
         String scrub(String input) {
             if (input == null || input.isEmpty()) {
                 return "";
+            }
+
+            // If we have a pending partial opening tag from the previous chunk,
+            // prepend it to this chunk so the tag is reassembled correctly (Hermes parity).
+            // Hermes stores partial tags in _think_buffer and prepends to the next chunk.
+            if (pendingTag.length() > 0) {
+                input = pendingTag.toString() + input;
+                pendingTag.setLength(0);
             }
 
             // If we have a pending partial closing tag from the previous chunk,
