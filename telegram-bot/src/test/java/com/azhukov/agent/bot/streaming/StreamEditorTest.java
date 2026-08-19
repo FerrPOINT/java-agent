@@ -618,4 +618,58 @@ class StreamEditorTest {
         assertThat(r2).contains("Real answer");
         assertThat(r2).doesNotContain("secret");
     }
+
+    // ── Backslash bug regression tests ──────────────────────────────
+    // Bug: editStream/startStream applied formatForTelegram (MarkdownV2 escaping) to text
+    // but sent it with parseMode=null (plain text). Telegram showed \. \- \_ etc. literally.
+    // Fix: edit-based streaming sends raw scrubbed text (no MarkdownV2 escaping).
+
+    @Test
+    void editStream_doesNotEscapeMarkdownV2SpecialChars() throws InterruptedException {
+        // Text with MarkdownV2 special chars: . _ - | ( ) ! =
+        String specialText = "grep -rn \"pattern\" file.txt | head -5";
+        String cursor = " \u2589";
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+            .thenReturn(Optional.of(42L));
+        // Hermes: streaming edits send raw text (null parse_mode) — no backslash escaping
+        when(client.editMessageText(123L, 42L, specialText + cursor, null, true))
+            .thenReturn(true);
+
+        editor.startStream(123L, "Hello");
+        Thread.sleep(120); // wait past 100ms interval
+        boolean result = editor.editStream(123L, 42L, specialText);
+
+        assertThat(result).isTrue();
+        // Verify NO backslashes were added before special chars
+        verify(client).editMessageText(123L, 42L, specialText + cursor, null, true);
+    }
+
+    @Test
+    void startStream_doesNotEscapeMarkdownV2SpecialChars() {
+        // Text with MarkdownV2 special chars: . _ - | ( ) ! =
+        String specialText = "Result: value_1 | value-2 (test). Done!";
+        // Hermes: startStream sends raw text (null parse_mode) — no backslash escaping
+        when(client.sendMessage(123L, specialText, null, null, null))
+            .thenReturn(Optional.of(42L));
+
+        Optional<Long> msgId = editor.startStream(123L, specialText);
+
+        assertThat(msgId).contains(42L);
+        verify(client).sendMessage(123L, specialText, null, null, null);
+    }
+
+    @Test
+    void editStream_delayedStartDoesNotEscapeMarkdownV2SpecialChars() {
+        // When no message exists yet (delayed start), editStream sends via sendMessage
+        // with null parse_mode — text must NOT be MarkdownV2-escaped.
+        String specialText = "file.txt - pattern_match (v2.0)";
+        String cursor = " \u2589";
+        when(client.sendMessage(123L, specialText + cursor, null, null, null))
+            .thenReturn(Optional.of(42L));
+
+        boolean result = editor.editStream(123L, -1L, specialText);
+
+        assertThat(result).isTrue();
+        verify(client).sendMessage(123L, specialText + cursor, null, null, null);
+    }
 }

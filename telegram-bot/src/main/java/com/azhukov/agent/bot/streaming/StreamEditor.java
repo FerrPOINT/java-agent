@@ -270,7 +270,9 @@ public class StreamEditor {
         session.thinkScrubber = new ThinkScrubber();
 
         String scrubbed = scrubThink(session, initialText);
-        String formatted = formatForTelegram(scrubbed);
+        // Edit-based streaming sends with parseMode=null (plain text) — do NOT apply
+        // formatForTelegram/MarkdownV2 escaping here, or backslashes will be visible.
+        String formatted = scrubbed;
 
         // Hermes: if initial text is empty or too short (<4 chars), don't send a message yet.
         // Wait for editStream to accumulate >=4 chars before sending the first message.
@@ -374,7 +376,8 @@ public class StreamEditor {
         boolean noMsgYet = currentMsg < 0;
         if (noMsgYet && text.length() >= 4) {
             String scrubbed = scrubThink(session, text);
-            String formatted = formatForTelegram(scrubbed);
+            // Edit-based streaming sends with parseMode=null (plain text) — no MarkdownV2 escaping.
+            String formatted = scrubbed;
             if (!formatted.isEmpty() && formatted.length() >= 4) {
                 Optional<Long> newMsgId = sendMessageWithNotification(chatId, formatted + streamCursor, false);
                 if (newMsgId.isPresent()) {
@@ -415,8 +418,11 @@ public class StreamEditor {
         }
 
         // B6: Strip think blocks
+        // Edit-based streaming sends with parseMode=null (plain text) — no MarkdownV2 escaping.
+        // Applying formatForTelegram here would add backslashes before _ . - | ( ) etc.
+        // which Telegram shows literally when parse_mode is not set.
         String scrubbed = scrubThink(session, text);
-        String formatted = formatForTelegram(scrubbed);
+        String formatted = scrubbed;
 
         // Append streaming cursor
         String withCursor = formatted + streamCursor;
@@ -1048,8 +1054,10 @@ public class StreamEditor {
             log.warn("Max flood strikes ({}) exceeded for chat {}, disabling streaming edits — buffering until final",
                 MAX_FLOOD_STRIKES, chatId);
             session.streamingDisabled = true;
-            // P2-16: Initialize the flood fallback buffer with the current formatted content
-            session.floodFallbackBuffer.append(formatted);
+            // P2-16: Initialize the flood fallback buffer with the current content.
+            // The buffer is sent via sendFormattedMessage (parseMode=MarkdownV2) on finalize,
+            // so apply formatForTelegram here to escape special chars correctly.
+            session.floodFallbackBuffer.append(formatForTelegram(formatted));
         }
         return false;
     }
