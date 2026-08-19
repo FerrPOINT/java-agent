@@ -392,7 +392,23 @@ public class AgentStreamingService {
                                 streamRetries + 1, MAX_STREAM_RETRIES, errorType, delayMs, error.getMessage());
                             send(emitter, new StreamEvent("retry", null, null, retryMsg), streamCtx);
                             try {
-                                Thread.sleep(delayMs);
+                                // Interruptible sleep — check cancel flag in small increments
+                                // so user cancellation is detected during backoff (Hermes parity).
+                                long remaining = delayMs;
+                                while (remaining > 0) {
+                                    long chunk = Math.min(remaining, 500);
+                                    Thread.sleep(chunk);
+                                    remaining -= chunk;
+                                    if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                                        log.info("Retry backoff cancelled by interrupt for session {}", session.id());
+                                        send(emitter, new StreamEvent("interrupted", null, null,
+                                            "Turn cancelled by user."), streamCtx);
+                                        send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                                        emitter.complete();
+                                        if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                                        return;
+                                    }
+                                }
                             } catch (InterruptedException ie) {
                                 Thread.currentThread().interrupt();
                                 log.warn("Retry backoff interrupted for session {}", session.id());
@@ -467,6 +483,7 @@ public class AgentStreamingService {
                     // Reset state for the retry — previous tool calls/content must not leak
                     contentBuilder.setLength(0);
                     collectedToolCalls.clear();
+                    turnIndex++; // Increment turnIndex for each continuation attempt (Hermes parity)
                     // Build a temporary context with continuation prompt WITHOUT polluting
                     // turnMessages (Hermes marks synthetic messages and strips them before
                     // finalization — we avoid pollution by using a separate list).
