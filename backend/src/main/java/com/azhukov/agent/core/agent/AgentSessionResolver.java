@@ -75,6 +75,14 @@ public class AgentSessionResolver {
      * @return the created domain session
      */
     public Session createSession(String userId, String provider, String modelName) {
+        return createSession(userId, provider, modelName, "cli");
+    }
+
+    /**
+     * Create a new session with a specific source (e.g. "telegram", "cli", "api_server").
+     * The source becomes the platform in the system prompt volatile tier.
+     */
+    public Session createSession(String userId, String provider, String modelName, String source) {
         SessionEntity e = new SessionEntity();
         e.setUserId(userId);
         e.setModelProvider(provider);
@@ -82,6 +90,9 @@ public class AgentSessionResolver {
         e.setTitle("New chat");
         e.setCreatedAt(Instant.now());
         e.setUpdatedAt(Instant.now());
+        e.setSource(source);
+        e.setLastActive(Instant.now());
+        e.setMessageCount(0);
         SessionEntity saved = transactionTemplate.execute(status -> sessionRepository.save(e));
         return sessionMapper.toDomain(saved);
     }
@@ -113,6 +124,16 @@ public class AgentSessionResolver {
             Session session = sessionMapper.toDomain(e);
             for (var entry : cliStateCopy.entrySet()) {
                 session = session.withMetadata(entry.getKey(), entry.getValue());
+            }
+            // Add source as platform metadata so the system prompt builder
+            // can include "Platform: telegram" in the volatile tier.
+            if (e.getSource() != null && !e.getSource().isBlank()) {
+                session = session.withMetadata("platform", e.getSource());
+            }
+            // Add userId as userDisplayName so the system prompt can include "User: ...".
+            if (e.getUserId() != null && !e.getUserId().isBlank() && !"user-1".equals(e.getUserId())
+                    && (session.metadata() == null || !session.metadata().containsKey("userDisplayName"))) {
+                session = session.withMetadata("userDisplayName", e.getUserId());
             }
             if (e.getSubgoal() != null && !e.getSubgoal().isBlank()) {
                 session = session.withMetadata("subgoal", e.getSubgoal());

@@ -45,6 +45,22 @@ public class SessionEntity {
     /** Session lifecycle status: "active" (default) or "compressed" (superseded by a child session). */
     private String sessionStatus = "active";
 
+    /** Session source: telegram, cli, cron, subagent, kanban, tool. Used for hidden/demoted filtering. */
+    private String source;
+
+    /** End reason: compression, new_session, idle_timeout, daily_reset, branched. Used for lineage logic. */
+    private String endReason;
+
+    /** Short preview text for browse mode. */
+    @Column(columnDefinition = "TEXT")
+    private String preview;
+
+    /** Last activity timestamp (distinct from updatedAt which tracks row writes). */
+    private Instant lastActive;
+
+    /** Cached message count for browse mode efficiency. */
+    private Integer messageCount = 0;
+
     @Column(columnDefinition = "TEXT")
     private String subgoal;
 
@@ -69,5 +85,11 @@ public class SessionEntity {
         if (cliState != null) {
             cliState.remove(key);
         }
+    }
+
+    @jakarta.persistence.PrePersist
+    void onCreateTimestamps() {
+        if (createdAt == null) createdAt = java.time.Instant.now();
+        if (updatedAt == null) updatedAt = java.time.Instant.now();
     }
 }

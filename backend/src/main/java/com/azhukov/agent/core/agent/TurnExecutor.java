@@ -1,0 +1,1040 @@
+package com.azhukov.agent.core.agent;
+
+import com.azhukov.agent.client.langchain4j.ErrorClassifier;
+import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.config.FallbackConfig;
+import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.client.ModelRequestOptions;
+import com.azhukov.agent.core.context.ContextCompressor;
+import com.azhukov.agent.core.context.ContextEngine;
+import com.azhukov.agent.core.context.DefaultContextCompressor;
+import com.azhukov.agent.core.context.DefaultContextEngine;
+import com.azhukov.agent.core.model.ChatResponse;
+import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.model.ToolCall;
+import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
+import com.azhukov.agent.core.state.TurnState;
+import com.azhukov.agent.core.tool.ToolExecutionService;
+import com.azhukov.agent.core.tool.ToolParallelSafety;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadLocalRandom;
+
+/**
+ * Shared turn-execution logic extracted from {@link DefaultAgentRuntime} and
+ * {@code AgentStreamingService} to eliminate duplication of the agentic-loop
+ * internals.
+ * <p>
+ * Contains the genuinely shared pieces that both runtimes need:
+ * <ul>
+ *   <li>{@link #callModelWithRetry} — model call with retry, fallback, and
+ *       one-shot recovery guards (parity with Hermes
+ *       {@code _retry_with_recoveries})</li>
+ *   <li>{@link #executeToolsInParallel} — parallel tool execution via a shared
+ *       virtual-thread executor</li>
+ *   <li>{@link #executeToolBatch} — full sequential-or-parallel tool batch
+ *       execution with the parallel-safety gate, approval flow, and
+ *       memory-nudge counter resets</li>
+ *   <li>{@link #checkProactiveCompression} — post-tool-batch context
+ *       compression check</li>
+ *   <li>{@link #classifyForRetry} — error classification + backoff calculation
+ *       shared by the streaming path (which cannot reuse the synchronous
+ *       retry loop directly)</li>
+ *   <li>Static helpers: {@link #interruptibleSleep}, {@link #detectRefusalPattern},
+ *       {@link #estimateResponseTokens(ChatResponse)},
+ *       {@link #estimateResponseTokens(String, List)}, plus think/image/multimodal
+ *       content helpers</li>
+ * </ul>
+ * <p>
+ * {@code DefaultAgentRuntime} delegates model calling + tool execution to this
+ * class. {@code AgentStreamingService} delegates the retry classification and
+ * backoff calculation (the non-SSE-specific part of "model call with retry")
+ * while keeping its own SSE streaming wrapper.
+ *
+ * <h2>Fallback context</h2>
+ * The rich retry loop depends on a per-turn {@link FallbackManager} and an
+ * {@code activeModelClient} field that the caller owns. Callers pass a
+ * {@link FallbackContext} snapshot so {@code TurnExecutor} can swap models
+ * mid-retry without owning the per-turn mutable state itself.
+ */
+@Slf4j
+@Component
+public class TurnExecutor {
+
+    private final ErrorClassifier errorClassifier;
+    private final AgentProperties properties;
+    private final ContextCompressor contextCompressor;
+    private final ContextEngine contextEngine;
+    private final ToolExecutionService toolExecutionService;
+    private final ToolResultFormatter toolResultFormatter;
+    private final TokenEstimator tokenEstimator;
+    private final InterruptToken interruptToken;
+    private final com.azhukov.agent.core.security.ApprovalQueue approvalQueue;
+    private final MemoryNudgeManager memoryNudgeManager;
+    private final SteerBuffer steerBuffer;
+
+    /**
+     * Shared daemon executor for parallel tool execution — avoids creating a
+     * new executor per batch. Virtual threads are daemon by default in Java 25.
+     */
+    private final ExecutorService parallelToolExecutor =
+        java.util.concurrent.Executors.newThreadPerTaskExecutor(
+            Thread.ofVirtual().name("tool-parallel-", 0).factory());
+
+    public TurnExecutor(ErrorClassifier errorClassifier,
+                         AgentProperties properties,
+                         ContextCompressor contextCompressor,
+                         ContextEngine contextEngine,
+                         ToolExecutionService toolExecutionService,
+                         ToolResultFormatter toolResultFormatter,
+                         TokenEstimator tokenEstimator,
+                         InterruptToken interruptToken,
+                         com.azhukov.agent.core.security.ApprovalQueue approvalQueue,
+                         MemoryNudgeManager memoryNudgeManager,
+                         SteerBuffer steerBuffer) {
+        this.errorClassifier = errorClassifier;
+        this.properties = properties;
+        this.contextCompressor = contextCompressor;
+        this.contextEngine = contextEngine;
+        this.toolExecutionService = toolExecutionService;
+        this.toolResultFormatter = toolResultFormatter;
+        this.tokenEstimator = tokenEstimator;
+        this.interruptToken = interruptToken;
+        this.approvalQueue = approvalQueue;
+        this.memoryNudgeManager = memoryNudgeManager;
+        this.steerBuffer = steerBuffer;
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    //  Model call with retry (shared by both runtimes)
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Mutable per-turn fallback state passed in by the caller.
+     * <p>
+     * {@code DefaultAgentRuntime} owns the {@link FallbackManager} and the
+     * {@code activeModelClient} field because they are initialised per turn
+     * from session/config data. This holder lets {@code TurnExecutor} swap
+     * the active model mid-retry without owning that per-turn state.
+     */
+    public static final class FallbackContext {
+        private FallbackManager fallbackManager;
+        private ModelClient activeModelClient;
+        private final ModelClient primaryModelClient;
+
+        public FallbackContext(ModelClient primaryModelClient) {
+            this.primaryModelClient = primaryModelClient;
+            this.activeModelClient = primaryModelClient;
+        }
+
+        public FallbackManager getFallbackManager() { return fallbackManager; }
+        public void setFallbackManager(FallbackManager fm) { this.fallbackManager = fm; }
+        public ModelClient getActiveModelClient() { return activeModelClient; }
+        public void setActiveModelClient(ModelClient c) { this.activeModelClient = c; }
+        public ModelClient getPrimaryModelClient() { return primaryModelClient; }
+    }
+
+    /**
+     * Calls the active model client with full retry logic: error classification,
+     * one-shot recovery guards (14 total, parity with Hermes), fallback chain
+     * activation, and interruptible backoff.
+     * <p>
+     * This is the canonical "model call with retry" extracted from
+     * {@code DefaultAgentRuntime.callModelWithRetry}. Both runtimes use it:
+     * {@code DefaultAgentRuntime} directly, and {@code AgentStreamingService}
+     * uses {@link #classifyForRetry} for the parts that are reusable in the
+     * streaming path.
+     *
+     * @param context          the prepared message context
+     * @param tools            the tool definitions available to the model
+     * @param session          the current session (for interrupt checks)
+     * @param options          model request options
+     * @param fallbackCtx      per-turn fallback state (may be null if no fallback)
+     * @return the model response
+     * @throws ContentPolicyException if a content policy block has no fallback
+     * @throws RuntimeException        if all retries and fallbacks are exhausted
+     */
+    public ChatResponse callModelWithRetry(List<Message> context, List<ToolDefinition> tools,
+                                            Session session, ModelRequestOptions options,
+                                            FallbackContext fallbackCtx) {
+        int retryAttempts = properties.getError().getRetryAttempts();
+        Exception lastException = null;
+        int totalAttempts = 0;
+        List<Message> currentContext = context;
+        List<ToolDefinition> currentTools = tools;
+        TurnRetryState retryState = new TurnRetryState();
+
+        for (;;) {
+            for (int attempt = 0; attempt <= retryAttempts; attempt++) {
+                totalAttempts++;
+                try {
+                    ModelClient client = fallbackCtx != null && fallbackCtx.getActiveModelClient() != null
+                        ? fallbackCtx.getActiveModelClient()
+                        : (fallbackCtx != null ? fallbackCtx.getPrimaryModelClient() : null);
+                    return client.complete(currentContext, currentTools, options);
+                } catch (Exception e) {
+                    lastException = e;
+                    if (attempt >= retryAttempts) {
+                        break;
+                    }
+                    ErrorClassifier.ClassificationResult classification = errorClassifier.classifyWithHints(e);
+                    ErrorClassifier.ErrorType errorType = classification.type();
+
+                    // ── Part F: Content policy handling ──
+                    if (errorType == ErrorClassifier.ErrorType.CONTENT_POLICY) {
+                        log.warn("Content policy block: {} — attempting fallback", e.getMessage());
+                        if (tryActivateFallback(errorType, e, fallbackCtx)) {
+                            retryState = new TurnRetryState();
+                            currentContext = context;
+                            break;
+                        }
+                        String refusalMsg = detectRefusalPattern(e.getMessage());
+                        throw new ContentPolicyException(refusalMsg != null ? refusalMsg :
+                            "The model's safety filter blocked this request. Please rephrase your request and try again.",
+                            e);
+                    }
+
+                    // ── One-shot recovery guards (parity with Hermes TurnRetryState — 14 total) ──
+
+                    // Guard 1: AUTH — try refreshing credentials once (generic)
+                    if (errorType == ErrorClassifier.ErrorType.AUTH && !retryState.isAuthRetryAttempted()) {
+                        retryState.setAuthRetryAttempted(true);
+                        log.info("AUTH error, attempting credential refresh (one-shot guard)");
+                        attempt--;
+                        continue;
+                    }
+
+                    // Guard 2: THINKING_SIGNATURE — strip thinking blocks and retry
+                    if (errorType == ErrorClassifier.ErrorType.THINKING_SIGNATURE
+                        && !retryState.isThinkingSigRetryAttempted()
+                        && containsThinkingBlocks(currentContext)) {
+                        retryState.setThinkingSigRetryAttempted(true);
+                        log.info("THINKING_SIGNATURE error, stripping thinking blocks and retrying (one-shot guard)");
+                        currentContext = ThinkBlockProcessor.stripThinkingBlocks(currentContext);
+                        attempt--;
+                        continue;
+                    }
+
+                    // Guard 2b: FORMAT_ERROR with thinking blocks
+                    if (errorType == ErrorClassifier.ErrorType.FORMAT_ERROR
+                        && !retryState.isThinkingSigRetryAttempted()
+                        && containsThinkingBlocks(currentContext)) {
+                        retryState.setThinkingSigRetryAttempted(true);
+                        log.info("FORMAT_ERROR with thinking blocks, stripping and retrying (one-shot guard)");
+                        currentContext = ThinkBlockProcessor.stripThinkingBlocks(currentContext);
+                        attempt--;
+                        continue;
+                    }
+
+                    // Guard 3: IMAGE_TOO_LARGE — shrink image content from messages
+                    if ((errorType == ErrorClassifier.ErrorType.IMAGE_TOO_LARGE
+                         || errorType == ErrorClassifier.ErrorType.CONTENT_POLICY)
+                        && !retryState.isImageShrinkRetryAttempted()
+                        && containsImageContent(currentContext)) {
+                        retryState.setImageShrinkRetryAttempted(true);
+                        log.info("{} with image content, stripping images and retrying (one-shot guard)", errorType);
+                        currentContext = stripImageContent(currentContext);
+                        attempt--;
+                        continue;
+                    }
+
+                    // Guard 4: MULTIMODAL_TOOL_CONTENT — strip non-text from tool results
+                    if ((errorType == ErrorClassifier.ErrorType.MULTIMODAL_TOOL_CONTENT
+                         || errorType == ErrorClassifier.ErrorType.FORMAT_ERROR)
+                        && !retryState.isMultimodalToolContentRetryAttempted()
+                        && containsMultimodalToolContent(currentContext)) {
+                        retryState.setMultimodalToolContentRetryAttempted(true);
+                        log.info("{} with multimodal tool content, stripping and retrying (one-shot guard)", errorType);
+                        currentContext = stripMultimodalToolContent(currentContext);
+                        attempt--;
+                        continue;
+                    }
+
+                    // Guard 5: INVALID_ENCRYPTED_CONTENT — strip codex reasoning replay
+                    if (errorType == ErrorClassifier.ErrorType.INVALID_ENCRYPTED_CONTENT
+                        && !retryState.isInvalidEncryptedContentRetryAttempted()) {
+                        retryState.setInvalidEncryptedContentRetryAttempted(true);
+                        log.info("INVALID_ENCRYPTED_CONTENT error, stripping encrypted reasoning and retrying (one-shot guard)");
+                        currentContext = ThinkBlockProcessor.stripThinkingBlocks(currentContext);
+                        attempt--;
+                        continue;
+                    }
+
+                    // Guard 6: LONG_CONTEXT_TIER with oauth_1m_beta — disable 1M context beta
+                    if (errorType == ErrorClassifier.ErrorType.LONG_CONTEXT_TIER
+                        && !retryState.isOauth1mBetaRetryAttempted()
+                        && lowerMessageContains(e, "long context beta")) {
+                        retryState.setOauth1mBetaRetryAttempted(true);
+                        log.info("LONG_CONTEXT_TIER with 1M beta, disabling beta and retrying (one-shot guard)");
+                        attempt--;
+                        continue;
+                    }
+
+                    // Guard 7: LLAMA_CPP_GRAMMAR — strip tool schema patterns
+                    if (errorType == ErrorClassifier.ErrorType.LLAMA_CPP_GRAMMAR
+                        && !retryState.isLlamaCppGrammarRetryAttempted()) {
+                        retryState.setLlamaCppGrammarRetryAttempted(true);
+                        log.info("LLAMA_CPP_GRAMMAR error, stripping pattern/format from tools and retrying (one-shot guard)");
+                        currentTools = stripGrammarPatternsFromTools(currentTools);
+                        attempt--;
+                        continue;
+                    }
+
+                    // ── Compression-disabled respect ──
+                    if ((errorType == ErrorClassifier.ErrorType.CONTEXT_OVERFLOW
+                         || errorType == ErrorClassifier.ErrorType.PAYLOAD_TOO_LARGE
+                         || errorType == ErrorClassifier.ErrorType.LONG_CONTEXT_TIER)
+                        && !properties.getCompression().isEnabled()) {
+                        log.warn("Context overflow ({}) detected, but auto-compaction is disabled (compression.enabled: false)", errorType);
+                        throw new RuntimeException(
+                            "Context limit exceeded. Enable compression or reduce context size. " +
+                            "Run /compress to compact manually, /new to start fresh, " +
+                            "or switch to a larger-context model.", e);
+                    }
+
+                    // ── Long-context tier handling ──
+                    if (errorType == ErrorClassifier.ErrorType.LONG_CONTEXT_TIER) {
+                        int reducedContext = 200_000;
+                        if (contextCompressor instanceof DefaultContextCompressor dcc) {
+                            int currentContextLength = 0;
+                            if (contextEngine instanceof DefaultContextEngine dce) {
+                                currentContextLength = dce.getContextLength();
+                            }
+                            if (currentContextLength > reducedContext) {
+                                dcc.recalculateThreshold(reducedContext);
+                                log.warn("⚠️  Anthropic long-context tier requires extra usage — reducing context: {} → {} tokens",
+                                    currentContextLength, reducedContext);
+                            }
+                        }
+                        if (contextCompressor != null) {
+                            int compressionAttempts = retryState.getCompressionAttempts();
+                            if (compressionAttempts >= 3) {
+                                log.error("Max compression attempts (3) reached for long-context-tier error.");
+                                break;
+                            }
+                            retryState.incrementCompressionAttempts();
+                            log.info("Long-context tier detected, triggering compression attempt {}/3", compressionAttempts + 1);
+                            try {
+                                int targetChars = properties.getContext().getTargetTokens() * 4;
+                                List<Message> compressed = contextCompressor.compress(currentContext, targetChars);
+                                currentContext = compressed;
+                                log.info("Context compressed for long-context tier (attempt {}/3), retrying model call",
+                                    compressionAttempts + 1);
+                                attempt--;
+                                continue;
+                            } catch (Exception ce) {
+                                log.warn("Context compression for long-context tier failed (attempt {}/3): {}",
+                                    compressionAttempts + 1, ce.getMessage());
+                                if (compressionAttempts + 1 >= 3) {
+                                    break;
+                                }
+                                attempt--;
+                                continue;
+                            }
+                        }
+                    }
+
+                    // Context overflow: try compression (up to 3 attempts)
+                    if (errorType == ErrorClassifier.ErrorType.CONTEXT_OVERFLOW) {
+                        if (contextCompressor == null) {
+                            log.warn("Context overflow detected, compression unavailable, failing: {}", e.getMessage());
+                            break;
+                        }
+                        int compressionAttempts = retryState.getCompressionAttempts();
+                        if (compressionAttempts >= 3) {
+                            log.error("Max compression attempts (3) reached for context overflow.");
+                            break;
+                        }
+                        retryState.incrementCompressionAttempts();
+                        log.info("Context overflow detected, triggering compression attempt {}/3", compressionAttempts + 1);
+                        try {
+                            int targetChars = properties.getContext().getTargetTokens() * 4;
+                            List<Message> compressed = contextCompressor.compress(currentContext, targetChars);
+                            if (compressed.size() < currentContext.size()
+                                || (compressed.size() == currentContext.size()
+                                    && compressed.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum()
+                                    < currentContext.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum())) {
+                                currentContext = compressed;
+                                log.info("Context compressed from {} to {} messages, retrying model call (attempt {}/3)",
+                                    context.size(), compressed.size(), compressionAttempts + 1);
+                                attempt--;
+                                continue;
+                            } else {
+                                log.warn("Context overflow detected, compression did not reduce context (attempt {}/3): {}",
+                                    compressionAttempts + 1, e.getMessage());
+                                if (compressionAttempts + 1 >= 3) {
+                                    break;
+                                }
+                                attempt--;
+                                continue;
+                            }
+                        } catch (Exception ce) {
+                            log.warn("Context compression failed (attempt {}/3): {}", compressionAttempts + 1, ce.getMessage());
+                            if (compressionAttempts + 1 >= 3) {
+                                break;
+                            }
+                            attempt--;
+                            continue;
+                        }
+                    }
+
+                    // Payload too large: try compression (up to 3 attempts)
+                    if (errorType == ErrorClassifier.ErrorType.PAYLOAD_TOO_LARGE) {
+                        if (contextCompressor == null) {
+                            log.warn("Payload too large, compression unavailable, failing: {}", e.getMessage());
+                            break;
+                        }
+                        int compressionAttempts = retryState.getCompressionAttempts();
+                        if (compressionAttempts >= 3) {
+                            log.error("Max compression attempts (3) reached for payload-too-large error.");
+                            break;
+                        }
+                        retryState.incrementCompressionAttempts();
+                        log.info("Payload too large, triggering compression attempt {}/3", compressionAttempts + 1);
+                        try {
+                            int targetChars = properties.getContext().getTargetTokens() * 4;
+                            List<Message> compressed = contextCompressor.compress(currentContext, targetChars);
+                            currentContext = compressed;
+                            log.info("Context compressed for payload size (attempt {}/3), retrying model call",
+                                compressionAttempts + 1);
+                            attempt--;
+                            continue;
+                        } catch (Exception ce) {
+                            log.warn("Context compression for payload too large failed (attempt {}/3): {}",
+                                compressionAttempts + 1, ce.getMessage());
+                            if (compressionAttempts + 1 >= 3) {
+                                break;
+                            }
+                            attempt--;
+                            continue;
+                        }
+                    }
+
+                    // ── Immediate-fallback errors (no retry, try fallback immediately) ──
+                    if (errorType == ErrorClassifier.ErrorType.AUTH_PERMANENT
+                        || errorType == ErrorClassifier.ErrorType.MODEL_NOT_FOUND) {
+                        log.warn("{} error — attempting immediate fallback: {}", errorType, e.getMessage());
+                        if (tryActivateFallback(errorType, e, fallbackCtx)) {
+                            retryState = new TurnRetryState();
+                            currentContext = context;
+                            break;
+                        }
+                        log.warn("{} error, no fallback available, failing: {}", errorType, e.getMessage());
+                        break;
+                    }
+
+                    // ── Permanent errors that don't trigger fallback ──
+                    if (errorType == ErrorClassifier.ErrorType.PERMANENT
+                        || errorType == ErrorClassifier.ErrorType.BILLING
+                        || errorType == ErrorClassifier.ErrorType.PROVIDER_POLICY_BLOCKED) {
+                        log.warn("Model call failed with {} error, not retrying: {}", errorType, e.getMessage());
+                        break;
+                    }
+
+                    // ── Credential rotation for RATE_LIMIT ──
+                    if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT && !retryState.isHasRetried429()) {
+                        retryState.setHasRetried429(true);
+                        log.info("RATE_LIMIT (429) detected — tracking for credential rotation");
+                    }
+
+                    // ── Part C: Retry-After header parsing + backoff calculation ──
+                    long delayMs = computeBackoffMs(errorType, attempt, e);
+
+                    log.warn("Model call failed (attempt {}/{}), classified as {}, retrying in {} ms: {}",
+                        attempt + 1, retryAttempts + 1, errorType, delayMs, e.getMessage());
+
+                    // ── Part D: Interruptible backoff ──
+                    try {
+                        interruptibleSleep(delayMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        log.debug("Model call retry interrupted, stopping retries");
+                        break;
+                    }
+                }
+            }
+
+            // ── Retries exhausted — try fallback before failing ──
+            if (lastException != null) {
+                ErrorClassifier.ClassificationResult classification = errorClassifier.classifyWithHints(lastException);
+                if (classification.hints().shouldFallback() && tryActivateFallback(classification.type(), lastException, fallbackCtx)) {
+                    retryState = new TurnRetryState();
+                    currentContext = context;
+                    totalAttempts = 0;
+                    continue;
+                }
+            }
+
+            break;
+        }
+
+        throw new RuntimeException("Model call failed after " + totalAttempts + " attempt(s): "
+            + (lastException != null ? lastException.getMessage() : "unknown error"), lastException);
+    }
+
+    /**
+     * Result of classifying a streaming error for retry purposes.
+     * <p>
+     * Carries the classified error type and the computed backoff delay so the
+     * streaming path can decide whether to retry and how long to wait without
+     * duplicating the classification + backoff logic.
+     */
+    public record RetryClassification(ErrorClassifier.ErrorType errorType, long backoffMs) {}
+
+    /**
+     * Classify a streaming error and compute the backoff delay, without
+     * performing the retry itself (the streaming path owns its own loop).
+     * <p>
+     * This is the shared, SSE-agnostic half of "model call with retry" that
+     * {@code AgentStreamingService} delegates to so it doesn't duplicate the
+     * error-classification + backoff calculation logic.
+     *
+     * @param error   the exception from the streaming call
+     * @param attempt zero-based attempt index (for exponential backoff)
+     * @return classification result with error type and a computed backoff delay in ms
+     */
+    public RetryClassification classifyForRetry(Exception error, int attempt) {
+        ErrorClassifier.ErrorType errorType = errorClassifier.classify(error);
+        long delayMs = computeBackoffMs(errorType, attempt, error);
+        return new RetryClassification(errorType, delayMs);
+    }
+
+    /**
+     * Compute the backoff delay for the given error type and attempt index.
+     * <p>
+     * Shared by both the synchronous retry loop and the streaming retry path.
+     *
+     * @param errorType the classified error type
+     * @param attempt    zero-based attempt index
+     * @param e         the original exception (for Retry-After header parsing)
+     * @return delay in milliseconds
+     */
+    public long computeBackoffMs(ErrorClassifier.ErrorType errorType, int attempt, Exception e) {
+        long delayMs;
+        if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
+            long retryAfterMs = extractRetryAfterMs(e);
+            if (retryAfterMs > 0) {
+                delayMs = Math.min(retryAfterMs, 120_000L);
+                log.info("Rate limit: using Retry-After header value: {}ms (capped at 120s)", delayMs);
+            } else {
+                long base = properties.getError().getRetryDelayMs() * (1L << attempt);
+                delayMs = Math.min(base, 60_000L);
+                log.info("Rate limit: no Retry-After header, using exponential backoff: {}ms", delayMs);
+            }
+        } else if (errorType == ErrorClassifier.ErrorType.OVERLOADED) {
+            long base = properties.getError().getRetryDelayMs() * (1L << attempt);
+            delayMs = Math.min(base, 60_000L);
+        } else {
+            long base = properties.getError().getRetryDelayMs() * (1L << attempt);
+            long jitter = ThreadLocalRandom.current().nextLong(0, base / 2 + 1);
+            delayMs = Math.min(base + jitter, 60_000L);
+        }
+        return delayMs;
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    //  Tool execution (shared by both runtimes)
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Execute a batch of tool calls, choosing sequential or parallel execution
+     * via the {@link ToolParallelSafety} gate, and injecting any pending steer
+     * note into the last tool result.
+     * <p>
+     * This is the canonical "tool execution in parallel" (and sequential) path
+     * extracted from {@code DefaultAgentRuntime}. It handles:
+     * <ul>
+     *   <li>Interrupt checks before and during execution</li>
+     *   <li>Approval flow (latch-based wait)</li>
+     *   <li>Memory-nudge counter resets (skill_manage / memory tools)</li>
+     *   <li>Parallel-safety gate: parallel for safe batches, sequential otherwise</li>
+     *   <li>Steer-note injection into the last tool result</li>
+     * </ul>
+     *
+     * @param toolCalls         the validated tool calls to execute
+     * @param registeredToolNames set of valid tool names (for parallel-safety check)
+     * @param session            the current session
+     * @param turnState          the current turn state
+     * @param currentTurnIndex   the turn index for result messages
+     * @param skipApproval       true to skip the approval gate (subagent auto-approve)
+     * @return list of tool result messages, or null if the turn was interrupted
+     *         (caller should return the interrupted TurnResult)
+     */
+    public ToolBatchResult executeToolBatch(List<ToolCall> toolCalls, Set<String> registeredToolNames,
+                                              Session session, TurnState turnState, int currentTurnIndex,
+                                              boolean skipApproval) {
+        boolean shouldParallel = ToolParallelSafety.shouldParallelize(toolCalls, registeredToolNames);
+
+        if (!shouldParallel) {
+            // Sequential path
+            List<Message> toolResults = new ArrayList<>();
+            for (ToolCall call : toolCalls) {
+                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                    log.info("Turn cancelled by interrupt for session {}", session.id());
+                    return ToolBatchResult.interruptedResult();
+                }
+                // Approval flow
+                if (!skipApproval && approvalQueue != null && approvalQueue.isPending(session.id())) {
+                    log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
+                    long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
+                    boolean decided = approvalQueue.awaitDecision(session.id(), approvalTimeoutMs);
+                    if (!decided) {
+                        log.warn("Approval wait timed out for session {} after {} ms", session.id(), approvalTimeoutMs);
+                    }
+                    if (Thread.currentThread().isInterrupted()) {
+                        log.info("Session {} interrupted while waiting for approval", session.id());
+                        ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
+                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                        approvalQueue.clear(session.id());
+                        return new ToolBatchResult(toolResults, true);
+                    }
+                    if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                        log.info("Session {} interrupted while waiting for approval", session.id());
+                        ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
+                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                        approvalQueue.clear(session.id());
+                        return new ToolBatchResult(toolResults, true);
+                    }
+                }
+                if (!skipApproval && approvalQueue != null && approvalQueue.isDenied(session.id())) {
+                    log.info("Tool {} denied for session {}, skipping", call.name(), session.id());
+                    ToolResult deniedResult = ToolResult.fail("Tool execution denied by user approval");
+                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                    approvalQueue.clear(session.id());
+                } else {
+                    // Reset skill/memory counters before execution
+                    resetNudgeCounters(call, session.id());
+                    ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState);
+                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(result), currentTurnIndex));
+                }
+            }
+            injectSteer(toolResults, session.id(), currentTurnIndex);
+            return new ToolBatchResult(toolResults, false);
+        } else {
+            // Parallel path
+            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                log.info("Turn cancelled by interrupt for session {}", session.id());
+                return ToolBatchResult.interruptedResult();
+            }
+            // Reset skill/memory counters before parallel execution
+            for (ToolCall call : toolCalls) {
+                resetNudgeCounters(call, session.id());
+            }
+            List<Message> toolResults = executeToolsInParallel(toolCalls, session, turnState, currentTurnIndex);
+            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                log.info("Turn cancelled by interrupt after parallel tool execution for session {}", session.id());
+                injectSteer(toolResults, session.id(), currentTurnIndex);
+                return new ToolBatchResult(toolResults, true);
+            }
+            injectSteer(toolResults, session.id(), currentTurnIndex);
+            return new ToolBatchResult(toolResults, false);
+        }
+    }
+
+    /**
+     * Result of executing a tool batch.
+     * <p>
+     * When {@code interrupted} is true, the caller should return an interrupted
+     * {@code TurnResult} (the {@code toolResults} may contain partial results
+     * that were already generated before the interrupt).
+     */
+    public static final class ToolBatchResult {
+        private final List<Message> toolResults;
+        private final boolean interrupted;
+
+        public ToolBatchResult(List<Message> toolResults, boolean interrupted) {
+            this.toolResults = toolResults;
+            this.interrupted = interrupted;
+        }
+
+        public List<Message> toolResults() { return toolResults; }
+        public boolean isInterrupted() { return interrupted; }
+
+        public static ToolBatchResult interruptedResult() {
+            return new ToolBatchResult(List.of(), true);
+        }
+    }
+
+    /**
+     * Execute tool calls in parallel using the shared virtual-thread executor.
+     * <p>
+     * Waits for all futures, cancels remaining on interrupt, and collects
+     * results in tool-call-ID order.
+     *
+     * @param toolCalls       the tool calls to execute
+     * @param session         the current session
+     * @param turnState       the current turn state
+     * @param currentTurnIndex the turn index for result messages
+     * @return tool result messages in the same order as {@code toolCalls}
+     */
+    public List<Message> executeToolsInParallel(List<ToolCall> toolCalls, Session session,
+                                                 TurnState turnState, int currentTurnIndex) {
+        List<CompletableFuture<ToolResult>> futures = new ArrayList<>();
+        for (ToolCall call : toolCalls) {
+            futures.add(CompletableFuture.supplyAsync(() -> {
+                try {
+                    return toolExecutionService.execute(call.name(), call.id(),
+                        call.arguments(), null, session, turnState);
+                } catch (Exception e) {
+                    log.warn("Tool {} failed in parallel execution: {}", call.name(), e.getMessage());
+                    return ToolResult.fail("Tool execution failed: " + call.name() + " - " + e.getMessage());
+                }
+            }, parallelToolExecutor));
+        }
+
+        CompletableFuture<Void> allOf = CompletableFuture.allOf(
+            futures.toArray(new CompletableFuture[0]));
+        try {
+            allOf.join();
+        } catch (CompletionException e) {
+            log.warn("Parallel tool execution had unexpected error", e);
+        }
+
+        if (Thread.currentThread().isInterrupted()) {
+            for (CompletableFuture<ToolResult> f : futures) {
+                f.cancel(true);
+            }
+        }
+
+        List<Message> toolResults = new ArrayList<>();
+        for (int i = 0; i < toolCalls.size(); i++) {
+            ToolCall call = toolCalls.get(i);
+            ToolResult result;
+            CompletableFuture<ToolResult> future = futures.get(i);
+            if (future.isDone() && !future.isCompletedExceptionally()) {
+                result = future.getNow(ToolResult.fail("Tool not completed: " + call.name()));
+            } else {
+                result = ToolResult.fail("Tool cancelled: " + call.name());
+            }
+            log.debug("Parallel tool {} result: success={}, content length={}, error={}",
+                call.name(), result.success(),
+                result.content() != null ? result.content().length() : 0, result.error());
+            toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(result), currentTurnIndex));
+        }
+        return toolResults;
+    }
+
+    /**
+     * Inject a pending steer note into the last tool result message, if any.
+     * <p>
+     * Mirrors Hermes steer-note injection: the steer text is appended to the
+     * last tool result so the model sees it on the next iteration.
+     */
+    private void injectSteer(List<Message> toolResults, UUID sessionId, int currentTurnIndex) {
+        if (steerBuffer == null || toolResults.isEmpty()) return;
+        String steerText = steerBuffer.consume(sessionId);
+        if (steerText == null) return;
+        String sanitizedSteer = steerText
+            .replace(DefaultPromptBuilder.STEER_MARKER_OPEN, "")
+            .replace(DefaultPromptBuilder.STEER_MARKER_CLOSE, "");
+        Message lastToolResult = toolResults.get(toolResults.size() - 1);
+        String enhancedContent = lastToolResult.content() + "\n\n"
+            + DefaultPromptBuilder.STEER_MARKER_OPEN + "\n" + sanitizedSteer + "\n"
+            + DefaultPromptBuilder.STEER_MARKER_CLOSE;
+        toolResults.set(toolResults.size() - 1,
+            Message.toolResult(lastToolResult.toolCallId(), enhancedContent, currentTurnIndex));
+        log.info("Injected steer note for session {}", sessionId);
+    }
+
+    /**
+     * Reset memory-nudge counters for skill_manage / memory tool calls.
+     */
+    private void resetNudgeCounters(ToolCall call, UUID sessionId) {
+        if ("skill_manage".equals(call.name()) && memoryNudgeManager != null) {
+            memoryNudgeManager.resetSkillIters(sessionId);
+        }
+        if ("memory".equals(call.name()) && memoryNudgeManager != null) {
+            memoryNudgeManager.resetMemoryTurns(sessionId);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    //  Context compression check (shared by both runtimes)
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Check whether proactive context compression should be triggered after a
+     * tool batch, and if so, compress the turn messages in place.
+     * <p>
+     * Mirrors Hermes {@code conversation_loop.py:3960-3998}: after each tool
+     * batch, before the next model call, check if compression should be
+     * triggered. This is IN ADDITION to the reactive compression on
+     * CONTEXT_OVERFLOW handled in {@link #callModelWithRetry}.
+     * <p>
+     * This is the "context compression check" shared by both runtimes.
+     *
+     * @param turnMessages the mutable turn message list (compressed in place if triggered)
+     * @return true if compression was triggered and reduced the message list
+     */
+    public boolean checkProactiveCompression(List<Message> turnMessages) {
+        if (!(contextCompressor instanceof DefaultContextCompressor dcc)
+            || !properties.getCompression().isEnabled()) {
+            return false;
+        }
+        int estimatedTokens = tokenEstimator.estimateTokens(turnMessages);
+        int contextWindowSize = 0;
+        if (contextEngine instanceof DefaultContextEngine dce) {
+            contextWindowSize = dce.getContextLength();
+        }
+        if (contextWindowSize <= 0) {
+            contextWindowSize = properties.getContext().getMaxTokens();
+        }
+        if (!dcc.shouldCompressProactive(estimatedTokens, contextWindowSize)) {
+            return false;
+        }
+        log.info("  ⟳ Proactive compression triggered after tool batch (estimated {} tokens, threshold at 50% of {})",
+            estimatedTokens, contextWindowSize);
+        int targetChars = properties.getContext().getTargetTokens() * 4;
+        List<Message> compressed = dcc.compress(turnMessages, targetChars);
+        if (compressed.size() < turnMessages.size()
+            || compressed.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum()
+               < turnMessages.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum()) {
+            turnMessages.clear();
+            turnMessages.addAll(compressed);
+            log.info("Proactive compression: {} -> {} messages",
+                compressed.size(), turnMessages.size());
+            return true;
+        }
+        return false;
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    //  Shared static helpers
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Sleep for the given delay in 200ms increments, checking for thread
+     * interrupts between each chunk. Mirrors Hermes backoff sleep.
+     * <p>
+     * This allows the agent to respond to interrupts (user cancellation,
+     * session teardown) promptly instead of blocking for the full backoff
+     * duration.
+     *
+     * @param delayMs total sleep time in milliseconds
+     * @throws InterruptedException if the thread was interrupted during sleep
+     */
+    public static void interruptibleSleep(long delayMs) throws InterruptedException {
+        long remaining = delayMs;
+        while (remaining > 0) {
+            long chunk = Math.min(200, remaining);
+            Thread.sleep(chunk);
+            remaining -= chunk;
+            if (Thread.interrupted()) {
+                throw new InterruptedException();
+            }
+        }
+    }
+
+    /**
+     * Detect refusal patterns in the error message that indicate a content
+     * policy violation. Returns a user-friendly message if a refusal pattern
+     * is found, null otherwise.
+     */
+    public static String detectRefusalPattern(String message) {
+        if (message == null) {
+            return null;
+        }
+        String lower = message.toLowerCase(Locale.ROOT);
+        if (lower.contains("i cannot") || lower.contains("i can't")
+            || lower.contains("i'm unable to") || lower.contains("i am unable to")
+            || lower.contains("i'm not able to") || lower.contains("i am not able to")
+            || lower.contains("i won't be able to") || lower.contains("i will not be able to")) {
+            return "The model declined to generate a response for this request due to a content policy restriction. " +
+                   "Please rephrase your request or try a different approach.";
+        }
+        return null;
+    }
+
+    /**
+     * Estimate output tokens from a {@link ChatResponse}.
+     */
+    public static int estimateResponseTokens(ChatResponse response) {
+        int chars = response.content() != null ? response.content().length() : 0;
+        if (response.toolCalls() != null) {
+            for (ToolCall tc : response.toolCalls()) {
+                chars += tc.arguments() != null ? tc.arguments().length() : 0;
+                chars += tc.name() != null ? tc.name().length() : 0;
+            }
+        }
+        return chars / 4 + 1;
+    }
+
+    /**
+     * Estimate output tokens from raw content + tool calls (streaming path).
+     */
+    public static int estimateResponseTokens(String content, List<ToolCall> toolCalls) {
+        int chars = content != null ? content.length() : 0;
+        if (toolCalls != null) {
+            for (ToolCall tc : toolCalls) {
+                chars += tc.arguments() != null ? tc.arguments().length() : 0;
+                chars += tc.name() != null ? tc.name().length() : 0;
+            }
+        }
+        return chars / 4 + 1;
+    }
+
+    /**
+     * Strip grammar-incompatible patterns from tool definitions.
+     */
+    public static List<ToolDefinition> stripGrammarPatternsFromTools(List<ToolDefinition> tools) {
+        log.debug("stripGrammarPatternsFromTools: would strip pattern/format from {} tools", tools.size());
+        return tools;
+    }
+
+    /**
+     * Check if any message in the context contains thinking/reasoning blocks.
+     */
+    public static boolean containsThinkingBlocks(List<Message> context) {
+        return context.stream().anyMatch(m -> m.content() != null
+            && ThinkBlockProcessor.containsAnyThinkTag(m.content()));
+    }
+
+    public static boolean containsImageContent(List<Message> context) {
+        return context.stream().anyMatch(m -> m.imageCount() != null && m.imageCount() > 0);
+    }
+
+    public static List<Message> stripImageContent(List<Message> context) {
+        return context.stream().map(m -> {
+            if (m.imageCount() == null || m.imageCount() == 0) return m;
+            return new Message(m.role(), m.content(), m.toolCall(), m.toolCalls(),
+                m.toolCallId(), m.turnIndex(), 0);
+        }).toList();
+    }
+
+    public static boolean containsMultimodalToolContent(List<Message> context) {
+        return context.stream().anyMatch(m -> m.content() != null
+            && m.content().startsWith("data:")
+            && (m.content().contains("image/") || m.content().contains(";base64,")));
+    }
+
+    public static List<Message> stripMultimodalToolContent(List<Message> context) {
+        return context.stream().map(m -> {
+            if (m.content() != null && m.content().startsWith("data:")) {
+                return new Message(m.role(), "[multimodal content stripped]", m.toolCall(),
+                    m.toolCalls(), m.toolCallId(), m.turnIndex(), m.imageCount());
+            }
+            return m;
+        }).toList();
+    }
+
+    /**
+     * Extract Retry-After header value from an HTTP exception, if available.
+     *
+     * @param e the exception from the model call
+     * @return retry-after value in milliseconds, or -1 if not found
+     */
+    public static long extractRetryAfterMs(Exception e) {
+        if (e == null || e.getMessage() == null) {
+            return -1;
+        }
+        String msg = e.getMessage();
+        String lower = msg.toLowerCase(Locale.ROOT);
+        int idx = lower.indexOf("retry-after:");
+        if (idx >= 0) {
+            String after = msg.substring(idx + 12).trim();
+            String[] parts = after.split("[\\s,;]");
+            for (String part : parts) {
+                try {
+                    double seconds = Double.parseDouble(part.trim());
+                    return (long) (seconds * 1000);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        idx = lower.indexOf("retry-after");
+        if (idx >= 0) {
+            String after = msg.substring(idx + 11).trim();
+            if (after.startsWith(":")) {
+                after = after.substring(1).trim();
+            }
+            String[] parts = after.split("[\\s,;]");
+            for (String part : parts) {
+                try {
+                    double seconds = Double.parseDouble(part.trim());
+                    return (long) (seconds * 1000);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Check if an exception's message contains a substring (case-insensitive).
+     */
+    public static boolean lowerMessageContains(Exception e, String substring) {
+        return e != null && e.getMessage() != null
+            && e.getMessage().toLowerCase(Locale.ROOT).contains(substring.toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * Attempt to activate the next fallback model in the chain.
+     *
+     * @param errorType   the error type that triggered the fallback
+     * @param error       the exception that caused the fallback
+     * @param fallbackCtx the per-turn fallback context
+     * @return true if fallback was activated, false if chain is exhausted
+     */
+    private boolean tryActivateFallback(ErrorClassifier.ErrorType errorType, Exception error,
+                                         FallbackContext fallbackCtx) {
+        if (fallbackCtx == null || fallbackCtx.getFallbackManager() == null
+            || !fallbackCtx.getFallbackManager().hasPendingFallback()) {
+            return false;
+        }
+        FallbackManager fm = fallbackCtx.getFallbackManager();
+
+        if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT || errorType == ErrorClassifier.ErrorType.BILLING) {
+            fm.setRateLimitCooldown();
+        }
+
+        FallbackConfig fallbackConfig = fm.activateFallback();
+        if (fallbackConfig == null) {
+            log.warn("Fallback chain exhausted — no more fallback models available");
+            return false;
+        }
+
+        try {
+            com.azhukov.agent.client.langchain4j.FallbackModelClient fallbackClient =
+                com.azhukov.agent.client.langchain4j.FallbackModelClient.from(fallbackConfig, properties);
+            fallbackCtx.setActiveModelClient(fallbackClient);
+            log.info("🔄 Switched to fallback model: {} via {}",
+                fm.getCurrentModel(), fm.getCurrentProvider());
+            if (contextCompressor instanceof DefaultContextCompressor dcc) {
+                dcc.resetCompressionFailureCooldown(
+                    fm.getCurrentProvider() + "/" + fm.getCurrentModel());
+            }
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to create fallback model client for {}/{}: {}",
+                fallbackConfig.getProvider(), fallbackConfig.getModel(), e.getMessage());
+            return tryActivateFallback(errorType, error, fallbackCtx);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    //  Content policy exception (shared by both runtimes)
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Exception thrown for content policy errors (terminal — no retry).
+     * The caller catches this to return a user-friendly message.
+     */
+    public static class ContentPolicyException extends RuntimeException {
+        public ContentPolicyException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+}

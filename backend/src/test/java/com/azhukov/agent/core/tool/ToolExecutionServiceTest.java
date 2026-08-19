@@ -1,0 +1,292 @@
+package com.azhukov.agent.core.tool;
+
+import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.state.TurnState;
+import com.azhukov.agent.metrics.AgentMetrics;
+import com.azhukov.agent.core.security.GuardrailAction;
+import com.azhukov.agent.core.security.GuardrailDecision;
+import com.azhukov.agent.core.security.SecretRedactor;
+import com.azhukov.agent.core.security.ToolCallGuardrail;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class ToolExecutionServiceTest {
+
+    private static final String USER_ID = "user-42";
+    private static final Session SESSION = Session.create(USER_ID, "noop", "default");
+    private static final Message LAST_MSG = Message.user("test prompt");
+
+    @Mock
+    private ToolRegistry toolRegistry;
+    @Mock
+    private ToolCallGuardrail guardrail;
+    @Mock
+    private SecretRedactor redactor;
+    @Mock
+    private ToolResultClassifier toolResultClassifier;
+    @Mock
+    private ToolOutputLimiter toolOutputLimiter;
+    @Mock
+    private AgentMetrics agentMetrics;
+
+    private AgentProperties properties;
+    private ToolExecutionService service;
+
+    @BeforeEach
+    void setUp() {
+        properties = new AgentProperties();
+        // Use a high maxChars so truncation doesn't interfere with tests
+        properties.getToolOutput().setMaxChars(100_000);
+        // Set a short timeout so timeout tests run quickly
+        properties.getToolOutput().setTimeoutSeconds(5);
+        service = new ToolExecutionService(
+            toolRegistry, properties, guardrail, redactor,
+            toolResultClassifier, toolOutputLimiter, agentMetrics);
+    }
+
+    @Test
+    @DisplayName("Should execute tool successfully and return redacted, truncated result")
+    void shouldExecuteToolSuccessfully() {
+        String toolName = "web_search";
+        String toolCallId = "call-1";
+        String arguments = "{\"query\":\"test\"}";
+        ToolResult rawResult = ToolResult.ok("search results here");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(toolName, toolCallId, arguments, LAST_MSG, SESSION)).thenReturn(rawResult);
+        when(redactor.redact("search results here")).thenReturn("search results here");
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolResultClassifier.classify(any(ToolResult.class)))
+            .thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        ToolResult result = service.execute(toolName, toolCallId, arguments, LAST_MSG, SESSION);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).isEqualTo("search results here");
+        verify(agentMetrics).incrementToolCalls(toolName);
+        verify(agentMetrics, never()).incrementToolErrors(toolName);
+        verify(toolResultClassifier).classify(any(ToolResult.class));
+        verify(toolOutputLimiter).truncate(any(ToolResult.class));
+    }
+
+    @Test
+    @DisplayName("Should return fail when guardrail blocks before call")
+    void shouldFailWhenGuardrailBlocksBeforeCall() {
+        String toolName = "bash";
+        String arguments = "rm -rf /";
+        GuardrailDecision block = GuardrailDecision.block(toolName, "dangerous", "Blocked: dangerous command");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(block);
+
+        ToolResult result = service.execute(toolName, "call-2", arguments, LAST_MSG, SESSION);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Blocked: dangerous command");
+        // Should NOT call the registry since guardrail blocked
+        verify(toolRegistry, never()).execute(anyString(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Should return fail when guardrail halts before call")
+    void shouldFailWhenGuardrailHaltsBeforeCall() {
+        String toolName = "bash";
+        String arguments = "halt command";
+        GuardrailDecision halt = GuardrailDecision.halt(toolName, "halt_code", "Halted by guardrail");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(halt);
+
+        ToolResult result = service.execute(toolName, "call-3", arguments, LAST_MSG, SESSION);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Halted by guardrail");
+        verify(toolRegistry, never()).execute(anyString(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Should handle tool execution failure and record metrics")
+    void shouldHandleToolExecutionFailure() {
+        String toolName = "failing_tool";
+        String arguments = "{}";
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION)))
+            .thenThrow(new RuntimeException("Tool crashed"));
+        // redactor.redact is called on the error path; return the error as-is
+        when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        ToolResult result = service.execute(toolName, "call-4", arguments, LAST_MSG, SESSION);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Tool execution failed");
+        assertThat(result.error()).contains("failing_tool");
+        verify(agentMetrics).incrementToolCalls(toolName);
+        verify(agentMetrics).incrementToolErrors(toolName);
+    }
+
+    @Test
+    @DisplayName("Should handle IllegalArgumentException without retry (ignored exception)")
+    void shouldHandleIllegalArgumentExceptionWithoutRetry() {
+        String toolName = "bad_args_tool";
+        String arguments = "{}";
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION)))
+            .thenThrow(new IllegalArgumentException("Invalid arguments"));
+        when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        ToolResult result = service.execute(toolName, "call-5", arguments, LAST_MSG, SESSION);
+
+        assertThat(result.success()).isFalse();
+        // IllegalArgumentException is an ignored exception for the retry — should fail immediately
+        assertThat(result.error()).contains("Tool execution failed");
+        // Should only be called once (no retry)
+        verify(toolRegistry).execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION));
+    }
+
+    @Test
+    @DisplayName("Should modify result when guardrail blocks after call")
+    void shouldModifyResultWhenGuardrailBlocksAfterCall() {
+        String toolName = "file_write";
+        String arguments = "{\"path\":\"/etc/passwd\"}";
+        ToolResult rawResult = ToolResult.ok("written");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(toolName, "call-6", arguments, LAST_MSG, SESSION)).thenReturn(rawResult);
+        // afterCall blocks
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.block(toolName, "post_block", "Post-call block"));
+        // On block, the result error is redacted
+        when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolResultClassifier.classify(any(ToolResult.class)))
+            .thenReturn(ToolResultClassifier.ResultType.FAILURE);
+        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        ToolResult result = service.execute(toolName, "call-6", arguments, LAST_MSG, SESSION);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Guardrail");
+        assertThat(result.error()).contains("Post-call block");
+    }
+
+    @Test
+    @DisplayName("Should redact secrets from successful result content")
+    void shouldRedactSecretsFromSuccessfulResult() {
+        String toolName = "web_search";
+        String arguments = "{}";
+        ToolResult rawResult = ToolResult.ok("api_key=sk-abc123secret");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(toolName, "call-7", arguments, LAST_MSG, SESSION)).thenReturn(rawResult);
+        when(redactor.redact("api_key=sk-abc123secret")).thenReturn("api_key=[REDACTED]");
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolResultClassifier.classify(any(ToolResult.class)))
+            .thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        ToolResult result = service.execute(toolName, "call-7", arguments, LAST_MSG, SESSION);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).isEqualTo("api_key=[REDACTED]");
+        verify(redactor).redact("api_key=sk-abc123secret");
+    }
+
+    @Test
+    @DisplayName("Should record execution in TurnState when provided")
+    void shouldRecordExecutionInTurnState() {
+        String toolName = "web_search";
+        String arguments = "{\"query\":\"test\"}";
+        TurnState turnState = new TurnState("session-1", 0);
+        ToolResult rawResult = ToolResult.ok("result");
+
+        when(guardrail.beforeCall(eq(toolName), eq(arguments), eq(turnState)))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(toolName, "call-8", arguments, LAST_MSG, SESSION)).thenReturn(rawResult);
+        when(redactor.redact("result")).thenReturn("result");
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean(), eq(turnState)))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolResultClassifier.classify(any(ToolResult.class)))
+            .thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        ToolResult result = service.execute(toolName, "call-8", arguments, LAST_MSG, SESSION, turnState);
+
+        assertThat(result.success()).isTrue();
+        assertThat(turnState.totalExecutions()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Should handle unknown tool failure from registry")
+    void shouldHandleUnknownToolFromRegistry() {
+        String toolName = "nonexistent_tool";
+        String arguments = "{}";
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION)))
+            .thenReturn(ToolResult.fail("Unknown tool: " + toolName));
+        when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        ToolResult result = service.execute(toolName, "call-9", arguments, LAST_MSG, SESSION);
+
+        assertThat(result.success()).isFalse();
+        verify(agentMetrics).incrementToolErrors(toolName);
+    }
+
+    @Test
+    @DisplayName("Overloaded execute without TurnState should delegate to full method")
+    void overloadedExecuteShouldDelegateToFullMethod() {
+        String toolName = "web_search";
+        String arguments = "{}";
+        ToolResult rawResult = ToolResult.ok("ok");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(toolName, "call-10", arguments, LAST_MSG, SESSION)).thenReturn(rawResult);
+        when(redactor.redact("ok")).thenReturn("ok");
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolResultClassifier.classify(any(ToolResult.class)))
+            .thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        ToolResult result = service.execute(toolName, "call-10", arguments, LAST_MSG, SESSION);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).isEqualTo("ok");
+    }
+}

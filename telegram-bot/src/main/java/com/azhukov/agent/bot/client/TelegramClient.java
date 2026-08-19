@@ -865,39 +865,27 @@ public class TelegramClient {
             log.warn("Bot token is empty; cannot call sendMessageDraft");
             return false;
         }
-        // Try MarkdownV2 first, then fall back to plain text
-        for (boolean useMarkdown : new boolean[]{true, false}) {
-            Map<String, Object> params = new LinkedHashMap<>();
-            params.put("chat_id", chatId);
-            params.put("draft_id", draftId);
-            params.put("text", text);
-            if (useMarkdown) {
-                params.put("parse_mode", "MarkdownV2");
-            }
-            if (messageThreadId != null) {
-                params.put("message_thread_id", messageThreadId);
-            }
-            try {
-                Optional<TelegramResponse> response = callApi("sendMessageDraft", params);
-                if (response.isPresent() && response.get().isSuccess()) {
-                    log.debug("sendMessageDraft succeeded for chat {} draftId={} (markdown={})", chatId, draftId, useMarkdown);
-                    return true;
-                }
-                // Should not reach here — callApi throws on non-ok responses
-                return false;
-            } catch (TelegramApiException e) {
-                if (useMarkdown && e.isParseError()) {
-                    log.debug("sendMessageDraft MarkdownV2 parse error for chat {}, retrying as plain text: {}", chatId, e.getMessage());
-                    continue; // Retry without parse_mode
-                }
-                // Non-parse error (including errors on the plain-text attempt) — log and return false
-                log.debug("sendMessageDraft failed for chat {} draftId={}: {}", chatId, draftId, e.getMessage());
-                return false;
-            }
+        // Streaming text is raw (no parse_mode) — avoids MarkdownV2 escaping issues
+        // and prevents double API calls (MarkdownV2 → parse error → plain text retry)
+        // that cause 429 Too Many Requests. Hermes sends draft frames without parse_mode.
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("chat_id", chatId);
+        params.put("draft_id", draftId);
+        params.put("text", text);
+        if (messageThreadId != null) {
+            params.put("message_thread_id", messageThreadId);
         }
-        // Both attempts failed
-        log.debug("sendMessageDraft exhausted both markdown and plain-text attempts for chat {} draftId={}", chatId, draftId);
-        return false;
+        try {
+            Optional<TelegramResponse> response = callApi("sendMessageDraft", params);
+            if (response.isPresent() && response.get().isSuccess()) {
+                log.debug("sendMessageDraft succeeded for chat {} draftId={} (raw text)", chatId, draftId);
+                return true;
+            }
+            return false;
+        } catch (TelegramApiException e) {
+            log.debug("sendMessageDraft failed for chat {} draftId={}: {}", chatId, draftId, e.getMessage());
+            return false;
+        }
     }
 
     // ─── Internal ─────────────────────────────────────────────────

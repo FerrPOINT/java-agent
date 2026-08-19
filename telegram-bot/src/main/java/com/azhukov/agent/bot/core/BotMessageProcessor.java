@@ -643,7 +643,25 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         String userId = String.valueOf(event.userId());
         String chatId = String.valueOf(event.chatId());
         String username = event.username();
-        return sessionStore.resolveOrCreate(userId, chatId, username);
+        BotSessionEntity session = sessionStore.resolveOrCreate(userId, chatId, username);
+        // Store firstName and languageCode as session metadata so buildChatBody
+        // can forward them to the backend for the system prompt volatile tier.
+        if (event.firstName() != null && !event.firstName().isBlank()) {
+            session.setMetadata("firstName", event.firstName());
+        }
+        if (event.languageCode() != null && !event.languageCode().isBlank()) {
+            session.setMetadata("languageCode", event.languageCode());
+        }
+        // Store chatType for backend context (dm/group/channel/supergroup)
+        session.setMetadata("chatType", determineChatType(event));
+        return session;
+    }
+
+    /** Determine chat type string from UpdateEvent for session metadata. */
+    private String determineChatType(UpdateEvent event) {
+        if (event.type() == UpdateEvent.Type.CHANNEL_POST) return "channel";
+        if (event.chatId() < 0) return "group"; // Telegram: negative chatId = group/supergroup
+        return "dm";
     }
 
     private String extractMessageText(UpdateEvent event) {
@@ -729,8 +747,18 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
         String parseMode = properties.getParseMode();
         String formatted = textForDisplay;
+        // Audit M21: strip think blocks from non-streaming (fallback) path.
+        // StreamEditor strips them during streaming, but sendFormatted is used
+        // when streaming didn't finalize — without this, raw think tags reach the user.
+        formatted = StreamEditor.stripThinkTagsRegex(formatted);
         if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-            formatted = MarkdownConverter.convert(textForDisplay);
+            formatted = MarkdownConverter.convert(formatted);
+        } else if ("HTML".equalsIgnoreCase(parseMode)) {
+            // Audit M20: escape HTML-special characters in LLM output to prevent
+            // injection of <a>, <b>, <code> and other Telegram-allowed tags.
+            formatted = formatted.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
         }
 
         // B1.6: Thread reply mode — off/all/first

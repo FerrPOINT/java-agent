@@ -89,7 +89,7 @@ public class LangChain4jModelClient implements ModelClient {
             .apiKey(apiKey)
             .modelName(properties.getModel().getModelName())
             .timeout(java.time.Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
-            .maxRetries(properties.getModel().getMaxRetries())
+            .maxRetries(0) // H21: Let DefaultAgentRuntime handle retries — avoids double-retry.
             .temperature(properties.getModel().getTemperature())
             .build();
         this.streamingChatModel = dev.langchain4j.model.openai.OpenAiStreamingChatModel.builder()
@@ -215,6 +215,10 @@ public class LangChain4jModelClient implements ModelClient {
         java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
         final java.util.concurrent.atomic.AtomicReference<Throwable> errorRef = new java.util.concurrent.atomic.AtomicReference<>();
         final java.util.concurrent.atomic.AtomicBoolean interrupted = new java.util.concurrent.atomic.AtomicBoolean(false);
+        // H19: Guard flags declared at outer scope so both the handler callbacks and
+        // the post-await fallback path can use them to prevent double onError()/onComplete().
+        final java.util.concurrent.atomic.AtomicBoolean errored = new java.util.concurrent.atomic.AtomicBoolean(false);
+        final java.util.concurrent.atomic.AtomicBoolean completed = new java.util.concurrent.atomic.AtomicBoolean(false);
 
         streamingChatModel.doChat(request, new StreamingChatResponseHandler() {
             private final StringBuilder content = new StringBuilder();
@@ -234,6 +238,13 @@ public class LangChain4jModelClient implements ModelClient {
             @Override
             public void onCompleteResponse(dev.langchain4j.model.chat.response.ChatResponse completeResponse) {
                 try {
+                    if (!completed.compareAndSet(false, true)) {
+                        // H19: already completed (or error already reported) — skip duplicate.
+                        return;
+                    }
+                    // H20: Persist token usage from the complete streaming response,
+                    // mirroring what complete() does for the non-streaming path.
+                    persistUsage(completeResponse);
                     if (completeResponse.aiMessage().hasToolExecutionRequests()) {
                         List<ToolCall> calls = completeResponse.aiMessage().toolExecutionRequests().stream()
                             .map(r -> new ToolCall(r.id(), r.name(), r.arguments()))
@@ -242,7 +253,17 @@ public class LangChain4jModelClient implements ModelClient {
                     } else if (content.isEmpty() && completeResponse.aiMessage().text() != null) {
                         handler.onToken(completeResponse.aiMessage().text());
                     }
-                    handler.onComplete();
+                    // Propagate finish_reason to the handler for routing decisions
+                    // (LENGTH → continuation, CONTENT_FILTER → error, STOP → normal)
+                    String finishReason = null;
+                    try {
+                        if (completeResponse.finishReason() != null) {
+                            finishReason = completeResponse.finishReason().name();
+                        }
+                    } catch (Exception e) {
+                        log.debug("Could not extract finishReason: {}", e.getMessage());
+                    }
+                    handler.onComplete(finishReason);
                 } finally {
                     latch.countDown();
                 }
@@ -251,8 +272,15 @@ public class LangChain4jModelClient implements ModelClient {
             @Override
             public void onError(Throwable error) {
                 try {
+                    // H19: Guard against double-invocation — if onCompleteResponse already
+                    // completed successfully, or onError already fired, skip the second call.
+                    if (!errored.compareAndSet(false, true)) {
+                        return;
+                    }
                     if (interrupted.get() || error instanceof TurnInterruptedException) {
                         log.info("Model stream interrupted by user cancellation");
+                        // Mark as completed so the post-await path doesn't double-report.
+                        completed.set(true);
                         handler.onComplete();
                     } else {
                         ErrorClassifier.ErrorType errorType = errorClassifier != null
@@ -270,18 +298,25 @@ public class LangChain4jModelClient implements ModelClient {
 
         // Block until streaming completes or errors
         try {
-            boolean completed = latch.await(properties.getModel().getTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS);
-            if (!completed && errorRef.get() == null) {
+            boolean done = latch.await(properties.getModel().getTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS);
+            if (!done && errorRef.get() == null) {
                 // Latch timed out without completing or erroring — set timeout error
                 String timeoutMsg = "Model stream() timed out after " + properties.getModel().getTimeoutSeconds() + "s";
                 log.warn(timeoutMsg);
                 errorRef.set(new java.util.concurrent.TimeoutException(timeoutMsg));
-                handler.onError(errorRef.get());
+                // H19: Only call handler.onError if nothing has been reported yet.
+                if (errored.compareAndSet(false, true)) {
+                    handler.onError(errorRef.get());
+                }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("Model stream() interrupted");
-            handler.onError(e);
+            errorRef.set(e);
+            // H19: Only call handler.onError if nothing has been reported yet.
+            if (errored.compareAndSet(false, true)) {
+                handler.onError(e);
+            }
         }
         if (errorRef.get() != null) {
             throw new RuntimeException("Model call failed: " + errorRef.get().getMessage(), errorRef.get());

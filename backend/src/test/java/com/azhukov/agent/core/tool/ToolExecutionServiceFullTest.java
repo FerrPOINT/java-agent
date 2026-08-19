@@ -4,8 +4,8 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
-import com.azhukov.agent.security.DefaultToolCallGuardrail;
-import com.azhukov.agent.security.SecretRedactor;
+import com.azhukov.agent.core.security.DefaultToolCallGuardrail;
+import com.azhukov.agent.core.security.SecretRedactor;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -20,7 +20,7 @@ class ToolExecutionServiceFullTest {
 
     private AgentProperties properties = new AgentProperties();
 
-    private com.azhukov.agent.security.ToolCallGuardrail guardrail() {
+    private com.azhukov.agent.core.security.ToolCallGuardrail guardrail() {
         return new DefaultToolCallGuardrail(properties);
     }
 

@@ -178,6 +178,7 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     }
 
     @Override
+    @Transactional
     public void store(String userId, String category, String fact) {
         store(userId, "memory", category, fact);
     }

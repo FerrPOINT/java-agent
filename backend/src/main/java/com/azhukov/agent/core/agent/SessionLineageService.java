@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.agent;
 
+import com.azhukov.agent.core.context.SessionLineagePort;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
@@ -33,7 +34,7 @@ import java.util.UUID;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class SessionLineageService {
+public class SessionLineageService implements SessionLineagePort {
 
     /** Maximum chain depth to guard against accidental cycles. Mirrors Hermes cap of 100. */
     static final int MAX_CHAIN_DEPTH = 100;
@@ -108,6 +109,7 @@ public class SessionLineageService {
      * @param sessionId the current (tip) session ID
      * @return combined message list from all sessions in the lineage, ordered root-to-tip
      */
+    @Override
     public List<Message> loadMessagesWithAncestors(UUID sessionId) {
         if (sessionId == null) {
             return Collections.emptyList();

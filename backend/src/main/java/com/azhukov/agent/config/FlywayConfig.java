@@ -19,11 +19,22 @@ public class FlywayConfig {
     public Flyway flyway(DataSource dataSource) {
         var config = Flyway.configure()
             .dataSource(dataSource)
-            .locations("classpath:db/migration")
-            .baselineOnMigrate(true);
+            .baselineOnMigrate(true)
+            // V21.1 (ensure bot_sessions) was added after V22..V29 were already applied
+            // on production. Allow out-of-order application so fresh installs and the
+            // existing production history both converge to the same schema.
+            .outOfOrder(true);
 
         if (isH2(dataSource)) {
-            config.initSql("CREATE DOMAIN IF NOT EXISTS timestamptz AS TIMESTAMP WITH TIME ZONE; CREATE DOMAIN IF NOT EXISTS jsonb AS JSON");
+            // H2 (tests / noop profile): no tsvector/GIN, no partial indexes.
+            // Vendor variants live in db/h2; FTS queries fall back to LIKE in
+            // SessionSearchService.
+            config.locations("classpath:db/migration", "classpath:db/h2")
+                .initSql("CREATE DOMAIN IF NOT EXISTS timestamptz AS TIMESTAMP WITH TIME ZONE; CREATE DOMAIN IF NOT EXISTS jsonb AS JSON");
+        } else {
+            // PostgreSQL: vendor-specific scripts (tsvector FTS, partial indexes)
+            // live in db/postgresql on top of the common set.
+            config.locations("classpath:db/migration", "classpath:db/postgresql");
         }
 
         return config.load();

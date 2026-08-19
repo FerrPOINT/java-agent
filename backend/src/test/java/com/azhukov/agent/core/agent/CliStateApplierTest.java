@@ -29,14 +29,14 @@ class CliStateApplierTest {
 
     @Test
     void applyCliState_nullSession_returnsOriginalRequest() {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         ChatRequest result = applier.applyCliState(request, null);
         assertThat(result).isSameAs(request);
     }
 
     @Test
     void applyCliState_noCliState_returnsOriginalMessage() {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         SessionEntity entity = newSessionEntity();
         ChatRequest result = applier.applyCliState(request, entity);
         assertThat(result.message()).isEqualTo("Hello");
@@ -44,7 +44,7 @@ class CliStateApplierTest {
 
     @Test
     void applyCliState_withGoalPrependsGoalBlock() {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         SessionEntity entity = newSessionEntity();
         entity.setCliStateValue("goal", "fix all bugs");
         ChatRequest result = applier.applyCliState(request, entity);
@@ -55,7 +55,7 @@ class CliStateApplierTest {
 
     @Test
     void applyCliState_goalPausedSkipsGoalBlock() {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         SessionEntity entity = newSessionEntity();
         entity.setCliStateValue("goal", "fix all bugs");
         entity.setCliStateValue("goalPaused", "true");
@@ -66,7 +66,7 @@ class CliStateApplierTest {
 
     @Test
     void applyCliState_withSubgoalsPrependsSubgoalsBlock() {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         SessionEntity entity = newSessionEntity();
         entity.setCliStateValue("subgoals", "bug1\nbug2\nbug3");
         ChatRequest result = applier.applyCliState(request, entity);
@@ -76,7 +76,7 @@ class CliStateApplierTest {
 
     @Test
     void applyCliState_withSubgoalPrependsGoalSubgoalBlock() {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         SessionEntity entity = newSessionEntity();
         entity.setSubgoal("Complete the migration");
         ChatRequest result = applier.applyCliState(request, entity);
@@ -86,7 +86,7 @@ class CliStateApplierTest {
 
     @Test
     void applyCliState_withQueuedPromptPrependsQueuedContext() {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         SessionEntity entity = newSessionEntity();
         entity.setCliStateValue("queuedPrompt", "Additional context info");
         ChatRequest result = applier.applyCliState(request, entity);
@@ -96,7 +96,7 @@ class CliStateApplierTest {
 
     @Test
     void applyCliState_allBlocksPresentInCorrectOrder() {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         SessionEntity entity = newSessionEntity();
         entity.setCliStateValue("goal", "my goal");
         entity.setCliStateValue("subgoals", "sub1\nsub2");
@@ -122,7 +122,7 @@ class CliStateApplierTest {
         ChatRequest request = new ChatRequest(
             SESSION_ID, "Hello", null, 10_000L,
             "high", null, null, null,
-            null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null, null, null, null);
         SessionEntity entity = newSessionEntity();
         entity.setCliStateValue("reasoningEffort", "low");
         ChatRequest result = applier.applyCliState(request, entity);
@@ -131,7 +131,7 @@ class CliStateApplierTest {
 
     @Test
     void applyCliState_sessionReasoningEffortUsedWhenRequestIsNull() {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         SessionEntity entity = newSessionEntity();
         entity.setCliStateValue("reasoningEffort", "medium");
         ChatRequest result = applier.applyCliState(request, entity);
@@ -143,7 +143,7 @@ class CliStateApplierTest {
         ChatRequest request = new ChatRequest(
             SESSION_ID, "Hello", null, 10_000L,
             null, null, null, null,
-            null, null, "request-queued", null, null, null);
+            null, null, "request-queued", null, null, null, null, null, null, null, null);
         SessionEntity entity = newSessionEntity();
         ChatRequest result = applier.applyCliState(request, entity);
         assertThat(result.queuedPrompt()).isNull(); // consumed

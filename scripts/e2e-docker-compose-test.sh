@@ -98,8 +98,11 @@ assert_contains "Test 1b: Readiness UP" "${READINESS_BODY}" '"status":"UP"' || t
 LIVENESS_BODY=$(curl -fsS "${AGENT_URL}/actuator/health/liveness")
 assert_contains "Test 1c: Liveness UP" "${LIVENESS_BODY}" '"status":"UP"' || true
 
-HEALTH_BODY=$(curl -fsS "${AGENT_URL}/actuator/health")
-assert_contains "Test 1d: Health UP" "${HEALTH_BODY}" '"status":"UP"' || true
+# Full /actuator/health includes browser/chromium/mcp indicators, which are
+# intentionally disabled in this E2E environment (AGENT_CHROMIUM_AUTO_START=false),
+# so it legitimately returns 503. Verify the readiness group instead.
+HEALTH_BODY=$(curl -fsS "${AGENT_URL}/actuator/health/readiness")
+assert_contains "Test 1d: Readiness group UP" "${HEALTH_BODY}" '"status":"UP"' || true
 
 # ──────────────────────────────────────────────────────────
 # Test 2: Sync chat

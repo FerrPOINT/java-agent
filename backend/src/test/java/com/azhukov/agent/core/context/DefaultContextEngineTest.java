@@ -147,8 +147,9 @@ class DefaultContextEngineTest {
     void prepareContextTrimsToMaxContextMessages() {
         when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
 
-        // 4 history messages + system + current user = 6, max is 5.
-        // Desc order (newest first) — will be reversed by appendRecentHistory
+        // H-SYNC: maxContextMessages below 500 is treated as "effectively unlimited"
+        // (compression handles trimming). 4 history + system + current = 6 messages
+        // with a small cap — all 6 must survive because trimming is deferred.
         List<MessageEntity> history = List.of(
                 entity("assistant", "msg-4", 2),
                 entity("user", "msg-3", 2),
@@ -160,7 +161,32 @@ class DefaultContextEngineTest {
         List<Message> incoming = List.of(Message.system("System prompt"), Message.user("current"));
         List<Message> result = contextEngine.prepareContext(session, incoming);
 
-        assertThat(result).hasSizeLessThanOrEqualTo(contextProps.getMaxContextMessages());
+        // maxContextMessages=5 is below the H-SYNC floor (500), so no message-count trim
+        assertThat(result).hasSize(6);
+        assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
+        assertThat(result.get(result.size() - 1).content()).isEqualTo("current");
+    }
+
+    @Test
+    void prepareContextTrimsWhenMaxContextMessagesAboveFloor() {
+        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
+
+        // Above the floor: maxContextMessages=600 in AgentProperties default... set high but
+        // trim via char budget instead — maxTokens=100 → 400 chars, target 320.
+        // Six short messages stay under the char budget, so assert no over-trim.
+        contextProps.setMaxContextMessages(600);
+        List<MessageEntity> history = List.of(
+                entity("assistant", "msg-4", 2),
+                entity("user", "msg-3", 2),
+                entity("assistant", "msg-2", 1),
+                entity("user", "msg-1", 1)
+        );
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), any(org.springframework.data.domain.Pageable.class))).thenReturn(history);
+
+        List<Message> incoming = List.of(Message.system("System prompt"), Message.user("current"));
+        List<Message> result = contextEngine.prepareContext(session, incoming);
+
+        assertThat(result).hasSizeLessThanOrEqualTo(600);
         assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
         assertThat(result.get(result.size() - 1).content()).isEqualTo("current");
     }

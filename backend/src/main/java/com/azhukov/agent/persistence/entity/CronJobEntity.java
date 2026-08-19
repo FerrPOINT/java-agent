@@ -19,6 +19,8 @@ public class CronJobEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
+    /** Multi-user: owner of this cron job. */
+    private String userId;
 
     private String name;
 
@@ -101,4 +103,9 @@ public class CronJobEntity {
     // h74: Consecutive failure count for backoff during backend unavailability.
     @Column(name = "consecutive_failures")
     private int consecutiveFailures = 0;
+
+    @jakarta.persistence.PrePersist
+    void onCreateTimestamps() {
+        if (createdAt == null) createdAt = java.time.Instant.now();
+    }
 }

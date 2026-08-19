@@ -99,6 +99,12 @@ public class SkillPreprocessor {
  return content;
  }
 
+ // H-SYNC: Strip leading UTF-8 BOM (Windows editors) before the fence.
+ // Mirrors Hermes skill_manager_tool.py: content = content.lstrip("\ufeff")
+ if (content.charAt(0) == '\uFEFF') {
+ content = content.substring(1);
+ }
+
  // S2: Substitute template variables (with backward compat)
  content = substituteTemplateVars(content, sessionId, skillDir);
 

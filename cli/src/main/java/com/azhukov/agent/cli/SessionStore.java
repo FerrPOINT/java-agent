@@ -2,6 +2,7 @@ package com.azhukov.agent.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -19,8 +20,12 @@ import java.util.Map;
  * Persists session metadata (ID, title, timestamps, message count) to
  * {@code ~/.java-agent-cli/sessions.json}. Loaded on startup for /sessions browsing.
  * <p>
- * c16: Registered as a Spring {@code @Component}. The default no-arg constructor
- * uses the shared {@link SharedObjectMapper} and the standard store file.
+ * c16: Registered as a Spring {@code @Component}. The {@link ObjectMapper} is
+ * injected by Spring (via the bean defined in {@link CliConfig}). A second
+ * constructor accepting an explicit {@code ObjectMapper} and store path is
+ * retained for unit tests; the no-arg convenience constructor that used the
+ * {@link SharedObjectMapper} static singleton has been removed — Spring now
+ * wires the dependencies.
  */
 @Slf4j
 @Component
@@ -29,16 +34,41 @@ public class SessionStore {
     private static final Path STORE_DIR = Path.of(System.getProperty("user.home"), ".java-agent-cli");
     private static final Path STORE_FILE = STORE_DIR.resolve("sessions.json");
 
+    /**
+     * Returns the default sessions store file path
+     * ({@code ~/.java-agent-cli/sessions.json}). Used by test code and the
+     * {@link SlashCommandRegistry} no-arg constructor to construct a
+     * {@link SessionStore} without Spring wiring.
+     */
+    public static Path defaultStorePath() {
+        return STORE_FILE;
+    }
+
     private final ObjectMapper objectMapper;
     private final Path storePath;
 
     private final List<SessionEntry> sessions = new ArrayList<>();
     private final Map<String, SessionEntry> byId = new LinkedHashMap<>();
 
-    public SessionStore() {
-        this(SharedObjectMapper.get(), STORE_FILE);
+    /**
+     * Spring-injection constructor.
+     * <p>
+     * The {@link ObjectMapper} bean is provided by {@link CliConfig} (which
+     * itself delegates to {@link SharedObjectMapper#get()}). The store path
+     * defaults to {@code ~/.java-agent-cli/sessions.json}.
+     *
+     * @param objectMapper the injected Jackson {@link ObjectMapper}
+     */
+    @Autowired
+    public SessionStore(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+        this.storePath = STORE_FILE;
+        load();
     }
 
+    /**
+     * Test constructor: explicit {@link ObjectMapper} and store path.
+     */
     public SessionStore(ObjectMapper objectMapper, Path storePath) {
         this.objectMapper = objectMapper;
         this.storePath = storePath;

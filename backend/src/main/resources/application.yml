@@ -179,7 +179,7 @@ agent:
   
   # ─── Tool output ───
   tool-output:
-    max-chars: ${AGENT_TOOL_OUTPUT_MAX_CHARS:16000}
+    max-chars: ${AGENT_TOOL_OUTPUT_MAX_CHARS:50000}
     truncate-warning-chars: ${AGENT_TOOL_OUTPUT_TRUNCATE_WARNING_CHARS:12000}
     timeout-seconds: ${AGENT_TOOL_OUTPUT_TIMEOUT_SECONDS:300}
     include-timestamps: ${AGENT_TOOL_OUTPUT_INCLUDE_TIMESTAMPS:true}
@@ -197,7 +197,7 @@ agent:
     max-tokens: ${AGENT_CONTEXT_MAX_TOKENS:16000}
     target-tokens: ${AGENT_CONTEXT_TARGET_TOKENS:12000}
     summary-chunk-tokens: ${AGENT_CONTEXT_SUMMARY_CHUNK_TOKENS:2000}
-    max-context-messages: ${AGENT_CONTEXT_MAX_CONTEXT_MESSAGES:50}
+    max-context-messages: ${AGENT_CONTEXT_MAX_CONTEXT_MESSAGES:10000}
   
   # ─── Compression ───
   compression:
@@ -263,7 +263,7 @@ agent:
   
   # ─── Core ───
   core:
-    max-turns: ${AGENT_CORE_MAX_TURNS:100}
+    max-turns: ${AGENT_CORE_MAX_TURNS:25}
     tool-use-enforcement: ${AGENT_CORE_TOOL_USE_ENFORCEMENT:auto}
     task-completion-guidance: ${AGENT_CORE_TASK_COMPLETION_GUIDANCE:true}
     parallel-tool-call-guidance: ${AGENT_CORE_PARALLEL_TOOL_CALL_GUIDANCE:true}
@@ -279,7 +279,7 @@ agent:
   budget:
     enabled: ${AGENT_BUDGET_ENABLED:true}
     max-model-calls-per-turn: ${AGENT_BUDGET_MAX_MODEL_CALLS_PER_TURN:100}
-    max-tool-executions-per-turn: ${AGENT_BUDGET_MAX_TOOL_EXECUTIONS_PER_TURN:200}
+    max-tool-executions-per-turn: ${AGENT_BUDGET_MAX_TOOL_EXECUTIONS_PER_TURN:40}
     max-tokens-per-turn: ${AGENT_BUDGET_MAX_TOKENS_PER_TURN:200000}
     max-tool-duration-ms-per-turn: ${AGENT_BUDGET_MAX_TOOL_DURATION_MS_PER_TURN:600000}
   

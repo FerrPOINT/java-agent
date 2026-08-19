@@ -6,6 +6,7 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -18,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
 
 class MessagePersistenceServiceTest {
@@ -32,7 +34,9 @@ class MessagePersistenceServiceTest {
     @BeforeEach
     void setUp() {
         repository = mock(MessageRepository.class);
-        service = new MessagePersistenceService(repository);
+        SessionRepository sessionRepo = mock(SessionRepository.class);
+        when(repository.countBySessionId(any(UUID.class))).thenReturn(0L);
+        service = new MessagePersistenceService(repository, sessionRepo);
     }
 
     @Test

@@ -10,6 +10,7 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.memory.ReviewToolProvider;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -373,6 +374,7 @@ public class BackgroundReviewService {
  /**
  * Shutdown the executor.
  */
+ @PreDestroy
  public void shutdown() {
  executor.shutdown();
  }

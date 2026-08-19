@@ -173,7 +173,7 @@ class CommentaryStreamingTest {
             any(), any(Session.class), any()))
             .thenReturn(ToolResult.ok("25°C, sunny"));
 
-        ChatRequest request = new ChatRequest(SESSION_ID, "Weather in Tokyo?", null, 30_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Weather in Tokyo?", null, 30_000L);
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
@@ -222,7 +222,7 @@ class CommentaryStreamingTest {
             any(), any(Session.class), any()))
             .thenReturn(ToolResult.ok("Rainy"));
 
-        ChatRequest request = new ChatRequest(SESSION_ID, "Weather in NYC?", null, 30_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Weather in NYC?", null, 30_000L);
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);

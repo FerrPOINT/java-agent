@@ -112,7 +112,7 @@ class SessionPersistenceE2ETest {
     }
 
     private UUID chatAndReturnSessionId(String message) throws Exception {
-        ChatRequest request = new ChatRequest(null, message, null, null);
+        ChatRequest request = ChatRequest.simple(null, message, null, null);
         String response = mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
@@ -124,7 +124,7 @@ class SessionPersistenceE2ETest {
     }
 
     private void chat(UUID sessionId, String message) throws Exception {
-        ChatRequest request = new ChatRequest(sessionId, message, null, null);
+        ChatRequest request = ChatRequest.simple(sessionId, message, null, null);
         mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))

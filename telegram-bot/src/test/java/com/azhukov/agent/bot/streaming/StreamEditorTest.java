@@ -57,13 +57,13 @@ class StreamEditorTest {
         String cursor = " \u2589"; // \u2589 = ▉
         // Hermes: when no message exists yet (currentMessageId is null), editStream
         // sends a new message via sendMessage (raw text, null parse_mode) with cursor appended.
-        when(client.sendMessage(123L, "Hello" + cursor, null, null, null))
+        when(client.sendMessage(eq(123L), eq("Hello" + cursor), isNull(), isNull(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(42L));
 
         boolean result = editor.editStream(123L, 42L, "Hello");
 
         assertThat(result).isTrue();
-        verify(client).sendMessage(123L, "Hello" + cursor, null, null, null);
+        verify(client).sendMessage(eq(123L), eq("Hello" + cursor), isNull(), isNull(), isNull(), anyBoolean());
     }
 
     @Test
@@ -77,13 +77,13 @@ class StreamEditorTest {
 
         String cursor = " \u23F3";
         // Hermes: delayed first message via sendMessage with raw text and null parse_mode
-        when(client.sendMessage(123L, "Hello" + cursor, null, null, null))
+        when(client.sendMessage(eq(123L), eq("Hello" + cursor), isNull(), isNull(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(42L));
 
         boolean result = customEditor.editStream(123L, 42L, "Hello");
 
         assertThat(result).isTrue();
-        verify(client).sendMessage(123L, "Hello" + cursor, null, null, null);
+        verify(client).sendMessage(eq(123L), eq("Hello" + cursor), isNull(), isNull(), isNull(), anyBoolean());
     }
 
     @Test
@@ -103,18 +103,18 @@ class StreamEditorTest {
     @Test
     void startStream_sendsMessageAndReturnsId() {
         // Hermes: startStream sends raw text (null parse_mode) during streaming
-        when(client.sendMessage(123L, "Hello", null, null, null))
+        when(client.sendMessage(eq(123L), eq("Hello"), isNull(), isNull(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(42L));
 
         Optional<Long> msgId = editor.startStream(123L, "Hello");
 
         assertThat(msgId).contains(42L);
-        verify(client).sendMessage(123L, "Hello", null, null, null);
+        verify(client).sendMessage(eq(123L), eq("Hello"), isNull(), isNull(), isNull(), anyBoolean());
     }
 
     @Test
     void startStream_returnsEmptyOnFailure() {
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.empty());
 
         Optional<Long> msgId = editor.startStream(123L, "Hello");
@@ -127,18 +127,18 @@ class StreamEditorTest {
         String cursor = " \u2589";
         // Hermes: no prior startStream → currentMessageId is null → sends new message
         // via sendMessage with raw text (null parse_mode) and cursor appended
-        when(client.sendMessage(123L, "Updated" + cursor, null, null, null))
+        when(client.sendMessage(eq(123L), eq("Updated" + cursor), isNull(), isNull(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(42L));
 
         boolean result = editor.editStream(123L, 42L, "Updated");
 
         assertThat(result).isTrue();
-        verify(client).sendMessage(123L, "Updated" + cursor, null, null, null);
+        verify(client).sendMessage(eq(123L), eq("Updated" + cursor), isNull(), isNull(), isNull(), anyBoolean());
     }
 
     @Test
     void editStream_throttlesWhenCalledTooSoon() throws InterruptedException {
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
             .thenReturn(true);
@@ -154,7 +154,7 @@ class StreamEditorTest {
     @Test
     void editStream_allowsAfterInterval() throws InterruptedException {
         String cursor = " \u2589";
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         // Hermes: streaming edits send raw text (null parse_mode)
         when(client.editMessageText(123L, 42L, "Updated" + cursor, null, true))
@@ -170,7 +170,7 @@ class StreamEditorTest {
 
     @Test
     void finalizeStream_alwaysSendsRegardlessOfThrottle() {
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         when(client.editMessageText(123L, 42L, "Final text", "MarkdownV2", false))
             .thenReturn(true);
@@ -216,7 +216,7 @@ class StreamEditorTest {
     @Test
     void clearStream_removesThrottleState() {
         String cursor = " \u2589";
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
             .thenReturn(true);
@@ -228,14 +228,14 @@ class StreamEditorTest {
         boolean result = editor.editStream(123L, 42L, "Updated");
 
         assertThat(result).isTrue();
-        verify(client).sendMessage(123L, "Updated" + cursor, null, null, null);
+        verify(client).sendMessage(eq(123L), eq("Updated" + cursor), isNull(), isNull(), isNull(), anyBoolean());
     }
 
     @Test
     void fullStreamSequence_startEditFinalize() throws InterruptedException {
         String cursor = " \u2589";
         // Hermes: startStream sends raw text (null parse_mode)
-        when(client.sendMessage(123L, "Part 1", null, null, null))
+        when(client.sendMessage(eq(123L), eq("Part 1"), isNull(), isNull(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(99L));
         // Hermes: streaming edits send raw text (null parse_mode)
         when(client.editMessageText(eq(123L), eq(99L), anyString(), isNull(), eq(true)))
@@ -258,7 +258,7 @@ class StreamEditorTest {
         boolean finalized = editor.finalizeStream(123L, 99L, "Part 1 Part 2 Part 3 FINAL");
         assertThat(finalized).isTrue();
 
-        verify(client).sendMessage(123L, "Part 1", null, null, null);
+        verify(client).sendMessage(eq(123L), eq("Part 1"), isNull(), isNull(), isNull(), anyBoolean());
         verify(client, times(2)).editMessageText(eq(123L), eq(99L), anyString(), isNull(), eq(true));
         verify(client, times(1)).editMessageText(eq(123L), eq(99L), anyString(), eq("MarkdownV2"), eq(false));
     }
@@ -389,14 +389,14 @@ class StreamEditorTest {
     void editStream_scrubsThinkBlocksBeforeSending() {
         String cursor = " \u2589";
         // Hermes: no prior startStream → sends new message via sendMessage (raw text, null parse_mode)
-        when(client.sendMessage(eq(123L), eq("Hello world" + cursor), any(), any(), any()))
+        when(client.sendMessage(eq(123L), eq("Hello world" + cursor), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
 
         String input = THINK_OPEN + "reasoning" + THINK_CLOSE + "Hello world";
         boolean result = editor.editStream(123L, 42L, input);
 
         assertThat(result).isTrue();
-        verify(client).sendMessage(eq(123L), eq("Hello world" + cursor), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Hello world" + cursor), any(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -439,7 +439,7 @@ class StreamEditorTest {
     void editStream_decreasesIntervalOnSuccess() throws InterruptedException {
         // Hermes: first editStream sends a new message (currentMessageId is null),
         // second editStream edits via editMessageText (raw text, null parse_mode)
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         when(client.editMessageText(anyLong(), anyLong(), anyString(), nullable(String.class), anyBoolean()))
             .thenReturn(true);
@@ -458,7 +458,7 @@ class StreamEditorTest {
     @Test
     void editStream_400DoesNotIncrementFloodStrikes() throws InterruptedException {
         // Hermes: need startStream first so editStream goes through editMessageText path
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         // First edit fails with 400, then truncated retry succeeds
         when(client.getLastApiErrorCode()).thenReturn(400);
@@ -509,7 +509,7 @@ class StreamEditorTest {
         silentEditor.init();
 
         // Hermes: startStream sends via sendMessage (null parse_mode)
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         // Streaming edit uses null parse_mode with silent notification
         when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), eq(true)))
@@ -537,9 +537,9 @@ class StreamEditorTest {
     @Test
     void editStream_perChatIntervalIsIndependent() throws InterruptedException {
         // Hermes: no prior startStream → each chat sends a new message via sendMessage
-        when(client.sendMessage(eq(111L), anyString(), any(), any(), any()))
+        when(client.sendMessage(eq(111L), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(1L));
-        when(client.sendMessage(eq(222L), anyString(), any(), any(), any()))
+        when(client.sendMessage(eq(222L), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(2L));
 
         boolean a1 = editor.editStream(111L, 1L, "text A");
@@ -564,13 +564,13 @@ class StreamEditorTest {
         String text = "This is a very long text that exceeds the max chars limit";
 
         // Hermes: startStream sends via sendMessage (null parse_mode)
-        when(client.sendMessage(eq(123L), anyString(), any(), any(), any()))
+        when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         // Split edit: Hermes sends raw text (null parse_mode)
         when(client.editMessageText(eq(123L), eq(42L), anyString(), any(), anyBoolean()))
             .thenReturn(true);
         // Remainder sent as new messages (null parse_mode)
-        when(client.sendMessage(eq(123L), anyString(), any(), anyLong(), any()))
+        when(client.sendMessage(eq(123L), anyString(), any(), anyLong(), any(), anyBoolean()))
             .thenReturn(Optional.of(43L));
 
         splitEditor.startStream(123L, "Initial text");
@@ -580,8 +580,10 @@ class StreamEditorTest {
 
         // Hermes: streaming split uses null parse_mode for editMessageText
         verify(client).editMessageText(eq(123L), eq(42L), anyString(), isNull(), anyBoolean());
-        // Hermes: remainder sent via sendMessage with null parse_mode
-        verify(client).sendMessage(eq(123L), anyString(), isNull(), eq(42L), any());
+        // Hermes: remainder sent via sendMessage with null parse_mode.
+        // Text is 57 chars with streamingMaxChars=20 → edit keeps first 20,
+        // remainder 37 chars is sent as 2 chunked continuation messages.
+        verify(client, times(2)).sendMessage(eq(123L), anyString(), isNull(), anyLong(), any());
     }
 
     // --- ThinkScrubber partial closing tag test ---
@@ -617,5 +619,59 @@ class StreamEditorTest {
         String r2 = scrubber.scrub(" more secrets " + REASONING_SCRATCHPAD_CLOSE + " Real answer");
         assertThat(r2).contains("Real answer");
         assertThat(r2).doesNotContain("secret");
+    }
+
+    // ── Backslash bug regression tests ──────────────────────────────
+    // Bug: editStream/startStream applied formatForTelegram (MarkdownV2 escaping) to text
+    // but sent it with parseMode=null (plain text). Telegram showed \. \- \_ etc. literally.
+    // Fix: edit-based streaming sends raw scrubbed text (no MarkdownV2 escaping).
+
+    @Test
+    void editStream_doesNotEscapeMarkdownV2SpecialChars() throws InterruptedException {
+        // Text with MarkdownV2 special chars: . _ - | ( ) ! =
+        String specialText = "grep -rn \"pattern\" file.txt | head -5";
+        String cursor = " \u2589";
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(42L));
+        // Hermes: streaming edits send raw text (null parse_mode) — no backslash escaping
+        when(client.editMessageText(123L, 42L, specialText + cursor, null, true))
+            .thenReturn(true);
+
+        editor.startStream(123L, "Hello");
+        Thread.sleep(120); // wait past 100ms interval
+        boolean result = editor.editStream(123L, 42L, specialText);
+
+        assertThat(result).isTrue();
+        // Verify NO backslashes were added before special chars
+        verify(client).editMessageText(123L, 42L, specialText + cursor, null, true);
+    }
+
+    @Test
+    void startStream_doesNotEscapeMarkdownV2SpecialChars() {
+        // Text with MarkdownV2 special chars: . _ - | ( ) ! =
+        String specialText = "Result: value_1 | value-2 (test). Done!";
+        // Hermes: startStream sends raw text (null parse_mode) — no backslash escaping
+        when(client.sendMessage(eq(123L), eq(specialText), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(42L));
+
+        Optional<Long> msgId = editor.startStream(123L, specialText);
+
+        assertThat(msgId).contains(42L);
+        verify(client).sendMessage(eq(123L), eq(specialText), isNull(), isNull(), isNull(), anyBoolean());
+    }
+
+    @Test
+    void editStream_delayedStartDoesNotEscapeMarkdownV2SpecialChars() {
+        // When no message exists yet (delayed start), editStream sends via sendMessage
+        // with null parse_mode — text must NOT be MarkdownV2-escaped.
+        String specialText = "file.txt - pattern_match (v2.0)";
+        String cursor = " \u2589";
+        when(client.sendMessage(eq(123L), eq(specialText + cursor), isNull(), isNull(), isNull(), anyBoolean()))
+            .thenReturn(Optional.of(42L));
+
+        boolean result = editor.editStream(123L, -1L, specialText);
+
+        assertThat(result).isTrue();
+        verify(client).sendMessage(eq(123L), eq(specialText + cursor), isNull(), isNull(), isNull(), anyBoolean());
     }
 }

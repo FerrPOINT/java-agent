@@ -65,7 +65,7 @@ class AgentControllerTest {
     @Mock private com.azhukov.agent.persistence.repository.TodoRepository todoRepository;
     @Mock private com.azhukov.agent.service.RuntimeConfigService runtimeConfigService;
     @Mock private TodoService todoService;
-    @Mock private com.azhukov.agent.security.UrlSafetyHandler urlSafetyHandler;
+    @Mock private com.azhukov.agent.core.security.UrlSafetyHandler urlSafetyHandler;
 
     @BeforeEach
     void setUp() {

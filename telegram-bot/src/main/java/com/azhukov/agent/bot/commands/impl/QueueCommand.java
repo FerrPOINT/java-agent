@@ -27,7 +27,8 @@ public class QueueCommand implements CommandHandler {
         // Create a synthetic TEXT event with the prompt
         UpdateEvent queuedEvent = new UpdateEvent(
             event.updateId(), UpdateEvent.Type.TEXT, event.chatId(), event.userId(),
-            event.username(), prompt, null, null, null, null, null, null,
+            event.username(), event.firstName(), event.languageCode(),
+            prompt, null, null, null, null, null, null,
             false, null, null, event.messageId(), null, 0, event.forwardedFrom());
         busyHandler.queueMessage(event.chatId(), queuedEvent);
         return "📋 Queued for next turn: " + prompt;

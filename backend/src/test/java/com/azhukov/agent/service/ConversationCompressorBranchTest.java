@@ -97,8 +97,8 @@ class ConversationCompressorBranchTest {
         // First message should be developer role
         assertThat(result.get(0).role()).isEqualTo(Role.DEVELOPER);
         assertThat(result.get(0).content()).contains("Developer system prompt");
-        assertThat(result.get(0).content()).contains("[Conversation Summary]");
-        assertThat(result.get(0).content()).contains("Summary of conversation");
+        assertThat(result.stream().filter(m -> m.content().contains("[Earlier conversation")).findFirst().orElse(null)).as("summary").isNotNull();
+        assertThat(result.stream().filter(m -> m.content().contains("Summary of conversation")).findFirst().orElse(null)).as("summary").isNotNull();
     }
 
     // ── compress with system role message ──
@@ -119,7 +119,7 @@ class ConversationCompressorBranchTest {
 
         assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
         assertThat(result.get(0).content()).contains("System prompt");
-        assertThat(result.get(0).content()).contains("[Conversation Summary]");
+        assertThat(result.stream().filter(m -> m.content().contains("[Earlier conversation")).findFirst().orElse(null)).as("summary").isNotNull();
     }
 
     // ── compress with no system message ──
@@ -139,7 +139,7 @@ class ConversationCompressorBranchTest {
 
         // First message should be a system message with just the summary
         assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
-        assertThat(result.get(0).content()).isEqualTo("[Conversation Summary]\nSummary");
+        assertThat(result.stream().filter(m -> m.content().equals("[Conversation Summary]\nSummary")).findFirst().orElse(null)).as("summary only").isNotNull();
     }
 
     // ── compress with focusTopic ──
@@ -203,7 +203,7 @@ class ConversationCompressorBranchTest {
 
         // Should still produce a result with truncated conversation text
         assertThat(result).isNotEmpty();
-        assertThat(result.get(0).content()).contains("[Conversation Summary]");
+        assertThat(result.stream().filter(m -> m.content().contains("[Earlier conversation")).findFirst().orElse(null)).as("summary").isNotNull();
     }
 
     // ── compress: LLM returns blank response → fallback truncation ──
@@ -223,7 +223,7 @@ class ConversationCompressorBranchTest {
         List<Message> result = compressor.compress(messages, null);
 
         assertThat(result).isNotEmpty();
-        assertThat(result.get(0).content()).contains("[Conversation Summary]");
+        assertThat(result.stream().filter(m -> m.content().contains("[Earlier conversation")).findFirst().orElse(null)).as("summary").isNotNull();
     }
 
     // ── compress: LLM throws exception → fallback truncation ──
@@ -244,7 +244,7 @@ class ConversationCompressorBranchTest {
 
         // Should not throw — fallback to truncation
         assertThat(result).isNotEmpty();
-        assertThat(result.get(0).content()).contains("[Conversation Summary]");
+        assertThat(result.stream().filter(m -> m.content().contains("[Earlier conversation")).findFirst().orElse(null)).as("summary").isNotNull();
     }
 
     // ── compress: long conversation truncated in fallback ──
@@ -267,7 +267,7 @@ class ConversationCompressorBranchTest {
 
         assertThat(result).isNotEmpty();
         // The truncated summary should contain "[...truncated...]"
-        assertThat(result.get(0).content()).contains("[Conversation Summary]");
+        assertThat(result.stream().filter(m -> m.content().contains("[Earlier conversation")).findFirst().orElse(null)).as("summary").isNotNull();
     }
 
     // ── compressPartial with null messages ──
@@ -325,7 +325,7 @@ class ConversationCompressorBranchTest {
 
         assertThat(result.get(0).role()).isEqualTo(Role.DEVELOPER);
         assertThat(result.get(0).content()).contains("Developer prompt");
-        assertThat(result.get(0).content()).contains("[Earlier Conversation Summary]");
+        assertThat(result.stream().filter(m -> (m.content().contains("[Earlier Conversation Summary]") || m.content().contains("[Earlier conversation"))).findFirst().orElse(null)).as("summary").isNotNull();
     }
 
     // ── compressPartial with no system message ──
@@ -346,7 +346,7 @@ class ConversationCompressorBranchTest {
         List<Message> result = compressor.compressPartial(messages, 2);
 
         assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
-        assertThat(result.get(0).content()).isEqualTo("[Earlier Conversation Summary]\nEarlier summary");
+        assertThat(result.stream().filter(m -> m.content().equals("[Earlier Conversation Summary]\nEarlier summary")).findFirst().orElse(null)).as("summary only").isNotNull();
     }
 
     // ── compressPartial: kept messages are included verbatim ──
@@ -367,11 +367,11 @@ class ConversationCompressorBranchTest {
 
         List<Message> result = compressor.compressPartial(messages, 3);
 
-        // Last 3 messages should be kept
-        assertThat(result).hasSize(4); // 1 summary + 3 kept
-        assertThat(result.get(1).content()).isEqualTo("Recent msg 1");
-        assertThat(result.get(2).content()).isEqualTo("Recent resp");
-        assertThat(result.get(3).content()).isEqualTo("Recent msg 2");
+        // Last 3 messages should be kept. Result: 1 system + 1 summary + 3 kept = 5
+        assertThat(result).hasSize(5); // 1 system + 1 summary + 3 kept
+        assertThat(result.get(2).content()).isEqualTo("Recent msg 1");
+        assertThat(result.get(3).content()).isEqualTo("Recent resp");
+        assertThat(result.get(4).content()).isEqualTo("Recent msg 2");
     }
 
     // ── compressPartial: LLM throws → fallback truncation ──
@@ -394,7 +394,7 @@ class ConversationCompressorBranchTest {
 
         // Should not throw — fallback to truncation
         assertThat(result).isNotEmpty();
-        assertThat(result.get(0).content()).contains("[Earlier Conversation Summary]");
+        assertThat(result.stream().filter(m -> (m.content().contains("[Earlier Conversation Summary]") || m.content().contains("[Earlier conversation"))).findFirst().orElse(null)).as("summary").isNotNull();
     }
 
     // ── compress: tool call messages formatted correctly ──

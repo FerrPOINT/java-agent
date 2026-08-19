@@ -19,10 +19,10 @@ import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
-import com.azhukov.agent.security.DefaultToolCallGuardrail;
-import com.azhukov.agent.security.MessageSanitizer;
-import com.azhukov.agent.security.SecretRedactor;
-import com.azhukov.agent.security.UserInputSanitizer;
+import com.azhukov.agent.core.security.DefaultToolCallGuardrail;
+import com.azhukov.agent.core.security.MessageSanitizer;
+import com.azhukov.agent.core.security.SecretRedactor;
+import com.azhukov.agent.core.security.UserInputSanitizer;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

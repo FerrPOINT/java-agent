@@ -6,6 +6,7 @@ import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
+import com.azhukov.agent.core.agent.SessionDeletedEvent;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
@@ -71,6 +72,7 @@ public class SessionCrudController {
     private final SessionEntityMapper sessionMapper;
     private final DomainDtoMapper domainDtoMapper;
     private final AgentProperties properties;
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     // ── List sessions ──
 
@@ -188,6 +190,9 @@ public class SessionCrudController {
         // Delete messages first
         messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
         sessionRepository.delete(entity);
+        // Evict per-session in-memory state (runtime maps, context caches, review state)
+        // so deleted sessions do not leak memory (audit finding C3).
+        eventPublisher.publishEvent(new SessionDeletedEvent(sessionId));
         return ResponseEntity.ok(Map.of(
             "object", "session.deleted",
             "id", sessionId.toString(),
@@ -242,13 +247,7 @@ public class SessionCrudController {
         if (!sessionRepository.existsById(sessionId)) {
             return ResponseEntity.notFound().build();
         }
-        ChatRequest request = new ChatRequest(
-            sessionId,
-            body.message(),
-            null,   // delegationDepth
-            body.timeoutMs(),
-            null, null, null, null, null, null, null, null, null, null
-        );
+        ChatRequest request = ChatRequest.simple(sessionId, body.message(), null, body.timeoutMs());
         ChatResponseDto response = agentRuntimeService.runTurn(request);
         return ResponseEntity.ok(response);
     }
@@ -263,13 +262,7 @@ public class SessionCrudController {
         if (!sessionRepository.existsById(sessionId)) {
             return ResponseEntity.notFound().build();
         }
-        ChatRequest request = new ChatRequest(
-            sessionId,
-            body.message(),
-            null,
-            body.timeoutMs(),
-            null, null, null, null, null, null, null, null, null, null
-        );
+        ChatRequest request = ChatRequest.simple(sessionId, body.message(), null, body.timeoutMs());
         SseEmitter emitter = streamingService.streamTurn(request);
         return ResponseEntity.ok(emitter);
     }

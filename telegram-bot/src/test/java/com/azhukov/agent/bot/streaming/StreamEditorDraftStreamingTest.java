@@ -103,7 +103,7 @@ class StreamEditorDraftStreamingTest {
         StreamEditor editEditor = new StreamEditor(client, props, new MediaDeliveryService());
         editEditor.init();
 
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
 
         Optional<Long> msgId = editEditor.startStream(123L, "Hello world", "dm");
@@ -136,7 +136,7 @@ class StreamEditorDraftStreamingTest {
     void startStream_withGroupChat_doesNotUseDraftStreaming() {
         // Override: group chats don't support draft streaming
         when(client.supportsDraftStreaming("group")).thenReturn(false);
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
 
         Optional<Long> msgId = editor.startStream(123L, "Hello world", "group");
@@ -168,14 +168,15 @@ class StreamEditorDraftStreamingTest {
     void finalizeStream_withDraftStreaming_sendsRegularMessage() {
         editor.startStream(123L, "Hello world", "dm");
 
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(99L));
 
         boolean result = editor.finalizeStream(123L, -1, "Hello world final");
 
         assertThat(result).isTrue();
-        // Should send the final text as a regular sendMessage (commits the draft)
-        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any());
+        // Final message is sent RAW (parseMode=null): streaming output is unescaped,
+        // MarkdownV2 escaping only applies to edit-path finalization.
+        verify(client).sendMessage(eq(123L), anyString(), isNull(), any(), any(), anyBoolean());
         // Should NOT call editMessageText (drafts have no message_id)
         verify(client, never()).editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
         // Draft streaming should be cleaned up
@@ -192,17 +193,12 @@ class StreamEditorDraftStreamingTest {
         // Now make sendDraft fail
         when(client.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(false);
 
-        // First failure
+        // S5 tolerance: a single draft failure falls back to edit-based
+        // (>= 2 was too forgiving — users waited through repeated 400s).
         Thread.sleep(110);
         editor.editStream(123L, -1, "Hello world updated");
-        // Still in draft mode (1 failure)
-        assertThat(editor.isDraftStreamingActive(123L)).isTrue();
 
-        // Second failure — should fall back to edit-based
-        Thread.sleep(110);
-        editor.editStream(123L, -1, "Hello world updated again");
-
-        // After 2 failures, draft streaming should be disabled
+        // After 1 failure, draft streaming should be disabled
         assertThat(editor.isDraftStreamingActive(123L)).isFalse();
     }
 
@@ -265,13 +261,14 @@ class StreamEditorDraftStreamingTest {
         offEditor.startStream(123L, "Hello", "dm");
         offEditor.editStream(123L, -1, "Hello world");
 
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(99L));
 
         boolean result = offEditor.finalizeStream(123L, -1, "Hello world final");
 
         assertThat(result).isTrue();
-        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any());
+        // 'off' transport finalize sends RAW text (parseMode=null) — no escaping applied.
+        verify(client).sendMessage(eq(123L), anyString(), isNull(), any(), any(), anyBoolean());
     }
 
     // ─── Draft transport (explicit) tests ────────────────────────
@@ -287,7 +284,7 @@ class StreamEditorDraftStreamingTest {
 
         // Group chat with draft transport — should fall back to edit
         when(client.supportsDraftStreaming("group")).thenReturn(false);
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
 
         Optional<Long> msgId = draftEditor.startStream(123L, "Hello world", "group");

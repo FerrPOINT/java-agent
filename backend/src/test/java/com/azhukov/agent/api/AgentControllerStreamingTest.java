@@ -38,7 +38,7 @@ class AgentControllerStreamingTest {
 
     @Test
     void streamChatReturnsSseEvents() throws Exception {
-        ChatRequest request = new ChatRequest(null, "hello", null, null);
+        ChatRequest request = ChatRequest.simple(null, "hello", null, null);
 
         MvcResult result = mockMvc.perform(post("/api/v1/agent/chat/stream")
                 .contentType(MediaType.APPLICATION_JSON)

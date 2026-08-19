@@ -18,7 +18,12 @@ import org.springframework.stereotype.Component;
  * confirmation (same as the original project).
  * <p>
  * c16: Registered as a Spring {@code @Component} so it can be injected into
- * the registry and command group classes.
+ * the registry and command group classes. The helper methods
+ * ({@link #isDestructive}, {@link #isDestructiveLine}, etc.) were previously
+ * static; they are now instance methods so callers go through the injected
+ * bean rather than static access. The backing {@code DESTRUCTIVE_COMMANDS}
+ * and {@code SKIP_TOKENS} sets are {@code static final} immutable constants
+ * (created via {@link Set#of}), so no mutable static state remains.
  */
 @Component
 public class DestructiveCommandConfirmation {
@@ -36,14 +41,14 @@ public class DestructiveCommandConfirmation {
  /**
  * Check if a command name is destructive.
  */
- public static boolean isDestructive(String commandName) {
+ public boolean isDestructive(String commandName) {
  return DESTRUCTIVE_COMMANDS.contains(commandName);
  }
 
  /**
  * Check if a full command line is destructive (handles /exit --delete).
  */
- public static boolean isDestructiveLine(String fullLine) {
+ public boolean isDestructiveLine(String fullLine) {
  if (fullLine == null || !fullLine.startsWith("/")) return false;
  String trimmed = fullLine.substring(1).strip();
  int spaceIdx = trimmed.indexOf(' ');
@@ -58,7 +63,7 @@ public class DestructiveCommandConfirmation {
  * Split inline-skip tokens from a command line.
  * Returns the cleaned args (skip tokens removed).
  */
- public static String stripSkipTokens(String args) {
+ public String stripSkipTokens(String args) {
  if (args == null || args.isBlank()) return "";
  String[] tokens = args.strip().split("\\s+");
  StringBuilder kept = new StringBuilder();
@@ -74,7 +79,7 @@ public class DestructiveCommandConfirmation {
  /**
  * Check if args contain a skip token.
  */
- public static boolean hasSkipToken(String args) {
+ public boolean hasSkipToken(String args) {
  if (args == null || args.isBlank()) return false;
  for (String tok : args.strip().split("\\s+")) {
  if (SKIP_TOKENS.contains(tok.toLowerCase())) return true;
@@ -85,7 +90,7 @@ public class DestructiveCommandConfirmation {
  /**
  * Get the command name from a full command line.
  */
- public static String getCommandName(String fullLine) {
+ public String getCommandName(String fullLine) {
  if (fullLine == null || !fullLine.startsWith("/")) return "";
  String trimmed = fullLine.substring(1).strip();
  int spaceIdx = trimmed.indexOf(' ');
@@ -95,7 +100,7 @@ public class DestructiveCommandConfirmation {
  /**
  * Get the args from a full command line (skip tokens removed).
  */
- public static String getCleanArgs(String fullLine) {
+ public String getCleanArgs(String fullLine) {
  if (fullLine == null || !fullLine.startsWith("/")) return "";
  String trimmed = fullLine.substring(1).strip();
  int spaceIdx = trimmed.indexOf(' ');

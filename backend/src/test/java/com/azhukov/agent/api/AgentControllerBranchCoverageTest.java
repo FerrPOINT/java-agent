@@ -85,7 +85,7 @@ class AgentControllerBranchCoverageTest {
     @Mock private CliRuntimeSettingsService cliRuntimeSettingsService;
     @Mock private TodoService todoService;
     @Mock private RuntimeConfigService runtimeConfigService;
-    @Mock private com.azhukov.agent.security.UrlSafetyHandler urlSafetyHandler;
+    @Mock private com.azhukov.agent.core.security.UrlSafetyHandler urlSafetyHandler;
 
     private SteerBuffer steerBuffer;
     private InterruptToken interruptToken;

@@ -164,7 +164,7 @@ class AgentStreamingServiceDoublePersistenceTest {
 
     @Test
     void persistTurnCalledExactlyOnceOnSuccess() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
@@ -190,7 +190,7 @@ class AgentStreamingServiceDoublePersistenceTest {
 
     @Test
     void persistTurnNotCalledTwiceOnError() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         // Model fails with permanent error

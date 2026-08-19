@@ -37,4 +37,9 @@ public class AuditLogEntity {
         this.resource = resource;
         this.details = details;
     }
+
+    @jakarta.persistence.PrePersist
+    void onCreateTimestamps() {
+        if (createdAt == null) createdAt = java.time.Instant.now();
+    }
 }

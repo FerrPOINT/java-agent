@@ -57,6 +57,10 @@ public class CronJobService {
     private final SkillManager skillManager;
     // h72: Cron execution ledger repository.
     private final CronExecutionLogRepository cronExecutionLogRepository;
+    // Audit C4: programmatic transactions for scheduler-thread multi-write sequences
+    // (@Transactional would be bypassed here because executeAndReschedule is a
+    // self-invocation from the scheduler lambda).
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     // Daemon thread factory so cron threads don't prevent JVM shutdown
     private static final ThreadFactory DAEMON_THREAD_FACTORY = r -> {
@@ -95,6 +99,11 @@ public class CronJobService {
     private static final int MAX_CONSECUTIVE_FAILURES = 5;
     // h74: Base backoff seconds for backend unavailability.
     private static final long BACKEND_UNAVAILABLE_BACKOFF_SECONDS = 300; // 5 minutes
+
+    // HERMES-SYNC Bug 1: Cron nudge — "automation needs attention" message.
+    private static final String AUTOMATION_NEEDS_ATTENTION_MSG =
+        "⚠️ Automation needs attention: cron job '{}' has failed {} consecutive times. " +
+        "Last error: {}";
 
     @PostConstruct
     public void init() {
@@ -212,7 +221,9 @@ public class CronJobService {
     }
 
     public List<CronJobEntity> list() {
-        return cronJobRepository.findAll();
+        // H13: Add deterministic sort to avoid unbounded unordered results.
+        return cronJobRepository.findAll(org.springframework.data.domain.Sort.by(
+            org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
     }
 
     // ── Update overloads (backward-compatible) ──
@@ -379,24 +390,39 @@ public class CronJobService {
                 // ── Fix 2: Repeat count auto-delete ──
                 // After each successful execution, increment repeatCompleted.
                 // If repeatCount is set and completed >= repeatCount, auto-delete.
+                // Audit C4: save + delete + reset are wrapped in one programmatic
+                // transaction so a DB failure mid-sequence cannot leave an orphaned
+                // fully-completed job that never runs again and never gets deleted.
                 if (job.getRepeatCount() != null) {
-                    job.setRepeatCompleted(job.getRepeatCompleted() + 1);
-                    if (job.getRepeatCompleted() >= job.getRepeatCount()) {
-                        log.info("Cron job '{}' reached repeat limit ({}/{}), auto-deleting",
-                            job.getName(), job.getRepeatCompleted(), job.getRepeatCount());
-                        cronJobRepository.save(job);
-                        cancelJob(jobId);
-                        cronJobRepository.deleteById(jobId);
+                    final CronJobEntity jobRef = job;
+                    boolean deleted = Boolean.TRUE.equals(transactionTemplate.execute(tx -> {
+                        jobRef.setRepeatCompleted(jobRef.getRepeatCompleted() + 1);
+                        if (jobRef.getRepeatCompleted() >= jobRef.getRepeatCount()) {
+                            log.info("Cron job '{}' reached repeat limit ({}/{}), auto-deleting",
+                                jobRef.getName(), jobRef.getRepeatCompleted(), jobRef.getRepeatCount());
+                            cronJobRepository.save(jobRef);
+                            cancelJob(jobId);
+                            cronJobRepository.deleteById(jobId);
+                            return true;
+                        }
+                        cronJobRepository.save(jobRef);
+                        // h71: Reset consecutive failures on successful execution (same tx)
+                        if (jobRef.getConsecutiveFailures() > 0) {
+                            jobRef.setConsecutiveFailures(0);
+                            cronJobRepository.save(jobRef);
+                        }
+                        return false;
+                    }));
+                    if (deleted) {
                         jobLocks.remove(jobId, lock);
                         return;
                     }
-                    cronJobRepository.save(job);
-                }
-
-                // h71: Reset consecutive failures on successful execution
-                if (job.getConsecutiveFailures() > 0) {
-                    job.setConsecutiveFailures(0);
-                    cronJobRepository.save(job);
+                } else if (job.getConsecutiveFailures() > 0) {
+                    // h71: Reset consecutive failures on successful execution
+                    transactionTemplate.executeWithoutResult(tx -> {
+                        job.setConsecutiveFailures(0);
+                        cronJobRepository.save(job);
+                    });
                 }
 
                 // Reschedule (one-shot jobs with repeatCount=1 are already deleted above)
@@ -541,6 +567,23 @@ public class CronJobService {
                     job.getName(), job.getConsecutiveFailures());
             }
             cronJobRepository.save(job);
+
+            // HERMES-SYNC Bug 1: Cron nudge — when consecutiveFailures >= threshold,
+            // show a single "automation needs attention" message instead of per-error pings.
+            int nudgeThreshold = properties.getCron().getNudgeFailureThreshold();
+            if (nudgeThreshold > 0 && job.getConsecutiveFailures() >= nudgeThreshold) {
+                // Only log the nudge at the exact threshold to avoid repeating on every failure
+                if (job.getConsecutiveFailures() == nudgeThreshold) {
+                    log.warn(AUTOMATION_NEEDS_ATTENTION_MSG,
+                        job.getName(), job.getConsecutiveFailures(), errorMsg);
+                }
+                // Beyond the threshold, suppress per-error ping — the nudge has already fired.
+            } else {
+                // Below threshold — log the per-error detail as before
+                log.warn("Cron job '{}' execution failed (consecutive failures: {}): {}",
+                    job.getName(), job.getConsecutiveFailures(), errorMsg);
+            }
+
             // h72: Record failed execution in the ledger.
             String status = errorMsg.toLowerCase().contains("timeout") ? "timeout" : "failure";
             recordExecution(job.getId(), startedAt, Instant.now(), status, errorMsg);
@@ -548,6 +591,28 @@ public class CronJobService {
             // The error is recorded for audit but doesn't permanently block execution.
             // The scheduleJob call in executeAndReschedule will still fire.
         }
+    }
+
+    // ── HERMES-SYNC Bug 1: Cron nudge ──
+
+    /**
+     * HERMES-SYNC Bug 1: Check if a cron job needs attention due to consecutive failures.
+     * Returns true when consecutiveFailures >= nudgeFailureThreshold.
+     *
+     * @param job the cron job to check
+     * @return true if the job has reached the "needs attention" threshold
+     */
+    public boolean needsAttention(CronJobEntity job) {
+        if (job == null) return false;
+        int threshold = properties.getCron().getNudgeFailureThreshold();
+        return threshold > 0 && job.getConsecutiveFailures() >= threshold;
+    }
+
+    /**
+     * HERMES-SYNC Bug 1: Returns the configured nudge failure threshold.
+     */
+    public int getNudgeFailureThreshold() {
+        return properties.getCron().getNudgeFailureThreshold();
     }
 
     // ── h72: Cron execution ledger ──

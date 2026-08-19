@@ -37,6 +37,7 @@ public class SearXngSearchProvider {
         this.urlSafety = urlSafety;
         this.httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
+            .followRedirects(HttpClient.Redirect.NEVER)
             .build();
     }
 

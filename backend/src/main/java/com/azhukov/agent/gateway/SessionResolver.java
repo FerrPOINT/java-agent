@@ -42,6 +42,9 @@ public class SessionResolver {
         created.setModelName(properties.getModel().getModelName());
         created.setCreatedAt(Instant.now());
         created.setUpdatedAt(Instant.now());
+        created.setSource("telegram");
+        created.setLastActive(Instant.now());
+        created.setMessageCount(0);
         SessionEntity saved = sessionRepository.save(created);
         log.info("Created new session for userId={} sessionId={}", userId, saved.getId());
         return new Session(saved.getId(), saved.getUserId(), saved.getTitle(),

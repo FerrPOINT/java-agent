@@ -41,7 +41,7 @@ bot:
   typing-refresh-interval: 4s
   stream-edit-interval: 800ms
   buffer-threshold: 24
-  heartbeat-interval-seconds: ${BOT_HEARTBEAT_INTERVAL:180}
+  heartbeat-interval-seconds: ${BOT_HEARTBEAT_INTERVAL:30}
   initial-stream-text: ""
   streaming-max-chars: 32768
   streaming-transport: ${AGENT_STREAMING_TRANSPORT:auto}
@@ -58,7 +58,7 @@ bot:
   media-delivery-enabled: ${BOT_MEDIA_DELIVERY_ENABLED:true}
 
   footer:
-    enabled: ${BOT_FOOTER_ENABLED:false}
+    enabled: ${BOT_FOOTER_ENABLED:true}
     fields:
       - model
       - context_pct

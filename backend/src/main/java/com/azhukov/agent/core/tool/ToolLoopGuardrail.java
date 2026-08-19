@@ -5,9 +5,9 @@ import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Feature 9: Tool loop guardrails — tracks repeated tool calls and generates
@@ -27,9 +27,9 @@ public class ToolLoopGuardrail {
     private final int maxExactRepeats;
     private final int maxSameToolFailures;
 
-    // Per-turn tracking
-    private final Map<String, Integer> exactRepeatCounts = new HashMap<>();
-    private final Map<String, Integer> sameToolFailureCounts = new HashMap<>();
+    // Per-turn tracking — thread-safe for parallel tool execution
+    private final Map<String, Integer> exactRepeatCounts = new ConcurrentHashMap<>();
+    private final Map<String, Integer> sameToolFailureCounts = new ConcurrentHashMap<>();
 
     public ToolLoopGuardrail() {
         this(true, 3, 5);

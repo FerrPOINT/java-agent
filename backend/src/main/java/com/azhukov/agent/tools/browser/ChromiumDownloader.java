@@ -69,10 +69,14 @@ public class ChromiumDownloader {
 
     private void unzip(Path zipFile, Path targetDir) throws IOException {
         Files.createDirectories(targetDir);
+        Path normalizedTarget = targetDir.toAbsolutePath().normalize();
         try (ZipInputStream zis = new ZipInputStream(Files.newInputStream(zipFile))) {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
-                Path entryPath = targetDir.resolve(entry.getName());
+                Path entryPath = normalizedTarget.resolve(entry.getName()).normalize();
+                if (!entryPath.startsWith(normalizedTarget)) {
+                    throw new IOException("Zip entry outside target directory: " + entry.getName());
+                }
                 if (entry.isDirectory()) {
                     Files.createDirectories(entryPath);
                 } else {

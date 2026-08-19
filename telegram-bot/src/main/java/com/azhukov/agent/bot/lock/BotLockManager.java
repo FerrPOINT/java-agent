@@ -105,14 +105,19 @@ public class BotLockManager {
             }
         }
 
-        // Create or truncate the lock file and acquire an exclusive file lock
+        // Create/open the lock file WITHOUT truncating first — audit M25:
+        // TRUNCATE_EXISTING before tryLock races with concurrent holders:
+        // if tryLock fails, the file is already zeroed and readLockRecord returns null,
+        // making it look like the lock is free.
         lockChannel = FileChannel.open(lockPath,
-            StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+            StandardOpenOption.CREATE, StandardOpenOption.WRITE);
         fileLock = lockChannel.tryLock();
         if (fileLock == null) {
             lockChannel.close();
             throw new LockAcquisitionException("Could not acquire file lock on " + lockPath);
         }
+        // Truncate AFTER successful lock so we start with a clean file
+        lockChannel.truncate(0);
 
         // Write our PID record
         writeLockRecord(lockPath);

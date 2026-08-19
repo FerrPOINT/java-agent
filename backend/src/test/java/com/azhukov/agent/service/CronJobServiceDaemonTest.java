@@ -42,7 +42,7 @@ class CronJobServiceDaemonTest {
         properties = new AgentProperties();
         properties.getCron().setEnabled(false);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository);
+        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, new org.springframework.transaction.support.TransactionTemplate());
     }
 
     @Test

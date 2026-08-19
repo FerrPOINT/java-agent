@@ -178,7 +178,7 @@ class AgentStreamingServiceSseErrorTest {
 
     @Test
     void streamErrorCompletesNormallyAndSendsErrorEvent() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         // Simulate stream() throwing an exception
@@ -203,7 +203,7 @@ class AgentStreamingServiceSseErrorTest {
 
     @Test
     void handlerOnErrorCompletesNormallyAndSendsErrorEvent() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
@@ -229,7 +229,7 @@ class AgentStreamingServiceSseErrorTest {
 
     @Test
     void permanentErrorAfterRetriesExhaustedCompletesNormally() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 30_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 30_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         // Always error — retries will exhaust
@@ -256,7 +256,7 @@ class AgentStreamingServiceSseErrorTest {
 
     @Test
     void timeoutCompletesNormallyWithErrorEvent() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         // Simulate a successful stream to keep it simple — timeout is tested

@@ -1,33 +1,33 @@
 # Java-Agent TODO List — Architecture + Port + Hermes Sync + Multi-User
 
-**Updated:** 2026-08-15  
-**Total active:** 111 items (38 cancelled/filtered out)  
+**Updated:** 2026-08-18  
+**Total active:** 88 items (38 cancelled/filtered out)  
 
 ---
 
 ## CRITICAL — Architecture (8)
 
-1. **c1** Decompose DefaultAgentRuntime (1847 LOC, 31 deps) → TurnOrchestrator, FallbackController, ToolExecutionCoordinator, MemoryNudgeManager, SessionLockManager
+1. **c1** Decompose DefaultAgentRuntime (1892→1745 LOC, partial) — ThinkBlockProcessor extracted (-147 LOC). Further: TurnOrchestrator, FallbackController, ToolExecutionCoordinator, MemoryNudgeManager, SessionLockManager
 2. **c2** Eliminate duplicated agentic loop — extract shared TurnExecutor from DefaultAgentRuntime + AgentStreamingService
-3. **c3** Fix SessionCrudController — delegate to service layer, not repositories directly
-4. **c4** Stop returning CronJobEntity from CronJobController — create CronJobDto
-5. **c5** Split BotMessageProcessor (1164 LOC, 20 deps) → UpdateDispatcher, CommandExecutionService, TextMediaProcessor, StreamingOrchestrator, BusyMessageHandler, MediaDeliveryCoordinator
-6. **c6** Extract StreamSession from StreamEditor — consolidate 17 concurrent maps into per-chat state objects
-7. **c7** Split BackendClient (CLI, 1888 LOC) → transport + formatter, or per-domain API classes
-8. **c8** Split SlashCommandRegistry.registerAll() (800 LOC) → grouped command classes
+3. ~~**c3** Fix SessionCrudController — delegate to service layer~~ ✅ DONE (087aca3)
+4. ~~**c4** Stop returning CronJobEntity from CronJobController~~ ✅ DONE (087aca3)
+5. ~~**c5** Split BotMessageProcessor~~ ✅ DONE (087aca3)
+6. ~~**c6** Extract StreamSession from StreamEditor~~ ✅ DONE (087aca3)
+7. ~~**c7** Split BackendClient (CLI)~~ ✅ DONE (087aca3)
+8. ~~**c8** Split SlashCommandRegistry~~ ✅ DONE (087aca3)
 
 ## HIGH — Architecture (10)
 
-9. **h9** Remove phantom project(':backend') from telegram-bot/build.gradle
+9. ~~**h9** Remove phantom project(':backend')~~ ✅ DONE (5d4e26b)
 10. **h10** Create shared module — API DTOs, SharedObjectMapper, base REST client
-11. **h11** Consolidate duplicate security/ packages — merge security/ + core/security/
-12. **h12** ★RESTORED: Introduce repository ports in core — justified for multi-user: per-user filtering abstraction
-13. **h13** Break core.memory ↔ tools.memory cycle — abstract behind ToolSchemaProvider
-14. **h14** Split AgentConfig (68 imports) → ModelClientConfig, MemoryConfig, SecurityConfig, etc.
-15. **h15** Split AgentBackendClient (bot, 1474 LOC) → per-domain delegate classes + typed DTOs
-16. **h16** Make CliState/SessionStore/DestructiveCommandConfirmation Spring beans
-17. **h17** Delete ReplLoop — dead code
-18. **h18** Break core.agent ↔ core.context cycle
+11. ~~**h11** Consolidate duplicate security/ packages~~ ✅ DONE (5d4e26b)
+12. **h12** ★RESTORED: Introduce repository ports in core — justified for multi-user
+13. ~~**h13** Break core.memory ↔ tools.memory cycle~~ ✅ DONE (2e37f4c)
+14. ~~**h14** Split AgentConfig into domain-specific @Configuration classes~~ ✅ DONE (a2ece7b)
+15. ~~**h15** Split AgentBackendClient (bot, 1474 LOC) → per-domain delegate classes~~ ✅ DONE (f8610ca)
+16. ~~**h16** Make CliState/SessionStore/DestructiveCommandConfirmation Spring beans~~ ✅ DONE (70faf14)
+17. ~~**h17** Delete ReplLoop — dead code~~ ✅ DONE (087aca3)
+18. ~~**h18** Break core.agent ↔ core.context cycle~~ ✅ DONE (5d4e26b)
 
 ## MEDIUM — Architecture (11)
 

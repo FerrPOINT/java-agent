@@ -53,14 +53,17 @@ class ConversationCompressorTest {
         assertThat(result).isNotEmpty();
         assertThat(result.size()).isLessThan(messages.size());
 
-        // The summary should be injected into the system message
+        // The original system prompt should be preserved UNCHANGED (prompt caching parity)
         Message systemMsg = result.get(0);
         assertThat(systemMsg.role()).isEqualTo(Role.SYSTEM);
-        assertThat(systemMsg.content()).contains("Summary of conversation");
-        // The original system prompt should be preserved
         assertThat(systemMsg.content()).contains("System prompt");
-        // The [Conversation Summary] marker should be present
-        assertThat(systemMsg.content()).contains("[Conversation Summary]");
+        // The summary is in a SEPARATE system message (not appended to the original)
+        assertThat(result.size()).isGreaterThanOrEqualTo(2);
+        Message summaryMsg = result.stream()
+            .filter(m -> m.role() == Role.SYSTEM && (m.content().contains("[Conversation Summary]") || m.content().contains("[Earlier conversation")))
+            .findFirst().orElse(null);
+        assertThat(summaryMsg).as("summary message").isNotNull();
+        assertThat(summaryMsg.content()).contains("Summary of conversation");
 
         // The last user message should be kept intact
         Message lastMsg = result.get(result.size() - 1);
@@ -81,9 +84,13 @@ class ConversationCompressorTest {
         );
         List<Message> result = compressor.compress(messages, "topic-X");
         assertThat(result).isNotEmpty();
-        // Summary should appear in system message
+        // System prompt preserved, summary in separate message
         assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
-        assertThat(result.get(0).content()).contains("Focused summary");
+        assertThat(result.get(0).content()).contains("System");
+        Message summaryMsg = result.stream()
+            .filter(m -> m.role() == Role.SYSTEM && m.content().contains("Focused summary"))
+            .findFirst().orElse(null);
+        assertThat(summaryMsg).as("summary with focus topic").isNotNull();
         // Last user message preserved
         assertThat(result.get(result.size() - 1).role()).isEqualTo(Role.USER);
         assertThat(result.get(result.size() - 1).content()).isEqualTo("Q3");
@@ -105,10 +112,14 @@ class ConversationCompressorTest {
         assertThat(result).isNotEmpty();
         assertThat(result.size()).isLessThan(messages.size());
 
-        // System message should contain summary
+        // System prompt preserved, summary in separate message
         assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
-        assertThat(result.get(0).content()).contains("Summary of old messages");
-        assertThat(result.get(0).content()).contains("[Earlier Conversation Summary]");
+        assertThat(result.get(0).content()).contains("System");
+        Message partialSummaryMsg = result.stream()
+            .filter(m -> m.role() == Role.SYSTEM && m.content().contains("Summary of old messages"))
+            .findFirst().orElse(null);
+        assertThat(partialSummaryMsg).as("partial summary").isNotNull();
+        assertThat(partialSummaryMsg.content()).contains("[Earlier Conversation Summary]");
 
         // The last 2 messages should be kept verbatim
         assertThat(result.get(result.size() - 2).content()).isEqualTo("Q3");

@@ -132,7 +132,7 @@ class AgentRuntimeServiceTest {
 
     @Test
     void runTurnCreatesNewSessionWhenSessionIdIsNull() {
-        ChatRequest request = new ChatRequest(null, USER_MESSAGE, null, null);
+        ChatRequest request = ChatRequest.simple(null, USER_MESSAGE, null, null);
 
         SessionEntity savedEntity = newSessionEntity(SESSION_ID, USER_ID, "New chat");
         when(sessionRepository.save(any(SessionEntity.class))).thenReturn(savedEntity);
@@ -164,7 +164,7 @@ class AgentRuntimeServiceTest {
 
     @Test
     void runTurnLoadsExistingSessionByUuid() {
-        ChatRequest request = new ChatRequest(EXISTING_SESSION_ID, USER_MESSAGE, null, null);
+        ChatRequest request = ChatRequest.simple(EXISTING_SESSION_ID, USER_MESSAGE, null, null);
 
         SessionEntity existing = newSessionEntity(EXISTING_SESSION_ID, USER_ID, "Existing chat");
         existing.setModelProvider(MODEL_PROVIDER);
@@ -190,7 +190,7 @@ class AgentRuntimeServiceTest {
 
     @Test
     void runDelegateCreatesSessionWithDelegationDepthMetadata() {
-        ChatRequest request = new ChatRequest(null, USER_MESSAGE, 3, null);
+        ChatRequest request = ChatRequest.simple(null, USER_MESSAGE, 3, null);
 
         SessionEntity savedEntity = newSessionEntity(SESSION_ID, USER_ID, "New chat");
         when(sessionRepository.save(any(SessionEntity.class))).thenReturn(savedEntity);
@@ -217,7 +217,7 @@ class AgentRuntimeServiceTest {
 
     @Test
     void persistsUserAssistantAndToolMessages() {
-        ChatRequest request = new ChatRequest(EXISTING_SESSION_ID, USER_MESSAGE, null, null);
+        ChatRequest request = ChatRequest.simple(EXISTING_SESSION_ID, USER_MESSAGE, null, null);
 
         SessionEntity existing = newSessionEntity(EXISTING_SESSION_ID, USER_ID, "Tool chat");
         when(sessionRepository.findById(EXISTING_SESSION_ID)).thenReturn(Optional.of(existing));
@@ -265,7 +265,7 @@ class AgentRuntimeServiceTest {
 
     @Test
     void createsNewSessionWhenSessionIdNotFoundInBackend() {
-        ChatRequest request = new ChatRequest(UNKNOWN_SESSION_ID, USER_MESSAGE, null, null);
+        ChatRequest request = ChatRequest.simple(UNKNOWN_SESSION_ID, USER_MESSAGE, null, null);
         when(sessionRepository.findById(UNKNOWN_SESSION_ID)).thenReturn(Optional.empty());
         SessionEntity savedEntity = newSessionEntity(SESSION_ID, USER_ID, "New chat");
         when(sessionRepository.save(any(SessionEntity.class))).thenReturn(savedEntity);

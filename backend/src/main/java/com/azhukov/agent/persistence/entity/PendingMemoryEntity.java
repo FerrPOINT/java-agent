@@ -29,4 +29,9 @@ public class PendingMemoryEntity {
     private String status = "pending";
     private Instant createdAt;
     private Instant resolvedAt;
+
+    @jakarta.persistence.PrePersist
+    void onCreateTimestamps() {
+        if (createdAt == null) createdAt = java.time.Instant.now();
+    }
 }

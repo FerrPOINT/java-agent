@@ -73,7 +73,7 @@ public class BotProperties {
     private String initialStreamText = "";
     // Threshold (chars) to split streaming text into a new message during editStream.
     // Matches Hermes behavior when rich messages are available.
-    private int streamingMaxChars = 32768;
+    private int streamingMaxChars = 4096;
 
     // S5: Streaming transport selection for draft streaming.
     //   "auto"  — prefer native draft streaming (sendMessageDraft) when the chat

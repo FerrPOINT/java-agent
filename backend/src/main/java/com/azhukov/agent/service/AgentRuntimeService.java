@@ -430,7 +430,8 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public List<MemoryDto> listAllMemory(String userId) {
-        return memoryRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
+        // H13: Use bounded query to avoid loading an unbounded result set.
+        return memoryRepository.findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, 1000)).stream()
             .map(e -> new MemoryDto(e.getId(), e.getUserId(), e.getCategory(), e.getFact(),
                 e.getTarget(), e.getCreatedAt()))
             .toList();

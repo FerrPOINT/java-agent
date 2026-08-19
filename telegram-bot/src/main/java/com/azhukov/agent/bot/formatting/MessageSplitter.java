@@ -51,7 +51,14 @@ public final class MessageSplitter {
             int total = chunks.size();
             List<String> indexed = new ArrayList<>(total);
             for (int i = 0; i < total; i++) {
-                indexed.add("(" + (i + 1) + "/" + total + ") " + chunks.get(i));
+                String prefix = "(" + (i + 1) + "/" + total + ") ";
+                int prefixLen = prefix.length();
+                String chunk = chunks.get(i);
+                // Shrink chunk so that prefix + chunk fits within maxLength
+                if (chunk.length() > maxLength - prefixLen) {
+                    chunk = chunk.substring(0, maxLength - prefixLen);
+                }
+                indexed.add(prefix + chunk);
             }
             return indexed;
         }
@@ -85,13 +92,27 @@ public final class MessageSplitter {
             return split(text);
         }
 
-        // For MarkdownV2: split raw text first, then format each chunk, then add escaped indicator
+        // For MarkdownV2: split raw text first, then format each chunk, then add escaped indicator.
+        // MarkdownV2 escaping can double each char (every special char gets a '\' prefix),
+        // so we split the raw text at maxLength / maxExpansionFactor to leave room for escaping.
         if (utf16Length(text) <= TELEGRAM_MAX_LENGTH) {
             // Single chunk — format and return without indicator
             return List.of(MarkdownConverter.convert(text));
         }
 
-        List<String> rawChunks = doSplit(text, TELEGRAM_MAX_LENGTH);
+        // Worst case: every character is a MarkdownV2 special char and gets escaped (doubled).
+        // Also account for the escaped continuation indicator prefix length.
+        final int maxExpansionFactor = 2;
+        // Reserve space for the longest possible indicator prefix "(N/M) " —
+        // after escaping, each of its chars could double, but in practice the indicator
+        // is short (e.g. "(10/10) " = 8 chars, escaped ≈ 12 chars). We use a safe margin.
+        int indicatorReserve = 24; // generous upper bound for escaped "(NN/NN) "
+        int rawMaxLen = (TELEGRAM_MAX_LENGTH - indicatorReserve) / maxExpansionFactor;
+        if (rawMaxLen <= 0) {
+            rawMaxLen = 1; // ensure at least 1 char per chunk
+        }
+
+        List<String> rawChunks = doSplit(text, rawMaxLen);
         int total = rawChunks.size();
         List<String> result = new ArrayList<>(total);
 
@@ -101,6 +122,11 @@ public final class MessageSplitter {
                 // Build the indicator and escape it for MarkdownV2
                 String indicator = "(" + (i + 1) + "/" + total + ") ";
                 String escapedIndicator = MarkdownConverter.escapeMarkdownV2(indicator);
+                // Truncate formatted text if it still exceeds the limit with the prefix
+                int remaining = TELEGRAM_MAX_LENGTH - escapedIndicator.length();
+                if (formatted.length() > remaining) {
+                    formatted = formatted.substring(0, remaining);
+                }
                 result.add(escapedIndicator + formatted);
             } else {
                 result.add(formatted);

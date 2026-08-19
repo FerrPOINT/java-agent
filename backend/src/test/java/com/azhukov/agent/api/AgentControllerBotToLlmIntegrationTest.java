@@ -61,7 +61,7 @@ class AgentControllerBotToLlmIntegrationTest {
 
     @Test
     void syncChatCreatesSessionPersistsMessagesAndReturnsResponse() throws Exception {
-        ChatRequest request = new ChatRequest(null, "hello", null, null);
+        ChatRequest request = ChatRequest.simple(null, "hello", null, null);
 
         MvcResult result = mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -84,18 +84,19 @@ class AgentControllerBotToLlmIntegrationTest {
                 assertThat(session.getModelProvider()).isEqualTo("openai-compatible");
             });
 
+        // System prompt is rebuilt per turn (Hermes parity), not persisted:
+        // persisted history = user + assistant only.
         List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        assertThat(messages).hasSize(3);
-        assertThat(messages.get(0).getRole()).isEqualTo("system");
-        assertThat(messages.get(1).getRole()).isEqualTo("user");
-        assertThat(messages.get(1).getContent()).isEqualTo("hello");
-        assertThat(messages.get(2).getRole()).isEqualTo("assistant");
-        assertThat(messages.get(2).getContent()).isEqualTo("NoOp response: hello");
+        assertThat(messages).hasSize(2);
+        assertThat(messages.get(0).getRole()).isEqualTo("user");
+        assertThat(messages.get(0).getContent()).isEqualTo("hello");
+        assertThat(messages.get(1).getRole()).isEqualTo("assistant");
+        assertThat(messages.get(1).getContent()).isEqualTo("NoOp response: hello");
     }
 
     @Test
     void chatWithExistingSessionContinuesConversation() throws Exception {
-        ChatRequest first = new ChatRequest(null, "first", null, null);
+        ChatRequest first = ChatRequest.simple(null, "first", null, null);
 
         MvcResult firstResult = mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -106,7 +107,7 @@ class AgentControllerBotToLlmIntegrationTest {
         UUID sessionId = objectMapper.readValue(
             firstResult.getResponse().getContentAsString(), ChatResponseDto.class).sessionId();
 
-        ChatRequest second = new ChatRequest(sessionId, "second", null, null);
+        ChatRequest second = ChatRequest.simple(sessionId, "second", null, null);
 
         mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -116,16 +117,16 @@ class AgentControllerBotToLlmIntegrationTest {
             .andExpect(jsonPath("$.sessionId").value(sessionId.toString()));
 
         List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        assertThat(messages).hasSize(6);
+        assertThat(messages).hasSize(4);
         assertThat(messages).extracting(MessageEntity::getRole)
-            .containsExactly("system", "user", "assistant", "system", "user", "assistant");
+            .containsExactly("user", "assistant", "user", "assistant");
         assertThat(messages).extracting(MessageEntity::getContent)
             .contains("first", "NoOp response: first", "second", "NoOp response: second");
     }
 
     @Test
     void streamChatReturnsSseAndPersistsMessages() throws Exception {
-        ChatRequest request = new ChatRequest(null, "stream me", null, null);
+        ChatRequest request = ChatRequest.simple(null, "stream me", null, null);
 
         MvcResult asyncResult = mockMvc.perform(post("/api/v1/agent/chat/stream")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -147,7 +148,7 @@ class AgentControllerBotToLlmIntegrationTest {
 
     @Test
     void contextEndpointReturnsSessionMetadata() throws Exception {
-        ChatRequest request = new ChatRequest(null, "meta", null, null);
+        ChatRequest request = ChatRequest.simple(null, "meta", null, null);
 
         MvcResult result = mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -161,13 +162,13 @@ class AgentControllerBotToLlmIntegrationTest {
         mockMvc.perform(get("/api/v1/agent/session/{sessionId}/context", sessionId))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.sessionId").value(sessionId.toString()))
-            .andExpect(jsonPath("$.messageCount").value(3))
+            .andExpect(jsonPath("$.messageCount").value(2))
             .andExpect(jsonPath("$.toolsUsed").isArray());
     }
 
     @Test
     void usageEndpointReturnsUsageAfterChat() throws Exception {
-        ChatRequest request = new ChatRequest(null, "count me", null, null);
+        ChatRequest request = ChatRequest.simple(null, "count me", null, null);
 
         MvcResult result = mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)

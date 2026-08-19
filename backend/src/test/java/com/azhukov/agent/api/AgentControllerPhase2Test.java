@@ -57,7 +57,7 @@ class AgentControllerPhase2Test {
     @Mock private DomainDtoMapper domainDtoMapper;
     @Mock private RuntimeConfigService runtimeConfigService;
     @Mock private com.azhukov.agent.service.CliRuntimeSettingsService cliRuntimeSettingsService;
-    @Mock private com.azhukov.agent.security.UrlSafetyHandler urlSafetyHandler;
+    @Mock private com.azhukov.agent.core.security.UrlSafetyHandler urlSafetyHandler;
     @Mock private com.azhukov.agent.service.TodoService todoService;
 
     @BeforeEach

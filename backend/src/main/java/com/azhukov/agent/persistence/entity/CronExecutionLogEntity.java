@@ -30,6 +30,9 @@ public class CronExecutionLogEntity {
     @Column(name = "job_id", nullable = false)
     private UUID jobId;
 
+    /** Multi-user: owner of this execution log entry. */
+    private String userId;
+
     @Column(name = "started_at", nullable = false)
     private Instant startedAt;
 

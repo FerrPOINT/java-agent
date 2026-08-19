@@ -115,41 +115,45 @@ class P1CliFixesTest {
 
     @Test
     void destructiveCommandsAreIdentified() {
-        assertThat(DestructiveCommandConfirmation.isDestructive("new")).isTrue();
-        assertThat(DestructiveCommandConfirmation.isDestructive("reset")).isTrue();
-        assertThat(DestructiveCommandConfirmation.isDestructive("rollback")).isTrue();
-        assertThat(DestructiveCommandConfirmation.isDestructive("undo")).isTrue();
-        assertThat(DestructiveCommandConfirmation.isDestructive("clear")).isTrue();
-        assertThat(DestructiveCommandConfirmation.isDestructive("help")).isFalse();
-        assertThat(DestructiveCommandConfirmation.isDestructive("status")).isFalse();
+        DestructiveCommandConfirmation conf = new DestructiveCommandConfirmation();
+        assertThat(conf.isDestructive("new")).isTrue();
+        assertThat(conf.isDestructive("reset")).isTrue();
+        assertThat(conf.isDestructive("rollback")).isTrue();
+        assertThat(conf.isDestructive("undo")).isTrue();
+        assertThat(conf.isDestructive("clear")).isTrue();
+        assertThat(conf.isDestructive("help")).isFalse();
+        assertThat(conf.isDestructive("status")).isFalse();
     }
 
     @Test
     void destructiveLinesAreIdentified() {
-        assertThat(DestructiveCommandConfirmation.isDestructiveLine("/new")).isTrue();
-        assertThat(DestructiveCommandConfirmation.isDestructiveLine("/reset")).isTrue();
-        assertThat(DestructiveCommandConfirmation.isDestructiveLine("/undo 3")).isTrue();
-        assertThat(DestructiveCommandConfirmation.isDestructiveLine("/clear")).isTrue();
-        assertThat(DestructiveCommandConfirmation.isDestructiveLine("/exit --delete")).isTrue();
-        assertThat(DestructiveCommandConfirmation.isDestructiveLine("/help")).isFalse();
-        assertThat(DestructiveCommandConfirmation.isDestructiveLine("/status")).isFalse();
+        DestructiveCommandConfirmation conf = new DestructiveCommandConfirmation();
+        assertThat(conf.isDestructiveLine("/new")).isTrue();
+        assertThat(conf.isDestructiveLine("/reset")).isTrue();
+        assertThat(conf.isDestructiveLine("/undo 3")).isTrue();
+        assertThat(conf.isDestructiveLine("/clear")).isTrue();
+        assertThat(conf.isDestructiveLine("/exit --delete")).isTrue();
+        assertThat(conf.isDestructiveLine("/help")).isFalse();
+        assertThat(conf.isDestructiveLine("/status")).isFalse();
     }
 
     @Test
     void skipTokensAreDetected() {
-        assertThat(DestructiveCommandConfirmation.hasSkipToken("now")).isTrue();
-        assertThat(DestructiveCommandConfirmation.hasSkipToken("--yes")).isTrue();
-        assertThat(DestructiveCommandConfirmation.hasSkipToken("-y")).isTrue();
-        assertThat(DestructiveCommandConfirmation.hasSkipToken("title")).isFalse();
-        assertThat(DestructiveCommandConfirmation.hasSkipToken("")).isFalse();
+        DestructiveCommandConfirmation conf = new DestructiveCommandConfirmation();
+        assertThat(conf.hasSkipToken("now")).isTrue();
+        assertThat(conf.hasSkipToken("--yes")).isTrue();
+        assertThat(conf.hasSkipToken("-y")).isTrue();
+        assertThat(conf.hasSkipToken("title")).isFalse();
+        assertThat(conf.hasSkipToken("")).isFalse();
     }
 
     @Test
     void skipTokensAreStripped() {
-        assertThat(DestructiveCommandConfirmation.stripSkipTokens("now")).isEqualTo("");
-        assertThat(DestructiveCommandConfirmation.stripSkipTokens("--yes My title")).isEqualTo("My title");
-        assertThat(DestructiveCommandConfirmation.stripSkipTokens("-y")).isEqualTo("");
-        assertThat(DestructiveCommandConfirmation.stripSkipTokens("My title")).isEqualTo("My title");
+        DestructiveCommandConfirmation conf = new DestructiveCommandConfirmation();
+        assertThat(conf.stripSkipTokens("now")).isEqualTo("");
+        assertThat(conf.stripSkipTokens("--yes My title")).isEqualTo("My title");
+        assertThat(conf.stripSkipTokens("-y")).isEqualTo("");
+        assertThat(conf.stripSkipTokens("My title")).isEqualTo("My title");
     }
 
     @Test
@@ -201,16 +205,18 @@ class P1CliFixesTest {
 
     @Test
     void getCommandNameExtractsName() {
-        assertThat(DestructiveCommandConfirmation.getCommandName("/new")).isEqualTo("new");
-        assertThat(DestructiveCommandConfirmation.getCommandName("/undo 3")).isEqualTo("undo");
-        assertThat(DestructiveCommandConfirmation.getCommandName("/clear")).isEqualTo("clear");
+        DestructiveCommandConfirmation conf = new DestructiveCommandConfirmation();
+        assertThat(conf.getCommandName("/new")).isEqualTo("new");
+        assertThat(conf.getCommandName("/undo 3")).isEqualTo("undo");
+        assertThat(conf.getCommandName("/clear")).isEqualTo("clear");
     }
 
     @Test
     void getCleanArgsStripsSkipTokens() {
-        assertThat(DestructiveCommandConfirmation.getCleanArgs("/new now")).isEqualTo("");
-        assertThat(DestructiveCommandConfirmation.getCleanArgs("/new --yes My title")).isEqualTo("My title");
-        assertThat(DestructiveCommandConfirmation.getCleanArgs("/clear")).isEqualTo("");
+        DestructiveCommandConfirmation conf = new DestructiveCommandConfirmation();
+        assertThat(conf.getCleanArgs("/new now")).isEqualTo("");
+        assertThat(conf.getCleanArgs("/new --yes My title")).isEqualTo("My title");
+        assertThat(conf.getCleanArgs("/clear")).isEqualTo("");
     }
 
     // ── P1-4: 15 new slash commands ──

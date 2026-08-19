@@ -1340,7 +1340,7 @@ class BotMessageProcessorTest {
     }
 
     @Test
-    void toolResultConsumerTriggersSegmentBreak() {
+    void toolResultConsumerDoesNotTriggerSegmentBreak() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(3);
@@ -1351,8 +1351,8 @@ class BotMessageProcessorTest {
             });
 
         processor.accept(textEvent(1, 100L, "hello"));
-        // Tool results should NOT be shown in stream edits — instead a segment break is triggered
-        verify(streamEditor).onSegmentBreak(anyLong(), anyLong(), anyString());
+        // Tool results do NOT trigger segment break (Hermes parity); next tokens continue in the same message.
+        verify(streamEditor, never()).onSegmentBreak(anyLong(), anyLong(), anyString());
     }
 
     @Test
@@ -1592,14 +1592,18 @@ class BotMessageProcessorTest {
         long chatId = 500L;
         List<String> finalizedTexts = new ArrayList<>();
 
+        when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(123L));
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(3);
                 tokenConsumer.accept("Here is the answer");
                 Consumer<String> toolCallConsumer = inv.getArgument(4);
-                toolCallConsumer.accept("search");
+                toolCallConsumer.accept("search\u0001{\"q\":\"test\"}");
                 BiConsumer<String, String> toolResultConsumer = inv.getArgument(5);
                 toolResultConsumer.accept("search", "results found");
+                // Post-tool tokens form the final segment (the tool-call consumer
+                // committed the previous segment and reset the accumulator).
+                tokenConsumer.accept("Here is the answer");
                 Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(7);
                 onComplete.accept(new AgentBackendClient.ChatResult("Here is the answer", "test-model", 100, 1000, true));
                 return new AgentBackendClient.ChatResult("Here is the answer", "test-model", 100, 1000, true);
@@ -1819,7 +1823,7 @@ class BotMessageProcessorTest {
     @Test
     void editedMessageSendsEditedNotice() {
         UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.EDITED_MESSAGE, 100L, 200L,
-            "testuser", "edited text", null, null, null,
+            "testuser", null, null, "edited text", null, null, null,
             null, null, null, false, null, null, 101L, null, 0, null);
         processor.accept(event);
         verify(telegramClient).sendMessage(eq(100L), contains("Message edited"), anyString(), any(), any());
@@ -1828,7 +1832,7 @@ class BotMessageProcessorTest {
     @Test
     void editedMessageDoesNotCallBackend() {
         UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.EDITED_MESSAGE, 100L, 200L,
-            "testuser", "edited text", null, null, null,
+            "testuser", null, null, "edited text", null, null, null,
             null, null, null, false, null, null, 101L, null, 0, null);
         processor.accept(event);
         verify(backendClient, never()).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any());

@@ -6,13 +6,13 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.tool.ToolRegistry;
-import com.azhukov.agent.security.McpResponseScanner;
-import com.azhukov.agent.security.McpToolDefinitionScanner;
-import com.azhukov.agent.security.ScanResult;
-import com.azhukov.agent.security.Severity;
-import com.azhukov.agent.security.SlidingWindowRateLimiter;
-import com.azhukov.agent.security.ToolArgumentInjectionScanner;
-import com.azhukov.agent.security.ToolFingerprintStore;
+import com.azhukov.agent.core.security.McpResponseScanner;
+import com.azhukov.agent.core.security.McpToolDefinitionScanner;
+import com.azhukov.agent.core.security.ScanResult;
+import com.azhukov.agent.core.security.Severity;
+import com.azhukov.agent.core.security.SlidingWindowRateLimiter;
+import com.azhukov.agent.core.security.ToolArgumentInjectionScanner;
+import com.azhukov.agent.core.security.ToolFingerprintStore;
 import com.azhukov.agent.tools.ToolHandler;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -120,26 +120,53 @@ public class McpLifecycleManager {
     }
 
     public void connect(AgentProperties.McpProperties.ServerProperties server) {
-        // WARNING 4: Wrap the entire read-compare-register-write in synchronized block
-        // to make the check-then-act atomic. Previously only the put was thread-safe,
-        // but the containsKey + put sequence could race, allowing duplicate connections.
+        // H18: Synchronize only the check-then-act, not the initialization.
+        // client.initialize() and listToolsWithPagination() involve network I/O
+        // that must NOT be held under the lock — it would block all other connect/
+        // reconnect operations for the entire duration of the handshake.
         synchronized (clients) {
             if (clients.containsKey(server.getName())) {
                 return;
             }
-            try {
-                McpSyncClient client = createClient(server);
-                client.initialize();
-                // h43: Follow nextCursor pagination when listing tools.
-                var tools = listToolsWithPagination(client);
+        }
+        McpSyncClient client = null;
+        try {
+            client = createClient(server);
+            client.initialize();
+            // h43: Follow nextCursor pagination when listing tools.
+            var tools = listToolsWithPagination(client);
+            // H18: Re-check under lock to prevent duplicate connections from
+            // concurrent callers that both passed the initial check.
+            synchronized (clients) {
+                if (clients.containsKey(server.getName())) {
+                    // Another thread already connected — close this duplicate client.
+                    safeCloseClient(client);
+                    return;
+                }
                 clients.put(server.getName(), new McpServerState(server, client, tools));
-                registerTools(server.getName(), tools);
-                scheduleToolRefresh(server.getName());
-                log.info("Connected to MCP server {} ({}) with {} tools", server.getName(), server.getTransport(), tools.size());
-            } catch (Exception e) {
-                log.warn("Failed to connect to MCP server {}: {}", server.getName(), e.getMessage());
-                scheduleReconnect(server, 0, true);
             }
+            registerTools(server.getName(), tools);
+            scheduleToolRefresh(server.getName());
+            log.info("Connected to MCP server {} ({}) with {} tools", server.getName(), server.getTransport(), tools.size());
+        } catch (Exception e) {
+            log.warn("Failed to connect to MCP server {}: {}", server.getName(), e.getMessage());
+            // H17: Close the client in the catch block before scheduleReconnect
+            // to avoid leaking the underlying transport/resources.
+            if (client != null) {
+                safeCloseClient(client);
+            }
+            scheduleReconnect(server, 0, true);
+        }
+    }
+
+    private void safeCloseClient(McpSyncClient client) {
+        if (client == null) {
+            return;
+        }
+        try {
+            client.close();
+        } catch (Exception e) {
+            log.debug("Error closing MCP client: {}", e.getMessage());
         }
     }
 
@@ -752,6 +779,8 @@ public class McpLifecycleManager {
                 String text = result.content().stream()
                     .map(Object::toString)
                     .collect(Collectors.joining("\n"));
+                // H-SYNC: Strip invisible Unicode TAG characters from MCP tool output
+                text = com.azhukov.agent.core.security.UnicodeTagStripper.stripUnicodeTags(text);
                 // ── Response security scan ──
                 String safeText = text;
                 if (responseScanner != null) {

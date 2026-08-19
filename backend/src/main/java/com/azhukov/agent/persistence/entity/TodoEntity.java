@@ -34,4 +34,10 @@ public class TodoEntity {
 
     @Column(name = "updated_at")
     private Instant updatedAt;
+
+    @jakarta.persistence.PrePersist
+    void onCreateTimestamps() {
+        if (createdAt == null) createdAt = java.time.Instant.now();
+        if (updatedAt == null) updatedAt = java.time.Instant.now();
+    }
 }

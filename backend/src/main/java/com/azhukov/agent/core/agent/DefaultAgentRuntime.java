@@ -31,9 +31,9 @@ import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.core.state.TurnStateManager;
-import com.azhukov.agent.security.MessageSanitizer;
-import com.azhukov.agent.security.ToolCallGuardrail;
-import com.azhukov.agent.security.UserInputSanitizer;
+import com.azhukov.agent.core.security.MessageSanitizer;
+import com.azhukov.agent.core.security.ToolCallGuardrail;
+import com.azhukov.agent.core.security.UserInputSanitizer;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolCallValidator;
 import com.azhukov.agent.core.tool.ToolExecutionService;
@@ -162,10 +162,24 @@ public class DefaultAgentRuntime implements AgentRuntime {
     public TurnResult runTurn(Session session, String userInput, List<String> references,
                               ModelRequestOptions options) {
         ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
-        // Acquire per-session lock to prevent concurrent turns on the same session
+        // Acquire per-session lock to prevent concurrent turns on the same session.
+        // Audit H1: use tryLock with a bounded wait instead of blocking indefinitely.
+        // The previous lock.lock() would block for up to 5 minutes while an
+        // approval gate was being awaited inside runTurnInternal, effectively
+        // hanging the session if a second request arrived during that window.
         UUID sid = session.id();
         java.util.concurrent.locks.ReentrantLock lock = sessionLocks.computeIfAbsent(sid, k -> new java.util.concurrent.locks.ReentrantLock());
-        lock.lock();
+        boolean acquired;
+        try {
+            acquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted while waiting for session lock", e);
+        }
+        if (!acquired) {
+            throw new IllegalStateException(
+                "Session " + sid + " is busy (another turn is in progress). Retry later.");
+        }
         try {
             return runTurnInternal(session, userInput, references, effectiveOptions);
         } finally {
@@ -1888,6 +1902,26 @@ public class DefaultAgentRuntime implements AgentRuntime {
         sessionLocks.remove(sessionId);
         turnsSinceMemory.remove(sessionId);
         itersSinceSkill.remove(sessionId);
+        // Evict per-session state held by collaborating components so that
+        // deleting a session cannot leak memory across the runtime.
+        turnStateManager.clear(sessionId);
+        interruptToken.remove(sessionId);
+        contextEngine.evict(sessionId);
+        backgroundReviewService.clearFlag(sessionId);
+        if (steerBuffer != null) {
+            steerBuffer.clear(sessionId);
+        }
         log.debug("Cleaned up runtime state maps for session {}", sessionId);
+    }
+
+    /**
+     * Reacts to {@link SessionDeletedEvent} (published by session deletion/rotation
+     * endpoints) and evicts all per-session in-memory state. Without this, the
+     * per-session ConcurrentHashMap entries in this runtime and its collaborators
+     * accumulate forever — an unbounded memory leak (audit finding C3).
+     */
+    @org.springframework.context.event.EventListener
+    public void onSessionDeleted(SessionDeletedEvent event) {
+        cleanupSession(event.sessionId());
     }
 }

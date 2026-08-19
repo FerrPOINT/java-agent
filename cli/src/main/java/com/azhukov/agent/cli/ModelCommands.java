@@ -37,7 +37,7 @@ public class ModelCommands implements CommandGroup {
         registry.register("reasoning", "Manage reasoning effort: /reasoning [none|minimal|low|medium|high|xhigh]", (args, client, sessionId) -> {
             if (args.isBlank()) {
                 return "Current reasoning effort: " + cliState.getReasoningEffort() + "\n" +
-                    "Levels: " + String.join(", ", CliState.getValidReasoningLevels()) + "\n" +
+                    "Levels: " + String.join(", ", cliState.getValidReasoningLevels()) + "\n" +
                     "Use /reasoning <level> to set, or /reasoning cycle to cycle.";
             }
             if ("cycle".equalsIgnoreCase(args.strip())) {
@@ -47,7 +47,7 @@ public class ModelCommands implements CommandGroup {
             }
             if (!cliState.setReasoningEffortIfValid(args.strip())) {
                 return "Invalid level: " + args + "\nValid levels: " +
-                    String.join(", ", CliState.getValidReasoningLevels());
+                    String.join(", ", cliState.getValidReasoningLevels());
             }
             String level = cliState.getReasoningEffort();
             client.setReasoningEffort(sessionId, level);

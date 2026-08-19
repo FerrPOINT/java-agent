@@ -5,8 +5,8 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.metrics.AgentMetrics;
-import com.azhukov.agent.security.SecretRedactor;
-import com.azhukov.agent.security.ToolCallGuardrail;
+import com.azhukov.agent.core.security.SecretRedactor;
+import com.azhukov.agent.core.security.ToolCallGuardrail;
 import com.azhukov.agent.core.state.TurnState;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
@@ -130,5 +130,18 @@ public class ToolExecutionService {
         String truncated = result.content().substring(0, max);
         log.warn("Tool {} output truncated from {} to {} chars", toolName, result.content().length(), max);
         return ToolResult.ok(truncated + "\n[output truncated]");
+    }
+
+    @jakarta.annotation.PreDestroy
+    void shutdown() {
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }

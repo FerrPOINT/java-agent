@@ -56,7 +56,7 @@ class StreamEditorFloodFallbackTest {
     @Test
     void floodFallback_entersFallbackModeAfter3Strikes() throws InterruptedException {
         // Start stream successfully
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         editor.startStream(123L, "Hello world");
         Thread.sleep(110);
@@ -91,7 +91,7 @@ class StreamEditorFloodFallbackTest {
     @Test
     void floodFallback_sendsBufferedContentOnFinalize() throws InterruptedException {
         // Start stream successfully
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         editor.startStream(123L, "Hello world");
         Thread.sleep(110);
@@ -114,21 +114,22 @@ class StreamEditorFloodFallbackTest {
         editor.editStream(123L, 42L, "Hello world final buffered content");
 
         // Finalize — should send buffered content as new message
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(99L));
 
         boolean result = editor.finalizeStream(123L, 42L, "Hello world final buffered content");
 
         assertThat(result).isTrue();
-        // Should have sent the buffered content as a new message with parse_mode
-        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any());
+        // Flood fallback sends RAW text (parseMode=null) — streaming output is unescaped.
+        // Anchor on the buffered content to exclude the earlier delayed-start message.
+        verify(client).sendMessage(eq(123L), contains("buffered content"), isNull(), any(), any(), anyBoolean());
         // Should have deleted the old streaming message
         verify(client).deleteMessage(123L, 42L);
     }
 
     @Test
     void floodFallback_resetsStrikesOnSuccess() throws InterruptedException {
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
             .thenReturn(false);
@@ -176,7 +177,7 @@ class StreamEditorFloodFallbackTest {
 
     @Test
     void redundantEditSkip_skipsIdenticalContent() throws InterruptedException {
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
             .thenReturn(true);
@@ -202,7 +203,7 @@ class StreamEditorFloodFallbackTest {
 
     @Test
     void redundantEditSkip_allowsDifferentContent() throws InterruptedException {
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
             .thenReturn(true);
@@ -225,7 +226,7 @@ class StreamEditorFloodFallbackTest {
     void redundantEditSkip_differentCursorStillSkips() throws InterruptedException {
         // The cursor is appended to the formatted text, so if the content is the same,
         // the cursor makes the full text the same too — so it should still skip.
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
             .thenReturn(true);

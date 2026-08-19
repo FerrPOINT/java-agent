@@ -7,6 +7,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.context.ContextEngine;
+import com.azhukov.agent.core.context.DefaultContextEngine;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
@@ -50,6 +51,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -94,8 +96,31 @@ public class AgentStreamingService {
     private final MidTurnPersistenceCallback midTurnPersistenceCallback;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
 
+    // ── Shared turn-execution logic (c2: extracted with DefaultAgentRuntime) ──
+    // TurnExecutor contains the shared model-call-with-retry, tool execution,
+    // think-block stripping, and context-compression-check logic. The streaming
+    // path delegates error classification + backoff calculation to it via
+    // classifyForRetry(), and uses its static estimateResponseTokens helper.
+    // Lazily initialized from existing dependencies to preserve the
+    // @RequiredArgsConstructor signature (tests construct this class positionally
+    // without going through Spring's @PostConstruct lifecycle).
+    // The deps not available here (contextCompressor, approvalQueue,
+    // memoryNudgeManager) are passed as null — they are only used by
+    // callModelWithRetry/executeToolBatch which the streaming path doesn't call.
+    private com.azhukov.agent.core.agent.TurnExecutor turnExecutor;
+
+    private com.azhukov.agent.core.agent.TurnExecutor turnExecutor() {
+        if (turnExecutor == null) {
+            turnExecutor = new com.azhukov.agent.core.agent.TurnExecutor(
+                errorClassifier, properties, null, contextEngine,
+                toolExecutionService, toolResultFormatter, tokenEstimator,
+                interruptToken, null, null, steerBuffer);
+        }
+        return turnExecutor;
+    }
+
     private static final int MAX_STREAM_RETRIES = 5;
-    private static final int MAX_CONTINUATION_ATTEMPTS = 1;
+    private static final int MAX_CONTINUATION_ATTEMPTS = 3;
     // Backoff base/cap are now read from AgentProperties at runtime (see getRetryBackoffBase/Cap)
 
     // Dedicated executor for streaming tasks — avoids ForkJoinPool.commonPool() starvation
@@ -192,9 +217,28 @@ public class AgentStreamingService {
         // create a new session (the bot may have a sessionId from its own bot_sessions table
         // which is separate from backend's sessions table).
         var resolved = sessionResolver.resolveOrCreate(
-            request.sessionId(), "user-1", properties.getModel().getModelName());
+            request.sessionId(),
+            request.userId() != null && !request.userId().isBlank() ? request.userId() : "user-1",
+            properties.getModel().getModelName());
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
+
+        // Enrich session metadata with user identity from the request so the
+        // system prompt volatile tier can include the real name, language, and platform.
+        if (request.username() != null && !request.username().isBlank()) {
+            session = session.withMetadata("userDisplayName",
+                request.firstName() != null && !request.firstName().isBlank()
+                    ? request.firstName()
+                    : request.username());
+        } else if (request.firstName() != null && !request.firstName().isBlank()) {
+            session = session.withMetadata("userDisplayName", request.firstName());
+        }
+        if (request.languageCode() != null && !request.languageCode().isBlank()) {
+            session = session.withMetadata("languageCode", request.languageCode());
+        }
+        if (request.chatType() != null && !request.chatType().isBlank()) {
+            session = session.withMetadata("chatType", request.chatType());
+        }
 
         // Set the ThreadLocal session ID so LangChain4jModelClient can check cancellation
         InterruptToken.setCurrentSessionId(session.id());
@@ -209,15 +253,11 @@ public class AgentStreamingService {
 
         try {
 
-        // Build messages with full session context (system + history + user)
+        // Build messages with full session context (system + user)
+        // History is loaded by contextEngine.prepareContext() via appendRecentHistory().
+        // Do NOT load history here — that would duplicate it in the context.
         List<Message> turnMessages = new ArrayList<>();
         turnMessages.add(promptBuilder.buildSystemMessage(session));
-
-        // Load existing conversation history for this session
-        if (!isNew) {
-            List<Message> history = loadHistory(session.id());
-            turnMessages.addAll(history);
-        }
 
         // Add user message
         turnMessages.add(Message.user(request.message()));
@@ -259,16 +299,19 @@ public class AgentStreamingService {
 
             // Prepare context (trimming/summarization as needed)
             List<Message> context = contextEngine.prepareContext(session, turnMessages);
+            session = resolveRotatedSession(session);
 
             // Call model — streaming tokens to SSE, with error recovery
             int streamRetries = 0;
             int continuationAttempts = 0;
+            boolean lastResponseHadToolCalls = false;
             ChatResponse response;
             final UUID sessionId = session.id();
             while (true) {
                 final StringBuilder contentBuilder = new StringBuilder();
                 final List<ToolCall> collectedToolCalls = new ArrayList<>();
                 final AtomicReference<Throwable> capturedError = new AtomicReference<>();
+                final AtomicReference<String> capturedFinishReason = new AtomicReference<>();
 
                 try {
                     long llmStart = System.currentTimeMillis();
@@ -303,6 +346,13 @@ public class AgentStreamingService {
                         }
 
                         @Override
+                        public void onComplete(String finishReason) {
+                            // Store finish_reason for post-stream routing (LENGTH, CONTENT_FILTER)
+                            capturedFinishReason.set(finishReason);
+                            onComplete();
+                        }
+
+                        @Override
                         public void onError(Throwable error) {
                             capturedError.set(error);
                         }
@@ -322,18 +372,30 @@ public class AgentStreamingService {
                 if (capturedError.get() != null) {
                     Throwable error = capturedError.get();
                     if (streamRetries < MAX_STREAM_RETRIES) {
-                        ErrorClassifier.ErrorType errorType = error instanceof Exception
-                            ? errorClassifier.classify((Exception) error)
-                            : ErrorClassifier.ErrorType.RETRYABLE;
-                        if (errorType == ErrorClassifier.ErrorType.RETRYABLE
-                            || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
-                            // Exponential backoff: base*2^n capped, with jitter
+                        // ── c2: delegate error classification + backoff to TurnExecutor ──
+                        // The streaming path can't reuse callModelWithRetry directly (it
+                        // streams tokens via a handler), but the error classification and
+                        // backoff-delay calculation are shared logic that TurnExecutor owns.
+                        ErrorClassifier.ErrorType errorType;
+                        long delayMs;
+                        if (error instanceof Exception exc) {
+                            com.azhukov.agent.core.agent.TurnExecutor.RetryClassification rc =
+                                turnExecutor().classifyForRetry(exc, streamRetries);
+                            errorType = rc.errorType();
+                            delayMs = rc.backoffMs();
+                            // Preserve the streaming path's jitter: add 0-500ms on top of
+                            // the computed backoff (the synchronous path's jitter is already
+                            // included in computeBackoffMs for non-RATE_LIMIT/OVERLOADED types).
+                            delayMs += ThreadLocalRandom.current().nextLong(0, 500);
+                        } else {
+                            errorType = ErrorClassifier.ErrorType.RETRYABLE;
                             long baseMs = properties.getError().getRetryDelayMs();
                             long capMs = properties.getError().getRetryCapMs();
-                            long delayMs = Math.min(
-                                baseMs * (1L << streamRetries),
-                                capMs);
+                            delayMs = Math.min(baseMs * (1L << streamRetries), capMs);
                             delayMs += ThreadLocalRandom.current().nextLong(0, 500);
+                        }
+                        if (errorType == ErrorClassifier.ErrorType.RETRYABLE
+                            || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
                             String retryMsg = "⏳ Model overloaded, retrying (attempt "
                                 + (streamRetries + 1) + "/" + MAX_STREAM_RETRIES
                                 + ") in " + (delayMs / 1000) + "s...";
@@ -341,7 +403,23 @@ public class AgentStreamingService {
                                 streamRetries + 1, MAX_STREAM_RETRIES, errorType, delayMs, error.getMessage());
                             send(emitter, new StreamEvent("retry", null, null, retryMsg), streamCtx);
                             try {
-                                Thread.sleep(delayMs);
+                                // Interruptible sleep — check cancel flag in small increments
+                                // so user cancellation is detected during backoff (Hermes parity).
+                                long remaining = delayMs;
+                                while (remaining > 0) {
+                                    long chunk = Math.min(remaining, 500);
+                                    Thread.sleep(chunk);
+                                    remaining -= chunk;
+                                    if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                                        log.info("Retry backoff cancelled by interrupt for session {}", session.id());
+                                        send(emitter, new StreamEvent("interrupted", null, null,
+                                            "Turn cancelled by user."), streamCtx);
+                                        send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                                        emitter.complete();
+                                        if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                                        return;
+                                    }
+                                }
                             } catch (InterruptedException ie) {
                                 Thread.currentThread().interrupt();
                                 log.warn("Retry backoff interrupted for session {}", session.id());
@@ -362,13 +440,19 @@ public class AgentStreamingService {
                             send(emitter, new StreamEvent("retry", null, null,
                                 "Compressing context..."), streamCtx);
                             try {
-                                int targetChars = properties.getContext().getTargetTokens() * 4;
                                 List<Message> compressed = conversationCompressor.compress(context, null);
                                 if (compressed.size() < context.size()
                                     || (compressed.size() == context.size()
                                         && compressed.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum()
                                         < context.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum())) {
+                                    // Update BOTH context and turnMessages so compression persists
+                                    // across iterations (Hermes parity). Without updating turnMessages,
+                                    // prepareContext() on the next for-loop iteration would rebuild
+                                    // from the uncompressed turnMessages, discarding compression effort.
                                     context = compressed;
+                                    turnMessages.clear();
+                                    turnMessages.addAll(compressed);
+                                    persistedUpTo = turnMessages.size();
                                     log.info("Context compressed from {} to {} messages during streaming, retrying",
                                         turnMessages.size(), compressed.size());
                                     // Don't count this as a retry attempt — retry immediately
@@ -395,16 +479,76 @@ public class AgentStreamingService {
                     return;
                 }
 
+                // ── finish_reason routing (Hermes parity: conversation_loop.py:3354-3506) ──
+                String finishReason = capturedFinishReason.get();
+                boolean hasContent = contentBuilder.length() > 0;
+                boolean hasToolCalls = !collectedToolCalls.isEmpty();
+                if (finishReason != null) {
+                    log.info("finish_reason={} for session {} (content={} chars, toolCalls={})",
+                        finishReason, session.id(), contentBuilder.length(), collectedToolCalls.size());
+                }
+
+                // CONTENT_FILTER: model declined due to content policy
+                if ("CONTENT_FILTER".equals(finishReason) && !hasToolCalls) {
+                    log.warn("Content filter triggered for session {} — model declined response", session.id());
+                    String filterMsg = "⚠️ Модель отклонила ответ из-за фильтра контента. " +
+                        "Попробуйте переформулировать запрос, сузить контекст или добавить fallback провайдер.";
+                    send(emitter, new StreamEvent("token", filterMsg, null, null), streamCtx);
+                    response = ChatResponse.text(filterMsg);
+                    break;
+                }
+
+                // LENGTH: model hit max output tokens — partial content
+                if ("LENGTH".equals(finishReason) && hasContent && !hasToolCalls
+                        && continuationAttempts < MAX_CONTINUATION_ATTEMPTS) {
+                    log.info("LENGTH truncation detected for session {} — partial content ({} chars), sending continuation (attempt {}/{})",
+                        session.id(), contentBuilder.length(), continuationAttempts + 1, MAX_CONTINUATION_ATTEMPTS);
+                    send(emitter, new StreamEvent("continuation", null, null,
+                        "Continuation prompt sent to model (LENGTH)"), streamCtx);
+                    continuationAttempts++;
+                    turnIndex++;
+                    // LENGTH continuation: preserve the partial content and ask for more
+                    String partialContent = contentBuilder.toString();
+                    contentBuilder.setLength(0);
+                    collectedToolCalls.clear();
+                    List<Message> lengthContext = new ArrayList<>(turnMessages);
+                    lengthContext.add(Message.assistant(partialContent, turnIndex));
+                    lengthContext.add(Message.user("Продолжи с того места, где ты остановился."));
+                    context = contextEngine.prepareContext(session, lengthContext);
+                    session = resolveRotatedSession(session);
+                    continue;
+                }
+
                 // Check for truncated response (empty content + no tool calls + no error)
-                boolean isEmpty = (contentBuilder.length() == 0) && collectedToolCalls.isEmpty();
+                // ThinkScrubber strips reasoning blocks — if the response was think-only,
+                // contentBuilder will be empty but hadThinkContent() is true. In that case
+                // the response is NOT truncated — the model just produced reasoning only.
+                boolean isEmpty = (contentBuilder.length() == 0) && collectedToolCalls.isEmpty()
+                    && !scrubber.hadThinkContent();
                 if (isEmpty && continuationAttempts < MAX_CONTINUATION_ATTEMPTS) {
-                    log.warn("Truncated response detected (empty content, no tool calls), sending continuation prompt");
+                    log.warn("Truncated response detected (empty content, no tool calls), sending continuation prompt (attempt {}/{})",
+                        continuationAttempts + 1, MAX_CONTINUATION_ATTEMPTS);
                     send(emitter, new StreamEvent("continuation", null, null,
                         "Continuation prompt sent to model"), streamCtx);
                     continuationAttempts++;
-                    turnMessages.add(Message.assistant("", turnIndex));
-                    turnMessages.add(Message.user("Please continue your response."));
-                    context = contextEngine.prepareContext(session, turnMessages);
+                    // Reset state for the retry — previous tool calls/content must not leak
+                    contentBuilder.setLength(0);
+                    collectedToolCalls.clear();
+                    turnIndex++; // Increment turnIndex for each continuation attempt (Hermes parity)
+                    // Build a temporary context with continuation prompt WITHOUT polluting
+                    // turnMessages (Hermes marks synthetic messages and strips them before
+                    // finalization — we avoid pollution by using a separate list).
+                    List<Message> continuationContext = new ArrayList<>(turnMessages);
+                    continuationContext.add(Message.assistant("", turnIndex));
+                    // Post-tool empty nudge: if the previous response had tool calls,
+                    // use a specific nudge telling the model to process tool results
+                    // (mirrors Hermes _EMPTY_TOOL_RESPONSE_NUDGE).
+                    String nudgeText = lastResponseHadToolCalls
+                        ? "Ты выполнил tool calls, но вернул пустой ответ. Обработай результаты инструментов выше и продолжи задачу."
+                        : "Пожалуйста, продолжи свой ответ на языке пользователя.";
+                    continuationContext.add(Message.user(nudgeText));
+                    context = contextEngine.prepareContext(session, continuationContext);
+                    session = resolveRotatedSession(session);
                     continue;
                 }
 
@@ -414,12 +558,14 @@ public class AgentStreamingService {
                 // Mirrors Hermes _emit_interim_assistant_message().
                 String streamedContent = contentBuilder.toString();
                 if (!collectedToolCalls.isEmpty()) {
+                    lastResponseHadToolCalls = true;
                     if (streamedContent != null && !streamedContent.isBlank()) {
                         response = ChatResponse.textAndToolCalls(streamedContent, collectedToolCalls);
                     } else {
                         response = ChatResponse.toolCalls(collectedToolCalls);
                     }
                 } else {
+                    lastResponseHadToolCalls = false;
                     response = ChatResponse.text(streamedContent);
                 }
                 break;
@@ -438,6 +584,16 @@ public class AgentStreamingService {
 
             // No tool calls → turn is complete
             if (!response.hasToolCalls()) {
+                // Check for empty response after continuation exhaustion — send error to user
+                // instead of silently delivering an empty message (Hermes parity)
+                if ((response.content() == null || response.content().isBlank())
+                        && continuationAttempts >= MAX_CONTINUATION_ATTEMPTS) {
+                    log.warn("Empty response after {} continuation attempts for session {} — sending error",
+                        continuationAttempts, session.id());
+                    String errorMsg = "⚠️ Модель вернула пустой ответ после " + continuationAttempts
+                        + " попыток продолжения. Попробуйте переформулировать запрос.";
+                    send(emitter, new StreamEvent("token", errorMsg, null, null), streamCtx);
+                }
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
                 sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens());
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
@@ -491,8 +647,9 @@ public class AgentStreamingService {
                     if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                     return;
                 }
-                send(emitter, new StreamEvent("tool_start", null, null, null,
-                    null, null, null, call.name(), null), streamCtx);
+                send(emitter, new StreamEvent("tool_start", null,
+                    java.util.List.of(new com.azhukov.agent.core.model.ToolCall(call.id(), call.name(), call.arguments())),
+                    null, null, null, null, call.name(), null), streamCtx);
 
                 long toolStart = System.currentTimeMillis();
                 ToolResult result = toolExecutionService.execute(
@@ -541,6 +698,26 @@ public class AgentStreamingService {
                 // M6: Only advance cursor if persistence succeeded
                 if (midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
                     persistedUpTo = turnMessages.size();
+                }
+            }
+
+            // Proactive compression check after tool batch (Hermes parity).
+            // Hermes checks should_compress at 50% threshold after every tool batch.
+            // The non-streaming path uses TurnExecutor.checkProactiveCompression.
+            // Without this, context grows unbounded through tool results until
+            // a reactive CONTEXT_OVERFLOW error or provider 400 rejection.
+            if (contextEngine instanceof DefaultContextEngine dce) {
+                if (dce.shouldCompressPreflight(turnMessages)) {
+                    int targetChars = properties.getContext().getTargetTokens() * 4;
+                    List<Message> compressed = dce.getContextCompressor()
+                        .compress(turnMessages, targetChars);
+                    if (compressed.size() < turnMessages.size()) {
+                        log.info("Proactive compression after tool batch: {} → {} messages for session {}",
+                            turnMessages.size(), compressed.size(), session.id());
+                        turnMessages.clear();
+                        turnMessages.addAll(compressed);
+                        persistedUpTo = turnMessages.size();
+                    }
                 }
             }
 
@@ -625,14 +802,8 @@ public class AgentStreamingService {
     }
 
     private int estimateResponseTokens(String content, List<ToolCall> toolCalls) {
-        int chars = content != null ? content.length() : 0;
-        if (toolCalls != null) {
-            for (ToolCall tc : toolCalls) {
-                chars += tc.arguments() != null ? tc.arguments().length() : 0;
-                chars += tc.name() != null ? tc.name().length() : 0;
-            }
-        }
-        return chars / 4 + 1;
+        // c2: delegate to TurnExecutor's shared static helper
+        return com.azhukov.agent.core.agent.TurnExecutor.estimateResponseTokens(content, toolCalls);
     }
 
     private void persistTurn(Session session, List<Message> turnMessages, boolean isNew) {
@@ -681,11 +852,16 @@ public class AgentStreamingService {
         return "New chat";
     }
 
-    private List<Message> loadHistory(UUID sessionId) {
-        // Load messages with ancestor context (mirrors Hermes get_messages_as_conversation
-        // with include_ancestors=True). After compression rotation, the child session
-        // starts fresh — ancestor messages provide historical context.
-        return sessionLineageService.loadMessagesWithAncestors(sessionId);
+    private Session resolveRotatedSession(Session session) {
+        if (contextEngine instanceof DefaultContextEngine dce) {
+            Optional<Session> rotated = dce.resolveRotatedSession(session);
+            if (rotated.isPresent()) {
+                Session ns = rotated.get();
+                log.info("Switching to rotated session: old={}, new={}", session.id(), ns.id());
+                return ns;
+            }
+        }
+        return session;
     }
 
     private void safeCompleteWithError(SseEmitter emitter, Throwable error) {

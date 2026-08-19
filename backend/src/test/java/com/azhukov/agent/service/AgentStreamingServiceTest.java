@@ -180,7 +180,7 @@ class AgentStreamingServiceTest {
 
     @Test
     void streamTurnEmitsTokenEvents() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
@@ -208,7 +208,7 @@ class AgentStreamingServiceTest {
 
     @Test
     void streamTurnEmitsToolCallsAndToolResultEvents() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
         ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"Paris\"}");
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
@@ -245,7 +245,7 @@ class AgentStreamingServiceTest {
 
     @Test
     void streamTurnEmitsMetadataFromUsageTracker() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
@@ -283,7 +283,7 @@ class AgentStreamingServiceTest {
         // properties.getContext().getMaxTokens() (response limit) instead of
         // the actual model context window from ModelMetadataService.
         // With kimi-k2.6, the real context window is 262144, not 8192.
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
@@ -313,7 +313,7 @@ class AgentStreamingServiceTest {
     void streamTurnMetadataContextTokensFromBudgetInputTokens() throws Exception {
         // Bug 2: contextTokens should use the actual input tokens from the last
         // model call (budget.totalInputTokens()), not just usageTracker.
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         // Create a budget snapshot with real input token counts
         int expectedInputTokens = 5000;
@@ -349,7 +349,7 @@ class AgentStreamingServiceTest {
 
     @Test
     void streamTurnEmitsErrorOnModelClientException() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
         RuntimeException failure = new RuntimeException("model exploded");
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
@@ -374,7 +374,7 @@ class AgentStreamingServiceTest {
     @Test
     void streamTurnCreatesNewSessionWhenSessionIdNotFoundInBackend() throws Exception {
         UUID unknownSessionId = UUID.fromString("99999999-9999-9999-9999-999999999999");
-        ChatRequest request = new ChatRequest(unknownSessionId, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(unknownSessionId, USER_MESSAGE, null, 10_000L);
 
         // sessionRepository.findById returns empty for this UUID (not mocked → default empty Optional)
         when(sessionRepository.findById(unknownSessionId)).thenReturn(Optional.empty());
@@ -403,7 +403,7 @@ class AgentStreamingServiceTest {
 
     @Test
     void streamTurnUsesDefaultTimeoutWhenRequestTimeoutMsIsNull() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, null);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, null);
 
         AtomicReference<Long> capturedTimeout = new AtomicReference<>();
         doAnswer(invocation -> {
@@ -424,7 +424,7 @@ class AgentStreamingServiceTest {
 
     @Test
     void streamTurnUsesProvidedTimeoutWhenRequestTimeoutMsIsSet() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 42L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 42L);
 
         AtomicReference<Long> capturedTimeout = new AtomicReference<>();
         doAnswer(invocation -> {
@@ -460,7 +460,7 @@ class AgentStreamingServiceTest {
         entity.setCliStateValue("subgoals", "bug1\nbug2\nbug3");
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
 
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {
@@ -507,7 +507,7 @@ class AgentStreamingServiceTest {
         entity.setCliStateValue("goalPaused", "true");
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
 
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {
@@ -537,7 +537,7 @@ class AgentStreamingServiceTest {
 
     @Test
     void streamTurnCleansUpInterruptTokenAfterCompletion() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
@@ -561,7 +561,7 @@ class AgentStreamingServiceTest {
 
     @Test
     void streamTurnStopsSendingAfterClientDisconnect() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         AtomicBoolean firstSend = new AtomicBoolean(true);

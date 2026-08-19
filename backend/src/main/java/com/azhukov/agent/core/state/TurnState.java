@@ -3,11 +3,11 @@ package com.azhukov.agent.core.state;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolResult;
 
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import lombok.RequiredArgsConstructor;
 
 /**
@@ -27,9 +27,9 @@ public class TurnState {
 
     private final String sessionId;
     private final int turnIndex;
-    private final List<ToolExecution> executions = new ArrayList<>();
-    private final Map<String, Integer> failureCounts = new HashMap<>();
-    private final Map<String, Integer> repeatCallCounts = new HashMap<>();
+    private final List<ToolExecution> executions = new CopyOnWriteArrayList<>();
+    private final Map<String, Integer> failureCounts = new ConcurrentHashMap<>();
+    private final Map<String, Integer> repeatCallCounts = new ConcurrentHashMap<>();
     private int modelCalls = 0;
     private boolean halted = false;
     private String haltReason;

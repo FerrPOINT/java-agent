@@ -270,7 +270,9 @@ public class StreamEditor {
         session.thinkScrubber = new ThinkScrubber();
 
         String scrubbed = scrubThink(session, initialText);
-        String formatted = formatForTelegram(scrubbed);
+        // Edit-based streaming sends with parseMode=null (plain text) — do NOT apply
+        // formatForTelegram/MarkdownV2 escaping here, or backslashes will be visible.
+        String formatted = scrubbed;
 
         // Hermes: if initial text is empty or too short (<4 chars), don't send a message yet.
         // Wait for editStream to accumulate >=4 chars before sending the first message.
@@ -348,7 +350,7 @@ public class StreamEditor {
         // S5: Native draft streaming — route mid-stream frames through sendDraft.
         if (session.useDraftStreaming && !session.streamingDisabled) {
             // Check failure threshold — after 2 failures, fall back to edit-based
-            if (session.draftFailures >= 2) {
+            if (session.draftFailures >= 1) {
                 log.info("Draft streaming disabled for chat {} after {} failures, falling back to edit-based", chatId, session.draftFailures);
                 session.useDraftStreaming = false;
                 // Fall through to edit-based path below
@@ -374,7 +376,8 @@ public class StreamEditor {
         boolean noMsgYet = currentMsg < 0;
         if (noMsgYet && text.length() >= 4) {
             String scrubbed = scrubThink(session, text);
-            String formatted = formatForTelegram(scrubbed);
+            // Edit-based streaming sends with parseMode=null (plain text) — no MarkdownV2 escaping.
+            String formatted = scrubbed;
             if (!formatted.isEmpty() && formatted.length() >= 4) {
                 Optional<Long> newMsgId = sendMessageWithNotification(chatId, formatted + streamCursor, false);
                 if (newMsgId.isPresent()) {
@@ -415,8 +418,18 @@ public class StreamEditor {
         }
 
         // B6: Strip think blocks
+        // Edit-based streaming sends with parseMode=null (plain text) — no MarkdownV2 escaping.
+        // Applying formatForTelegram here would add backslashes before _ . - | ( ) etc.
+        // which Telegram shows literally when parse_mode is not set.
         String scrubbed = scrubThink(session, text);
-        String formatted = formatForTelegram(scrubbed);
+        String formatted = scrubbed;
+
+        // Partial silence marker holdback: don't render a chunk that ends with an incomplete
+        // marker like "NO" / "NO_R" / "[SILE" / "**". Wait for the next chunk.
+        if (endsWithPartialSilenceMarker(formatted)) {
+            log.debug("Holding back partial silence marker for chat {}: '{}'", chatId, formatted);
+            return false;
+        }
 
         // Append streaming cursor
         String withCursor = formatted + streamCursor;
@@ -472,8 +485,21 @@ public class StreamEditor {
         // First portion: first streamingMaxChars chars (minus cursor space)
         int firstLen = streamingMaxChars - streamCursor.length();
         if (firstLen <= 0) firstLen = streamingMaxChars;
+
+        // Code fence balancing: if the split point falls inside an open ``` block,
+        // close the fence at the end of the first chunk and reopen it at the start
+        // of the remainder (Hermes balance_fences_across_chunks).
         String firstPart = withCursor.substring(0, Math.min(firstLen, withCursor.length()));
         String remainder = withCursor.length() > firstLen ? withCursor.substring(firstLen) : "";
+
+        // Count ``` (triple backtick) occurrences in firstPart
+        // If odd, we're inside an unclosed code block at the split point
+        int fenceCount = countCodeFences(firstPart);
+        if (fenceCount % 2 != 0) {
+            // Inside a code block — close in firstPart, reopen in remainder
+            firstPart = firstPart + "\n```";
+            remainder = "```\n" + remainder;
+        }
 
         boolean disableNotification = streamingSilent;
         boolean success;
@@ -548,6 +574,20 @@ public class StreamEditor {
         // Stop heartbeat
         stopHeartbeat(session);
 
+        // Silence marker suppression (Hermes parity: _is_intentional_silence_response).
+        // If the final text is a silence marker, retract the streaming message instead
+        // of showing NO_REPLY/[SILENT]/*** to the user.
+        if (isSilenceMarker(finalText)) {
+            log.debug("Silence marker detected for chat {}, retracting streaming message", chatId);
+            try {
+                telegramClient.deleteMessage(chatId, messageId);
+            } catch (Exception e) {
+                log.debug("Failed to delete streaming message for silence marker: {}", e.getMessage());
+            }
+            removeSession(chatId);
+            return true;
+        }
+
         // S5: Draft streaming — the draft is "committed" by sending the final
         // text as a regular sendMessage. Drafts have no message_id to edit or
         // delete; the draft preview clears naturally on the client when the
@@ -568,8 +608,8 @@ public class StreamEditor {
             }
 
             // Send the final text as a regular message (commits the draft)
-            String formatted = formatForTelegram(scrubbed);
-            Optional<Long> finalMsgId = sendFormattedMessage(chatId, formatted);
+            String formatted = scrubbed;
+            Optional<Long> finalMsgId = sendPlainMessage(chatId, formatted);
             removeSession(chatId);
             if (finalMsgId.isPresent()) {
                 log.debug("Draft finalized for chat {}, messageId={}", chatId, finalMsgId.get());
@@ -593,8 +633,8 @@ public class StreamEditor {
             if (oldMsgId > 0) {
                 telegramClient.deleteMessage(chatId, oldMsgId);
             }
-            // Send the buffered content as a new message (with parse_mode for formatting)
-            Optional<Long> newMsgId = sendFormattedMessage(chatId, bufferedContent);
+            // Send the buffered content as a new message (plain text — no MarkdownV2 escaping)
+            Optional<Long> newMsgId = sendPlainMessage(chatId, bufferedContent);
             removeSession(chatId);
             if (newMsgId.isPresent()) {
                 log.debug("Flood fallback sent for chat {}, new messageId={}", chatId, newMsgId.get());
@@ -631,10 +671,10 @@ public class StreamEditor {
                     return true;
                 }
             }
-            // Delete old message and send new one
+            // Delete old message and send new one (plain text — streaming output is raw)
             telegramClient.deleteMessage(chatId, effectiveMessageId);
-            String formatted = formatForTelegram(scrubbed);
-            Optional<Long> newMsgId = sendFormattedMessage(chatId, formatted);
+            String formatted = scrubbed;
+            Optional<Long> newMsgId = sendPlainMessage(chatId, formatted);
             removeSession(chatId);
             if (newMsgId.isPresent()) {
                 log.debug("Fresh-final sent for chat {}, new messageId={}", chatId, newMsgId.get());
@@ -670,6 +710,11 @@ public class StreamEditor {
                 // 429 on final edit — fall through to sendMessage fallback
                 log.warn("Final edit 429 rate limited for chat {}, trying sendMessage fallback", chatId);
                 success = false;
+            } else if (e.isParseError()) {
+                // 400 parse error on final edit — text may not be properly escaped;
+                // fall back to plain text edit to avoid visible backslashes.
+                log.warn("Final edit parse error for chat {}, trying plain text edit", chatId);
+                success = telegramClient.editMessageText(chatId, effectiveMessageId, scrubbed, null, false);
             } else {
                 throw e;
             }
@@ -748,7 +793,7 @@ public class StreamEditor {
         if (!ok) {
             session.draftFailures = session.draftFailures + 1;
             log.debug("Draft frame failed for chat {} (failures={})", chatId, session.draftFailures);
-            if (session.draftFailures >= 2) {
+            if (session.draftFailures >= 1) {
                 log.info("Disabling draft streaming for chat {} after {} failures, falling back to edit-based",
                     chatId, session.draftFailures);
                 session.useDraftStreaming = false;
@@ -829,6 +874,21 @@ public class StreamEditor {
         onSegmentBreak(chatId, messageId, accumulatedText, session);
     }
 
+    /**
+     * Send a short progress message (tool call bubble) as a separate Telegram message.
+     * Mirrors Hermes tool progress: each tool call gets its own message like "🔎 session_search..."
+     * Not accumulated into the main streaming text.
+     * Sent as PLAIN TEXT (no MarkdownV2 escaping) — tool args may contain regex/special chars.
+     */
+    public void sendProgressMessage(long chatId, String text) {
+        try {
+            // Hermes: raw text (no parse_mode) for tool progress — avoids escaping issues
+            sendMessageWithNotification(chatId, text, streamingSilent);
+        } catch (Exception e) {
+            log.debug("Failed to send progress message for chat {}: {}", chatId, e.getMessage());
+        }
+    }
+
     void onSegmentBreak(long chatId, long messageId, String accumulatedText, StreamSession session) {
         if (accumulatedText == null || accumulatedText.isBlank()) {
             // No text accumulated yet — just clear the tool name
@@ -857,12 +917,20 @@ public class StreamEditor {
             return;
         }
 
-        // Finalize the current message with what we have (no cursor, no silent)
-        // Hermes: raw text (no parse_mode) during streaming
+        // Use session.currentMessageId (may differ from messageId parameter after
+        // a previous segment break created a new message). The caller's messageId
+        // is stale once onSegmentBreak resets currentMessageId to -1.
+        long effectiveMessageId = session.currentMessageId.get();
+        if (effectiveMessageId < 0) {
+            effectiveMessageId = messageId;
+        }
+
+        // Finalize the current message with MarkdownV2 formatting (Hermes parity).
+        // Hermes sends segment breaks with finalize=True (MarkdownV2 formatted).
         String scrubbed = scrubThink(session, accumulatedText);
-        String formatted = scrubbed; // Raw text during streaming — no formatForTelegram
+        String formatted = formatForTelegram(scrubbed);
         try {
-            telegramClient.editMessageText(chatId, messageId, formatted, null, false);
+            telegramClient.editMessageText(chatId, effectiveMessageId, formatted, "MarkdownV2", false);
         } catch (TelegramApiException e) {
             if (!e.isRateLimit()) {
                 throw e;
@@ -925,13 +993,14 @@ public class StreamEditor {
             return; // Tokens are arriving, no need for heartbeat
         }
 
-        long elapsedMinutes = (now - startTime) / 60000;
-        if (elapsedMinutes < 1) {
-            return; // Less than 1 minute, don't show heartbeat yet
+        long elapsedSeconds = (now - startTime) / 1000;
+        if (elapsedSeconds < 10) {
+            return; // Less than 10 seconds, don't show heartbeat yet
         }
 
         String toolName = session.currentToolName;
-        String heartbeatText = "⏳ Working — " + elapsedMinutes + " min";
+        long elapsedMinutes = elapsedSeconds / 60;
+        String heartbeatText = "⏳ Working — " + (elapsedMinutes >= 1 ? elapsedMinutes + " min" : elapsedSeconds + "s");
         if (toolName != null && !toolName.isBlank()) {
             heartbeatText += " — " + toolName;
         }
@@ -1032,8 +1101,10 @@ public class StreamEditor {
             log.warn("Max flood strikes ({}) exceeded for chat {}, disabling streaming edits — buffering until final",
                 MAX_FLOOD_STRIKES, chatId);
             session.streamingDisabled = true;
-            // P2-16: Initialize the flood fallback buffer with the current formatted content
-            session.floodFallbackBuffer.append(formatted);
+            // P2-16: Initialize the flood fallback buffer with the current content.
+            // The buffer is sent via sendFormattedMessage (parseMode=MarkdownV2) on finalize,
+            // so apply formatForTelegram here to escape special chars correctly.
+            session.floodFallbackBuffer.append(formatForTelegram(formatted));
         }
         return false;
     }
@@ -1098,6 +1169,14 @@ public class StreamEditor {
         String scrub(String input) {
             if (input == null || input.isEmpty()) {
                 return "";
+            }
+
+            // If we have a pending partial opening tag from the previous chunk,
+            // prepend it to this chunk so the tag is reassembled correctly (Hermes parity).
+            // Hermes stores partial tags in _think_buffer and prepends to the next chunk.
+            if (pendingTag.length() > 0) {
+                input = pendingTag.toString() + input;
+                pendingTag.setLength(0);
             }
 
             // If we have a pending partial closing tag from the previous chunk,
@@ -1365,7 +1444,7 @@ public class StreamEditor {
         Pattern.compile("</?(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>\\s*",
             Pattern.CASE_INSENSITIVE);
 
-    static String stripThinkTagsRegex(String content) {
+    public static String stripThinkTagsRegex(String content) {
         if (content == null || content.isEmpty()) {
             return "";
         }
@@ -1385,23 +1464,73 @@ public class StreamEditor {
      * During streaming, the initial message is sent silently if streamingSilent is true.
      */
     private Optional<Long> sendMessageWithNotification(long chatId, String text, boolean forceNotification) {
-        // For the initial streaming message, use silent mode if configured
-        // (disable_notification is not a standard sendMessage param, but we use it
-        // for consistency — Telegram's sendMessage doesn't support disable_notification,
-        // so we just send normally for the initial message)
-        // Hermes: during streaming, send raw text (no parse_mode).
-        return telegramClient.sendMessage(chatId, text, null, null, null);
+        // Send with notification control: if forceNotification is true, send with notification
+        // (disableNotification=false). If streamingSilent is true and forceNotification is false,
+        // send silently (disableNotification=true). Hermes sends preview/progress with notify=false.
+        boolean disableNotification = forceNotification ? false : streamingSilent;
+        return telegramClient.sendMessage(chatId, text, null, null, null, disableNotification);
+    }
+
+    /**
+     * Send a plain final message (no parse_mode). Used by draft finalize and
+     * flood fallback where the text has not been MarkdownV2-escaped.
+     */
+    public Optional<Long> sendPlainMessage(long chatId, String text) {
+        return telegramClient.sendMessage(chatId, text, null, null, null, false);
     }
 
     /**
      * Send a formatted final message with parse_mode enabled.
      * Used by finalizeStream fallback paths where MarkdownV2 formatting is needed.
      */
-    private Optional<Long> sendFormattedMessage(long chatId, String text) {
+    public Optional<Long> sendFormattedMessage(long chatId, String text) {
         return telegramClient.sendMessage(chatId, text, parseMode, null, null);
     }
 
     // ─── Formatting ──────────────────────────────────────────────
+
+    /**
+     * Count the number of ``` (triple backtick) code fence markers in text.
+     */
+    private int countCodeFences(String text) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = text.indexOf("```", idx)) >= 0) {
+            count++;
+            idx += 3;
+        }
+        return count;
+    }
+
+    /**
+     * Check if text ends with a partial silence marker prefix. If we render these,
+     * the user sees "NO" / "NO_R" / "NO_RE" flash before the complete marker is scrubbed.
+     * Hermes holdback: wait for the next chunk if text ends with a silence-marker prefix.
+     */
+    private boolean endsWithPartialSilenceMarker(String text) {
+        if (text == null || text.isBlank()) return false;
+        String t = text.trim();
+        return t.endsWith("NO") || t.endsWith("NO_") || t.endsWith("NO_R") || t.endsWith("NO_RE")
+            || t.endsWith("NO_REPL") || t.endsWith("NO_REPLY")
+            || t.endsWith("[") || t.endsWith("[S") || t.endsWith("[SI") || t.endsWith("[SIL")
+            || t.endsWith("[SILE") || t.endsWith("[SILEN") || t.endsWith("[SILENT")
+            || t.endsWith("***") || t.endsWith("**");
+    }
+
+    /**
+     * Check if text is an intentional silence marker (Hermes parity: _is_intentional_silence_response).
+     * These markers indicate the model chose not to respond — the streaming message should be
+     * retracted rather than showing the marker to the user.
+     */
+    private boolean isSilenceMarker(String text) {
+        if (text == null || text.isBlank()) return false;
+        String trimmed = text.trim();
+        return "NO_REPLY".equals(trimmed)
+            || "[SILENT]".equals(trimmed)
+            || "***".equals(trimmed)
+            || trimmed.startsWith("NO_REPLY")
+            && trimmed.length() <= 20; // catch NO_REPLY with trailing whitespace/punctuation
+    }
 
     /**
      * Formats text for Telegram based on the configured parse mode.

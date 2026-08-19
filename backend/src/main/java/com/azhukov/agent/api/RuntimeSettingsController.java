@@ -19,7 +19,7 @@ import com.azhukov.agent.api.dto.TitleRequest;
 import com.azhukov.agent.api.dto.VoiceModeRequest;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
-import com.azhukov.agent.security.UrlSafetyHandler;
+import com.azhukov.agent.core.security.UrlSafetyHandler;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.CliRuntimeSettingsService;
 import com.azhukov.agent.service.RuntimeConfigService;

@@ -50,4 +50,9 @@ public class UsageEntity {
 
     @Column(name = "cache_write_tokens")
     private int cacheWriteTokens;
+
+    @jakarta.persistence.PrePersist
+    void onCreateTimestamps() {
+        if (createdAt == null) createdAt = java.time.Instant.now();
+    }
 }

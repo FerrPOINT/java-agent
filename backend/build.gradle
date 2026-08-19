@@ -121,26 +121,6 @@ dependencies {
     testImplementation 'org.testcontainers:junit-jupiter:1.20.4'
 }
 
-// Temporary workaround: exclude pre-existing broken test files (from other concurrent work)
-// so that compilation succeeds and we can run terminal tests
-sourceSets {
-    test {
-        java {
-            exclude '**/core/context/DefaultContextCompressorHermesSyncTest.java'
-            exclude '**/service/SessionTitleServiceHermesSyncTest.java'
-            exclude '**/service/MemoryManagerHermesSyncTest.java'
-            exclude '**/tools/cron/CronJobToolBranchTest.java'
-            exclude '**/service/CronSuggestionServiceTest.java'
-            exclude '**/service/CronBlueprintServiceTest.java'
-            exclude '**/service/CronBlueprintServiceBranchTest.java'
-            exclude '**/service/transcription/OpenAiTranscriptionProviderTest.java'
-            exclude '**/service/ThinkScrubberTest.java'
-            exclude '**/service/AgentRuntimeServiceTest.java'
-            exclude '**/service/tts/TtsServiceBranchTest.java'
-        }
-    }
-}
-
 tasks.named('test') {
     useJUnitPlatform {
         excludeTags 'live', 'slow', 'e2e'

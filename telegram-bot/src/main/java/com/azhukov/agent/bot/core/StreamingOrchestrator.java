@@ -6,6 +6,7 @@ import com.azhukov.agent.bot.media.MediaDeliveryService;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BusySessionHandler;
 import com.azhukov.agent.bot.streaming.StreamEditor;
+import com.azhukov.agent.bot.streaming.ToolEmojiMap;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -105,27 +106,44 @@ public class StreamingOrchestrator {
                         throw new StreamInterruptedException();
                     }
                     // Edit the message with accumulated text (throttled by StreamEditor)
-                    if (messageId[0] >= 0) {
-                        streamEditor.editStream(chatId, messageId[0], accumulated.toString());
-                    }
+                    // editStream handles both edit-based and draft streaming internally
+                    streamEditor.editStream(chatId, Math.max(0, messageId[0]), accumulated.toString());
                 },
                 // toolCallConsumer — called when backend emits tool_calls event
-                // Tool progress is NOT shown in the streaming message (tool_progress: off).
-                // The current tool name is tracked for heartbeat display only.
+                // Hermes parity: send tool call as a separate short message (progress bubble),
+                // not accumulated in the main text. This keeps the chat clean and readable.
                 toolCall -> {
-                    if (messageId[0] >= 0) {
-                        // Track current tool name for heartbeat, but don't show in stream
-                        streamEditor.setCurrentToolName(chatId, toolCall);
+                    // Check for interrupt before processing tool call
+                    if (busyHandler.isInterrupted(chatId)) {
+                        log.debug("Stream interrupted during tool call for chat {}", chatId);
+                        throw new StreamInterruptedException();
                     }
-                },
-                // toolResultConsumer — called when backend emits tool_result event
-                // Tool results are NOT shown in the streaming message (tool_progress: off).
-                (toolName, toolResultPreview) -> {
-                    if (messageId[0] >= 0) {
-                        // Send a new message to create a segment break after tool execution,
-                        // so the response continues in a fresh message.
+                    // Parse "toolName\u0001args" format from MessageApiClient
+                    String toolName = toolCall;
+                    String toolArgs = null;
+                    int sep = toolCall.indexOf('\u0001');
+                    if (sep >= 0) {
+                        toolName = toolCall.substring(0, sep);
+                        toolArgs = toolCall.substring(sep + 1);
+                    }
+                    streamEditor.setCurrentToolName(chatId, toolName);
+                    // Finalize current streaming message with accumulated text (if any)
+                    if (accumulated.length() > 0 && messageId[0] >= 0) {
                         streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
+                        accumulated.setLength(0);
                     }
+                    // Send tool call as a separate message (progress bubble) with args preview
+                    String toolDisplay = ToolEmojiMap.formatToolCall(toolName, toolArgs);
+                    streamEditor.sendProgressMessage(chatId, toolDisplay);
+                },
+                // toolResultConsumer — called when backend emits tool_result event.
+                // No segment break here: the text after a tool call is a NEW segment
+                // that starts streaming via editStream (which creates a new message
+                // because currentMessageId was reset to -1 by the previous segment break).
+                // Calling onSegmentBreak here with stale messageId would edit the wrong
+                // (already-finalized) message. Hermes does not break on tool_result either.
+                (toolName, toolResultPreview) -> {
+                    // Just clear accumulated text — the next tokens will start a new segment
                 },
                 // retryConsumer — called when backend emits retry/continuation events
                 retryMsg -> {
@@ -139,6 +157,20 @@ public class StreamingOrchestrator {
                 },
                 // onComplete
                 result -> {
+                    // If messageId is still -1 (startStream didn't send initial text because
+                    // it was < 4 chars), but we have accumulated text, send it as a new message
+                    // before finalizing. Hermes handles this via the 'off' transport fallback.
+                    if (messageId[0] < 0 && accumulated.length() > 0) {
+                        String display = accumulated.toString();
+                        messageId[0] = streamEditor.startStream(chatId, display)
+                            .orElse(-1L);
+                        // If startStream still returns empty (text < 4 chars), send directly
+                        // via sendMessage to avoid losing the response (Hermes 'off' transport).
+                        if (messageId[0] < 0) {
+                            streamEditor.sendPlainMessage(chatId, display);
+                            finalized[0] = true;
+                        }
+                    }
                     if (messageId[0] >= 0 && accumulated.length() > 0) {
                         // Append footer to the streaming message before finalizing
                         String footer = runtimeFooter.format(

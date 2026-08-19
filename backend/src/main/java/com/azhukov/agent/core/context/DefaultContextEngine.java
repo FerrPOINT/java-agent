@@ -9,9 +9,9 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
-import com.azhukov.agent.core.agent.SessionLineageService;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -35,20 +36,50 @@ public class DefaultContextEngine implements ContextEngine {
  private final SkillManager skillManager;
  private final MessageRepository messageRepository;
  private final ContextCompressor contextCompressor;
+
+ /** Exposed for proactive compression checks from AgentStreamingService. */
+ public ContextCompressor getContextCompressor() {
+     return contextCompressor;
+ }
  private final AgentProperties.ContextProperties contextProps;
  private final PromptCacheTracker cacheTracker;
  private final ModelMetadataService modelMetadataService;
 
  /**
-  * Session lineage service for loading ancestor messages after compression rotation.
+  * Session lineage port for loading ancestor messages after compression rotation.
   * Optional — set via {@link #setSessionLineageService} after construction.
   * When null, falls back to loading current-session-only history.
   */
- private SessionLineageService sessionLineageService;
+ private SessionLineagePort sessionLineageService;
+ private SessionRepository sessionRepository;
 
  private final Map<UUID, Map<String, String>> snapshotCache = new ConcurrentHashMap<>();
+ private final Map<UUID, UUID> rotatedSessionIds = new ConcurrentHashMap<>();
  private final Map<UUID, String> lastMemoryHash = new ConcurrentHashMap<>();
  private final ConcurrentHashMap<UUID, Instant> lastCompressedAt = new ConcurrentHashMap<>();
+
+ /**
+  * If the given session was rotated during a recent prepareContext call, return the
+  * new child session entity loaded from the repository. Returns empty if no rotation
+  * happened or the child session cannot be found.
+  */
+ public Optional<Session> resolveRotatedSession(Session session) {
+     UUID childId = rotatedSessionIds.get(session.id());
+     if (childId == null) {
+         return Optional.empty();
+     }
+     return sessionRepository.findById(childId)
+         .map(entity -> new Session(
+             childId,
+             entity.getUserId(),
+             entity.getTitle(),
+             entity.getModelProvider(),
+             entity.getModelName(),
+             session.systemPrompt(),
+             session.metadata(), // propagate metadata (platform, source, etc.)
+             session.subgoal()
+         ));
+ }
 
  // Real token usage tracking (replaces chars/4 estimate)
  private volatile int lastPromptTokens = 0;
@@ -100,15 +131,19 @@ public class DefaultContextEngine implements ContextEngine {
  }
 
  /**
- * Inject the {@link SessionLineageService} for loading ancestor messages
+ * Inject the {@link SessionLineagePort} for loading ancestor messages
  * after compression rotation. Called by the Spring {@code @Bean} factory
  * after construction. When not set, history loading falls back to
  * current-session-only queries.
  *
- * @param sessionLineageService the lineage service, or null to disable
+ * @param sessionLineageService the lineage port, or null to disable
  */
- public void setSessionLineageService(SessionLineageService sessionLineageService) {
- this.sessionLineageService = sessionLineageService;
+ public void setSessionLineageService(SessionLineagePort sessionLineageService) {
+     this.sessionLineageService = sessionLineageService;
+ }
+
+ public void setSessionRepository(SessionRepository sessionRepository) {
+     this.sessionRepository = sessionRepository;
  }
 
  @Override
@@ -152,8 +187,10 @@ public class DefaultContextEngine implements ContextEngine {
          if (contextCompressor instanceof DefaultContextCompressor dcc) {
              var rotationResult = dcc.rotateSession(String.valueOf(session.id()));
              if (rotationResult.isPresent()) {
+                 UUID newId = rotationResult.get().newSessionId();
+                 rotatedSessionIds.put(session.id(), newId);
                  log.info("Session rotated: old={}, new={}, title='{}'",
-                         session.id(), rotationResult.get().newSessionId(), rotationResult.get().newTitle());
+                         session.id(), newId, rotationResult.get().newTitle());
              } else {
                  // Fall back to legacy compression boundary logging
                  dcc.logCompressionBoundary(String.valueOf(session.id()), ts -> {
@@ -297,8 +334,8 @@ public class DefaultContextEngine implements ContextEngine {
 
  private List<Message> trimToFit(List<Message> context) {
  int maxMessages = contextProps.getMaxContextMessages();
- if (maxMessages <= 0) {
- maxMessages = 50;
+ if (maxMessages <= 0 || maxMessages < 500) {
+     maxMessages = 10000; // H-SYNC: effectively unlimited — compression handles trimming
  }
  int maxChars = contextProps.getMaxTokens() * charsPerToken();
  int targetChars = contextProps.getTargetTokens() * charsPerToken();
@@ -372,8 +409,8 @@ public class DefaultContextEngine implements ContextEngine {
              if (lineageMessages != null && !lineageMessages.isEmpty()) {
                  // Apply the same maxMessages limit as the paginated path.
                  int maxMessages = contextProps.getMaxContextMessages();
-                 if (maxMessages <= 0) {
-                     maxMessages = 50;
+                 if (maxMessages <= 0 || maxMessages < 500) {
+                     maxMessages = 10000; // H-SYNC: effectively unlimited — let compression handle it
                  }
                  List<Message> recent;
                  if (lineageMessages.size() > maxMessages) {
@@ -413,4 +450,12 @@ public class DefaultContextEngine implements ContextEngine {
          log.debug("History load failed: {}", e.getMessage());
      }
  }
+
+    @Override
+    public void evict(UUID sessionId) {
+        if (sessionId == null) return;
+        snapshotCache.remove(sessionId);
+        lastMemoryHash.remove(sessionId);
+        lastCompressedAt.remove(sessionId);
+    }
 }
