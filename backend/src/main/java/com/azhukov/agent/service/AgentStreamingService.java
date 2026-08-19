@@ -780,13 +780,6 @@ public class AgentStreamingService {
         return "New chat";
     }
 
-    private List<Message> loadHistory(UUID sessionId) {
-        // Load messages with ancestor context (mirrors Hermes get_messages_as_conversation
-        // with include_ancestors=True). After compression rotation, the child session
-        // starts fresh — ancestor messages provide historical context.
-        return sessionLineageService.loadMessagesWithAncestors(sessionId);
-    }
-
     private void safeCompleteWithError(SseEmitter emitter, Throwable error) {
         try {
             // Complete normally — the error has already been sent as an SSE event.

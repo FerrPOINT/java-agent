@@ -350,7 +350,7 @@ public class StreamEditor {
         // S5: Native draft streaming — route mid-stream frames through sendDraft.
         if (session.useDraftStreaming && !session.streamingDisabled) {
             // Check failure threshold — after 2 failures, fall back to edit-based
-            if (session.draftFailures >= 2) {
+            if (session.draftFailures >= 1) {
                 log.info("Draft streaming disabled for chat {} after {} failures, falling back to edit-based", chatId, session.draftFailures);
                 session.useDraftStreaming = false;
                 // Fall through to edit-based path below
@@ -554,6 +554,20 @@ public class StreamEditor {
         // Stop heartbeat
         stopHeartbeat(session);
 
+        // Silence marker suppression (Hermes parity: _is_intentional_silence_response).
+        // If the final text is a silence marker, retract the streaming message instead
+        // of showing NO_REPLY/[SILENT]/*** to the user.
+        if (isSilenceMarker(finalText)) {
+            log.debug("Silence marker detected for chat {}, retracting streaming message", chatId);
+            try {
+                telegramClient.deleteMessage(chatId, messageId);
+            } catch (Exception e) {
+                log.debug("Failed to delete streaming message for silence marker: {}", e.getMessage());
+            }
+            removeSession(chatId);
+            return true;
+        }
+
         // S5: Draft streaming — the draft is "committed" by sending the final
         // text as a regular sendMessage. Drafts have no message_id to edit or
         // delete; the draft preview clears naturally on the client when the
@@ -754,7 +768,7 @@ public class StreamEditor {
         if (!ok) {
             session.draftFailures = session.draftFailures + 1;
             log.debug("Draft frame failed for chat {} (failures={})", chatId, session.draftFailures);
-            if (session.draftFailures >= 2) {
+            if (session.draftFailures >= 1) {
                 log.info("Disabling draft streaming for chat {} after {} failures, falling back to edit-based",
                     chatId, session.draftFailures);
                 session.useDraftStreaming = false;
@@ -1425,23 +1439,37 @@ public class StreamEditor {
      * During streaming, the initial message is sent silently if streamingSilent is true.
      */
     private Optional<Long> sendMessageWithNotification(long chatId, String text, boolean forceNotification) {
-        // For the initial streaming message, use silent mode if configured
-        // (disable_notification is not a standard sendMessage param, but we use it
-        // for consistency — Telegram's sendMessage doesn't support disable_notification,
-        // so we just send normally for the initial message)
-        // Hermes: during streaming, send raw text (no parse_mode).
-        return telegramClient.sendMessage(chatId, text, null, null, null);
+        // Send with notification control: if forceNotification is true, send with notification
+        // (disableNotification=false). If streamingSilent is true and forceNotification is false,
+        // send silently (disableNotification=true). Hermes sends preview/progress with notify=false.
+        boolean disableNotification = forceNotification ? false : streamingSilent;
+        return telegramClient.sendMessage(chatId, text, null, null, null, disableNotification);
     }
 
     /**
      * Send a formatted final message with parse_mode enabled.
      * Used by finalizeStream fallback paths where MarkdownV2 formatting is needed.
      */
-    private Optional<Long> sendFormattedMessage(long chatId, String text) {
+    public Optional<Long> sendFormattedMessage(long chatId, String text) {
         return telegramClient.sendMessage(chatId, text, parseMode, null, null);
     }
 
     // ─── Formatting ──────────────────────────────────────────────
+
+    /**
+     * Check if text is an intentional silence marker (Hermes parity: _is_intentional_silence_response).
+     * These markers indicate the model chose not to respond — the streaming message should be
+     * retracted rather than showing the marker to the user.
+     */
+    private boolean isSilenceMarker(String text) {
+        if (text == null || text.isBlank()) return false;
+        String trimmed = text.trim();
+        return "NO_REPLY".equals(trimmed)
+            || "[SILENT]".equals(trimmed)
+            || "***".equals(trimmed)
+            || trimmed.startsWith("NO_REPLY")
+            && trimmed.length() <= 20; // catch NO_REPLY with trailing whitespace/punctuation
+    }
 
     /**
      * Formats text for Telegram based on the configured parse mode.

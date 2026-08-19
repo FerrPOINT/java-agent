@@ -164,6 +164,12 @@ public class StreamingOrchestrator {
                         String display = accumulated.toString();
                         messageId[0] = streamEditor.startStream(chatId, display)
                             .orElse(-1L);
+                        // If startStream still returns empty (text < 4 chars), send directly
+                        // via sendMessage to avoid losing the response (Hermes 'off' transport).
+                        if (messageId[0] < 0) {
+                            streamEditor.sendFormattedMessage(chatId, display);
+                            finalized[0] = true;
+                        }
                     }
                     if (messageId[0] >= 0 && accumulated.length() > 0) {
                         // Append footer to the streaming message before finalizing
