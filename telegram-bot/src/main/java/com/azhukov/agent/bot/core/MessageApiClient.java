@@ -211,23 +211,11 @@ public class MessageApiClient extends BaseBackendClient {
                                         metadataHolder[0] = extractMetadata(event);
                                         continue;
                                     }
-                                    // tool_calls event — notify tool call consumer
+                                    // tool_calls event — LLM decided to call tools.
+                                    // Do NOT send a progress bubble here; the tool_start event
+                                    // (fired per-tool right before execution) will send the bubble.
+                                    // Sending here causes duplicate bubbles in Telegram.
                                     if ("tool_calls".equalsIgnoreCase(type)) {
-                                        JsonNode toolCallsNode = event.get("toolCalls");
-                                        if (toolCallsNode != null && toolCallsNode.isArray()) {
-                                            for (JsonNode tc : toolCallsNode) {
-                                                String toolName = tc.path("name").asText("unknown");
-                                                String toolArgs = tc.path("arguments").asText("");
-                                                if (toolArgs.isEmpty()) {
-                                                    // Try arguments as object
-                                                    JsonNode argsNode = tc.path("arguments");
-                                                    if (argsNode != null && !argsNode.isNull()) {
-                                                        toolArgs = argsNode.toString();
-                                                    }
-                                                }
-                                                toolCallConsumer.accept(toolName + "\u0001" + toolArgs);
-                                            }
-                                        }
                                         continue;
                                     }
                                     // tool_start event — notify tool call consumer
