@@ -878,12 +878,20 @@ public class StreamEditor {
             return;
         }
 
+        // Use session.currentMessageId (may differ from messageId parameter after
+        // a previous segment break created a new message). The caller's messageId
+        // is stale once onSegmentBreak resets currentMessageId to -1.
+        long effectiveMessageId = session.currentMessageId.get();
+        if (effectiveMessageId < 0) {
+            effectiveMessageId = messageId;
+        }
+
         // Finalize the current message with what we have (no cursor, no silent)
         // Hermes: raw text (no parse_mode) during streaming
         String scrubbed = scrubThink(session, accumulatedText);
         String formatted = scrubbed; // Raw text during streaming — no formatForTelegram
         try {
-            telegramClient.editMessageText(chatId, messageId, formatted, null, false);
+            telegramClient.editMessageText(chatId, effectiveMessageId, formatted, null, false);
         } catch (TelegramApiException e) {
             if (!e.isRateLimit()) {
                 throw e;

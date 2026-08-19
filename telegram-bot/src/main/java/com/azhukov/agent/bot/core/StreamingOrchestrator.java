@@ -136,11 +136,14 @@ public class StreamingOrchestrator {
                     String toolDisplay = ToolEmojiMap.formatToolCall(toolName, toolArgs);
                     streamEditor.sendProgressMessage(chatId, toolDisplay);
                 },
-                // toolResultConsumer — called when backend emits tool_result event
+                // toolResultConsumer — called when backend emits tool_result event.
+                // No segment break here: the text after a tool call is a NEW segment
+                // that starts streaming via editStream (which creates a new message
+                // because currentMessageId was reset to -1 by the previous segment break).
+                // Calling onSegmentBreak here with stale messageId would edit the wrong
+                // (already-finalized) message. Hermes does not break on tool_result either.
                 (toolName, toolResultPreview) -> {
-                    if (messageId[0] >= 0) {
-                        streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
-                    }
+                    // Just clear accumulated text — the next tokens will start a new segment
                 },
                 // retryConsumer — called when backend emits retry/continuation events
                 retryMsg -> {
