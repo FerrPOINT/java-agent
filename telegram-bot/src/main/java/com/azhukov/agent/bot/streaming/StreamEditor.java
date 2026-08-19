@@ -608,8 +608,8 @@ public class StreamEditor {
             }
 
             // Send the final text as a regular message (commits the draft)
-            String formatted = formatForTelegram(scrubbed);
-            Optional<Long> finalMsgId = sendFormattedMessage(chatId, formatted);
+            String formatted = scrubbed;
+            Optional<Long> finalMsgId = sendPlainMessage(chatId, formatted);
             removeSession(chatId);
             if (finalMsgId.isPresent()) {
                 log.debug("Draft finalized for chat {}, messageId={}", chatId, finalMsgId.get());
@@ -633,8 +633,8 @@ public class StreamEditor {
             if (oldMsgId > 0) {
                 telegramClient.deleteMessage(chatId, oldMsgId);
             }
-            // Send the buffered content as a new message (with parse_mode for formatting)
-            Optional<Long> newMsgId = sendFormattedMessage(chatId, bufferedContent);
+            // Send the buffered content as a new message (plain text — no MarkdownV2 escaping)
+            Optional<Long> newMsgId = sendPlainMessage(chatId, bufferedContent);
             removeSession(chatId);
             if (newMsgId.isPresent()) {
                 log.debug("Flood fallback sent for chat {}, new messageId={}", chatId, newMsgId.get());
@@ -671,10 +671,10 @@ public class StreamEditor {
                     return true;
                 }
             }
-            // Delete old message and send new one
+            // Delete old message and send new one (plain text — streaming output is raw)
             telegramClient.deleteMessage(chatId, effectiveMessageId);
-            String formatted = formatForTelegram(scrubbed);
-            Optional<Long> newMsgId = sendFormattedMessage(chatId, formatted);
+            String formatted = scrubbed;
+            Optional<Long> newMsgId = sendPlainMessage(chatId, formatted);
             removeSession(chatId);
             if (newMsgId.isPresent()) {
                 log.debug("Fresh-final sent for chat {}, new messageId={}", chatId, newMsgId.get());
@@ -710,6 +710,11 @@ public class StreamEditor {
                 // 429 on final edit — fall through to sendMessage fallback
                 log.warn("Final edit 429 rate limited for chat {}, trying sendMessage fallback", chatId);
                 success = false;
+            } else if (e.isParseError()) {
+                // 400 parse error on final edit — text may not be properly escaped;
+                // fall back to plain text edit to avoid visible backslashes.
+                log.warn("Final edit parse error for chat {}, trying plain text edit", chatId);
+                success = telegramClient.editMessageText(chatId, effectiveMessageId, scrubbed, null, false);
             } else {
                 throw e;
             }
@@ -1464,6 +1469,14 @@ public class StreamEditor {
         // send silently (disableNotification=true). Hermes sends preview/progress with notify=false.
         boolean disableNotification = forceNotification ? false : streamingSilent;
         return telegramClient.sendMessage(chatId, text, null, null, null, disableNotification);
+    }
+
+    /**
+     * Send a plain final message (no parse_mode). Used by draft finalize and
+     * flood fallback where the text has not been MarkdownV2-escaped.
+     */
+    public Optional<Long> sendPlainMessage(long chatId, String text) {
+        return telegramClient.sendMessage(chatId, text, null, null, null);
     }
 
     /**

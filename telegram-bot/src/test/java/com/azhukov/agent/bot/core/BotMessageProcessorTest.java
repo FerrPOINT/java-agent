@@ -1340,7 +1340,7 @@ class BotMessageProcessorTest {
     }
 
     @Test
-    void toolResultConsumerTriggersSegmentBreak() {
+    void toolResultConsumerDoesNotTriggerSegmentBreak() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(3);
@@ -1351,8 +1351,8 @@ class BotMessageProcessorTest {
             });
 
         processor.accept(textEvent(1, 100L, "hello"));
-        // Tool results should NOT be shown in stream edits — instead a segment break is triggered
-        verify(streamEditor).onSegmentBreak(anyLong(), anyLong(), anyString());
+        // Tool results do NOT trigger segment break (Hermes parity); next tokens continue in the same message.
+        verify(streamEditor, never()).onSegmentBreak(anyLong(), anyLong(), anyString());
     }
 
     @Test
@@ -1592,6 +1592,7 @@ class BotMessageProcessorTest {
         long chatId = 500L;
         List<String> finalizedTexts = new ArrayList<>();
 
+        when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(123L));
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(3);

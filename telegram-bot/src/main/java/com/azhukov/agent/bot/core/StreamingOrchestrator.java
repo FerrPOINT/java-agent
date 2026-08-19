@@ -167,7 +167,7 @@ public class StreamingOrchestrator {
                         // If startStream still returns empty (text < 4 chars), send directly
                         // via sendMessage to avoid losing the response (Hermes 'off' transport).
                         if (messageId[0] < 0) {
-                            streamEditor.sendFormattedMessage(chatId, display);
+                            streamEditor.sendPlainMessage(chatId, display);
                             finalized[0] = true;
                         }
                     }

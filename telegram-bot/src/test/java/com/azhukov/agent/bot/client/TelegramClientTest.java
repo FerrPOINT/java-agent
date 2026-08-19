@@ -1420,8 +1420,8 @@ class TelegramClientTest {
         }
 
         @Test
-        @DisplayName("sendDraft succeeds with MarkdownV2")
-        void sendDraft_succeedsWithMarkdownV2() {
+        @DisplayName("sendDraft succeeds with raw text (no parse_mode)")
+        void sendDraft_succeedsWithRawText() {
             TelegramResponse okResponse = new TelegramResponse(true, null, "OK", Map.of(), null);
             stubPostChain(okResponse);
 
@@ -1431,27 +1431,14 @@ class TelegramClientTest {
         }
 
         @Test
-        @DisplayName("sendDraft falls back to plain text on MarkdownV2 parse error")
-        void sendDraft_fallsBackToPlainTextOnParseError() {
-            // First call (MarkdownV2) returns parse error
+        @DisplayName("sendDraft returns false on parse error (raw text only, no retry)")
+        void sendDraft_returnsFalseOnParseError() {
             TelegramResponse parseError = errorResponse(400, "Bad Request: can't parse entities: unmatched asterisk");
-            // Second call (plain text) succeeds
-            TelegramResponse okResponse = new TelegramResponse(true, null, "OK", Map.of(), null);
-
-            // Stub two sequential calls
-            when(restClient.post()).thenReturn(postUriSpec);
-            when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
-            when(bodySpec.accept(any(MediaType.class))).thenReturn(bodySpec);
-            when(bodySpec.contentType(any(MediaType.class))).thenReturn(bodySpec);
-            when(bodySpec.body(anyMap())).thenReturn(bodySpec);
-            when(bodySpec.retrieve()).thenReturn(responseSpec);
-            when(responseSpec.body(TelegramResponse.class))
-                .thenReturn(parseError)  // First call: MarkdownV2 parse error
-                .thenReturn(okResponse);  // Second call: plain text success
+            stubPostChain(parseError);
 
             boolean result = client.sendDraft(123L, "Hello *invalid markdown", 1);
 
-            assertThat(result).isTrue();
+            assertThat(result).isFalse();
         }
 
         @Test
