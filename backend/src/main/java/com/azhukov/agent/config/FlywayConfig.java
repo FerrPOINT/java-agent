@@ -19,18 +19,21 @@ public class FlywayConfig {
     public Flyway flyway(DataSource dataSource) {
         var config = Flyway.configure()
             .dataSource(dataSource)
-            .baselineOnMigrate(true);
+            .baselineOnMigrate(true)
+            // V21.1 (ensure bot_sessions) was added after V22..V29 were already applied
+            // on production. Allow out-of-order application so fresh installs and the
+            // existing production history both converge to the same schema.
+            .outOfOrder(true);
 
         if (isH2(dataSource)) {
-            // H2 (tests / noop profile): H2 has no tsvector/GIN support, so
-            // vendor-specific migrations live in db/h2 (V18 FTS stub).
-            // Runtime FTS queries already have LIKE-based fallbacks in
-            // SessionSearchService, so search still works on H2.
+            // H2 (tests / noop profile): no tsvector/GIN, no partial indexes.
+            // Vendor variants live in db/h2; FTS queries fall back to LIKE in
+            // SessionSearchService.
             config.locations("classpath:db/migration", "classpath:db/h2")
                 .initSql("CREATE DOMAIN IF NOT EXISTS timestamptz AS TIMESTAMP WITH TIME ZONE; CREATE DOMAIN IF NOT EXISTS jsonb AS JSON");
         } else {
-            // PostgreSQL: db/postgresql adds vendor-specific scripts
-            // (V18 tsvector/GIN full-text search) on top of the common set.
+            // PostgreSQL: vendor-specific scripts (tsvector FTS, partial indexes)
+            // live in db/postgresql on top of the common set.
             config.locations("classpath:db/migration", "classpath:db/postgresql");
         }
 
