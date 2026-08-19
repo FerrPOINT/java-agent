@@ -423,6 +423,10 @@ public class SessionSearchService {
 
     private ShapedMessage shapeMessage(MessageEntity m, UUID anchorId, int maxContentLen) {
         String content = m.getContent();
+        // Strip ANSI escape sequences from recalled terminal output (Hermes parity)
+        if (content != null && content.contains("\u001b")) {
+            content = content.replaceAll("\u001b\\[[0-9;]*[a-zA-Z]", "");
+        }
         boolean truncated = false;
         Integer originalChars = null;
         if (content != null && maxContentLen > 0 && content.length() > maxContentLen) {
@@ -550,8 +554,12 @@ public class SessionSearchService {
     record DiscoverMatch(UUID rawSessionId, UUID lineageRoot, UUID messageId, String matchType) {}
     public record AnchoredView(List<ShapedMessage> window, int messagesBefore, int messagesAfter,
                                 List<ShapedMessage> bookendStart, List<ShapedMessage> bookendEnd) {}
-    public record ShapedMessage(UUID id, String role, String content, String timestamp,
-                                 String toolName, boolean contentTruncated, Integer originalContentChars, boolean anchor) {}
+    public record ShapedMessage(
+        UUID id, String role, String content, String timestamp,
+        @com.fasterxml.jackson.annotation.JsonProperty("tool_name") String toolName,
+        @com.fasterxml.jackson.annotation.JsonProperty("content_truncated") boolean contentTruncated,
+        @com.fasterxml.jackson.annotation.JsonProperty("original_content_chars") Integer originalContentChars,
+        boolean anchor) {}
     public record DiscoverResult(
         @com.fasterxml.jackson.annotation.JsonProperty("session_id") UUID sessionId,
         String when, String source, String model,
