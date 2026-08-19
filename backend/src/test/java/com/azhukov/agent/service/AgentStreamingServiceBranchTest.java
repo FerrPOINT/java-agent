@@ -37,6 +37,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -819,7 +820,8 @@ class AgentStreamingServiceBranchTest {
 
     @Test
     void existingSessionLoadsHistory() throws Exception {
-        // Set up message history
+        // History is now loaded by contextEngine.prepareContext(), not by loadHistory().
+        // Mock prepareContext to inject history messages (mirrors what DefaultContextEngine.appendRecentHistory does).
         var msgEntity = new com.azhukov.agent.persistence.entity.MessageEntity();
         msgEntity.setRole("user");
         msgEntity.setContent("previous message");
@@ -827,6 +829,16 @@ class AgentStreamingServiceBranchTest {
         msgEntity.setCreatedAt(Instant.now());
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID))
             .thenReturn(List.of(msgEntity));
+
+        // Override prepareContext to inject history before returning
+        when(contextEngine.prepareContext(any(Session.class), any(List.class)))
+            .thenAnswer(inv -> {
+                List<Message> msgs = new ArrayList<>(inv.getArgument(1));
+                // Insert history before the last (current user) message
+                int insertAt = msgs.size() > 1 ? msgs.size() - 1 : msgs.size();
+                msgs.add(insertAt, Message.user("previous message"));
+                return msgs;
+            });
 
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {

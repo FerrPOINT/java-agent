@@ -1029,6 +1029,16 @@ public class DefaultPromptBuilder implements PromptBuilder {
                 java.time.format.DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy")
             )
         );
+        // Timezone — helps the LLM determine the user's locale and language
+        java.time.ZoneId zoneId = java.time.ZoneId.systemDefault();
+        String zoneIdStr = zoneId.getId();
+        java.time.ZonedDateTime now = java.time.ZonedDateTime.now();
+        String offsetStr = now.getOffset().getId();
+        volatileTier.append(" (").append(zoneIdStr).append(", UTC").append(offsetStr).append(")");
+        // Session ID — allows the model to reference the current session
+        if (session.id() != null) {
+            volatileTier.append("\nSession ID: ").append(session.id());
+        }
         // Model and provider — helps the LLM know what model it is
         if (session.modelName() != null) {
             volatileTier.append("\nModel: ").append(session.modelName());

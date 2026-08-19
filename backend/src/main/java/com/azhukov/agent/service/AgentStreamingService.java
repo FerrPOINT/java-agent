@@ -232,15 +232,11 @@ public class AgentStreamingService {
 
         try {
 
-        // Build messages with full session context (system + history + user)
+        // Build messages with full session context (system + user)
+        // History is loaded by contextEngine.prepareContext() via appendRecentHistory().
+        // Do NOT load history here — that would duplicate it in the context.
         List<Message> turnMessages = new ArrayList<>();
         turnMessages.add(promptBuilder.buildSystemMessage(session));
-
-        // Load existing conversation history for this session
-        if (!isNew) {
-            List<Message> history = loadHistory(session.id());
-            turnMessages.addAll(history);
-        }
 
         // Add user message
         turnMessages.add(Message.user(request.message()));
@@ -477,6 +473,16 @@ public class AgentStreamingService {
 
             // No tool calls → turn is complete
             if (!response.hasToolCalls()) {
+                // Check for empty response after continuation exhaustion — send error to user
+                // instead of silently delivering an empty message (Hermes parity)
+                if ((response.content() == null || response.content().isBlank())
+                        && continuationAttempts >= MAX_CONTINUATION_ATTEMPTS) {
+                    log.warn("Empty response after {} continuation attempts for session {} — sending error",
+                        continuationAttempts, session.id());
+                    String errorMsg = "⚠️ Модель вернула пустой ответ после " + continuationAttempts
+                        + " попыток продолжения. Попробуйте переформулировать запрос.";
+                    send(emitter, new StreamEvent("token", errorMsg, null, null), streamCtx);
+                }
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
                 sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens());
                 send(emitter, new StreamEvent("done", null, null, null), streamCtx);
