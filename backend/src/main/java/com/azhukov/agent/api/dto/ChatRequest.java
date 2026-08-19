@@ -21,7 +21,8 @@ public record ChatRequest(
     String userId,
     String username,
     String firstName,
-    String languageCode
+    String languageCode,
+    String chatType
 ) {
     // Static factory — compact 4-arg form for tests and simple calls
     public static ChatRequest simple(UUID sessionId, String message, Integer delegationDepth, Long timeoutMs) {
@@ -29,16 +30,16 @@ public record ChatRequest(
             (String) null, (Boolean) null, (Boolean) null, (String) null,
             (java.util.List<String>) null, (java.util.List<String>) null,
             (String) null, (String) null, (String) null,  // queuedPrompt, subgoal, cdpUrl
-            (String) null, (String) null, (String) null, (String) null, (String) null); // goal..languageCode
+            (String) null, (String) null, (String) null, (String) null, (String) null, (String) null); // goal..chatType
     }
 
-    // Static factory — 13-arg form (all runtime flags except goal/userId)
+    // Static factory — 13-arg form (all runtime flags except goal/userId/chatType)
     public static ChatRequest withFlags(UUID sessionId, String message, Integer delegationDepth, Long timeoutMs,
                                  String reasoningEffort, Boolean fastMode, Boolean voiceMode, String personality,
                                  java.util.List<String> enabledTools, java.util.List<String> disabledTools,
                                  String queuedPrompt, String subgoal, String cdpUrl) {
         return new ChatRequest(sessionId, message, delegationDepth, timeoutMs, reasoningEffort, fastMode,
             voiceMode, personality, enabledTools, disabledTools, queuedPrompt, subgoal, cdpUrl,
-            (String) null, (String) null, (String) null, (String) null, (String) null); // goal..languageCode
+            (String) null, (String) null, (String) null, (String) null, (String) null, (String) null);
     }
 }

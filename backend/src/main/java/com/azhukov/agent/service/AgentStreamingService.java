@@ -234,6 +234,9 @@ public class AgentStreamingService {
         if (request.languageCode() != null && !request.languageCode().isBlank()) {
             session = session.withMetadata("languageCode", request.languageCode());
         }
+        if (request.chatType() != null && !request.chatType().isBlank()) {
+            session = session.withMetadata("chatType", request.chatType());
+        }
 
         // Set the ThreadLocal session ID so LangChain4jModelClient can check cancellation
         InterruptToken.setCurrentSessionId(session.id());

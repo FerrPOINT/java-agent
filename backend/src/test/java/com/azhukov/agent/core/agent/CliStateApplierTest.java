@@ -122,7 +122,7 @@ class CliStateApplierTest {
         ChatRequest request = new ChatRequest(
             SESSION_ID, "Hello", null, 10_000L,
             "high", null, null, null,
-            null, null, null, null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null, null, null, null);
         SessionEntity entity = newSessionEntity();
         entity.setCliStateValue("reasoningEffort", "low");
         ChatRequest result = applier.applyCliState(request, entity);
@@ -143,7 +143,7 @@ class CliStateApplierTest {
         ChatRequest request = new ChatRequest(
             SESSION_ID, "Hello", null, 10_000L,
             null, null, null, null,
-            null, null, "request-queued", null, null, null, null, null, null, null);
+            null, null, "request-queued", null, null, null, null, null, null, null, null);
         SessionEntity entity = newSessionEntity();
         ChatRequest result = applier.applyCliState(request, entity);
         assertThat(result.queuedPrompt()).isNull(); // consumed

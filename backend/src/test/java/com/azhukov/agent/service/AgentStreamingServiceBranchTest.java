@@ -185,7 +185,7 @@ class AgentStreamingServiceBranchTest {
             SESSION_ID, "Hello", null, 10_000L,
             null, null, null, null,
             null, List.of("weather"), // disabledTools
-            null, null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null, null);
 
         AtomicReference<List<ToolDefinition>> capturedTools = new AtomicReference<>();
         doAnswer(invocation -> {
@@ -633,7 +633,7 @@ class AgentStreamingServiceBranchTest {
         ChatRequest request = new ChatRequest(
             SESSION_ID, "Hello", null, 10_000L,
             null, null, null, null,
-            null, null, null, null, null, "request goal", null, null, null, null);
+            null, null, null, null, null, "request goal", null, null, null, null, null);
 
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {

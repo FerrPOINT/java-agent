@@ -397,6 +397,11 @@ public class MessageApiClient extends BaseBackendClient {
         if (languageCode != null && !languageCode.isBlank()) {
             body.put("languageCode", languageCode);
         }
+        // chatType — dm/group/channel — tells the model which chat context it's in
+        String chatType = runtime.getMetadata("chatType");
+        if (chatType != null && !chatType.isBlank()) {
+            body.put("chatType", chatType);
+        }
         // Forward Telegram routing IDs to the backend
         if (runtime.getChatId() != null && !runtime.getChatId().isBlank()) {
             body.put("chatId", runtime.getChatId());

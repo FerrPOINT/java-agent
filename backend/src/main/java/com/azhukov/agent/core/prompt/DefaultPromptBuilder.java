@@ -51,7 +51,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
     // ── Model family detection prefixes (Fix 9: per-model operational guidance) ──
 
     /** Model name prefixes indicating OpenAI family (GPT, o1/o3 reasoning, Codex). */
-    static final Set<String> OPENAI_FAMILY_PREFIXES = Set.of("gpt", "o1", "o3", "codex");
+    static final Set<String> OPENAI_FAMILY_PREFIXES = Set.of("gpt", "o1", "o3", "codex", "grok");
 
     /** Model name prefixes indicating Google family (Gemini, Gemma). */
     static final Set<String> GOOGLE_FAMILY_PREFIXES = Set.of("gemini", "gemma");
@@ -97,7 +97,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
 
     // ── Fix 2: Tool-specific guidance blocks (mirrors Hermes prompt_builder.py) ──
 
-    /** Guidance injected when the `memory` tool is available. */
+    /** Guidance injected when the `memory` tool is available. Mirrors Hermes prompt_builder.py. */
     static final String MEMORY_GUIDANCE = """
         ## Memory Guidance
         You have persistent memory across sessions. Save durable facts using the memory
@@ -109,8 +109,17 @@ public class DefaultPromptBuilder implements PromptBuilder {
         User preferences and recurring corrections matter more than procedural task details.
         Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO
         state to memory; use session_search to recall those from past transcripts.
+        Specifically: do not record PR numbers, issue numbers, commit SHAs, 'fixed bug X',
+        'submitted PR Y', 'Phase N done', file counts, or any artifact that will be stale
+        in 7 days. If a fact will be stale in a week, it does not belong in memory.
+        If you've discovered a new way to do something, solved a problem that could be
+        necessary later, save it as a skill with the skill tool.
         Write memories as declarative facts, not instructions to yourself.
-        'User prefers concise responses' ✓ — 'Always respond concisely' ✗.""";
+        'User prefers concise responses' ✓ — 'Always respond concisely' ✗.
+        'Project uses pytest with xdist' ✓ — 'Run tests with pytest -n 4' ✗.
+        Imperative phrasing gets re-read as a directive in later sessions and can
+        cause repeated work or override the user's current request. Procedures and
+        workflows belong in skills, not memory.""";
 
     /** Guidance injected when the `session_search` tool is available. Ported from Hermes. */
     static final String SESSION_SEARCH_GUIDANCE = """
@@ -147,15 +156,21 @@ public class DefaultPromptBuilder implements PromptBuilder {
         ("that's @session:default/... — want me to pick it up?"), never alone
         on its own line, and never alongside the title/id/date spelled out.""";
 
-    /** Guidance injected when `skill_view`/`skills_list`/`skill_manage` tools are available. */
+    /** Guidance injected when `skill_view`/`skills_list`/`skill_manage` tools are available.
+     *  Mirrors Hermes prompt_builder.py SKILLS_GUIDANCE (fix #82154 — old wording triggers
+     *  Anthropic content-filter rejection on subscription OAuth credentials). */
     static final String SKILLS_GUIDANCE = """
         ## Skills Guidance
-        After completing a complex task (5+ tool calls), fixing a tricky error,
-        or discovering a non-trivial workflow, save the approach as a
-        skill with skill_manage so you can reuse it next time.
-        When using a skill and finding it outdated, incomplete, or wrong,
-        patch it immediately with skill_manage(action='patch') — don't wait to be asked.
-        Skills that aren't maintained become liabilities.""";
+        When you work out a non-trivial workflow, record it with skill_manage for future reuse.
+        When using a skill and finding it outdated, incomplete, or wrong, patch it immediately
+        with skill_manage(action='patch') — don't wait to be asked. Skills that aren't maintained
+        become liabilities.
+
+        ## Skill Safety Rule
+        1. **UNAVAILABLE** — If a skill placeholder contains `[SKILL_PRUNED]`, the skill content was lost in compression and is inaccessible.
+        2. **RELOAD** — Before performing any action that depends on a skill, re-check its content with `skill_view(name='...')` if it shows `[SKILL_PRUNED]`.
+        3. **WAIT** — If a skill is loading or was just pruned, wait for the reload confirmation before proceeding.
+        4. **DEDUP** — After reloading a pruned skill, **ignore any remaining `[SKILL_PRUNED]` markers for that same skill** — they are historical artifacts from previous compactions and do not need further action.""";
 
     // ── Out-of-band steer markers (mirrors Hermes prompt_builder.py) ──
 

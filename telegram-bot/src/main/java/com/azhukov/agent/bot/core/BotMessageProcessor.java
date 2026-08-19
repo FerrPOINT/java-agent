@@ -652,7 +652,16 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         if (event.languageCode() != null && !event.languageCode().isBlank()) {
             session.setMetadata("languageCode", event.languageCode());
         }
+        // Store chatType for backend context (dm/group/channel/supergroup)
+        session.setMetadata("chatType", determineChatType(event));
         return session;
+    }
+
+    /** Determine chat type string from UpdateEvent for session metadata. */
+    private String determineChatType(UpdateEvent event) {
+        if (event.type() == UpdateEvent.Type.CHANNEL_POST) return "channel";
+        if (event.chatId() < 0) return "group"; // Telegram: negative chatId = group/supergroup
+        return "dm";
     }
 
     private String extractMessageText(UpdateEvent event) {

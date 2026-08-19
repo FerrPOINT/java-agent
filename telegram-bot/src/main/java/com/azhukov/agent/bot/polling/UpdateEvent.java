@@ -124,6 +124,9 @@ public record UpdateEvent(
         String username = from != null ? (String) from.get("username") : "";
         String firstName = from != null ? (String) from.get("first_name") : null;
         String languageCode = from != null ? (String) from.get("language_code") : null;
+        // Determine chat type from Telegram chat object
+        String chatType = chat != null ? (String) chat.get("type") : "private";
+        if (chatType == null) chatType = "private";
         String text = Optional.ofNullable(message.get("text")).map(Object::toString).orElse(null);
         String caption = Optional.ofNullable(message.get("caption")).map(Object::toString).orElse(null);
 
