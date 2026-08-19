@@ -267,16 +267,59 @@ public class DefaultPromptBuilder implements PromptBuilder {
         + "URLs in markdown format ![alt](url) and they will be sent as native photos.";
 
     /**
-     * Operational guidance for OpenAI models (GPT, o1/o3, Codex).
+     * Operational guidance for OpenAI models (GPT, o1/o3, Codex, Grok).
+     * Mirrors Hermes OPENAI_MODEL_EXECUTION_GUIDANCE with XML-tagged sections.
      * Injected into the system prompt when the configured model belongs to the OpenAI family.
      */
     static final String OPENAI_MODEL_GUIDANCE = """
-        ## Model-Specific Guidance (OpenAI)
-        - **Tool persistence**: Once you start using a tool, continue using tools until the task is complete. Do not fall back to narration.
-        - **Act, don't ask**: When you have enough context to act, call tools immediately. Do not ask for permission to use tools that are already available.
-        - **Prerequisite checks**: Before calling a tool, verify its preconditions (e.g., file exists, dependencies installed). Use other tools to check first.
-        - **Verification before claiming done**: After performing actions, verify the results by reading output, running tests, or checking state. Never claim a task is complete without verification.
-        - **Missing context**: If you lack information needed to proceed, use tools to gather it rather than asking the user. Only ask when tool-based discovery is impossible.""";
+        # Execution discipline
+        <tool_persistence>
+        - Use tools whenever they improve correctness, completeness, or grounding.
+        - Do not stop early when another tool call would materially improve the result.
+        - If a tool returns empty or partial results, retry with a different query or strategy before giving up.
+        - Keep calling tools until: (1) the task is complete, AND (2) you have verified the result.
+        </tool_persistence>
+
+        <mandatory_tool_use>
+        NEVER answer these from memory or mental computation — ALWAYS use a tool:
+        - Arithmetic, math, calculations → use terminal or execute_code
+        - Hashes, encodings, checksums → use terminal (e.g. sha256sum, base64)
+        - Current time, date, timezone → use terminal (e.g. date)
+        - System state: OS, CPU, memory, disk, ports, processes → use terminal
+        - File contents, sizes, line counts → use read_file, search_files, or terminal
+        - Git history, branches, diffs → use terminal
+        - Current facts (weather, news, versions) → use web_search
+        Your memory and user profile describe the USER, not the system you are running on. The execution environment may differ from what the user profile says about their personal setup.
+        </mandatory_tool_use>
+
+        <act_dont_ask>
+        When a question has an obvious default interpretation, act on it immediately instead of asking for clarification. Examples:
+        - 'Is port 443 open?' → check THIS machine (don't ask 'open where?')
+        - 'What OS am I running?' → check the live system (don't use user profile)
+        - 'What time is it?' → run `date` (don't guess)
+        Only ask for clarification when the ambiguity genuinely changes what tool you would call.
+        </act_dont_ask>
+
+        <prerequisite_checks>
+        - Before taking an action, check whether prerequisite discovery, lookup, or context-gathering steps are needed.
+        - Do not skip prerequisite steps just because the final action seems obvious.
+        - If a task depends on output from a prior step, resolve that dependency first.
+        </prerequisite_checks>
+
+        <verification>
+        Before finalizing your response:
+        - Correctness: does the output satisfy every stated requirement?
+        - Grounding: are factual claims backed by tool outputs or provided context?
+        - Formatting: does the output match the requested format or schema?
+        - Safety: if the next step has side effects (file writes, commands, API calls), confirm scope before executing.
+        </verification>
+
+        <missing_context>
+        - If required context is missing, do NOT guess or hallucinate an answer.
+        - Use the appropriate lookup tool when missing information is retrievable (search_files, web_search, read_file, etc.).
+        - Ask a clarifying question only when the information cannot be retrieved by tools.
+        - If you must proceed with incomplete information, label assumptions explicitly.
+        </missing_context>""";
 
     /**
      * Operational guidance for Google models (Gemini, Gemma).
@@ -1037,8 +1080,11 @@ public class DefaultPromptBuilder implements PromptBuilder {
         }
 
         // ── Model-specific operational guidance (Fix 9) ──
+        // Hermes injects model guidance only when tools are available (if agent.valid_tool_names:).
+        // Without tools, the execution-discipline guidance is wasteful and confusing.
         String modelGuidance = getModelGuidance();
-        if (!modelGuidance.isEmpty()) {
+        boolean hasTools = !toolRegistry.getDefinitions().isEmpty();
+        if (!modelGuidance.isEmpty() && hasTools) {
             stable.append("\n").append(modelGuidance);
         }
 

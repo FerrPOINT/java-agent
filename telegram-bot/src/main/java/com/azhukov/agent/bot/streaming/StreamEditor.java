@@ -478,8 +478,21 @@ public class StreamEditor {
         // First portion: first streamingMaxChars chars (minus cursor space)
         int firstLen = streamingMaxChars - streamCursor.length();
         if (firstLen <= 0) firstLen = streamingMaxChars;
+
+        // Code fence balancing: if the split point falls inside an open ``` block,
+        // close the fence at the end of the first chunk and reopen it at the start
+        // of the remainder (Hermes balance_fences_across_chunks).
         String firstPart = withCursor.substring(0, Math.min(firstLen, withCursor.length()));
         String remainder = withCursor.length() > firstLen ? withCursor.substring(firstLen) : "";
+
+        // Count ``` (triple backtick) occurrences in firstPart
+        // If odd, we're inside an unclosed code block at the split point
+        int fenceCount = countCodeFences(firstPart);
+        if (fenceCount % 2 != 0) {
+            // Inside a code block — close in firstPart, reopen in remainder
+            firstPart = firstPart + "\n```";
+            remainder = "```\n" + remainder;
+        }
 
         boolean disableNotification = streamingSilent;
         boolean success;
@@ -1455,6 +1468,19 @@ public class StreamEditor {
     }
 
     // ─── Formatting ──────────────────────────────────────────────
+
+    /**
+     * Count the number of ``` (triple backtick) code fence markers in text.
+     */
+    private int countCodeFences(String text) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = text.indexOf("```", idx)) >= 0) {
+            count++;
+            idx += 3;
+        }
+        return count;
+    }
 
     /**
      * Check if text is an intentional silence marker (Hermes parity: _is_intentional_silence_response).

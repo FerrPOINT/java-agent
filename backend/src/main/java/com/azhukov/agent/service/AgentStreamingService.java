@@ -309,6 +309,7 @@ public class AgentStreamingService {
                 final StringBuilder contentBuilder = new StringBuilder();
                 final List<ToolCall> collectedToolCalls = new ArrayList<>();
                 final AtomicReference<Throwable> capturedError = new AtomicReference<>();
+                final AtomicReference<String> capturedFinishReason = new AtomicReference<>();
 
                 try {
                     long llmStart = System.currentTimeMillis();
@@ -340,6 +341,13 @@ public class AgentStreamingService {
                                 send(emitter, new StreamEvent("token", remaining, null, null), streamCtx);
                                 contentBuilder.append(remaining);
                             }
+                        }
+
+                        @Override
+                        public void onComplete(String finishReason) {
+                            // Store finish_reason for post-stream routing (LENGTH, CONTENT_FILTER)
+                            capturedFinishReason.set(finishReason);
+                            onComplete();
                         }
 
                         @Override
@@ -467,6 +475,41 @@ public class AgentStreamingService {
                         ? (Exception) error : new RuntimeException(error));
                     if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                     return;
+                }
+
+                // ── finish_reason routing (Hermes parity: conversation_loop.py:3354-3506) ──
+                String finishReason = capturedFinishReason.get();
+                boolean hasContent = contentBuilder.length() > 0;
+                boolean hasToolCalls = !collectedToolCalls.isEmpty();
+
+                // CONTENT_FILTER: model declined due to content policy
+                if ("CONTENT_FILTER".equals(finishReason) && !hasToolCalls) {
+                    log.warn("Content filter triggered for session {} — model declined response", session.id());
+                    String filterMsg = "⚠️ Модель отклонила ответ из-за фильтра контента. " +
+                        "Попробуйте переформулировать запрос, сузить контекст или добавить fallback провайдер.";
+                    send(emitter, new StreamEvent("token", filterMsg, null, null), streamCtx);
+                    response = ChatResponse.text(filterMsg);
+                    break;
+                }
+
+                // LENGTH: model hit max output tokens — partial content
+                if ("LENGTH".equals(finishReason) && hasContent && !hasToolCalls
+                        && continuationAttempts < MAX_CONTINUATION_ATTEMPTS) {
+                    log.info("LENGTH truncation detected for session {} — partial content ({} chars), sending continuation (attempt {}/{})",
+                        session.id(), contentBuilder.length(), continuationAttempts + 1, MAX_CONTINUATION_ATTEMPTS);
+                    send(emitter, new StreamEvent("continuation", null, null,
+                        "Continuation prompt sent to model (LENGTH)"), streamCtx);
+                    continuationAttempts++;
+                    turnIndex++;
+                    // LENGTH continuation: preserve the partial content and ask for more
+                    String partialContent = contentBuilder.toString();
+                    contentBuilder.setLength(0);
+                    collectedToolCalls.clear();
+                    List<Message> lengthContext = new ArrayList<>(turnMessages);
+                    lengthContext.add(Message.assistant(partialContent, turnIndex));
+                    lengthContext.add(Message.user("Продолжи с того места, где ты остановился."));
+                    context = contextEngine.prepareContext(session, lengthContext);
+                    continue;
                 }
 
                 // Check for truncated response (empty content + no tool calls + no error)

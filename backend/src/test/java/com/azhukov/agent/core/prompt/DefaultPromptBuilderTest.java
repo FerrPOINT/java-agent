@@ -424,18 +424,20 @@ class DefaultPromptBuilderTest {
         properties.getModel().setModelName("gpt-4o");
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of());
-        when(registry.getDefinitions()).thenReturn(List.of());
+        when(registry.getDefinitions()).thenReturn(List.of(
+            new ToolDefinition("test_tool", "Test tool", Map.of())));
         DefaultAgentConstants constants = new DefaultAgentConstants();
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, constants);
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
 
-        assertThat(msg.content()).contains("Model-Specific Guidance (OpenAI)");
-        assertThat(msg.content()).contains("Tool persistence");
-        assertThat(msg.content()).contains("Act, don't ask");
-        assertThat(msg.content()).contains("Prerequisite checks");
-        assertThat(msg.content()).contains("Verification before claiming done");
-        assertThat(msg.content()).contains("Missing context");
+        assertThat(msg.content()).contains("Execution discipline");
+        assertThat(msg.content()).contains("<tool_persistence>");
+        assertThat(msg.content()).contains("<act_dont_ask>");
+        assertThat(msg.content()).contains("<prerequisite_checks>");
+        assertThat(msg.content()).contains("<verification>");
+        assertThat(msg.content()).contains("<missing_context>");
+        assertThat(msg.content()).contains("<mandatory_tool_use>");
     }
 
     @Test
@@ -445,13 +447,14 @@ class DefaultPromptBuilderTest {
         properties.getModel().setModelName("gemini-2.0-flash");
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of());
-        when(registry.getDefinitions()).thenReturn(List.of());
+        when(registry.getDefinitions()).thenReturn(List.of(
+            new ToolDefinition("test_tool", "Test tool", Map.of())));
         DefaultAgentConstants constants = new DefaultAgentConstants();
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, constants);
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
 
-        assertThat(msg.content()).contains("Model-Specific Guidance (Google)");
+        assertThat(msg.content()).contains("Model-Specific Guidance (Google)"); // Google guidance header unchanged
         assertThat(msg.content()).contains("Absolute paths");
         assertThat(msg.content()).contains("Verify first");
         assertThat(msg.content()).contains("Dependency checks");

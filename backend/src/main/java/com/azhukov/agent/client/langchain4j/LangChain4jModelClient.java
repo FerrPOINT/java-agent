@@ -242,7 +242,17 @@ public class LangChain4jModelClient implements ModelClient {
                     } else if (content.isEmpty() && completeResponse.aiMessage().text() != null) {
                         handler.onToken(completeResponse.aiMessage().text());
                     }
-                    handler.onComplete();
+                    // Propagate finish_reason to the handler for routing decisions
+                    // (LENGTH → continuation, CONTENT_FILTER → error, STOP → normal)
+                    String finishReason = null;
+                    try {
+                        if (completeResponse.finishReason() != null) {
+                            finishReason = completeResponse.finishReason().name();
+                        }
+                    } catch (Exception e) {
+                        log.debug("Could not extract finishReason: {}", e.getMessage());
+                    }
+                    handler.onComplete(finishReason);
                 } finally {
                     latch.countDown();
                 }
