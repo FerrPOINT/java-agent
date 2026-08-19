@@ -5,6 +5,7 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,7 +35,9 @@ class MidTurnPersistenceServiceTest {
     void setUp() {
         // Use Mappers.getMapper for real mapper (per AGENTS.md: don't mock mappers)
         MessageMapper messageMapper = org.mapstruct.factory.Mappers.getMapper(MessageMapper.class);
-        service = new MidTurnPersistenceService(messageRepository, messageMapper, transactionTemplate);
+        SessionRepository sessionRepo = mock(SessionRepository.class);
+        lenient().when(messageRepository.countBySessionId(any())).thenReturn(0L);
+        service = new MidTurnPersistenceService(messageRepository, messageMapper, transactionTemplate, sessionRepo);
     }
 
     private void stubTransaction() {

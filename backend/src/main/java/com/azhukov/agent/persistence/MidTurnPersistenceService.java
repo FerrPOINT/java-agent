@@ -6,6 +6,7 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -37,6 +38,7 @@ public class MidTurnPersistenceService implements MidTurnPersistenceCallback {
     private final MessageRepository messageRepository;
     private final MessageMapper messageMapper;
     private final TransactionTemplate transactionTemplate;
+    private final SessionRepository sessionRepository;
 
     @Override
     public boolean persistNewMessages(UUID sessionId, List<Message> messages, int fromIndex) {
@@ -59,6 +61,14 @@ public class MidTurnPersistenceService implements MidTurnPersistenceCallback {
             });
             log.debug("Mid-turn persistence: flushed messages [{}..{}] for session {}",
                 fromIndex, messages.size() - 1, sessionId);
+            // Update session stats (message_count, last_active) so session_search
+            // browse mode shows accurate data even for mid-turn persisted sessions.
+            try {
+                long count = messageRepository.countBySessionId(sessionId);
+                sessionRepository.updateLastActiveAndMessageCount(sessionId, Instant.now(), (int) count);
+            } catch (Exception statEx) {
+                log.debug("Failed to update session stats after mid-turn persistence: {}", statEx.getMessage());
+            }
             return true;
         } catch (Exception e) {
             // M6: Don't silently swallow — return false so caller doesn't advance cursor
