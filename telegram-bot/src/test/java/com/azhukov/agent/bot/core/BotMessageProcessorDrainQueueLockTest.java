@@ -140,7 +140,7 @@ class BotMessageProcessorDrainQueueLockTest {
 
     private UpdateEvent textEvent(long updateId, long chatId, String text) {
         return new UpdateEvent(
-            updateId, UpdateEvent.Type.TEXT, chatId, 200L, "test", text,
+            updateId, UpdateEvent.Type.TEXT, chatId, 200L, "test", null, null, text,
             null, null, null, null, null, null, false, null, null,
             0L, null, 0L, null
         );

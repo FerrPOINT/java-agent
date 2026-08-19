@@ -13,6 +13,8 @@ public record UpdateEvent(
     long chatId,
     long userId,
     String username,
+    String firstName,
+    String languageCode,
     String text,
     String caption,
     String fileId,
@@ -34,23 +36,23 @@ public record UpdateEvent(
         LOCATION, CHANNEL_POST, EDITED_MESSAGE, UNKNOWN
     }
 
-    /** Compact constructor — defaults messageId=0, mediaGroupId=null, threadId=0, forwardedFrom=null for backward compatibility. */
+    /** Compact constructor — defaults firstName=null, languageCode=null, messageId=0, mediaGroupId=null, threadId=0, forwardedFrom=null. */
     public UpdateEvent(long updateId, Type type, long chatId, long userId,
                        String username, String text, String caption, String fileId, String fileType,
                        String callbackQueryId, String callbackData, String replyToText,
                        boolean isCommand, String commandName, String commandArgs) {
-        this(updateId, type, chatId, userId, username, text, caption, fileId, fileType,
+        this(updateId, type, chatId, userId, username, null, null, text, caption, fileId, fileType,
             callbackQueryId, callbackData, replyToText, isCommand, commandName, commandArgs,
             0L, null, 0L, null);
     }
 
-    /** 17-arg constructor — defaults forwardedFrom=null. */
+    /** 17-arg constructor — defaults firstName=null, languageCode=null, forwardedFrom=null. */
     public UpdateEvent(long updateId, Type type, long chatId, long userId,
                        String username, String text, String caption, String fileId, String fileType,
                        String callbackQueryId, String callbackData, String replyToText,
                        boolean isCommand, String commandName, String commandArgs,
                        long messageId, String mediaGroupId, long messageThreadId) {
-        this(updateId, type, chatId, userId, username, text, caption, fileId, fileType,
+        this(updateId, type, chatId, userId, username, null, null, text, caption, fileId, fileType,
             callbackQueryId, callbackData, replyToText, isCommand, commandName, commandArgs,
             messageId, mediaGroupId, messageThreadId, null);
     }
@@ -71,11 +73,15 @@ public record UpdateEvent(
             }
             long userId = from != null ? ((Number) from.get("id")).longValue() : 0L;
             String username = from != null ? (String) from.get("username") : "";
+            String cqFirstName = from != null ? (String) from.get("first_name") : null;
+            String cqLanguageCode = from != null ? (String) from.get("language_code") : null;
             String cqId = (String) callbackQuery.get("id");
             String data = (String) callbackQuery.get("data");
             return new UpdateEvent(updateId, Type.CALLBACK_QUERY, chatId, userId,
-                username != null ? username : "", null, null, null, null,
-                cqId, data, null, false, null, null);
+                username != null ? username : "", cqFirstName, cqLanguageCode,
+                null, null, null, null,
+                cqId, data, null, false, null, null,
+                0L, null, 0L, null);
         }
 
         // Message
@@ -104,8 +110,11 @@ public record UpdateEvent(
             }
         }
         if (message == null) {
-            return new UpdateEvent(updateId, Type.UNKNOWN, 0, 0, "", null, null, null, null,
-                null, null, null, false, null, null);
+            return new UpdateEvent(updateId, Type.UNKNOWN, 0, 0, "", null, null,
+                null, null, null, null,  // text, caption, fileId, fileType
+                null, null, null,         // callbackQueryId, callbackData, replyToText
+                false, null, null,        // isCommand, commandName, commandArgs
+                0L, null, 0L, null);      // messageId, mediaGroupId, messageThreadId, forwardedFrom
         }
 
         Map<String, Object> chat = (Map<String, Object>) message.get("chat");
@@ -113,6 +122,8 @@ public record UpdateEvent(
         long chatId = chat != null ? ((Number) chat.get("id")).longValue() : 0L;
         long userId = from != null ? ((Number) from.get("id")).longValue() : 0L;
         String username = from != null ? (String) from.get("username") : "";
+        String firstName = from != null ? (String) from.get("first_name") : null;
+        String languageCode = from != null ? (String) from.get("language_code") : null;
         String text = Optional.ofNullable(message.get("text")).map(Object::toString).orElse(null);
         String caption = Optional.ofNullable(message.get("caption")).map(Object::toString).orElse(null);
 
@@ -235,7 +246,8 @@ public record UpdateEvent(
         }
 
         return new UpdateEvent(updateId, type, chatId, userId,
-            username != null ? username : "", text, caption, fileId, fileType,
+            username != null ? username : "", firstName, languageCode,
+            text, caption, fileId, fileType,
             null, null, replyToText, isCommand, commandName, commandArgs,
             msgId, mediaGroupId, threadId, forwardedFrom);
     }

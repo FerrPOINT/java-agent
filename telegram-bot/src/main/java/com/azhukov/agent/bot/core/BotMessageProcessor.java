@@ -643,7 +643,16 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         String userId = String.valueOf(event.userId());
         String chatId = String.valueOf(event.chatId());
         String username = event.username();
-        return sessionStore.resolveOrCreate(userId, chatId, username);
+        BotSessionEntity session = sessionStore.resolveOrCreate(userId, chatId, username);
+        // Store firstName and languageCode as session metadata so buildChatBody
+        // can forward them to the backend for the system prompt volatile tier.
+        if (event.firstName() != null && !event.firstName().isBlank()) {
+            session.setMetadata("firstName", event.firstName());
+        }
+        if (event.languageCode() != null && !event.languageCode().isBlank()) {
+            session.setMetadata("languageCode", event.languageCode());
+        }
+        return session;
     }
 
     private String extractMessageText(UpdateEvent event) {

@@ -61,7 +61,7 @@ class AgentControllerBotToLlmIntegrationTest {
 
     @Test
     void syncChatCreatesSessionPersistsMessagesAndReturnsResponse() throws Exception {
-        ChatRequest request = new ChatRequest(null, "hello", null, null);
+        ChatRequest request = ChatRequest.simple(null, "hello", null, null);
 
         MvcResult result = mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -95,7 +95,7 @@ class AgentControllerBotToLlmIntegrationTest {
 
     @Test
     void chatWithExistingSessionContinuesConversation() throws Exception {
-        ChatRequest first = new ChatRequest(null, "first", null, null);
+        ChatRequest first = ChatRequest.simple(null, "first", null, null);
 
         MvcResult firstResult = mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -106,7 +106,7 @@ class AgentControllerBotToLlmIntegrationTest {
         UUID sessionId = objectMapper.readValue(
             firstResult.getResponse().getContentAsString(), ChatResponseDto.class).sessionId();
 
-        ChatRequest second = new ChatRequest(sessionId, "second", null, null);
+        ChatRequest second = ChatRequest.simple(sessionId, "second", null, null);
 
         mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -125,7 +125,7 @@ class AgentControllerBotToLlmIntegrationTest {
 
     @Test
     void streamChatReturnsSseAndPersistsMessages() throws Exception {
-        ChatRequest request = new ChatRequest(null, "stream me", null, null);
+        ChatRequest request = ChatRequest.simple(null, "stream me", null, null);
 
         MvcResult asyncResult = mockMvc.perform(post("/api/v1/agent/chat/stream")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -147,7 +147,7 @@ class AgentControllerBotToLlmIntegrationTest {
 
     @Test
     void contextEndpointReturnsSessionMetadata() throws Exception {
-        ChatRequest request = new ChatRequest(null, "meta", null, null);
+        ChatRequest request = ChatRequest.simple(null, "meta", null, null);
 
         MvcResult result = mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -167,7 +167,7 @@ class AgentControllerBotToLlmIntegrationTest {
 
     @Test
     void usageEndpointReturnsUsageAfterChat() throws Exception {
-        ChatRequest request = new ChatRequest(null, "count me", null, null);
+        ChatRequest request = ChatRequest.simple(null, "count me", null, null);
 
         MvcResult result = mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)

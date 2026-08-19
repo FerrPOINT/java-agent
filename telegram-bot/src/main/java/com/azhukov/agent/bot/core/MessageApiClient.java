@@ -380,6 +380,23 @@ public class MessageApiClient extends BaseBackendClient {
         if (runtime == null) {
             return body;
         }
+        // Forward user identity to the backend so the system prompt can include
+        // the real user name, language code, and platform-specific context.
+        if (runtime.getUserId() != null && !runtime.getUserId().isBlank()) {
+            body.put("userId", runtime.getUserId());
+        }
+        if (runtime.getUsername() != null && !runtime.getUsername().isBlank()) {
+            body.put("username", runtime.getUsername());
+        }
+        // firstName and languageCode are stored as metadata by BotMessageProcessor
+        String firstName = runtime.getMetadata("firstName");
+        if (firstName != null && !firstName.isBlank()) {
+            body.put("firstName", firstName);
+        }
+        String languageCode = runtime.getMetadata("languageCode");
+        if (languageCode != null && !languageCode.isBlank()) {
+            body.put("languageCode", languageCode);
+        }
         // Forward Telegram routing IDs to the backend
         if (runtime.getChatId() != null && !runtime.getChatId().isBlank()) {
             body.put("chatId", runtime.getChatId());

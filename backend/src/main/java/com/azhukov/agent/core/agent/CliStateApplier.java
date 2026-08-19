@@ -55,7 +55,11 @@ public class CliStateApplier {
             null, // consumed
             null,
             request.cdpUrl(),
-            null
+            null, // goal
+            request.userId(),
+            request.username(),
+            request.firstName(),
+            request.languageCode()
         );
     }
 

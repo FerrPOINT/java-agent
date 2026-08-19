@@ -133,7 +133,8 @@ public class TextBatchDebouncer {
 
         UpdateEvent merged = new UpdateEvent(
             first.updateId(), first.type(), first.chatId(), first.userId(),
-            first.username(), mergedText, first.caption(), first.fileId(),
+            first.username(), first.firstName(), first.languageCode(),
+            mergedText, first.caption(), first.fileId(),
             first.fileType(), first.callbackQueryId(), first.callbackData(),
             first.replyToText(), first.isCommand(), first.commandName(),
             first.commandArgs(), first.messageId(), first.mediaGroupId(),

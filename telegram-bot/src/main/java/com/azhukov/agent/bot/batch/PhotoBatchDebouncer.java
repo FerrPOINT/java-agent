@@ -90,7 +90,8 @@ public class PhotoBatchDebouncer {
 
         UpdateEvent merged = new UpdateEvent(
             first.updateId(), first.type(), first.chatId(), first.userId(),
-            first.username(), first.text(), mergedCaption, mergedFileIds,
+            first.username(), first.firstName(), first.languageCode(),
+            first.text(), mergedCaption, mergedFileIds,
             first.fileType(), first.callbackQueryId(), first.callbackData(),
             first.replyToText(), first.isCommand(), first.commandName(),
             first.commandArgs(), first.messageId(), first.mediaGroupId(),

@@ -42,7 +42,7 @@ class AgentControllerIntegrationTest {
 
     @Test
     void chatReturnsNoOpResponse() throws Exception {
-        ChatRequest request = new ChatRequest(null, "hello", null, null);
+        ChatRequest request = ChatRequest.simple(null, "hello", null, null);
 
         mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -54,7 +54,7 @@ class AgentControllerIntegrationTest {
 
     @Test
     void chatWithEmptyMessageReturnsValidationError() throws Exception {
-        ChatRequest request = new ChatRequest(null, "", null, null);
+        ChatRequest request = ChatRequest.simple(null, "", null, null);
 
         mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)

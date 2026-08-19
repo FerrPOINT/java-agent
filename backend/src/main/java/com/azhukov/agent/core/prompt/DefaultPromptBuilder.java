@@ -1104,6 +1104,11 @@ public class DefaultPromptBuilder implements PromptBuilder {
         if (userDisplayName != null && !userDisplayName.isBlank()) {
             volatileTier.append("\nUser: ").append(userDisplayName);
         }
+        // Language code — tells the LLM which language the user prefers (e.g. "ru")
+        String languageCode = session.getMetadata("languageCode");
+        if (languageCode != null && !languageCode.isBlank()) {
+            volatileTier.append("\nLanguage: ").append(languageCode);
+        }
 
         // ── Session Context block (mirrors Hermes gateway/session.py build_session_context_prompt) ──
         // Hermes injects this as part of the system prompt so the LLM knows which platform

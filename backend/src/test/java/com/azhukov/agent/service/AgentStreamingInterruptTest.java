@@ -176,7 +176,7 @@ class AgentStreamingInterruptTest {
      */
     @Test
     void interruptBeforeLoopIteration_abortsImmediately() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         // Pre-cancel the session
         interruptToken.cancel(SESSION_ID);
@@ -212,7 +212,7 @@ class AgentStreamingInterruptTest {
      */
     @Test
     void interruptMidStream_stopsEmittingTokens() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         CollectingEmitter emitter = new CollectingEmitter(500L);
         doAnswer(invocation -> {
@@ -252,7 +252,7 @@ class AgentStreamingInterruptTest {
      */
     @Test
     void interruptBeforeToolExecution_preventsToolCall() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
         ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"Paris\"}");
 
         CollectingEmitter emitter = new CollectingEmitter(500L);
@@ -289,7 +289,7 @@ class AgentStreamingInterruptTest {
      */
     @Test
     void interruptReset_allowsSubsequentTurn() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         // Cancel, then reset before the turn
         interruptToken.cancel(SESSION_ID);
@@ -328,7 +328,7 @@ class AgentStreamingInterruptTest {
      */
     @Test
     void steerNote_isInjectedIntoToolResult() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
         ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"Paris\"}");
 
         // Add a steer note before the turn

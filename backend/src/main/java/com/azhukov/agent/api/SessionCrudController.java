@@ -242,13 +242,7 @@ public class SessionCrudController {
         if (!sessionRepository.existsById(sessionId)) {
             return ResponseEntity.notFound().build();
         }
-        ChatRequest request = new ChatRequest(
-            sessionId,
-            body.message(),
-            null,   // delegationDepth
-            body.timeoutMs(),
-            null, null, null, null, null, null, null, null, null, null
-        );
+        ChatRequest request = ChatRequest.simple(sessionId, body.message(), null, body.timeoutMs());
         ChatResponseDto response = agentRuntimeService.runTurn(request);
         return ResponseEntity.ok(response);
     }
@@ -263,13 +257,7 @@ public class SessionCrudController {
         if (!sessionRepository.existsById(sessionId)) {
             return ResponseEntity.notFound().build();
         }
-        ChatRequest request = new ChatRequest(
-            sessionId,
-            body.message(),
-            null,
-            body.timeoutMs(),
-            null, null, null, null, null, null, null, null, null, null
-        );
+        ChatRequest request = ChatRequest.simple(sessionId, body.message(), null, body.timeoutMs());
         SseEmitter emitter = streamingService.streamTurn(request);
         return ResponseEntity.ok(emitter);
     }

@@ -42,7 +42,7 @@ class ApiDtoObjectsTest {
         @Test
         void constructionAndAccessors() {
             UUID sessionId = UUID.randomUUID();
-            ChatRequest req = new ChatRequest(sessionId, "hello", 2, 5000L);
+            ChatRequest req = ChatRequest.simple(sessionId, "hello", 2, 5000L);
 
             assertThat(req.sessionId()).isEqualTo(sessionId);
             assertThat(req.message()).isEqualTo("hello");
@@ -52,7 +52,7 @@ class ApiDtoObjectsTest {
 
         @Test
         void nullablesAreAllowed() {
-            ChatRequest req = new ChatRequest(null, "msg", null, null);
+            ChatRequest req = ChatRequest.simple(null, "msg", null, null);
             assertThat(req.sessionId()).isNull();
             assertThat(req.delegationDepth()).isNull();
             assertThat(req.timeoutMs()).isNull();
@@ -61,9 +61,9 @@ class ApiDtoObjectsTest {
         @Test
         void equalsHashCodeAndToString() {
             UUID sid = UUID.randomUUID();
-            ChatRequest a = new ChatRequest(sid, "msg", 1, 100L);
-            ChatRequest b = new ChatRequest(sid, "msg", 1, 100L);
-            ChatRequest c = new ChatRequest(sid, "diff", 1, 100L);
+            ChatRequest a = ChatRequest.simple(sid, "msg", 1, 100L);
+            ChatRequest b = ChatRequest.simple(sid, "msg", 1, 100L);
+            ChatRequest c = ChatRequest.simple(sid, "diff", 1, 100L);
 
             assertThat(a).isEqualTo(b).hasSameHashCodeAs(b);
             assertThat(a).isNotEqualTo(c);
@@ -73,7 +73,7 @@ class ApiDtoObjectsTest {
         @Test
         void jsonRoundTrip() throws Exception {
             UUID sid = UUID.randomUUID();
-            ChatRequest original = new ChatRequest(sid, "hello world", 3, 10000L);
+            ChatRequest original = ChatRequest.simple(sid, "hello world", 3, 10000L);
 
             String json = mapper.writeValueAsString(original);
             assertThat(json).contains("\"message\":\"hello world\"");
@@ -84,7 +84,7 @@ class ApiDtoObjectsTest {
 
         @Test
         void jsonRoundTripWithNulls() throws Exception {
-            ChatRequest original = new ChatRequest(null, "msg", null, null);
+            ChatRequest original = ChatRequest.simple(null, "msg", null, null);
             ChatRequest deserialized = mapper.readValue(
                     mapper.writeValueAsString(original), ChatRequest.class);
             assertThat(deserialized).isEqualTo(original);

@@ -215,9 +215,25 @@ public class AgentStreamingService {
         // create a new session (the bot may have a sessionId from its own bot_sessions table
         // which is separate from backend's sessions table).
         var resolved = sessionResolver.resolveOrCreate(
-            request.sessionId(), "user-1", properties.getModel().getModelName());
+            request.sessionId(),
+            request.userId() != null && !request.userId().isBlank() ? request.userId() : "user-1",
+            properties.getModel().getModelName());
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
+
+        // Enrich session metadata with user identity from the request so the
+        // system prompt volatile tier can include the real name, language, and platform.
+        if (request.username() != null && !request.username().isBlank()) {
+            session = session.withMetadata("userDisplayName",
+                request.firstName() != null && !request.firstName().isBlank()
+                    ? request.firstName()
+                    : request.username());
+        } else if (request.firstName() != null && !request.firstName().isBlank()) {
+            session = session.withMetadata("userDisplayName", request.firstName());
+        }
+        if (request.languageCode() != null && !request.languageCode().isBlank()) {
+            session = session.withMetadata("languageCode", request.languageCode());
+        }
 
         // Set the ThreadLocal session ID so LangChain4jModelClient can check cancellation
         InterruptToken.setCurrentSessionId(session.id());

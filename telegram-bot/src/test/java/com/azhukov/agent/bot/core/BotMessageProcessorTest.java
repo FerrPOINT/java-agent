@@ -1819,7 +1819,7 @@ class BotMessageProcessorTest {
     @Test
     void editedMessageSendsEditedNotice() {
         UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.EDITED_MESSAGE, 100L, 200L,
-            "testuser", "edited text", null, null, null,
+            "testuser", null, null, "edited text", null, null, null,
             null, null, null, false, null, null, 101L, null, 0, null);
         processor.accept(event);
         verify(telegramClient).sendMessage(eq(100L), contains("Message edited"), anyString(), any(), any());
@@ -1828,7 +1828,7 @@ class BotMessageProcessorTest {
     @Test
     void editedMessageDoesNotCallBackend() {
         UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.EDITED_MESSAGE, 100L, 200L,
-            "testuser", "edited text", null, null, null,
+            "testuser", null, null, "edited text", null, null, null,
             null, null, null, false, null, null, 101L, null, 0, null);
         processor.accept(event);
         verify(backendClient, never()).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any());

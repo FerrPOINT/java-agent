@@ -82,7 +82,7 @@ class AgentControllerStreamingLazyInitTest {
 
         // Stream a chat message to the session — this exercises the code path
         // where SessionEntity is loaded and cliState is accessed during streaming
-        ChatRequest request = new ChatRequest(sessionId, "hello", null, 30_000L);
+        ChatRequest request = ChatRequest.simple(sessionId, "hello", null, 30_000L);
 
         MvcResult result = mockMvc.perform(post("/api/v1/agent/chat/stream")
                 .contentType(MediaType.APPLICATION_JSON)

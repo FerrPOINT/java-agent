@@ -185,7 +185,7 @@ class AgentStreamingServiceBranchTest {
             SESSION_ID, "Hello", null, 10_000L,
             null, null, null, null,
             null, List.of("weather"), // disabledTools
-            null, null, null, null);
+            null, null, null, null, null, null, null, null);
 
         AtomicReference<List<ToolDefinition>> capturedTools = new AtomicReference<>();
         doAnswer(invocation -> {
@@ -214,7 +214,7 @@ class AgentStreamingServiceBranchTest {
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
         runtimeConfigService.setModelOverride("override-model");
 
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
@@ -241,7 +241,7 @@ class AgentStreamingServiceBranchTest {
     @Test
     void streamTurnUsesPropertiesModelWhenNoOverrideAndBlankSessionModel() throws Exception {
         // Session has blank model, no runtime override → should use properties model
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
@@ -269,7 +269,7 @@ class AgentStreamingServiceBranchTest {
         SessionEntity entity = newSessionEntity(SESSION_ID, "my-session-model");
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
 
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
@@ -299,7 +299,7 @@ class AgentStreamingServiceBranchTest {
         SessionEntity entity = newSessionEntity(SESSION_ID, "");
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
 
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
@@ -326,7 +326,7 @@ class AgentStreamingServiceBranchTest {
     void streamTurnMetadataHandlesNullUsage() throws Exception {
         when(usageTracker.getSessionUsage(eq(SESSION_ID))).thenReturn(null);
 
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
@@ -351,7 +351,7 @@ class AgentStreamingServiceBranchTest {
 
     @Test
     void toolErrorResultIsFormattedWithErrorMessage() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"Paris\"}");
         CollectingEmitter emitter = new CollectingEmitter(1000L);
 
@@ -387,7 +387,7 @@ class AgentStreamingServiceBranchTest {
 
     @Test
     void toolErrorResultPreviewTruncatedWhenLongerThan500Chars() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         ToolCall toolCall = new ToolCall("call-1", "failing-tool", "{\"x\":1}");
         CollectingEmitter emitter = new CollectingEmitter(1000L);
 
@@ -426,7 +426,7 @@ class AgentStreamingServiceBranchTest {
 
     @Test
     void streamTurnWithNullSessionIdCreatesNewSession() throws Exception {
-        ChatRequest request = new ChatRequest(null, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(null, "Hello", null, 10_000L);
 
         when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
             SessionEntity e = inv.getArgument(0);
@@ -456,7 +456,7 @@ class AgentStreamingServiceBranchTest {
 
     @Test
     void truncatedEmptyResponseTriggersContinuationPrompt() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(1000L);
 
         AtomicInteger callCount = new AtomicInteger(0);
@@ -488,7 +488,7 @@ class AgentStreamingServiceBranchTest {
 
     @Test
     void iterationBudgetExhaustedTerminatesStream() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         when(iterationBudget.isExhausted(any())).thenReturn(true);
@@ -525,7 +525,7 @@ class AgentStreamingServiceBranchTest {
         // Set maxTurns to 1 so we hit the limit quickly
         properties.getCore().setMaxTurns(1);
 
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(1000L);
 
         // Model always returns tool calls → never finishes with text → max turns
@@ -566,7 +566,7 @@ class AgentStreamingServiceBranchTest {
         entity.setSubgoal("fix the login bug");
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
 
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
 
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {
@@ -598,7 +598,7 @@ class AgentStreamingServiceBranchTest {
         entity.setCliStateValue("queuedPrompt", "Remember to check tests");
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
 
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
 
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {
@@ -633,7 +633,7 @@ class AgentStreamingServiceBranchTest {
         ChatRequest request = new ChatRequest(
             SESSION_ID, "Hello", null, 10_000L,
             null, null, null, null,
-            null, null, null, null, null, "request goal");
+            null, null, null, null, null, "request goal", null, null, null, null);
 
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {
@@ -662,7 +662,7 @@ class AgentStreamingServiceBranchTest {
 
     @Test
     void streamTurnWithNullSessionIdDoesNotApplyCliState() throws Exception {
-        ChatRequest request = new ChatRequest(null, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(null, "Hello", null, 10_000L);
 
         when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
             SessionEntity e = inv.getArgument(0);
@@ -696,7 +696,7 @@ class AgentStreamingServiceBranchTest {
     @Test
     void streamTurnWithUnknownSessionIdDoesNotApplyCliState() throws Exception {
         UUID unknownId = UUID.fromString("88888888-9999-0000-1111-222222222222");
-        ChatRequest request = new ChatRequest(unknownId, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(unknownId, "Hello", null, 10_000L);
 
         when(sessionRepository.findById(unknownId)).thenReturn(Optional.empty());
         when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
@@ -728,7 +728,7 @@ class AgentStreamingServiceBranchTest {
 
     @Test
     void retryableErrorTriggersRetryAndEventuallySucceeds() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(1000L);
 
         AtomicInteger callCount = new AtomicInteger(0);
@@ -762,7 +762,7 @@ class AgentStreamingServiceBranchTest {
 
     @Test
     void permanentErrorTerminatesImmediatelyWithoutRetry() throws Exception {
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 30_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 30_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         // Error thrown as exception from stream() (not via onError)
@@ -798,7 +798,7 @@ class AgentStreamingServiceBranchTest {
         when(usageTracker.getSessionUsage(eq(SESSION_ID)))
             .thenThrow(new RuntimeException("usage tracker broken"));
 
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
@@ -849,7 +849,7 @@ class AgentStreamingServiceBranchTest {
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
 
-        ChatRequest request = new ChatRequest(SESSION_ID, "Hello", null, 10_000L);
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
