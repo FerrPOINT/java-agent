@@ -41,4 +41,10 @@ public class MemoryEntity {
      */
     @Version
     private Long version;
+
+    @jakarta.persistence.PrePersist
+    void onCreateTimestamps() {
+        if (createdAt == null) createdAt = java.time.Instant.now();
+        if (updatedAt == null) updatedAt = java.time.Instant.now();
+    }
 }

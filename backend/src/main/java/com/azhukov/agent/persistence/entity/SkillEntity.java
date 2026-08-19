@@ -57,4 +57,10 @@ public class SkillEntity {
 
     // S5: Curator — absorbed_into declaration when consolidated into umbrella
     private String absorbedInto;
+
+    @jakarta.persistence.PrePersist
+    void onCreateTimestamps() {
+        if (createdAt == null) createdAt = java.time.Instant.now();
+        if (updatedAt == null) updatedAt = java.time.Instant.now();
+    }
 }

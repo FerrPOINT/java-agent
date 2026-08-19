@@ -19,13 +19,17 @@ public final class UnicodeTagStripper {
     private UnicodeTagStripper() {}
 
     // Valid emoji tag sequence: U+1F3F4 + tag spec chars (U+E0020–U+E007E) + U+E007F CANCEL TAG
+    // NOTE: plane-14 codepoints are outside the BMP, so Java \\uXXXX escapes cannot
+    // represent them. Using \\uE0000 in a char class silently degrades to the two
+    // chars U+E000 and '0', corrupting the range and matching ordinary ASCII letters
+    // (verified: it stripped the letter 'T' from plain text). Use \\x{...} instead.
     private static final Pattern UNICODE_TAG_SUB = Pattern.compile(
-        "(\\uD83C\\uDFF4[\\uE0020-\\uE007E]+\\uE007F)" // valid emoji tag seq (kept)
-        + "|[\\uE0000-\\uE007F]"                       // any other tag char (stripped)
+        "(\\x{1F3F4}[\\x{E0020}-\\x{E007E}]+\\x{E007F})"  // valid emoji tag seq (kept)
+        + "|[\\x{E0000}-\\x{E007F}]"                     // any other tag char (stripped)
     );
 
     // Fast-path check — plane-14 tag chars only
-    private static final Pattern HAS_UNICODE_TAG = Pattern.compile("[\\uE0000-\\uE007F]");
+    private static final Pattern HAS_UNICODE_TAG = Pattern.compile("[\\x{E0000}-\\x{E007F}]");
 
     /**
      * Remove invisible Unicode TAG characters from text.

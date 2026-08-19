@@ -1,5 +1,6 @@
 package com.azhukov.agent.persistence.repository;
 
+import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.entity.UsageEntity;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -47,9 +48,24 @@ class UsageRepositoryTest {
     @Autowired
     private UsageRepository usageRepository;
 
+    @Autowired
+    private SessionRepository sessionRepository;
+
+    /** V21 added FK usage_log.session_id -> sessions(id): random UUIDs violate it. */
+    private UUID newSessionId() {
+        SessionEntity s = new SessionEntity();
+        s.setUserId("usage-test-user");
+        s.setTitle("usage-test");
+        s.setModelProvider("openai-compatible");
+        s.setModelName("test-model");
+        s.setCreatedAt(Instant.now());
+        sessionRepository.save(s);
+        return s.getId();
+    }
+
     @Test
     void saveAndFindById() {
-        UsageEntity entity = newUsage(UUID.randomUUID(), USER_ID_1, MODEL_1, 100, 200, 300, 0.05, T1);
+        UsageEntity entity = newUsage(newSessionId(), USER_ID_1, MODEL_1, 100, 200, 300, 0.05, T1);
 
         UsageEntity saved = usageRepository.save(entity);
         UUID generatedId = saved.getId();
@@ -69,10 +85,10 @@ class UsageRepositoryTest {
 
     @Test
     void findBySessionIdReturnsEntities() {
-        UUID sessionId = UUID.randomUUID();
+        UUID sessionId = newSessionId();
         usageRepository.save(newUsage(sessionId, USER_ID_1, MODEL_1, 50, 100, 150, 0.02, T1));
         usageRepository.save(newUsage(sessionId, USER_ID_1, MODEL_1, 60, 120, 180, 0.03, T2));
-        usageRepository.save(newUsage(UUID.randomUUID(), USER_ID_2, MODEL_2, 70, 140, 210, 0.04, T1));
+        usageRepository.save(newUsage(newSessionId(), USER_ID_2, MODEL_2, 70, 140, 210, 0.04, T1));
 
         List<UsageEntity> results = usageRepository.findBySessionId(sessionId);
 
@@ -84,10 +100,10 @@ class UsageRepositoryTest {
 
     @Test
     void findByUserIdAndCreatedAtBetweenReturnsEntities() {
-        usageRepository.save(newUsage(UUID.randomUUID(), USER_ID_1, MODEL_1, 10, 20, 30, 0.01, T1));
-        usageRepository.save(newUsage(UUID.randomUUID(), USER_ID_1, MODEL_1, 40, 50, 90, 0.02, T2));
-        usageRepository.save(newUsage(UUID.randomUUID(), USER_ID_1, MODEL_1, 15, 25, 40, 0.01, T3));
-        usageRepository.save(newUsage(UUID.randomUUID(), USER_ID_2, MODEL_2, 10, 20, 30, 0.01, T2));
+        usageRepository.save(newUsage(newSessionId(), USER_ID_1, MODEL_1, 10, 20, 30, 0.01, T1));
+        usageRepository.save(newUsage(newSessionId(), USER_ID_1, MODEL_1, 40, 50, 90, 0.02, T2));
+        usageRepository.save(newUsage(newSessionId(), USER_ID_1, MODEL_1, 15, 25, 40, 0.01, T3));
+        usageRepository.save(newUsage(newSessionId(), USER_ID_2, MODEL_2, 10, 20, 30, 0.01, T2));
 
         List<UsageEntity> results = usageRepository.findByUserIdAndCreatedAtBetween(USER_ID_1, T2, T3);
 
@@ -99,8 +115,8 @@ class UsageRepositoryTest {
 
     @Test
     void findAllReturnsSavedEntities() {
-        usageRepository.save(newUsage(UUID.randomUUID(), USER_ID_1, MODEL_1, 100, 200, 300, 0.05, T1));
-        usageRepository.save(newUsage(UUID.randomUUID(), USER_ID_2, MODEL_2, 200, 400, 600, 0.10, T1));
+        usageRepository.save(newUsage(newSessionId(), USER_ID_1, MODEL_1, 100, 200, 300, 0.05, T1));
+        usageRepository.save(newUsage(newSessionId(), USER_ID_2, MODEL_2, 200, 400, 600, 0.10, T1));
 
         List<UsageEntity> all = usageRepository.findAll();
 
@@ -112,7 +128,7 @@ class UsageRepositoryTest {
 
     @Test
     void deleteByIdRemovesEntity() {
-        UsageEntity saved = usageRepository.save(newUsage(UUID.randomUUID(), USER_ID_1, MODEL_1, 100, 200, 300, 0.05, T1));
+        UsageEntity saved = usageRepository.save(newUsage(newSessionId(), USER_ID_1, MODEL_1, 100, 200, 300, 0.05, T1));
         UUID id = saved.getId();
 
         assertThat(usageRepository.findById(id)).isPresent();
@@ -124,7 +140,7 @@ class UsageRepositoryTest {
 
     @Test
     void saveUpdatesExistingEntity() {
-        UsageEntity saved = usageRepository.save(newUsage(UUID.randomUUID(), USER_ID_1, MODEL_1, 100, 200, 300, 0.05, T1));
+        UsageEntity saved = usageRepository.save(newUsage(newSessionId(), USER_ID_1, MODEL_1, 100, 200, 300, 0.05, T1));
         UUID id = saved.getId();
 
         saved.setTotalTokens(999);

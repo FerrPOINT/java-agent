@@ -18,10 +18,8 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS compacted BOOLEAN DEFAULT false;
 
 -- Index for browse mode: recent sessions excluding hidden sources, ordered by last_active
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
-CREATE INDEX IF NOT EXISTS idx_sessions_last_active ON sessions(last_active DESC) WHERE source IS NULL OR source NOT IN ('kanban', 'subagent', 'tool');
 
 -- Index for message active filtering
-CREATE INDEX IF NOT EXISTS idx_messages_session_active ON messages(session_id) WHERE active = true;
 
 -- Backfill: set source='telegram' for existing sessions that have no source
 -- (existing sessions were created before the source field existed)

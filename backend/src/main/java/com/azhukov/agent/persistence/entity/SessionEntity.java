@@ -86,4 +86,10 @@ public class SessionEntity {
             cliState.remove(key);
         }
     }
+
+    @jakarta.persistence.PrePersist
+    void onCreateTimestamps() {
+        if (createdAt == null) createdAt = java.time.Instant.now();
+        if (updatedAt == null) updatedAt = java.time.Instant.now();
+    }
 }

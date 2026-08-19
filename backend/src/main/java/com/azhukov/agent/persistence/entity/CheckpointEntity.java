@@ -47,4 +47,9 @@ public class CheckpointEntity {
     @JsonIgnore
     @OneToMany(mappedBy = "checkpoint", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<CheckpointFileEntity> files = new ArrayList<>();
+
+    @jakarta.persistence.PrePersist
+    void onCreateTimestamps() {
+        if (createdAt == null) createdAt = java.time.Instant.now();
+    }
 }

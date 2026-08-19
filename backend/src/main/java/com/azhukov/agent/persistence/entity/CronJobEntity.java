@@ -103,4 +103,9 @@ public class CronJobEntity {
     // h74: Consecutive failure count for backoff during backend unavailability.
     @Column(name = "consecutive_failures")
     private int consecutiveFailures = 0;
+
+    @jakarta.persistence.PrePersist
+    void onCreateTimestamps() {
+        if (createdAt == null) createdAt = java.time.Instant.now();
+    }
 }

@@ -42,19 +42,26 @@ public class SlidingWindowRateLimiter {
 
         ConcurrentLinkedDeque<Long> deque = windows.computeIfAbsent(key, k -> new ConcurrentLinkedDeque<>());
 
-        // Prune timestamps older than the window
-        pruneOldTimestamps(deque, windowStart);
+        // Check-then-add must be atomic per key, otherwise concurrent callers can
+        // all observe size < maxCalls and overshoot the limit (audit: race in
+        // SlidingWindowRateLimiter — 10 threads allowed 21 of 20). Synchronizing
+        // on the deque keeps different keys independent while making the
+        // count-check-add sequence atomic for the same key.
+        synchronized (deque) {
+            // Prune timestamps older than the window
+            pruneOldTimestamps(deque, windowStart);
 
-        // Check current count
-        if (deque.size() >= maxCalls) {
-            log.warn("Rate limit exceeded for key '{}': {} calls in last {}s (max={})",
-                key, deque.size(), windowSeconds, maxCalls);
-            return false;
+            // Check current count
+            if (deque.size() >= maxCalls) {
+                log.warn("Rate limit exceeded for key '{}': {} calls in last {}s (max={})",
+                    key, deque.size(), windowSeconds, maxCalls);
+                return false;
+            }
+
+            // Add current timestamp
+            deque.addLast(now);
+            return true;
         }
-
-        // Add current timestamp
-        deque.addLast(now);
-        return true;
     }
 
     /**
