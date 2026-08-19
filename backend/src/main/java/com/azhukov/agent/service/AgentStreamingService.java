@@ -298,6 +298,7 @@ public class AgentStreamingService {
             // Call model — streaming tokens to SSE, with error recovery
             int streamRetries = 0;
             int continuationAttempts = 0;
+            boolean lastResponseHadToolCalls = false;
             ChatResponse response;
             final UUID sessionId = session.id();
             while (true) {
@@ -449,7 +450,11 @@ public class AgentStreamingService {
                 }
 
                 // Check for truncated response (empty content + no tool calls + no error)
-                boolean isEmpty = (contentBuilder.length() == 0) && collectedToolCalls.isEmpty();
+                // ThinkScrubber strips reasoning blocks — if the response was think-only,
+                // contentBuilder will be empty but hadThinkContent() is true. In that case
+                // the response is NOT truncated — the model just produced reasoning only.
+                boolean isEmpty = (contentBuilder.length() == 0) && collectedToolCalls.isEmpty()
+                    && !scrubber.hadThinkContent();
                 if (isEmpty && continuationAttempts < MAX_CONTINUATION_ATTEMPTS) {
                     log.warn("Truncated response detected (empty content, no tool calls), sending continuation prompt (attempt {}/{})",
                         continuationAttempts + 1, MAX_CONTINUATION_ATTEMPTS);
@@ -464,7 +469,13 @@ public class AgentStreamingService {
                     // finalization — we avoid pollution by using a separate list).
                     List<Message> continuationContext = new ArrayList<>(turnMessages);
                     continuationContext.add(Message.assistant("", turnIndex));
-                    continuationContext.add(Message.user("Пожалуйста, продолжи свой ответ на языке пользователя."));
+                    // Post-tool empty nudge: if the previous response had tool calls,
+                    // use a specific nudge telling the model to process tool results
+                    // (mirrors Hermes _EMPTY_TOOL_RESPONSE_NUDGE).
+                    String nudgeText = lastResponseHadToolCalls
+                        ? "Ты выполнил tool calls, но вернул пустой ответ. Обработай результаты инструментов выше и продолжи задачу."
+                        : "Пожалуйста, продолжи свой ответ на языке пользователя.";
+                    continuationContext.add(Message.user(nudgeText));
                     context = contextEngine.prepareContext(session, continuationContext);
                     continue;
                 }
@@ -475,12 +486,14 @@ public class AgentStreamingService {
                 // Mirrors Hermes _emit_interim_assistant_message().
                 String streamedContent = contentBuilder.toString();
                 if (!collectedToolCalls.isEmpty()) {
+                    lastResponseHadToolCalls = true;
                     if (streamedContent != null && !streamedContent.isBlank()) {
                         response = ChatResponse.textAndToolCalls(streamedContent, collectedToolCalls);
                     } else {
                         response = ChatResponse.toolCalls(collectedToolCalls);
                     }
                 } else {
+                    lastResponseHadToolCalls = false;
                     response = ChatResponse.text(streamedContent);
                 }
                 break;

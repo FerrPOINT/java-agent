@@ -236,6 +236,21 @@ public class DefaultPromptBuilder implements PromptBuilder {
         When you need several pieces of information that don't depend on each other, request them together in a single response instead of one tool call per turn. Independent reads, searches, web fetches, and read-only commands should be batched into the same assistant turn — the runtime executes independent calls concurrently, and batching avoids resending the whole conversation on every extra round-trip.
         Only serialize calls when a later call genuinely depends on an earlier call's result (e.g. you must read a file before you can patch it). When in doubt and the calls are independent, batch them.""";
 
+    // ── Platform-specific hints (mirrors Hermes PLATFORM_HINTS) ──
+
+    /** Telegram platform hint — tells the model about markdown conversion and MEDIA: file delivery. */
+    static final String TELEGRAM_PLATFORM_HINT =
+        "You are on a text messaging communication platform, Telegram. "
+        + "Standard Markdown is automatically converted to Telegram formatting. "
+        + "Supported: **bold**, *italic*, ~~strikethrough~~, ||spoiler||, "
+        + "`inline code`, ```code blocks```, [links](url), and ## headers. "
+        + "Prefer bullet lists and labeled key:value pairs for structured data. "
+        + "You can send media files natively: to deliver a file to the user, "
+        + "include MEDIA:/absolute/path/to/file in your response. Images "
+        + "(.png, .jpg, .webp) appear as photos, audio (.ogg) sends as voice "
+        + "bubbles, and videos (.mp4) play inline. You can also include image "
+        + "URLs in markdown format ![alt](url) and they will be sent as native photos.";
+
     /**
      * Operational guidance for OpenAI models (GPT, o1/o3, Codex).
      * Injected into the system prompt when the configured model belongs to the OpenAI family.
@@ -1000,6 +1015,14 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // Task completion + parallel tool calls — applied to ALL models
         stable.append("\n\n").append(TASK_COMPLETION_GUIDANCE);
         stable.append("\n\n").append(PARALLEL_TOOL_CALL_GUIDANCE);
+
+        // ── Platform-specific hints (mirrors Hermes PLATFORM_HINTS) ──
+        // Injected in stable tier so the model knows about markdown conversion,
+        // MEDIA: file delivery, and platform formatting constraints.
+        String stablePlatform = session.getMetadata("platform");
+        if (stablePlatform != null && "telegram".equalsIgnoreCase(stablePlatform)) {
+            stable.append("\n\n").append(TELEGRAM_PLATFORM_HINT);
+        }
 
         // Tool-use enforcement — only for model families that need it (GLM, GPT, etc.)
         String modelName = properties.getModel().getModelName();

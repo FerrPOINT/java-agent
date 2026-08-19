@@ -52,6 +52,7 @@ public class ThinkScrubber {
     private boolean inBlock = false;
     private final StringBuilder buffer = new StringBuilder();
     private boolean lastEmittedEndedNewline = true;
+    private boolean hadThinkContent = false;
 
     /**
      * Process a chunk of streaming output, returning only the visible (non-think) portion.
@@ -95,6 +96,7 @@ public class ThinkScrubber {
                 // Pick whichever match comes earliest
                 if (pairMatch[0] >= 0 && (openMatch[0] < 0 || pairMatch[0] <= openMatch[0])) {
                     // Closed pair — emit preceding, strip pair
+                    hadThinkContent = true;
                     int startIdx = pairMatch[0];
                     int endIdx = pairMatch[1];
                     String preceding = buffer.substring(0, startIdx);
@@ -122,6 +124,7 @@ public class ThinkScrubber {
                         }
                     }
                     inBlock = true;
+                    hadThinkContent = true;
                     buffer.delete(0, openIdx + openLen);
                     continue;
                 }
@@ -196,6 +199,15 @@ public class ThinkScrubber {
         inBlock = false;
         buffer.setLength(0);
         lastEmittedEndedNewline = true;
+        hadThinkContent = false;
+    }
+
+    /**
+     * Returns true if any think block content was found and stripped during this stream.
+     * Used to distinguish truly empty responses from think-block-only responses.
+     */
+    public boolean hadThinkContent() {
+        return hadThinkContent;
     }
 
     // ── Internal helpers ──────────────────────────────────────────
