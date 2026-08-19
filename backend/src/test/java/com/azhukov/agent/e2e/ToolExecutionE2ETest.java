@@ -57,19 +57,26 @@ class ToolExecutionE2ETest {
     }
 
     @Test
-    void readFileToolExecutesThroughService() {
-        Session session = Session.create("test-user", "noop", "");
-        ToolResult result = toolExecutionService.execute(
-            "read_file",
-            "call-2",
-            "{\"path\":\"/opt/dev/java-agent/README.md\",\"limit\":5}",
-            null,
-            session
-        );
+    void readFileToolExecutesThroughService() throws Exception {
+        // CI runners have no /opt/dev/java-agent — create the fixture in a temp dir.
+        java.nio.file.Path tmp = java.nio.file.Files.createTempFile("e2e-read", ".md");
+        java.nio.file.Files.writeString(tmp, "# Java Agent E2E fixture\nSome content for read_file.\n");
+        try {
+            Session session = Session.create("test-user", "noop", "");
+            ToolResult result = toolExecutionService.execute(
+                "read_file",
+                "call-2",
+                "{\"path\":\"" + tmp.toAbsolutePath().toString().replace("\\", "\\\\") + "\",\"limit\":5}",
+                null,
+                session
+            );
 
-        assertThat(result.success()).isTrue();
-        assertThat(result.content()).isNotBlank();
-        assertThat(result.content()).contains("Java Agent");
+            assertThat(result.success()).isTrue();
+            assertThat(result.content()).isNotBlank();
+            assertThat(result.content()).contains("Java Agent E2E fixture");
+        } finally {
+            java.nio.file.Files.deleteIfExists(tmp);
+        }
     }
 
     @Test
