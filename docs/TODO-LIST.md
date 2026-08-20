@@ -34,8 +34,8 @@ Terminal CWD echo ✅, Terminal error hints ✅, Terminal timeout clarity ✅ (p
 ### Utility (0) — ✅ ALL DONE
 ~~Robust JSON Extraction~~ ✅ NEW (ToolCallArgumentRepair + code-fence stripping, plugin_llm.py _FENCE_RE)
 
-### Bot (3 — feature candidates, not bugs)
-~~Approval TTL~~ ✅, ~~Approval Auto-Supersede~~ ✅, ~~Post-Debounce Re-Validation~~ ✅ (fail-closed), Edit-Capture Mode ⏳ (feature), Per-Action Owner Auth ⏳ (feature), Permission-Aware Keyboard ⏳ (feature)
+### Bot (0) — ✅ VERIFIED NOT PORTABLE 2026-08-20
+~~Approval TTL~~ ✅, ~~Approval Auto-Supersede~~ ✅, ~~Post-Debounce Re-Validation~~ ✅ (fail-closed), ~~Edit-Capture Mode~~ ❌ NOT IN HERMES (speculative idea, removed), ~~Per-Action Owner Auth~~ ❌ NOT IN HERMES, ~~Permission-Aware Keyboard~~ ❌ NOT IN HERMES
 
 ## HERMES-SYNC — Bug fixes (7 remaining; 25 closed 2026-08-20)
 
@@ -58,7 +58,7 @@ connect/DNS ✅ (h80), empty-response advisory ✅ (h81), GLM token-limit ✅ (h
 ### Memory (1)
 drain queued writes ✅ (h86)
 ### Misc (1)
-AGENTS.override.md ✅, auto-title ✅, reject answer-shaped ✅, session handles ⏳ (feature), ~~approval coalesce~~ ✅ (supersede via request() + F16 producer wiring), /worktree ⏳ (feature), session pin/unpin ⏳ (feature), silence markers ✅ NEW (Hermes marker set + canonicalisation)
+AGENTS.override.md ✅, auto-title ✅, reject answer-shaped ✅, ~~session handles~~ ✅ ALREADY IMPLEMENTED (@session:profile/id parse + sessionLink generation, verified 2026-08-20), ~~approval coalesce~~ ✅ (supersede via request() + F16 producer wiring), /worktree ⏳ (real Hermes CLI feature — needs per-session terminal cwd design, server-side ≠ process-level os.chdir), ~~session pin/unpin~~ ❌ NOT IN HERMES (speculative, removed), silence markers ✅ NEW (Hermes marker set + canonicalisation)
 
 ## ★ NEW — MULTI-USER (14)
 
