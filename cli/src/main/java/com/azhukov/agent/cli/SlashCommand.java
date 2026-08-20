@@ -18,11 +18,4 @@ public interface SlashCommand {
      * @return output text to display to the user
      */
     String execute(String args, BackendClient client, String sessionId);
-
-    /**
-     * A short description of the command, shown in /help.
-     */
-    default String description() {
-        return "";
-    }
 }

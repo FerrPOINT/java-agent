@@ -1,4 +1,4 @@
-package com.azhukov.agent.bot.reaction;
+package com.azhukov.agent.bot.core;
 
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;

@@ -11,7 +11,7 @@ import lombok.RequiredArgsConstructor;
 @Component
 @Slf4j
 @RequiredArgsConstructor
-public class ManagedToolGateway {
+public class ManagedToolGate {
 
     private final AgentProperties properties;
     private final ConcurrentHashMap<String, Predicate<String>> registeredChecks = new ConcurrentHashMap<>();

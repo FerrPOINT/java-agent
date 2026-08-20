@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
  * <p>
  * Includes: config, doctor, health, usage, insights, agents, restart,
  * reload-mcp, reload-skills, reload, diff, credits, curator, kanban,
- * codex_runtime, plugins, toolsets, tools, browser, plan, gquota, platforms.
+ * codex-runtime, plugins, toolsets, tools, browser, plan, gquota, platforms.
  */
 @Component
 @RequiredArgsConstructor
@@ -98,7 +98,7 @@ public class AdminCommands implements CommandGroup {
             }
         });
 
-        registry.register("codex_runtime", "Codex runtime settings: /codex_runtime [status|model <name>|reset]", (args, client, sessionId) -> {
+        registry.register("codex-runtime", "Codex runtime settings: /codex-runtime [status|model <name>|reset]", (args, client, sessionId) -> {
             String sub = args.strip().toLowerCase();
             if (sub.isBlank() || "status".equals(sub)) {
                 return client.codexRuntimeStatus();
@@ -106,11 +106,11 @@ public class AdminCommands implements CommandGroup {
             String[] parts = args.split("\\s+", 2);
             switch (parts[0].toLowerCase()) {
                 case "model" -> {
-                    if (parts.length < 2) return "Usage: /codex_runtime model <name>";
+                    if (parts.length < 2) return "Usage: /codex-runtime model <name>";
                     return client.codexRuntimeModel(parts[1].strip());
                 }
                 case "reset" -> { return client.codexRuntimeReset(); }
-                default -> { return "Usage: /codex_runtime [status|model <name>|reset]"; }
+                default -> { return "Usage: /codex-runtime [status|model <name>|reset]"; }
             }
         });
 

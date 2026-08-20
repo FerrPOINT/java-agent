@@ -198,7 +198,7 @@ class SlashCommandRegistryTest {
     @Test
     void registersAllP1BatchCommands() {
         List<String> names = registry.getCommandNames();
-        assertThat(names).contains("diff", "reload", "credits", "curator", "kanban", "codex_runtime");
+        assertThat(names).contains("diff", "reload", "credits", "curator", "kanban", "codex-runtime");
     }
 
     @Test
@@ -304,20 +304,20 @@ class SlashCommandRegistryTest {
     @Test
     void codexRuntimeStatusCallsBackend() {
         when(client.codexRuntimeStatus()).thenReturn("Codex runtime:\n  Model: gpt-4o");
-        String result = registry.execute("/codex_runtime", client, "sid");
+        String result = registry.execute("/codex-runtime", client, "sid");
         assertThat(result).contains("Codex runtime");
     }
 
     @Test
     void codexRuntimeModelWithoutNameShowsUsage() {
-        String result = registry.execute("/codex_runtime model", client, "sid");
-        assertThat(result).contains("Usage: /codex_runtime model");
+        String result = registry.execute("/codex-runtime model", client, "sid");
+        assertThat(result).contains("Usage: /codex-runtime model");
     }
 
     @Test
     void codexRuntimeResetCallsBackend() {
         when(client.codexRuntimeReset()).thenReturn("Codex runtime reset.");
-        String result = registry.execute("/codex_runtime reset", client, "sid");
+        String result = registry.execute("/codex-runtime reset", client, "sid");
         assertThat(result).contains("reset");
     }
 
@@ -338,7 +338,7 @@ class SlashCommandRegistryTest {
     @Test
     void codexRuntimeModelWithNameCallsBackend() {
         when(client.codexRuntimeModel("gpt-4o")).thenReturn("Codex runtime model set: gpt-4o");
-        String result = registry.execute("/codex_runtime model gpt-4o", client, "sid");
+        String result = registry.execute("/codex-runtime model gpt-4o", client, "sid");
         assertThat(result).contains("gpt-4o");
     }
 

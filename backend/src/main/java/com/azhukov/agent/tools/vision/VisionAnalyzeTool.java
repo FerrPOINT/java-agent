@@ -7,7 +7,7 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
-import com.azhukov.agent.service.ImageShrinker;
+import com.azhukov.agent.service.ImageShrinkerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -29,7 +29,7 @@ import java.util.Base64;
 public class VisionAnalyzeTool implements ToolHandler {
 
     private final ModelClient modelClient;
-    private final ImageShrinker imageShrinker;
+    private final ImageShrinkerService imageShrinker;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {

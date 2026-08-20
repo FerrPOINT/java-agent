@@ -34,7 +34,7 @@ import com.azhukov.agent.gateway.SessionResolver;
 import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.persistence.service.MessagePersistenceService;
 import com.azhukov.agent.persistence.repository.*;
-import com.azhukov.agent.service.ImageShrinker;
+import com.azhukov.agent.service.ImageShrinkerService;
 import com.azhukov.agent.service.TurnUsageCollector;
 import io.github.resilience4j.retry.RetryRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
@@ -83,7 +83,7 @@ class AgentConfigBeanMethodsTest {
     @Test
     void openAiCompatibleModelClient_bean() {
         properties.getModel().setProvider("openai-compatible");
-        assertThat(modelClientConfig.openAiCompatibleModelClient(properties, mock(TurnUsageCollector.class), new ErrorClassifier(), new RateLimitTracker(), new ImageShrinker(properties))).isInstanceOfAny(LangChain4jModelClient.class, ModelClient.class);
+        assertThat(modelClientConfig.openAiCompatibleModelClient(properties, mock(TurnUsageCollector.class), new ErrorClassifier(), new RateLimitTracker(), new ImageShrinkerService(properties))).isInstanceOfAny(LangChain4jModelClient.class, ModelClient.class);
     }
 
     @Test

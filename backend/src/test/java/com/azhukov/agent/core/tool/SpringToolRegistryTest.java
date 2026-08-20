@@ -34,7 +34,7 @@ class SpringToolRegistryTest {
     private org.springframework.context.ApplicationContext context;
     private AgentProperties properties;
     private ObjectMapper objectMapper;
-    private ManagedToolGateway managedToolGateway;
+    private ManagedToolGate managedToolGateway;
     private SpringToolRegistry registry;
 
     // ── Test fixtures ──
@@ -76,7 +76,7 @@ class SpringToolRegistryTest {
         context = mock(org.springframework.context.ApplicationContext.class);
         properties = new AgentProperties();
         objectMapper = new ObjectMapper();
-        managedToolGateway = new ManagedToolGateway(properties);
+        managedToolGateway = new ManagedToolGate(properties);
 
         // Wire up three real ToolHandler beans + one non-handler bean
         Map<String, Object> beans = new LinkedHashMap<>();
@@ -285,7 +285,7 @@ class SpringToolRegistryTest {
         assertThat(coreDef.parameters().get("type")).isEqualTo("object");
     }
 
-    // ── ManagedToolGateway integration ──
+    // ── ManagedToolGate integration ──
 
     @Test
     void registerBeans_skipsToolsDisabledByGateway() {

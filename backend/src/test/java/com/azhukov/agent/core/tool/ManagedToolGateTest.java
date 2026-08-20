@@ -6,15 +6,15 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class ManagedToolGatewayTest {
+class ManagedToolGateTest {
 
     private AgentProperties properties;
-    private ManagedToolGateway gateway;
+    private ManagedToolGate gateway;
 
     @BeforeEach
     void setUp() {
         properties = new AgentProperties();
-        gateway = new ManagedToolGateway(properties);
+        gateway = new ManagedToolGate(properties);
     }
 
     @Test

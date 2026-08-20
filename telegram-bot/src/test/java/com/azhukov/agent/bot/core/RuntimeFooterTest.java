@@ -1,4 +1,4 @@
-package com.azhukov.agent.bot.footer;
+package com.azhukov.agent.bot.core;
 
 import com.azhukov.agent.bot.config.BotProperties;
 import org.junit.jupiter.api.BeforeEach;

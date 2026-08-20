@@ -13,20 +13,20 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * P2-15: Tests for {@link ImageShrinker}.
+ * P2-15: Tests for {@link ImageShrinkerService}.
  */
-class ImageShrinkerTest {
+class ImageShrinkerServiceTest {
 
-    private ImageShrinker createShrinker() {
-        return new ImageShrinker(new AgentProperties());
+    private ImageShrinkerService createShrinker() {
+        return new ImageShrinkerService(new AgentProperties());
     }
 
-    private ImageShrinker createShrinker(int maxImageBytes, int maxTotalBytes, double quality) {
+    private ImageShrinkerService createShrinker(int maxImageBytes, int maxTotalBytes, double quality) {
         AgentProperties props = new AgentProperties();
         props.getModel().setMaxImageSizeBytes(maxImageBytes);
         props.getModel().setMaxTotalImageSizeBytes(maxTotalBytes);
         props.getModel().setImageJpegQuality(quality);
-        return new ImageShrinker(props);
+        return new ImageShrinkerService(props);
     }
 
     private String createTestImageBase64(int width, int height) throws Exception {
@@ -66,7 +66,7 @@ class ImageShrinkerTest {
     @Test
     @DisplayName("small image is not shrunk")
     void smallImageNotShrunk() throws Exception {
-        ImageShrinker shrinker = createShrinker();
+        ImageShrinkerService shrinker = createShrinker();
         String small = createTestImageBase64(10, 10);
         String result = shrinker.shrinkIfNeeded(small);
         assertThat(result).isEqualTo(small);
@@ -75,14 +75,14 @@ class ImageShrinkerTest {
     @Test
     @DisplayName("null input returns null")
     void nullInputReturnsNull() {
-        ImageShrinker shrinker = createShrinker();
+        ImageShrinkerService shrinker = createShrinker();
         assertThat(shrinker.shrinkIfNeeded((String) null)).isNull();
     }
 
     @Test
     @DisplayName("blank input returns blank")
     void blankInputReturnsBlank() {
-        ImageShrinker shrinker = createShrinker();
+        ImageShrinkerService shrinker = createShrinker();
         assertThat(shrinker.shrinkIfNeeded("")).isEqualTo("");
     }
 
@@ -94,7 +94,7 @@ class ImageShrinkerTest {
         int originalSize = Base64.getDecoder().decode(large).length;
         assertThat(originalSize).isGreaterThan(4 * 1024 * 1024);
 
-        ImageShrinker shrinker = createShrinker();
+        ImageShrinkerService shrinker = createShrinker();
         String result = shrinker.shrinkIfNeeded(large);
         assertThat(result).isNotNull();
         int shrunkSize = Base64.getDecoder().decode(result).length;
@@ -108,7 +108,7 @@ class ImageShrinkerTest {
         String img = createTestImageBase64(100, 100);
         int imgSize = Base64.getDecoder().decode(img).length;
         // Set threshold just above the image size
-        ImageShrinker shrinker = createShrinker(imgSize + 1, 100 * 1024 * 1024, 0.85);
+        ImageShrinkerService shrinker = createShrinker(imgSize + 1, 100 * 1024 * 1024, 0.85);
         String result = shrinker.shrinkIfNeeded(img);
         assertThat(result).isEqualTo(img);
     }
@@ -116,7 +116,7 @@ class ImageShrinkerTest {
     @Test
     @DisplayName("list of small images is not shrunk")
     void smallImageListNotShrunk() throws Exception {
-        ImageShrinker shrinker = createShrinker();
+        ImageShrinkerService shrinker = createShrinker();
         String small = createTestImageBase64(10, 10);
         List<String> images = List.of(small, small);
         List<String> result = shrinker.shrinkIfNeeded(images);
@@ -128,7 +128,7 @@ class ImageShrinkerTest {
     void listWithOversizedImageTriggersShrinking() throws Exception {
         String large = createLargeNoisyImageBase64(1200, 1200);
         String small = createTestImageBase64(10, 10);
-        ImageShrinker shrinker = createShrinker();
+        ImageShrinkerService shrinker = createShrinker();
         List<String> result = shrinker.shrinkIfNeeded(List.of(small, large));
         assertThat(result).hasSize(2);
         // Small image unchanged
@@ -146,7 +146,7 @@ class ImageShrinkerTest {
         String medium = createTestImageBase64(500, 500);
         int mediumSize = Base64.getDecoder().decode(medium).length;
         // Set per-image limit high (so individual check passes), but total limit very low
-        ImageShrinker shrinker = createShrinker(50 * 1024 * 1024, mediumSize, 0.85);
+        ImageShrinkerService shrinker = createShrinker(50 * 1024 * 1024, mediumSize, 0.85);
         List<String> result = shrinker.shrinkIfNeeded(List.of(medium, medium));
         assertThat(result).hasSize(2);
         // Each should be shrunk since total exceeds limit
@@ -157,7 +157,7 @@ class ImageShrinkerTest {
     @Test
     @DisplayName("empty list returns empty list")
     void emptyListReturnsEmpty() {
-        ImageShrinker shrinker = createShrinker();
+        ImageShrinkerService shrinker = createShrinker();
         List<String> result = shrinker.shrinkIfNeeded(List.of());
         assertThat(result).isEmpty();
     }
@@ -165,7 +165,7 @@ class ImageShrinkerTest {
     @Test
     @DisplayName("null list returns null")
     void nullListReturnsNull() {
-        ImageShrinker shrinker = createShrinker();
+        ImageShrinkerService shrinker = createShrinker();
         List<String> result = shrinker.shrinkIfNeeded((List<String>) null);
         assertThat(result).isNull();
     }

@@ -43,7 +43,7 @@ public class CliReplRunner implements CommandLineRunner {
 
     private final BackendClient backendClient;
     private final SlashCommandRegistry commandRegistry;
-    private final BackendProperties properties;
+    private final CliProperties properties;
     private final MarkdownRenderer markdownRenderer;
     private final ContextReferenceExpander contextExpander;
 

@@ -3,7 +3,7 @@ package com.azhukov.agent.bot.polling;
 import com.azhukov.agent.bot.client.TelegramApiException;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
-import com.azhukov.agent.bot.lock.BotLockManager;
+import com.azhukov.agent.bot.polling.BotLockManager;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

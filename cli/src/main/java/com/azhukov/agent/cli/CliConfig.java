@@ -15,7 +15,7 @@ import java.util.List;
 /**
  * CLI configuration — provides RestClient and ObjectMapper beans.
  */
-@EnableConfigurationProperties(BackendProperties.class)
+@EnableConfigurationProperties(CliProperties.class)
 @Configuration
 public class CliConfig {
 
@@ -35,7 +35,7 @@ public class CliConfig {
     }
 
     @Bean
-    public RestClient backendRestClient(BackendProperties properties, ObjectMapper objectMapper) {
+    public RestClient backendRestClient(CliProperties properties, ObjectMapper objectMapper) {
         MappingJackson2HttpMessageConverter jacksonConverter =
             new MappingJackson2HttpMessageConverter(objectMapper);
         List<org.springframework.http.MediaType> supportedTypes = new ArrayList<>(jacksonConverter.getSupportedMediaTypes());

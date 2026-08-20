@@ -62,7 +62,7 @@ class CommandGroupTest {
         // AdminCommands
         assertThat(names).contains("config", "doctor", "health", "usage", "insights", "agents",
             "restart", "reload-mcp", "reload-skills", "reload", "diff", "credits", "curator",
-            "kanban", "codex_runtime", "plugins", "toolsets", "tools", "browser", "plan",
+            "kanban", "codex-runtime", "plugins", "toolsets", "tools", "browser", "plan",
             "gquota", "platforms");
         // UtilityCommands
         assertThat(names).contains("help", "exit", "quit", "version", "clear", "redraw",

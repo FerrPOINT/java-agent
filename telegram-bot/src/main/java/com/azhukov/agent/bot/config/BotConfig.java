@@ -73,12 +73,14 @@ public class BotConfig {
 
     @Bean
     public RestClient backendRestClient(BotProperties properties) {
+        // l38: explicit factory bean instead of double-brace initialization
+        // (anonymous subclass holds a hidden this$0 reference and leaks it).
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout((int) Duration.ofSeconds(10).toMillis());
+        factory.setReadTimeout((int) Duration.ofMinutes(10).toMillis());
         return RestClient.builder()
             .baseUrl(properties.getBackendUrl())
-            .requestFactory(new SimpleClientHttpRequestFactory() {{
-                setConnectTimeout((int) Duration.ofSeconds(10).toMillis());
-                setReadTimeout((int) Duration.ofMinutes(10).toMillis());
-            }})
+            .requestFactory(factory)
             .build();
     }
 

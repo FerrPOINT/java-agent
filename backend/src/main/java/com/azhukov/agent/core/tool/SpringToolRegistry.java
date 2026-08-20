@@ -34,7 +34,7 @@ public class SpringToolRegistry implements ToolRegistry {
     private final ApplicationContext context;
     private final AgentProperties properties;
     private final ObjectMapper objectMapper;
-    private final ManagedToolGateway managedToolGateway;
+    private final ManagedToolGate managedToolGateway;
     private final Map<String, ToolEntry> entries = new java.util.concurrent.ConcurrentHashMap<>();
 
     @PostConstruct

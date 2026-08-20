@@ -1,7 +1,7 @@
 package com.azhukov.agent.bot.core;
 
 import com.azhukov.agent.bot.config.BotProperties;
-import com.azhukov.agent.bot.footer.RuntimeFooter;
+import com.azhukov.agent.bot.core.RuntimeFooter;
 import com.azhukov.agent.bot.media.MediaDeliveryService;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BusySessionHandler;

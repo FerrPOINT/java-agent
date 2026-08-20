@@ -1,4 +1,4 @@
-package com.azhukov.agent.bot.lock;
+package com.azhukov.agent.bot.polling;
 
 import com.azhukov.agent.bot.config.SharedObjectMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;

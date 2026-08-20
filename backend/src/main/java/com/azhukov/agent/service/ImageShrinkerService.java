@@ -31,13 +31,13 @@ import java.util.List;
  */
 @Slf4j
 @Component
-public class ImageShrinker {
+public class ImageShrinkerService {
 
     private final int maxImageSizeBytes;
     private final int maxTotalImageSizeBytes;
     private final float jpegQuality;
 
-    public ImageShrinker(AgentProperties properties) {
+    public ImageShrinkerService(AgentProperties properties) {
         this.maxImageSizeBytes = properties.getModel().getMaxImageSizeBytes();
         this.maxTotalImageSizeBytes = properties.getModel().getMaxTotalImageSizeBytes();
         this.jpegQuality = (float) properties.getModel().getImageJpegQuality();

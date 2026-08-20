@@ -9,7 +9,7 @@ import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.core.budget.DefaultIterationBudget;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
-import com.azhukov.agent.service.ImageShrinker;
+import com.azhukov.agent.service.ImageShrinkerService;
 import com.azhukov.agent.service.TurnUsageCollector;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.resilience4j.retry.RetryRegistry;
@@ -37,7 +37,7 @@ public class ModelClientConfig {
     @ConditionalOnMissingBean(ModelClient.class)
     public ModelClient openAiCompatibleModelClient(AgentProperties properties, TurnUsageCollector turnUsageCollector,
                                                     ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker,
-                                                    ImageShrinker imageShrinker) {
+                                                    ImageShrinkerService imageShrinker) {
         return new LangChain4jModelClient(properties, usage -> {
             turnUsageCollector.record(usage.promptTokens(), usage.completionTokens());
         }, errorClassifier, rateLimitTracker, null, imageShrinker);

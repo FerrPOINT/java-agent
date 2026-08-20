@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 @Getter
 @Setter
 @ConfigurationProperties(prefix = "cli")
-public class BackendProperties {
+public class CliProperties {
 
     private String backendUrl = "http://localhost:8090";
     private String sessionId;

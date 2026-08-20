@@ -52,7 +52,7 @@ public class BackendClient {
     public BackendClient(@Qualifier("backendRestClient") RestClient restClient,
                          ObjectMapper objectMapper,
                          BackendResponseFormatter formatter,
-                         BackendProperties properties) {
+                         CliProperties properties) {
         this.restClient = restClient;
         this.objectMapper = objectMapper;
         this.formatter = formatter;
@@ -60,7 +60,7 @@ public class BackendClient {
     }
 
     /**
-     * Constructor for tests that don't need a BackendProperties or formatter.
+     * Constructor for tests that don't need a CliProperties or formatter.
      * Creates a default formatter backed by the given ObjectMapper.
      */
     public BackendClient(RestClient restClient,

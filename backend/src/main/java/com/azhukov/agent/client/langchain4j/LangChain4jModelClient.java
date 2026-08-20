@@ -14,7 +14,7 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
-import com.azhukov.agent.service.ImageShrinker;
+import com.azhukov.agent.service.ImageShrinkerService;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
@@ -48,7 +48,7 @@ public class LangChain4jModelClient implements ModelClient {
     private final ErrorClassifier errorClassifier;
     private final RateLimitTracker rateLimitTracker;
     private final CredentialPool credentialPool;
-    private final ImageShrinker imageShrinker;
+    private final ImageShrinkerService imageShrinker;
 
     public LangChain4jModelClient(AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker) {
@@ -63,7 +63,7 @@ public class LangChain4jModelClient implements ModelClient {
 
     public LangChain4jModelClient(AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker,
-                                   CredentialPool credentialPool, ImageShrinker imageShrinker) {
+                                   CredentialPool credentialPool, ImageShrinkerService imageShrinker) {
         this.properties = properties;
         this.usageConsumer = usageConsumer;
         this.errorClassifier = errorClassifier;
@@ -117,7 +117,7 @@ public class LangChain4jModelClient implements ModelClient {
     public LangChain4jModelClient(ChatModel chatModel, StreamingChatModel streamingChatModel,
                                    AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker,
-                                   CredentialPool credentialPool, ImageShrinker imageShrinker) {
+                                   CredentialPool credentialPool, ImageShrinkerService imageShrinker) {
         this.chatModel = chatModel;
         this.streamingChatModel = streamingChatModel;
         this.properties = properties;

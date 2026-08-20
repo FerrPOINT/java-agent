@@ -16,7 +16,7 @@ import java.util.UUID;
  *   <li>{@code --new-session} — force a new session instead of loading from ~/.java-agent-cli/session.txt (C4)</li>
  * </ul>
  * These are passed as Spring properties with prefix {@code cli.*} so that
- * {@link BackendProperties} picks them up via @ConfigurationProperties.
+ * {@link CliProperties} picks them up via @ConfigurationProperties.
  */
 @SpringBootApplication(scanBasePackages = "com.azhukov.agent.cli")
 public class CliApplication {
