@@ -100,8 +100,8 @@ class RetryHardeningTest {
     @DisplayName("ContentPolicyException carries user-friendly message and cause")
     void contentPolicyException() {
         Exception cause = new RuntimeException("content_filter triggered");
-        DefaultAgentRuntime.ContentPolicyException ex =
-            new DefaultAgentRuntime.ContentPolicyException("User-friendly message", cause);
+        TurnExecutor.ContentPolicyException ex =
+            new TurnExecutor.ContentPolicyException("User-friendly message", cause);
         assertThat(ex.getMessage()).isEqualTo("User-friendly message");
         assertThat(ex.getCause()).isSameAs(cause);
     }
