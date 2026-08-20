@@ -175,11 +175,22 @@ public class SessionSearchService {
             }
         }
 
-        // Demote cron rows below interactive
+        // Demote cron rows below interactive.
+        // H12 (re-applied): batch-load all referenced sessions in ONE findAllById call
+        // instead of per-comparison findById inside the sort comparator (2 calls per
+        // comparison — O(n log n) queries).
         List<MessageEntity> sortedMessages = new ArrayList<>(ftsMessages);
+        java.util.Set<UUID> sessionIdsToLoad = new java.util.LinkedHashSet<>();
+        for (MessageEntity m : sortedMessages) {
+            if (m.getSessionId() != null) sessionIdsToLoad.add(m.getSessionId());
+        }
+        Map<UUID, SessionEntity> sessionById = sessionIdsToLoad.isEmpty()
+            ? Map.of()
+            : sessionRepository.findAllById(sessionIdsToLoad).stream()
+                .collect(Collectors.toMap(SessionEntity::getId, s -> s, (a, b) -> a));
         sortedMessages.sort((a, b) -> {
-            SessionEntity sa = sessionRepository.findById(a.getSessionId()).orElse(null);
-            SessionEntity sb = sessionRepository.findById(b.getSessionId()).orElse(null);
+            SessionEntity sa = a.getSessionId() != null ? sessionById.get(a.getSessionId()) : null;
+            SessionEntity sb = b.getSessionId() != null ? sessionById.get(b.getSessionId()) : null;
             int sourceA = sa != null && DEMOTED_SESSION_SOURCES.contains(sa.getSource()) ? 1 : 0;
             int sourceB = sb != null && DEMOTED_SESSION_SOURCES.contains(sb.getSource()) ? 1 : 0;
             return Integer.compare(sourceA, sourceB);

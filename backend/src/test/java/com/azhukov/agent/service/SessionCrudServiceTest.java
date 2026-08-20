@@ -41,6 +41,7 @@ class SessionCrudServiceTest {
     private MessageRepository messageRepository;
     private AgentSessionResolver sessionResolver;
     private AgentProperties properties;
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
     private SessionCrudService sessionCrudService;
 
     @BeforeEach
@@ -49,6 +50,7 @@ class SessionCrudServiceTest {
         messageRepository = mock(MessageRepository.class);
         sessionResolver = mock(AgentSessionResolver.class);
         properties = mock(AgentProperties.class);
+        eventPublisher = mock(org.springframework.context.ApplicationEventPublisher.class);
         AgentProperties.ModelProperties modelProps = mock(AgentProperties.ModelProperties.class);
         when(modelProps.getModelName()).thenReturn("default-model");
         when(properties.getModel()).thenReturn(modelProps);
@@ -59,7 +61,8 @@ class SessionCrudServiceTest {
             sessionResolver,
             Mappers.getMapper(SessionEntityMapper.class),
             Mappers.getMapper(DomainDtoMapper.class),
-            properties
+            properties,
+            eventPublisher
         );
     }
 
@@ -239,6 +242,8 @@ class SessionCrudServiceTest {
         assertThat(result.get().deleted()).isTrue();
         verify(messageRepository).deleteAll(msgs);
         verify(sessionRepository).delete(entity);
+        // C3 regression: the service path must evict per-session runtime state too
+        verify(eventPublisher).publishEvent(any(com.azhukov.agent.core.agent.SessionDeletedEvent.class));
     }
 
     @Test
