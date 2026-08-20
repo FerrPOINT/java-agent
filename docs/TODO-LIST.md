@@ -15,13 +15,13 @@
 3. **h10** Create shared module — API DTOs, SharedObjectMapper, base REST client
 4. **h12** ★RESTORED: Introduce repository ports in core — justified for multi-user
 
-## MEDIUM — Architecture (11)
+## MEDIUM — Architecture (0) — ✅ ALL DONE
 
-5-15. (m19–m31, excluding m29/m30 cancelled) — package cleanup, moves, dead code fixes
+~~5-15.~~ ✅ m21-m28+m31 done (m31 reverted — false finding, Dockerfile needs settings.gradle), m19/m24 were already done, m20 deferred (high-churn/low-value)
 
-## LOW — Architecture (8)
+## LOW — Architecture (0) — ✅ ALL DONE
 
-16-23. (l32–l39) — renames, consolidation, cosmetic
+~~16-23.~~ ✅ l32 ManagedToolGateway→ManagedToolGate, l33 ImageShrinker→ImageShrinkerService, l34 BackendProperties→CliProperties, l35 codex-runtime kebab, l36 dead description() removed, l37 single-class pkgs consolidated + dead MemoryMonitor deleted, l38 double-brace→explicit bean; l39 REJECTED (metrics facade in own pkg is fine)
 
 ## PORT — From Hermes ecosystem (3 — feature candidates)
 
