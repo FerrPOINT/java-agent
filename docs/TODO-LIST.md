@@ -1,7 +1,7 @@
 # Java-Agent TODO List — Architecture + Port + Hermes Sync + Multi-User
 
 **Updated:** 2026-08-20 (post parity-audit round 2)
-**Total active:** 74 items
+**Total active:** 66 items
 
 ---
 
@@ -23,32 +23,32 @@
 
 16-23. (l32–l39) — renames, consolidation, cosmetic
 
-## PORT — From Hermes ecosystem (9)
+## PORT — From Hermes ecosystem (3)
 
 ### Security/MCP (0) — ✅ ALL DONE 2026-08-20
 ~~MCP Tool Definition Scanner, MCP Response Scanner, Tool Argument Injection Scanner, Sliding-Window Rate Limiter, MCP Rug Pull Detection~~ — all present in core/security
 
-### Tool UX (6)
-Terminal CWD echo ✅, Terminal error hints ✅, Terminal timeout clarity ⏳, Patch already-applied ⏳, Search zero-match hints ✅, Write-file verification echo ✅, Read_file truncation UX ⏳, Patch multi-match detection ✅, Blocked-command recovery ⏳
+### Tool UX (0) — ✅ ALL DONE
+Terminal CWD echo ✅, Terminal error hints ✅, Terminal timeout clarity ✅ (partial output + enhanced hints, exceeds Hermes), Patch already-applied ✅ (p7), Search zero-match hints ✅, Write-file verification echo ✅, Read_file truncation UX ✅ (p10 remaining-lines hint), Patch multi-match detection ✅ (p11), Blocked-command recovery ✅ (p12 alternative suggestions)
 
-### Bot (4)
-Approval TTL ⏳, Approval Auto-Supersede ⏳, Post-Debounce Re-Validation ⏳, Edit-Capture Mode ⏳, Per-Action Owner Auth ⏳, Permission-Aware Keyboard ⏳
+### Bot (3)
+~~Approval TTL~~ ✅ (DEFAULT_TIMEOUT 5m = Hermes 300s + auto-deny on expiry), ~~Approval Auto-Supersede~~ ✅ (supersede marker + latch release), ~~Post-Debounce Re-Validation~~ ✅ NEW (fail-closed: isApproved-only gate, timeout blocks — tools/approval.py:2984), Edit-Capture Mode ⏳, Per-Action Owner Auth ⏳, Permission-Aware Keyboard ⏳
 
 ### Utility (1)
 Robust JSON Extraction ⏳ (ToolCallArgumentRepair covers most; fence-stripping pending)
 
-## HERMES-SYNC — Bug fixes (17 remaining; 15 closed 2026-08-20)
+## HERMES-SYNC — Bug fixes (12 remaining; 20 closed 2026-08-20)
 
-### MCP (2)
-~~nextCursor pagination~~ ✅ FIXED (cursor now passed; dup-cursor guard), ~~Unicode TAG strip~~ ✅, tool-result _meta ⏳ (SessionSearch covers), tool_call_id reuse ⏳, name collision ✅ (warn + dedup)
+### MCP (0) — ✅ ALL DONE
+~~nextCursor pagination~~ ✅ (cursor passed; dup-cursor guard), ~~Unicode TAG strip~~ ✅, ~~tool-result _meta~~ ✅ NEW (McpTool: vendor _meta surfaced, reserved prefixes dropped — kimi-code#2600), ~~tool_call_id reuse~~ ✅ NEW (uniquifyToolCallIds, deterministic _d<n>, both runtimes), name collision ✅ (warn + dedup)
 ### Terminal (0) — ✅ ALL DONE
 ~~signal-termination exit codes~~ ✅, ~~exit_code 0 masks piped~~ ✅ (Java-native search, N/A), ~~cwd unenterable~~ ✅ (h49), ~~ANSI strip~~ ✅ NEW AnsiStrip (ECMA-48 full)
 ### Tools (3)
 process unique ID prefixes ✅, mixed valid/invalid calls ✅, UTF-16 reading ✅ (h55)
-### Compression (4)
-handoff prefix ✅, timeout budget ⏳, cooldown reset ✅ (h60 + wiring 2026-08-20: 600s + 60/300/900 ladder), failure feedback ⏳, quota exhaustion ✅
-### Agent (4)
-empty-response guard ✅ (jittered backoff + separate budget 3), timezone in prompt ✅, think scrubber re-arm ✅ (reset per iteration), parallel-batch path canonicalisation ⏳, LENGTH stitching ✅ NEW (4 attempts, stitched partial kept), dropped-toolcall recovery ✅ NEW (3 consecutive, reset on success)
+### Compression (3)
+handoff prefix ✅, timeout budget ⏳ (idle 120s + ceiling 600s — Java uses flat 120s summaryTimeout), ~~failure feedback~~ ✅ (classified ladder: json/stream 30s, net 60s, timeout 60/300/900, hard 600s), cooldown reset ✅, quota exhaustion ✅
+### Agent (3)
+empty-response guard ✅ (jittered backoff + separate budget 3), timezone in prompt ✅, think scrubber re-arm ✅ (reset per iteration), parallel-batch path canonicalisation ⏳, LENGTH stitching ✅ NEW, dropped-toolcall recovery ✅ NEW
 ### Cron (0) — ✅ ALL DONE 2026-08-20
 persisted-state recovery ✅ (h71), retry storm suppression ✅ (h74), execution ledger ✅ (h72), self-context ✅ (contextFrom + lastRunSessionId), nudge failing ✅ NEW (CronDeliveryPoller delivers to chat)
 ### Skills (3)
