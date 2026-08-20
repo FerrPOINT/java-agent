@@ -1169,6 +1169,10 @@ public class DefaultPromptBuilder implements PromptBuilder {
         }
 
         // ── Volatile tier (changes per turn, but NO memory) ──
+        // R7 (Hermes system_prompt.py:840-856): the timestamp line carries EXACTLY
+        // date+zone, Session ID, Model, Provider, Platform. User/Language are NOT
+        // here — identity rides the Session Context block below (gateway/session.py),
+        // and Hermes has no Language line at all (language is inferred from context).
         StringBuilder volatileTier = new StringBuilder();
         // Date-only with full names (matching Hermes format) so the system prompt is byte-stable for the full day
         volatileTier.append("Conversation started: ").append(
@@ -1199,16 +1203,8 @@ public class DefaultPromptBuilder implements PromptBuilder {
         if (platform != null && !platform.isBlank()) {
             volatileTier.append("\nPlatform: ").append(platform);
         }
-        // User display name — helps the LLM respond in the user's language
+        // User display name — resolved here for the Session Context block only
         String userDisplayName = session.getMetadata("userDisplayName");
-        if (userDisplayName != null && !userDisplayName.isBlank()) {
-            volatileTier.append("\nUser: ").append(userDisplayName);
-        }
-        // Language code — tells the LLM which language the user prefers (e.g. "ru")
-        String languageCode = session.getMetadata("languageCode");
-        if (languageCode != null && !languageCode.isBlank()) {
-            volatileTier.append("\nLanguage: ").append(languageCode);
-        }
 
         // ── Session Context block (mirrors Hermes gateway/session.py build_session_context_prompt) ──
         // Hermes injects this as part of the system prompt so the LLM knows which platform

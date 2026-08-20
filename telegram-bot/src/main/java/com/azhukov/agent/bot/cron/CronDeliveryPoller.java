@@ -106,6 +106,15 @@ public class CronDeliveryPoller {
             output = "(cron job '" + name + "' completed — no output recorded)";
         }
 
+        // R6 (Hermes response_filters.py is_autonomous_silence_response): a tick
+        // that emitted a silence marker ([SILENT], whole/line/prefix) produced
+        // nothing worth a human's attention — mark delivered WITHOUT sending.
+        if (AutonomousSilenceFilter.isAutonomousSilence(output)) {
+            log.info("Cron job '{}' stayed silent — skipping delivery, advancing mark", name);
+            cronApiClient.markDelivered(jobId);
+            return;
+        }
+
         String header = "🕐 Cron: " + name + "\n\n";
         boolean sent = telegramClient.sendMessage(chatId, truncate(header + output, 4000)).isPresent();
         if (sent) {
