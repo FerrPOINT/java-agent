@@ -322,6 +322,23 @@ public class AgentStreamingService {
             int droppedToolcallRetries = 0;
             StringBuilder truncatedParts = new StringBuilder();
             boolean lastResponseHadToolCalls = false;
+            // R3/R4 (Hermes 7728-7760 + empty_response_guard): per-turn fallback chain
+            // and deterministic-empty tracker for the streaming path too.
+            com.azhukov.agent.core.agent.FallbackManager streamFallbackManager =
+                new com.azhukov.agent.core.agent.FallbackManager(
+                    properties.getFallbackChain(),
+                    properties.getModel().getProvider(),
+                    properties.getModel().getModelName(),
+                    properties.getModel().getBaseUrl(),
+                    properties.getModel().getApiKey());
+            // Compressor is null: this caller is only used for the empty-exhausted
+            // fallback activation (no compression paths run through it).
+            com.azhukov.agent.core.agent.FallbackModelCaller streamFallbackCaller =
+                new com.azhukov.agent.core.agent.FallbackModelCaller(
+                    errorClassifier, properties, null, contextEngine);
+            com.azhukov.agent.core.agent.EmptyResponseGuard streamEmptyGuard =
+                new com.azhukov.agent.core.agent.EmptyResponseGuard();
+            ModelClient activeStreamClient = modelClient;
             ChatResponse response;
             final UUID sessionId = session.id();
             while (true) {
@@ -335,7 +352,7 @@ public class AgentStreamingService {
 
                 try {
                     long llmStart = System.currentTimeMillis();
-                    modelClient.stream(context, tools, new StreamingResponseHandler() {
+                    activeStreamClient.stream(context, tools, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
                             // Check interrupt before emitting each token/chunk
@@ -590,7 +607,35 @@ public class AgentStreamingService {
                 // the response is NOT truncated — the model just produced reasoning only.
                 boolean isEmpty = (contentBuilder.length() == 0) && collectedToolCalls.isEmpty()
                     && !scrubber.hadThinkContent();
-                if (isEmpty && emptyContentRetries < MAX_EMPTY_RESPONSE_ATTEMPTS) {
+                streamEmptyGuard.recordEmptyAttempt(
+                    properties.getModel().getModelName(),
+                    properties.getModel().getProvider(),
+                    capturedFinishReason.get(), null /* usage not on streaming handler yet — fail-open */);
+                boolean streamDeterministicEmpty = streamEmptyGuard.deterministicEmpty();
+                if (streamDeterministicEmpty) {
+                    log.warn("Deterministic empty response in stream (consecutive zero-output) — skipping remaining retries");
+                    send(emitter, new StreamEvent("continuation", null, null,
+                        "⚠️ Модель детерминированно возвращает пустой ответ — ретраи остановлены"), streamCtx);
+                }
+                if (isEmpty && !streamDeterministicEmpty && emptyContentRetries >= MAX_EMPTY_RESPONSE_ATTEMPTS
+                        && streamFallbackManager.hasPendingFallback()) {
+                    // R3 (Hermes 7728-7760): empty budget burned — try the next fallback
+                    // provider BEFORE the terminal "(empty)".
+                    com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext fmc =
+                        new com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext(
+                            modelClient, streamFallbackManager);
+                    fmc.activeClient = activeStreamClient == modelClient ? null : activeStreamClient;
+                    if (streamFallbackCaller.tryActivateFallbackForEmpty(fmc)) {
+                        activeStreamClient = fmc.activeClient;
+                        emptyContentRetries = 0;
+                        streamEmptyGuard.reset();
+                        send(emitter, new StreamEvent("continuation", null, null,
+                            "↻ Переключение на fallback-провайдера после пустых ответов"), streamCtx);
+                        log.warn("Empty responses exhausted in stream — switched to fallback model");
+                        continue;
+                    }
+                }
+                if (isEmpty && !streamDeterministicEmpty && emptyContentRetries < MAX_EMPTY_RESPONSE_ATTEMPTS) {
                     emptyContentRetries++;
                     log.warn("Empty response (no content or reasoning) — retry {}/{} with backoff (model returned empty)",
                         emptyContentRetries, MAX_EMPTY_RESPONSE_ATTEMPTS);
@@ -622,10 +667,17 @@ public class AgentStreamingService {
                     String nudgeText = lastResponseHadToolCalls
                         ? com.azhukov.agent.core.agent.ResponseRecoveryPolicy.EMPTY_AFTER_TOOLS_NUDGE
                         : com.azhukov.agent.core.agent.ResponseRecoveryPolicy.EMPTY_NUDGE;
-                    if (!lastResponseHadToolCalls) {
-                        continuationContext.add(Message.assistant("", turnIndex));
+                    // ── Empty-response nudge semantics (Hermes conversation_loop.py:7568-7577) ──
+                    // Post-tool round: assistant("(empty)") synthetic stub + nudge user message —
+                    // a tool→user sequence without the stub is rejected by strict providers
+                    // (Moonshot/Kimi) and would poison the next replay (HTTP 400).
+                    // Plain-empty round: NO synthetic messages at all — backoff + fresh call
+                    // (Hermes adds nothing to the context; the retry re-sends as-is).
+                    if (lastResponseHadToolCalls) {
+                        continuationContext.add(Message.assistant("(empty)", turnIndex));
+                        continuationContext.add(Message.user(nudgeText));
                     }
-                    continuationContext.add(Message.user(nudgeText));
+                    // Plain-empty: nudgeText intentionally NOT added — fresh call only.
                     context = contextEngine.prepareContext(session, continuationContext);
                     session = resolveRotatedSession(session);
                     continue;
@@ -982,15 +1034,13 @@ public class AgentStreamingService {
      * (conversation_loop.py:7659, agent/jitter util semantics).
      */
     static long jitteredBackoffMs(int attempt) {
-        return jitteredBackoffMs(attempt, EMPTY_BACKOFF_BASE_MS, EMPTY_BACKOFF_CAP_MS);
+        return com.azhukov.agent.core.agent.ResponseRecoveryPolicy.jitteredBackoffMs(
+            attempt, EMPTY_BACKOFF_BASE_MS, EMPTY_BACKOFF_CAP_MS);
     }
 
     /** Parameterised variant — base/cap come from config so tests can shorten the wait. */
     static long jitteredBackoffMs(int attempt, long baseMs, long capMs) {
-        double base = baseMs * Math.pow(2, attempt - 1);
-        long capped = (long) Math.min(base, capMs);
-        double jitter = 0.75 + ThreadLocalRandom.current().nextDouble(0.5); // 0.75–1.25
-        return (long) (capped * jitter);
+        return com.azhukov.agent.core.agent.ResponseRecoveryPolicy.jitteredBackoffMs(attempt, baseMs, capMs);
     }
 
     /**

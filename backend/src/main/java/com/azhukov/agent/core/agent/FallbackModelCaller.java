@@ -420,6 +420,18 @@ public class FallbackModelCaller {
      * creates a new {@link com.azhukov.agent.client.langchain4j.FallbackModelClient}
      * from the fallback config and swaps it in as the active model client.
      */
+    /**
+     * R3 (Hermes 7728-7760): empty-response-exhausted fallback activation —
+     * public entry for the runtimes: after the empty budget is burned, try the
+     * next provider in the chain before returning the "(empty)" terminal.
+     */
+    public boolean tryActivateFallbackForEmpty(ModelCallContext ctx) {
+        if (ctx.fallbackManager == null || !ctx.fallbackManager.hasPendingFallback()) {
+            return false;
+        }
+        return tryActivateFallback(ctx, null, null);
+    }
+
     private boolean tryActivateFallback(ModelCallContext ctx, ErrorClassifier.ErrorType errorType, Exception error) {
         if (ctx.fallbackManager == null || !ctx.fallbackManager.hasPendingFallback()) {
             return false;

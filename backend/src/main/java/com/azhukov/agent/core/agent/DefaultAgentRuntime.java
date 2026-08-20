@@ -414,6 +414,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
         StringBuilder truncatedParts = new StringBuilder();
         // Empty response retry counter (parity with Hermes _empty_content_retries: max 3)
         int retryStateEmptyResponse = 0;
+        // Hermes: whether the PREVIOUS model round landed tool calls — drives the
+        // empty-recovery nudge choice (post-tool stub vs plain backoff).
+        boolean lastResponseHadToolCalls = false;
+        // R4 (Hermes empty_response_guard): deterministic-empty detection —
+        // ≥2 consecutive zero-output attempts with identical signature skip retries.
+        EmptyResponseGuard emptyGuard = new EmptyResponseGuard();
 
         // P1-5: Mid-turn persistence cursor — tracks how many messages have been
         // flushed to the database. After each tool batch, new messages (assistant
@@ -636,34 +642,76 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         }
                         return new TurnResult(turnMessages, true, null);
                     }
-                    int emptyRetries = retryStateEmptyResponse;  // read current value
-                    if (emptyRetries < 3) {
-                        emptyRetries++;
-                        retryStateEmptyResponse = emptyRetries;
-                        log.warn("Empty response (no content or reasoning) — retry {}/3 (model returned empty)", emptyRetries);
-                        if (emptyRetries == 1) {
-                            // First attempt: add a nudge user message
-                            turnMessages.add(Message.user(
-                                "Please provide your response. Your previous response was empty."));
-                        } else if (emptyRetries == 2) {
-                            // Second attempt: add a prefill assistant message
-                            turnMessages.add(Message.assistant("Let me continue... ", turnIndex));
-                            turnMessages.add(Message.user("Please complete your response."));
+                    // ── Empty-response recovery (Hermes conversation_loop.py:7640-7712) ──
+                    // Budget 3 SEPARATE from thinking-prefill; jittered backoff base 5s/cap 60s
+                    // (interruptible) BEFORE each retry — never instant retries; post-tool rounds
+                    // get _EMPTY_TOOL_RESPONSE_NUDGE with a synthetic "(empty)" assistant stub for
+                    // role alternation; plain-empty rounds get NO synthetic messages at all.
+                    // R3: nudges/stubs live in a LOCAL retry list — they are never appended to
+                    // turnMessages and thus never persisted (Hermes strips this scaffolding before
+                    // persistence; we keep it out of the durable list entirely).
+                    emptyGuard.recordEmptyAttempt(
+                        properties.getModel().getModelName(),
+                        properties.getModel().getProvider(),
+                        response.finishReason(), null /* usage not on ChatResponse yet — fail-open */);
+                    boolean deterministicEmpty = emptyGuard.deterministicEmpty();
+                    if (deterministicEmpty) {
+                        log.warn("Deterministic empty response detected (consecutive zero-output, "
+                            + "model={} provider={}) — skipping remaining retries to avoid repeat charges",
+                            properties.getModel().getModelName(), properties.getModel().getProvider());
+                    }
+                    if (!deterministicEmpty
+                            && retryStateEmptyResponse < ResponseRecoveryPolicy.MAX_EMPTY_RESPONSE_ATTEMPTS) {
+                        retryStateEmptyResponse++;
+                        log.warn("Empty response (no content or reasoning) — retry {}/{}",
+                            retryStateEmptyResponse, ResponseRecoveryPolicy.MAX_EMPTY_RESPONSE_ATTEMPTS);
+                        long backoffMs = ResponseRecoveryPolicy.jitteredBackoffMs(retryStateEmptyResponse,
+                            properties.getCore().getEmptyBackoffBaseMs(),
+                            properties.getCore().getEmptyBackoffCapMs());
+                        try {
+                            com.azhukov.agent.core.agent.TurnExecutor.interruptibleSleep(backoffMs);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            log.info("Empty-response backoff interrupted — aborting turn");
+                            break;
                         }
-                        // Third attempt: fall through to terminal below
-                        if (emptyRetries < 3) {
-                            turnIndex++;
+                        List<Message> retryContext = new ArrayList<>(turnMessages);
+                        if (lastResponseHadToolCalls) {
+                            // Hermes 7568-7577: tool → user alternation needs the synthetic
+                            // "(empty)" stub; strict providers reject tool→user sequences.
+                            retryContext.add(Message.assistant("(empty)", turnIndex));
+                            retryContext.add(Message.user(ResponseRecoveryPolicy.EMPTY_AFTER_TOOLS_NUDGE));
+                        }
+                        // Plain-empty: Hermes adds NO synthetic message — backoff + fresh call only.
+                        turnIndex++;
+                        context = contextEngine.prepareContext(session, retryContext);
+                        session = resolveRotatedSession(session);
+                        continue;
+                    }
+                    // ── Exhausted (Hermes 7728-7760): fallback attempt BEFORE terminal ──
+                    if (fallbackManager != null && fallbackManager.hasPendingFallback()) {
+                        log.warn("Empty response after {} retries — attempting fallback provider",
+                            retryStateEmptyResponse);
+                        FallbackModelCaller.ModelCallContext fmc = new FallbackModelCaller.ModelCallContext(
+                            modelClient, fallbackManager);
+                        fmc.activeClient = activeModelClient;
+                        if (fallbackModelCaller().tryActivateFallbackForEmpty(fmc)) {
+                            activeModelClient = fmc.activeClient;
+                            retryStateEmptyResponse = 0; // Hermes: reset budget for the fallback model
+                            emptyGuard.reset();           // ...and the deterministic-streak tracker
                             continue;
                         }
                     }
-                    // Third attempt (or exhausted): treat as terminal
-                    log.error("Empty response after 3 retries — returning terminal EMPTY_RESPONSE_EXHAUSTED");
-                    turnMessages.add(Message.assistant("(empty)", turnIndex));
+                    // Terminal: "(empty)" sentinel is USER-FACING ONLY — never persisted
+                    // (Hermes _empty_terminal_sentinel + _drop_trailing_empty_response_scaffolding).
+                    log.error("Empty response after {} retries — returning terminal EMPTY_RESPONSE_EXHAUSTED",
+                        ResponseRecoveryPolicy.MAX_EMPTY_RESPONSE_ATTEMPTS);
                     if (turnFinalizer != null) {
                         turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.EMPTY_RESPONSE_EXHAUSTED);
                     }
-                    return new TurnResult(turnMessages, true, null);
+                    return new TurnResult(turnMessages, true, "(empty)");
                 }
+                lastResponseHadToolCalls = false; // clean text round — plain backoff next time
                 turnMessages.add(Message.assistant(visibleContent, turnIndex));
                 // P1-5: Persist the final assistant message immediately
                 if (midTurnPersistenceCallback != null) {
@@ -946,6 +994,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 log.info("Injected steer note for session {}", session.id());
             }
             turnMessages.addAll(toolResults);
+            // Hermes empty-recovery driver: the previous round landed tool calls.
+            lastResponseHadToolCalls = true;
 
             // P1-5: Persist tool result messages immediately after the batch completes.
             // Mirrors Hermes _persist_session after _execute_tool_calls.
