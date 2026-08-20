@@ -58,7 +58,7 @@ connect/DNS ✅ (h80), empty-response advisory ✅ (h81), GLM token-limit ✅ (h
 ### Memory (1)
 drain queued writes ✅ (h86)
 ### Misc (1)
-AGENTS.override.md ✅, auto-title ✅, reject answer-shaped ✅, ~~session handles~~ ✅ ALREADY IMPLEMENTED (@session:profile/id parse + sessionLink generation, verified 2026-08-20), ~~approval coalesce~~ ✅ (supersede via request() + F16 producer wiring), /worktree ⏳ (real Hermes CLI feature — needs per-session terminal cwd design, server-side ≠ process-level os.chdir), ~~session pin/unpin~~ ❌ NOT IN HERMES (speculative, removed), silence markers ✅ NEW (Hermes marker set + canonicalisation)
+AGENTS.override.md ✅, auto-title ✅, reject answer-shaped ✅, ~~session handles~~ ✅ ALREADY IMPLEMENTED (@session:profile/id parse + sessionLink generation, verified 2026-08-20), ~~approval coalesce~~ ✅ (supersede via request() + F16 producer wiring), ~~/worktree~~ ⏴ DEFERRED BY USER 2026-08-20 (не нужен для текущего сценария; при необходимости — per-session cwd дизайн + API + CLI-команда), ~~session pin/unpin~~ ❌ NOT IN HERMES (speculative, removed), silence markers ✅ NEW (Hermes marker set + canonicalisation)
 
 ## ★ NEW — MULTI-USER (14)
 
