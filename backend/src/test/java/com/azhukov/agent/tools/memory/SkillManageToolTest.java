@@ -35,7 +35,10 @@ class SkillManageToolTest {
 
     @BeforeEach
     void setUp() {
-        tool = new SkillManageTool(skillManager);
+        tool = new SkillManageTool(skillManager,
+            new com.azhukov.agent.core.skill.SkillMutationLedger(
+                new org.springframework.beans.factory.support.DefaultListableBeanFactory()
+                    .getBeanProvider(com.azhukov.agent.persistence.repository.SkillAuditLogRepository.class)));
         // Ensure no leftover ThreadLocal from a previous test
         WriteContext.clear();
     }

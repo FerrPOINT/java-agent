@@ -31,6 +31,7 @@ import static com.azhukov.agent.tools.ToolHandler.parseJson;
 public class SkillManageTool implements ToolHandler {
 
     private final SkillManager skillManager;
+    private final com.azhukov.agent.core.skill.SkillMutationLedger mutationLedger;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -44,26 +45,32 @@ public class SkillManageTool implements ToolHandler {
                     validateSkillName(args.name());
                     String content = generateFrontmatterIfNeeded(args.name(), args.content());
                     skillManager.saveSkill(args.name(), content, origin);
+                    ledger("create", args.name(), null, content);
                     yield ToolResult.ok("Skill " + args.name() + " created.");
                 }
                 case "update", "edit" -> {
                     validateSkillName(args.name());
+                    String before = snapshotSkill(args.name());
                     // Finding 4.4: Pass absorbed_into to saveSkill in update action
                     // "edit" is the Hermes name for the same action (full SKILL.md rewrite)
                     skillManager.saveSkill(args.name(), args.content(), origin, args.absorbed_into());
+                    ledger("update", args.name(), before, args.content());
                     yield ToolResult.ok("Skill " + args.name() + " updated.");
                 }
                 case "delete" -> {
                     validateSkillName(args.name());
+                    String before = snapshotSkill(args.name());
                     boolean deleted;
                     if (args.absorbed_into() != null && !args.absorbed_into().isBlank()) {
                         deleted = skillManager.deleteSkill(args.name(), args.absorbed_into());
                     } else {
                         deleted = skillManager.deleteSkill(args.name());
                     }
-                    yield deleted
-                        ? ToolResult.ok("Skill " + args.name() + " deleted.")
-                        : ToolResult.fail("Skill " + args.name() + " not found.");
+                    if (deleted) {
+                        ledger("delete", args.name(), before, null);
+                        yield ToolResult.ok("Skill " + args.name() + " deleted.");
+                    }
+                    yield ToolResult.fail("Skill " + args.name() + " not found.");
                 }
                 case "patch" -> {
                     // S3: Find-and-replace text in skill content or support file
@@ -76,19 +83,25 @@ public class SkillManageTool implements ToolHandler {
                     boolean replaceAll = args.replace_all() != null && args.replace_all();
                     if (args.file_path() != null && !args.file_path().isBlank()) {
                         // Patch a support file (references/, templates/, scripts/)
+                        String before = snapshotSupportFile(args.name(), args.file_path());
                         boolean patched = skillManager.patchSupportFile(
                             args.name(), args.file_path(), args.old_text(), args.new_text(), replaceAll);
-                        yield patched
-                            ? ToolResult.ok("File " + args.file_path() + " in skill " + args.name() + " patched.")
-                            : ToolResult.fail("Skill " + args.name() + " or file " + args.file_path() +
-                                " not found, or old_text not found in file.");
+                        if (patched) {
+                            ledger("patch", args.name(), before, snapshotSupportFile(args.name(), args.file_path()));
+                            yield ToolResult.ok("File " + args.file_path() + " in skill " + args.name() + " patched.");
+                        }
+                        yield ToolResult.fail("Skill " + args.name() + " or file " + args.file_path() +
+                            " not found, or old_text not found in file.");
                     } else {
                         // Patch SKILL.md
+                        String before = snapshotSkill(args.name());
                         boolean patched = skillManager.patchSkill(
                             args.name(), args.old_text(), args.new_text(), replaceAll);
-                        yield patched
-                            ? ToolResult.ok("Skill " + args.name() + " patched.")
-                            : ToolResult.fail("Skill " + args.name() + " not found or old_text not found in content.");
+                        if (patched) {
+                            ledger("patch", args.name(), before, snapshotSkill(args.name()));
+                            yield ToolResult.ok("Skill " + args.name() + " patched.");
+                        }
+                        yield ToolResult.fail("Skill " + args.name() + " not found or old_text not found in content.");
                     }
                 }
                 case "write_file" -> {
@@ -100,7 +113,9 @@ public class SkillManageTool implements ToolHandler {
                         yield ToolResult.fail("content is required for write_file action");
                     }
                     try {
+                        String before = snapshotSupportFile(args.name(), args.file_path());
                         skillManager.writeSupportFile(args.name(), args.file_path(), args.content());
+                        ledger("write_file", args.name(), before, args.content());
                         yield ToolResult.ok("File " + args.file_path() + " written to skill " + args.name() + ".");
                     } catch (SecurityException e) {
                         // P2-49: Security scan failed — content was not written
@@ -114,10 +129,13 @@ public class SkillManageTool implements ToolHandler {
                     if (args.file_path() == null || args.file_path().isBlank()) {
                         yield ToolResult.fail("file_path is required for remove_file action");
                     }
+                    String before = snapshotSupportFile(args.name(), args.file_path());
                     boolean removed = skillManager.removeSupportFile(args.name(), args.file_path());
-                    yield removed
-                        ? ToolResult.ok("File " + args.file_path() + " removed from skill " + args.name() + ".")
-                        : ToolResult.fail("File not found: " + args.file_path());
+                    if (removed) {
+                        ledger("remove_file", args.name(), before, null);
+                        yield ToolResult.ok("File " + args.file_path() + " removed from skill " + args.name() + ".");
+                    }
+                    yield ToolResult.fail("File not found: " + args.file_path());
                 }
                 default -> ToolResult.fail("Unknown action: " + args.action());
             };
@@ -129,6 +147,40 @@ public class SkillManageTool implements ToolHandler {
             // prevents the write rather than reverting it after the fact.
             log.warn("Security scan blocked skill edit '{}': {} — original content preserved", args.name(), e.getMessage());
             return ToolResult.fail("Security scan blocked: " + e.getMessage());
+        }
+    }
+
+    /**
+     * h77 ledger hook (Hermes skill_ledger.record_mutation): telemetry, not a gate —
+     * ledger failures are swallowed by SkillMutationLedger and never block the tool result.
+     */
+    private void ledger(String action, String skill, String oldValue, String newValue) {
+        try {
+            mutationLedger.record(action, skill, null, oldValue, newValue);
+        } catch (Exception e) {
+            log.debug("Skill ledger hook failed for '{}' ({}): {} — mutation unaffected", skill, action, e.getMessage());
+        }
+    }
+
+    /** Best-effort pre-mutation snapshot of SKILL.md content (null when absent). */
+    private String snapshotSkill(String name) {
+        try {
+            return skillManager.getSkill(name);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Best-effort pre-mutation snapshot of a support file (null when absent). */
+    private String snapshotSupportFile(String name, String filePath) {
+        try {
+            var files = skillManager.listSupportFiles(name);
+            if (files != null && files.contains(filePath)) {
+                return skillManager.readSupportFile(name, filePath);
+            }
+            return null;
+        } catch (Exception e) {
+            return null;
         }
     }
 
