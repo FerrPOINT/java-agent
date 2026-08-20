@@ -87,6 +87,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ErrorClassifier errorClassifier;
     private final ContextCompressor contextCompressor;
     private final com.azhukov.agent.core.security.ApprovalQueue approvalQueue;
+    private final com.azhukov.agent.core.security.ToolGuardrails toolGuardrails;
     private final MemoryManager memoryManager;
     private final TokenEstimator tokenEstimator;
     private final ToolResultFormatter toolResultFormatter;
@@ -742,7 +743,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // subagent_auto_approve=true (set by DelegateTaskTool when
                 // agent.delegation.subagent-auto-approve is enabled).
                 boolean skipApproval = "true".equals(session.getMetadata("subagent_auto_approve"));
-                boolean approvalRequired = !skipApproval && approvalQueue != null && approvalQueue.isPending(session.id());
+                // F16 fix: create the request when the guardrail flags the tool — the
+                // queue never had a producer, so isPending alone was always false.
+                boolean approvalRequired = !skipApproval && approvalQueue != null
+                    && (approvalQueue.isPending(session.id())
+                        || (toolGuardrails != null && toolGuardrails.requiresApproval(call)
+                            && approvalQueue.getPending(session.id()) == null
+                            && toolGuardrails.requestApproval(session.id(), call) != null));
                 if (approvalRequired) {
                     log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
                     long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();

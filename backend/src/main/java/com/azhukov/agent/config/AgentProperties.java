@@ -532,8 +532,21 @@ public class AgentProperties {
         private boolean enabled = true;
         private int summaryChunkTokens = 2000;
         private boolean abortOnSummaryFailure = false;
-        /** HERMES-SYNC Bug 4: Compression summary timeout in seconds (default 120s). Prevents hang on slow LLM. */
+        /**
+         * HERMES-SYNC Bug 4: Compression summary timeout in seconds (default 120s).
+         * Acts as the IDLE budget in Hermes terms (DEFAULT_CONTEXT_TIMEOUT_SECONDS = 120.0,
+         * conversation_compression.py:698): inactivity-based — streamed summary
+         * progress extends the wait. Prevents hang on slow LLM.
+         */
         private int summaryTimeoutSeconds = 120;
+        /**
+         * Hermes parity (DEFAULT_CONTEXT_TOTAL_CEILING_SECONDS = 600.0,
+         * conversation_compression.py:699): hard ceiling bounding a degenerate
+         * trickle stream. The summary phase is bounded by min(idle, ceiling) —
+         * the ceiling only kicks in when idle > ceiling, but keeping it explicit
+         * matches Hermes budgets and documents the upper bound.
+         */
+        private int totalCeilingSeconds = 600;
         private final SessionRotationProperties sessionRotation = new SessionRotationProperties();
 
         @Getter @Setter

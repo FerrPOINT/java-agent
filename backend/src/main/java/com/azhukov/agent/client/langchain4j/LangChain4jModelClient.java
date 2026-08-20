@@ -454,7 +454,11 @@ public class LangChain4jModelClient implements ModelClient {
                         .map(c -> ToolExecutionRequest.builder()
                             .id(c.id())
                             .name(c.name())
-                            .arguments(c.arguments())
+                            // Hermes parity (_canonicalize_api_tool_calls, conversation_loop.py:1230):
+                            // canonical wire form for historical tool-call arguments on EVERY
+                            // send — separators (",", ":") + sorted keys, memoized per unique string.
+                            // Stabilizes provider prompt-cache prefixes across iterations.
+                            .arguments(canonicalizeArguments(c.arguments()))
                             .build())
                         .collect(Collectors.toList());
                     yield AiMessage.from(requests);
@@ -464,6 +468,72 @@ public class LangChain4jModelClient implements ModelClient {
             case TOOL -> dev.langchain4j.data.message.ToolExecutionResultMessage.from(
                 message.toolCallId(), null, message.content() != null ? message.content() : "");
         };
+    }
+
+    // ── Send-path tool-call argument canonicalization (Hermes parity) ──────
+
+    /** Value-keyed memo: pure deterministic function of the input string. */
+    private static final com.fasterxml.jackson.databind.ObjectMapper CANON_MAPPER =
+        new com.fasterxml.jackson.databind.ObjectMapper();
+    private static final java.util.Map<String, String> CANON_ARGS_CACHE =
+        java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(64, 0.75f, false) {
+            @Override
+            protected boolean removeEldestEntry(java.util.Map.Entry<String, String> eldest) {
+                return size() > 4096;
+            }
+        });
+
+    /**
+     * Canonical wire form of a tool-call arguments JSON string: compact separators,
+     * sorted keys (Hermes json.dumps(separators=(",", ":"), sort_keys=True)).
+     * Returns the input unchanged when it doesn't parse — the persisted history
+     * must never be mangled by this pass; repair owns malformed strings.
+     */
+    static String canonicalizeArguments(String argStr) {
+        if (argStr == null || argStr.isEmpty()) {
+            return argStr;
+        }
+        String cached = CANON_ARGS_CACHE.get(argStr);
+        if (cached != null) {
+            return cached;
+        }
+        String canonical;
+        try {
+            var tree = CANON_MAPPER.readTree(argStr);
+            var out = new java.util.TreeMap<String, Object>();
+            tree.fields().forEachRemaining(e -> out.put(e.getKey(), unwrap(e.getValue())));
+            canonical = CANON_MAPPER.writeValueAsString(out);
+        } catch (Exception e) {
+            return argStr; // unparseable — pass through untouched (repair owns those)
+        }
+        CANON_ARGS_CACHE.put(argStr, canonical);
+        return canonical;
+    }
+
+    private static Object unwrap(com.fasterxml.jackson.databind.JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        if (node.isObject()) {
+            var m = new java.util.TreeMap<String, Object>();
+            node.fields().forEachRemaining(e -> m.put(e.getKey(), unwrap(e.getValue())));
+            return m;
+        }
+        if (node.isArray()) {
+            var l = new java.util.ArrayList<Object>();
+            node.forEach(v -> l.add(unwrap(v)));
+            return l;
+        }
+        if (node.isBoolean()) {
+            return node.booleanValue();
+        }
+        if (node.isIntegralNumber()) {
+            return node.canConvertToLong() ? node.longValue() : node.bigIntegerValue();
+        }
+        if (node.isFloatingPointNumber()) {
+            return node.decimalValue();
+        }
+        return node.asText();
     }
 
     private ToolSpecification toToolSpecification(ToolDefinition definition) {

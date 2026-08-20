@@ -9,6 +9,21 @@ public interface ToolGuardrails {
     boolean requiresApproval(ToolCall call);
 
     /**
+     * Creates a pending approval request in the {@link ApprovalQueue} for the
+     * given tool call. F16 fix: this path is what actually enqueues a pending
+     * approval — before it had zero callers and the whole approval flow was
+     * dead code (isPending was always false).
+     *
+     * @param sessionId the session requesting approval
+     * @param call      the tool call that requires approval
+     * @return the created pending approval, or {@code null} when approvals are
+     *         unavailable/not configured
+     */
+    default ApprovalQueue.PendingApproval requestApproval(java.util.UUID sessionId, ToolCall call) {
+        return null;
+    }
+
+    /**
      * Records a tool call for loop detection tracking.
      *
      * @param toolName the tool that was called

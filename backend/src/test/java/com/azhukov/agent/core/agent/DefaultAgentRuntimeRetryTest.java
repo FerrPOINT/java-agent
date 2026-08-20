@@ -118,7 +118,7 @@ class DefaultAgentRuntimeRetryTest {
             messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
-            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
             new TokenEstimator(), new ToolResultFormatter(), null, null);
     }
 
@@ -431,7 +431,7 @@ class DefaultAgentRuntimeRetryTest {
             messageSanitizer, mock(ContextReferenceService.class), properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
-            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
             new TokenEstimator(), new ToolResultFormatter(), null, null);
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");

@@ -98,6 +98,7 @@ public class AgentConfig {
                                      ErrorClassifier errorClassifier,
                                      ContextCompressor contextCompressor,
                                      ApprovalQueue approvalQueue,
+                                     com.azhukov.agent.core.security.ToolGuardrails toolGuardrails,
                                      MemoryManager memoryManager,
                                      TokenEstimator tokenEstimator,
                                      ToolResultFormatter toolResultFormatter,
@@ -106,7 +107,7 @@ public class AgentConfig {
         return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
             memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService, interruptToken, turnFinalizer, steerBuffer,
-            errorClassifier, contextCompressor, approvalQueue, memoryManager, tokenEstimator, toolResultFormatter,
+            errorClassifier, contextCompressor, approvalQueue, toolGuardrails, memoryManager, tokenEstimator, toolResultFormatter,
             midTurnPersistenceCallback, commentaryCallback);
     }
 

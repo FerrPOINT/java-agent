@@ -83,6 +83,7 @@ public class TurnExecutor {
     private final TokenEstimator tokenEstimator;
     private final InterruptToken interruptToken;
     private final com.azhukov.agent.core.security.ApprovalQueue approvalQueue;
+    private final com.azhukov.agent.core.security.ToolGuardrails toolGuardrails;
     private final MemoryNudgeManager memoryNudgeManager;
     private final SteerBuffer steerBuffer;
 
@@ -103,6 +104,7 @@ public class TurnExecutor {
                          TokenEstimator tokenEstimator,
                          InterruptToken interruptToken,
                          com.azhukov.agent.core.security.ApprovalQueue approvalQueue,
+                         com.azhukov.agent.core.security.ToolGuardrails toolGuardrails,
                          MemoryNudgeManager memoryNudgeManager,
                          SteerBuffer steerBuffer) {
         this.errorClassifier = errorClassifier;
@@ -114,6 +116,7 @@ public class TurnExecutor {
         this.tokenEstimator = tokenEstimator;
         this.interruptToken = interruptToken;
         this.approvalQueue = approvalQueue;
+        this.toolGuardrails = toolGuardrails;
         this.memoryNudgeManager = memoryNudgeManager;
         this.steerBuffer = steerBuffer;
     }
@@ -597,7 +600,14 @@ public class TurnExecutor {
                 }
                 // Approval flow — remember whether THIS call was gated so the
                 // post-wait re-validation below only fires for gated calls.
-                boolean approvalRequired = !skipApproval && approvalQueue != null && approvalQueue.isPending(session.id());
+                // F16 fix: the gate was dead code — requiresApproval/requestApproval had
+                // ZERO callers, so no request was ever created and isPending was always
+                // false. Create the request here when the guardrail flags the tool.
+                boolean approvalRequired = !skipApproval && approvalQueue != null
+                    && (approvalQueue.isPending(session.id())
+                        || (toolGuardrails != null && toolGuardrails.requiresApproval(call)
+                            && approvalQueue.getPending(session.id()) == null
+                            && requestApproval(session.id(), call) != null));
                 if (approvalRequired) {
                     log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
                     long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
@@ -1088,6 +1098,20 @@ public class TurnExecutor {
     private static boolean isTransient(String msg) {
         return msg.contains("connection") || msg.contains("reset") || msg.contains("refused")
             || msg.contains("broken pipe") || msg.contains("eof") || msg.contains("closed");
+    }
+
+    /** F16: create an approval request via the guardrail-owned queue path. */
+    private com.azhukov.agent.core.security.ApprovalQueue.PendingApproval requestApproval(
+            UUID sessionId, ToolCall call) {
+        try {
+            return toolGuardrails != null
+                ? toolGuardrails.requestApproval(sessionId, call)
+                : null;
+        } catch (Exception e) {
+            log.warn("Failed to create approval request for {} in session {}: {}",
+                call.name(), sessionId, e.getMessage());
+            return null;
+        }
     }
 
     private static String classifyForLog(String msg) {

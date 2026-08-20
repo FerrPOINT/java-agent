@@ -19,6 +19,13 @@ public class ToolCallArgumentRepair {
 
  private static final ObjectMapper MAPPER = new ObjectMapper();
  private static final Pattern TRAILING_COMMA_PATTERN = Pattern.compile(",\\s*([}\\]])");
+ /**
+  * Hermes parity (plugin_llm.py:555 _FENCE_RE): models wrap tool-call JSON in a
+  * markdown code fence. Pull the first fenced block out if present; the optional
+  * "json" language tag is matched case-insensitively.
+  */
+ private static final Pattern FENCE_PATTERN =
+     Pattern.compile("```(?:json)?\\s*(.+?)```", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
  /**
  * Attempt to repair malformed tool_call argument JSON.
@@ -28,22 +35,32 @@ public class ToolCallArgumentRepair {
  * @return repaired JSON string, or "{}" if unrepairable
  */
  public String repair(String rawArgs, String toolName) {
- String rawStripped = rawArgs != null ? rawArgs.strip() : "";
+     String rawStripped = rawArgs != null ? rawArgs.strip() : "";
 
- // Fast-path: empty / whitespace-only → empty object
- if (rawStripped.isEmpty()) {
- log.warn("Sanitized empty tool_call arguments for {}", toolName);
- return "{}";
- }
+     // Fast-path: empty / whitespace-only → empty object
+     if (rawStripped.isEmpty()) {
+         log.warn("Sanitized empty tool_call arguments for {}", toolName);
+         return "{}";
+     }
 
- // Python-literal None → {}
- if ("None".equals(rawStripped)) {
- log.warn("Sanitized Python-None tool_call arguments for {}", toolName);
- return "{}";
- }
+     // Python-literal None → {}
+     if ("None".equals(rawStripped)) {
+         log.warn("Sanitized Python-None tool_call arguments for {}", toolName);
+         return "{}";
+     }
 
- // Repair pass 0: json.loads with non-strict parsing (handles control chars)
- try {
+     // Hermes parity (_strip_code_fences): unwrap ```json ... ``` fences before parsing.
+     var fence = FENCE_PATTERN.matcher(rawStripped);
+     if (fence.find()) {
+         String inner = fence.group(1).strip();
+         if (!inner.equals(rawStripped)) {
+             log.warn("Stripped code fence from tool_call arguments for {}", toolName);
+             rawStripped = inner;
+         }
+     }
+
+     // Repair pass 0: json.loads with non-strict parsing (handles control chars)
+     try {
  JsonNode parsed = MAPPER.readTree(rawStripped);
  String reserialised = MAPPER.writeValueAsString(parsed);
  if (!reserialised.equals(rawStripped)) {

@@ -107,7 +107,7 @@ class DefaultAgentRuntimeFallbackTest {
             messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
-            new com.azhukov.agent.core.security.ApprovalQueue(), null,
+            new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
             new TokenEstimator(), new ToolResultFormatter(), null, null);
     }
 

@@ -115,7 +115,7 @@ public class AgentStreamingService {
             turnExecutor = new com.azhukov.agent.core.agent.TurnExecutor(
                 errorClassifier, properties, null, contextEngine,
                 toolExecutionService, toolResultFormatter, tokenEstimator,
-                interruptToken, null, null, steerBuffer);
+                interruptToken, null, null, null, steerBuffer);
         }
         return turnExecutor;
     }

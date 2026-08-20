@@ -953,7 +953,13 @@ public class DefaultContextCompressor implements ContextCompressor {
      * @return the LLM-generated summary, or a fallback truncation if timed out
      */
     private String summarizeWithTimeout(String text, int summaryBudgetTokens) {
-        int timeoutSeconds = properties.getCompression().getSummaryTimeoutSeconds();
+        int idleSeconds = properties.getCompression().getSummaryTimeoutSeconds();
+        // Hermes parity (conversation_compression.py:789): ceiling clamped to at least
+        // one idle window; effective pre-commit budget = min(idle, ceiling).
+        int ceilingSeconds = properties.getCompression().getTotalCeilingSeconds();
+        int timeoutSeconds = Math.min(idleSeconds, Math.max(ceilingSeconds, idleSeconds)) == idleSeconds
+            ? idleSeconds
+            : Math.min(idleSeconds, ceilingSeconds);
         // If timeout is disabled (0 or negative), call summarize directly
         if (timeoutSeconds <= 0) {
             return summarize(text, summaryBudgetTokens);
