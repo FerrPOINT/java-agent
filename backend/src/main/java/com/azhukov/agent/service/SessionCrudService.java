@@ -46,6 +46,9 @@ public class SessionCrudService {
     private final SessionEntityMapper sessionEntityMapper;
     private final DomainDtoMapper domainDtoMapper;
     private final AgentProperties properties;
+    // C3: publish SessionDeletedEvent so per-session runtime state is evicted
+    // (memory-leak fix must hold on the service path too, not just the controller).
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     // ── List sessions ──
 
@@ -126,6 +129,9 @@ public class SessionCrudService {
         // Delete messages first
         messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
         sessionRepository.delete(entity);
+        // C3: evict per-session in-memory state (runtime maps, context caches, review
+        // state) so deleted sessions do not leak memory on the service path either.
+        eventPublisher.publishEvent(new com.azhukov.agent.core.agent.SessionDeletedEvent(sessionId));
         return Optional.of(new SessionDeletedDto("session.deleted", sessionId.toString(), true));
     }
 

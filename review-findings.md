@@ -26,6 +26,10 @@ Baseline: 6075 tests, 0 failures
 ### C3. Memory leak: 7+ ConcurrentHashMaps for sessions never cleaned up [CORE]
 **Files:** DefaultAgentRuntime, TurnStateManager, InterruptToken, DefaultContextEngine, PromptCacheTracker, ToolResultStorage, BackgroundReviewService
 Session keys accumulate without limit. No eviction, no TTL, no cleanup hook.
+**Status:** Fixed via SessionDeletedEvent → DefaultAgentRuntime.cleanupSession(). Gap found
+in re-audit: `SessionCrudService.deleteSession()` (service path) deleted rows without
+publishing the event, silently leaking the same state; publisher injected on
+`fix/audit-regressions` with a regression test.
 
 ### C4. CronJobService: no @Transactional on multi-write methods [PERSISTENCE]
 **File:** `CronJobService.java:49-52`
@@ -79,6 +83,10 @@ All DTOs with Instant fields will throw InvalidDefinitionException.
 ### H12. N+1 query in SessionSearchTool [PERSISTENCE]
 **File:** `SessionSearchTool.java:63-75`
 findById called in loop for each match.
+**Status:** Fixed in `SessionSearchService.discover()` — batch `findAllById` before the
+demotion sort (was: 2 `findById` calls per comparator invocation over the full FTS result
+set). The PR #1 integration merge lost the original dafb8c1 version of this fix; re-applied
+on `fix/audit-regressions`.
 
 ### H13. Unbounded result sets — no pagination on list endpoints [PERSISTENCE]
 **Files:** 9 repositories + 3 services
@@ -87,6 +95,9 @@ findAll() without Pageable on cron jobs, checkpoints, messages, memory, skills.
 ### H14. Telegram streaming: content > 4096 lost (streamingMaxChars=32768) [TELEGRAM-BOT]
 **File:** `BotProperties.java:76`, `StreamEditor.java`
 Content 4097-32767 chars → Telegram 400 → content lost.
+**Status:** NOT lost in the PR #1 integration merge (initial line-diff audit flagged it, but
+main re-implements the fix as an init()-time clamp of `streamingMaxChars` to 4096 — see
+`StreamEditor.init()`; covered by `StreamEditorOversizedContentTest`). No action needed.
 
 ### H15. Telegram MessageSplitter: prefix (1/N) exceeds 4096 [TELEGRAM-BOT]
 **File:** `MessageSplitter.java:50-56`
