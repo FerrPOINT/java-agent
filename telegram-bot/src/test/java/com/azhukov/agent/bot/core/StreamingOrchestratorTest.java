@@ -67,6 +67,7 @@ class StreamingOrchestratorTest {
 
         // StreamEditor defaults
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(1L));
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.of(1L));
         when(streamEditor.editStream(anyLong(), anyLong(), anyString())).thenReturn(true);
         when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString())).thenReturn(true);
 
@@ -229,6 +230,7 @@ class StreamingOrchestratorTest {
     void streamChat_chatStreamThrows_clearsStreamWhenMessageExistsAndRethrows() {
         // startStream succeeds → messageId >= 0 → clearStream is invoked on failure
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(1L));
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.of(1L));
         when(backendClient.chatStream(anyString(), nullable(String.class), any(),
             any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("connection refused"));
@@ -246,6 +248,7 @@ class StreamingOrchestratorTest {
     void streamChat_chatStreamThrows_whenNoMessage_doesNotClearStream() {
         // startStream returns empty → messageId stays -1 → clearStream NOT called
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.empty());
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.empty());
         when(backendClient.chatStream(anyString(), nullable(String.class), any(),
             any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("connection refused"));

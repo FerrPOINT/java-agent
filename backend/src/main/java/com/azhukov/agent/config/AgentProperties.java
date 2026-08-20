@@ -434,6 +434,12 @@ public class AgentProperties {
         private String soulMdPath = "";
         // h63: Whether to retry on empty responses (default false — return immediately).
         private boolean emptyResponseRetry = false;
+        /**
+         * Hermes parity: jittered backoff base/cap for empty-response retries
+         * (conversation_loop.py jittered_backoff base=5s max=60s). Overridable for tests.
+         */
+        private long emptyBackoffBaseMs = 5_000L;
+        private long emptyBackoffCapMs = 60_000L;
 
         public int getMaxTotalChars() { return 64000; }
     }

@@ -104,6 +104,14 @@ public class CronJobEntity {
     @Column(name = "consecutive_failures")
     private int consecutiveFailures = 0;
 
+    // h75/h76: Session produced by the last run (delivery reads its output) and the
+    // high-water mark the bot-side delivery poller has already delivered through.
+    @Column(name = "last_run_session_id")
+    private UUID lastRunSessionId;
+
+    @Column(name = "last_delivered_run_at")
+    private Instant lastDeliveredRunAt;
+
     @jakarta.persistence.PrePersist
     void onCreateTimestamps() {
         if (createdAt == null) createdAt = java.time.Instant.now();

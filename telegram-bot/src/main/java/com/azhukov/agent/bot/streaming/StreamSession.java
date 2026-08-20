@@ -29,6 +29,10 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class StreamSession {
 
+    // ─── P2.S6: Forum-topic routing ──────────────────────────────
+    /** Telegram forum thread the stream was started in (0 = no thread routing). */
+    public volatile long messageThreadId = 0L;
+
     // ─── B5: Adaptive rate limiting ───────────────────────────────
     /** Per-chat adaptive edit interval in ms; starts at minIntervalMs, grows on 429. */
     public final AtomicLong editInterval = new AtomicLong(0);

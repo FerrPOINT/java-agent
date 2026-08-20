@@ -101,6 +101,10 @@ class AgentStreamingServiceGapTest {
         properties.getCore().setMaxTurns(10);
         properties.getError().setRetryDelayMs(10);
         properties.getError().setRetryCapMs(50);
+        // Shorten the empty-response backoff so continuation retries complete fast in tests
+        // (production default: 5s base / 60s cap — Hermes jittered_backoff parity).
+        properties.getCore().setEmptyBackoffBaseMs(10L);
+        properties.getCore().setEmptyBackoffCapMs(50L);
         sessionRepository = mock(SessionRepository.class);
         messageRepository = mock(MessageRepository.class);
         transactionTemplate = mock(TransactionTemplate.class);

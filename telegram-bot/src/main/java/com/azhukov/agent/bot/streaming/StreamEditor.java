@@ -196,6 +196,17 @@ public class StreamEditor {
     }
 
     /**
+     * P2.S6: startStream with forum-topic routing. The thread id is recorded on the
+     * StreamSession so every subsequent send in this stream (progress bubbles, splits,
+     * fresh finals) lands in the same topic.
+     */
+    public Optional<Long> startStream(long chatId, String initialText, String chatType, long threadId) {
+        StreamSession session = sessionFor(chatId);
+        session.messageThreadId = threadId;
+        return startStream(chatId, initialText, chatType, session);
+    }
+
+    /**
      * Sends the initial streaming message with a chat type hint.
      *
      * <p>S5: When the streaming transport is "auto" or "draft" and the chat
@@ -1482,7 +1493,10 @@ public class StreamEditor {
         // (disableNotification=false). If streamingSilent is true and forceNotification is false,
         // send silently (disableNotification=true). Hermes sends preview/progress with notify=false.
         boolean disableNotification = forceNotification ? false : streamingSilent;
-        return telegramClient.sendMessage(chatId, text, null, null, null, disableNotification);
+        // P2.S6: route into the forum topic the stream was started in (StreamSession carries it).
+        StreamSession session = sessionFor(chatId);
+        Integer threadId = session.messageThreadId > 0 ? (int) session.messageThreadId : null;
+        return telegramClient.sendMessage(chatId, text, null, null, threadId, disableNotification);
     }
 
     /**
@@ -1547,26 +1561,76 @@ public class StreamEditor {
     private boolean endsWithPartialSilenceMarker(String text) {
         if (text == null || text.isBlank()) return false;
         String t = text.trim();
-        return t.endsWith("NO") || t.endsWith("NO_") || t.endsWith("NO_R") || t.endsWith("NO_RE")
-            || t.endsWith("NO_REPL") || t.endsWith("NO_REPLY")
-            || t.endsWith("[") || t.endsWith("[S") || t.endsWith("[SI") || t.endsWith("[SIL")
-            || t.endsWith("[SILE") || t.endsWith("[SILEN") || t.endsWith("[SILENT")
-            || t.endsWith("***") || t.endsWith("**");
+        // NO_REPLY prefixes
+        if (t.endsWith("NO") || t.endsWith("NO_") || t.endsWith("NO_R") || t.endsWith("NO_RE")
+            || t.endsWith("NO_REPL") || t.endsWith("NO_REPLY")) return true;
+        // "NO REPLY" (space form) prefixes
+        if (t.endsWith("NO REP") || t.endsWith("NO REPL") || t.endsWith("NO REPLY")) return true;
+        // [SILENT] and bare SILENT prefixes
+        if (t.endsWith("[") || t.endsWith("[S") || t.endsWith("[SI") || t.endsWith("[SIL")
+            || t.endsWith("[SILE") || t.endsWith("[SILEN") || t.endsWith("[SILENT")) return true;
+        if (t.endsWith("SIL") || t.endsWith("SILE") || t.endsWith("SILEN") || t.endsWith("SILENT")) return true;
+        return t.endsWith("***") || t.endsWith("**");
     }
 
     /**
-     * Check if text is an intentional silence marker (Hermes parity: _is_intentional_silence_response).
-     * These markers indicate the model chose not to respond — the streaming message should be
-     * retracted rather than showing the marker to the user.
+     * Check if text is an intentional silence marker (Hermes parity: response_filters.py
+     * is_intentional_silence_response). Canonicalises (upper-case, collapse whitespace),
+     * strips edge punctuation while keeping brackets structural, caps length at 64 chars —
+     * substantive prose that merely MENTIONS a marker is never suppressed.
      */
     private boolean isSilenceMarker(String text) {
         if (text == null || text.isBlank()) return false;
-        String trimmed = text.trim();
-        return "NO_REPLY".equals(trimmed)
-            || "[SILENT]".equals(trimmed)
-            || "***".equals(trimmed)
-            || trimmed.startsWith("NO_REPLY")
-            && trimmed.length() <= 20; // catch NO_REPLY with trailing whitespace/punctuation
+        String stripped = text.strip();
+        if (stripped.isEmpty()) return false;
+        if (stripped.length() > 64) return false;
+        // Candidate 1: canonical form as-is; Candidate 2: edge punctuation stripped
+        // (".NO_REPLY" / "*NO_REPLY*"), keeping square brackets structural.
+        for (String candidate : silenceCandidates(stripped)) {
+            switch (candidate) {
+                case "[SILENT]", "SILENT", "NO_REPLY", "NO REPLY" -> {
+                    return true;
+                }
+                default -> { }
+            }
+        }
+        return false;
+    }
+
+    /** Canonicalise: upper-case + collapse internal whitespace (Hermes _canonical_silence_candidate). */
+    private String canonicalSilence(String text) {
+        return String.join(" ", text.toUpperCase().strip().split("\\s+"));
+    }
+
+    /** Hermes _canonical_silence_candidates: raw canonical + edge-punctuation-stripped variant. */
+    private java.util.List<String> silenceCandidates(String stripped) {
+        String strippedPunct = stripEdgeSilencePunctuation(stripped);
+        if (strippedPunct.equals(stripped)) {
+            return java.util.List.of(canonicalSilence(stripped));
+        }
+        return java.util.List.of(canonicalSilence(stripped), canonicalSilence(strippedPunct));
+    }
+
+    /** Strip stray edge punctuation without erasing marker structure (brackets stay). */
+    private String stripEdgeSilencePunctuation(String text) {
+        int start = 0, end = text.length();
+        while (start < end && text.charAt(start) != '[' && text.charAt(start) != ']'
+            && isPunctuation(text.charAt(start))) {
+            start++;
+        }
+        while (end > start && text.charAt(end - 1) != '[' && text.charAt(end - 1) != ']'
+            && isPunctuation(text.charAt(end - 1))) {
+            end--;
+        }
+        return text.substring(start, end).strip();
+    }
+
+    private boolean isPunctuation(char c) {
+        int t = Character.getType(c);
+        return t == Character.CONNECTOR_PUNCTUATION || t == Character.DASH_PUNCTUATION
+            || t == Character.START_PUNCTUATION || t == Character.END_PUNCTUATION
+            || t == Character.INITIAL_QUOTE_PUNCTUATION || t == Character.FINAL_QUOTE_PUNCTUATION
+            || t == Character.OTHER_PUNCTUATION;
     }
 
     /**

@@ -117,6 +117,7 @@ class BotMessageProcessorTest {
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("");
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.empty());
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(1L));
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.of(1L));
         when(streamEditor.editStream(anyLong(), anyLong(), anyString())).thenReturn(true);
         when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString())).thenReturn(true);
         doNothing().when(streamEditor).clearStream(anyLong());
@@ -835,6 +836,7 @@ class BotMessageProcessorTest {
     @Test
     void streamingFailsToStartFallsBackToSyncChat() {
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.empty());
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.empty());
         // When startStream returns empty, messageId stays -1, so no tokens are delivered,
         // accumulated is empty, and the code falls through to sync fallback
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any()))
@@ -1593,6 +1595,7 @@ class BotMessageProcessorTest {
         List<String> finalizedTexts = new ArrayList<>();
 
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(123L));
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.of(123L));
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(3);
@@ -1666,6 +1669,7 @@ class BotMessageProcessorTest {
     @Test
     void startStreamReturnsEmptyUsesSyncFallback() {
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.empty());
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.empty());
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "test-model", 100, 1000, false, false));
         when(backendClient.chat(anyString(), nullable(String.class), any()))

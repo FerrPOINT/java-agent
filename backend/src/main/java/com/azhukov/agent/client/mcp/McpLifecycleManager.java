@@ -171,24 +171,32 @@ public class McpLifecycleManager {
     }
 
     // h43: Follow nextCursor pagination when listing tools from an MCP server.
-    // If response contains nextCursor (as a string), make additional requests until
-    // no more cursor. Treat non-string nextCursor as end of pagination.
+    // Hermes parity (tools/mcp_tool.py _drain_paginated): pass the cursor INTO the next
+    // list call — calling listTools() without the cursor refetches page 1 forever.
+    // Safety-capped at 100 pages to survive a misbehaving server looping its cursor.
     private List<McpSchema.Tool> listToolsWithPagination(McpSyncClient client) {
         List<McpSchema.Tool> allTools = new ArrayList<>();
         try {
             var result = client.listTools();
-            allTools.addAll(result.tools());
-            // h43: Check for nextCursor in the response and follow pagination.
-            // The MCP SDK's ListToolsResult may contain a nextCursor field.
-            // We use reflection to check for it since the SDK may not expose it directly.
-            String cursor = extractNextCursor(result);
-            int maxPages = 100; // Safety limit
+            if (result.tools() != null) {
+                allTools.addAll(result.tools());
+            }
+            String cursor = result.nextCursor();
+            int maxPages = 100; // Safety limit (Hermes has the same class of cap)
             while (cursor != null && !cursor.isEmpty() && maxPages-- > 0) {
                 log.debug("MCP tool pagination: fetching next page with cursor '{}'", cursor);
                 try {
-                    var nextResult = client.listTools();
-                    allTools.addAll(nextResult.tools());
-                    cursor = extractNextCursor(nextResult);
+                    var nextResult = client.listTools(cursor);
+                    if (nextResult.tools() != null) {
+                        allTools.addAll(nextResult.tools());
+                    }
+                    String next = nextResult.nextCursor();
+                    // Guard against a server returning the same cursor forever.
+                    if (cursor.equals(next)) {
+                        log.warn("MCP tool pagination: server returned the same cursor twice — stopping");
+                        break;
+                    }
+                    cursor = next;
                 } catch (Exception e) {
                     log.warn("MCP tool pagination: failed to fetch next page: {}", e.getMessage());
                     break;
@@ -198,22 +206,6 @@ public class McpLifecycleManager {
             log.warn("MCP tool listing failed: {}", e.getMessage());
         }
         return allTools;
-    }
-
-    // h43: Extract nextCursor from a ListToolsResult if present.
-    // Treat non-string nextCursor as end of pagination (return null).
-    private String extractNextCursor(McpSchema.ListToolsResult result) {
-        try {
-            var field = result.getClass().getDeclaredField("nextCursor");
-            field.setAccessible(true);
-            Object value = field.get(result);
-            if (value instanceof String s && !s.isEmpty()) {
-                return s;
-            }
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            // Field doesn't exist or can't access — no pagination support
-        }
-        return null;
     }
 
     private McpSyncClient createClient(AgentProperties.McpProperties.ServerProperties server) {

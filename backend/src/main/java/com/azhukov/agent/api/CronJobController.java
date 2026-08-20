@@ -65,6 +65,13 @@ public class CronJobController {
         return cronJobDtoMapper.toExecutionLogDtoList(cronExecutionLogRepository.findByJobIdOrderByStartedAtDesc(id));
     }
 
+    // h76: Delivery high-water mark — the bot-side poller calls this after delivering
+    // a run's output so each run is delivered exactly once.
+    @PostMapping("/{id}/delivered")
+    public CronJobDto markDelivered(@PathVariable UUID id) {
+        return cronJobDtoMapper.toDto(cronJobService.markDelivered(id));
+    }
+
     public record CreateCronRequest(
         @jakarta.validation.constraints.NotBlank String name,
         @jakarta.validation.constraints.NotBlank String schedule,

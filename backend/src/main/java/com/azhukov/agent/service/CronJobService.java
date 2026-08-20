@@ -295,6 +295,19 @@ public class CronJobService {
         return entity;
     }
 
+    /**
+     * h76: Mark a job's latest run as delivered (high-water mark for the bot-side
+     * delivery poller). Called after the run's output was successfully pushed to
+     * the user's chat so each run is delivered exactly once.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public CronJobEntity markDelivered(UUID id) {
+        CronJobEntity entity = cronJobRepository.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
+        entity.setLastDeliveredRunAt(java.time.Instant.now());
+        return cronJobRepository.save(entity);
+    }
+
     public CronJobEntity pause(UUID id) {
         CronJobEntity entity = cronJobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
@@ -518,13 +531,14 @@ public class CronJobService {
 
             // Run the prompt through the agent runtime with retry on failure
             AgentRuntimeService runtimeService = agentRuntimeServiceProvider.getIfAvailable();
+            String lastRunSessionId = null;
             if (runtimeService != null) {
                 int maxRetries = 2;
                 int attempt = 0;
                 boolean success = false;
                 while (attempt <= maxRetries && !success) {
                     try {
-                        runtimeService.runBackground(enhancedPrompt, null);
+                        lastRunSessionId = runtimeService.runBackground(enhancedPrompt, null);
                         success = true;
                     } catch (Exception llmEx) {
                         attempt++;
@@ -549,6 +563,14 @@ public class CronJobService {
             job.setLastRunAt(Instant.now());
             job.setLastStatus("success");
             job.setLastError(null);
+            // h75: remember the session this run produced so delivery can read its output.
+            if (lastRunSessionId != null) {
+                try {
+                    job.setLastRunSessionId(UUID.fromString(lastRunSessionId));
+                } catch (IllegalArgumentException ignored) {
+                    log.warn("Cron job '{}' produced non-UUID session id: {}", job.getName(), lastRunSessionId);
+                }
+            }
             cronJobRepository.save(job);
             // h72: Record successful execution in the ledger.
             recordExecution(job.getId(), startedAt, Instant.now(), "success", null);

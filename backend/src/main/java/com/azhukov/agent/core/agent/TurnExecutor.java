@@ -338,6 +338,11 @@ public class TurnExecutor {
                             } catch (Exception ce) {
                                 log.warn("Context compression for long-context tier failed (attempt {}/3): {}",
                                     compressionAttempts + 1, ce.getMessage());
+                                // Hermes parity: 600s summary-failure cooldown so a wedged
+                                // summarizer doesn't burn paid retries (context_compressor.py
+                                // _SUMMARY_FAILURE_COOLDOWN_SECONDS). Transient failures use
+                                // the 60/300/900s ladder instead.
+                                applyCompressionFailureCooldown(contextCompressor, compressionAttempts + 1, ce);
                                 if (compressionAttempts + 1 >= 3) {
                                     break;
                                 }
@@ -383,6 +388,8 @@ public class TurnExecutor {
                             }
                         } catch (Exception ce) {
                             log.warn("Context compression failed (attempt {}/3): {}", compressionAttempts + 1, ce.getMessage());
+                            // Hermes parity: failure cooldown (600s) / transient ladder (60/300/900s).
+                            applyCompressionFailureCooldown(contextCompressor, compressionAttempts + 1, ce);
                             if (compressionAttempts + 1 >= 3) {
                                 break;
                             }
@@ -415,6 +422,8 @@ public class TurnExecutor {
                         } catch (Exception ce) {
                             log.warn("Context compression for payload too large failed (attempt {}/3): {}",
                                 compressionAttempts + 1, ce.getMessage());
+                            // Hermes parity: failure cooldown (600s) / transient ladder (60/300/900s).
+                            applyCompressionFailureCooldown(contextCompressor, compressionAttempts + 1, ce);
                             if (compressionAttempts + 1 >= 3) {
                                 break;
                             }
@@ -1022,6 +1031,40 @@ public class TurnExecutor {
                 fallbackConfig.getProvider(), fallbackConfig.getModel(), e.getMessage());
             return tryActivateFallback(errorType, error, fallbackCtx);
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    //  Compression failure cooldown (Hermes parity: h60 wiring)
+    // ──────────────────────────────────────────────────────────────────
+
+    /** Hermes _SUMMARY_FAILURE_COOLDOWN_SECONDS: 600s cooldown after a hard summary failure. */
+    private static final long COMPRESSION_FAILURE_COOLDOWN_MS = 600_000L;
+
+    /** Hermes _TIMEOUT_COOLDOWN_LADDER (60, 300, 900)s for transient/timeout failures. */
+    private static final long[] TRANSIENT_COOLDOWN_LADDER_MS = {60_000L, 300_000L, 900_000L};
+
+    /**
+     * Applies the Hermes compression-failure cooldown after a failed compression attempt:
+     * transient failures (timeouts) get the escalating 60/300/900s ladder; everything else
+     * gets the flat 600s summary-failure cooldown (context_compressor.py:4763, 4893).
+     * No-op for compressor implementations without cooldown support.
+     */
+    private void applyCompressionFailureCooldown(ContextCompressor compressor, int attempt, Exception cause) {
+        if (!(compressor instanceof DefaultContextCompressor dcc)) {
+            return;
+        }
+        String msg = cause.getMessage() != null ? cause.getMessage().toLowerCase(Locale.ROOT) : "";
+        boolean transientFailure = msg.contains("timeout") || msg.contains("timed out");
+        long cooldownMs;
+        if (transientFailure) {
+            int idx = Math.min(attempt - 1, TRANSIENT_COOLDOWN_LADDER_MS.length - 1);
+            cooldownMs = TRANSIENT_COOLDOWN_LADDER_MS[idx];
+        } else {
+            cooldownMs = COMPRESSION_FAILURE_COOLDOWN_MS;
+        }
+        dcc.setCompressionFailureCooldown(cooldownMs);
+        log.info("Compression failure cooldown set: {}s (attempt {}, {})",
+            cooldownMs / 1000, attempt, transientFailure ? "transient" : "hard failure");
     }
 
     // ──────────────────────────────────────────────────────────────────

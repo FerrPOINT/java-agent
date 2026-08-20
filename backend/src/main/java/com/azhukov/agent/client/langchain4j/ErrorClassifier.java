@@ -230,7 +230,17 @@ public class ErrorClassifier {
             // h82: Z.AI GLM token-limit messages
             || lowerMessage.contains("token limit reached")
             || lowerMessage.contains("maximum context length")
-            || lowerMessage.contains("input too long")) {
+            || lowerMessage.contains("input too long")
+            // Hermes parity (error_classifier.py _CONTEXT_OVERFLOW_PATTERNS): Z.AI/Zhipu
+            // GLM error-code-1210 English form, Chinese provider messages, Ollama slot
+            // context, and Together/Fireworks input-length wording.
+            || lowerMessage.contains("tokens in request more than max tokens allowed")
+            || lowerMessage.contains("超过最大长度")
+            || lowerMessage.contains("上下文长度")
+            || lowerMessage.contains("slot context")
+            || lowerMessage.contains("n_ctx_slot")
+            || lowerMessage.contains("maximum allowed input length")
+            || lowerMessage.contains("max input token")) {
             return new ClassificationResult(ErrorType.CONTEXT_OVERFLOW, RecoveryHints.compressAndRetry());
         }
 

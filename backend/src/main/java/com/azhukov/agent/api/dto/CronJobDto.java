@@ -31,5 +31,7 @@ public record CronJobDto(
     String lastStatus,
     String lastError,
     Instant lastErrorAt,
-    int consecutiveFailures
+    int consecutiveFailures,
+    java.time.Instant lastDeliveredRunAt,
+    UUID lastRunSessionId
 ) {}

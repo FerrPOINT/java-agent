@@ -196,7 +196,7 @@ public class TerminalTool implements ToolHandler {
                 if (outputReader != null) {
                     outputReader.join(2000);
                 }
-                String partialOutput = redact(stripTrailingNewline(outputBuffer.toString(), usePty));
+                String partialOutput = redact(AnsiStrip.strip(stripTrailingNewline(outputBuffer.toString(), usePty)));
                 String enhanced = TerminalOutputEnhancer.enhance(
                     partialOutput, -1, workdir, true, actualCwd);
                 return ToolResult.fail("Command timed out after " + timeoutSeconds + " seconds" + enhanced);
@@ -209,6 +209,9 @@ public class TerminalTool implements ToolHandler {
 
             String output = outputBuffer.toString();
             output = stripTrailingNewline(output, usePty);
+            // Hermes parity (tools/terminal_tool.py:3466): strip ANSI escapes from ALL
+            // terminal output — full ECMA-48 coverage (CSI private-mode, OSC, DCS, 8-bit C1).
+            output = AnsiStrip.strip(output);
             String redactedOutput = redact(output);
 
             // Finding 1.3: Call notifyPostExecution after process completes

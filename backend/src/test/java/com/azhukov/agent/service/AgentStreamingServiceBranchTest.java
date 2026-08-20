@@ -103,6 +103,8 @@ class AgentStreamingServiceBranchTest {
         objectMapper = new ObjectMapper();
         usageTracker = mock(UsageTracker.class);
         properties = new AgentProperties();
+        properties.getCore().setEmptyBackoffBaseMs(10L);
+        properties.getCore().setEmptyBackoffCapMs(50L);
         properties.getContext().setMaxTokens(4096);
         properties.getModel().setModelName("test-model");
         properties.getCore().setMaxTurns(10);

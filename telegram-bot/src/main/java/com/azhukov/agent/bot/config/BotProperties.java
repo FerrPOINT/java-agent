@@ -87,6 +87,10 @@ public class BotProperties {
     private final Polling polling = new Polling();
     private final Webhook webhook = new Webhook();
     private final Auth auth = new Auth();
+
+    // h76: cron output delivery poller toggle (bot side).
+    private boolean cronDeliveryEnabled = true;
+
     private final Footer footer = new Footer();
     private final Reactions reactions = new Reactions();
     private final TextBatch textBatch = new TextBatch();

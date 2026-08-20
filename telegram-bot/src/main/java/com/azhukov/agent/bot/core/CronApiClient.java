@@ -75,4 +75,18 @@ public class CronApiClient extends BaseBackendClient {
             return false;
         }
     }
+
+    /** h76: advance the delivery high-water mark after a successful delivery. */
+    public boolean markDelivered(String id) {
+        try {
+            restClient.post()
+                .uri("/api/v1/agent/cron/{id}/delivered", id)
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.warn("markDelivered failed for id={}: {}", id, e.getMessage());
+            return false;
+        }
+    }
 }

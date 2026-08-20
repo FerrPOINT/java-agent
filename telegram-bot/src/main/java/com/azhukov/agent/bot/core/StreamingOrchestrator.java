@@ -90,8 +90,8 @@ public class StreamingOrchestrator {
 
         // Try streaming first
         try {
-            // Start with an initial message
-            Optional<Long> initialMsgId = streamEditor.startStream(chatId, "…");
+            // Start with an initial message (P2.S6: routed into the originating forum topic)
+            Optional<Long> initialMsgId = streamEditor.startStream(chatId, "…", "dm", messageThreadId);
             if (initialMsgId.isPresent()) {
                 messageId[0] = initialMsgId.get();
             }
@@ -145,10 +145,14 @@ public class StreamingOrchestrator {
                 (toolName, toolResultPreview) -> {
                     // Just clear accumulated text — the next tokens will start a new segment
                 },
-                // retryConsumer — called when backend emits retry/continuation events
+                // retryConsumer — called when backend emits retry/continuation events.
+                // TRANSIENT status only (Hermes parity: gateway shows retry status, it never
+                // becomes part of the answer): the display text is shown on the streaming
+                // message but NOT appended to `accumulated`, so the finalized message and
+                // ChatResult contain clean content. The next editStream with real tokens
+                // overwrites the status line.
                 retryMsg -> {
                     if (messageId[0] >= 0) {
-                        // Update streaming message to show retry status to the user
                         String display = accumulated.length() > 0
                             ? accumulated + "\n\n" + retryMsg
                             : retryMsg;
@@ -162,7 +166,7 @@ public class StreamingOrchestrator {
                     // before finalizing. Hermes handles this via the 'off' transport fallback.
                     if (messageId[0] < 0 && accumulated.length() > 0) {
                         String display = accumulated.toString();
-                        messageId[0] = streamEditor.startStream(chatId, display)
+                        messageId[0] = streamEditor.startStream(chatId, display, "dm", messageThreadId)
                             .orElse(-1L);
                         // If startStream still returns empty (text < 4 chars), send directly
                         // via sendMessage to avoid losing the response (Hermes 'off' transport).

@@ -124,6 +124,7 @@ class BotMessageProcessorMediaDeliveryTest {
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("");
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.empty());
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(1L));
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.of(1L));
         when(streamEditor.editStream(anyLong(), anyLong(), anyString())).thenReturn(true);
         when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString())).thenReturn(true);
         doNothing().when(streamEditor).clearStream(anyLong());

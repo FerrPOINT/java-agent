@@ -120,7 +120,16 @@ public class AgentStreamingService {
     }
 
     private static final int MAX_STREAM_RETRIES = 5;
-    private static final int MAX_CONTINUATION_ATTEMPTS = 3;
+    // Hermes parity: LENGTH continuation ceiling is 4 attempts
+    // (conversation_loop.py "length_continue_retries < 4"), empty-response budget is 3
+    // (empty_response_guard.DEFAULT_EMPTY_RETRY_BUDGET). Separate counters — never shared.
+    private static final int MAX_LENGTH_CONTINUATION_ATTEMPTS = 4;
+    private static final int MAX_EMPTY_RESPONSE_ATTEMPTS = 3;
+    /** Hermes _DROPPED_TOOLCALL_RETRIES: 3 consecutive stalls, reset on a successful tool round. */
+    private static final int MAX_DROPPED_TOOLCALL_RETRIES = 3;
+    /** Hermes jittered_backoff for empty-response retries: base 5s, cap 60s, interruptible. */
+    private static final long EMPTY_BACKOFF_BASE_MS = 5_000L;
+    private static final long EMPTY_BACKOFF_CAP_MS = 60_000L;
     // Backoff base/cap are now read from AgentProperties at runtime (see getRetryBackoffBase/Cap)
 
     // Dedicated executor for streaming tasks — avoids ForkJoinPool.commonPool() starvation
@@ -303,7 +312,13 @@ public class AgentStreamingService {
 
             // Call model — streaming tokens to SSE, with error recovery
             int streamRetries = 0;
-            int continuationAttempts = 0;
+            // Hermes parity: separate retry counters (conversation_loop.py) —
+            // length_continue_retries (ceiling 4), _empty_content_retries (ceiling 3),
+            // and stitched LENGTH fragments (truncated_response_parts).
+            int lengthContinueRetries = 0;
+            int emptyContentRetries = 0;
+            int droppedToolcallRetries = 0;
+            StringBuilder truncatedParts = new StringBuilder();
             boolean lastResponseHadToolCalls = false;
             ChatResponse response;
             final UUID sessionId = session.id();
@@ -312,6 +327,9 @@ public class AgentStreamingService {
                 final List<ToolCall> collectedToolCalls = new ArrayList<>();
                 final AtomicReference<Throwable> capturedError = new AtomicReference<>();
                 final AtomicReference<String> capturedFinishReason = new AtomicReference<>();
+                // Hermes parity: think-scrub state is per-RESPONSE (_strip_think_blocks is
+                // stateless); reset so hadThinkContent() reflects THIS iteration only.
+                scrubber.reset();
 
                 try {
                     long llmStart = System.currentTimeMillis();
@@ -498,23 +516,70 @@ public class AgentStreamingService {
                     break;
                 }
 
-                // LENGTH: model hit max output tokens — partial content
+                // LENGTH: model hit max output tokens — partial content.
+                // Hermes parity (conversation_loop.py:3711-3775): the partial fragment is
+                // ACCUMULATED into truncatedParts and stitched into the final response;
+                // ceiling is 4 attempts; on exhaustion the stitched partial is KEPT.
                 if ("LENGTH".equals(finishReason) && hasContent && !hasToolCalls
-                        && continuationAttempts < MAX_CONTINUATION_ATTEMPTS) {
+                        && lengthContinueRetries < MAX_LENGTH_CONTINUATION_ATTEMPTS) {
                     log.info("LENGTH truncation detected for session {} — partial content ({} chars), sending continuation (attempt {}/{})",
-                        session.id(), contentBuilder.length(), continuationAttempts + 1, MAX_CONTINUATION_ATTEMPTS);
+                        session.id(), contentBuilder.length(), lengthContinueRetries + 1, MAX_LENGTH_CONTINUATION_ATTEMPTS);
                     send(emitter, new StreamEvent("continuation", null, null,
                         "Continuation prompt sent to model (LENGTH)"), streamCtx);
-                    continuationAttempts++;
+                    lengthContinueRetries++;
                     turnIndex++;
-                    // LENGTH continuation: preserve the partial content and ask for more
+                    // Stitch: keep the partial fragment, ask the model to continue from it.
                     String partialContent = contentBuilder.toString();
+                    truncatedParts.append(partialContent);
                     contentBuilder.setLength(0);
                     collectedToolCalls.clear();
                     List<Message> lengthContext = new ArrayList<>(turnMessages);
                     lengthContext.add(Message.assistant(partialContent, turnIndex));
-                    lengthContext.add(Message.user("Продолжи с того места, где ты остановился."));
+                    lengthContext.add(Message.user("Продолжи с того места, где ты остановился. Не начинай заново и не повторяй уже написанный текст. Закончи ответ напрямую."));
                     context = contextEngine.prepareContext(session, lengthContext);
+                    session = resolveRotatedSession(session);
+                    continue;
+                }
+
+                // LENGTH ceiling reached with partial content — Hermes keeps the stitched
+                // partial instead of discarding it (conversation_loop.py:3779-3813).
+                if ("LENGTH".equals(finishReason) && hasContent && !hasToolCalls
+                        && lengthContinueRetries >= MAX_LENGTH_CONTINUATION_ATTEMPTS) {
+                    String stitched = truncatedParts.toString() + contentBuilder;
+                    log.warn("Response still truncated after {} continuation attempts for session {} — keeping partial ({} chars)",
+                        lengthContinueRetries, session.id(), stitched.length());
+                    send(emitter, new StreamEvent("token", "\n\n⚠️ Ответ остался обрезанным после "
+                        + lengthContinueRetries + " попыток продолжения — сохранена полученная часть.", null, null), streamCtx);
+                    response = ChatResponse.text(stitched);
+                    break;
+                }
+
+                // ── Dropped tool-call recovery (Hermes parity: conversation_loop.py:7918-7950) ──
+                // Some providers return finish_reason="tool_calls" while the parsed array is
+                // empty — the model signalled it wanted to act but shipped no call. Reaching
+                // finalization with that mismatch would end the turn with the task unstarted.
+                // Re-prompt (bounded to 3 CONSECUTIVE stalls; budget resets after any
+                // successful tool round). finish_reason="stop" text finishes never enter this.
+                if ("TOOL_EXECUTION".equals(finishReason) && collectedToolCalls.isEmpty()
+                        && droppedToolcallRetries < MAX_DROPPED_TOOLCALL_RETRIES) {
+                    droppedToolcallRetries++;
+                    log.warn("finish_reason=tool_calls with empty tool_calls array (narration only) — re-prompting to emit the call (retry {}/{}, session {})",
+                        droppedToolcallRetries, MAX_DROPPED_TOOLCALL_RETRIES, session.id());
+                    send(emitter, new StreamEvent("retry", null, null,
+                        "Model signaled a tool call but sent none — re-prompting ("
+                            + droppedToolcallRetries + "/" + MAX_DROPPED_TOOLCALL_RETRIES + ")"), streamCtx);
+                    turnIndex++;
+                    // Ephemeral recovery pair (Hermes flags both _dropped_toolcall_nudge so the
+                    // persistence layer skips them): build a separate context, don't pollute turnMessages.
+                    List<Message> droppedContext = new ArrayList<>(turnMessages);
+                    if (contentBuilder.length() > 0) {
+                        droppedContext.add(Message.assistant(contentBuilder.toString(), turnIndex));
+                    }
+                    droppedContext.add(Message.user(
+                        "Your previous turn indicated a tool call but none was included. "
+                            + "Do not narrate a plan or restate intent — issue the actual tool call now to continue the task."));
+                    contentBuilder.setLength(0);
+                    context = contextEngine.prepareContext(session, droppedContext);
                     session = resolveRotatedSession(session);
                     continue;
                 }
@@ -525,27 +590,41 @@ public class AgentStreamingService {
                 // the response is NOT truncated — the model just produced reasoning only.
                 boolean isEmpty = (contentBuilder.length() == 0) && collectedToolCalls.isEmpty()
                     && !scrubber.hadThinkContent();
-                if (isEmpty && continuationAttempts < MAX_CONTINUATION_ATTEMPTS) {
-                    log.warn("Truncated response detected (empty content, no tool calls), sending continuation prompt (attempt {}/{})",
-                        continuationAttempts + 1, MAX_CONTINUATION_ATTEMPTS);
+                if (isEmpty && emptyContentRetries < MAX_EMPTY_RESPONSE_ATTEMPTS) {
+                    emptyContentRetries++;
+                    log.warn("Empty response (no content or reasoning) — retry {}/{} with backoff (model returned empty)",
+                        emptyContentRetries, MAX_EMPTY_RESPONSE_ATTEMPTS);
                     send(emitter, new StreamEvent("continuation", null, null,
-                        "Continuation prompt sent to model"), streamCtx);
-                    continuationAttempts++;
+                        "Empty response from model — retrying (" + emptyContentRetries + "/" + MAX_EMPTY_RESPONSE_ATTEMPTS + ")"), streamCtx);
+                    // Hermes parity (conversation_loop.py:7657): jittered backoff base 5s,
+                    // cap 60s, interruptible in small increments. Base/cap configurable.
+                    long backoffMs = jitteredBackoffMs(emptyContentRetries,
+                        properties.getCore().getEmptyBackoffBaseMs(),
+                        properties.getCore().getEmptyBackoffCapMs());
+                    if (!interruptibleSleep(backoffMs, session.id(), interruptToken)) {
+                        log.info("Empty-response backoff interrupted for session {}", session.id());
+                    }
                     // Reset state for the retry — previous tool calls/content must not leak
                     contentBuilder.setLength(0);
                     collectedToolCalls.clear();
+                    scrubber.reset();
                     turnIndex++; // Increment turnIndex for each continuation attempt (Hermes parity)
                     // Build a temporary context with continuation prompt WITHOUT polluting
                     // turnMessages (Hermes marks synthetic messages and strips them before
                     // finalization — we avoid pollution by using a separate list).
                     List<Message> continuationContext = new ArrayList<>(turnMessages);
-                    continuationContext.add(Message.assistant("", turnIndex));
                     // Post-tool empty nudge: if the previous response had tool calls,
                     // use a specific nudge telling the model to process tool results
-                    // (mirrors Hermes _EMPTY_TOOL_RESPONSE_NUDGE).
+                    // (mirrors Hermes _EMPTY_TOOL_RESPONSE_NUDGE). A tool-call round means
+                    // role alternation must NOT get an empty assistant stub — strict providers
+                    // (Moonshot/Kimi) reject {"role":"assistant","content":""} with HTTP 400
+                    // (Hermes _is_empty_partial_stub, conversation_loop.py:3718-3730).
                     String nudgeText = lastResponseHadToolCalls
                         ? "Ты выполнил tool calls, но вернул пустой ответ. Обработай результаты инструментов выше и продолжи задачу."
                         : "Пожалуйста, продолжи свой ответ на языке пользователя.";
+                    if (!lastResponseHadToolCalls) {
+                        continuationContext.add(Message.assistant("", turnIndex));
+                    }
                     continuationContext.add(Message.user(nudgeText));
                     context = contextEngine.prepareContext(session, continuationContext);
                     session = resolveRotatedSession(session);
@@ -559,6 +638,9 @@ public class AgentStreamingService {
                 String streamedContent = contentBuilder.toString();
                 if (!collectedToolCalls.isEmpty()) {
                     lastResponseHadToolCalls = true;
+                    // Hermes parity (conversation_loop.py:7133): a landed tool call resets
+                    // the dropped-toolcall stall budget.
+                    droppedToolcallRetries = 0;
                     if (streamedContent != null && !streamedContent.isBlank()) {
                         response = ChatResponse.textAndToolCalls(streamedContent, collectedToolCalls);
                     } else {
@@ -566,7 +648,13 @@ public class AgentStreamingService {
                     }
                 } else {
                     lastResponseHadToolCalls = false;
-                    response = ChatResponse.text(streamedContent);
+                    // Hermes parity (conversation_loop.py:7888-7893): a successful response
+                    // after LENGTH continuations joins all stitched fragments.
+                    if (truncatedParts.length() > 0) {
+                        response = ChatResponse.text(truncatedParts + streamedContent);
+                    } else {
+                        response = ChatResponse.text(streamedContent);
+                    }
                 }
                 break;
             }
@@ -587,10 +675,10 @@ public class AgentStreamingService {
                 // Check for empty response after continuation exhaustion — send error to user
                 // instead of silently delivering an empty message (Hermes parity)
                 if ((response.content() == null || response.content().isBlank())
-                        && continuationAttempts >= MAX_CONTINUATION_ATTEMPTS) {
-                    log.warn("Empty response after {} continuation attempts for session {} — sending error",
-                        continuationAttempts, session.id());
-                    String errorMsg = "⚠️ Модель вернула пустой ответ после " + continuationAttempts
+                        && emptyContentRetries >= MAX_EMPTY_RESPONSE_ATTEMPTS) {
+                    log.warn("Empty response after {} empty-response retries for session {} — sending error",
+                        emptyContentRetries, session.id());
+                    String errorMsg = "⚠️ Модель вернула пустой ответ после " + emptyContentRetries
                         + " попыток продолжения. Попробуйте переформулировать запрос.";
                     send(emitter, new StreamEvent("token", errorMsg, null, null), streamCtx);
                 }
@@ -874,6 +962,46 @@ public class AgentStreamingService {
         } catch (IllegalStateException e) {
             log.debug("SSE emitter already completed when trying to complete with error: {}", e.getMessage());
         }
+    }
+
+    /**
+     * Hermes parity: jittered_backoff (base 5s, cap 60s) with ±25% jitter
+     * (conversation_loop.py:7659, agent/jitter util semantics).
+     */
+    static long jitteredBackoffMs(int attempt) {
+        return jitteredBackoffMs(attempt, EMPTY_BACKOFF_BASE_MS, EMPTY_BACKOFF_CAP_MS);
+    }
+
+    /** Parameterised variant — base/cap come from config so tests can shorten the wait. */
+    static long jitteredBackoffMs(int attempt, long baseMs, long capMs) {
+        double base = baseMs * Math.pow(2, attempt - 1);
+        long capped = (long) Math.min(base, capMs);
+        double jitter = 0.75 + ThreadLocalRandom.current().nextDouble(0.5); // 0.75–1.25
+        return (long) (capped * jitter);
+    }
+
+    /**
+     * Hermes parity: sleep in small increments so interrupts (user cancel) are honoured
+     * mid-backoff (conversation_loop.py:7685-7700 "sleep in small increments").
+     *
+     * @return true if the full duration elapsed, false if interrupted/cancelled
+     */
+    private boolean interruptibleSleep(long totalMs, UUID sessionId, InterruptToken token) {
+        long deadline = System.currentTimeMillis() + totalMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (token != null && token.isCancelled(sessionId)) {
+                return false;
+            }
+            long step = Math.min(250L, deadline - System.currentTimeMillis());
+            if (step <= 0) break;
+            try {
+                Thread.sleep(step);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return true;
     }
 
     private void send(SseEmitter emitter, StreamEvent event, StreamContext streamCtx) {

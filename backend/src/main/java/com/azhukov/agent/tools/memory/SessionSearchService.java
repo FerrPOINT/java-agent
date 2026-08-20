@@ -427,10 +427,9 @@ public class SessionSearchService {
 
     private ShapedMessage shapeMessage(MessageEntity m, UUID anchorId, int maxContentLen) {
         String content = m.getContent();
-        // Strip ANSI escape sequences from recalled terminal output (Hermes parity)
-        if (content != null && content.contains("\u001b")) {
-            content = content.replaceAll("\u001b\\[[0-9;]*[a-zA-Z]", "");
-        }
+        // Strip ANSI escape sequences from recalled terminal output (Hermes parity:
+        // tools/ansi_strip.py — full ECMA-48: CSI private-mode, OSC, DCS, 8-bit C1)
+        content = com.azhukov.agent.tools.terminal.AnsiStrip.strip(content);
         boolean truncated = false;
         Integer originalChars = null;
         if (content != null && maxContentLen > 0 && content.length() > maxContentLen) {
