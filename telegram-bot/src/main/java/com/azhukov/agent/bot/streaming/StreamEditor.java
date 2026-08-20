@@ -592,6 +592,8 @@ public class StreamEditor {
     }
 
     boolean finalizeStream(long chatId, long messageId, String finalText, StreamSession session) {
+        // R8: close orphaned code fences BEFORE delivery (Hermes ensure_closed_code_fences)
+        finalText = ensureClosedCodeFences(finalText);
         // Stop heartbeat
         stopHeartbeat(session);
 
@@ -1542,6 +1544,50 @@ public class StreamEditor {
     /**
      * Count the number of ``` (triple backtick) code fence markers in text.
      */
+
+    /**
+     * R8 (Hermes stream_consumer.py ensure_closed_code_fences): a response
+     * truncated mid-code-block (finish_reason=length etc.) leaves an orphaned
+     * ``` fence — everything after it renders as one giant code block; an
+     * orphaned single backtick renders the rest as inline code. Append the
+     * missing closers: triple fence if odd count, then inline backtick if the
+     * standalone count (outside complete fences) is odd.
+     */
+    static String ensureClosedCodeFences(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        // Step 1: balance triple-backtick fences
+        if (countOccurrences(text, "```") % 2 == 1) {
+            text = stripTrailingNewlines(text) + "\n```";
+        }
+        // Step 2: balance single-backtick inline spans outside complete fences
+        String withoutFences = text.replaceAll("(?s)```.*?```", "");
+        withoutFences = withoutFences.replaceAll("```[^`]*$", "");
+        if (countOccurrences(withoutFences, "`") % 2 == 1) {
+            text = text + "`";
+        }
+        return text;
+    }
+
+    private static String stripTrailingNewlines(String s) {
+        int end = s.length();
+        while (end > 0 && s.charAt(end - 1) == '\n') {
+            end--;
+        }
+        return s.substring(0, end);
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = haystack.indexOf(needle, idx)) != -1) {
+            count++;
+            idx += needle.length();
+        }
+        return count;
+    }
+
     private int countCodeFences(String text) {
         int count = 0;
         int idx = 0;
