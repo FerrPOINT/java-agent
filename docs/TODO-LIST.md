@@ -7,7 +7,7 @@
 
 ## CRITICAL — Architecture (2)
 
-1. **c1** Decompose DefaultAgentRuntime (1745 LOC) — remaining: TurnOrchestrator, FallbackController, ToolExecutionCoordinator, MemoryNudgeManager, SessionLockManager (TurnExecutor already extracted)
+1. **c1** Decompose DefaultAgentRuntime — remaining: FallbackController extraction, MemoryNudgeCoordinator
 2. **c2** Eliminate duplicated agentic loop — extract shared TurnExecutor from DefaultAgentRuntime + AgentStreamingService (empty-response/LENGTH/dropped-toolcall recovery now aligned in both, but logic still duplicated)
 
 ## HIGH — Architecture (2)
