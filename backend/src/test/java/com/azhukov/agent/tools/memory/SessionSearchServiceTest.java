@@ -358,6 +358,41 @@ class SessionSearchServiceTest {
     }
 
     @Test
+    void discovery_demotesCronSessionsBelowInteractive_viaBatchLoad() {
+        // H12 regression: demotion sort must batch-load sessions (findAllById) and still
+        // order interactive rows above cron rows.
+        UUID interactiveSession = UUID.randomUUID();
+        UUID cronSession = UUID.randomUUID();
+        MessageEntity cronMsg = newMessageEntity(cronSession, "user", "searchterm in cron output", 0);
+        MessageEntity interactiveMsg = newMessageEntity(interactiveSession, "user", "searchterm in chat", 0);
+
+        when(messageRepository.searchByContentFtsExcludingSources(eq("searchterm"), any()))
+            .thenReturn(List.of(cronMsg, interactiveMsg)); // cron first — sort must demote it
+        when(sessionRepository.searchByTitleFtsExcludingSources(eq("searchterm"), any()))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleIgnoreCase("searchterm")).thenReturn(null);
+        when(sessionRepository.findAllById(any()))
+            .thenReturn(List.of(
+                newSessionEntity(interactiveSession, "Chat", "api_server"),
+                newSessionEntity(cronSession, "Cron", "cron")));
+        when(messageRepository.findById(any())).thenAnswer(inv -> Optional.empty());
+
+        SessionSearchService.SearchResult result = service.search(
+            "searchterm", null, null, null, null, null, null, null, null, null
+        );
+
+        assertThat(result.success).isTrue();
+        assertThat(result.discoverResults).hasSize(2);
+        // The interactive session must be ranked above the cron session
+        int interactiveIdx = -1, cronIdx = -1;
+        for (int i = 0; i < result.discoverResults.size(); i++) {
+            if (result.discoverResults.get(i).sessionId().equals(interactiveSession)) interactiveIdx = i;
+            if (result.discoverResults.get(i).sessionId().equals(cronSession)) cronIdx = i;
+        }
+        assertThat(interactiveIdx).isLessThan(cronIdx);
+    }
+
+    @Test
     void discovery_noMatches_returnsEmptyResults() {
         when(messageRepository.searchByContentFtsExcludingSources(any(), any()))
             .thenReturn(Collections.emptyList());
