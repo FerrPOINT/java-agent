@@ -1,5 +1,7 @@
 package com.azhukov.agent.bot.streaming;
 
+import com.azhukov.agent.bot.rich.RichMessageSupport;
+
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.client.TelegramResponse;
 import com.azhukov.agent.bot.config.BotProperties;
@@ -41,7 +43,7 @@ class StreamEditorDraftStreamingTest {
         props.setStreamingSilent(true);
         props.setHeartbeatIntervalSeconds(0); // Disable heartbeat for tests
         props.setStreamingTransport("auto"); // Default to auto for draft streaming
-        editor = new StreamEditor(client, props, new MediaDeliveryService());
+        editor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         editor.init();
         // Mock getMe to return no rich messages support
         TelegramResponse meResponse = mock(TelegramResponse.class);
@@ -100,7 +102,7 @@ class StreamEditorDraftStreamingTest {
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
         props.setStreamingTransport("edit");
-        StreamEditor editEditor = new StreamEditor(client, props, new MediaDeliveryService());
+        StreamEditor editEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         editEditor.init();
 
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
@@ -120,7 +122,7 @@ class StreamEditorDraftStreamingTest {
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
         props.setStreamingTransport("off");
-        StreamEditor offEditor = new StreamEditor(client, props, new MediaDeliveryService());
+        StreamEditor offEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         offEditor.init();
 
         Optional<Long> msgId = offEditor.startStream(123L, "Hello world", "dm");
@@ -238,7 +240,7 @@ class StreamEditorDraftStreamingTest {
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
         props.setStreamingTransport("off");
-        StreamEditor offEditor = new StreamEditor(client, props, new MediaDeliveryService());
+        StreamEditor offEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         offEditor.init();
 
         offEditor.startStream(123L, "Hello", "dm");
@@ -255,7 +257,7 @@ class StreamEditorDraftStreamingTest {
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
         props.setStreamingTransport("off");
-        StreamEditor offEditor = new StreamEditor(client, props, new MediaDeliveryService());
+        StreamEditor offEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         offEditor.init();
 
         offEditor.startStream(123L, "Hello", "dm");
@@ -279,7 +281,7 @@ class StreamEditorDraftStreamingTest {
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
         props.setStreamingTransport("draft");
-        StreamEditor draftEditor = new StreamEditor(client, props, new MediaDeliveryService());
+        StreamEditor draftEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         draftEditor.init();
 
         // Group chat with draft transport — should fall back to edit

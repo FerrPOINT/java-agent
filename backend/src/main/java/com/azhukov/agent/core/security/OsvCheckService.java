@@ -1,4 +1,4 @@
-package com.azhukov.agent.client.mcp;
+package com.azhukov.agent.core.security;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

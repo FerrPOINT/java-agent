@@ -32,7 +32,7 @@ import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.gateway.GatewayRoutingService;
 import com.azhukov.agent.gateway.SessionResolver;
 import com.azhukov.agent.gateway.model.MessageEvent;
-import com.azhukov.agent.persistence.MessagePersistenceService;
+import com.azhukov.agent.persistence.service.MessagePersistenceService;
 import com.azhukov.agent.persistence.repository.*;
 import com.azhukov.agent.service.ImageShrinker;
 import com.azhukov.agent.service.TurnUsageCollector;

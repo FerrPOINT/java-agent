@@ -26,7 +26,7 @@ class StreamEditorSilenceMarkerTest {
     @BeforeEach
     void setUp() {
         var props = new com.azhukov.agent.bot.config.BotProperties();
-        editor = new StreamEditor(client, props, new com.azhukov.agent.bot.media.MediaDeliveryService());
+        editor = new StreamEditor(client, props, new com.azhukov.agent.bot.media.MediaDeliveryService(), new com.azhukov.agent.bot.rich.RichMessageSupport(client));
     }
 
     private boolean isSilenceMarker(String text) throws Exception {

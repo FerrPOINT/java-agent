@@ -1,4 +1,4 @@
-package com.azhukov.agent.persistence;
+package com.azhukov.agent.persistence.service;
 
 import com.azhukov.agent.core.agent.MidTurnPersistenceCallback;
 import com.azhukov.agent.core.model.Message;

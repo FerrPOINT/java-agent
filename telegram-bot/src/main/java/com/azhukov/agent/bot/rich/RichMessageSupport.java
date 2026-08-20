@@ -3,6 +3,7 @@ package com.azhukov.agent.bot.rich;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.client.TelegramResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -22,6 +23,7 @@ import java.util.Optional;
  * </ul>
  */
 @Slf4j
+@Component
 public class RichMessageSupport {
 
  /** Bot API 10.1 rich message character limit. */

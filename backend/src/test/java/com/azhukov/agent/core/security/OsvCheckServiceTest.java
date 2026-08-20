@@ -1,4 +1,4 @@
-package com.azhukov.agent.client.mcp;
+package com.azhukov.agent.core.security;
 
 import org.junit.jupiter.api.Test;
 

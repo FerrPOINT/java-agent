@@ -102,8 +102,8 @@ public class StreamEditor {
     // B7: Silent notification config
     private boolean streamingSilent;
 
-    // P1: Rich message support for final delivery
-    private RichMessageSupport richMessageSupport;
+    // P1 (m25): rich message support injected as a Spring bean
+    private final RichMessageSupport richMessageSupport;
 
     // Streaming cursor config
     private String streamCursor;
@@ -152,9 +152,8 @@ public class StreamEditor {
         bufferThreshold = properties.getBufferThreshold();
         streamingTransport = properties.getStreamingTransport() != null
             ? properties.getStreamingTransport().toLowerCase() : "auto";
-        // P1: Initialize rich message support
-        this.richMessageSupport = new RichMessageSupport(telegramClient);
-        this.richMessageSupport.setRichMessagesEnabled(properties.getRichMessages().isEnabled());
+        // P1 (m25): bean-injected; apply the rich-message config flag
+        richMessageSupport.setRichMessagesEnabled(properties.getRichMessages().isEnabled());
     }
 
     @PreDestroy

@@ -8,7 +8,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.SessionSource;
-import com.azhukov.agent.persistence.MessagePersistenceService;
+import com.azhukov.agent.persistence.service.MessagePersistenceService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;

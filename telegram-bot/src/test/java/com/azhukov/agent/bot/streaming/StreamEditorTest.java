@@ -1,5 +1,7 @@
 package com.azhukov.agent.bot.streaming;
 
+import com.azhukov.agent.bot.rich.RichMessageSupport;
+
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.client.TelegramResponse;
 import com.azhukov.agent.bot.config.BotProperties;
@@ -39,7 +41,7 @@ class StreamEditorTest {
         props.setParseMode("MarkdownV2");
         props.setStreamingSilent(true);
         props.setHeartbeatIntervalSeconds(1); // Short for testing
-        editor = new StreamEditor(client, props, new MediaDeliveryService());
+        editor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         editor.init();
         // Mock getMe to return no rich messages support, so existing tests use legacy path
         TelegramResponse meResponse = mock(TelegramResponse.class);
@@ -72,7 +74,7 @@ class StreamEditorTest {
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
         props.setStreamCursor(" \u23F3"); // ⏳
-        StreamEditor customEditor = new StreamEditor(client, props, new MediaDeliveryService());
+        StreamEditor customEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         customEditor.init();
 
         String cursor = " \u23F3";
@@ -505,7 +507,7 @@ class StreamEditorTest {
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
         props.setStreamingSilent(true);
-        StreamEditor silentEditor = new StreamEditor(client, props, new MediaDeliveryService());
+        StreamEditor silentEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         silentEditor.init();
 
         // Hermes: startStream sends via sendMessage (null parse_mode)
@@ -558,7 +560,7 @@ class StreamEditorTest {
         props.setParseMode("MarkdownV2");
         props.setStreamingMaxChars(20);
         props.setStreamCursor("|");
-        StreamEditor splitEditor = new StreamEditor(client, props, new MediaDeliveryService());
+        StreamEditor splitEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         splitEditor.init();
 
         String text = "This is a very long text that exceeds the max chars limit";

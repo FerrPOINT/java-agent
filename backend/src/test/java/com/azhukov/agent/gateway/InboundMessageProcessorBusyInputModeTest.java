@@ -11,7 +11,7 @@ import com.azhukov.agent.gateway.model.MessageType;
 import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.SendResult;
 import com.azhukov.agent.gateway.model.SessionSource;
-import com.azhukov.agent.persistence.MessagePersistenceService;
+import com.azhukov.agent.persistence.service.MessagePersistenceService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;

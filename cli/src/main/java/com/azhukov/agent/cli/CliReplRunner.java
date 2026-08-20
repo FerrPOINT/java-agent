@@ -181,7 +181,14 @@ public class CliReplRunner implements CommandLineRunner {
                         }
                     }
                     try {
-                        String result = commandRegistry.execute(line, backendClient, sessionId);
+                        String result;
+                        try {
+                            result = commandRegistry.execute(line, backendClient, sessionId);
+                        } catch (ExitCliException exitSignal) {
+                            // m27: graceful exit — C4 session save + cleanup below the loop still run
+                            System.out.println(exitSignal.getMessage());
+                            break;
+                        }
                         if (result != null && !result.isEmpty()) {
                             System.out.println(markdownRenderer.render(result));
                         }

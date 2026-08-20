@@ -1,5 +1,7 @@
 package com.azhukov.agent.bot.streaming;
 
+import com.azhukov.agent.bot.rich.RichMessageSupport;
+
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.media.MediaDeliveryService;
@@ -46,7 +48,7 @@ class StreamEditorOversizedContentTest {
         // 32768 as shipped in application.yml — the misconfiguration that
         // triggered H14: editStreamSplit chunks must clamp to 4096.
         props.setStreamingMaxChars(32768);
-        editor = new StreamEditor(client, props, new MediaDeliveryService());
+        editor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         editor.init();
     }
 

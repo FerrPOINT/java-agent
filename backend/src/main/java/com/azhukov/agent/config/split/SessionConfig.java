@@ -9,7 +9,7 @@ import com.azhukov.agent.gateway.InboundMessageProcessor;
 import com.azhukov.agent.gateway.SessionResolver;
 import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.core.agent.AgentRuntime;
-import com.azhukov.agent.persistence.MessagePersistenceService;
+import com.azhukov.agent.persistence.service.MessagePersistenceService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;

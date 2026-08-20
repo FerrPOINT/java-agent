@@ -6,6 +6,9 @@ import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.DenyRequest;
 import com.azhukov.agent.api.dto.DoctorDto;
+import com.azhukov.agent.api.dto.StopRequest;
+import com.azhukov.agent.api.dto.SteerRequest;
+import com.azhukov.agent.api.dto.TtsRequest;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
@@ -112,7 +115,6 @@ public class AgentChatController {
         return Map.of("ok", true, "message", "Agent stopped");
     }
 
-    public record StopRequest(UUID sessionId) {}
 
     // ── Steer endpoint ──
 
@@ -126,7 +128,6 @@ public class AgentChatController {
         return Map.of("accepted", accepted, "sessionId", request.sessionId().toString());
     }
 
-    public record SteerRequest(UUID sessionId, String text) {}
 
     // ── Background ──
 
@@ -200,7 +201,6 @@ public class AgentChatController {
         return ttsService.synthesize(request.text(), request.voice());
     }
 
-    public record TtsRequest(String text, String voice) {}
 
     // ── Transcription endpoint ──
 

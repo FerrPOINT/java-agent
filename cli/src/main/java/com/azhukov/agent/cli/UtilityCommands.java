@@ -50,15 +50,11 @@ public class UtilityCommands implements CommandGroup {
 
         // ── Exit / quit ──
         registry.register("exit", "Exit the CLI", (args, client, sessionId) -> {
-            System.out.println("Goodbye!");
-            System.exit(0);
-            return "Exiting...";
+            throw new ExitCliException("Goodbye!");
         });
 
         registry.register("quit", "Exit the CLI (alias for /exit)", (args, client, sessionId) -> {
-            System.out.println("Goodbye!");
-            System.exit(0);
-            return "Exiting...";
+            throw new ExitCliException("Goodbye!");
         });
 
         // ── Version ──

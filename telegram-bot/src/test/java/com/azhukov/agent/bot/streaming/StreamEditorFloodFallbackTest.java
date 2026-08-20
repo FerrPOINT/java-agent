@@ -1,5 +1,7 @@
 package com.azhukov.agent.bot.streaming;
 
+import com.azhukov.agent.bot.rich.RichMessageSupport;
+
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.client.TelegramResponse;
 import com.azhukov.agent.bot.config.BotProperties;
@@ -41,7 +43,7 @@ class StreamEditorFloodFallbackTest {
         props.setParseMode("MarkdownV2");
         props.setStreamingSilent(true);
         props.setHeartbeatIntervalSeconds(0); // Disable heartbeat for tests
-        editor = new StreamEditor(client, props, new MediaDeliveryService());
+        editor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         editor.init();
         // Mock getMe to return no rich messages support
         TelegramResponse meResponse = mock(TelegramResponse.class);

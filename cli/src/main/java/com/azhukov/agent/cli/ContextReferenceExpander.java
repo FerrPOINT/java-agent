@@ -205,13 +205,22 @@ public class ContextReferenceExpander {
         }
     }
 
+    /**
+     * m28: fetch URL via JDK HttpClient instead of shelling out to curl —
+     * no external process, no shell-injection surface, same 10s timeout.
+     */
     private String fetchUrl(String urlString) throws IOException, InterruptedException {
-        ProcessBuilder pb = new ProcessBuilder("sh", "-c",
-            "curl -sL --max-time 10 '" + urlString.replace("'", "'\\''") + "'");
-        pb.redirectErrorStream(true);
-        Process process = pb.start();
-        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        process.waitFor();
-        return output.strip();
+        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(5))
+            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
+            .build();
+        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+            .uri(java.net.URI.create(urlString))
+            .timeout(java.time.Duration.ofSeconds(10))
+            .GET()
+            .build();
+        java.net.http.HttpResponse<String> response =
+            client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+        return response.body().strip();
     }
 }

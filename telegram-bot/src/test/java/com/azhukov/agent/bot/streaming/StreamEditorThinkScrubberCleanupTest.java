@@ -1,5 +1,7 @@
 package com.azhukov.agent.bot.streaming;
 
+import com.azhukov.agent.bot.rich.RichMessageSupport;
+
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.media.MediaDeliveryService;
@@ -30,7 +32,7 @@ class StreamEditorThinkScrubberCleanupTest {
         props.setParseMode("MarkdownV2");
         props.setStreamingSilent(true);
         props.setHeartbeatIntervalSeconds(1);
-        editor = new StreamEditor(client, props, new MediaDeliveryService());
+        editor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         editor.init();
         // Mock getMe for rich messages check
         com.azhukov.agent.bot.client.TelegramResponse meResponse = mock(com.azhukov.agent.bot.client.TelegramResponse.class);
