@@ -383,6 +383,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
         // These track recovery attempts across loop iterations within a single turn.
         int thinkingPrefillRetries = 0;
         int incompleteScratchpadRetries = 0;
+        // c2: shared recovery counters (ResponseRecoveryPolicy) — same budgets as streaming
+        int lengthContinueRetries = 0;
+        int droppedToolcallRetries = 0;
+        StringBuilder truncatedParts = new StringBuilder();
         // Empty response retry counter (parity with Hermes _empty_content_retries: max 3)
         int retryStateEmptyResponse = 0;
 
@@ -483,6 +487,62 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
             // Reset incomplete scratchpad counter on clean response
             incompleteScratchpadRetries = 0;
+
+            // ── c2: LENGTH continuation (Hermes conversation_loop.py:3711-3775) ──
+            // Sync-path parity with the streaming loop: the partial fragment is
+            // ACCUMULATED (stitched) and the model is asked to continue; ceiling 4;
+            // on exhaustion the stitched partial is KEPT, not discarded.
+            if (ResponseRecoveryPolicy.isLengthContinuable(response, lengthContinueRetries)) {
+                lengthContinueRetries++;
+                log.info("LENGTH truncation detected — partial content ({} chars), continuation attempt {}/{}",
+                    response.content().length(), lengthContinueRetries,
+                    ResponseRecoveryPolicy.MAX_LENGTH_CONTINUATION_ATTEMPTS);
+                String partialContent = response.content();
+                truncatedParts.append(partialContent);
+                List<Message> lengthContext = new ArrayList<>(turnMessages);
+                lengthContext.add(Message.assistant(partialContent, turnIndex));
+                lengthContext.add(Message.user(ResponseRecoveryPolicy.LENGTH_NUDGE));
+                turnIndex++;
+                context = contextEngine.prepareContext(session, lengthContext);
+                session = resolveRotatedSession(session);
+                continue;
+            }
+            if ("LENGTH".equals(response.finishReason()) && response.hasContent() && !response.hasToolCalls()
+                    && lengthContinueRetries >= ResponseRecoveryPolicy.MAX_LENGTH_CONTINUATION_ATTEMPTS) {
+                String stitched = truncatedParts + response.content();
+                log.warn("Response still truncated after {} continuation attempts — keeping partial ({} chars)",
+                    lengthContinueRetries, stitched.length());
+                response = ChatResponse.text(stitched, "STOP");
+                truncatedParts.setLength(0);
+                // fall through to the no-tool-calls completion path below
+            } else if (truncatedParts.length() > 0 && !response.hasToolCalls() && response.hasContent()) {
+                // c2: successful STOP after LENGTH continuations — join the stitched
+                // fragments (streaming parity: response construction concatenates).
+                response = ChatResponse.text(truncatedParts + response.content(), "STOP");
+                truncatedParts.setLength(0);
+            }
+
+            // ── c2: Dropped tool-call recovery (Hermes conversation_loop.py:7918-7950) ──
+            // finish_reason signalled tool calls but the parsed array is empty —
+            // re-prompt (bounded, resets on any landed call) instead of finalizing.
+            if (ResponseRecoveryPolicy.isDroppedToolcall(response, droppedToolcallRetries)) {
+                droppedToolcallRetries++;
+                log.warn("finish_reason=tool_calls with empty tool_calls array (narration only) — re-prompting (retry {}/{})",
+                    droppedToolcallRetries, ResponseRecoveryPolicy.MAX_DROPPED_TOOLCALL_RETRIES);
+                List<Message> droppedContext = new ArrayList<>(turnMessages);
+                if (response.hasContent()) {
+                    droppedContext.add(Message.assistant(response.content(), turnIndex));
+                }
+                droppedContext.add(Message.user(ResponseRecoveryPolicy.DROPPED_TOOLCALL_NUDGE));
+                turnIndex++;
+                context = contextEngine.prepareContext(session, droppedContext);
+                session = resolveRotatedSession(session);
+                continue;
+            }
+
+            // c2: a landed tool call resets the dropped-toolcall budget (Hermes :7133)
+            droppedToolcallRetries =
+                ResponseRecoveryPolicy.resetOnLandedToolCall(droppedToolcallRetries, response.hasToolCalls());
 
             if (!response.hasToolCalls()) {
                 // ── Thinking-only prefill continuation (parity with Hermes conversation_loop.py:4136) ──
@@ -1947,5 +2007,18 @@ public class DefaultAgentRuntime implements AgentRuntime {
     @org.springframework.context.event.EventListener
     public void onSessionDeleted(SessionDeletedEvent event) {
         cleanupSession(event.sessionId());
+    }
+
+    /** c2: session-rotation resolution for recovery continuations (same as streaming). */
+    private Session resolveRotatedSession(Session session) {
+        if (contextEngine instanceof com.azhukov.agent.core.context.DefaultContextEngine dce) {
+            java.util.Optional<Session> rotated = dce.resolveRotatedSession(session);
+            if (rotated.isPresent()) {
+                Session ns = rotated.get();
+                log.info("Switching to rotated session: old={}, new={}", session.id(), ns.id());
+                return ns;
+            }
+        }
+        return session;
     }
 }

@@ -4,20 +4,44 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+/**
+ * A model turn result: visible content, tool calls and the provider-reported
+ * finish reason.
+ *
+ * <p>{@code finishReason} carries the wire-level termination signal
+ * ("LENGTH", "TOOL_EXECUTION", "CONTENT_FILTER", "STOP", …) when the client
+ * can extract it (streaming always; sync via langchain4j
+ * {@code ChatResponse.finishReason()}). It drives the shared recovery
+ * policies (LENGTH continuation, dropped-toolcall re-prompt) in BOTH runtimes
+ * — a missing reason is treated as {@code "STOP"} and disables recovery,
+ * matching the pre-recovery behaviour.</p>
+ */
 public record ChatResponse(
     String content,
-    List<ToolCall> toolCalls
+    List<ToolCall> toolCalls,
+    String finishReason
 ) {
     public ChatResponse {
         Objects.requireNonNull(content, "content must not be null");
+        toolCalls = toolCalls != null ? List.copyOf(toolCalls) : Collections.emptyList();
+        finishReason = finishReason != null ? finishReason : "STOP";
+    }
+
+    /** Legacy 2-arg canonical constructor: finish reason defaults to STOP. */
+    public ChatResponse(String content, List<ToolCall> toolCalls) {
+        this(content, toolCalls, "STOP");
     }
 
     public static ChatResponse text(String content) {
-        return new ChatResponse(content != null ? content : "", Collections.emptyList());
+        return new ChatResponse(content != null ? content : "", Collections.emptyList(), "STOP");
+    }
+
+    public static ChatResponse text(String content, String finishReason) {
+        return new ChatResponse(content != null ? content : "", Collections.emptyList(), finishReason);
     }
 
     public static ChatResponse toolCalls(List<ToolCall> toolCalls) {
-        return new ChatResponse("", toolCalls != null ? List.copyOf(toolCalls) : Collections.emptyList());
+        return new ChatResponse("", toolCalls != null ? List.copyOf(toolCalls) : Collections.emptyList(), "TOOL_EXECUTION");
     }
 
     /**
@@ -35,7 +59,8 @@ public record ChatResponse(
     public static ChatResponse textAndToolCalls(String content, List<ToolCall> toolCalls) {
         return new ChatResponse(
             content != null ? content : "",
-            toolCalls != null ? List.copyOf(toolCalls) : Collections.emptyList()
+            toolCalls != null ? List.copyOf(toolCalls) : Collections.emptyList(),
+            "TOOL_EXECUTION"
         );
     }
 

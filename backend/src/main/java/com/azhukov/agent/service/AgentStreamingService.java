@@ -121,13 +121,14 @@ public class AgentStreamingService {
     }
 
     private static final int MAX_STREAM_RETRIES = 5;
-    // Hermes parity: LENGTH continuation ceiling is 4 attempts
-    // (conversation_loop.py "length_continue_retries < 4"), empty-response budget is 3
-    // (empty_response_guard.DEFAULT_EMPTY_RETRY_BUDGET). Separate counters — never shared.
-    private static final int MAX_LENGTH_CONTINUATION_ATTEMPTS = 4;
-    private static final int MAX_EMPTY_RESPONSE_ATTEMPTS = 3;
-    /** Hermes _DROPPED_TOOLCALL_RETRIES: 3 consecutive stalls, reset on a successful tool round. */
-    private static final int MAX_DROPPED_TOOLCALL_RETRIES = 3;
+    // c2: recovery budgets/nudges live in the SHARED ResponseRecoveryPolicy
+    // (single owner for both runtimes — DefaultAgentRuntime + this loop).
+    private static final int MAX_LENGTH_CONTINUATION_ATTEMPTS =
+        com.azhukov.agent.core.agent.ResponseRecoveryPolicy.MAX_LENGTH_CONTINUATION_ATTEMPTS;
+    private static final int MAX_EMPTY_RESPONSE_ATTEMPTS =
+        com.azhukov.agent.core.agent.ResponseRecoveryPolicy.MAX_EMPTY_RESPONSE_ATTEMPTS;
+    private static final int MAX_DROPPED_TOOLCALL_RETRIES =
+        com.azhukov.agent.core.agent.ResponseRecoveryPolicy.MAX_DROPPED_TOOLCALL_RETRIES;
     /** Hermes jittered_backoff for empty-response retries: base 5s, cap 60s, interruptible. */
     private static final long EMPTY_BACKOFF_BASE_MS = 5_000L;
     private static final long EMPTY_BACKOFF_CAP_MS = 60_000L;
@@ -536,7 +537,7 @@ public class AgentStreamingService {
                     collectedToolCalls.clear();
                     List<Message> lengthContext = new ArrayList<>(turnMessages);
                     lengthContext.add(Message.assistant(partialContent, turnIndex));
-                    lengthContext.add(Message.user("Продолжи с того места, где ты остановился. Не начинай заново и не повторяй уже написанный текст. Закончи ответ напрямую."));
+                    lengthContext.add(Message.user(com.azhukov.agent.core.agent.ResponseRecoveryPolicy.LENGTH_NUDGE));
                     context = contextEngine.prepareContext(session, lengthContext);
                     session = resolveRotatedSession(session);
                     continue;
@@ -576,9 +577,7 @@ public class AgentStreamingService {
                     if (contentBuilder.length() > 0) {
                         droppedContext.add(Message.assistant(contentBuilder.toString(), turnIndex));
                     }
-                    droppedContext.add(Message.user(
-                        "Your previous turn indicated a tool call but none was included. "
-                            + "Do not narrate a plan or restate intent — issue the actual tool call now to continue the task."));
+                    droppedContext.add(Message.user(com.azhukov.agent.core.agent.ResponseRecoveryPolicy.DROPPED_TOOLCALL_NUDGE));
                     contentBuilder.setLength(0);
                     context = contextEngine.prepareContext(session, droppedContext);
                     session = resolveRotatedSession(session);
@@ -621,8 +620,8 @@ public class AgentStreamingService {
                     // (Moonshot/Kimi) reject {"role":"assistant","content":""} with HTTP 400
                     // (Hermes _is_empty_partial_stub, conversation_loop.py:3718-3730).
                     String nudgeText = lastResponseHadToolCalls
-                        ? "Ты выполнил tool calls, но вернул пустой ответ. Обработай результаты инструментов выше и продолжи задачу."
-                        : "Пожалуйста, продолжи свой ответ на языке пользователя.";
+                        ? com.azhukov.agent.core.agent.ResponseRecoveryPolicy.EMPTY_AFTER_TOOLS_NUDGE
+                        : com.azhukov.agent.core.agent.ResponseRecoveryPolicy.EMPTY_NUDGE;
                     if (!lastResponseHadToolCalls) {
                         continuationContext.add(Message.assistant("", turnIndex));
                     }

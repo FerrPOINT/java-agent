@@ -173,16 +173,28 @@ public class LangChain4jModelClient implements ModelClient {
                 // Mirrors Hermes _emit_interim_assistant_message().
                 String text = aiMessage.text();
                 if (text != null && !text.isBlank()) {
-                    return ChatResponse.textAndToolCalls(text, calls);
+                    return new ChatResponse(text, calls, finishReasonOf(response));
                 }
-                return ChatResponse.toolCalls(calls);
+                return new ChatResponse("", calls, finishReasonOf(response));
             }
 
-            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "");
+            // c2: carry the provider finish reason so BOTH runtimes can run the
+            // shared recovery policies (LENGTH continuation). Missing → "STOP".
+            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "", finishReasonOf(response));
         } catch (Exception e) {
             ErrorClassifier.ErrorType errorType = errorClassifier != null ? errorClassifier.classify(e) : ErrorClassifier.ErrorType.RETRYABLE;
             log.warn("Model complete() failed — errorType={}: {}", errorType, e.getMessage());
             throw e;
+        }
+    }
+
+    /** Extract the langchain4j finish reason name, "STOP" when absent. */
+    private static String finishReasonOf(dev.langchain4j.model.chat.response.ChatResponse response) {
+        try {
+            var fr = response.finishReason();
+            return fr != null ? fr.name() : "STOP";
+        } catch (Exception e) {
+            return "STOP";
         }
     }
 
