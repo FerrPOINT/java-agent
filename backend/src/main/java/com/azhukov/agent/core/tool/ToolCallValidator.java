@@ -45,6 +45,64 @@ public final class ToolCallValidator {
     // ── Tool name validation & repair ──────────────────────────────────────
 
     /**
+     * Ensure every tool call in a single assistant turn has a distinct id
+     * (Hermes parity: message_sanitization.uniquify_tool_call_ids, #58327 loss class).
+     *
+     * <p>Some models/providers reuse one call id across different calls in a single
+     * batch (observed with Kimi Responses replays, Ollama-compatible endpoints, and
+     * degraded models at long context). Duplicate ids are lossy downstream: strict
+     * providers (Anthropic tool_use, DeepSeek) reject duplicate ids outright, and
+     * payload sanitizers keep only the first call/result pair per id — the later
+     * call's result silently vanishes from replayed payloads.</p>
+     *
+     * <p>The first occurrence keeps its id; later collisions get a deterministic
+     * {@code <id>_d<n>} suffix — never a random UUID, which would break
+     * prompt-cache prefix stability across replays. Composite ids
+     * ({@code call_x|fc_y}) collide on the call half (the pairing key providers
+     * enforce per turn) while the response-item half is preserved on rename.
+     * Blank/missing ids are left untouched. Mutates the list in place
+     * (replace-by-index) and returns the number of ids rewritten.</p>
+     */
+    public static int uniquifyToolCallIds(List<ToolCall> toolCalls) {
+        if (toolCalls == null || toolCalls.size() < 2) {
+            return 0;
+        }
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        int rewritten = 0;
+        for (int i = 0; i < toolCalls.size(); i++) {
+            ToolCall tc = toolCalls.get(i);
+            String raw = tc.id() != null ? tc.id().strip() : "";
+            if (raw.isEmpty()) {
+                continue; // deterministic fallback path owns blank ids
+            }
+            // Composite Responses ids ("call_x|fc_y") collide on the call half.
+            String cid = raw.contains("|") ? raw.split("\\|", 2)[0] : raw;
+            if (cid.isEmpty()) {
+                continue;
+            }
+            if (seen.add(cid)) {
+                continue; // first occurrence — keep
+            }
+            int n = 2;
+            String newId = cid + "_d" + n;
+            while (seen.contains(newId)) {
+                n++;
+                newId = cid + "_d" + n;
+            }
+            seen.add(newId);
+            // Preserve a composite id's response-item half (fc_/item id survives).
+            String finalId = raw.contains("|")
+                ? newId + "|" + raw.split("\\|", 2)[1]
+                : newId;
+            toolCalls.set(i, new ToolCall(finalId, tc.name(), tc.arguments()));
+            rewritten++;
+            log.warn("Duplicate tool_call id '{}' in batch — renamed to '{}' (call #{})",
+                raw, finalId, i + 1);
+        }
+        return rewritten;
+    }
+
+    /**
      * Validate tool names against the set of registered tool names.
      * <p>
      * For each tool call whose name is not in {@code registeredToolNames},

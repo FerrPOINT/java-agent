@@ -37,10 +37,50 @@ public class McpTool implements ToolHandler {
             String text = result.content().stream()
                 .map(c -> c instanceof io.modelcontextprotocol.spec.McpSchema.TextContent tc ? tc.text() : c.toString())
                 .collect(Collectors.joining("\n"));
-            return ToolResult.ok(text);
+            // Hermes parity (mcp_tool.py _strip_reserved_meta_keys, MoonshotAI/kimi-code#2600):
+            // surface tool-result _meta to the model, but drop protocol-reserved keys —
+            // a prefix is reserved when a "modelcontextprotocol" or "mcp" label is followed
+            // by at least one more label (tools.mcp.com/...). A trailing reserved word
+            // (com.example.mcp/...) is a legitimate vendor namespace and passes through.
+            String metaSection = formatMeta(result.meta());
+            return ToolResult.ok(metaSection.isEmpty() ? text : text + "\n" + metaSection);
         } catch (Exception e) {
             return ToolResult.fail("MCP tool failed: " + e.getMessage());
         }
+    }
+
+    /** Format non-reserved _meta entries as a JSON-ish block; empty when nothing model-facing. */
+    static String formatMeta(java.util.Map<String, Object> meta) {
+        if (meta == null || meta.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (var e : meta.entrySet()) {
+            if (e.getKey() == null || isReservedMetaKey(e.getKey())) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(", ");
+            }
+            sb.append('"').append(e.getKey()).append("\": ").append(String.valueOf(e.getValue()));
+        }
+        return sb.isEmpty() ? "" : "[_meta: {" + sb + "}]";
+    }
+
+    /** Hermes _is_reserved_mcp_meta_key: reserved prefix = mcp/modelcontextprotocol label + ≥1 more label. */
+    static boolean isReservedMetaKey(String key) {
+        int slash = key.indexOf('/');
+        if (slash <= 0) {
+            return false;
+        }
+        String[] labels = key.substring(0, slash).split("\\.");
+        for (int i = 0; i < labels.length; i++) {
+            if (("modelcontextprotocol".equals(labels[i]) || "mcp".equals(labels[i]))
+                && i < labels.length - 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public record McpArgs(

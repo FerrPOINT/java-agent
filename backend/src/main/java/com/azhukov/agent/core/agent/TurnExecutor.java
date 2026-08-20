@@ -595,8 +595,10 @@ public class TurnExecutor {
                     log.info("Turn cancelled by interrupt for session {}", session.id());
                     return ToolBatchResult.interruptedResult();
                 }
-                // Approval flow
-                if (!skipApproval && approvalQueue != null && approvalQueue.isPending(session.id())) {
+                // Approval flow — remember whether THIS call was gated so the
+                // post-wait re-validation below only fires for gated calls.
+                boolean approvalRequired = !skipApproval && approvalQueue != null && approvalQueue.isPending(session.id());
+                if (approvalRequired) {
                     log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
                     long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
                     boolean decided = approvalQueue.awaitDecision(session.id(), approvalTimeoutMs);
@@ -618,9 +620,20 @@ public class TurnExecutor {
                         return new ToolBatchResult(toolResults, true);
                     }
                 }
-                if (!skipApproval && approvalQueue != null && approvalQueue.isDenied(session.id())) {
-                    log.info("Tool {} denied for session {}, skipping", call.name(), session.id());
-                    ToolResult deniedResult = ToolResult.fail("Tool execution denied by user approval");
+                // HERMES-SYNC (tools/approval.py:2984): post-debounce re-validation,
+                // fail-closed — execute ONLY on an explicit approval. A timeout without
+                // a user response still blocks the action ("no response" is not a
+                // denial, but it is not a consent either); the old gate (isDenied →
+                // else execute) let pending/timed-out approvals through (fail-open).
+                if (approvalRequired && !approvalQueue.isApproved(session.id())) {
+                    boolean denied = approvalQueue.isDenied(session.id());
+                    String why = denied
+                        ? "Tool execution denied by user approval"
+                        : "Approval wait timed out without a user decision — tool blocked (fail-closed). "
+                          + "Re-request approval if this action is still needed.";
+                    log.info("Tool {} {} for session {}, skipping", call.name(),
+                        denied ? "denied" : "unapproved after timeout", session.id());
+                    ToolResult deniedResult = ToolResult.fail(why);
                     toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
                     approvalQueue.clear(session.id());
                 } else {
@@ -1044,27 +1057,44 @@ public class TurnExecutor {
     private static final long[] TRANSIENT_COOLDOWN_LADDER_MS = {60_000L, 300_000L, 900_000L};
 
     /**
-     * Applies the Hermes compression-failure cooldown after a failed compression attempt:
-     * transient failures (timeouts) get the escalating 60/300/900s ladder; everything else
-     * gets the flat 600s summary-failure cooldown (context_compressor.py:4763, 4893).
-     * No-op for compressor implementations without cooldown support.
+     * Applies the Hermes compression-failure cooldown after a failed compression attempt
+     * (context_compressor.py:4763, 4884-4901): transient failures get an escalating ladder —
+     * timeouts 60/300/900s, JSON-decode/stream-closed 30s, other transient 60s — and hard
+     * (non-transient) summary failures get the flat 600s cooldown. No-op for compressor
+     * implementations without cooldown support.
      */
     private void applyCompressionFailureCooldown(ContextCompressor compressor, int attempt, Exception cause) {
         if (!(compressor instanceof DefaultContextCompressor dcc)) {
             return;
         }
         String msg = cause.getMessage() != null ? cause.getMessage().toLowerCase(Locale.ROOT) : "";
-        boolean transientFailure = msg.contains("timeout") || msg.contains("timed out");
         long cooldownMs;
-        if (transientFailure) {
+        if (msg.contains("timeout") || msg.contains("timed out")) {
+            // Timeout ladder: 60/300/900s by consecutive failure count (attempt 1-based).
             int idx = Math.min(attempt - 1, TRANSIENT_COOLDOWN_LADDER_MS.length - 1);
             cooldownMs = TRANSIENT_COOLDOWN_LADDER_MS[idx];
+        } else if (msg.contains("json") || msg.contains("stream") && msg.contains("closed")) {
+            cooldownMs = 30_000L;
+        } else if (isTransient(msg)) {
+            cooldownMs = 60_000L;
         } else {
             cooldownMs = COMPRESSION_FAILURE_COOLDOWN_MS;
         }
         dcc.setCompressionFailureCooldown(cooldownMs);
         log.info("Compression failure cooldown set: {}s (attempt {}, {})",
-            cooldownMs / 1000, attempt, transientFailure ? "transient" : "hard failure");
+            cooldownMs / 1000, attempt, classifyForLog(msg));
+    }
+
+    private static boolean isTransient(String msg) {
+        return msg.contains("connection") || msg.contains("reset") || msg.contains("refused")
+            || msg.contains("broken pipe") || msg.contains("eof") || msg.contains("closed");
+    }
+
+    private static String classifyForLog(String msg) {
+        if (msg.contains("timeout") || msg.contains("timed out")) return "timeout ladder";
+        if (msg.contains("json") || msg.contains("stream") && msg.contains("closed")) return "json/stream transient";
+        if (isTransient(msg)) return "network transient";
+        return "hard failure";
     }
 
     // ──────────────────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ import com.azhukov.agent.core.agent.ToolResultFormatter;
 import com.azhukov.agent.core.agent.MidTurnPersistenceCallback;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.prompt.PromptBuilder;
+import com.azhukov.agent.core.tool.ToolCallValidator;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.state.TurnState;
@@ -691,6 +692,19 @@ public class AgentStreamingService {
             }
 
             // Tool calls → execute each, emit tool_result events
+            // ── Uniquify duplicate tool-call ids BEFORE any downstream consumer ──
+            // (Hermes conversation_loop.py:6827 — duplicate ids lose the later call's
+            // result; strict providers reject duplicates outright.) ChatResponse
+            // carries an immutable list, so rebuild the response with the fixed copy.
+            if (response.toolCalls() != null && response.toolCalls().size() > 1) {
+                List<ToolCall> fixed = new ArrayList<>(response.toolCalls());
+                if (ToolCallValidator.uniquifyToolCallIds(fixed) > 0) {
+                    response = response.hasContent()
+                        ? ChatResponse.textAndToolCalls(response.content(), fixed)
+                        : ChatResponse.toolCalls(fixed);
+                }
+            }
+
             // ── Commentary emission (parity with Hermes _emit_interim_assistant_message) ──
             // When the LLM returns BOTH text AND tool calls, the text is "commentary" —
             // an interim assistant message shown to the user before tool execution.

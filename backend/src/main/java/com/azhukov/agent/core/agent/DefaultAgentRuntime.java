@@ -641,6 +641,14 @@ public class DefaultAgentRuntime implements AgentRuntime {
             List<ToolCall> toolCalls = response.toolCalls();
 
             // ── Tool call validation pipeline (parity with Hermes conversation_loop.py) ──
+            // 0. Uniquify duplicate tool-call ids BEFORE any downstream consumer
+            //    (Hermes conversation_loop.py:6827 — models reusing one id in a batch
+            //    lose the later call's result; strict providers reject duplicates).
+            if (toolCalls != null) {
+                toolCalls = new ArrayList<>(toolCalls);
+                ToolCallValidator.uniquifyToolCallIds(toolCalls);
+            }
+
             // 1. Validate tool names — repair fuzzy mismatches, collect errors
             Set<String> registeredToolNames = new HashSet<>();
             for (ToolDefinition td : tools) {
@@ -734,7 +742,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // subagent_auto_approve=true (set by DelegateTaskTool when
                 // agent.delegation.subagent-auto-approve is enabled).
                 boolean skipApproval = "true".equals(session.getMetadata("subagent_auto_approve"));
-                if (!skipApproval && approvalQueue != null && approvalQueue.isPending(session.id())) {
+                boolean approvalRequired = !skipApproval && approvalQueue != null && approvalQueue.isPending(session.id());
+                if (approvalRequired) {
                     log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
                     long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
                     boolean decided = approvalQueue.awaitDecision(session.id(), approvalTimeoutMs);
@@ -761,9 +770,17 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         continue;
                     }
                 }
-                if (!skipApproval && approvalQueue != null && approvalQueue.isDenied(session.id())) {
-                    log.info("Tool {} denied for session {}, skipping", call.name(), session.id());
-                    ToolResult deniedResult = ToolResult.fail("Tool execution denied by user approval");
+                // HERMES-SYNC (tools/approval.py:2984): fail-closed post-wait re-validation —
+                // execute ONLY on explicit approval; timeout-without-response blocks too.
+                if (approvalRequired && !approvalQueue.isApproved(session.id())) {
+                    boolean denied = approvalQueue.isDenied(session.id());
+                    String why = denied
+                        ? "Tool execution denied by user approval"
+                        : "Approval wait timed out without a user decision — tool blocked (fail-closed). "
+                          + "Re-request approval if this action is still needed.";
+                    log.info("Tool {} {} for session {}, skipping", call.name(),
+                        denied ? "denied" : "unapproved after timeout", session.id());
+                    ToolResult deniedResult = ToolResult.fail(why);
                     toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
                     approvalQueue.clear(session.id());
                 } else {
