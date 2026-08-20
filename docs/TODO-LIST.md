@@ -5,9 +5,9 @@
 
 ---
 
-## CRITICAL — Architecture (2)
+## CRITICAL — Architecture (0) — ✅ ALL DONE
 
-1. **c1** Decompose DefaultAgentRuntime — remaining: FallbackController extraction, MemoryNudgeCoordinator
+~~1. **c1**~~ ✅ DONE 2026-08-20 (FallbackModelCaller extracted: retry+fallback loop + 7 one-shot guards + compression recovery; runtime 1951→1346 LOC; 11 dead helper copies removed)
 2. **c2** Eliminate duplicated agentic loop — extract shared TurnExecutor from DefaultAgentRuntime + AgentStreamingService (empty-response/LENGTH/dropped-toolcall recovery now aligned in both, but logic still duplicated)
 
 ## HIGH — Architecture (2)
