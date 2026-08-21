@@ -127,3 +127,17 @@ cli:
 
 bot:
 	$(GRADLE) :telegram-bot:bootRun --args='--spring.profiles.active=dev'
+# ── Parity workflow ──────────────────────────────────────────────
+# One-command status snapshot for the java-agent-porting skill.
+# Run after every parity session BEFORE updating the skill — the dashboard
+# numbers (tests/version/migrations/CI) are the source of truth to paste.
+parity-dashboard:
+	@python3 scripts/parity-dashboard.py
+
+# Refresh dashboard + show the compact block to paste into the skill:
+#   ~/.hermes/skills/software-development/java-agent-porting/references/hermes-update-procedure.md
+skill-update:
+	@python3 scripts/parity-dashboard.py --stdout
+	@echo ""
+	@echo ">>> Paste the block above into the skill's 'Current Parity Status' header,"
+	@echo ">>> then append session findings to 'Fully Ported' / 'Known Gaps'."

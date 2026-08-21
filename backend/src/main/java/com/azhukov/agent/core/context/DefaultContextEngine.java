@@ -310,9 +310,20 @@ public class DefaultContextEngine implements ContextEngine {
  @Override
  public long countPriorUserMessages(UUID sessionId) {
      try {
-         // Query all messages for the session and count user-role ones.
-         // This is much cheaper than prepareContext which loads skills,
-         // checks compression, builds system prompt, etc.
+         // Seam audit 2026-08-21 (Hermes parity): hydration must count the SAME
+         // message set the context engine sees — including lineage ancestors after
+         // compression rotation. Before this, only the current session's rows were
+         // counted, so every rotation reset the nudge counter to ~0 and silently
+         // stretched the review interval.
+         if (sessionLineageService != null) {
+             List<Message> lineageMessages = sessionLineageService.loadMessagesWithAncestors(sessionId);
+             if (lineageMessages != null && !lineageMessages.isEmpty()) {
+                 return lineageMessages.stream()
+                     .filter(m -> m.role() == Role.USER)
+                     .count();
+             }
+         }
+         // Fallback: current session only (lineage unavailable/no ancestors)
          List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
          return messages.stream()
              .filter(m -> "user".equalsIgnoreCase(m.getRole()))
