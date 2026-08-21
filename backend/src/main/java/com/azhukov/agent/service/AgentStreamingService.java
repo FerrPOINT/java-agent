@@ -20,6 +20,7 @@ import com.azhukov.agent.core.agent.CliStateApplier;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.agent.SessionLineageService;
+import com.azhukov.agent.core.agent.MemoryNudgeManager;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.agent.StreamContext;
 import com.azhukov.agent.core.agent.TokenEstimator;
@@ -97,6 +98,20 @@ public class AgentStreamingService {
     private final ModelMetadataService modelMetadataService;
     private final MidTurnPersistenceCallback midTurnPersistenceCallback;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
+
+    // ── Background self-improvement wiring (Hermes parity, ported 0.1.16) ──
+    // The streaming path previously NEVER initialized or incremented the
+    // memory/skill nudge counters (MemoryNudgeManager methods had zero
+    // callers here), so background review never fired for streaming turns —
+    // i.e. for every Telegram bot turn. Injected via optional setter to keep
+    // the @RequiredArgsConstructor signature stable for the 7 positional
+    // test constructors.
+    private MemoryNudgeManager memoryNudgeManager;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setMemoryNudgeManager(MemoryNudgeManager memoryNudgeManager) {
+        this.memoryNudgeManager = memoryNudgeManager;
+    }
 
     // ── Shared turn-execution logic (c2: extracted with DefaultAgentRuntime) ──
     // TurnExecutor contains the shared model-call-with-retry, tool execution,
@@ -276,6 +291,25 @@ public class AgentStreamingService {
 
         // Tools
         List<ToolDefinition> tools = selectTools(request);
+
+        // ── Memory nudge counter (Hermes parity: turn_context.py:704-710) ──
+        // Increment at the START of each user turn, hydrated from persisted
+        // history on first sight of the session (Hermes issue #22357 / M8).
+        // This is what arms the background self-improvement review: without
+        // this increment the review thresholds are never reached and the
+        // review NEVER fires for streaming (bot) turns.
+        if (memoryNudgeManager != null && toolsetsIncludeMemory(request)) {
+            try {
+                int memNudge = properties.getMemory().getNudgeInterval();
+                if (memNudge > 0) {
+                    long priorUserTurns = contextEngine.countPriorUserMessages(session.id());
+                    memoryNudgeManager.initMemoryCounter(session.id(), priorUserTurns);
+                }
+                memoryNudgeManager.incrementMemoryTurns(session.id());
+            } catch (Exception e) {
+                log.debug("Memory nudge counter update failed for {}: {}", session.id(), e.getMessage());
+            }
+        }
 
         int maxTurns = properties.getCore().getMaxTurns();
         int turnIndex = 1;
@@ -749,6 +783,19 @@ public class AgentStreamingService {
 
             // No tool calls → turn is complete
             if (!response.hasToolCalls()) {
+                // ── Background self-improvement review (Hermes parity:
+                // turn_finalizer.py:790-802) ──
+                // Fire AFTER the final response is delivered, not before:
+                // the review must not delay the user-visible answer. It runs
+                // async (scheduled with delay) and cannot fail the turn.
+                if (memoryNudgeManager != null) {
+                    try {
+                        boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
+                        memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+                    } catch (Exception e) {
+                        log.debug("Background review trigger failed for {}: {}", session.id(), e.getMessage());
+                    }
+                }
                 // Check for empty response after continuation exhaustion — send error to user
                 // instead of silently delivering an empty message (Hermes parity)
                 if ((response.content() == null || response.content().isBlank())
@@ -815,6 +862,16 @@ public class AgentStreamingService {
 
             TurnState turnState = turnStateManager.getOrStart(session.id(), 1);
             for (ToolCall call : response.toolCalls()) {
+                // Skill-creation nudge (Hermes parity: conversation_loop.py:1977-1980):
+                // each tool-calling iteration counts toward the skill review threshold;
+                // skill_manage itself resets it (handled in resetNudgeCounters).
+                if (memoryNudgeManager != null) {
+                    try {
+                        memoryNudgeManager.incrementSkillIters(session.id());
+                    } catch (Exception e) {
+                        log.debug("Skill iter increment failed for {}: {}", session.id(), e.getMessage());
+                    }
+                }
                 // Check interrupt before each tool execution
                 if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                     log.info("Streaming turn cancelled by interrupt before tool {} for session {}",
@@ -955,6 +1012,20 @@ public class AgentStreamingService {
                 .toList();
         }
         return all;
+    }
+
+    /**
+     * Hermes parity (turn_context.py:707): the memory nudge only counts when
+     * the memory toolset is actually available to the session (tool not
+     * disabled via request). Subagents and memory-disabled sessions never
+     * accumulate review counters.
+     */
+    private boolean toolsetsIncludeMemory(ChatRequest request) {
+        if (request != null && request.disabledTools() != null
+                && request.disabledTools().contains("memory")) {
+            return false;
+        }
+        return properties.getSkills().getDefaultToolsets().contains("memory");
     }
 
     private String resolveModelUsed(Session session) {
