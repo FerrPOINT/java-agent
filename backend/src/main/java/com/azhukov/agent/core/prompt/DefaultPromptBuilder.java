@@ -1007,24 +1007,85 @@ public class DefaultPromptBuilder implements PromptBuilder {
     /**
      * Internal method that builds the memory prefix from the provider.
      * C1: Uses getRawEntries (non-FTS) instead of recall (FTS with empty query).
+     * <p>
+     * Hermes parity (tools/memory_tool.py render + system_prompt.py:782-792,
+     * ported 0.1.18): BOTH targets are injected —
+     * <ul>
+     *   <li>memory → "MEMORY (your personal notes)"</li>
+     *   <li>user   → "USER PROFILE (who the user is)" — previously NEVER
+     *       injected, so every user fact written by the background review or
+     *       the memory tool was invisible to the model (the agent literally
+     *       could not recall the user's name).</li>
+     * </ul>
+     * Format matches Hermes: 46-char ═ separator, header with usage
+     * indicator [N% — cur/limit chars], entries joined with "§".
      */
     private String buildMemoryPrefixInternal(Session session) {
         try {
-            // C1: Use getRawEntries (non-FTS) for system-prompt injection
-            var memories = memoryProvider.getRawEntries(session.userId(), "memory");
-            if (memories == null || memories.isEmpty()) {
+            String userBlock = renderMemoryBlock(session.userId(), "user");
+            String memoryBlock = renderMemoryBlock(session.userId(), "memory");
+            if (userBlock.isEmpty() && memoryBlock.isEmpty()) {
                 return "";
             }
             StringBuilder sb = new StringBuilder();
-            sb.append("## Memory (persistent facts)\n");
-            for (String memory : memories) {
-                sb.append("- ").append(memory).append("\n");
+            if (!userBlock.isEmpty()) {
+                sb.append(userBlock);
+            }
+            if (!memoryBlock.isEmpty()) {
+                if (sb.length() > 0) sb.append("\n\n");
+                sb.append(memoryBlock);
             }
             return sb.toString().trim();
         } catch (Exception e) {
             log.debug("Memory prefix build failed: {}", e.getMessage());
             return "";
         }
+    }
+
+    /** Hermes MEMORY_BLOCK_HEADERS (tools/memory_tool.py:62-65). */
+    private static final String MEMORY_HEADER_MEMORY = "MEMORY (your personal notes)";
+    private static final String MEMORY_HEADER_USER = "USER PROFILE (who the user is)";
+    /** Hermes ENTRY_DELIMITER (tools/memory_tool.py:67). */
+    private static final String ENTRY_DELIMITER = "\n§\n";
+    /** Hermes _render_block separator (tools/memory_tool.py:746). */
+    private static final String BLOCK_SEPARATOR = "═".repeat(46);
+
+    /**
+     * Hermes parity: render one memory block with header + usage indicator.
+     * Mirrors MemoryStore._render_block — dedup preserves order, keeps first
+     * occurrence (load_from_disk dedup semantics).
+     */
+    private String renderMemoryBlock(String userId, String target) {
+        try {
+            List<String> raw = memoryProvider.getRawEntries(userId, target);
+            if (raw == null || raw.isEmpty()) {
+                return "";
+            }
+            // Deduplicate, preserving order (Hermes: dict.fromkeys)
+            List<String> entries = raw.stream().distinct().toList();
+            int limit = charLimitFor(target);
+            String content = String.join(ENTRY_DELIMITER, entries);
+            int current = content.length();
+            int pct = limit > 0 ? Math.min(100, (int) ((current / (double) limit) * 100)) : 0;
+            String header = (target.equals("user") ? MEMORY_HEADER_USER : MEMORY_HEADER_MEMORY)
+                + String.format(" [%d%% — %,d/%,d chars]", pct, current, limit);
+            return BLOCK_SEPARATOR + "\n" + header + "\n" + BLOCK_SEPARATOR + "\n" + content;
+        } catch (Exception e) {
+            log.debug("Memory block render failed for target {}: {}", target, e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * Hermes char limits (agent_init.py:1763-1766 defaults): memory 2200,
+     * user 1375. Exposed via AgentProperties when configured.
+     */
+    private int charLimitFor(String target) {
+        var mem = properties.getMemory();
+        if ("user".equals(target)) {
+            return mem != null && mem.getUserCharLimit() > 0 ? mem.getUserCharLimit() : 1375;
+        }
+        return mem != null && mem.getMemoryCharLimit() > 0 ? mem.getMemoryCharLimit() : 2200;
     }
 
     private PromptCacheTracker.CachedSystemPrompt buildThreeTierPrompt(Session session, String systemMessageOverride) {

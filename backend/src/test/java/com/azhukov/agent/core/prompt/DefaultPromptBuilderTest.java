@@ -124,8 +124,11 @@ class DefaultPromptBuilderTest {
         Message msg = builder.buildSystemMessage(session);
 
         assertThat(msg.role()).isEqualTo(Role.SYSTEM);
-        // Memory prefix should be at the start of the system prompt
-        assertThat(msg.content()).startsWith("## Memory (persistent facts)");
+        // Memory prefix should be at the start of the system prompt.
+        // 0.1.18 Hermes parity: header is "MEMORY (your personal notes)" with
+        // usage indicator, ═ separators, §-joined entries (tools/memory_tool.py).
+        assertThat(msg.content()).startsWith("════════");
+        assertThat(msg.content()).contains("MEMORY (your personal notes)");
         assertThat(msg.content()).contains("User prefers dark mode");
         assertThat(msg.content()).contains("User works with Python");
         // The three-tier prompt content should still be present after the memory prefix
