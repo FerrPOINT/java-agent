@@ -424,6 +424,11 @@ public class MessageApiClient extends BaseBackendClient {
         if (runtime.isFastMode()) {
             body.put("fastMode", true);
         }
+        // Per-session model override (/model command) — the backend threads it
+        // through ModelRequestOptions so every model call in the turn uses it.
+        if (runtime.getModelOverride() != null && !runtime.getModelOverride().isBlank()) {
+            body.put("model", runtime.getModelOverride());
+        }
         if (runtime.getReasoningLevel() != null && !runtime.getReasoningLevel().isBlank()) {
             body.put("reasoningEffort", runtime.getReasoningLevel());
         }

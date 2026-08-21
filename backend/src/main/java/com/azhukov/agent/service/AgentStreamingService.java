@@ -290,7 +290,25 @@ public class AgentStreamingService {
         // model call so the bot can render the footer model even when the call fails
         // immediately (e.g. billing/usage-limit errors emit no tokens at all).
         // The final metadata event after a successful turn overwrites the token estimate.
+
+        // Per-request model override (/model command or API "model" field):
+        // thread it through options so the model client uses it for every call
+        // in this turn, and record it in session metadata so resolveModelUsed
+        // reports the ACTUAL model in the footer/metadata events.
+        String requestModel = request.model() != null && !request.model().isBlank() ? request.model() : null;
+        if (requestModel != null) {
+            session = session.withMetadata("modelOverride", requestModel);
+        }
         sendMetadataEvent(emitter, session, streamCtx);
+        com.azhukov.agent.core.client.ModelRequestOptions streamOptions =
+            new com.azhukov.agent.core.client.ModelRequestOptions(
+                requestModel,
+                request.reasoningEffort(),
+                request.fastMode(),
+                request.voiceMode(),
+                request.personality(),
+                request.subgoal(),
+                null);
 
         for (int i = 0; i < maxTurns; i++) {
             // Check for interrupt at the top of each agentic-loop iteration
@@ -358,7 +376,7 @@ public class AgentStreamingService {
 
                 try {
                     long llmStart = System.currentTimeMillis();
-                    activeStreamClient.stream(context, tools, new StreamingResponseHandler() {
+                    activeStreamClient.stream(context, tools, streamOptions, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
                             // Check interrupt before emitting each token/chunk
@@ -939,6 +957,11 @@ public class AgentStreamingService {
     }
 
     private String resolveModelUsed(Session session) {
+        // Per-request override (from /model command or API model field) wins
+        String requestOverride = session.getMetadata("modelOverride");
+        if (requestOverride != null && !requestOverride.isBlank()) {
+            return requestOverride;
+        }
         if (session.modelName() != null && !session.modelName().isBlank()) {
             return session.modelName();
         }

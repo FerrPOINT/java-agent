@@ -185,11 +185,11 @@ class AgentStreamingInterruptTest {
 
         CollectingEmitter emitter = new CollectingEmitter(500L);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("should not reach here");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -218,7 +218,7 @@ class AgentStreamingInterruptTest {
 
         CollectingEmitter emitter = new CollectingEmitter(500L);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("first");
             // Cancel after the first token
             interruptToken.cancel(SESSION_ID);
@@ -226,7 +226,7 @@ class AgentStreamingInterruptTest {
             handler.onToken("third");   // should be skipped
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -261,13 +261,13 @@ class AgentStreamingInterruptTest {
 
         // First model call returns tool calls; cancel interrupt before tools run
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToolCalls(List.of(toolCall));
             handler.onComplete();
             // Cancel right after the model returns tool calls
             interruptToken.cancel(SESSION_ID);
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -301,11 +301,11 @@ class AgentStreamingInterruptTest {
 
         CollectingEmitter emitter = new CollectingEmitter(500L);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("hello");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -341,7 +341,7 @@ class AgentStreamingInterruptTest {
         // First call returns tool calls, second returns text
         AtomicBoolean firstCall = new AtomicBoolean(true);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             if (firstCall.getAndSet(false)) {
                 handler.onToolCalls(List.of(toolCall));
                 handler.onComplete();
@@ -350,7 +350,7 @@ class AgentStreamingInterruptTest {
                 handler.onComplete();
             }
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         when(toolExecutionService.execute(eq("weather"), eq("call-1"), any(String.class),
             any(), any(Session.class), any()))

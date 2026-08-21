@@ -46,6 +46,7 @@ public class CliStateApplier {
             finalMessage,
             request.delegationDepth(),
             request.timeoutMs(),
+            request.model(),
             reasoningEffort,
             request.fastMode(),
             request.voiceMode(),

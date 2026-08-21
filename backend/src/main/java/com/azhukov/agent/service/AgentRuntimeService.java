@@ -502,7 +502,9 @@ public class AgentRuntimeService {
         } catch (NumberFormatException e) {
             maxTokens = 0;
         }
-        return new ModelRequestOptions(reasoningEffort, fastMode, request.voiceMode(),
+        return new ModelRequestOptions(
+            request.model() != null && !request.model().isBlank() ? request.model() : null,
+            reasoningEffort, fastMode, request.voiceMode(),
             request.personality(), request.subgoal(), maxTokens);
     }
 }

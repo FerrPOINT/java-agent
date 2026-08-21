@@ -149,7 +149,8 @@ public class LangChain4jModelClient implements ModelClient {
 
         ChatRequest request = ChatRequest.builder()
             .messages(chatMessages)
-            .parameters(buildParameters(specs, reasoningEffort, fastMode, maxTokens))
+            .parameters(buildParameters(specs, reasoningEffort, fastMode, maxTokens,
+                options != null ? options.modelName() : null))
             .build();
 
         log.debug("Sending {} messages to model {}", chatMessages.size(), request);
@@ -220,7 +221,8 @@ public class LangChain4jModelClient implements ModelClient {
 
         ChatRequest request = ChatRequest.builder()
             .messages(chatMessages)
-            .parameters(buildParameters(specs, reasoningEffort, fastMode, maxTokens))
+            .parameters(buildParameters(specs, reasoningEffort, fastMode, maxTokens,
+                options != null ? options.modelName() : null))
             .build();
 
         // OpenAiStreamingChatModel.doChat() is async — block until streaming completes
@@ -380,8 +382,25 @@ public class LangChain4jModelClient implements ModelClient {
                                                                                        int reasoningEffort,
                                                                                        boolean fastMode,
                                                                                        int maxTokens) {
+        return buildParameters(specs, reasoningEffort, fastMode, maxTokens, null);
+    }
+
+    /**
+     * Per-request model override: when options carry a modelName (from /model
+     * or the API model field), it replaces the configured default in the
+     * request parameters. The OpenAI-compatible client sends the override to
+     * the provider on every call that uses these parameters.
+     */
+    private dev.langchain4j.model.chat.request.ChatRequestParameters buildParameters(List<ToolSpecification> specs,
+                                                                                       int reasoningEffort,
+                                                                                       boolean fastMode,
+                                                                                       int maxTokens,
+                                                                                       String modelOverride) {
+        String effectiveModel = modelOverride != null && !modelOverride.isBlank()
+            ? modelOverride
+            : properties.getModel().getModelName();
         var builder = OpenAiChatRequestParameters.builder()
-            .modelName(properties.getModel().getModelName())
+            .modelName(effectiveModel)
             .toolSpecifications(specs)
             .maxCompletionTokens(fastMode ? Math.min(maxTokens, 2048) : maxTokens);
         if (reasoningEffort > 0 && !fastMode) {

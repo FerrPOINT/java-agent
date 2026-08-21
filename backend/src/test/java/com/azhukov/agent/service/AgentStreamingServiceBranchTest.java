@@ -184,7 +184,7 @@ class AgentStreamingServiceBranchTest {
     @Test
     void streamTurnWithDisabledToolsFiltersThemOut() throws Exception {
         ChatRequest request = new ChatRequest(
-            SESSION_ID, "Hello", null, 10_000L,
+            SESSION_ID, "Hello", null, 10_000L, null,
             null, null, null, null,
             null, List.of("weather"), // disabledTools
             null, null, null, null, null, null, null, null, null);
@@ -192,11 +192,11 @@ class AgentStreamingServiceBranchTest {
         AtomicReference<List<ToolDefinition>> capturedTools = new AtomicReference<>();
         doAnswer(invocation -> {
             capturedTools.set(invocation.getArgument(1));
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
@@ -220,11 +220,11 @@ class AgentStreamingServiceBranchTest {
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -247,11 +247,11 @@ class AgentStreamingServiceBranchTest {
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -275,11 +275,11 @@ class AgentStreamingServiceBranchTest {
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -305,11 +305,11 @@ class AgentStreamingServiceBranchTest {
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -332,11 +332,11 @@ class AgentStreamingServiceBranchTest {
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -359,7 +359,7 @@ class AgentStreamingServiceBranchTest {
 
         AtomicInteger callCount = new AtomicInteger(0);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             if (callCount.incrementAndGet() == 1) {
                 handler.onToolCalls(List.of(toolCall));
             } else {
@@ -367,7 +367,7 @@ class AgentStreamingServiceBranchTest {
             }
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         when(toolExecutionService.execute(eq("weather"), eq("call-1"), any(String.class),
             any(), any(Session.class), any()))
@@ -395,7 +395,7 @@ class AgentStreamingServiceBranchTest {
 
         AtomicInteger callCount = new AtomicInteger(0);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             if (callCount.incrementAndGet() == 1) {
                 handler.onToolCalls(List.of(toolCall));
             } else {
@@ -403,7 +403,7 @@ class AgentStreamingServiceBranchTest {
             }
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         // Tool returns an error with very long error message
         String longError = "E".repeat(2000);
@@ -440,11 +440,11 @@ class AgentStreamingServiceBranchTest {
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("new session");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -463,7 +463,7 @@ class AgentStreamingServiceBranchTest {
 
         AtomicInteger callCount = new AtomicInteger(0);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             int count = callCount.incrementAndGet();
             if (count == 1) {
                 // First call: empty response (truncated)
@@ -474,7 +474,7 @@ class AgentStreamingServiceBranchTest {
                 handler.onComplete();
             }
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -496,11 +496,11 @@ class AgentStreamingServiceBranchTest {
         when(iterationBudget.isExhausted(any())).thenReturn(true);
 
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("should not matter");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -533,11 +533,11 @@ class AgentStreamingServiceBranchTest {
         // Model always returns tool calls → never finishes with text → max turns
         ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"Paris\"}");
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToolCalls(List.of(toolCall));
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         when(toolExecutionService.execute(eq("weather"), eq("call-1"), any(String.class),
             any(), any(Session.class), any()))
@@ -573,11 +573,11 @@ class AgentStreamingServiceBranchTest {
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {
             capturedMessages.set(invocation.getArgument(0));
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
@@ -605,11 +605,11 @@ class AgentStreamingServiceBranchTest {
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {
             capturedMessages.set(invocation.getArgument(0));
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
@@ -633,18 +633,18 @@ class AgentStreamingServiceBranchTest {
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
 
         ChatRequest request = new ChatRequest(
-            SESSION_ID, "Hello", null, 10_000L,
+            SESSION_ID, "Hello", null, 10_000L, null,
             null, null, null, null,
             null, null, null, null, null, "request goal", null, null, null, null, null);
 
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {
             capturedMessages.set(invocation.getArgument(0));
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
@@ -679,11 +679,11 @@ class AgentStreamingServiceBranchTest {
             List<Message> msgs = invocation.getArgument(0);
             // Find the user message (last in list)
             capturedMessage.set(msgs.get(msgs.size() - 1).content());
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
@@ -713,11 +713,11 @@ class AgentStreamingServiceBranchTest {
         doAnswer(invocation -> {
             List<Message> msgs = invocation.getArgument(0);
             capturedMessage.set(msgs.get(msgs.size() - 1).content());
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
@@ -735,7 +735,7 @@ class AgentStreamingServiceBranchTest {
 
         AtomicInteger callCount = new AtomicInteger(0);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             int count = callCount.incrementAndGet();
             if (count == 1) {
                 // First call: retryable error
@@ -746,7 +746,7 @@ class AgentStreamingServiceBranchTest {
                 handler.onComplete();
             }
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -772,11 +772,11 @@ class AgentStreamingServiceBranchTest {
         // To get a permanent error, we need to exhaust retries
         AtomicInteger callCount = new AtomicInteger(0);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             int count = callCount.incrementAndGet();
             handler.onError(new RuntimeException("permanent failure " + count));
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone(15);
@@ -804,11 +804,11 @@ class AgentStreamingServiceBranchTest {
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -845,11 +845,11 @@ class AgentStreamingServiceBranchTest {
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {
             capturedMessages.set(invocation.getArgument(0));
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);

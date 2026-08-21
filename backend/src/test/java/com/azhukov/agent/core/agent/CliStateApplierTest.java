@@ -120,7 +120,7 @@ class CliStateApplierTest {
     @Test
     void applyCliState_requestReasoningEffortOverridesSession() {
         ChatRequest request = new ChatRequest(
-            SESSION_ID, "Hello", null, 10_000L,
+            SESSION_ID, "Hello", null, 10_000L, null,
             "high", null, null, null,
             null, null, null, null, null, null, null, null, null, null, null);
         SessionEntity entity = newSessionEntity();
@@ -141,7 +141,7 @@ class CliStateApplierTest {
     @Test
     void applyCliState_queuedPromptConsumedFromRequest() {
         ChatRequest request = new ChatRequest(
-            SESSION_ID, "Hello", null, 10_000L,
+            SESSION_ID, "Hello", null, 10_000L, null,
             null, null, null, null,
             null, null, "request-queued", null, null, null, null, null, null, null, null);
         SessionEntity entity = newSessionEntity();

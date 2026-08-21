@@ -170,11 +170,11 @@ class AgentStreamingServiceDoublePersistenceTest {
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("Hello world");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -197,10 +197,10 @@ class AgentStreamingServiceDoublePersistenceTest {
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         // Model fails with permanent error
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onError(new RuntimeException("Permanent failure"));
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();

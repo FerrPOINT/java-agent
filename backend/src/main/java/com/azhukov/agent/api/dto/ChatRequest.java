@@ -8,6 +8,7 @@ public record ChatRequest(
     @NotBlank String message,
     Integer delegationDepth,
     Long timeoutMs,
+    String model,
     String reasoningEffort,
     Boolean fastMode,
     Boolean voiceMode,
@@ -27,9 +28,9 @@ public record ChatRequest(
     // Static factory — compact 4-arg form for tests and simple calls
     public static ChatRequest simple(UUID sessionId, String message, Integer delegationDepth, Long timeoutMs) {
         return new ChatRequest(sessionId, message, delegationDepth, timeoutMs,
-            (String) null, (Boolean) null, (Boolean) null, (String) null,
+            (String) null, (String) null, (Boolean) null, (Boolean) null, (String) null,
             (java.util.List<String>) null, (java.util.List<String>) null,
-            (String) null, (String) null, (String) null,  // queuedPrompt, subgoal, cdpUrl
+            (String) null, (String) null, (String) null,  // model, queuedPrompt, subgoal, cdpUrl
             (String) null, (String) null, (String) null, (String) null, (String) null, (String) null); // goal..chatType
     }
 
@@ -38,7 +39,8 @@ public record ChatRequest(
                                  String reasoningEffort, Boolean fastMode, Boolean voiceMode, String personality,
                                  java.util.List<String> enabledTools, java.util.List<String> disabledTools,
                                  String queuedPrompt, String subgoal, String cdpUrl) {
-        return new ChatRequest(sessionId, message, delegationDepth, timeoutMs, reasoningEffort, fastMode,
+        return new ChatRequest(sessionId, message, delegationDepth, timeoutMs,
+            null, reasoningEffort, fastMode,
             voiceMode, personality, enabledTools, disabledTools, queuedPrompt, subgoal, cdpUrl,
             (String) null, (String) null, (String) null, (String) null, (String) null, (String) null);
     }

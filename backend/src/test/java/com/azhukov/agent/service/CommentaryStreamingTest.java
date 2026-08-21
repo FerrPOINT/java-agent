@@ -155,7 +155,7 @@ class CommentaryStreamingTest {
         AtomicInteger streamCallCount = new AtomicInteger(0);
 
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             int n = streamCallCount.incrementAndGet();
             if (n == 1) {
                 handler.onToken("Let me check Tokyo weather.");
@@ -166,7 +166,7 @@ class CommentaryStreamingTest {
                 handler.onComplete();
             }
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         when(toolExecutionService.execute(
             any(String.class), any(String.class), any(String.class),
@@ -204,7 +204,7 @@ class CommentaryStreamingTest {
         AtomicInteger streamCallCount = new AtomicInteger(0);
 
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             int n = streamCallCount.incrementAndGet();
             if (n == 1) {
                 // No onToken calls — just tool calls
@@ -215,7 +215,7 @@ class CommentaryStreamingTest {
                 handler.onComplete();
             }
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         when(toolExecutionService.execute(
             any(String.class), any(String.class), any(String.class),

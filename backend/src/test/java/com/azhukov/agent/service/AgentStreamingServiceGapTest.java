@@ -190,7 +190,7 @@ class AgentStreamingServiceGapTest {
             CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doThrow(new RuntimeException("stream setup failed"))
-                .when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+                .when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
@@ -209,10 +209,10 @@ class AgentStreamingServiceGapTest {
             CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doAnswer(invocation -> {
-                StreamingResponseHandler handler = invocation.getArgument(2);
+                StreamingResponseHandler handler = invocation.getArgument(3);
                 handler.onError(new RuntimeException("model stream error"));
                 return null;
-            }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
@@ -231,7 +231,7 @@ class AgentStreamingServiceGapTest {
             CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doThrow(new RuntimeException("fatal error"))
-                .when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+                .when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
@@ -258,10 +258,10 @@ class AgentStreamingServiceGapTest {
             CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doAnswer(invocation -> {
-                StreamingResponseHandler handler = invocation.getArgument(2);
+                StreamingResponseHandler handler = invocation.getArgument(3);
                 handler.onComplete();
                 return null;
-            }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
@@ -278,11 +278,11 @@ class AgentStreamingServiceGapTest {
             CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doAnswer(invocation -> {
-                StreamingResponseHandler handler = invocation.getArgument(2);
+                StreamingResponseHandler handler = invocation.getArgument(3);
                 handler.onToken("Partial response...");
                 handler.onError(new RuntimeException("stream interrupted"));
                 return null;
-            }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
@@ -301,11 +301,11 @@ class AgentStreamingServiceGapTest {
             CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doAnswer(invocation -> {
-                StreamingResponseHandler handler = invocation.getArgument(2);
+                StreamingResponseHandler handler = invocation.getArgument(3);
                 handler.onToken("Java is");
                 handler.onComplete();
                 return null;
-            }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
@@ -330,7 +330,7 @@ class AgentStreamingServiceGapTest {
 
             java.util.concurrent.atomic.AtomicInteger callCount = new java.util.concurrent.atomic.AtomicInteger(0);
             doAnswer(invocation -> {
-                StreamingResponseHandler handler = invocation.getArgument(2);
+                StreamingResponseHandler handler = invocation.getArgument(3);
                 if (callCount.incrementAndGet() == 1) {
                     handler.onToolCalls(List.of(toolCall));
                 } else {
@@ -338,7 +338,7 @@ class AgentStreamingServiceGapTest {
                 }
                 handler.onComplete();
                 return null;
-            }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             when(toolExecutionService.execute(
                 eq("weather"), eq("call-1"), any(String.class),
@@ -369,7 +369,7 @@ class AgentStreamingServiceGapTest {
 
             java.util.concurrent.atomic.AtomicInteger callCount = new java.util.concurrent.atomic.AtomicInteger(0);
             doAnswer(invocation -> {
-                StreamingResponseHandler handler = invocation.getArgument(2);
+                StreamingResponseHandler handler = invocation.getArgument(3);
                 if (callCount.incrementAndGet() == 1) {
                     handler.onToolCalls(List.of(toolCall));
                 } else {
@@ -377,7 +377,7 @@ class AgentStreamingServiceGapTest {
                 }
                 handler.onComplete();
                 return null;
-            }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             when(toolExecutionService.execute(
                 eq("search"), eq("call-1"), any(String.class),
@@ -405,7 +405,7 @@ class AgentStreamingServiceGapTest {
 
             java.util.concurrent.atomic.AtomicInteger callCount = new java.util.concurrent.atomic.AtomicInteger(0);
             doAnswer(invocation -> {
-                StreamingResponseHandler handler = invocation.getArgument(2);
+                StreamingResponseHandler handler = invocation.getArgument(3);
                 if (callCount.incrementAndGet() == 1) {
                     handler.onToolCalls(List.of(toolCall));
                 } else {
@@ -413,7 +413,7 @@ class AgentStreamingServiceGapTest {
                 }
                 handler.onComplete();
                 return null;
-            }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             when(toolExecutionService.execute(
                 eq("weather"), eq("call-1"), any(String.class),
@@ -437,7 +437,7 @@ class AgentStreamingServiceGapTest {
 
             java.util.concurrent.atomic.AtomicInteger callCount = new java.util.concurrent.atomic.AtomicInteger(0);
             doAnswer(invocation -> {
-                StreamingResponseHandler handler = invocation.getArgument(2);
+                StreamingResponseHandler handler = invocation.getArgument(3);
                 if (callCount.incrementAndGet() == 1) {
                     handler.onToolCalls(List.of(toolCall));
                 } else {
@@ -445,7 +445,7 @@ class AgentStreamingServiceGapTest {
                 }
                 handler.onComplete();
                 return null;
-            }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             String largeOutput = "x".repeat(2000);
             when(toolExecutionService.execute(
@@ -479,11 +479,11 @@ class AgentStreamingServiceGapTest {
             CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doAnswer(invocation -> {
-                StreamingResponseHandler handler = invocation.getArgument(2);
+                StreamingResponseHandler handler = invocation.getArgument(3);
                 handler.onToken("Hello!");
                 handler.onComplete();
                 return null;
-            }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
@@ -501,7 +501,7 @@ class AgentStreamingServiceGapTest {
             CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doThrow(new RuntimeException("crash"))
-                .when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+                .when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
@@ -522,10 +522,10 @@ class AgentStreamingServiceGapTest {
             CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
             doAnswer(invocation -> {
-                StreamingResponseHandler handler = invocation.getArgument(2);
+                StreamingResponseHandler handler = invocation.getArgument(3);
                 handler.onError(new RuntimeException("stream error"));
                 return null;
-            }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
@@ -552,11 +552,11 @@ class AgentStreamingServiceGapTest {
             when(iterationBudget.isExhausted(any())).thenReturn(true);
 
             doAnswer(invocation -> {
-                StreamingResponseHandler handler = invocation.getArgument(2);
+                StreamingResponseHandler handler = invocation.getArgument(3);
                 handler.onToken("some text");
                 handler.onComplete();
                 return null;
-            }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();
@@ -582,7 +582,7 @@ class AgentStreamingServiceGapTest {
 
             java.util.concurrent.atomic.AtomicInteger streamCallCount = new java.util.concurrent.atomic.AtomicInteger(0);
             doAnswer(invocation -> {
-                StreamingResponseHandler handler = invocation.getArgument(2);
+                StreamingResponseHandler handler = invocation.getArgument(3);
                 if (streamCallCount.incrementAndGet() == 1) {
                     handler.onError(new RuntimeException("transient stream error"));
                 } else {
@@ -590,7 +590,7 @@ class AgentStreamingServiceGapTest {
                     handler.onComplete();
                 }
                 return null;
-            }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
             streamingService.streamTurn(request, emitter);
             emitter.awaitDone();

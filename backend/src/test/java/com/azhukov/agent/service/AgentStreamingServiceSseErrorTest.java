@@ -185,7 +185,7 @@ class AgentStreamingServiceSseErrorTest {
 
         // Simulate stream() throwing an exception
         doThrow(new RuntimeException("model unavailable"))
-            .when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+            .when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -209,10 +209,10 @@ class AgentStreamingServiceSseErrorTest {
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onError(new RuntimeException("stream broke"));
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -236,10 +236,10 @@ class AgentStreamingServiceSseErrorTest {
 
         // Always error — retries will exhaust
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onError(new RuntimeException("permanent failure"));
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone(15);
@@ -264,11 +264,11 @@ class AgentStreamingServiceSseErrorTest {
         // Simulate a successful stream to keep it simple — timeout is tested
         // by the emitter.onTimeout callback which calls safeCompleteWithError
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("hi");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();

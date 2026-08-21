@@ -55,7 +55,7 @@ class AgentRuntimeServiceMaxTokensTest {
             maxTokens = 0;
         }
 
-        ModelRequestOptions options = new ModelRequestOptions(null, false, false, null, null, maxTokens);
+        ModelRequestOptions options = new ModelRequestOptions(null, null, false, false, null, null, maxTokens);
         assertThat(options.maxCompletionTokens()).isEqualTo(8192);
     }
 
@@ -69,7 +69,7 @@ class AgentRuntimeServiceMaxTokensTest {
             maxTokens = 0;
         }
 
-        ModelRequestOptions options = new ModelRequestOptions(null, false, false, null, null, maxTokens);
+        ModelRequestOptions options = new ModelRequestOptions(null, null, false, false, null, null, maxTokens);
         assertThat(options.maxCompletionTokens()).isEqualTo(0);
     }
 }

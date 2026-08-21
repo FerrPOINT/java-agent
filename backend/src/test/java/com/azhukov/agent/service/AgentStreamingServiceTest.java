@@ -184,12 +184,12 @@ class AgentStreamingServiceTest {
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("Hello");
             handler.onToken(" world");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         SseEmitter returned = streamingService.streamTurn(request, emitter);
         assertThat(returned).isSameAs(emitter);
@@ -226,11 +226,11 @@ class AgentStreamingServiceTest {
 
         // First model call returns tool calls, second returns text
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToolCalls(List.of(toolCall));
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         // Tool execution returns success
         when(toolExecutionService.execute(eq("weather"), eq("call-1"), any(String.class),
@@ -260,11 +260,11 @@ class AgentStreamingServiceTest {
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("Hi");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
         when(usageTracker.getSessionUsage(eq(SESSION_ID)))
             .thenReturn(new UsageDto(SESSION_ID, 3, 1500));
 
@@ -298,11 +298,11 @@ class AgentStreamingServiceTest {
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("Hi");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -337,11 +337,11 @@ class AgentStreamingServiceTest {
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("Hi");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -365,10 +365,10 @@ class AgentStreamingServiceTest {
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onError(failure);
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -397,11 +397,11 @@ class AgentStreamingServiceTest {
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("created");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
@@ -419,11 +419,11 @@ class AgentStreamingServiceTest {
         AtomicReference<Long> capturedTimeout = new AtomicReference<>();
         doAnswer(invocation -> {
             capturedTimeout.set(getEmitterTimeout(streamingService.streamTurn(request)));
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("x");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request);
 
@@ -440,11 +440,11 @@ class AgentStreamingServiceTest {
         AtomicReference<Long> capturedTimeout = new AtomicReference<>();
         doAnswer(invocation -> {
             capturedTimeout.set(getEmitterTimeout(streamingService.streamTurn(request)));
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("x");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request);
 
@@ -476,11 +476,11 @@ class AgentStreamingServiceTest {
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {
             capturedMessages.set(invocation.getArgument(0));
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
@@ -523,11 +523,11 @@ class AgentStreamingServiceTest {
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
         doAnswer(invocation -> {
             capturedMessages.set(invocation.getArgument(0));
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("ok");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         streamingService.streamTurn(request, emitter);
@@ -552,11 +552,11 @@ class AgentStreamingServiceTest {
 
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("done");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         // Get the InterruptToken from the service (it's the same instance wired in setUp)
         // We can verify cleanup by checking that after the stream completes,
@@ -579,13 +579,13 @@ class AgentStreamingServiceTest {
         AtomicInteger sendCount = new AtomicInteger(0);
 
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("first");
             handler.onToken("second");
             handler.onToken("third");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(any(List.class), any(List.class), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
