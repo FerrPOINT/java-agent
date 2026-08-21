@@ -306,6 +306,24 @@ public class ErrorClassifier {
             return new ClassificationResult(ErrorType.PROVIDER_POLICY_BLOCKED, RecoveryHints.noRetry());
         }
 
+        // ── 11a. Malformed request history — non-retryable with same history ──
+        // litellm wraps upstream request-shape rejections (Gemini "Missing
+        // corresponding tool call for tool response message", DeepSeek "an
+        // assistant message with 'tool_calls' must be followed by...") into
+        // APIConnectionError/ChatgptException envelopes. Retrying the SAME
+        // broken history is guaranteed to fail — and the wrapper text
+        // ("ChatgptException", "connection error") otherwise matches AUTH /
+        // NETWORK patterns, causing pointless retry loops. Classify as
+        // CONTEXT_OVERFLOW-family so the agent compresses/rebuilds history
+        // instead of hammering the provider.
+        if (lowerMessage.contains("missing corresponding tool call for tool response message")
+            || lowerMessage.contains("must be followed by tool messages")
+            || lowerMessage.contains("tool_calls' must be followed by")
+            || lowerMessage.contains("invalid 'messages[")
+            || lowerMessage.contains("duplicate tool_call_id")) {
+            return new ClassificationResult(ErrorType.CONTEXT_OVERFLOW, RecoveryHints.compressAndRetry());
+        }
+
         // ── 12. Auth errors — 401 ──
         if (lowerMessage.contains("401") || lowerMessage.contains("unauthorized")
             || lowerMessage.contains("invalid api key") || lowerMessage.contains("invalid_api_key")

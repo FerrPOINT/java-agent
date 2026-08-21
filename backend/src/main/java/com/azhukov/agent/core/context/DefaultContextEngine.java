@@ -175,6 +175,12 @@ public class DefaultContextEngine implements ContextEngine {
  context.addAll(messages.subList(start, messages.size()));
 
  List<Message> trimmed = trimToFit(context);
+ // Hermes parity: repair orphaned tool results / consecutive user turns
+ // BEFORE sending to the model — strict providers (Gemini via litellm,
+ // DeepSeek, Kimi) reject a tool message without a matching assistant
+ // tool_call with HTTP 400 ("Missing corresponding tool call for tool
+ // response message").
+ trimmed = HistorySanitizer.sanitize(trimmed);
  // Preflight: trigger compression at threshold of maxTokens (before API call)
  if (shouldCompressPreflight(trimmed)) {
      // Check cooldown — skip if compressed recently

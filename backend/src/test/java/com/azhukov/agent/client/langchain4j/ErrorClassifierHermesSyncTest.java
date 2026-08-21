@@ -180,4 +180,23 @@ class ErrorClassifierHermesSyncTest {
         var result = classifier.classifyWithHints(e);
         assertEquals(ErrorClassifier.ErrorType.CONTEXT_OVERFLOW, result.type());
     }
+
+    @Test
+    void malformedHistoryLitellmWrapper_classifiedAsContextOverflow() {
+        // Production 2026-08-21 15:50: litellm wrapped Gemini's request-shape
+        // rejection into APIConnectionError/ChatgptException — previously
+        // matched AUTH and burned 4 retries on the same broken history.
+        String err = "litellm.APIConnectionError: AuthenticationError: ChatgptException - "
+            + "Missing corresponding tool call for tool response message. Received - "
+            + "message={'role': 'tool', 'tool_call_id': 'call_873e...', 'content': 'data:image/png;base64,...'}";
+        var result = classifier.classifyWithHints(new RuntimeException(err));
+        assertEquals(ErrorClassifier.ErrorType.CONTEXT_OVERFLOW, result.type());
+    }
+
+    @Test
+    void deepseekToolCallsMustBeFollowed_classifiedAsContextOverflow() {
+        String err = "Error code: 400 - an assistant message with 'tool_calls' must be followed by tool messages";
+        var result = classifier.classifyWithHints(new RuntimeException(err));
+        assertEquals(ErrorClassifier.ErrorType.CONTEXT_OVERFLOW, result.type());
+    }
 }

@@ -16,44 +16,57 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ModelCommandTest {
 
+    private TelegramClient tc;
+
     private ModelCommand makeCommand(BotSessionStore store, BotProperties properties) {
-        TelegramClient tc = mock(TelegramClient.class);
+        tc = mock(TelegramClient.class);
         when(tc.sendMessage(anyLong(), any())).thenReturn(Optional.of(1L));
         when(tc.sendMessage(anyLong(), any(), any(), any(), any())).thenReturn(Optional.of(1L));
         return new ModelCommand(store, properties, mock(ModelKeyboardBuilder.class), mock(InlineKeyboardBuilder.class), tc);
     }
 
     @Test
-    void noArgs_showsCurrentModel() {
+    void noArgs_showsCurrentModelInKeyboardHeader() {
         BotSessionStore store = mock(BotSessionStore.class);
         BotProperties properties = new BotProperties();
+        properties.getAvailableModels().add("app-test");
         var cmd = makeCommand(store, properties);
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         session.setModelOverride("gpt-4o");
         UpdateEvent event = makeEvent("");
-        String result = cmd.handle(event, session);
-        assertThat(result).contains("gpt-4o");
+        cmd.handle(event, session);
+        // Bare /model sends the keyboard immediately with the current model
+        // in the header message (Hermes parity).
+        verify(tc).sendMessage(anyLong(),
+            argThat(text -> text != null && text.contains("gpt-4o") && text.contains("Select a model")),
+            isNull(), isNull(), any());
     }
 
     @Test
-    void noArgsNoOverride_showsDefault() {
+    void noArgsNoOverride_showsDefaultInKeyboardHeader() {
         BotSessionStore store = mock(BotSessionStore.class);
         BotProperties properties = new BotProperties();
+        properties.getAvailableModels().add("app-test");
         var cmd = makeCommand(store, properties);
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         UpdateEvent event = makeEvent("");
-        String result = cmd.handle(event, session);
-        assertThat(result).contains("default");
+        cmd.handle(event, session);
+        verify(tc).sendMessage(anyLong(),
+            argThat(text -> text != null && text.contains("default")),
+            isNull(), isNull(), any());
     }
 
     @Test

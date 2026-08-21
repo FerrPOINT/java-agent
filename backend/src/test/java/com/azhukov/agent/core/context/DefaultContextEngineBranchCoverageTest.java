@@ -223,8 +223,10 @@ class DefaultContextEngineBranchCoverageTest {
         List<Message> incoming = List.of(Message.system("System"), Message.user("Current"));
         List<Message> result = engine.prepareContext(session, incoming);
 
-        // Should contain the tool message from history
-        assertThat(result).anyMatch(m -> m.role() == Role.TOOL);
+        // HistorySanitizer (Hermes parity): an orphan tool result without a
+        // matching assistant tool_call is DROPPED — strict providers reject
+        // such histories with HTTP 400.
+        assertThat(result).noneMatch(m -> m.role() == Role.TOOL);
     }
 
     @Test
@@ -480,8 +482,10 @@ class DefaultContextEngineBranchCoverageTest {
             messages.add(Message.user("msg-" + i));
         }
         List<Message> result = engine.prepareContext(session, messages);
-        // Should not trim — 10 <= 50
-        assertThat(result).hasSize(10);
+        // Should not trim (10 <= 50), but HistorySanitizer merges the 9
+        // consecutive user messages into one (Hermes parity) — 2 remain.
+        assertThat(result).hasSize(2);
+        assertThat(result.get(1).content()).contains("msg-0").contains("msg-8");
     }
 
     // ── Constructor with cacheTracker only ──

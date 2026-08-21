@@ -33,7 +33,7 @@ public class ModelCommand implements CommandHandler {
 
     @Override
     public String description() {
-        return "Set or show the model override (usage: /model [name|list])";
+        return "Show/select the model (keyboard) or set override: /model [name|reset]";
     }
 
     @Override
@@ -43,18 +43,21 @@ public class ModelCommand implements CommandHandler {
         }
         String args = event.commandArgs();
         if (args == null || args.isBlank()) {
-            String model = session.getModelOverride();
-            if (model == null) {
-                model = properties.getDefaultModel();
+            // Hermes parity: bare /model shows the current model AND the selection
+            // keyboard immediately — the model choice must be one tap away, not
+            // hidden behind a "list" subcommand.
+            String current = session.getModelOverride();
+            if (current == null || current.isBlank()) {
+                current = properties.getDefaultModel();
             }
-            if (model == null || model.isBlank()) {
-                model = "default";
+            if (current == null || current.isBlank()) {
+                current = "default";
             }
-            return "Current model: " + model + "\nUse /model <name> to change, or /model list for options.";
+            return sendModelKeyboard(event.chatId(), "Current model: " + current + "\nSelect a model:");
         }
         String trimmed = args.trim();
         if ("list".equalsIgnoreCase(trimmed)) {
-            return sendModelKeyboard(event.chatId());
+            return sendModelKeyboard(event.chatId(), "Select a model:");
         }
         if ("default".equalsIgnoreCase(trimmed) || "reset".equalsIgnoreCase(trimmed)) {
             store.setModelOverride(session.getId(), null);
@@ -68,7 +71,7 @@ public class ModelCommand implements CommandHandler {
      * B2.2: Send a paginated inline keyboard for model selection.
      * If no available models are configured, falls back to a text hint.
      */
-    private String sendModelKeyboard(long chatId) {
+    private String sendModelKeyboard(long chatId, String header) {
         List<String> models = properties.getAvailableModels();
         if (models == null || models.isEmpty()) {
             return "No models configured. Set bot.available-models in application.yml or use /model <name>.";
@@ -78,7 +81,7 @@ public class ModelCommand implements CommandHandler {
         String replyMarkup = inlineKeyboardBuilder.build(rows);
         boolean ok = telegramClient.sendMessage(
             chatId,
-            "Select a model:",
+            header,
             null, null, replyMarkup
         ).isPresent();
 

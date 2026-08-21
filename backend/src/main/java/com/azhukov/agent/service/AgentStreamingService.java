@@ -7,6 +7,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.context.ContextEngine;
+import com.azhukov.agent.core.context.HistorySanitizer;
 import com.azhukov.agent.core.context.DefaultContextEngine;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
@@ -510,7 +511,7 @@ public class AgentStreamingService {
                                     // across iterations (Hermes parity). Without updating turnMessages,
                                     // prepareContext() on the next for-loop iteration would rebuild
                                     // from the uncompressed turnMessages, discarding compression effort.
-                                    context = compressed;
+                                    context = HistorySanitizer.sanitize(compressed);
                                     turnMessages.clear();
                                     turnMessages.addAll(compressed);
                                     persistedUpTo = turnMessages.size();
