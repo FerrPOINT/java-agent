@@ -169,10 +169,24 @@ public class DefaultContextEngine implements ContextEngine {
  // Then add recent history (excluding the current turn messages to avoid duplication)
  appendRecentHistory(session, context);
 
- // Add remaining incoming messages after system/developer
- int start = (!messages.isEmpty() && (messages.get(0).role() == Role.SYSTEM
+ // Deduplicate the current turn's user message: mid-turn persistence already
+ // wrote it to the DB, so appendRecentHistory loaded it as the LAST history
+ // entry. Drop that trailing duplicate before appending the incoming turn
+ // messages — otherwise the model sees the user input twice (surfaced by
+ // HistorySanitizer merging consecutive USER messages).
+ int from = (!messages.isEmpty() && (messages.get(0).role() == Role.SYSTEM
  || messages.get(0).role() == Role.DEVELOPER)) ? 1 : 0;
- context.addAll(messages.subList(start, messages.size()));
+ if (from < messages.size()) {
+ Message firstIncoming = messages.get(from);
+ if (firstIncoming.role() == Role.USER && !context.isEmpty()) {
+ Message lastHistory = context.get(context.size() - 1);
+ if (lastHistory.role() == Role.USER
+ && java.util.Objects.equals(lastHistory.content(), firstIncoming.content())) {
+ context.remove(context.size() - 1);
+ }
+ }
+ }
+ context.addAll(messages.subList(from, messages.size()));
 
  List<Message> trimmed = trimToFit(context);
  // Hermes parity: repair orphaned tool results / consecutive user turns
