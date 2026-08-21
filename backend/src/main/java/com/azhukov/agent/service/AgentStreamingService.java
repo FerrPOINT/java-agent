@@ -316,10 +316,22 @@ public class AgentStreamingService {
         var budget = iterationBudget.startTurn(session.id());
         turnStateManager.clear(session.id());
 
-        // P1-5: Initialize persistence cursor — all messages so far (system + history + user)
-        // are persisted by the end-of-turn persistTurn() call. Mid-turn persistence only
-        // covers new messages generated during the agentic loop below.
-        persistedUpTo = turnMessages.size();
+        // P1-5: Initialize persistence cursor. The user message is persisted
+        // IMMEDIATELY (Hermes parity: _persist_user_message_idx crash persist)
+        // — the end-of-turn persistTurn previously started from this cursor
+        // and NEVER flushed the user message for tool-less turns, so history
+        // in the DB had assistant replies with no user turns (starved
+        // countPriorUserMessages hydration and session_search). Mid-turn
+        // persistence continues from AFTER the user message.
+        if (midTurnPersistenceCallback != null) {
+            if (midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, 0)) {
+                persistedUpTo = turnMessages.size();
+            }
+        } else {
+            // No mid-turn callback (unit tests): end-of-turn persistTurn(from=0)
+            // flushes everything including the user message.
+            persistedUpTo = 1; // after system (skipped on persist anyway)
+        }
 
         // P0: Early metadata event — send the resolved model name BEFORE the first
         // model call so the bot can render the footer model even when the call fails
