@@ -128,4 +128,45 @@ class HistorySanitizerTest {
         assertThat(out).hasSize(2);
         assertThat(out.stream().noneMatch(m -> m.role() == Role.TOOL)).isTrue();
     }
+
+    @Test
+    void mergesConsecutiveAssistantMessages() {
+        // Production 2026-08-21 16:50: Gemini 400 "Please ensure that function
+        // call turn comes immediately after a user turn or after a function
+        // response turn" — two adjacent assistant(toolCalls) turns with the
+        // intermediate tool result dropped by compression.
+        List<Message> history = List.of(
+            Message.user("проверь браузер"),
+            Message.assistantToolCalls(List.of(tc("call_a")), 1),
+            Message.assistantToolCalls(List.of(tc("call_b")), 1),
+            Message.toolResult("call_b", "vision ok", 1),
+            Message.assistant("готово", 2)
+        );
+
+        List<Message> out = HistorySanitizer.sanitize(history);
+
+        // call_a and call_b merge into one assistant turn; its result stays
+        assertThat(out).hasSize(4);
+        Message mergedTurn = out.get(1);
+        assertThat(mergedTurn.role()).isEqualTo(Role.ASSISTANT);
+        assertThat(mergedTurn.toolCalls()).extracting(ToolCall::id)
+            .containsExactly("call_a", "call_b");
+        assertThat(out.get(2).toolCallId()).isEqualTo("call_b");
+    }
+
+    @Test
+    void assistantTextAndToolCallsMergeKeepsContent() {
+        List<Message> history = List.of(
+            Message.user("тест"),
+            Message.assistant("частичный текст", 1),
+            Message.assistantToolCalls(List.of(tc("call_x")), 1),
+            Message.toolResult("call_x", "результат", 1)
+        );
+
+        List<Message> out = HistorySanitizer.sanitize(history);
+
+        assertThat(out).hasSize(3);
+        assertThat(out.get(1).content()).isEqualTo("частичный текст");
+        assertThat(out.get(1).toolCalls()).extracting(ToolCall::id).containsExactly("call_x");
+    }
 }

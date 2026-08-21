@@ -319,6 +319,7 @@ public class ErrorClassifier {
         if (lowerMessage.contains("missing corresponding tool call for tool response message")
             || lowerMessage.contains("must be followed by tool messages")
             || lowerMessage.contains("tool_calls' must be followed by")
+            || lowerMessage.contains("function call turn comes immediately after")
             || lowerMessage.contains("invalid 'messages[")
             || lowerMessage.contains("duplicate tool_call_id")) {
             return new ClassificationResult(ErrorType.CONTEXT_OVERFLOW, RecoveryHints.compressAndRetry());

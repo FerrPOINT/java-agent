@@ -46,12 +46,50 @@ public final class HistorySanitizer {
 
         int repairs = 0;
 
+        // ── Pass 0: merge consecutive ASSISTANT messages ───────────────────
+        // Hermes parity (_repair_orphaned_tool_messages Pass 0): two adjacent
+        // assistant messages mean nothing (no tool result, no user turn)
+        // separates them. Strict providers reject the split shape: Gemini
+        // "Please ensure that function call turn comes immediately after a
+        // user turn or after a function response turn", OpenAI "an assistant
+        // message with 'tool_calls' must be followed by tool messages".
+        // The split arises when compression/rotation drops an intermediate
+        // tool result or when interim assistant turns are appended.
+        // Union toolCalls (preserve order), concatenate text content.
+        List<Message> collapsed = new ArrayList<>(messages.size());
+        for (Message msg : messages) {
+            if (msg.role() == Role.ASSISTANT
+                && !collapsed.isEmpty()
+                && collapsed.get(collapsed.size() - 1).role() == Role.ASSISTANT) {
+                Message prev = collapsed.remove(collapsed.size() - 1);
+                List<ToolCall> prevCalls = prev.toolCalls() == null
+                    ? new ArrayList<>() : new ArrayList<>(prev.toolCalls());
+                if (msg.toolCalls() != null) {
+                    prevCalls.addAll(msg.toolCalls());
+                }
+                String prevContent = prev.content() == null ? "" : prev.content();
+                String newContent = msg.content() == null ? "" : msg.content();
+                String joined = prevContent.isEmpty() ? newContent
+                    : newContent.isEmpty() ? prevContent
+                    : prevContent + "\n" + newContent;
+                Message mergedMsg = new Message(Role.ASSISTANT, joined, null,
+                    prevCalls.isEmpty() ? null : List.copyOf(prevCalls),
+                    null, msg.turnIndex(), Math.max(
+                        prev.imageCount() == null ? 0 : prev.imageCount(),
+                        msg.imageCount() == null ? 0 : msg.imageCount()));
+                collapsed.add(mergedMsg);
+                repairs++;
+            } else {
+                collapsed.add(msg);
+            }
+        }
+
         // ── Pass 1: drop stray TOOL messages ──────────────────────────────
         // Rolling set of known tool-call ids refreshed on each ASSISTANT
         // message; a user turn closes the tool-result run.
         Set<String> knownToolIds = new HashSet<>();
-        List<Message> filtered = new ArrayList<>(messages.size());
-        for (Message msg : messages) {
+        List<Message> filtered = new ArrayList<>(collapsed.size());
+        for (Message msg : collapsed) {
             if (msg.role() == Role.ASSISTANT) {
                 knownToolIds = new HashSet<>();
                 if (msg.toolCalls() != null) {

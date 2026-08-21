@@ -199,4 +199,20 @@ class ErrorClassifierHermesSyncTest {
         var result = classifier.classifyWithHints(new RuntimeException(err));
         assertEquals(ErrorClassifier.ErrorType.CONTEXT_OVERFLOW, result.type());
     }
+
+    @Test
+    void geminiFunctionCallTurnOrdering_classifiedAsContextOverflow() {
+        // Production 2026-08-21 16:50:03 — litellm concatenated Gemini 400
+        // ("Please ensure that function call turn comes immediately after a
+        // user turn...") with dead-fallback AuthenticationError noise; the
+        // whole envelope matched AUTH. Primary cause is history shape.
+        String err = "b'{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Please ensure that "
+            + "function call turn comes immediately after a user turn or after a function response turn.\",\n"
+            + "    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n'. Received Model Group=app-test\n"
+            + "Available Model Group Fallbacks=['ollama-kimi-k2.6', 'zai-glm-5', 'chatgpt-5.6-luna']\n"
+            + "Error doing the fallback: litellm.AuthenticationError: AuthenticationError: ChatgptException - "
+            + "Encountered invalidated oauth token for user, failing request token_revoked 401";
+        var result = classifier.classifyWithHints(new RuntimeException(err));
+        assertEquals(ErrorClassifier.ErrorType.CONTEXT_OVERFLOW, result.type());
+    }
 }
