@@ -109,6 +109,14 @@ public class MemoryNudgeManager {
             } catch (NumberFormatException ignored) {}
         }
 
+        // Hermes parity (turn_finalizer.py:794, cron/scheduler.py:5459): cron/background
+        // sessions set skip_background_review — review forks cost ~30K tokens and cron
+        // has no human-in-the-loop benefit from a memory/skill review.
+        if ("true".equalsIgnoreCase(session.getMetadata("skip_background_review"))) {
+            log.debug("Skipping background review for background session (skip_background_review)");
+            return;
+        }
+
         int memNudge = properties.getMemory().getNudgeInterval();
         int skillNudge = properties.getSkills().getCreationNudgeInterval();
 

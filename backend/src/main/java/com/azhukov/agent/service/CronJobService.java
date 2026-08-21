@@ -538,7 +538,7 @@ public class CronJobService {
                 boolean success = false;
                 while (attempt <= maxRetries && !success) {
                     try {
-                        lastRunSessionId = runtimeService.runBackground(enhancedPrompt, null);
+                        lastRunSessionId = runtimeService.runBackground(enhancedPrompt, null, true); // Hermes: skip_background_review for cron
                         success = true;
                     } catch (Exception llmEx) {
                         attempt++;

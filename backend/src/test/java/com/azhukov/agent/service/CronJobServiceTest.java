@@ -110,7 +110,7 @@ class CronJobServiceTest {
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         service.runNow(id);
-        verify(agentRuntimeService).runBackground("Do something", null);
+        verify(agentRuntimeService).runBackground("Do something", null, true);
     }
 
     @Test
@@ -171,7 +171,7 @@ class CronJobServiceTest {
         verify(skillManager).getSkill("hermes-agent");
         verify(skillManager).getSkill("backend-dev");
         // Verify the enhanced prompt (with skills injected) was passed to runtime
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("Use this skill"), eq(null));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("Use this skill"), eq(null), eq(true));
     }
 
     @Test
@@ -188,7 +188,7 @@ class CronJobServiceTest {
 
         service.runNow(id);
 
-        verify(agentRuntimeService).runBackground("Do something plain", null);
+        verify(agentRuntimeService).runBackground("Do something plain", null, true);
         verifyNoInteractions(skillManager);
     }
 
@@ -566,7 +566,7 @@ class CronJobServiceTest {
         service.runNow(id);
 
         // Verify LLM was NOT called
-        verify(agentRuntimeService, never()).runBackground(any(), any());
+        verify(agentRuntimeService, never()).runBackground(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     // ── Fix 5/6/7: Override field tests ──
@@ -630,10 +630,10 @@ class CronJobServiceTest {
 
         service.runNow(id);
 
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron toolset restriction: web,terminal]"), eq(null));
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron workdir: /opt/dev]"), eq(null));
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron model provider: openai]"), eq(null));
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron model name: gpt-4]"), eq(null));
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron base URL: https://api.openai.com]"), eq(null));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron toolset restriction: web,terminal]"), eq(null), eq(true));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron workdir: /opt/dev]"), eq(null), eq(true));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron model provider: openai]"), eq(null), eq(true));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron model name: gpt-4]"), eq(null), eq(true));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron base URL: https://api.openai.com]"), eq(null), eq(true));
     }
 }

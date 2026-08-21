@@ -70,6 +70,8 @@ public class AgentRuntimeService {
     private final com.azhukov.agent.core.context.ContextCompressor contextCompressor;
     private final com.azhukov.agent.core.metadata.ModelMetadataService modelMetadataService;
     private final com.azhukov.agent.core.agent.MidTurnPersistenceCallback midTurnPersistenceCallback;
+    private final com.azhukov.agent.core.agent.MemoryNudgeManager memoryNudgeManager;
+    private final com.azhukov.agent.core.prompt.DefaultPromptBuilder promptBuilder;
 
     private static final String UNKNOWN_MODEL = "unknown";
 
@@ -220,6 +222,32 @@ public class AgentRuntimeService {
     @Transactional
     public void resetSession(UUID sessionId) {
         messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
+        // Hermes parity / leak fix (seam audit 2026-08-21): /reset must also drop
+        // runtime per-session state, or stale counters leak into the "fresh" session:
+        // - MemoryNudgeManager.clearSession (turnsSinceMemory, itersSinceSkill) and
+        //   DefaultAgentRuntime.cleanupSession (locks, guardrail state) — were NEVER
+        //   called (memory leak + nudge counters survived a reset, so a review could
+        //   fire on turn 1 of the "new" session)
+        // - DefaultPromptBuilder.invalidateMemoryPrefix — memory prefix is frozen
+        //   per session (Hermes snapshot invariant); after /reset the next turn must
+        //   re-read memory, not replay the old snapshot
+        try {
+            if (agentRuntime instanceof com.azhukov.agent.core.agent.DefaultAgentRuntime dar) {
+                dar.cleanupSession(sessionId);
+            }
+        } catch (Exception e) {
+            log.debug("runtime cleanup on reset failed for {}: {}", sessionId, e.getMessage());
+        }
+        try {
+            memoryNudgeManager.clearSession(sessionId);
+        } catch (Exception e) {
+            log.debug("nudge counter cleanup on reset failed for {}: {}", sessionId, e.getMessage());
+        }
+        try {
+            promptBuilder.invalidateMemoryPrefix(String.valueOf(sessionId));
+        } catch (Exception e) {
+            log.debug("memory prefix invalidation on reset failed for {}: {}", sessionId, e.getMessage());
+        }
     }
 
     @Transactional(readOnly = true)
@@ -373,8 +401,24 @@ public class AgentRuntimeService {
     }
 
     public String runBackground(String prompt, String sessionId) {
+        return runBackground(prompt, sessionId, false);
+    }
+
+    /**
+     * Background turn (cron / scripted tasks).
+     *
+     * @param skipBackgroundReview Hermes parity (cron/scheduler.py:5459): cron sessions
+     *                             pass skip_background_review=True — review forks cost
+     *                             ~30K tokens/event and cron has no human-in-the-loop
+     *                             benefit from a memory/skill review. Before this flag
+     *                             every cron tick could silently spend an extra LLM call.
+     */
+    public String runBackground(String prompt, String sessionId, boolean skipBackgroundReview) {
         // Background task — just run a turn in a new session
-        Session session = createSession("user-1", "openai-compatible", "");
+        Session baseSession = createSession("user-1", "openai-compatible", "");
+        final Session session = skipBackgroundReview
+            ? baseSession.withMetadata("skip_background_review", "true")
+            : baseSession;
         // P1-5: Persist user message before turn when mid-turn persistence is active
         if (midTurnPersistenceCallback != null) {
             transactionTemplate.execute(status -> {

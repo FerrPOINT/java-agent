@@ -76,7 +76,8 @@ class AgentRuntimeServiceRestartTest {
             new CliStateApplier(),
             new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class), mock(ConversationCompressor.class)),
             mock(com.azhukov.agent.core.context.ContextCompressor.class),
-            mock(com.azhukov.agent.core.metadata.ModelMetadataService.class), null
+            mock(com.azhukov.agent.core.metadata.ModelMetadataService.class), null,
+            null, null
         );
     }
 

@@ -126,7 +126,8 @@ class AgentRuntimeServiceTest {
             new CliStateApplier(),
             new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class), conversationCompressor),
             mock(com.azhukov.agent.core.context.ContextCompressor.class),
-            mock(com.azhukov.agent.core.metadata.ModelMetadataService.class), null
+            mock(com.azhukov.agent.core.metadata.ModelMetadataService.class), null,
+            null, null
         );
     }
 
