@@ -10,6 +10,8 @@ import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+
+
 class PatchToolTest {
 
     private final PatchTool tool = new PatchTool();
@@ -99,5 +101,21 @@ class PatchToolTest {
         String json = "{\"mode\":\"patch\",\"patch\":\"" + patch.replace("\\", "\\\\").replace("\n", "\\n").replace("\"", "\\\"") + "\"}";
         ToolResult r = tool.execute(json, null, session);
         assertThat(r.success()).isFalse();
+    }
+
+    @org.junit.jupiter.api.Test
+    void m13BlockedPathTraversalBypassIsClosed() {
+        // M13 regression: isBlocked used to run on the RAW string before
+        // normalize — "/x/../.env" and "/./.env" slipped through.
+        var t = new PatchTool();
+        String raw = java.nio.file.Path.of("/tmp", "x", "..", "..", "root", ".env").toString()
+            .replace(java.nio.file.Path.of("/tmp").toString().replace("tmp", ""), "/");
+        // Direct normalized form of /.env via traversal
+        String traversal = "/etc/../root/.ssh/authorized_keys";
+        var r1 = t.execute("{\"mode\":\"replace\",\"path\":\"" + traversal
+            + "\",\"old_string\":\"a\",\"new_string\":\"b\"}", null, null);
+        assertThat(r1.success()).isFalse();
+        var r2 = t.execute("{\"mode\":\"replace\",\"path\":\"/x/../.env\",\"old_string\":\"a\",\"new_string\":\"b\"}", null, null);
+        assertThat(r2.success()).isFalse();
     }
 }

@@ -37,12 +37,13 @@ public class PatchTool implements ToolHandler {
         if (!hasPath && !"patch".equals(args.mode())) {
             return ToolResult.fail("path is required");
         }
-        if (hasPath && isBlocked(args.path())) {
-            return ToolResult.fail("Patching this path is not allowed: " + args.path());
-        }
-
         String mode = args.mode() == null ? "replace" : args.mode().toLowerCase();
         Path path = hasPath ? Path.of(args.path()).toAbsolutePath().normalize() : null;
+        // M13 fix: check the NORMALIZED absolute path — the raw string check
+        // was bypassable via /x/../.env and /./.env forms.
+        if (path != null && isBlocked(path.toString())) {
+            return ToolResult.fail("Patching this path is not allowed: " + args.path());
+        }
         try {
             if ("replace".equals(mode)) {
                 if (args.oldString() == null || args.newString() == null) {
