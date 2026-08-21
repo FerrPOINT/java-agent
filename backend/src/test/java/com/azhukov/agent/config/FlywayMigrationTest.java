@@ -1,6 +1,7 @@
 package com.azhukov.agent.config;
 
 import org.flywaydb.core.Flyway;
+import com.azhukov.agent.persistence.PostgresTestContainer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,10 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @TestPropertySource(properties = {
-    "spring.datasource.url=jdbc:h2:mem:flywaytest;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=false;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH",
-    "spring.datasource.driver-class-name=org.h2.Driver",
-    "spring.datasource.username=sa",
-    "spring.datasource.password=",
+    "spring.datasource.driver-class-name=org.postgresql.Driver",
     "spring.flyway.enabled=true",
     "spring.flyway.baseline-on-migrate=true",
     "spring.flyway.locations=classpath:db/migration",
@@ -36,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
     "agent.chromium.auto-install=false"
 })
 @Tag("slow")
-class FlywayMigrationTest {
+class FlywayMigrationTest extends PostgresTestContainer {
 
     @Autowired
     private DataSource dataSource;

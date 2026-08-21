@@ -1,6 +1,7 @@
 package com.azhukov.agent.persistence.repository;
 
 import com.azhukov.agent.persistence.entity.McpOAuthEntity;
+import com.azhukov.agent.persistence.PostgresTestContainer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,10 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Tag("slow")
 @SpringBootTest
 @TestPropertySource(properties = {
-    "spring.datasource.url=jdbc:h2:mem:mcpoauthrepo;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=false;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH",
-    "spring.datasource.driver-class-name=org.h2.Driver",
-    "spring.datasource.username=sa",
-    "spring.datasource.password=",
+    "spring.datasource.driver-class-name=org.postgresql.Driver",
     "spring.flyway.enabled=true",
     "spring.flyway.baseline-on-migrate=true",
     "spring.flyway.locations=classpath:db/migration",
@@ -34,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
     "agent.chromium.auto-install=false"
 })
 @Transactional
-class McpOAuthRepositoryTest {
+class McpOAuthRepositoryTest extends PostgresTestContainer {
 
     private static final Instant T1 = Instant.parse("2026-01-01T12:00:00Z");
     private static final Instant T2 = Instant.parse("2026-01-02T12:00:00Z");

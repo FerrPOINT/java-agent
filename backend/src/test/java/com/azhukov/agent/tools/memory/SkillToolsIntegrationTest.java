@@ -4,6 +4,7 @@ import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.core.tool.SpringToolRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.azhukov.agent.persistence.PostgresTestContainer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,16 +22,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Tag("slow")
 @AutoConfigureMockMvc
 @TestPropertySource(properties = {
-    "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=false",
-    "spring.datasource.driver-class-name=org.h2.Driver",
-    "spring.datasource.username=sa",
-    "spring.datasource.password=",
-    "spring.jpa.hibernate.ddl-auto=create-drop",
+    "spring.datasource.driver-class-name=org.postgresql.Driver",
+    "spring.jpa.hibernate.ddl-auto=none",
     "spring.flyway.enabled=false",
     "agent.model.provider=noop",
     "agent.skills.enabled=true"
 })
-class SkillToolsIntegrationTest {
+class SkillToolsIntegrationTest extends PostgresTestContainer {
 
     @Autowired
     private MockMvc mockMvc;

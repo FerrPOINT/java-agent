@@ -10,7 +10,7 @@ import org.springframework.test.context.TestPropertySource;
     "spring.datasource.driver-class-name=org.h2.Driver",
     "spring.datasource.username=sa",
     "spring.datasource.password=",
-    "spring.jpa.hibernate.ddl-auto=create-drop",
+    "spring.jpa.hibernate.ddl-auto=none",
     "spring.flyway.enabled=false",
     "agent.model.provider=noop"
 })
