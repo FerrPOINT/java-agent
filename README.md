@@ -81,13 +81,25 @@ java-agent/
 - LangChain4j integration с fallback model support
 - Context compression (tool dedup, sanitize, auto-focus, protect)
 - Session checkpoints + rollback + undo
-- Background review (memory + skill nudges)
 - Curator (skill consolidation, dry-run)
+
+### Self-improvement (замкнутый цикл, 0.1.16–0.1.19)
+
+Полный контур «ответ → фоновый ревью → память → следующий ход»:
+
+- Счётчики нуджей работают на ОБОИХ путях хода (sync runtime + streaming/bot)
+- User-сообщение персистится немедленно в начале хода (crash-persist)
+- После каждого ответа — асинхронный background review (memory + skills), с задержкой, не блокирует ответ
+- Ревью подавлен для subagent-сессий и cron-сессий (skip_background_review — parity с Hermes scheduler)
+- Извлечённые факты пишутся в память (target=memory / target=user)
+- **Оба блока подкладываются в системный промпт следующего хода** в формате Hermes: `USER PROFILE (who the user is)` + `MEMORY (your personal notes)`, разделители `═`×46, индикатор [N% — cur/limit chars], записи через `§`, лимиты 1375/2200 символов
+- /reset полностью очищает runtime-состояние сессии (счётчики, локи, замороженный memory-префикс)
 
 ### Telegram bot
 
 - 56 команд + 10 aliases
 - Streaming (edit-message + native draft streaming)
+- /model — клавиатура выбора модели + per-request override до LLM (request → bot_sessions.model_override → ChatRequest.model → per-request params)
 - MEDIA: tags — автоматическая доставка файлов (images, video, audio, documents)
 - Steer mode — инъекция сообщений в активный run
 - Busy-ack — подтверждение при занятом агенте
@@ -245,10 +257,31 @@ docker compose -f docker-compose.local.yml up --build  # local dev, порты 1
 
 ```bash
 cd /opt/dev/java-agent
-./gradlew build -x slowTest   # 6393 tests, 515 test files, 0 failures
-./gradlew slowTest            # @Tag("slow") integration tests
-./gradlew jacocoTestReport    # coverage report
-./gradlew bootJar             # собрать jar
+./gradlew :backend:test :telegram-bot:test :cli:test   # unit + fast integration (~4600)
+./gradlew :backend:slowTest                            # @Tag("slow") на РЕАЛЬНОМ PostgreSQL
+./gradlew jacocoTestReport                             # coverage report
+./gradlew bootJar                                      # собрать jar
+```
+
+**slowTest — реальный PostgreSQL** (не H2): один shared singleton Testcontainer
+(postgres:16-alpine, withReuse) на JVM; схемой владеет Flyway (ddl-auto=none).
+Testcontainers ≥1.21.x требуется для Docker 29. Отдельные H2-стриминг-тесты
+сохраняют create-drop.
+
+**Текущее состояние**: ~2905 тестов (backend 1090 / bot 1498 / cli 317), CI green.
+
+### Деплой (dev-лэддер)
+
+```bash
+# после зелёного CI:
+./gradlew :backend:bootJar :telegram-bot:bootJar
+cp backend/build/libs/backend-0.0.1-SNAPSHOT.jar /opt/java-agent/lib/java-agent-backend-<VER>.jar
+cp telegram-bot/build/libs/telegram-bot-0.0.1-SNAPSHOT.jar /opt/java-agent/lib/java-agent-bot-<VER>.jar
+echo <VER> > /opt/java-agent/VERSION
+ln -sfn /opt/java-agent/lib/java-agent-backend-<VER>.jar /opt/java-agent/lib/java-agent-backend-latest.jar
+ln -sfn /opt/java-agent/lib/java-agent-bot-<VER>.jar /opt/java-agent/lib/java-agent-bot-latest.jar
+systemctl restart java-agent-backend java-agent-bot
+# верификация: health + живой ход + journalctl
 ```
 
 ### E2E
