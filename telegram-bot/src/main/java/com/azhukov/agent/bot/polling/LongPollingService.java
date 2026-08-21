@@ -32,11 +32,10 @@ public class LongPollingService {
     private final BotProperties properties;
     private final Consumer<UpdateEvent> updateHandler;
     private final ReconnectWatcher reconnectWatcher;
-    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "telegram-polling");
-        t.setDaemon(true);
-        return t;
-    });
+    // NOTE: the separate single-thread poll executor was dead code — pollLoop
+    // has always run on ReconnectWatcher's worker thread (start() submits it
+    // there and scheduleReconnect() re-submits to the same thread), so a
+    // dedicated executor only created confusion.
     private final ExecutorService processPool = Executors.newFixedThreadPool(4, r -> {
         Thread t = new Thread(r, "telegram-update-" + System.nanoTime());
         t.setDaemon(true);
@@ -85,7 +84,6 @@ public class LongPollingService {
     public void stop() {
         running.set(false);
         reconnectWatcher.stop();
-        executor.shutdownNow();
         processPool.shutdown();
         try {
             if (!processPool.awaitTermination(5, TimeUnit.SECONDS)) {
@@ -108,14 +106,26 @@ public class LongPollingService {
             try {
                 var updates = fetchUpdates();
                 if (updates == null) {
-                    // fetchUpdates already triggered reconnect logic
+                    // P0 fix: fetchUpdates returns null on transient network
+                    // errors — TelegramClient swallows the exception and
+                    // returns Optional.empty(). The poll thread must NEVER die
+                    // silently: reschedule with backoff (parity with the Hermes
+                    // gateway reconnect loop). handleConflict() null (max
+                    // conflicts exceeded) sets running=false first, so the
+                    // guard below skips the reschedule in that case.
+                    if (running.get()) {
+                        log.warn("Poll loop exiting after fetch failure — scheduling reconnect with backoff");
+                        reconnectWatcher.scheduleReconnect(this::pollLoop);
+                    }
                     return;
                 }
                 // Audit M22: reset backoff after successful fetch so that
                 // a temporary network error doesn't leave the bot at max delay.
-                if (!updates.isEmpty()) {
-                    reconnectWatcher.resetBackoff();
-                }
+                // M22 fix: reset on ANY successful round-trip (including the
+                // normal empty long-poll timeout), not only when updates
+                // arrived — otherwise the backoff never decays back to 5s
+                // until the next real message.
+                reconnectWatcher.resetBackoff();
                 for (Map<String, Object> update : updates) {
                     try {
                         UpdateEvent event = UpdateEvent.from(update);
@@ -136,7 +146,12 @@ public class LongPollingService {
                 return;
             } catch (Exception e) {
                 log.warn("Polling loop error: {}", e.getMessage());
-                return; // reconnectWatcher will re-launch
+                // Same P0 fix as the fetchUpdates-null path: never let the
+                // poll thread die without scheduling its own replacement.
+                if (running.get()) {
+                    reconnectWatcher.scheduleReconnect(this::pollLoop);
+                }
+                return;
             }
         }
     }
@@ -205,9 +220,9 @@ public class LongPollingService {
         return List.of();
     }
 
-    void triggerReconnect() {
-        if (!running.get()) return;
-        log.info("Triggering reconnect for long-polling...");
-        reconnectWatcher.scheduleReconnect(this::pollLoop);
-    }
+    // triggerReconnect() removed with the P0 polling fix: it had zero callers
+    // (the comment "fetchUpdates already triggered reconnect logic" was false —
+    // nothing ever called this method, so the poll thread died silently on the
+    // first transient getUpdates network error). Reconnection now goes through
+    // reconnectWatcher.scheduleReconnect directly from pollLoop.
 }

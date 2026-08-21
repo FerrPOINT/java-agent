@@ -196,6 +196,39 @@ public class ErrorClassifier {
             return new ClassificationResult(ErrorType.INVALID_ENCRYPTED_CONTENT, RecoveryHints.canRetry());
         }
 
+        // ── 7a. Usage-limit disambiguation (Hermes _USAGE_LIMIT_PATTERNS) ──
+        // "usage limit" / "quota" can be either a transient periodic quota
+        // (rate_limit → retry with backoff) or genuine billing exhaustion
+        // (billing → fail fast, no retry). Hermes _classify_by_message:
+        // a transient signal ("try again", "resets at", "retry", …) means
+        // periodic quota; otherwise it is billing. Ollama Cloud sends
+        // "you have reached your weekly usage limit, add extra usage: …"
+        // with NO transient signal → billing (non-retryable), previously
+        // misclassified as RETRYABLE and burned 4 paid retries per call.
+        //
+        // Hermes reaches this branch only for STATUS-LESS errors (its
+        // status-bearing path handles 429/GLM-400 earlier). This classifier
+        // is message-only, so guard the two known status-bearing collisions:
+        // "rate limit exceeded" (429) and "token limit exceeded" (GLM 400)
+        // both contain the bare "limit exceeded" substring but must keep
+        // their rate-limit / context-overflow semantics.
+        boolean rateLimitOrTokenLimitContext = lowerMessage.contains("rate limit")
+            || lowerMessage.contains("token limit") || lowerMessage.contains("rate_limit");
+        boolean hasUsageLimit = !rateLimitOrTokenLimitContext
+            && (lowerMessage.contains("usage limit") || lowerMessage.contains("quota")
+                || lowerMessage.contains("limit exceeded") || lowerMessage.contains("key limit exceeded"));
+        if (hasUsageLimit) {
+            boolean hasTransientSignal = lowerMessage.contains("try again") || lowerMessage.contains("retry")
+                || lowerMessage.contains("resets at") || lowerMessage.contains("reset in")
+                || lowerMessage.contains("wait") || lowerMessage.contains("requests remaining")
+                || lowerMessage.contains("periodic") || lowerMessage.contains("window");
+            if (hasTransientSignal) {
+                // Transient periodic quota — rate limit semantics
+                return new ClassificationResult(ErrorType.RATE_LIMIT, RecoveryHints.rotateAndRetry());
+            }
+            return new ClassificationResult(ErrorType.BILLING, RecoveryHints.rotateAndFallback());
+        }
+
         // ── 7. Billing (402 / billing patterns) ──
         // Mirrors Hermes _BILLING_PATTERNS
         if (lowerMessage.contains("402")

@@ -119,4 +119,65 @@ class ErrorClassifierHermesSyncTest {
         assertFalse(hints.shouldRotateCredential());
         assertFalse(hints.shouldFallback());
     }
+
+    // ── usage-limit disambiguation (Hermes _USAGE_LIMIT_PATTERNS / _classify_by_message) ──
+
+    @Test
+    void ollamaWeeklyUsageLimitClassifiedAsBilling() {
+        // Real production shape (2026-08-20 22:38): Ollama Cloud returns
+        // {"error":{"message":"you (user) have reached your weekly usage limit,
+        // add extra usage: https://ollama.com/settings ...","type":"api_error"}}
+        // — no HTTP status in the message, no transient signal → billing,
+        // non-retryable. Previously misclassified RETRYABLE → 4 paid retries.
+        Exception e = new RuntimeException(
+            "{\"error\":{\"message\":\"you (azhukovjava) have reached your weekly usage limit, "
+                + "add extra usage: https://ollama.com/settings (ref: 2c58fa4c)\",\"type\":\"api_error\"}}");
+        var result = classifier.classifyWithHints(e);
+        assertEquals(ErrorClassifier.ErrorType.BILLING, result.type());
+        assertFalse(result.hints().retryable(), "billing must not burn retries");
+        assertTrue(result.hints().shouldFallback());
+    }
+
+    @Test
+    void usageLimitWithTransientSignalClassifiedAsRateLimit() {
+        // "Usage limit, try again in 5 minutes" — periodic quota, not billing
+        Exception e = new RuntimeException("Usage limit exceeded, please try again in 5 minutes");
+        var result = classifier.classifyWithHints(e);
+        assertEquals(ErrorClassifier.ErrorType.RATE_LIMIT, result.type());
+        assertTrue(result.hints().retryable());
+    }
+
+    @Test
+    void usageLimitResetsAtClassifiedAsRateLimit() {
+        Exception e = new RuntimeException("You have hit your usage limit; limit resets at 12:00 UTC");
+        var result = classifier.classifyWithHints(e);
+        assertEquals(ErrorClassifier.ErrorType.RATE_LIMIT, result.type());
+    }
+
+    @Test
+    void sessionUsageLimitClassifiedAsBilling() {
+        // Ollama Cloud session (hourly) limit — same shape, also no transient signal
+        Exception e = new RuntimeException(
+            "you (user) have reached your session usage limit, add extra usage: https://ollama.com/settings");
+        var result = classifier.classifyWithHints(e);
+        assertEquals(ErrorClassifier.ErrorType.BILLING, result.type());
+    }
+
+    @Test
+    void rateLimitExceededStillRateLimit() {
+        // Regression guard: "rate limit exceeded" contains "limit exceeded"
+        // but must keep RATE_LIMIT semantics (429 path, not usage-limit)
+        Exception e = new RuntimeException("Rate limit exceeded: 429 Too Many Requests");
+        var result = classifier.classifyWithHints(e);
+        assertEquals(ErrorClassifier.ErrorType.RATE_LIMIT, result.type());
+    }
+
+    @Test
+    void glmTokenLimitStillContextOverflow() {
+        // Regression guard: "token limit reached/exceeded" is GLM's context
+        // overflow (h82), not usage-limit billing
+        Exception e = new RuntimeException("token limit exceeded");
+        var result = classifier.classifyWithHints(e);
+        assertEquals(ErrorClassifier.ErrorType.CONTEXT_OVERFLOW, result.type());
+    }
 }
