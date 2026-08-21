@@ -24,7 +24,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @TestPropertySource(properties = {
     "spring.datasource.driver-class-name=org.postgresql.Driver",
     "spring.jpa.hibernate.ddl-auto=none",
-    "spring.flyway.enabled=false",
+    "spring.flyway.enabled=true",
+    "spring.flyway.baseline-on-migrate=true",
+    "spring.flyway.locations=classpath:db/migration",
     "agent.model.provider=noop"
 })
 class AgentControllerIntegrationTest extends PostgresTestContainer {
