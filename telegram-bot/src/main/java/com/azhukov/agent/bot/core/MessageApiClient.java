@@ -205,7 +205,18 @@ public class MessageApiClient extends BaseBackendClient {
                                         String errorMsg = event.path("error").asText(
                                             event.path("message").asText("Unknown stream error"));
                                         onError.accept(new RuntimeException(errorMsg));
-                                        return new AgentBackendClient.ChatResult(accumulated.toString());
+                                        // Preserve metadata received before the error
+                                        // (model, context) so the bot can still resolve
+                                        // the footer model on failed turns.
+                                        return metadataHolder[0] != null
+                                            ? new AgentBackendClient.ChatResult(accumulated.toString(),
+                                                metadataHolder[0].modelUsed(),
+                                                metadataHolder[0].contextTokens(),
+                                                metadataHolder[0].contextLength(),
+                                                false,
+                                                metadataHolder[0].memoryUpdated(),
+                                                metadataHolder[0].backendSessionId())
+                                            : new AgentBackendClient.ChatResult(accumulated.toString());
                                     }
                                     if ("metadata".equalsIgnoreCase(type)) {
                                         metadataHolder[0] = extractMetadata(event);

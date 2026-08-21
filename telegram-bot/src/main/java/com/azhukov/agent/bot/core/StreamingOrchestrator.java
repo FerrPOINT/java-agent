@@ -214,16 +214,30 @@ public class StreamingOrchestrator {
                             streamEditor.finalizeStream(chatId, messageId[0],
                                 accumulated.toString());
                             finalized[0] = true;
+                        } else if (messageId[0] < 0) {
+                            // Draft streaming (no message id): drop the draft session
+                            // and its heartbeat so they don't leak.
+                            streamEditor.clearStream(chatId);
                         }
                     } else {
                         log.error("Stream error for chat {}: {}", chatId, error.getMessage());
                         // Finalize with partial content + user-friendly error message
+                        String userFriendlyError = toUserFriendlyError(error);
+                        String errorText = accumulated.length() > 0
+                            ? accumulated + "\n\n" + userFriendlyError
+                            : userFriendlyError;
                         if (messageId[0] >= 0) {
-                            String userFriendlyError = toUserFriendlyError(error);
-                            String errorText = accumulated.length() > 0
-                                ? accumulated + "\n\n" + userFriendlyError
-                                : userFriendlyError;
                             streamEditor.finalizeStream(chatId, messageId[0], errorText);
+                            finalized[0] = true;
+                        } else {
+                            // P0: no streaming message exists (draft streaming keeps
+                            // messageId at -1 until the first token arrives; a model
+                            // error before any token left the user with NO feedback at
+                            // all). Deliver the error text as a standalone message so
+                            // the user is never left in silence. clearStream drops the
+                            // draft StreamSession and its heartbeat.
+                            streamEditor.sendPlainMessage(chatId, errorText);
+                            streamEditor.clearStream(chatId);
                             finalized[0] = true;
                         }
                     }
@@ -302,6 +316,19 @@ public class StreamingOrchestrator {
         if (msg.contains("rate limit") || msg.contains("flood") || msg.contains("429")
             || msg.contains("too many requests") || msg.contains("retry after")) {
             return "Rate limited by Telegram. Retrying...";
+        }
+        // Billing / usage-limit errors (Hermes parity: BILLING errors are
+        // non-retryable — the user must see a clear explanation, not "Temporary issue").
+        // Disambiguation mirrors ErrorClassifier: "usage limit" WITH a transient
+        // signal ("try again", "resets at") is a rate limit; without it it's billing.
+        if (msg.contains("usage limit") || msg.contains("billing")
+            || msg.contains("quota") || msg.contains("insufficient")
+            || msg.contains("add extra usage") || msg.contains("credit")) {
+            if (msg.contains("try again") || msg.contains("resets at")
+                || msg.contains("rate limit")) {
+                return "Rate limited. Please try again later.";
+            }
+            return "Provider usage limit reached (billing). Add usage at the provider settings page or switch the model.";
         }
         // Network / timeout errors
         if (error instanceof java.util.concurrent.TimeoutException

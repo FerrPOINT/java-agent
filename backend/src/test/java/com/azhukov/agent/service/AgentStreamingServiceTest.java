@@ -197,12 +197,23 @@ class AgentStreamingServiceTest {
         emitter.awaitDone();
 
         assertThat(emitter.error.get()).isNull();
-        // Events: token("Hello"), token(" world"), metadata, done
+        // Events: metadata (early, pre-model-call), token("Hello"), token(" world"),
+        // metadata (final, with real token counts), done
         assertThat(emitter.events).hasSizeGreaterThanOrEqualTo(4);
-        assertThat(emitter.events.get(0).name).isEqualTo("token");
-        assertThat(deserialize(emitter.events.get(0).data, StreamEvent.class).token()).isEqualTo("Hello");
-        assertThat(emitter.events.get(1).name).isEqualTo("token");
-        assertThat(deserialize(emitter.events.get(1).data, StreamEvent.class).token()).isEqualTo(" world");
+        // The first event is the early metadata carrying the resolved model name
+        // (P0: sent before the first model call so failed turns still know the model)
+        assertThat(emitter.events.get(0).name).isEqualTo("metadata");
+        SseEvent firstToken = emitter.events.stream()
+            .filter(e -> "token".equals(e.name))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("No token event found"));
+        assertThat(deserialize(firstToken.data, StreamEvent.class).token()).isEqualTo("Hello");
+        SseEvent secondToken = emitter.events.stream()
+            .filter(e -> "token".equals(e.name))
+            .skip(1)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("No second token event found"));
+        assertThat(deserialize(secondToken.data, StreamEvent.class).token()).isEqualTo(" world");
         assertThat(emitter.completed.get()).isTrue();
     }
 
@@ -337,7 +348,7 @@ class AgentStreamingServiceTest {
 
         SseEvent metadataEvent = emitter.events.stream()
             .filter(e -> "metadata".equals(e.name))
-            .findFirst()
+            .reduce((first, second) -> second) // last metadata event — final state
             .orElseThrow(() -> new AssertionError("No metadata event found"));
         StreamEvent metadata = deserialize(metadataEvent.data, StreamEvent.class);
         // contextTokens should be the actual input token count from the budget,

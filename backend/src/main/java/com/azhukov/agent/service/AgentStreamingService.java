@@ -286,6 +286,12 @@ public class AgentStreamingService {
         // covers new messages generated during the agentic loop below.
         persistedUpTo = turnMessages.size();
 
+        // P0: Early metadata event — send the resolved model name BEFORE the first
+        // model call so the bot can render the footer model even when the call fails
+        // immediately (e.g. billing/usage-limit errors emit no tokens at all).
+        // The final metadata event after a successful turn overwrites the token estimate.
+        sendMetadataEvent(emitter, session, streamCtx);
+
         for (int i = 0; i < maxTurns; i++) {
             // Check for interrupt at the top of each agentic-loop iteration
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {

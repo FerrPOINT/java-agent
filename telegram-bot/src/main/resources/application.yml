@@ -52,7 +52,7 @@ bot:
   register-commands: true
   rate-limit-per-second: 25
   working-directory: ${BOT_WORKING_DIRECTORY:${user.dir}}
-  default-model: ${BOT_DEFAULT_MODEL:}
+  default-model: ${BOT_DEFAULT_MODEL:${AGENT_MODEL_NAME:}}
   reply-to-mode: ${BOT_REPLY_TO_MODE:first}
   link-preview: ${BOT_LINK_PREVIEW:true}
   media-delivery-enabled: ${BOT_MEDIA_DELIVERY_ENABLED:true}
