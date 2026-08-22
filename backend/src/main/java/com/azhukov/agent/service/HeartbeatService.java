@@ -98,6 +98,11 @@ public class HeartbeatService {
     /** Last fired result per session, for delivery polling (chat delivery). */
     private final Map<UUID, String> lastFireResults = new ConcurrentHashMap<>();
 
+    /** Delivery attempts per pending result — after 5 failed sends we drop it
+     *  (a poisoned result must not clog the channel forever). */
+    private final Map<UUID, java.util.concurrent.atomic.AtomicInteger> deliveryAttempts =
+        new ConcurrentHashMap<>();
+
     @Autowired(required = false)
     @Lazy
     private AgentRuntimeService agentRuntimeService;
@@ -245,6 +250,7 @@ public class HeartbeatService {
         }
         if (response != null && !response.isBlank()) {
             lastFireResults.put(sessionId, response);
+            deliveryAttempts.put(sessionId, new java.util.concurrent.atomic.AtomicInteger());
         }
         // /loop contract: LOOP_COMPLETE in the response stops the loop.
         if (responseSignalsComplete(response)) {
@@ -256,9 +262,26 @@ public class HeartbeatService {
         }
     }
 
-    /** Last fired result for delivery polling; null when nothing new. Clears on read. */
-    public String pollLastFireResult(UUID sessionId) {
-        return lastFireResults.remove(sessionId);
+    /**
+     * Peek the last fired result WITHOUT clearing it (Hermes delivery-ledger
+     * semantics: a failed send must not lose the message). The bot ACKs via
+     * {@link #ackFireResult} after a successful Telegram send.
+     */
+    public String peekLastFireResult(UUID sessionId) {
+        return lastFireResults.get(sessionId);
+    }
+
+    /** ACK: drop the delivered result. No-op when nothing is pending. */
+    public boolean ackFireResult(UUID sessionId) {
+        deliveryAttempts.remove(sessionId);
+        return lastFireResults.remove(sessionId) != null;
+    }
+
+    /** Count a failed delivery attempt; true when the result should be dropped. */
+    public boolean shouldDropUndeliverable(UUID sessionId) {
+        var n = deliveryAttempts.get(sessionId);
+        if (n == null) return false;
+        return n.incrementAndGet() >= 5;
     }
 
     /** Busy-check seam (package-private for test overrides). */

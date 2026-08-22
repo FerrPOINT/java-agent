@@ -54,8 +54,26 @@ public class HeartbeatDeliveryPoller {
                 }
                 String text = r.path("result").asText("");
                 if (!text.isBlank()) {
-                    telegramClient.sendMessage(e.getValue(),
+                    var sent = telegramClient.sendMessage(e.getValue(),
                         "♥ Heartbeat:\n\n" + truncate(text));
+                    if (sent.isPresent()) {
+                        // Delivery succeeded — ACK so the result is dropped server-side
+                        backendClient.suggestionPost(
+                            "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack");
+                    } else {
+                        // Send failed — NACK; after 5 attempts the backend drops
+                        // the poisoned result instead of retrying forever
+                        JsonNode nack = backendClient.suggestionPost(
+                            "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/nack");
+                        if (nack != null && nack.path("drop").asBoolean(false)) {
+                            backendClient.suggestionPost(
+                                "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack");
+                        }
+                    }
+                } else {
+                    // Empty result (e.g. model said nothing) — ACK to clear it
+                    backendClient.suggestionPost(
+                        "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack");
                 }
                 // Stop watching cleared/finished loops
                 JsonNode st = backendClient.suggestionGet(

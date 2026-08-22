@@ -56,7 +56,9 @@ public class CapabilitiesController {
         features.put("run_stop", false);             // Async runs — deferred, not yet implemented
         features.put("run_approval_response", false); // Async runs — deferred, not yet implemented
         features.put("tool_progress_events", true);
-        features.put("approval_events", true);
+        // l_real-approval-mode: reflect the ACTUAL approvals-enabled setting —
+        // /approvals in the bot reads this; a hardcoded true lied about off-mode.
+        features.put("approval_events", properties.getSecurity().isApprovalsEnabled());
         features.put("session_resources", true);
         features.put("session_chat", true);
         features.put("session_chat_streaming", true);

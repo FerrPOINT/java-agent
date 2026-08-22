@@ -48,9 +48,9 @@ public class SaveCommand implements CommandHandler {
         if (backend == null) {
             return "Nothing to save yet — send a message first.";
         }
-        String[] parts = event.commandArgs() == null ? new String[0]
-            : event.commandArgs().trim().split("\\s+");
-        String fmt = parts.length > 0 ? parts[0].toLowerCase() : "md";
+        String argsText = event.commandArgs() == null ? "" : event.commandArgs().trim();
+        String[] parts = argsText.isEmpty() ? new String[0] : argsText.split("\\s+");
+        String fmt = parts.length > 0 ? parts[0].toLowerCase() : "md";   // default md (Hermes /save)
         if (!fmt.equals("md") && !fmt.equals("json")) {
             return USAGE;
         }

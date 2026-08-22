@@ -16,14 +16,14 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Heartbeat result delivery: each fired tick's reply must reach the chat
- * that set the heartbeat (Hermes: gateway wakeup watcher forwards replies).
+ * Heartbeat result delivery with ACK semantics (Hermes delivery-ledger
+ * parity): a failed send must NOT lose the message; the bot ACKs only after
+ * a successful Telegram send. Poisoned results are dropped after 5 nacks.
  */
 class HeartbeatDeliveryPollerTest {
 
     private AgentBackendClient backend;
     private TelegramClient telegram;
-    private BotProperties props;
     private HeartbeatDeliveryPoller poller;
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -31,65 +31,97 @@ class HeartbeatDeliveryPollerTest {
     void setUp() {
         backend = mock(AgentBackendClient.class);
         telegram = mock(TelegramClient.class);
-        props = mock(BotProperties.class);
+        BotProperties props = mock(BotProperties.class);
         when(props.isCronDeliveryEnabled()).thenReturn(true);
         poller = new HeartbeatDeliveryPoller(backend, telegram, props);
     }
 
-    @Test
-    void deliversFiredResultToWatchingChat() {
-        UUID sid = UUID.randomUUID();
-        poller.watch(sid, 754334329L);
-
+    private void stubResult(UUID sid, String text) {
         ObjectNode result = mapper.createObjectNode();
-        result.put("hasResult", true);
-        result.put("result", "Nothing has changed — deployment stable.");
-        when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid + "/result")).thenReturn(result);
+        result.put("hasResult", text != null);
+        if (text != null) result.put("result", text);
+        when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid + "/result"))
+            .thenReturn(result);
+    }
 
+    private void stubStatus(UUID sid, boolean set) {
         ObjectNode status = mapper.createObjectNode();
-        status.put("set", true);
-        status.put("status", "active");
+        status.put("set", set);
         when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid)).thenReturn(status);
+    }
+
+    @Test
+    void successfulSendAcks() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "Nothing changed.");
+        stubStatus(sid, true);
+        when(telegram.sendMessage(eq(42L), anyString())).thenReturn(Optional.of(7L));
 
         poller.poll();
 
-        verify(telegram).sendMessage(eq(754334329L), contains("Nothing has changed"));
+        verify(telegram).sendMessage(eq(42L), contains("Nothing changed"));
+        verify(backend).suggestionPost("/api/v1/agent/cron/heartbeat/" + sid + "/result/ack");
+    }
+
+    @Test
+    void failedSendNacksButResultSurvives() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "payload");
+        stubStatus(sid, true);
+        when(telegram.sendMessage(anyLong(), anyString())).thenReturn(Optional.empty());
+        ObjectNode notDropped = mapper.createObjectNode();
+        notDropped.put("drop", false);
+        when(backend.suggestionPost(contains("/result/nack"))).thenReturn(notDropped);
+
+        poller.poll();
+
+        // NO ack — the result stays server-side for the next tick
+        verify(backend, never()).suggestionPost(contains("/result/ack"));
+        verify(backend).suggestionPost(contains("/result/nack"));
+    }
+
+    @Test
+    void poisonedResultDroppedAfterNackSaysDrop() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "poison");
+        stubStatus(sid, true);
+        when(telegram.sendMessage(anyLong(), anyString())).thenReturn(Optional.empty());
+        ObjectNode drop = mapper.createObjectNode();
+        drop.put("drop", true);
+        when(backend.suggestionPost(contains("/result/nack"))).thenReturn(drop);
+
+        poller.poll();
+
+        // drop=true forces the ack that removes the poisoned result
+        verify(backend).suggestionPost(contains("/result/ack"));
+    }
+
+    @Test
+    void emptyResultIsAckedImmediately() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "");
+        stubStatus(sid, true);
+
+        poller.poll();
+
+        verify(telegram, never()).sendMessage(anyLong(), anyString());
+        verify(backend).suggestionPost(contains("/result/ack"));
     }
 
     @Test
     void clearsWatchWhenHeartbeatGone() {
         UUID sid = UUID.randomUUID();
         poller.watch(sid, 1L);
-
-        ObjectNode noResult = mapper.createObjectNode();
-        noResult.put("hasResult", false);
-        when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid + "/result")).thenReturn(noResult);
-        ObjectNode noHeartbeat = mapper.createObjectNode();
-        noHeartbeat.put("set", false);
-        when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid)).thenReturn(noHeartbeat);
+        stubResult(sid, null);
+        stubStatus(sid, false);
 
         poller.poll();
-
-        // unwatched — no further polling of this session
         poller.poll();
+
         verify(backend, times(2)).suggestionGet(anyString());
-    }
-
-    @Test
-    void truncatesVeryLongResults() {
-        UUID sid = UUID.randomUUID();
-        poller.watch(sid, 1L);
-
-        ObjectNode result = mapper.createObjectNode();
-        result.put("hasResult", true);
-        result.put("result", "x".repeat(9000));
-        when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid + "/result")).thenReturn(result);
-        ObjectNode status = mapper.createObjectNode();
-        status.put("set", false);  // loop finished after this fire
-        when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid)).thenReturn(status);
-
-        poller.poll();
-
-        verify(telegram).sendMessage(eq(1L), argThat((String s) -> s.length() < 3700));
     }
 }

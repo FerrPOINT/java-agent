@@ -128,13 +128,26 @@ public class CronJobController {
                 "Heartbeat resumed (every " + HeartbeatService.formatInterval(st.intervalSeconds()) + "): " + st.prompt());
     }
 
-    /** Bot polls this to deliver heartbeat/loop results to the chat. */
+    /** Bot polls this to deliver heartbeat/loop results to the chat (PEEK — not destructive). */
     @GetMapping("/heartbeat/{sessionId}/result")
     public java.util.Map<String, Object> heartbeatResult(@PathVariable UUID sessionId) {
-        String result = heartbeatService.pollLastFireResult(sessionId);
+        String result = heartbeatService.peekLastFireResult(sessionId);
         return result == null
             ? java.util.Map.of("hasResult", false)
             : java.util.Map.of("hasResult", true, "result", result);
+    }
+
+    /** ACK after a successful chat send — drops the delivered result. */
+    @PostMapping("/heartbeat/{sessionId}/result/ack")
+    public java.util.Map<String, Object> heartbeatResultAck(@PathVariable UUID sessionId) {
+        return java.util.Map.of("acked", heartbeatService.ackFireResult(sessionId));
+    }
+
+    /** Report a failed send attempt; after 5 the result is dropped as poison. */
+    @PostMapping("/heartbeat/{sessionId}/result/nack")
+    public java.util.Map<String, Object> heartbeatResultNack(@PathVariable UUID sessionId) {
+        return java.util.Map.of("drop", heartbeatService.shouldDropUndeliverable(sessionId));
+        // drop=true → caller must call ack to remove the poisoned result
     }
 
     @PostMapping("/heartbeat/{sessionId}/clear")
