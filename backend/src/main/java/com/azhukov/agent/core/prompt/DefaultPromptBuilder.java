@@ -854,19 +854,19 @@ public class DefaultPromptBuilder implements PromptBuilder {
         return "";
     }
 
-    // ── Fix 5: Full skills index with categories ──
+    // ── Skills index (Hermes prompt_builder.py _build_skills_system_prompt_inner) ──
+
+    /** Hermes parity: SKILL_PROMPT_DESC_LIMIT (skill_utils.py:872). */
+    private static final int SKILL_PROMPT_DESC_LIMIT = 60;
 
     /**
-     * Build a full skills index, grouped by category, with name and description for each skill.
-     * Uses the {@link SkillManager} to list all available skills.
-     *
-     * @return the skills index section text, or a stub if SkillManager is null or no skills
+     * Build a full skills index, grouped by category, with name and truncated
+     * description for each skill (Hermes prompt_builder.py
+     * _build_skills_system_prompt_inner).
      */
     String buildSkillsIndex() {
         if (skillManager == null) {
-            return "## Available Skills\n"
-                + "Load matching skills with skill_view(name) before performing a task. "
-                + "If a skill matches your task, follow its instructions.\n";
+            return "";
         }
 
         List<SkillInfo> skills;
@@ -874,20 +874,25 @@ public class DefaultPromptBuilder implements PromptBuilder {
             skills = skillManager.listSkills();
         } catch (Exception e) {
             log.debug("Failed to list skills from SkillManager: {}", e.getMessage());
-            return "## Available Skills\n"
-                + "Load matching skills with skill_view(name) before performing a task. "
-                + "If a skill matches your task, follow its instructions.\n";
+            return "";
         }
 
         if (skills == null || skills.isEmpty()) {
-            return "## Available Skills\n"
-                + "Load matching skills with skill_view(name) before performing a task. "
-                + "If a skill matches your task, follow its instructions.\n";
+            return "";
+        }
+
+        // Hermes parity: disabled skills (frontmatter `disabled: true`) never
+        // appear in the system-prompt index (prompt_builder.py:1848).
+        List<SkillInfo> visible = skills.stream()
+            .filter(s -> !s.disabled())
+            .toList();
+        if (visible.isEmpty()) {
+            return "";
         }
 
         // Group skills by category
         Map<String, List<SkillInfo>> byCategory = new TreeMap<>();
-        for (SkillInfo skill : skills) {
+        for (SkillInfo skill : visible) {
             String category = skill.category();
             if (category == null || category.isBlank()) {
                 category = "general";
@@ -896,12 +901,32 @@ public class DefaultPromptBuilder implements PromptBuilder {
         }
 
         StringBuilder sb = new StringBuilder();
-        sb.append("## Available Skills\n");
-        sb.append("Before replying, scan the skills below. If a skill matches or is even ")
-            .append("partially relevant to your task, you MUST load it with skill_view(name) ")
-            .append("and follow its instructions. Err on the side of loading — it is always ")
-            .append("better to have context you don't need than to miss critical steps, pitfalls, ")
-            .append("or established workflows.\n\n");
+        // Hermes parity: full header (prompt_builder.py:2029-2056) — the
+        // mandatory-scan instruction, the "load even if you could handle it
+        // with basic tools" paragraph, the hermes-agent skill pointer, and
+        // the patch/offer-to-save lines. The old java header dropped the
+        // second paragraph and the pointer entirely.
+        sb.append("## Skills (mandatory)\n");
+        sb.append("Before replying, scan the skills below. If a skill matches or is even partially relevant ")
+            .append("to your task, you MUST load it with skill_view(name) and follow its instructions. ")
+            .append("Err on the side of loading — it is always better to have context you don't need ")
+            .append("than to miss critical steps, pitfalls, or established workflows. ")
+            .append("Skills contain specialized knowledge — API endpoints, tool-specific commands, ")
+            .append("and proven workflows that outperform general-purpose approaches. Load the skill ")
+            .append("even if you think you could handle the task with basic tools like web_search or terminal. ")
+            .append("Skills also encode the user's preferred approach, conventions, and quality standards ")
+            .append("for tasks like code review, planning, and testing — load them even for tasks you ")
+            .append("already know how to do, because the skill defines how it should be done here.\n");
+        sb.append("Whenever the user asks you to configure, set up, install, enable, disable, modify, ")
+            .append("or troubleshoot Hermes Agent itself — its CLI, config, models, providers, tools, ")
+            .append("skills, voice, gateway, plugins, or any feature — load the `hermes-agent` skill ")
+            .append("first. It has the actual commands (e.g. `hermes config set …`, `hermes tools`, ")
+            .append("`hermes setup`) so you don't have to guess or invent workarounds.\n");
+        sb.append("If a skill has issues, fix it with skill_manage(action='patch').\n");
+        sb.append("After difficult/iterative tasks, offer to save as a skill. ");
+        sb.append("If a skill you loaded was missing steps, had wrong commands, or needed ")
+            .append("pitfalls you discovered, update it before finishing.\n");
+        sb.append("\n");
         sb.append("<available_skills>\n");
 
         for (Map.Entry<String, List<SkillInfo>> entry : byCategory.entrySet()) {
@@ -912,7 +937,6 @@ public class DefaultPromptBuilder implements PromptBuilder {
             sorted.sort((a, b) -> String.CASE_INSENSITIVE_ORDER.compare(a.name(), b.name()));
             for (SkillInfo skill : sorted) {
                 sb.append("    - ").append(skill.name());
-                // Extract description from frontmatter content if available
                 String desc = extractSkillDescription(skill);
                 if (desc != null && !desc.isBlank()) {
                     sb.append(": ").append(desc);
@@ -921,44 +945,64 @@ public class DefaultPromptBuilder implements PromptBuilder {
             }
         }
 
-        sb.append("</available_skills>\n\n");
+        sb.append("</available_skills>\n");
+        sb.append("\n");
         sb.append("Only proceed without loading a skill if genuinely none are relevant to the task.");
 
         return sb.toString().strip();
     }
 
     /**
-     * Extract a short description from a skill's content (frontmatter `description` field).
-     *
-     * @param skill the skill info
-     * @return the description, or empty string if not available
+     * Extract a system-prompt-length description for a skill, truncated to
+     * {@link #SKILL_PROMPT_DESC_LIMIT} chars with an ellipsis — Hermes
+     * extract_skill_description (skill_utils.py:881-888). Prefers the DB
+     * `description` column (set on save); falls back to the frontmatter
+     * `description:` field parsed from content.
      */
     private String extractSkillDescription(SkillInfo skill) {
-        if (skill.content() == null || skill.content().isBlank()) {
+        String raw = skill.description();
+        if (raw == null || raw.isBlank()) {
+            raw = extractFrontmatterDescription(skill.content());
+        }
+        if (raw == null) {
+            raw = "";
+        }
+        raw = raw.strip();
+        raw = stripSurroundingQuotes(raw);
+        if (raw.isEmpty()) {
             return "";
         }
-        // Try to parse description from YAML frontmatter
-        String content = skill.content();
-        if (content.startsWith("---")) {
-            int end = content.indexOf("\n---", 3);
-            if (end > 0) {
-                String yaml = content.substring(3, end);
-                for (String line : yaml.lines().toList()) {
-                    String trimmed = line.trim();
-                    if (trimmed.startsWith("description:")) {
-                        String desc = trimmed.substring("description:".length()).trim();
-                        // Strip surrounding quotes
-                        if ((desc.startsWith("\"") && desc.endsWith("\"")) ||
-                            (desc.startsWith("'") && desc.endsWith("'"))) {
-                            desc = desc.substring(1, desc.length() - 1);
-                        }
-                        return desc;
-                    }
+        if (raw.length() > SKILL_PROMPT_DESC_LIMIT) {
+            return raw.substring(0, SKILL_PROMPT_DESC_LIMIT - 3) + "...";
+        }
+        return raw;
+    }
+
+    /** Parse the frontmatter `description:` field from raw skill content. */
+    private String extractFrontmatterDescription(String content) {
+        if (content == null || content.isBlank() || !content.startsWith("---")) {
+            return null;
+        }
+        int end = content.indexOf("\n---", 3);
+        if (end > 0) {
+            String yaml = content.substring(3, end);
+            for (String line : yaml.lines().toList()) {
+                String trimmed = line.trim();
+                if (trimmed.startsWith("description:")) {
+                    return trimmed.substring("description:".length()).trim();
                 }
             }
         }
-        // Fallback: use category as description
-        return skill.category() != null && !skill.category().isBlank() ? skill.category() : "";
+        return null;
+    }
+
+    private static String stripSurroundingQuotes(String s) {
+        if (s.length() >= 2
+            && ((s.startsWith("\"") && s.endsWith("\""))
+                || (s.startsWith("'") && s.endsWith("'")))) {
+            return s.substring(1, s.length() - 1);
+        }
+        return s;
     }
 
     // ── Memory prefix ──
@@ -1197,23 +1241,16 @@ public class DefaultPromptBuilder implements PromptBuilder {
             contextTier.append(overrideContent).append("\n\n");
         }
 
-        // Available toolsets and tools
-        contextTier.append("## Available Toolsets\n");
-        for (String toolset : toolRegistry.getToolsets()) {
-            contextTier.append("- ").append(toolset).append("\n");
-        }
-        contextTier.append("\n");
+        // Available toolsets and tools — Hermes parity: tools are declared to
+        // the model EXCLUSIVELY via the API `tools` parameter
+        // (LangChain4jModelClient.toolSpecifications). Hermes never lists tool
+        // names/descriptions in the system prompt; duplicating them here cost
+        // 2-4KB per call and double-declared every tool. Removed.
 
-        // Tool descriptions
-        contextTier.append("## Tool Descriptions\n");
-        for (var def : toolRegistry.getDefinitions()) {
-            contextTier.append("- **").append(def.name()).append("**: ");
-            contextTier.append(def.description() != null ? def.description() : "No description").append("\n");
-        }
-        contextTier.append("\n");
-
-        // ── Fix 5: Full skills index with categories ──
-        contextTier.append(buildSkillsIndex()).append("\n");
+        // ── Fix 5: skills index — MOVED to the volatile tier (Hermes
+        // system_prompt.py:765-780: the skills index is runtime-mutable and
+        // rides at the FRONT of the volatile band, ahead of memory and the
+        // timestamp line, so a changed index only re-prefills from here on).
 
         // Coding context detection
         if (codingContextDetector != null
@@ -1235,6 +1272,16 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // here — identity rides the Session Context block below (gateway/session.py),
         // and Hermes has no Language line at all (language is inferred from context).
         StringBuilder volatileTier = new StringBuilder();
+        // ── Skills index — FRONT of the volatile band (Hermes parity,
+        // system_prompt.py:765-780). Runtime-mutable (the agent creates and
+        // patches skills mid-session), so it must not sit in the cached
+        // stable/context prefix; placed before the turn-varying memory/
+        // timestamp tail so an unchanged index still falls inside the reused
+        // prefix on implicit longest-prefix backends.
+        String skillsIndex = buildSkillsIndex();
+        if (!skillsIndex.isEmpty()) {
+            volatileTier.append(skillsIndex).append("\n\n");
+        }
         // Date-only with full names (matching Hermes format) so the system prompt is byte-stable for the full day
         volatileTier.append("Conversation started: ").append(
             java.time.LocalDate.now().format(

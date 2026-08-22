@@ -201,7 +201,12 @@ public class AgentProperties {
         private boolean enabled = true;
         private int maxSkillsInPrompt = 20;
         private int maxCharsPerSkill = 4000;
-        private List<String> defaultToolsets = new ArrayList<>(List.of("web", "file", "browser", "terminal", "coding", "memory", "core", "delegation", "gateway", "todo"));
+        // Hermes parity: skills tools (skill_view/skills_list/skill_manage) are
+        // DEFAULT-ON — Hermes enables ALL toolsets when none are explicitly
+        // configured, and the skills guidance ("patch a stale skill
+        // immediately", "save as a skill") requires skill_manage to be
+        // reachable. It was missing from the whitelist entirely.
+        private List<String> defaultToolsets = new ArrayList<>(List.of("web", "file", "browser", "terminal", "coding", "memory", "core", "delegation", "gateway", "todo", "skills"));
         // S6: External skill directories (expanded ~/ and ${VAR})
         private final List<String> externalDirs = new ArrayList<>();
         // S6: Disabled skills (global list)

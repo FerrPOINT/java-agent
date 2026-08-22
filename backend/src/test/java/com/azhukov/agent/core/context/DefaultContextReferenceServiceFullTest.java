@@ -206,9 +206,9 @@ class DefaultContextReferenceServiceFullTest {
 
     @Test
     void loadContentLoadsSkillContent() {
-        when(skillManager.getSkill("coding")).thenReturn("public class Example {}");
 
         ContextReference ref = new ContextReference(ReferenceType.SKILL, "coding", "coding", null);
+        when(skillManager.getSkill("coding")).thenReturn("public class Example {}");
 
         assertThat(service.loadContent(ref))
             .isPresent()
@@ -220,7 +220,6 @@ class DefaultContextReferenceServiceFullTest {
 
     @Test
     void loadContentReturnsErrorMarkerForMissingSkill() {
-        when(skillManager.getSkill("missing")).thenReturn(null);
 
         ContextReference ref = new ContextReference(ReferenceType.SKILL, "missing", "missing", null);
 

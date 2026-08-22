@@ -68,7 +68,6 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
@@ -81,12 +80,13 @@ class DefaultContextEngineBranchCoverageTest {
     }
 
     @Test
-    void prepareContextWithDeveloperRoleAndSkillsAppendsSkillInfo() {
+    void prepareContextWithDeveloperRoleAndSkillsDoesNotInjectSkillContent() {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(skillManager.listSkillNames()).thenReturn(List.of("coding"));
-        when(skillManager.getSkill("coding")).thenReturn("Write clean code.");
+        // Hermes parity: the skills INDEX lives in the system prompt's volatile
+        // tier (DefaultPromptBuilder.buildSkillsIndex), NOT in prepareContext.
+        // Raw SKILL.md content must never leak into the context messages.
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
@@ -94,41 +94,33 @@ class DefaultContextEngineBranchCoverageTest {
         List<Message> result = engine.prepareContext(session, incoming);
 
         assertThat(result.get(0).role()).isEqualTo(Role.DEVELOPER);
-        assertThat(result.get(0).content()).contains("Dev prompt.").contains("Available skills:");
+        assertThat(result.get(0).content()).isEqualTo("Dev prompt.");
     }
 
-    // ── Skills truncation ──
+    // ── Skills are no longer injected here (Hermes parity) ──
 
     @Test
-    void appendSkillsTruncatesAfterSkillLimit() {
+    void prepareContextDoesNotInjectSkillsEvenWhenPresent() {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        // Provide more than SKILL_LIMIT (3) skills
-        when(skillManager.listSkillNames()).thenReturn(List.of("skill1", "skill2", "skill3", "skill4", "skill5"));
-        when(skillManager.getSkill("skill1")).thenReturn("content1");
-        when(skillManager.getSkill("skill2")).thenReturn("content2");
-        when(skillManager.getSkill("skill3")).thenReturn("content3");
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Hi"));
         List<Message> result = engine.prepareContext(session, incoming);
 
-        // Only first 3 skills should be in the system message
+        // The system message must stay byte-identical — no skills block at all
         String systemContent = result.get(0).content();
-        assertThat(systemContent).contains("skill1").contains("skill2").contains("skill3");
-        assertThat(systemContent).doesNotContain("skill4").doesNotContain("skill5");
+        assertThat(systemContent).isEqualTo("System");
+        assertThat(systemContent).doesNotContain("skill1").doesNotContain("skill4");
     }
 
     @Test
-    void appendSkillsWithNullContentSkipsSkill() {
+    void prepareContextWithNullSkillContentStaysClean() {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(skillManager.listSkillNames()).thenReturn(List.of("skill1", "skill2"));
-        when(skillManager.getSkill("skill1")).thenReturn("content1");
-        when(skillManager.getSkill("skill2")).thenReturn(null);
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
@@ -136,12 +128,11 @@ class DefaultContextEngineBranchCoverageTest {
         List<Message> result = engine.prepareContext(session, incoming);
 
         String systemContent = result.get(0).content();
-        assertThat(systemContent).contains("skill1");
-        assertThat(systemContent).doesNotContain("skill2:");
+        assertThat(systemContent).isEqualTo("System");
     }
 
     @Test
-    void appendSkillsWithLongContentTruncates() {
+    void prepareContextWithLongSkillContentStaysClean() {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
@@ -151,8 +142,6 @@ class DefaultContextEngineBranchCoverageTest {
         properties.getContext().setMaxContextMessages(50);
 
         String longContent = "x".repeat(500);
-        when(skillManager.listSkillNames()).thenReturn(List.of("big-skill"));
-        when(skillManager.getSkill("big-skill")).thenReturn(longContent);
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
@@ -160,8 +149,7 @@ class DefaultContextEngineBranchCoverageTest {
         List<Message> result = engine.prepareContext(session, incoming);
 
         String systemContent = result.get(0).content();
-        assertThat(systemContent).contains("...");
-        assertThat(systemContent.length()).isLessThan(longContent.length() + 100);
+        assertThat(systemContent).isEqualTo("System");
     }
 
     // ── Empty skills list ──
@@ -171,7 +159,6 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
@@ -189,7 +176,6 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenThrow(new RuntimeException("DB connection failed"));
 
@@ -208,7 +194,6 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
 
         MessageEntity toolMsg = new MessageEntity();
         toolMsg.setSessionId(session.id());
@@ -234,7 +219,6 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
 
         MessageEntity userMsg = new MessageEntity();
         userMsg.setSessionId(session.id());
@@ -256,7 +240,6 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
 
         MessageEntity nullContentMsg = new MessageEntity();
         nullContentMsg.setSessionId(session.id());
@@ -315,7 +298,6 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties, cacheTracker);
 
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
@@ -471,7 +453,6 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
@@ -495,7 +476,6 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties, cacheTracker);
 
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
@@ -511,7 +491,6 @@ class DefaultContextEngineBranchCoverageTest {
         ContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 

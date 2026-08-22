@@ -52,7 +52,6 @@ class ContextEngineMemoryTest {
     @BeforeEach
     void setUp() {
         properties = new AgentProperties();
-        lenient().when(skillManager.listSkillNames()).thenReturn(List.of());
         engine = new DefaultContextEngine(memoryProvider, skillManager, messageRepository, contextCompressor, properties);
     }
 

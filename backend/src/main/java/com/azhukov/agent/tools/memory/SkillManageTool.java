@@ -11,6 +11,7 @@ import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import static com.azhukov.agent.tools.ToolHandler.parseJson;
@@ -33,6 +34,10 @@ public class SkillManageTool implements ToolHandler {
     private final SkillManager skillManager;
     private final com.azhukov.agent.core.skill.SkillMutationLedger mutationLedger;
 
+    /** Optional — cleared skills system-prompt cache after mutations (Hermes parity). */
+    @Autowired(required = false)
+    private transient com.azhukov.agent.core.prompt.PromptCacheTracker promptCacheTracker;
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         SkillManageArgs args = parseJson(arguments, SkillManageArgs.class);
@@ -40,7 +45,7 @@ public class SkillManageTool implements ToolHandler {
         // BACKGROUND_REVIEW during review)
         WriteOrigin origin = WriteContext.effectiveOrigin();
         try {
-            return switch (args.action().toLowerCase()) {
+            ToolResult result = switch (args.action().toLowerCase()) {
                 case "create" -> {
                     validateSkillName(args.name());
                     String content = generateFrontmatterIfNeeded(args.name(), args.content());
@@ -139,6 +144,13 @@ public class SkillManageTool implements ToolHandler {
                 }
                 default -> ToolResult.fail("Unknown action: " + args.action());
             };
+            // Hermes parity (skill_manager_tool.py:1654): every successful
+            // skill mutation clears the cached skills system prompt so the
+            // next turn's index reflects the change.
+            if (result.success()) {
+                afterSkillMutation(args.name());
+            }
+            return result;
         } catch (SecurityException e) {
             // P2-49: Security scan failed — content was not persisted. The scan runs
             // BEFORE the write in saveSkill/writeSupportFile (scanAndGuard → throw
@@ -159,6 +171,28 @@ public class SkillManageTool implements ToolHandler {
             mutationLedger.record(action, skill, null, oldValue, newValue);
         } catch (Exception e) {
             log.debug("Skill ledger hook failed for '{}' ({}): {} — mutation unaffected", skill, action, e.getMessage());
+        }
+    }
+
+    /**
+     * Hermes parity (skill_manager_tool.py:1653-1657): after every successful
+     * skill mutation — (a) clear the cached skills system prompt so the index
+     * reflects the change on the next turn, (b) bump the skill's manage
+     * counter (Hermes skill_usage.bump_patch / bump_use telemetry). Both are
+     * best-effort and never block the mutation result.
+     */
+    private void afterSkillMutation(String skillName) {
+        try {
+            skillManager.incrementManageCount(skillName);
+        } catch (Exception e) {
+            log.debug("manage_count bump failed for '{}': {}", skillName, e.getMessage());
+        }
+        if (promptCacheTracker != null) {
+            try {
+                promptCacheTracker.invalidateAllSystemPrompts();
+            } catch (Exception e) {
+                log.debug("System prompt cache invalidation failed after skill mutation: {}", e.getMessage());
+            }
         }
     }
 

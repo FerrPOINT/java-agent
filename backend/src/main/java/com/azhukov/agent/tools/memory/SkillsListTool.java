@@ -53,21 +53,48 @@ public class SkillsListTool implements ToolHandler {
         }
 
         StringBuilder sb = new StringBuilder();
+        // Hermes parity (skills_tool.py:789 skills_list): tier-1 progressive
+        // disclosure — name + description + category so the model can CHOOSE
+        // a skill without loading each one. The old output had only
+        // name+category+trust, forcing a skill_view per candidate.
         sb.append("Available Skills:\n");
         for (var skill : skills) {
             sb.append("  • ").append(skill.name());
             if (skill.category() != null && !skill.category().isBlank()) {
                 sb.append(" [").append(skill.category()).append("]");
             }
-            if (skill.trustLevel() != null) {
-                sb.append(" (").append(skill.trustLevel()).append(")");
+            String desc = skill.description();
+            if (desc == null || desc.isBlank()) {
+                desc = frontmatterDescription(skill.content());
+            }
+            if (desc != null && !desc.isBlank()) {
+                sb.append(": ").append(desc);
             }
             if (skill.archived()) {
                 sb.append(" [ARCHIVED]");
             }
             sb.append("\n");
         }
+        sb.append("\nUse skill_view(name) to see full content, tags, and linked files.");
         return ToolResult.ok(sb.toString().trim());
+    }
+
+    /** Best-effort frontmatter description parse (falls back to null). */
+    private String frontmatterDescription(String content) {
+        try {
+            if (content == null || !content.startsWith("---")) return null;
+            int end = content.indexOf("\n---", 3);
+            if (end < 0) return null;
+            for (String line : content.substring(3, end).lines().toList()) {
+                String trimmed = line.trim();
+                if (trimmed.startsWith("description:")) {
+                    return trimmed.substring("description:".length()).trim();
+                }
+            }
+        } catch (Exception ignored) {
+            // best-effort
+        }
+        return null;
     }
 
     public record SkillsListArgs(

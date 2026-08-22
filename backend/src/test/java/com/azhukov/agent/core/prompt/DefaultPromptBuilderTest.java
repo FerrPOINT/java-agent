@@ -1336,8 +1336,9 @@ class DefaultPromptBuilderTest {
             new DefaultAgentConstants());
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
 
-        assertThat(msg.content()).contains("## Available Skills");
-        assertThat(msg.content()).contains("skill_view(name)");
+        // Hermes parity: no SkillManager / no skills -> NO skills block at all
+        assertThat(msg.content()).doesNotContain("## Skills (mandatory)");
+        assertThat(msg.content()).doesNotContain("<available_skills>");
     }
 
     @Test
@@ -1356,8 +1357,8 @@ class DefaultPromptBuilderTest {
             new DefaultAgentConstants(), null, null, null, skillManager);
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
 
-        assertThat(msg.content()).contains("## Available Skills");
-        assertThat(msg.content()).contains("skill_view(name)");
+        // Hermes parity: empty skills -> NO skills block
+        assertThat(msg.content()).doesNotContain("## Skills (mandatory)");
     }
 
     @Test
@@ -1383,7 +1384,7 @@ class DefaultPromptBuilderTest {
             new DefaultAgentConstants(), null, null, null, skillManager);
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
 
-        assertThat(msg.content()).contains("## Available Skills");
+        assertThat(msg.content()).contains("## Skills (mandatory)");
         assertThat(msg.content()).contains("<available_skills>");
         assertThat(msg.content()).contains("</available_skills>");
         assertThat(msg.content()).contains("coding:");
@@ -1391,6 +1392,7 @@ class DefaultPromptBuilderTest {
         assertThat(msg.content()).contains("python-helper");
         assertThat(msg.content()).contains("web-search");
         assertThat(msg.content()).contains("git-helper");
+        // Descriptions come from the frontmatter and are NOT truncated for these short ones
         assertThat(msg.content()).contains("Python coding helper");
         assertThat(msg.content()).contains("Web search helper");
     }
@@ -1464,8 +1466,8 @@ class DefaultPromptBuilderTest {
             new DefaultAgentConstants(), null, null, null, skillManager);
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
 
-        assertThat(msg.content()).contains("## Available Skills");
-        assertThat(msg.content()).contains("skill_view(name)");
+        // Hermes parity: empty skills -> NO skills block
+        assertThat(msg.content()).doesNotContain("## Skills (mandatory)");
     }
 
     @Test
@@ -1489,6 +1491,114 @@ class DefaultPromptBuilderTest {
         String index = builder.buildSkillsIndex();
 
         assertThat(index).contains("test-skill: A test skill for testing");
+    }
+
+    @Test
+    void skillsIndexTruncatesDescriptionToSixtyChars() {
+        // Hermes parity: SKILL_PROMPT_DESC_LIMIT = 60 (skill_utils.py:872)
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getModel().setModelName("llama-3");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+
+        String longDesc = "L".repeat(100);
+        SkillManager skillManager = mock(SkillManager.class);
+        when(skillManager.listSkills()).thenReturn(List.of(
+            new SkillManager.SkillInfo("long-desc-skill",
+                "---\ndescription: " + longDesc + "\ncategory: test\n---\nBody",
+                "test", null, 0, 0, null, false, "AGENT_CREATED", List.of(), List.of(), false, null)
+        ));
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
+            new DefaultAgentConstants(), null, null, null, skillManager);
+        String index = builder.buildSkillsIndex();
+
+        int descIdx = index.indexOf("long-desc-skill: ");
+        String desc = index.substring(descIdx + "long-desc-skill: ".length()).split("\n")[0];
+        assertThat(desc.length()).isEqualTo(60);
+        assertThat(desc).endsWith("...");
+    }
+
+    @Test
+    void skillsIndexPrefersDbDescriptionColumn() {
+        // Hermes parity: description is a first-class field; the DB column wins
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getModel().setModelName("llama-3");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+
+        SkillManager skillManager = mock(SkillManager.class);
+        when(skillManager.listSkills()).thenReturn(List.of(
+            new SkillManager.SkillInfo("db-desc-skill",
+                "---\ndescription: from-frontmatter\ncategory: test\n---\nBody",
+                "from-db-column", "test", null, 0, 0, null, false, "AGENT_CREATED", List.of(), List.of(), false, null)
+        ));
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
+            new DefaultAgentConstants(), null, null, null, skillManager);
+        String index = builder.buildSkillsIndex();
+
+        assertThat(index).contains("db-desc-skill: from-db-column");
+    }
+
+    @Test
+    void skillsIndexFiltersDisabledSkills() {
+        // Hermes parity (prompt_builder.py:1848): disabled skills never appear
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getModel().setModelName("llama-3");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+
+        SkillManager skillManager = mock(SkillManager.class);
+        when(skillManager.listSkills()).thenReturn(List.of(
+            new SkillManager.SkillInfo("visible-skill", "content", "visible",
+                "test", null, 0, 0, null, false, "AGENT_CREATED", List.of(), List.of(), false, null),
+            new SkillManager.SkillInfo("hidden-skill", "content", "hidden",
+                "test", null, 0, 0, null, false, "AGENT_CREATED", List.of(), List.of(), true, null)
+        ));
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
+            new DefaultAgentConstants(), null, null, null, skillManager);
+        String index = builder.buildSkillsIndex();
+
+        assertThat(index).contains("visible-skill");
+        assertThat(index).doesNotContain("hidden-skill");
+    }
+
+    @Test
+    void skillsIndexRidesInVolatileTierBeforeTimestamp() {
+        // Hermes parity (system_prompt.py:779-780): the skills index is the
+        // FIRST block of the volatile band, ahead of the timestamp line
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getModel().setModelName("llama-3");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+
+        SkillManager skillManager = mock(SkillManager.class);
+        when(skillManager.listSkills()).thenReturn(List.of(
+            new SkillManager.SkillInfo("vol-skill", "content", "a vol skill",
+                "test", null, 0, 0, null, false, "AGENT_CREATED", List.of(), List.of(), false, null)
+        ));
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
+            new DefaultAgentConstants(), null, null, null, skillManager);
+        Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+
+        int skillsIdx = msg.content().indexOf("## Skills (mandatory)");
+        int tsIdx = msg.content().indexOf("Conversation started:");
+        assertThat(skillsIdx).isGreaterThan(0);
+        assertThat(tsIdx).isGreaterThan(skillsIdx);
+        // Tools must NOT be listed in the prompt (API-only, Hermes parity)
+        assertThat(msg.content()).doesNotContain("## Tool Descriptions");
+        assertThat(msg.content()).doesNotContain("## Available Toolsets");
     }
 
     @Test

@@ -27,6 +27,9 @@ public class SkillEntity {
 
     private String content;
 
+    /** Hermes parity: frontmatter description, persisted on save for the system-prompt index. */
+    private String description;
+
     private String category;
 
     @Column(name = "version")

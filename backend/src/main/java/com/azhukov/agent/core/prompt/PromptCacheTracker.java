@@ -89,6 +89,21 @@ public class PromptCacheTracker {
         log.debug("Invalidated system prompt cache for session {}", sessionId);
     }
 
+    /**
+     * Invalidate ALL cached system prompts (Hermes parity:
+     * clear_skills_system_prompt_cache(clear_snapshot=True), called by
+     * skill_manager_tool on every skill mutation). The skills index rides in
+     * the system prompt, so a created/patched/deleted skill must be visible
+     * on the next turn — without this, a freshly created skill stays
+     * invisible until an unrelated compression event.
+     */
+    public void invalidateAllSystemPrompts() {
+        int n = cachedSystemPrompts.size();
+        cachedSystemPrompts.clear();
+        sessionPrefixHashes.clear();
+        log.debug("Invalidated system prompt cache for all sessions ({} prompts)", n);
+    }
+
     public Map<String, Object> getCacheStats() {
         long totalHits = cacheHits.values().stream().mapToLong(AtomicLong::get).sum();
         long totalMisses = cacheMisses.values().stream().mapToLong(AtomicLong::get).sum();

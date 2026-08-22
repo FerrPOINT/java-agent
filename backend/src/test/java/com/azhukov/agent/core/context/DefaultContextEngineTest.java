@@ -69,7 +69,6 @@ class DefaultContextEngineTest {
 
     @Test
     void prepareContextAddsSystemMessageFirst() {
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class))).thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("You are a helpful assistant."), Message.user("Hello"));
@@ -84,7 +83,6 @@ class DefaultContextEngineTest {
 
     @Test
     void prepareContextAppendsRecentHistoryFromRepository() {
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
 
         MessageEntity userMsg = entity("user", "previous user question", 1);
         MessageEntity assistantMsg = entity("assistant", "previous assistant answer", 1);
@@ -106,7 +104,6 @@ class DefaultContextEngineTest {
 
     @Test
     void prepareContextAppendsMemoryRecallViaMemoryProvider() {
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
 
         MessageEntity userMsg = entity("user", "What do you know about me?", 1);
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), any(org.springframework.data.domain.Pageable.class)))
@@ -125,10 +122,10 @@ class DefaultContextEngineTest {
     }
 
     @Test
-    void prepareContextAppendsSkillInfoViaSkillManager() {
-        when(skillManager.listSkillNames()).thenReturn(List.of("coding", "web"));
-        when(skillManager.getSkill("coding")).thenReturn("Write clean, tested Java code.");
-        when(skillManager.getSkill("web")).thenReturn("Search the web using DuckDuckGo.");
+    void prepareContextDoesNotAppendSkillInfo() {
+        // Hermes parity: skills are NOT injected by prepareContext — the
+        // skills index is built by DefaultPromptBuilder into the system
+        // prompt's volatile tier. The system message stays byte-identical.
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(Collections.emptyList());
 
@@ -137,15 +134,11 @@ class DefaultContextEngineTest {
 
         assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
         assertThat(result.get(0).content())
-                .contains("System prompt")
-                .contains("Available skills:")
-                .contains("coding: Write clean, tested Java code.")
-                .contains("web: Search the web using DuckDuckGo.");
+                .isEqualTo("System prompt");
     }
 
     @Test
     void prepareContextTrimsToMaxContextMessages() {
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
 
         // H-SYNC: maxContextMessages below 500 is treated as "effectively unlimited"
         // (compression handles trimming). 4 history + system + current = 6 messages
@@ -169,7 +162,6 @@ class DefaultContextEngineTest {
 
     @Test
     void prepareContextTrimsWhenMaxContextMessagesAboveFloor() {
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
 
         // Above the floor: maxContextMessages=600 in AgentProperties default... set high but
         // trim via char budget instead — maxTokens=100 → 400 chars, target 320.
@@ -193,7 +185,6 @@ class DefaultContextEngineTest {
 
     @Test
     void prepareContextTriggersCompressorWhenCharsExceedMaxTokensEstimate() {
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(Collections.emptyList());
 
@@ -213,7 +204,6 @@ class DefaultContextEngineTest {
 
     @Test
     void prepareContextHandlesEmptyHistoryGracefully() {
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(Collections.emptyList());
 

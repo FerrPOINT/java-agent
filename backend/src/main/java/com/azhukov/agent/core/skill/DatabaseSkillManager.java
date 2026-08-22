@@ -93,6 +93,14 @@ public class DatabaseSkillManager implements SkillManager {
  SkillEntity e = skillRepository.findByName(name).orElse(new SkillEntity());
  e.setName(name);
  e.setContent(content);
+ // Hermes parity: persist frontmatter description/category into their DB
+ // columns on save so the system-prompt index doesn't re-parse raw content
+ // on every prompt build.
+ e.setDescription(extractFrontmatterField(content, "description"));
+ String fmCategory = extractFrontmatterField(content, "category");
+ if (fmCategory != null && !fmCategory.isBlank()) {
+     e.setCategory(fmCategory);
+ }
  e.setUpdatedAt(Instant.now());
  if (e.getCreatedAt() == null) {
  e.setCreatedAt(Instant.now());
@@ -301,7 +309,8 @@ public class DatabaseSkillManager implements SkillManager {
          LinkedFiles linkedFiles = listLinkedFilesFromFilesystem(skillFile.getParent());
 
          return new SkillInfo(
-             skillName, content, category, null, 0, 0, null, false, "AGENT_CREATED",
+             skillName, content, extractFrontmatterField(content, "description"), category,
+             null, 0, 0, null, false, "AGENT_CREATED",
              tags, relatedSkills, disabled, linkedFiles
          );
      } catch (IOException e) {
@@ -453,6 +462,7 @@ public class DatabaseSkillManager implements SkillManager {
      return new SkillInfo(
          e.getName(),
          e.getContent(),
+         e.getDescription(),
          category,
          e.getUpdatedAt(),
          e.getViewCount(),
@@ -465,6 +475,31 @@ public class DatabaseSkillManager implements SkillManager {
          disabled,
          linkedFiles
      );
+ }
+
+ // S9: Parse a scalar field from YAML frontmatter (e.g. description, category)
+ private String extractFrontmatterField(String content, String field) {
+ if (content == null || content.isBlank()) return null;
+ if (!content.startsWith("---")) return null;
+ int end = content.indexOf("---", 3);
+ if (end > 0) {
+ String yaml = content.substring(3, end);
+ String prefix = field + ":";
+ for (String line : yaml.lines().toList()) {
+ String trimmed = line.trim();
+ if (trimmed.startsWith(prefix)) {
+ String value = trimmed.substring(prefix.length()).trim();
+ // Strip surrounding quotes
+ if (value.length() >= 2
+ && ((value.startsWith("\"") && value.endsWith("\""))
+ || (value.startsWith("'") && value.endsWith("'")))) {
+ value = value.substring(1, value.length() - 1);
+ }
+ return value;
+ }
+ }
+ }
+ return null;
  }
 
  // S9: Parse YAML frontmatter category

@@ -171,6 +171,7 @@ agent:
       - delegation
       - gateway
       - todo
+      - skills
   
   # ─── Session search ───
   session-search:

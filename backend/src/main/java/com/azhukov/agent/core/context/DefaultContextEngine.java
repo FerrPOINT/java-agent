@@ -28,7 +28,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class DefaultContextEngine implements ContextEngine {
 
  private static final int RECALL_LIMIT = 5;
- private static final int SKILL_LIMIT = 3;
  private static final long COMPRESSION_COOLDOWN_SECONDS = 600;
  private static final double PREFLIGHT_THRESHOLD = 0.8;
 
@@ -150,20 +149,19 @@ public class DefaultContextEngine implements ContextEngine {
  public List<Message> prepareContext(Session session, List<Message> messages) {
  List<Message> context = new ArrayList<>();
 
- StringBuilder systemExtra = new StringBuilder();
- appendSkills(systemExtra);
- // Memory is injected into the system prompt by DefaultPromptBuilder, not here
+ // Hermes parity: NO skills are injected here. The skills INDEX (name +
+ // truncated description only) is built by DefaultPromptBuilder and lives in
+ // the volatile tier of the system prompt. The old appendSkills() injected
+ // the first 400 chars of raw SKILL.md content for 3 arbitrary skills into
+ // every system message — duplication, prompt bloat, and a second skills
+ // block Hermes never has. Removed.
 
  // Compose system/developer message first if present
  if (!messages.isEmpty() && (messages.get(0).role() == Role.SYSTEM
  || messages.get(0).role() == Role.DEVELOPER)) {
  Message base = messages.get(0);
- String systemText = base.content();
- if (!systemExtra.isEmpty()) {
- systemText = systemText + "\n\n" + systemExtra;
- }
  context.add(base.role() == Role.DEVELOPER
- ? Message.developer(systemText) : Message.system(systemText));
+ ? Message.developer(base.content()) : Message.system(base.content()));
  }
 
  // Then add recent history (excluding the current turn messages to avoid duplication)
@@ -410,23 +408,6 @@ public class DefaultContextEngine implements ContextEngine {
  total += images * DefaultContextCompressor.IMAGE_CHAR_EQUIVALENT;
  }
  return total;
- }
-
- private void appendSkills(StringBuilder sb) {
- List<String> names = skillManager.listSkillNames();
- if (names.isEmpty()) return;
-
- int count = 0;
- sb.append("Available skills:\n");
- for (String name : names) {
- if (++count > SKILL_LIMIT) break;
- String content = skillManager.getSkill(name);
- if (content != null) {
- sb.append("- ").append(name).append(": ")
- .append(content.length() > 400 ? content.substring(0, 400) + "..." : content)
- .append("\n");
- }
- }
  }
 
  private void appendRecentHistory(Session session, List<Message> context) {

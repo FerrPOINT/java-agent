@@ -57,6 +57,21 @@ class SkillManageToolTest {
     }
 
     @Test
+    void successfulMutationBumpsManageCountAndInvalidatesPromptCache() {
+        // Hermes parity (skill_manager_tool.py:1653): every successful mutation
+        // clears the cached skills system prompt + bumps the manage counter.
+        com.azhukov.agent.core.prompt.PromptCacheTracker tracker =
+            new com.azhukov.agent.core.prompt.PromptCacheTracker(new com.azhukov.agent.config.AgentProperties());
+        org.springframework.test.util.ReflectionTestUtils.setField(tool, "promptCacheTracker", tracker);
+
+        ToolResult result = tool.execute("{\"action\":\"create\",\"name\":\"cache-check\",\"content\":\"---\\ndescription: x\\n---\\nbody\"}",
+            assistant(), session());
+
+        assertThat(result.success()).isTrue();
+        verify(skillManager).incrementManageCount("cache-check");
+    }
+
+    @Test
     void createSavesSkillWithFrontmatter() {
         String args = "{\"action\":\"create\",\"name\":\"my-skill\",\"content\":\"hello world\"}";
         ToolResult result = tool.execute(args, assistant(), session());

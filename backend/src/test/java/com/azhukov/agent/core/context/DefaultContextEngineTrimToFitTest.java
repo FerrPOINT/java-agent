@@ -65,7 +65,6 @@ class DefaultContextEngineTrimToFitTest {
 
     @Test
     void trimToFitRemovesToolCallAndResultTogether() {
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 
@@ -96,7 +95,6 @@ class DefaultContextEngineTrimToFitTest {
 
     @Test
     void trimToFitWithMultipleToolCallsRemovesAllResults() {
-        when(skillManager.listSkillNames()).thenReturn(Collections.emptyList());
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
             .thenReturn(Collections.emptyList());
 

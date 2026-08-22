@@ -41,7 +41,7 @@ public interface SkillManager {
     // S9: Rich skill metadata for listing
     default List<SkillInfo> listSkills() {
         return listSkillNames().stream()
-            .map(name -> new SkillInfo(name, "", "", null, 0, 0, null, false, "AGENT_CREATED",
+            .map(name -> new SkillInfo(name, "", "", "", null, 0, 0, null, false, "AGENT_CREATED",
                 List.of(), List.of(), false, null))
             .toList();
     }
@@ -50,7 +50,7 @@ public interface SkillManager {
     default SkillInfo getSkillInfo(String name) {
         String content = getSkill(name);
         if (content == null) return null;
-        return new SkillInfo(name, content, "", null, 0, 0, null, false, "AGENT_CREATED",
+        return new SkillInfo(name, content, "", "", null, 0, 0, null, false, "AGENT_CREATED",
             List.of(), List.of(), false, null);
     }
 
@@ -168,6 +168,7 @@ public interface SkillManager {
     record SkillInfo(
         String name,
         String content,
+        String description,
         String category,
         Instant updatedAt,
         int viewCount,
@@ -179,7 +180,16 @@ public interface SkillManager {
         List<String> relatedSkills,
         boolean disabled,
         LinkedFiles linkedFiles
-    ) {}
+    ) {
+        /** Backward-compatible arity (no description) for existing call sites/tests. */
+        public SkillInfo(String name, String content, String category, Instant updatedAt,
+                         int viewCount, int manageCount, Instant lastActivityAt, boolean archived,
+                         String trustLevel, List<String> tags, List<String> relatedSkills,
+                         boolean disabled, LinkedFiles linkedFiles) {
+            this(name, content, null, category, updatedAt, viewCount, manageCount,
+                lastActivityAt, archived, trustLevel, tags, relatedSkills, disabled, linkedFiles);
+        }
+    }
 
     /**
      * Result of multi-strategy skill lookup.
