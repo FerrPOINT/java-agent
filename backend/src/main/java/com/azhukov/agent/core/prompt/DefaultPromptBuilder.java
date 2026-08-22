@@ -340,6 +340,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
     private final CodingContextDetector codingContextDetector;
     private final MemoryProvider memoryProvider;
     private final SkillManager skillManager;
+    private final com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot;
 
     // C2: Per-session memory snapshot cache — frozen for the session lifetime.
     // Only refreshed on new session or when the PromptCacheTracker is invalidated
@@ -347,32 +348,31 @@ public class DefaultPromptBuilder implements PromptBuilder {
     private final java.util.concurrent.ConcurrentHashMap<String, String> memoryPrefixCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry) {
-        this(properties, toolRegistry, new DefaultAgentConstants(), null, null, null, null);
+        this(properties, toolRegistry, new DefaultAgentConstants(), null, null, null, null, null);
     }
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants) {
-        this(properties, toolRegistry, constants, null, null, null, null);
+        this(properties, toolRegistry, constants, null, null, null, null, null);
     }
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants, PromptCacheTracker cacheTracker) {
-        this(properties, toolRegistry, constants, cacheTracker, null, null, null);
+        this(properties, toolRegistry, constants, cacheTracker, null, null, null, null);
     }
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants, PromptCacheTracker cacheTracker, CodingContextDetector codingContextDetector) {
-        this(properties, toolRegistry, constants, cacheTracker, codingContextDetector, null, null);
+        this(properties, toolRegistry, constants, cacheTracker, codingContextDetector, null, null, null);
     }
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants, PromptCacheTracker cacheTracker, CodingContextDetector codingContextDetector, MemoryProvider memoryProvider) {
-        this(properties, toolRegistry, constants, cacheTracker, codingContextDetector, memoryProvider, null);
+        this(properties, toolRegistry, constants, cacheTracker, codingContextDetector, memoryProvider, null, null);
     }
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private transient com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot;
 
     @Autowired
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants,
                                  PromptCacheTracker cacheTracker, CodingContextDetector codingContextDetector,
-                                 MemoryProvider memoryProvider, SkillManager skillManager) {
+                                 MemoryProvider memoryProvider, SkillManager skillManager,
+                                 @org.springframework.beans.factory.annotation.Autowired(required = false)
+                                 com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot) {
         this.properties = properties;
         this.toolRegistry = toolRegistry;
         this.constants = constants;
@@ -380,6 +380,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         this.codingContextDetector = codingContextDetector;
         this.memoryProvider = memoryProvider;
         this.skillManager = skillManager;
+        this.codingWorkspaceSnapshot = codingWorkspaceSnapshot;
     }
 
     @Override
@@ -1265,7 +1266,13 @@ public class DefaultPromptBuilder implements PromptBuilder {
         if (codingContextDetector != null
                 && properties.getCodingContext() != null
                 && properties.getCodingContext().isEnabled()) {
+            // application.yml binds working-directory to "" when the env var
+            // is unset, which overrides the user.dir default — fall back to
+            // the process CWD when blank (Hermes _resolve_cwd behavior).
             String workingDir = properties.getCore().getWorkingDirectory();
+            if (workingDir == null || workingDir.isBlank()) {
+                workingDir = System.getProperty("user.dir");
+            }
             String snapshot = codingWorkspaceSnapshot.build(workingDir);
             if (!snapshot.isBlank()) {
                 contextTier.append(snapshot).append("\n\n");

@@ -28,8 +28,9 @@ public class PromptConfig {
     @Bean
     public PromptBuilder promptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants agentConstants,
                                        PromptCacheTracker cacheTracker, CodingContextDetector codingContextDetector,
-                                       MemoryProvider memoryProvider, SkillManager skillManager) {
+                                       MemoryProvider memoryProvider, SkillManager skillManager,
+                                       com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot) {
         return new DefaultPromptBuilder(properties, toolRegistry, agentConstants, cacheTracker, codingContextDetector,
-            memoryProvider, skillManager);
+            memoryProvider, skillManager, codingWorkspaceSnapshot);
     }
 }

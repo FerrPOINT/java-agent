@@ -118,7 +118,7 @@ class DefaultPromptBuilderTest {
             .thenReturn(List.of("User prefers dark mode", "User works with Python"));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(
-            properties, registry, constants, null, null, memoryProvider);
+            properties, registry, constants, null, null, memoryProvider, null, null);
         Session session = new Session(UUID.randomUUID(), "user-1", null, "noop", "model", null, java.util.Map.of(), null);
 
         Message msg = builder.buildSystemMessage(session);
@@ -157,7 +157,7 @@ class DefaultPromptBuilderTest {
             .thenReturn(List.of());
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(
-            properties, registry, constants, null, null, memoryProvider);
+            properties, registry, constants, null, null, memoryProvider, null, null);
         Session session = new Session(UUID.randomUUID(), "user-1", null, "noop", "model", null, java.util.Map.of(), null);
 
         Message msg = builder.buildSystemMessage(session);
@@ -1362,7 +1362,7 @@ class DefaultPromptBuilderTest {
         when(skillManager.listSkills()).thenReturn(List.of());
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, skillManager);
+            new DefaultAgentConstants(), null, null, null, skillManager, null);
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
 
         // Hermes parity: empty skills -> NO skills block
@@ -1389,7 +1389,7 @@ class DefaultPromptBuilderTest {
         ));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, skillManager);
+            new DefaultAgentConstants(), null, null, null, skillManager, null);
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
 
         assertThat(msg.content()).contains("## Skills (mandatory)");
@@ -1422,7 +1422,7 @@ class DefaultPromptBuilderTest {
         ));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, skillManager);
+            new DefaultAgentConstants(), null, null, null, skillManager, null);
         String index = builder.buildSkillsIndex();
 
         // Categories should be sorted
@@ -1451,7 +1451,7 @@ class DefaultPromptBuilderTest {
         ));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, skillManager);
+            new DefaultAgentConstants(), null, null, null, skillManager, null);
         String index = builder.buildSkillsIndex();
 
         assertThat(index).contains("general:");
@@ -1471,7 +1471,7 @@ class DefaultPromptBuilderTest {
         when(skillManager.listSkills()).thenThrow(new RuntimeException("DB down"));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, skillManager);
+            new DefaultAgentConstants(), null, null, null, skillManager, null);
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
 
         // Hermes parity: empty skills -> NO skills block
@@ -1495,7 +1495,7 @@ class DefaultPromptBuilderTest {
         ));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, skillManager);
+            new DefaultAgentConstants(), null, null, null, skillManager, null);
         String index = builder.buildSkillsIndex();
 
         assertThat(index).contains("test-skill: A test skill for testing");
@@ -1520,7 +1520,7 @@ class DefaultPromptBuilderTest {
         ));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, skillManager);
+            new DefaultAgentConstants(), null, null, null, skillManager, null);
         String index = builder.buildSkillsIndex();
 
         int descIdx = index.indexOf("long-desc-skill: ");
@@ -1547,7 +1547,7 @@ class DefaultPromptBuilderTest {
         ));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, skillManager);
+            new DefaultAgentConstants(), null, null, null, skillManager, null);
         String index = builder.buildSkillsIndex();
 
         assertThat(index).contains("db-desc-skill: from-db-column");
@@ -1572,7 +1572,7 @@ class DefaultPromptBuilderTest {
         ));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, skillManager);
+            new DefaultAgentConstants(), null, null, null, skillManager, null);
         String index = builder.buildSkillsIndex();
 
         assertThat(index).contains("visible-skill");
@@ -1597,7 +1597,7 @@ class DefaultPromptBuilderTest {
         ));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, skillManager);
+            new DefaultAgentConstants(), null, null, null, skillManager, null);
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
 
         int skillsIdx = msg.content().indexOf("## Skills (mandatory)");
@@ -1624,7 +1624,7 @@ class DefaultPromptBuilderTest {
         ));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, skillManager);
+            new DefaultAgentConstants(), null, null, null, skillManager, null);
         String index = builder.buildSkillsIndex();
 
         assertThat(index).contains("Before replying, scan the skills below");
@@ -1650,7 +1650,7 @@ class DefaultPromptBuilderTest {
         when(registry.getDefinitions()).thenReturn(List.of());
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, null);
+            new DefaultAgentConstants(), null, null, null, null, null);
 
         // loadSoulMd() should load from the configured path
         String soulContent = builder.loadSoulMd();
@@ -1674,7 +1674,7 @@ class DefaultPromptBuilderTest {
         when(registry.getDefinitions()).thenReturn(List.of());
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, null);
+            new DefaultAgentConstants(), null, null, null, null, null);
 
         // With blank path, loadSoulMd() should use DEFAULT_SOUL_MD_PATH
         // which is ~/.hermes/soul.md — likely doesn't exist in test env, so returns null
@@ -1705,7 +1705,7 @@ class DefaultPromptBuilderTest {
         when(registry.getDefinitions()).thenReturn(List.of());
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, null);
+            new DefaultAgentConstants(), null, null, null, null, null);
 
         // buildContextFilesPrompt should walk up and find AGENTS.md in parent
         String contextFiles = builder.buildContextFilesPrompt();
@@ -1729,7 +1729,7 @@ class DefaultPromptBuilderTest {
         when(registry.getDefinitions()).thenReturn(List.of());
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, null);
+            new DefaultAgentConstants(), null, null, null, null, null);
 
         String contextFiles = builder.buildContextFilesPrompt();
         assertThat(contextFiles).isEmpty();

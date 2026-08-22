@@ -37,7 +37,7 @@ class MemoryUserPrefixInjectionTest {
         AgentProperties properties = new AgentProperties();
         // silence repo/file access paths
         builder = new DefaultPromptBuilder(properties, null, new com.azhukov.agent.core.state.DefaultAgentConstants(),
-            null, null, memoryProvider, null);
+            null, null, memoryProvider, null, null);
     }
 
     private Session session() {
