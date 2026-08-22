@@ -410,15 +410,19 @@ public class LangChain4jModelClient implements ModelClient {
     }
 
     /**
-     * Map numeric reasoning effort (0-100) back to API string values.
-     * Ollama Cloud / kimi expects: none, low, medium, high, max.
+     * Map numeric reasoning effort (0-100) to the WIRE effort set.
+     * Hermes parity (transports/chat_completions.py): never forward
+     * xhigh/max/ultra verbatim — providers clamp to their own levels
+     * (Gemini: low/medium/high; sending 'max' made LiteLLM raise
+     * "Invalid reasoning effort" and kill the whole turn). The wider
+     * Hermes effort vocabulary is a UI concept; the wire only sees
+     * low/medium/high.
      */
     private String effortToString(int effort) {
         if (effort <= 0) return "none";
         if (effort <= 40) return "low";
         if (effort <= 70) return "medium";
-        if (effort <= 90) return "high";
-        return "max";
+        return "high";
     }
 
     /**
@@ -445,7 +449,10 @@ public class LangChain4jModelClient implements ModelClient {
             case "low" -> 40;
             case "medium" -> 70;
             case "high" -> 90;
-            case "xhigh" -> 100;
+            // Hermes' wider vocabulary maps onto the same scale; the WIRE set
+            // stays low/medium/high (see effortToString) — max/ultra never
+            // reach the provider verbatim.
+            case "xhigh", "max", "ultra" -> 100;
             default -> {
                 try {
                     int value = Integer.parseInt(raw);
