@@ -79,7 +79,8 @@ public class SlashCommandRegistry {
             new ModelCommands(cliState),
             new ApprovalCommands(),
             new AdminCommands(cliState),
-            new UtilityCommands(cliState)
+            new UtilityCommands(cliState),
+            new LearnInitCommands()
         );
     }
 

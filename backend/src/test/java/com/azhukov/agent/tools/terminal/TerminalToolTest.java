@@ -156,8 +156,10 @@ class TerminalToolTest {
         ToolResult result = tool.execute(
             "{\"command\":\"echo error_msg_to_stderr 1>&2; exit 7\"}", null, session());
 
-        // The tool returns ok() with the captured output regardless of exit code
-        assertThat(result.success()).isTrue();
+        // Hermes parity: non-zero exit is a failure, but the captured output
+        // (stdout+stderr) is still delivered so the model can diagnose it.
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).isEqualTo("exit 7");
         assertThat(result.content()).contains("error_msg_to_stderr");
     }
 

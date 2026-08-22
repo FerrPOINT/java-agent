@@ -190,6 +190,31 @@ public class BackendClient {
      * Execute a POST that returns a bodiless response (e.g. 204).
      * Returns true on success, false on error.
      */
+    /**
+     * Hermes parity (/refine): run the memory/skill background review on
+     * demand with optional focus instructions. Returns the backend's JSON
+     * response (accepted / reason / message).
+     */
+    public JsonNode refine(String sessionId, String focus) {
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("sessionId", sessionId);
+        if (focus != null && !focus.isBlank()) {
+            body.put("focus", focus.strip());
+        }
+        try {
+            return executePost("/api/v1/agent/refine", body);
+        } catch (BackendUnavailableException e) {
+            throw e;
+        } catch (Exception e) {
+            if (isConnectionError(e)) {
+                throw new BackendUnavailableException(backendUrl, e);
+            }
+            log.error("refine failed: {}", e.getMessage());
+            return objectMapper.createObjectNode().put("accepted", false)
+                .put("reason", "refine request failed: " + e.getMessage());
+        }
+    }
+
     public boolean executePostBodiless(String uri, Object body, Object... uriVars) {
         try {
             restClient.post()

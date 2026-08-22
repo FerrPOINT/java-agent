@@ -121,7 +121,21 @@ public class BackgroundReviewService {
   */
  public void reviewTurn(UUID sessionId, List<Message> messages, String parentUserId,
                         boolean reviewMemory, boolean reviewSkills) {
-     if (!properties.getMemory().getBackgroundReview().isEnabled()) {
+     reviewTurn(sessionId, messages, parentUserId, reviewMemory, reviewSkills, null);
+ }
+
+ /**
+  * Hermes parity (/refine, background_review.py:1320-1358): explicit
+  * user-triggered review with optional focus instructions. A non-empty focus
+  * bypasses the enabled-gate (same contract as zeroing nudge intervals —
+  * manual refine keeps working when automatic forks are disabled, #87250)
+  * and appends a focus block to the chosen review prompt.
+  */
+ public void reviewTurn(UUID sessionId, List<Message> messages, String parentUserId,
+                        boolean reviewMemory, boolean reviewSkills, String focus) {
+     String f = focus == null ? "" : focus.strip();
+     // Explicit /refine (focus set) bypasses the enabled gate.
+     if (f.isEmpty() && !properties.getMemory().getBackgroundReview().isEnabled()) {
          return;
      }
      if (messages == null || messages.isEmpty()) {
@@ -134,7 +148,7 @@ public class BackgroundReviewService {
      int delayMs = properties.getMemory().getBackgroundReview().getDelayMs();
      executor.schedule(() -> {
          try {
-             doReview(sessionId, messages, parentUserId, reviewMemory, reviewSkills);
+             doReview(sessionId, messages, parentUserId, reviewMemory, reviewSkills, f);
          } catch (Exception e) {
              log.error("Background review failed for session {}: {}", sessionId, e.getMessage());
          }
@@ -187,7 +201,7 @@ public class BackgroundReviewService {
   * mirroring Hermes spawn_background_review_thread prompt selection.
   */
  private void doReview(UUID sessionId, List<Message> messages, String parentUserId,
-                       boolean reviewMemory, boolean reviewSkills) {
+                       boolean reviewMemory, boolean reviewSkills, String focus) {
      log.debug("Starting background review for session {} (memory={}, skills={})",
          sessionId, reviewMemory, reviewSkills);
 
@@ -204,6 +218,14 @@ public class BackgroundReviewService {
          reviewPrompt = ReviewPrompts.MEMORY_REVIEW_PROMPT;
      } else {
          reviewPrompt = ReviewPrompts.SKILL_REVIEW_PROMPT;
+     }
+     // Hermes parity (background_review.py:1352-1358): /refine focus block.
+     String f = focus == null ? "" : focus.strip();
+     if (!f.isEmpty()) {
+         reviewPrompt = reviewPrompt + "\n\n"
+             + "The user explicitly requested this review with the following "
+             + "focus — prioritize it over the general instructions above:\n"
+             + f;
      }
      log.debug("Background review for session {}: prompt type = {}",
          sessionId, reviewMemory && reviewSkills

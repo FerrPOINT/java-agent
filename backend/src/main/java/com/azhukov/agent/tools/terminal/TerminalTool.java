@@ -223,6 +223,13 @@ public class TerminalTool implements ToolHandler {
             String enhanced = TerminalOutputEnhancer.enhance(
                 redactedOutput, exitCode, workdir, false, actualCwd);
 
+            // Hermes parity (display.py _detect_tool_failure:1350-1358): a non-zero
+            // exit code is the CANONICAL failure signal — the loop guardrail and
+            // the result classifier both key off result.success. Returning ok()
+            // for failed commands made failure-loop detection blind for terminal.
+            if (exitCode != 0) {
+                return new ToolResult(false, enhanced, "exit " + exitCode);
+            }
             return ToolResult.ok(enhanced);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

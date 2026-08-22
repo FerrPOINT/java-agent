@@ -1,9 +1,11 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.ApproveRequest;
+import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.api.dto.BackgroundRequest;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.api.dto.RefineRequest;
 import com.azhukov.agent.api.dto.DenyRequest;
 import com.azhukov.agent.api.dto.DoctorDto;
 import com.azhukov.agent.api.dto.StopRequest;
@@ -56,6 +58,10 @@ public class AgentChatController {
     private final TranscriptionService transcriptionService;
     private final SteerBuffer steerBuffer;
     private final InterruptToken interruptToken;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.memory.BackgroundReviewService> backgroundReviewServiceProvider;
+    private final com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+    private final com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
+    private final com.azhukov.agent.persistence.mapper.MessageMapper messageMapper;
     private final ApprovalQueue approvalQueue;
     private final AgentProperties properties;
     private final AgentMetrics agentMetrics;
@@ -134,6 +140,36 @@ public class AgentChatController {
     @PostMapping("/agent/background")
     public String background(@Valid @RequestBody BackgroundRequest request) {
         return agentRuntimeService.runBackground(request.prompt(), request.sessionId());
+    }
+
+    // ── Refine (Hermes /refine) ──
+
+    @Operation(summary = "Run the memory/skill background review on demand (Hermes /refine parity)")
+    @PostMapping("/agent/refine")
+    public Map<String, Object> refine(@Valid @RequestBody RefineRequest request) {
+        var sessionOpt = sessionRepository.findById(request.sessionId());
+        if (sessionOpt.isEmpty()) {
+            return Map.of("accepted", false, "reason", "session not found");
+        }
+        var session = sessionOpt.get();
+        List<Message> history = this.messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId())
+            .stream().map(messageMapper::toDomain).toList();
+        if (history.isEmpty()) {
+            return Map.of("accepted", false, "reason", "nothing to refine — the conversation is empty");
+        }
+        // Hermes: review_skills iff "skill_manage" in agent.valid_tool_names —
+        // here: the skills toolset is enabled for the session's toolsets.
+        boolean reviewSkills = properties.getSkills().getDefaultToolsets().contains("skills");
+        backgroundReviewServiceProvider.getObject().reviewTurn(session.getId(), history, session.getUserId(),
+            true, reviewSkills, request.focus());
+        String focus = request.focus() == null ? "" : request.focus().strip();
+        return Map.of(
+            "accepted", true,
+            "sessionId", session.getId().toString(),
+            "message", focus.isEmpty()
+                ? "Reviewing this conversation in the background — any memory/skill updates will be reported when done."
+                : "Reviewing this conversation in the background (focus: " + focus + ") — updates reported when done."
+        );
     }
 
     // ── Approve / Deny ──

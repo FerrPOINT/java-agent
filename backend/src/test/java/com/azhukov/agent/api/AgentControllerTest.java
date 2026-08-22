@@ -80,6 +80,7 @@ class AgentControllerTest {
             ttsService, transcriptionService,
             new com.azhukov.agent.core.agent.SteerBuffer(),
             new com.azhukov.agent.core.agent.InterruptToken(),
+            null, null, null, null,
             new com.azhukov.agent.core.security.ApprovalQueue(),
             agentProperties,
             null

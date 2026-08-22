@@ -23,6 +23,16 @@ public class ToolResultFormatter {
         if (result.success()) {
             return result.content();
         }
+        // Hermes parity: a failed tool result still carries its payload — the model
+        // needs the command output (stdout/stderr) to diagnose the failure, not a
+        // bare "Error: exit 1". Content wins when present; error is appended so
+        // nothing is lost either way.
+        if (result.content() != null && !result.content().isBlank()) {
+            return result.content()
+                + (result.error() != null && !result.error().isBlank()
+                    ? "\n[error] " + result.error()
+                    : "");
+        }
         return "Error: " + result.error();
     }
 }

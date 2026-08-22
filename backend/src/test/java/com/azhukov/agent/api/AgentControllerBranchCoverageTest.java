@@ -105,7 +105,9 @@ class AgentControllerBranchCoverageTest {
         AgentChatController controller = new AgentChatController(
             agentRuntimeService, streamingService, memoryProvider, skillManager,
             ttsService, transcriptionService,
-            steerBuffer, interruptToken, approvalQueue, agentProperties,
+            steerBuffer, interruptToken,
+            null, null, null, null,
+            approvalQueue, agentProperties,
             null
         );
         return MockMvcBuilders.standaloneSetup(controller)
