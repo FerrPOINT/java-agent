@@ -1,0 +1,25 @@
+# Features: disabled-capability guards — TTS/imagegen must fail honestly when unconfigured
+name: disabled-capabilities
+steps:
+  - name: TTS tool reports disabled (not a crash)
+    step: turn
+    message: "Синтезируй речь из текста 'тест' через text_to_speech."
+    timeout: 120
+    assert:
+      - { var: turn.toolNames, contains: text_to_speech }
+      - { var: turn.text, matches: "(?i)(отключ|недоступ|disabled|unavailable|не настроен|конфигур)" }
+
+  - name: image generation reports disabled (not a crash)
+    step: turn
+    message: "Сгенерируй картинку кота через image_generate."
+    timeout: 120
+    assert:
+      - { var: turn.toolNames, contains: image_generate }
+      - { var: turn.text, matches: "(?i)(отключ|недоступ|disabled|unavailable|не настроен|конфигур)" }
+
+  - name: vision without image gives usage guidance
+    step: turn
+    message: "Проанализируй изображение через vision_analyze без указания файла."
+    timeout: 120
+    assert:
+      - { var: turn.error, eq: null }

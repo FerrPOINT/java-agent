@@ -1,0 +1,16 @@
+# Tools: web_search + web_extract — live web surface
+name: web-tools
+steps:
+  - name: agent searches the web
+    step: turn
+    message: "Найди в вебе: официальный сайт Spring Boot. Верни только домен."
+    assert:
+      - { var: turn.toolNames, contains: web_search }
+      - { var: turn.text, contains: "spring.io" }
+
+  - name: agent extracts a page
+    step: turn
+    message: "Извлеки содержимое страницы https://example.com и скажи какой заголовок h1 там."
+    assert:
+      - { var: turn.toolNames, contains: web_extract }
+      - { var: turn.text, matches: "(?i)Example Domain" }

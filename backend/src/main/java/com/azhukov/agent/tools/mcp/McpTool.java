@@ -30,6 +30,12 @@ public class McpTool implements ToolHandler {
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         McpArgs args = ToolHandler.parseJson(arguments, McpArgs.class);
+        // A null serverName would surface as a raw ConcurrentHashMap NPE
+        // ("Cannot invoke Object.hashCode()...") — give the model usage guidance instead.
+        if (args.serverName() == null || args.serverName().isBlank()) {
+            return ToolResult.fail("mcp_tool requires 'server_name' (and 'tool_name'). "
+                + "No MCP servers are connected; see /mcp/servers for the configured list.");
+        }
         mcpOAuthManager.getToken(args.serverName())
             .ifPresent(token -> log.debug("Using OAuth token for MCP server {}", args.serverName()));
         try {

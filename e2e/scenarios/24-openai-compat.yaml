@@ -1,0 +1,37 @@
+# Features: OpenAI-compatible /v1/chat/completions + /v1/models — external API surface
+name: openai-compat
+steps:
+  - name: models list
+    method: GET
+    path: /v1/models
+    assert:
+      - { path: object, eq: list }
+      - { path: data, len_gte: 1 }
+
+  - name: chat completion round-trip
+    method: POST
+    path: /v1/chat/completions
+    body:
+      model: app-test
+      messages:
+        - { role: user, content: "Ответь ровно одним словом: ок" }
+    assert:
+      - { path: choices, len_gte: 1 }
+      - { path: "choices[0].message.role", eq: assistant }
+    extract:
+      "choices[0].message.content": completion_text
+
+  - name: completion answered (checked on the response of this same step)
+    path: /v1/models
+    assert:
+      - { var: completion_text, matches: "(?i)ок|Ок|ОК" }
+
+  - name: unknown model still returns a completion shape (proxy default)
+    method: POST
+    path: /v1/chat/completions
+    body:
+      model: no-such-model
+      messages:
+        - { role: user, content: "Скажи: готово" }
+    assert:
+      - { path: choices, len_gte: 1 }

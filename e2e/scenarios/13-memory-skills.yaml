@@ -1,0 +1,35 @@
+# Tools: memory / skill_view / skills_list / skill_manage — memory & skills surface
+name: memory-skills-tools
+steps:
+  - name: agent recalls stored preference via memory tool
+    step: turn
+    message: "Посмотри в память: какое у меня постоянное предпочтение про префикс в e2e-тестах? Назови префикс."
+    assert:
+      - { var: turn.toolNames, contains: memory }
+
+  - name: agent lists skills via skills_list
+    step: turn
+    message: "Покажи список доступных скиллов через инструмент."
+    assert:
+      - { var: turn.toolNames, contains: skills_list }
+
+  - name: agent reads a skill via skill_view
+    step: turn
+    message: "Прочитай скилл deploy-checklist и назови первый шаг из его Deploy-секции."
+    assert:
+      - { var: turn.toolNames, contains: skill_view }
+      - { var: turn.text, contains: "Run tests" }
+
+  - name: skills REST API serves content
+    path: /agent/skills/deploy-checklist
+    assert:
+      - { path: content, contains: "deploy-checklist" }
+
+  - name: skill audit log endpoint responds
+    path: /agent/skills/deploy-checklist/audit
+    assert: { status: 200 }
+
+  - name: memory REST listing for user
+    path: /agent/memory/all/user-1
+    assert:
+      - { path: "[0].userId", eq: user-1 }

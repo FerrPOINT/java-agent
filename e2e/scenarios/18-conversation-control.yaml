@@ -1,0 +1,37 @@
+# Features: session branch + queue + steer + plan — conversation control surface
+name: conversation-control
+steps:
+  - name: probe session
+    step: turn
+    message: "Ответь одним словом: ок"
+
+  - name: branch the session
+    method: POST
+    path: /agent/session/{session_id}/branch
+    body: { name: "e2e-branch" }
+    assert:
+      - { path: id, exists: true }
+    extract:
+      id: branch_id
+
+  - name: queue a prompt
+    method: POST
+    path: /agent/queue
+    body: { sessionId: "{session_id}", prompt: "e2e queued prompt" }
+    assert: { status: 200 }
+
+  - name: steer accepted
+    method: POST
+    path: /agent/steer
+    body: { sessionId: "{session_id}", text: "steer: keep it short" }
+    assert: { accepted: true }
+
+  - name: plan endpoint (todos)
+    path: /agent/session/{session_id}/plan
+    assert:
+      - { path: session_id, exists: true }
+
+  - name: session context counters
+    path: /agent/session/{session_id}/context
+    assert:
+      - { path: messageCount, gte: 1 }

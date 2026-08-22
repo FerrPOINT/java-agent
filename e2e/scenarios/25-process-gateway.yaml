@@ -1,0 +1,24 @@
+# Features: process tool + send_message (gateway) + cronjob tool surfaces
+name: process-gateway-cron-tools
+steps:
+  - name: agent inspects a process listing
+    step: turn
+    message: "Через инструмент process покажи список фоновых процессов и назови сколько их."
+    timeout: 120
+    assert:
+      - { var: turn.toolNames, contains: process }
+
+  - name: cronjob tool lists jobs
+    step: turn
+    message: "Через инструмент cronjob покажи список cron-джобов."
+    timeout: 120
+    assert:
+      - { var: turn.toolNames, contains: cronjob }
+
+  - name: mcp_tool surfaces not-configured honestly
+    step: turn
+    message: "Вызови mcp_tool с сервером 'no-such-server' и любым tool name. Скажи что вернулось."
+    timeout: 120
+    assert:
+      - { var: turn.toolNames, contains: mcp_tool }
+      - { var: turn.error, eq: null }

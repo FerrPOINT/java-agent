@@ -77,41 +77,6 @@ import org.springframework.context.annotation.Import;
 public class AgentConfig {
 
     @Bean
-    public AgentRuntime agentRuntime(ModelClient modelClient,
-                                     ToolRegistry toolRegistry,
-                                     ToolExecutionService toolExecutionService,
-                                     PromptBuilder promptBuilder,
-                                     ContextEngine contextEngine,
-                                     MemoryProvider memoryProvider,
-                                     SkillManager skillManager,
-                                     IterationBudget iterationBudget,
-                                     MessageSanitizer messageSanitizer,
-                                     ContextReferenceService contextReferenceService,
-                                     AgentProperties properties,
-                                     UserInputSanitizer inputSanitizer,
-                                     ToolCallGuardrail guardrail,
-                                     TurnStateManager turnStateManager,
-                                     BackgroundReviewService backgroundReviewService,
-                                     InterruptToken interruptToken,
-                                     TurnFinalizer turnFinalizer,
-                                     SteerBuffer steerBuffer,
-                                     ErrorClassifier errorClassifier,
-                                     ContextCompressor contextCompressor,
-                                     ApprovalQueue approvalQueue,
-                                     com.azhukov.agent.core.security.ToolGuardrails toolGuardrails,
-                                     MemoryManager memoryManager,
-                                     TokenEstimator tokenEstimator,
-                                     ToolResultFormatter toolResultFormatter,
-                                     MidTurnPersistenceCallback midTurnPersistenceCallback,
-                                     CommentaryCallback commentaryCallback) {
-        return new DefaultAgentRuntime(modelClient, toolRegistry, toolExecutionService, promptBuilder, contextEngine,
-            memoryProvider, skillManager, iterationBudget, messageSanitizer, contextReferenceService, properties,
-            inputSanitizer, guardrail, turnStateManager, backgroundReviewService, interruptToken, turnFinalizer, steerBuffer,
-            errorClassifier, contextCompressor, approvalQueue, toolGuardrails, memoryManager, tokenEstimator, toolResultFormatter,
-            midTurnPersistenceCallback, commentaryCallback);
-    }
-
-    @Bean
     @ConditionalOnMissingBean(TurnStateManager.class)
     public TurnStateManager turnStateManager() {
         return new TurnStateManager();

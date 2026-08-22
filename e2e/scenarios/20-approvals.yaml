@@ -1,0 +1,16 @@
+# Features: approvals surface + yolo/security mode
+name: approvals-security
+steps:
+  - name: pending approvals empty (no active turn)
+    path: /agent/approvals/pending
+    assert:
+      - { path: "$", len_eq: 0 }
+
+  - name: capabilities report approval feature truthfully
+    path: /v1/capabilities
+    assert:
+      - { path: features.approval_events, eq: true }
+
+  - name: backend config exposes approvals flag
+    path: /agent/config
+    assert: { status: 200 }

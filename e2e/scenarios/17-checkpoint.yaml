@@ -1,0 +1,45 @@
+# Features: checkpoint / diff / rollback — state snapshot surface
+name: checkpoint-diff-rollback
+steps:
+  - name: create checkpoint A
+    method: POST
+    path: /agent/checkpoint
+    body: { description: "e2e checkpoint A" }
+    extract:
+      id: cp_a
+
+  - name: checkpoint A in list
+    path: /agent/checkpoint
+    assert:
+      - { path: "[0].description", exists: true }
+
+  - name: create checkpoint B
+    method: POST
+    path: /agent/checkpoint
+    body: { description: "e2e checkpoint B" }
+    extract:
+      id: cp_b
+
+  - name: diff A vs B computes
+    method: GET
+    path: /agent/diff
+    params: { left: "{cp_a}", right: "{cp_b}", scope: context }
+    assert:
+      - { path: left, exists: true }
+      - { path: right, exists: true }
+
+  - name: restore checkpoint A
+    method: POST
+    path: /agent/checkpoint/{cp_a}/restore
+    assert:
+      - { path: _raw, contains: "restored" }
+
+  - name: delete checkpoint B
+    method: DELETE
+    path: /agent/checkpoint/{cp_b}
+    assert: { status: 200 }
+
+  - name: deleted checkpoint restore rejected
+    method: POST
+    path: /agent/checkpoint/{cp_b}/restore
+    assert: { status: 400 }

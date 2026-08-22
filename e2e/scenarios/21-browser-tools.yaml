@@ -1,0 +1,24 @@
+# Features: browser tools via CDP — live chromium surface
+name: browser-tools
+steps:
+  - name: agent navigates and reads page title
+    step: turn
+    message: "Открой в браузере https://example.com и назови заголовок страницы."
+    timeout: 120
+    assert:
+      - { var: turn.toolNames, contains: browser_navigate }
+      - { var: turn.text, matches: "(?i)Example Domain" }
+
+  - name: agent takes a snapshot
+    step: turn
+    message: "Сделай снапшот текущей страницы и скажи сколько ссылок на ней."
+    timeout: 120
+    assert:
+      - { var: turn.toolNames, contains: browser_snapshot }
+
+  - name: agent goes back
+    step: turn
+    message: "Вернись на предыдущую страницу через browser_back и скажи получилось ли."
+    timeout: 120
+    assert:
+      - { var: turn.toolNames, contains: browser_back }

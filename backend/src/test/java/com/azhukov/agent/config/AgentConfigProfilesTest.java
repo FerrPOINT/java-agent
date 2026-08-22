@@ -36,7 +36,7 @@ class AgentConfigProfilesTest {
         void keyBeansExist() {
             assertThat(context.getBean(ModelClient.class)).isNotNull();
             assertThat(context.getBean(ToolRegistry.class)).isNotNull();
-            assertThat(context.getBean("agentRuntime", AgentRuntime.class)).isNotNull();
+            assertThat(context.getBean(AgentRuntime.class)).isNotNull();
             assertThat(context.getBean(GatewayRoutingService.class)).isNotNull();
         }
     }

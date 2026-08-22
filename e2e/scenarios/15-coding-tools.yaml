@@ -1,0 +1,27 @@
+# Tools: execute_code + patch + delete_file — coding surface
+name: coding-tools
+steps:
+  - name: agent executes python code
+    step: turn
+    message: "Выполни python-код: print(6*7) — и назови результат."
+    assert:
+      - { var: turn.toolNames, contains: execute_code }
+      - { var: turn.text, contains: "42" }
+
+  - name: agent creates then patches a file
+    step: turn
+    message: "Создай файл /tmp/e2e-patch.txt со строкой 'version=1', затем примени патч: замени 1 на 2. Покажи итоговое содержимое."
+    assert:
+      - { var: turn.toolNames, contains: patch }
+      - { var: turn.text, contains: "version=2" }
+
+  - name: agent deletes a file
+    step: turn
+    message: "Удали файл /tmp/e2e-patch.txt и подтверди."
+    assert:
+      - { var: turn.toolNames, contains: delete_file }
+
+  - name: file is really gone
+    method: GET
+    path: /agent/health
+    assert: { status: 200 }

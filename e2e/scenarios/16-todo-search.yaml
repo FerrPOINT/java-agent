@@ -1,0 +1,20 @@
+# Tools: todo + session_search — planning & recall surface
+name: todo-session-search
+steps:
+  - name: agent creates todos
+    step: turn
+    message: "Создай два тудушки: 'первая e2e задача' и 'вторая e2e задача', затем покажи список."
+    assert:
+      - { var: turn.toolNames, contains: todo }
+
+  - name: todo API reflects them
+    path: /agent/session/{session_id}/plan
+    assert:
+      - { path: todos, len_gte: 2 }
+
+  - name: agent searches session history
+    step: turn
+    message: "Поищи в истории сессий: в какой сессии я просил создать тудушки? Назови текст задачи."
+    assert:
+      - { var: turn.toolNames, contains: session_search }
+      - { var: turn.text, contains: "e2e" }

@@ -1,0 +1,26 @@
+# Features: kanban board + insights — workflow surfaces
+name: kanban-insights
+steps:
+  - name: add kanban item
+    method: POST
+    path: /agent/kanban/add
+    body: { text: "e2e kanban item" }
+    extract:
+      id: kb_id
+
+  - name: kanban list shows it
+    method: GET
+    path: /agent/kanban
+    assert: { status: 200 }
+
+  - name: mark done
+    method: POST
+    path: /agent/kanban/done/{kb_id}
+    assert: { status: 200 }
+
+  - name: insights aggregate usage
+    path: /agent/insights
+    assert:
+      - { path: totalTokens, gte: 0 }
+      - { path: totalMessages, gte: 1 }
+      - { path: byModel, exists: true }

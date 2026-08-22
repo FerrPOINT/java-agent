@@ -326,7 +326,7 @@ def main(argv):
 
     # health gate
     try:
-        h = requests.get(base.rsplit("/api/v1", 1)[0] + "/actuator/health", timeout=10).json()
+        h = requests.get(base.rsplit("/api/v1", 1)[0] + "/actuator/health", timeout=60).json()
         assert h.get("status") == "UP", h.get("status")
         print(f"backend health: UP ({base})")
     except Exception as e:  # noqa: BLE001

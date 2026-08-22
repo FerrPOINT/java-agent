@@ -46,6 +46,7 @@ import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import com.azhukov.agent.core.agent.DefaultAgentRuntime;
 
 /**
  * Verifies that every @Bean method previously defined in AgentConfig still
@@ -107,8 +108,11 @@ class AgentConfigBeanMethodsTest {
     }
 
     @Test
-    void agentRuntime_bean() {
-        assertThat(config.agentRuntime(mock(ModelClient.class), mock(ToolRegistry.class), mock(ToolExecutionService.class), mock(PromptBuilder.class), mock(ContextEngine.class), mock(MemoryProvider.class), mock(SkillManager.class), mock(IterationBudget.class), mock(MessageSanitizer.class), mock(ContextReferenceService.class), properties, mock(UserInputSanitizer.class), mock(ToolCallGuardrail.class), mock(TurnStateManager.class), mock(BackgroundReviewService.class), mock(InterruptToken.class), mock(TurnFinalizer.class), mock(com.azhukov.agent.core.agent.SteerBuffer.class), mock(ErrorClassifier.class), mock(ContextCompressor.class), mock(com.azhukov.agent.core.security.ApprovalQueue.class), mock(com.azhukov.agent.core.security.ToolGuardrails.class), mock(com.azhukov.agent.core.memory.MemoryManager.class), mock(com.azhukov.agent.core.agent.TokenEstimator.class), mock(com.azhukov.agent.core.agent.ToolResultFormatter.class), mock(com.azhukov.agent.core.agent.MidTurnPersistenceCallback.class), mock(com.azhukov.agent.core.agent.CommentaryCallback.class))).isNotNull();
+    void agentRuntime_nowComponent() {
+        // AgentRuntime is a single @Component (DefaultAgentRuntime); the former
+        // duplicate @Bean factory was removed after a live e2e run showed
+        // delegate_task failing on 'expected single matching bean but found 2'.
+        assertThat(DefaultAgentRuntime.class.isAnnotationPresent(org.springframework.stereotype.Component.class)).isTrue();
     }
 
     @Test

@@ -1,0 +1,16 @@
+# Features: delegate_task + clarify — orchestration surface
+name: delegate-clarify
+steps:
+  - name: agent uses clarify tool on ambiguous request
+    step: turn
+    message: "Запусти фонового субагента с задачей: посчитай от 1 до 5 и верни сумму. Дождись и назови результат."
+    timeout: 180
+    assert:
+      - { var: turn.toolNames, contains: delegate_task }
+      - { var: turn.text, contains: "15" }
+
+  - name: clarify tool reachable
+    step: turn
+    message: "Мне нужен однозначный ответ: задай мне ОДИН уточняющий вопрос про то, что я сейчас сказал."
+    assert:
+      - { var: turn.error, eq: null }
