@@ -143,6 +143,7 @@ public class ErrorClassifier {
             || lowerMessage.contains("violates our usage policies")
             || lowerMessage.contains("violates openai's usage policies")
             || lowerMessage.contains("your request was flagged by")
+            || lowerMessage.contains("new_sensitive")
             // Anthropic safety system
             || lowerMessage.contains("prompt was flagged by our safety")
             || lowerMessage.contains("responses cannot be generated due to safety")
@@ -230,17 +231,20 @@ public class ErrorClassifier {
         }
 
         // ── 7. Billing (402 / billing patterns) ──
-        // Mirrors Hermes _BILLING_PATTERNS
+        // Mirrors Hermes _BILLING_PATTERNS (21 strings, full parity 2026-08-22)
         if (lowerMessage.contains("402")
             || lowerMessage.contains("insufficient credits") || lowerMessage.contains("insufficient_quota")
             || lowerMessage.contains("insufficient balance") || lowerMessage.contains("credit balance")
             || lowerMessage.contains("credits exhausted") || lowerMessage.contains("credits have been exhausted")
+            || lowerMessage.contains("requires available credits")
+            || lowerMessage.contains("account balance is too low")
             || lowerMessage.contains("no usable credits") || lowerMessage.contains("top up your credits")
             || lowerMessage.contains("billing quota") || lowerMessage.contains("payment required")
             || lowerMessage.contains("billing hard limit") || lowerMessage.contains("quota exceeded")
             || lowerMessage.contains("exceeded your current quota")
             || lowerMessage.contains("account is deactivated")
             || lowerMessage.contains("plan does not include")
+            || lowerMessage.contains("out of extra usage")
             || lowerMessage.contains("out of funds") || lowerMessage.contains("run out of funds")
             || lowerMessage.contains("balance_depleted")
             || lowerMessage.contains("model_not_supported_on_free_tier")
@@ -273,26 +277,39 @@ public class ErrorClassifier {
             || lowerMessage.contains("slot context")
             || lowerMessage.contains("n_ctx_slot")
             || lowerMessage.contains("maximum allowed input length")
-            || lowerMessage.contains("max input token")) {
+            || lowerMessage.contains("max input token")
+            // Hermes parity (error_classifier.py _CONTEXT_OVERFLOW_PATTERNS, full set 2026-08-22):
+            || lowerMessage.contains("max_tokens")                     // bare max_tokens hint (Ollama/LiteLLM)
+            || lowerMessage.contains("maximum number of tokens")
+            || lowerMessage.contains("exceeds the max_model_len")
+            || lowerMessage.contains("engine prompt length")
+            || lowerMessage.contains("truncating input")               // vLLM truncation notice
+            || lowerMessage.contains("slot context")                   // llama.cpp slot hint
+            || lowerMessage.contains("exceeds the maximum number of input tokens")
+            || lowerMessage.contains("input token")) {                 // Bedrock "input token" family
             return new ClassificationResult(ErrorType.CONTEXT_OVERFLOW, RecoveryHints.compressAndRetry());
         }
 
         // ── 9. Payload too large (413) ──
-        // Mirrors Hermes FailoverReason.payload_too_large
+        // Mirrors Hermes FailoverReason.payload_too_large + _PAYLOAD_TOO_LARGE_PATTERNS (full set)
         if (lowerMessage.contains("413")
             || lowerMessage.contains("request entity too large")
             || lowerMessage.contains("payload too large")
-            || lowerMessage.contains("error code: 413")) {
+            || lowerMessage.contains("error code: 413")
+            || lowerMessage.contains("request_too_large")
+            || lowerMessage.contains("request exceeds the maximum size")) {
             return new ClassificationResult(ErrorType.PAYLOAD_TOO_LARGE, RecoveryHints.compressAndRetry());
         }
 
         // ── 10. Image too large (413/400 + image patterns) ──
-        // Mirrors Hermes FailoverReason.image_too_large + _IMAGE_TOO_LARGE_PATTERNS
+        // Mirrors Hermes FailoverReason.image_too_large + _IMAGE_TOO_LARGE_PATTERNS (full set)
         if (lowerMessage.contains("image exceeds")
+            || lowerMessage.contains("image exceeds 5 mb maximum")
             || lowerMessage.contains("image too large")
             || lowerMessage.contains("image_too_large")
             || lowerMessage.contains("image size exceeds")
             || lowerMessage.contains("image dimensions exceed")
+            || lowerMessage.contains("image dimensions exceed max allowed size: 8000 pixels")
             || lowerMessage.contains("dimensions exceed max allowed size")
             || lowerMessage.contains("max allowed size: 8000")) {
             return new ClassificationResult(ErrorType.IMAGE_TOO_LARGE, RecoveryHints.compressAndRetry());
@@ -304,6 +321,17 @@ public class ErrorClassifier {
             || lowerMessage.contains("no endpoints available matching your data policy")
             || lowerMessage.contains("no endpoints found matching your data policy")) {
             return new ClassificationResult(ErrorType.PROVIDER_POLICY_BLOCKED, RecoveryHints.noRetry());
+        }
+
+        // ── 11b. Invalid message body (Hermes _INVALID_MESSAGE_BODY_PATTERNS) ──
+        // Non-retryable with the same payload; classify as FORMAT_ERROR family.
+        if (lowerMessage.contains("must have non-empty content")
+            || lowerMessage.contains("messages must have non-empty")
+            || lowerMessage.contains("invalid_request_body")
+            || lowerMessage.contains("text content blocks must be non-empty")
+            || lowerMessage.contains("content field is required")
+            || lowerMessage.contains("messages: at least one message is required")) {
+            return new ClassificationResult(ErrorType.FORMAT_ERROR, RecoveryHints.noRetry());
         }
 
         // ── 11a. Malformed request history — non-retryable with same history ──
@@ -326,9 +354,12 @@ public class ErrorClassifier {
         }
 
         // ── 12. Auth errors — 401 ──
+        // Hermes _AUTH_PATTERNS full set (2026-08-22)
         if (lowerMessage.contains("401") || lowerMessage.contains("unauthorized")
             || lowerMessage.contains("invalid api key") || lowerMessage.contains("invalid_api_key")
+            || lowerMessage.contains("gateway_auth_failed")
             || lowerMessage.contains("authentication failed")
+            || lowerMessage.contains("authentication")
             || lowerMessage.contains("invalid token") || lowerMessage.contains("token expired")
             || lowerMessage.contains("token revoked")) {
             return new ClassificationResult(ErrorType.AUTH, RecoveryHints.rotateAndRetry());
@@ -350,7 +381,9 @@ public class ErrorClassifier {
             || lowerMessage.contains("model_not_found") || lowerMessage.contains("does not exist")
             || lowerMessage.contains("no such model") || lowerMessage.contains("is not a valid model")
             || lowerMessage.contains("invalid model") || lowerMessage.contains("unknown model")
-            || lowerMessage.contains("unsupported model")) {
+            || lowerMessage.contains("unsupported model")
+            // Hermes parity 2026-08-22: tool-use gating surfaces as model-unavailable
+            || lowerMessage.contains("no endpoints found that support tool use")) {
             return new ClassificationResult(ErrorType.MODEL_NOT_FOUND, RecoveryHints.switchModel());
         }
 
@@ -375,9 +408,20 @@ public class ErrorClassifier {
             return new ClassificationResult(ErrorType.MULTIMODAL_TOOL_CONTENT, RecoveryHints.canRetry());
         }
 
-        // ── 16. Provider overloaded (Anthropic-specific 529) ──
+        // ── 16. Provider overloaded (Anthropic-specific 529 + Hermes _OVERLOADED_PATTERNS) ──
         if (lowerMessage.contains("529") || lowerMessage.contains("overloaded")
-            || lowerMessage.contains("model is overloaded")) {
+            || lowerMessage.contains("model is overloaded")
+            || lowerMessage.contains("temporarily overloaded")
+            || lowerMessage.contains("service is temporarily overloaded")
+            || lowerMessage.contains("service may be temporarily overloaded")
+            || lowerMessage.contains("server is overloaded")
+            || lowerMessage.contains("server overloaded")
+            || lowerMessage.contains("service overloaded")
+            || lowerMessage.contains("service is overloaded")
+            || lowerMessage.contains("upstream overloaded")
+            || lowerMessage.contains("currently overloaded")
+            || lowerMessage.contains("at capacity")
+            || lowerMessage.contains("over capacity")) {
             return new ClassificationResult(ErrorType.OVERLOADED, RecoveryHints.canRetry());
         }
 
@@ -390,16 +434,37 @@ public class ErrorClassifier {
         }
 
         // ── 18. Rate limit — 429 ──
+        // Hermes _RATE_LIMIT_PATTERNS full set (2026-08-22)
         if (lowerMessage.contains("rate limit") || lowerMessage.contains("429")
+            || lowerMessage.contains("rate_limit")
             || lowerMessage.contains("too many requests")
             || lowerMessage.contains("throttled") || lowerMessage.contains("resource_exhausted")
-            || lowerMessage.contains("requests per minute") || lowerMessage.contains("tokens per minute")) {
+            || lowerMessage.contains("requests per minute") || lowerMessage.contains("tokens per minute")
+            || lowerMessage.contains("requests per day")
+            || lowerMessage.contains("try again in") || lowerMessage.contains("please retry after")
+            || lowerMessage.contains("rate increased too quickly")
+            || lowerMessage.contains("throttlingexception")
+            || lowerMessage.contains("too many concurrent requests")
+            || lowerMessage.contains("servicequotaexceededexception")
+            || lowerMessage.contains("throttling")) {
             return new ClassificationResult(ErrorType.RATE_LIMIT, RecoveryHints.canRetry());
         }
 
-        // ── 19. Timeout ──
+        // ── 18b. Empty provider response (Hermes _EMPTY_PROVIDER_RESPONSE_PATTERNS) ──
+        // Advisory, not an error to retry against the same payload shape.
+        if (lowerMessage.contains("returned an empty response")
+            || lowerMessage.contains("empty response despite retries")
+            || lowerMessage.contains("provider returned an empty response")
+            || lowerMessage.contains("model returning empty responses")
+            || lowerMessage.contains("empty response stream")) {
+            return new ClassificationResult(ErrorType.EMPTY_RESPONSE, RecoveryHints.advisory());
+        }
+
+        // ── 19. Timeout (Hermes _TIMEOUT_MESSAGE_PATTERNS full set) ──
         if (exception instanceof TimeoutException
             || lowerMessage.contains("timeout") || lowerMessage.contains("timed out")
+            || lowerMessage.contains("turn timed out")
+            || lowerMessage.contains("request timed out")
             || lowerMessage.contains("deadline exceeded") || lowerMessage.contains("operation timed out")
             || lowerMessage.contains("upstream timed out")) {
             return new ClassificationResult(ErrorType.TIMEOUT, RecoveryHints.canRetry());
@@ -416,11 +481,44 @@ public class ErrorClassifier {
         // ── 21. Connection issues ──
         // h80: Match on message content for connect/DNS failures on generic exception types,
         // not just specific exception classes.
+        // Hermes parity (full sets 2026-08-22): _CONNECTION_MESSAGE_PATTERNS (DNS/connect),
+        // _SERVER_DISCONNECT_PATTERNS (mid-stream disconnects),
+        // _SSL_CERT_VERIFY_PATTERNS + _SSL_TRANSIENT_PATTERNS (TLS).
         if (lowerMessage.contains("connection") || lowerMessage.contains("refused") || lowerMessage.contains("reset")
             || lowerMessage.contains("connection refused")
+            || lowerMessage.contains("econnrefused")
             || lowerMessage.contains("unknown host")
-            || lowerMessage.contains("network is unreachable")
-            || lowerMessage.contains("no route to host")) {
+            || lowerMessage.contains("network is unreachable") || lowerMessage.contains("network unreachable")
+            || lowerMessage.contains("no route to host")
+            || lowerMessage.contains("name or service not known")
+            || lowerMessage.contains("temporary failure in name resolution")
+            || lowerMessage.contains("nodename nor servname provided")
+            || lowerMessage.contains("getaddrinfo failed") || lowerMessage.contains("getaddrinfo enotfound")
+            || lowerMessage.contains("eai_again")
+            || lowerMessage.contains("fetch failed") || lowerMessage.contains("failed to fetch")
+            || lowerMessage.contains("upstream connect error")
+            // Server disconnects mid-stream
+            || lowerMessage.contains("server disconnected")
+            || lowerMessage.contains("peer closed connection")
+            || lowerMessage.contains("connection reset by peer")
+            || lowerMessage.contains("connection was closed")
+            || lowerMessage.contains("network connection lost")
+            || lowerMessage.contains("unexpected eof")
+            || lowerMessage.contains("incomplete chunked read")
+            // TLS certificate verify failures (retryable via different route/credential)
+            || lowerMessage.contains("certificate verify failed") || lowerMessage.contains("certificate_verify_failed")
+            || lowerMessage.contains("unable to get local issuer certificate")
+            || lowerMessage.contains("self-signed certificate") || lowerMessage.contains("self signed certificate")
+            || lowerMessage.contains("certificate has expired")
+            || lowerMessage.contains("hostname mismatch, certificate is not valid")
+            || lowerMessage.contains("unable to verify the first certificate")
+            // Transient TLS/SSL alerts
+            || lowerMessage.contains("bad record mac") || lowerMessage.contains("bad_record_mac")
+            || lowerMessage.contains("ssl alert") || lowerMessage.contains("ssl_alert")
+            || lowerMessage.contains("tls alert") || lowerMessage.contains("tls_alert")
+            || lowerMessage.contains("tls_alert_internal_error")
+            || lowerMessage.contains("ssl handshake failure")
+            || lowerMessage.contains("tlsv1 alert") || lowerMessage.contains("sslv3 alert")) {
             return new ClassificationResult(ErrorType.RETRYABLE, RecoveryHints.canRetry());
         }
 

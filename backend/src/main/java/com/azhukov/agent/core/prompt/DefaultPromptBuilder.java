@@ -366,6 +366,9 @@ public class DefaultPromptBuilder implements PromptBuilder {
         this(properties, toolRegistry, constants, cacheTracker, codingContextDetector, memoryProvider, null);
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private transient com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot;
+
     @Autowired
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants,
                                  PromptCacheTracker cacheTracker, CodingContextDetector codingContextDetector,
@@ -405,13 +408,15 @@ public class DefaultPromptBuilder implements PromptBuilder {
 
         String text = cached.fullPrompt();
 
-        // Prepend memory prefix to the system prompt (not the user message) so that
-        // persistent facts are always in context. The three-tier prompt cached above
-        // remains byte-stable; only the memory prefix is fetched fresh per turn.
-        String memoryPrefix = buildMemoryPrefix(session);
-        if (!memoryPrefix.isEmpty()) {
-            text = memoryPrefix + "\n\n" + text;
-        }
+        // Hermes parity (system_prompt.py:782-800): memory blocks live INSIDE
+        // the volatile tier of the system prompt (after the skills index,
+        // before the timestamp line) — NOT prepended per turn. Prepending a
+        // fresh prefix on every turn shifted the whole prompt and broke the
+        // upstream prefix cache whenever memory changed. The frozen-snapshot
+        // invariant is preserved: the memory prefix is cached per session
+        // (memoryPrefixCache) and only invalidated on explicit events
+        // (compression / reset), exactly like Hermes's load_from_disk()
+        // snapshot semantics.
 
         // Track system prompt hash for cache validation
         if (cacheTracker != null && session != null && session.id() != null) {
@@ -1252,17 +1257,26 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // rides at the FRONT of the volatile band, ahead of memory and the
         // timestamp line, so a changed index only re-prefills from here on).
 
-        // Coding context detection
+        // Coding context — Hermes parity (coding_context.py build_coding_
+        // workspace_block): full workspace snapshot (git branch/status/recent
+        // commits + manifests + package managers + VERIFY COMMANDS + context
+        // files), not a one-line language hint. The snapshot hands the model
+        // its verify loop up front so it doesn't rediscover it every session.
         if (codingContextDetector != null
                 && properties.getCodingContext() != null
                 && properties.getCodingContext().isEnabled()) {
             String workingDir = properties.getCore().getWorkingDirectory();
-            CodingContextDetector.CodingContext ctx = codingContextDetector.detect(workingDir);
-            if (ctx.language() != null) {
-                contextTier.append("\nDetected coding context: language=").append(ctx.language())
-                    .append(", framework=").append(ctx.framework())
-                    .append(", buildTool=").append(ctx.buildTool())
-                    .append(", gitRepo=").append(ctx.isGitRepo());
+            String snapshot = codingWorkspaceSnapshot.build(workingDir);
+            if (!snapshot.isBlank()) {
+                contextTier.append(snapshot).append("\n\n");
+            } else {
+                CodingContextDetector.CodingContext ctx = codingContextDetector.detect(workingDir);
+                if (ctx.language() != null) {
+                    contextTier.append("Detected coding context: language=").append(ctx.language())
+                        .append(", framework=").append(ctx.framework())
+                        .append(", buildTool=").append(ctx.buildTool())
+                        .append(", gitRepo=").append(ctx.isGitRepo()).append("\n\n");
+                }
             }
         }
 
@@ -1281,6 +1295,14 @@ public class DefaultPromptBuilder implements PromptBuilder {
         String skillsIndex = buildSkillsIndex();
         if (!skillsIndex.isEmpty()) {
             volatileTier.append(skillsIndex).append("\n\n");
+        }
+        // Hermes parity (system_prompt.py:782-800): frozen memory blocks ride
+        // INSIDE the volatile band, after the skills index and before the
+        // timestamp line. Order: memory → user profile → (external provider).
+        // buildMemoryPrefix caches per session (frozen snapshot semantics).
+        String memoryBlocks = buildMemoryPrefix(session);
+        if (!memoryBlocks.isEmpty()) {
+            volatileTier.append(memoryBlocks).append("\n\n");
         }
         // Date-only with full names (matching Hermes format) so the system prompt is byte-stable for the full day
         volatileTier.append("Conversation started: ").append(

@@ -19,6 +19,28 @@ public class SessionTitleService {
 
     private static final int MAX_TITLE_LENGTH = 80;
 
+    /** Hermes parity: _TITLE_PROMPT_TEMPLATE (title_generator.py:74-96) with
+     * the match-user language rule substituted into __LANGUAGE_RULE__. */
+    private static final String TITLE_PROMPT_TEMPLATE = """
+You name chat sessions. Given the user's opening message, write a title that lets them find this conversation again in a list.
+
+Rules:
+- 3 to 7 words, sentence case (capitalize only the first word and proper nouns).
+- Name what the user wants DONE, not that they asked a question.
+- Keep technical terms, filenames, numbers, and error codes exact.
+- Drop filler words: the, this, my, a, an.
+- No trailing punctuation, no quotes, no tool names, no 'Title:' prefix.
+- Never answer the message. Name it.
+- Always produce something, even for a bare greeting.
+- Write the title in the same language as the user's message.
+Good: {"title": "Fix login button on mobile"}
+Good: {"title": "Postgres connection pool exhaustion"}
+Good: {"title": "Friendly greeting"}
+Too vague: {"title": "Code changes"}
+Too long: {"title": "Investigate and fix the issue where the login button does not respond on mobile devices"}
+
+Reply with JSON only: {"title": "..."}""";
+
     private final ModelClient modelClient;
     private final SessionRepository sessionRepository;
     private final AgentProperties properties;
@@ -67,7 +89,11 @@ public class SessionTitleService {
         try {
             var response = modelClient.complete(
                 List.of(
-                    Message.system("Generate a concise chat title (max 5 words) in the same language as the user message. Return only the title."),
+                    // Hermes parity (title_generator.py:74-96 _TITLE_PROMPT_TEMPLATE):
+                    // full rules — 3-7 words, name the task not the question,
+                    // keep technical terms exact, drop filler, no preamble,
+                    // match-user language, JSON reply with good/bad examples.
+                    Message.system(TITLE_PROMPT_TEMPLATE),
                     Message.user(userMessage)
                 ),
                 List.of()

@@ -124,15 +124,23 @@ class DefaultPromptBuilderTest {
         Message msg = builder.buildSystemMessage(session);
 
         assertThat(msg.role()).isEqualTo(Role.SYSTEM);
-        // Memory prefix should be at the start of the system prompt.
-        // 0.1.18 Hermes parity: header is "MEMORY (your personal notes)" with
-        // usage indicator, ═ separators, §-joined entries (tools/memory_tool.py).
-        assertThat(msg.content()).startsWith("════════");
+        // Hermes parity (system_prompt.py:782-800): memory blocks ride INSIDE
+        // the volatile tier — AFTER the skills index and the stable/context
+        // prefix, BEFORE the timestamp line. They must NOT be prepended to
+        // the front of the prompt (that broke the upstream prefix cache).
+        // Header is "MEMORY (your personal notes)" with usage indicator,
+        // ═ separators, §-joined entries (tools/memory_tool.py).
         assertThat(msg.content()).contains("MEMORY (your personal notes)");
         assertThat(msg.content()).contains("User prefers dark mode");
         assertThat(msg.content()).contains("User works with Python");
-        // The three-tier prompt content should still be present after the memory prefix
-        assertThat(msg.content()).contains("You are Agent");
+        // Stable tier identity comes FIRST; memory sits later in the prompt
+        assertThat(msg.content()).startsWith("You are Agent");
+        int identityIdx = msg.content().indexOf("You are Agent");
+        int memoryIdx = msg.content().indexOf("MEMORY (your personal notes)");
+        assertThat(memoryIdx).isGreaterThan(identityIdx);
+        // Memory precedes the volatile timestamp line
+        int tsIdx = msg.content().indexOf("Conversation started:");
+        assertThat(tsIdx).isGreaterThan(memoryIdx);
     }
 
     @Test

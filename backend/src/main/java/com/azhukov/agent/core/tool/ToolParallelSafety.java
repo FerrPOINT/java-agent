@@ -32,7 +32,10 @@ public final class ToolParallelSafety {
     /** Tools that must never run concurrently (interactive / user-facing). */
     public static final Set<String> NEVER_PARALLEL_TOOLS = Set.of("clarify");
 
-    /** Read-only tools with no shared mutable session state. */
+    /** Read-only tools with no shared mutable session state.
+     * Hermes parity (tool_dispatch_helpers.py:48-61) — EXACT set. NOTE:
+     * "terminal" was wrongly listed here; terminal is stateful (shared PTY,
+     * cwd, env) and Hermes keeps it on the sequential path. */
     public static final Set<String> PARALLEL_SAFE_TOOLS = Set.of(
         "ha_get_state",
         "ha_list_entities",
@@ -44,8 +47,7 @@ public final class ToolParallelSafety {
         "skills_list",
         "vision_analyze",
         "web_extract",
-        "web_search",
-        "terminal"
+        "web_search"
     );
 
     /** File tools that can run concurrently when targeting independent paths. */

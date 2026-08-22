@@ -210,13 +210,13 @@ class ToolParallelSafetyTest {
         // ── terminal (parallel-safe) ──
 
         @Test
-        @DisplayName("Two terminal calls → parallel (terminal is parallel-safe)")
-        void twoTerminalCallsParallel() {
+        @DisplayName("Two terminal calls → sequential (terminal is stateful, Hermes keeps it off the parallel path)")
+        void twoTerminalCallsSequential() {
             List<ToolCall> calls = List.of(
                 new ToolCall("c1", "terminal", "{\"command\":\"ls\"}"),
                 new ToolCall("c2", "terminal", "{\"command\":\"pwd\"}")
             );
-            assertThat(ToolParallelSafety.shouldParallelize(calls, REGISTERED)).isTrue();
+            assertThat(ToolParallelSafety.shouldParallelize(calls, REGISTERED)).isFalse();
         }
 
         // ── Mixed safe + unsafe ──
