@@ -34,7 +34,7 @@ class CronJobControllerTest {
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
-        CronJobController controller = new CronJobController(cronJobService, cronExecutionLogRepository, org.mapstruct.factory.Mappers.getMapper(com.azhukov.agent.api.mapper.CronJobDtoMapper.class));
+        CronJobController controller = new CronJobController(cronJobService, new com.azhukov.agent.service.CronSuggestionService(null), new com.azhukov.agent.service.HeartbeatService(), cronExecutionLogRepository, org.mapstruct.factory.Mappers.getMapper(com.azhukov.agent.api.mapper.CronJobDtoMapper.class));
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 

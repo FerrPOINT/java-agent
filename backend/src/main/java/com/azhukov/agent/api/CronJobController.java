@@ -5,6 +5,8 @@ import com.azhukov.agent.api.dto.CronJobDto;
 import com.azhukov.agent.api.mapper.CronJobDtoMapper;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.azhukov.agent.service.CronJobService;
+import com.azhukov.agent.service.CronSuggestionService;
+import com.azhukov.agent.service.HeartbeatService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +22,8 @@ import java.util.UUID;
 public class CronJobController {
 
     private final CronJobService cronJobService;
+    private final CronSuggestionService cronSuggestionService;
+    private final HeartbeatService heartbeatService;
     private final CronExecutionLogRepository cronExecutionLogRepository;
     private final CronJobDtoMapper cronJobDtoMapper;
 
@@ -37,6 +41,94 @@ public class CronJobController {
     public CronJobDto update(@PathVariable UUID id, @Valid @RequestBody UpdateCronRequest request) {
         return cronJobDtoMapper.toDto(cronJobService.update(id, request.name(), request.schedule(), request.prompt(),
             request.deliverTo(), request.enabled()));
+    }
+
+    // ── Suggestions (Hermes /suggestions parity) ──
+
+    @GetMapping("/suggestions")
+    public List<CronSuggestionService.SuggestionRecord> suggestions() {
+        return cronSuggestionService.listPending();
+    }
+
+    @PostMapping("/suggestions/catalog")
+    public java.util.Map<String, Object> seedCatalog() {
+        int added = cronSuggestionService.seedCatalogSuggestions();
+        return java.util.Map.of("added", added,
+            "message", added > 0
+                ? "Seeded " + added + " curated starter suggestions."
+                : "Catalog already seeded — nothing new to add.");
+    }
+
+    @PostMapping("/suggestions/{id}/accept")
+    public java.util.Map<String, Object> acceptSuggestion(@PathVariable String id) {
+        var entity = cronSuggestionService.acceptSuggestion(id);
+        if (entity == null) {
+            return java.util.Map.of("accepted", false, "reason", "not found or already decided");
+        }
+        return java.util.Map.of("accepted", true,
+            "jobId", entity.getId().toString(), "name", entity.getName());
+    }
+
+    @PostMapping("/suggestions/{id}/dismiss")
+    public java.util.Map<String, Object> dismissSuggestion(@PathVariable String id) {
+        boolean ok = cronSuggestionService.dismissSuggestion(id);
+        return java.util.Map.of("dismissed", ok);
+    }
+
+    @PostMapping("/suggestions/clear")
+    public java.util.Map<String, Object> clearSuggestions() {
+        return java.util.Map.of("cleared", cronSuggestionService.clearAccepted());
+    }
+
+    // ── Heartbeat (Hermes /heartbeat parity) ──
+
+    public record HeartbeatSetRequest(UUID sessionId, String prompt, Integer intervalSeconds) {}
+
+    @GetMapping("/heartbeat/{sessionId}")
+    public java.util.Map<String, Object> heartbeatStatus(@PathVariable UUID sessionId) {
+        HeartbeatService.HeartbeatState st = heartbeatService.get(sessionId);
+        if (st == null) return java.util.Map.of("set", false);
+        return java.util.Map.of(
+            "set", true,
+            "prompt", st.prompt(),
+            "intervalSeconds", st.intervalSeconds(),
+            "interval", HeartbeatService.formatInterval(st.intervalSeconds()),
+            "status", st.status(),
+            "fireCount", st.fireCount());
+    }
+
+    @PostMapping("/heartbeat")
+    public java.util.Map<String, Object> heartbeatSet(@org.springframework.web.bind.annotation.RequestBody HeartbeatSetRequest request) {
+        if (request.sessionId() == null || request.prompt() == null || request.prompt().isBlank()
+            || request.intervalSeconds() == null || request.intervalSeconds() < HeartbeatService.MIN_INTERVAL_SECONDS) {
+            return java.util.Map.of("ok", false,
+                "reason", "sessionId, prompt and intervalSeconds >= " + HeartbeatService.MIN_INTERVAL_SECONDS + " required");
+        }
+        HeartbeatService.HeartbeatState st = heartbeatService.set(request.sessionId(), request.prompt(), request.intervalSeconds());
+        return java.util.Map.of("ok", true, "message",
+            "Heartbeat set (every " + HeartbeatService.formatInterval(st.intervalSeconds()) + "): " + st.prompt());
+    }
+
+    @PostMapping("/heartbeat/{sessionId}/pause")
+    public java.util.Map<String, Object> heartbeatPause(@PathVariable UUID sessionId) {
+        HeartbeatService.HeartbeatState st = heartbeatService.pause(sessionId);
+        return st == null
+            ? java.util.Map.of("ok", false, "reason", "no active heartbeat")
+            : java.util.Map.of("ok", true, "message", "Heartbeat paused: " + st.prompt());
+    }
+
+    @PostMapping("/heartbeat/{sessionId}/resume")
+    public java.util.Map<String, Object> heartbeatResume(@PathVariable UUID sessionId) {
+        HeartbeatService.HeartbeatState st = heartbeatService.resume(sessionId);
+        return st == null
+            ? java.util.Map.of("ok", false, "reason", "no paused heartbeat")
+            : java.util.Map.of("ok", true, "message",
+                "Heartbeat resumed (every " + HeartbeatService.formatInterval(st.intervalSeconds()) + "): " + st.prompt());
+    }
+
+    @PostMapping("/heartbeat/{sessionId}/clear")
+    public java.util.Map<String, Object> heartbeatClear(@PathVariable UUID sessionId) {
+        return java.util.Map.of("ok", heartbeatService.clear(sessionId));
     }
 
     @PostMapping("/{id}/pause")

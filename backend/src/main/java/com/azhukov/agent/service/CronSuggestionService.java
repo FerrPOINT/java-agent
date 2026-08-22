@@ -188,6 +188,53 @@ public class CronSuggestionService {
  /**
  * A suggestion record.
  */
+/**
+  * Hermes parity (cron/suggestion_catalog.py CATALOG): the curated starter
+  * automation set. Schedules use the same syntax the cron service accepts.
+  */
+ private static final List<Object[]> CATALOG = List.of(
+     new Object[]{"catalog:daily-briefing", "Daily briefing",
+         "Every morning at 8am, a short briefing: today's calendar, weather, and anything urgent waiting on you.",
+         "Produce a concise morning briefing for the user: today's calendar events, the local weather, and any urgent items (unread important email, due tasks). Keep it short and scannable. If you have no connected data sources, give a brief general good-morning with the date and offer to connect calendar/email.",
+         "0 8 * * *", "Daily briefing"},
+     new Object[]{"catalog:important-mail-monitor", "Important-mail monitor",
+         "Check your inbox periodically and ping you ONLY about mail that actually needs attention — never the newsletters.",
+         "Check the user's inbox for new messages since the last run. For each candidate, judge urgency against this rule: surface only mail that needs a reply today, is from a manager/family member, or mentions a deadline. Deliver ONLY what clears that bar. If nothing clears the bar, respond with [SILENT] so the user is not pinged. Requires a connected mail source; if none is configured, explain how to connect one and then stop.",
+         "every 30m", "Important-mail monitor"},
+     new Object[]{"catalog:weekly-review", "Weekly review",
+         "Every Sunday evening, a recap of the week: what got done, what's still open, and what's coming up next week.",
+         "Produce a weekly review for the user: summarize what was accomplished this week, list still-open items, and preview next week's calendar. Pull from whatever sources are connected (calendar, task tools, recent conversations). Keep it tight.",
+         "0 18 * * 0", "Weekly review"},
+     new Object[]{"catalog:standup-reminder", "Workday start reminder",
+         "A weekday nudge at 9am with your day's agenda and top priorities, so you start focused.",
+         "Give the user a brief weekday start-of-day nudge: their calendar for today and the 1-3 highest-priority things to focus on, inferred from recent context and any task tools. Encouraging, short, one message.",
+         "0 9 * * 1-5", "Workday start reminder"}
+ );
+
+ /**
+  * Hermes parity (seed_catalog_suggestions): seed the curated catalog as
+  * pending suggestions. Already-dismissed/accepted keys are skipped by
+  * {@link #addSuggestion}'s dedup — the dismiss latch is never re-offered.
+  * Returns the number of NEW suggestions added.
+  */
+ public synchronized int seedCatalogSuggestions() {
+     int added = 0;
+     for (Object[] e : CATALOG) {
+         String key = (String) e[0];
+         String title = (String) e[1];
+         String description = (String) e[2];
+         String prompt = (String) e[3];
+         String schedule = (String) e[4];
+         String name = (String) e[5];
+         SuggestionRecord rec = addSuggestion(title, description, "catalog",
+             new JobSpec(name, schedule, prompt, "origin", null), key);
+         if (rec != null) {
+             added++;
+         }
+     }
+     return added;
+ }
+
  public record SuggestionRecord(
  String id,
  String title,

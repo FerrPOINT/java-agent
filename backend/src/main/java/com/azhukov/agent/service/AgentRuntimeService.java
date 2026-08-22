@@ -405,6 +405,28 @@ public class AgentRuntimeService {
     }
 
     /**
+     * Heartbeat turn (Hermes hermes_cli/heartbeat.py): fires the recurring
+     * instruction as a NORMAL USER TURN in the SAME session — session-scoped,
+     * unlike {@link #runBackground} which always creates a fresh session.
+     */
+    public String runHeartbeatTurn(UUID sessionId, String prompt) {
+        SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
+        Session session;
+        if (entity != null) {
+            session = sessionMapper.toDomain(entity);
+        } else {
+            session = createSession("user-1", "openai-compatible", "");
+        }
+        TurnResult result = agentRuntime.runTurn(session, prompt);
+        persistMessages(session.id(), result.messages());
+        return result.messages().stream()
+            .filter(m -> m.role() != null && m.role().name().equalsIgnoreCase("assistant"))
+            .reduce((a, b) -> b)
+            .map(m -> m.content() == null ? "" : m.content())
+            .orElse("");
+    }
+
+    /**
      * Background turn (cron / scripted tasks).
      *
      * @param skipBackgroundReview Hermes parity (cron/scheduler.py:5459): cron sessions

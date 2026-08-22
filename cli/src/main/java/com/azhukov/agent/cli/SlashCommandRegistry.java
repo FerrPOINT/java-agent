@@ -80,7 +80,8 @@ public class SlashCommandRegistry {
             new ApprovalCommands(),
             new AdminCommands(cliState),
             new UtilityCommands(cliState),
-            new LearnInitCommands()
+            new LearnInitCommands(),
+            new HeartbeatLoopCommands()
         );
     }
 

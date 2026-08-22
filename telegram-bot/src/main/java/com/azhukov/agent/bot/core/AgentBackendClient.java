@@ -305,6 +305,22 @@ public class AgentBackendClient {
         return cron.listCronJobs();
     }
 
+    public JsonNode listSuggestions() {
+        return cron.listSuggestions();
+    }
+
+    public JsonNode suggestionPost(String path) {
+        return cron.suggestionPost(path);
+    }
+
+    public JsonNode suggestionGet(String path) {
+        return cron.suggestionGet(path);
+    }
+
+    public JsonNode suggestionPostJson(String path, Object body) {
+        return cron.suggestionPostJson(path, body);
+    }
+
     public boolean deleteCronJob(String id) {
         return cron.deleteCronJob(id);
     }

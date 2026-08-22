@@ -34,6 +34,65 @@ public class CronApiClient extends BaseBackendClient {
         }
     }
 
+    /** List pending automation suggestions (Hermes /suggestions parity). */
+    public JsonNode listSuggestions() {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/cron/suggestions")
+                .retrieve()
+                .body(String.class);
+            JsonNode parsed = readTree(json);
+            return parsed != null ? parsed : arrayNode();
+        } catch (Exception e) {
+            log.warn("listSuggestions failed: {}", e.getMessage());
+            return arrayNode();
+        }
+    }
+
+    /** GET a JSON endpoint (heartbeat status etc.); null on failure. */
+    public JsonNode suggestionGet(String path) {
+        try {
+            String json = restClient.get()
+                .uri(path)
+                .retrieve()
+                .body(String.class);
+            return readTree(json);
+        } catch (Exception e) {
+            log.warn("suggestionGet {} failed: {}", path, e.getMessage());
+            return null;
+        }
+    }
+
+    /** POST a JSON body to a scheduling endpoint; returns the parsed response or null. */
+    public JsonNode suggestionPostJson(String path, Object body) {
+        try {
+            String json = restClient.post()
+                .uri(path)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            return readTree(json);
+        } catch (Exception e) {
+            log.warn("suggestionPostJson {} failed: {}", path, e.getMessage());
+            return null;
+        }
+    }
+
+    /** POST a suggestions action; returns the parsed response or null. */
+    public JsonNode suggestionPost(String path) {
+        try {
+            String json = restClient.post()
+                .uri(path)
+                .retrieve()
+                .body(String.class);
+            return readTree(json);
+        } catch (Exception e) {
+            log.warn("suggestionPost {} failed: {}", path, e.getMessage());
+            return null;
+        }
+    }
+
     /** Delete (dismiss) a cron job by ID. */
     public boolean deleteCronJob(String id) {
         try {
