@@ -3,6 +3,7 @@ package com.azhukov.agent.cli;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import org.springframework.stereotype.Component;
 
 /**
  * Hermes parity: /learn and /init slash commands.
@@ -18,6 +19,7 @@ import java.util.List;
  * (build_learn_prompt) and {@code hermes_cli/init_command.py}
  * (build_init_prompt + _QUALITY_BAR).
  */
+@Component
 public final class LearnInitCommands implements CommandGroup {
 
     // ── /learn: agent/learn_prompt.py ────────────────────────────────────

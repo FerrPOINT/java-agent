@@ -45,6 +45,8 @@ public class SessionController {
     private final CheckpointManager checkpointManager;
     private final TodoService todoService;
     private final com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
+    private final com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+
 
     @Operation(summary = "List all sessions")
     @GetMapping("/sessions")
@@ -168,16 +170,31 @@ public class SessionController {
         if (sessionId != null) {
             try {
                 var session = agentRuntimeService.getContext(sessionId);
-                return Map.of(
-                    "sessionId", sessionId.toString(),
-                    "messageCount", session.messageCount(),
-                    "tokenEstimate", session.tokenEstimate()
-                );
+                Map<String, Object> out = new java.util.LinkedHashMap<>();
+                out.put("sessionId", sessionId.toString());
+                out.put("messageCount", session.messageCount());
+                out.put("tokenEstimate", session.tokenEstimate());
+                // The model actually in effect for this session (Hermes /model
+                // shows the model; counters-only made the CLI command useless).
+                var sessionRepository = this.sessionRepository;
+                sessionRepository.findById(sessionId).ifPresent(e -> {
+                    out.put("model", e.getModelName() == null ? defaultModelName() : e.getModelName());
+                    out.put("provider", e.getModelProvider());
+                });
+                if (!out.containsKey("model")) {
+                    out.put("model", defaultModelName());
+                }
+                return out;
             } catch (Exception e) {
                 return Map.of("error", e.getMessage());
             }
         }
         return Map.of("error", "sessionId required");
+    }
+
+    private String defaultModelName() {
+        var m = properties.getModel() != null ? properties.getModel().getModelName() : null;
+        return (m == null || m.isBlank()) ? "unknown" : m;
     }
 
     public record SwitchModelRequest(UUID sessionId, String model, String provider) {}

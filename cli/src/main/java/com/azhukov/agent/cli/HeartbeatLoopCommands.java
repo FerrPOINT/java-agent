@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.springframework.stereotype.Component;
 
 /**
  * Hermes parity: /heartbeat and /loop slash commands.
@@ -14,6 +15,7 @@ import java.util.regex.Pattern;
  * adds --times N and --until &lt;condition&gt; with the LOOP_COMPLETE marker
  * contract (hermes_cli/loops.py WAKEUP_PROMPT_TEMPLATE).
  */
+@Component
 public final class HeartbeatLoopCommands implements CommandGroup {
 
     public static final String LOOP_COMPLETE_MARKER = "LOOP_COMPLETE";

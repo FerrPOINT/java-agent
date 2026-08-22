@@ -81,7 +81,8 @@ public class SlashCommandRegistry {
             new AdminCommands(cliState),
             new UtilityCommands(cliState),
             new LearnInitCommands(),
-            new HeartbeatLoopCommands()
+            new HeartbeatLoopCommands(),
+            new SuggestionCommands()
         );
     }
 
@@ -125,6 +126,10 @@ public class SlashCommandRegistry {
         }
         try {
             return cmd.execute(args, client, sessionId);
+        } catch (ExitCliException e) {
+            // m27: graceful-exit signal must reach CliReplRunner (session save),
+            // never be logged as a command failure.
+            throw e;
         } catch (Exception e) {
             log.error("Command /{} failed: {}", resolvedName, e.getMessage(), e);
             return "Error executing /" + resolvedName + ": " + e.getMessage();
