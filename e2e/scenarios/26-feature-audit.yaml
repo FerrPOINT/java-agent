@@ -1,0 +1,55 @@
+# Deep feature audit: undo semantics, voice/reasoning toggles, state reset, agents monitor
+name: feature-audit-deep
+steps:
+  - name: probe turn one
+    step: turn
+    message: "Ответь одним словом: раз"
+
+  - name: probe turn two
+    step: turn
+    message: "Ответь одним словом: два"
+    sessionId: "{session_id}"
+
+  - name: undo one turn deletes that turn's messages
+    method: POST
+    path: /agent/undo
+    body: { sessionId: "{session_id}", turns: 1 }
+    assert:
+      - { path: "$", gte: 1 }
+
+  - name: "undo with turns=0 clamps to 1 (Hermes parity)"
+    method: POST
+    path: /agent/undo
+    body: { sessionId: "{session_id}", turns: 0 }
+    assert:
+      - { path: "$", gte: 1 }
+
+  - name: voice-mode toggles
+    method: POST
+    path: /agent/voice-mode
+    body: { sessionId: "{session_id}", enabled: "true" }
+    assert:
+      - { path: "$", eq: true }
+
+  - name: reasoning effort set
+    method: POST
+    path: /agent/reasoning
+    body: { sessionId: "{session_id}", effort: "low" }
+    assert: { status: 200 }
+
+  - name: state reset clears CLI state
+    method: POST
+    path: /agent/state/reset
+    body: { sessionId: "{session_id}" }
+    assert: { status: 200 }
+
+  - name: agents monitor lists active
+    path: /agent/agents
+    assert:
+      - { path: "[0].sessionId", exists: true }
+
+  - name: bad reasoning effort rejected
+    method: POST
+    path: /agent/reasoning
+    body: { sessionId: "{session_id}", effort: "bogus" }
+    assert: { status: 400 }

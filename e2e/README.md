@@ -71,6 +71,8 @@ values, `session_id` (last turn's session), `status`, `response`.
 | 23-disabled-caps | TTS/imagegen/vision honest disabled reporting |
 | 24-openai-compat | /v1/models, /v1/chat/completions round-trip |
 | 25-process-gateway | process listing, cronjob tool, mcp_tool guard |
+| 26-feature-audit | undo semantics, voice/reasoning toggles, state reset, agents monitor |
+| 27-mcp-reload | reload-mcp survives repeated reloads (RejectedExecutionException regression) |
 
 Bugs this suite has caught so far (keep the cases that found them):
 CLI /toolsets hitting a nonexistent path (404 forever), toolset

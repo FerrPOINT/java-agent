@@ -88,17 +88,24 @@ public class McpLifecycleManager {
         Pattern.CASE_INSENSITIVE
     );
 
-    private final ScheduledExecutorService reconnectExecutor = Executors.newScheduledThreadPool(1, r -> {
-        Thread t = new Thread(r, "mcp-reconnect");
-        t.setDaemon(true);
-        return t;
-    });
+    private volatile ScheduledExecutorService reconnectExecutor = newReconnectExecutor();
+    private volatile ScheduledExecutorService toolRefreshExecutor = newToolRefreshExecutor();
 
-    private final ScheduledExecutorService toolRefreshExecutor = Executors.newScheduledThreadPool(1, r -> {
-        Thread t = new Thread(r, "mcp-tool-refresh");
-        t.setDaemon(true);
-        return t;
-    });
+    private static ScheduledExecutorService newReconnectExecutor() {
+        return Executors.newScheduledThreadPool(1, r -> {
+            Thread t = new Thread(r, "mcp-reconnect");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    private static ScheduledExecutorService newToolRefreshExecutor() {
+        return Executors.newScheduledThreadPool(1, r -> {
+            Thread t = new Thread(r, "mcp-tool-refresh");
+            t.setDaemon(true);
+            return t;
+        });
+    }
 
     private ToolRegistry toolRegistry() {
         return applicationContext.getBean(ToolRegistry.class);
@@ -110,6 +117,8 @@ public class McpLifecycleManager {
     }
 
     public void connectConfiguredServers() {
+        // A reload must be able to reconnect after closeAll() flipped the latch.
+        shutdownRequested.set(false);
         if (!properties.getMcp().isEnabled()) {
             log.info("MCP is disabled.");
             return;
@@ -668,9 +677,15 @@ public class McpLifecycleManager {
 
     @EventListener(ContextClosedEvent.class)
     public void closeAll() {
+        // Reload-safe shutdown: terminators ran on the OLD pools; fresh pools are
+        // created so connectConfiguredServers() works after a reload (reload-mcp
+        // calls closeAll() then reconnects — one-shot shutdown made every later
+        // schedule throw RejectedExecutionException).
         shutdownRequested.set(true);
         reconnectExecutor.shutdownNow();
         toolRefreshExecutor.shutdownNow();
+        reconnectExecutor = newReconnectExecutor();
+        toolRefreshExecutor = newToolRefreshExecutor();
         // Cancel all tool refresh futures
         for (ScheduledFuture<?> f : toolRefreshFutures.values()) {
             f.cancel(false);

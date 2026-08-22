@@ -1,0 +1,26 @@
+# MCP lifecycle: reload survives repeated reloads (regression: RejectedExecutionException)
+name: mcp-reload-lifecycle
+steps:
+  - name: reload-mcp first
+    method: POST
+    path: /agent/reload-mcp
+    assert: { status: 200 }
+
+  - name: reload-mcp second (pool was terminated here before the fix)
+    method: POST
+    path: /agent/reload-mcp
+    assert: { status: 200 }
+
+  - name: full reload (skills + mcp)
+    method: POST
+    path: /agent/reload
+    assert: { status: 200 }
+
+  - name: reload-mcp third after full reload
+    method: POST
+    path: /agent/reload-mcp
+    assert: { status: 200 }
+
+  - name: mcp servers listing still coherent
+    path: /mcp/servers
+    assert: { status: 200 }

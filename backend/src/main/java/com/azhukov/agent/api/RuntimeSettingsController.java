@@ -89,11 +89,19 @@ public class RuntimeSettingsController {
 
     // ── CLI runtime settings endpoints ──
 
+    /** Hermes parity (cli_commands_mixin.py:3498): invalid effort is rejected with
+     *  the valid-levels list — the backend previously accepted any string. */
+    private static final java.util.Set<String> VALID_REASONING = java.util.Set.of(
+        "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra");
+
     @PostMapping("/agent/reasoning")
     public ResponseEntity<Void> setReasoning(@Valid @RequestBody ReasoningRequest body) {
         UUID sessionId = UUID.fromString(body.sessionId());
         String effort = body.effort();
-        cliRuntimeSettingsService.setReasoningEffort(sessionId, effort);
+        if (effort == null || !VALID_REASONING.contains(effort.toLowerCase())) {
+            return ResponseEntity.badRequest().build();
+        }
+        cliRuntimeSettingsService.setReasoningEffort(sessionId, effort.toLowerCase());
         return ResponseEntity.ok().build();
     }
 
