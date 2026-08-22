@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import com.azhukov.agent.config.AgentProperties;
 
 /**
  * Shared session resolution and creation logic used by both the streaming
@@ -131,7 +132,7 @@ public class AgentSessionResolver {
                 session = session.withMetadata("platform", e.getSource());
             }
             // Add userId as userDisplayName so the system prompt can include "User: ...".
-            if (e.getUserId() != null && !e.getUserId().isBlank() && !"user-1".equals(e.getUserId())
+            if (e.getUserId() != null && !e.getUserId().isBlank() && !AgentProperties.DEFAULT_USER_ID.equals(e.getUserId())
                     && (session.metadata() == null || !session.metadata().containsKey("userDisplayName"))) {
                 session = session.withMetadata("userDisplayName", e.getUserId());
             }

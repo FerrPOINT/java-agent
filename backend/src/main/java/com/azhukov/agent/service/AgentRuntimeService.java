@@ -77,7 +77,7 @@ public class AgentRuntimeService {
 
     public ChatResponseDto runDelegate(ChatRequest request) {
         int depth = request.delegationDepth() != null ? request.delegationDepth() : 0;
-        Session session = createSession("user-1", "openai-compatible", "")
+        Session session = createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "")
             .withMetadata("delegation_depth", String.valueOf(depth));
 
         // P1-5: Persist user message before turn when mid-turn persistence is active
@@ -108,7 +108,7 @@ public class AgentRuntimeService {
     public ChatResponseDto runTurn(ChatRequest request) {
         ChatRequest applied = applyCliState(request);
         var resolved = sessionResolver.resolveOrCreate(
-            applied.sessionId(), "user-1", properties.getModel().getModelName());
+            applied.sessionId(), AgentProperties.DEFAULT_USER_ID, properties.getModel().getModelName());
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
 
@@ -186,7 +186,7 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public List<SessionSummaryDto> listSessions() {
-        return sessionRepository.findAllByUserId("user-1", PageRequest.of(0, 50)).stream()
+        return sessionRepository.findAllByUserId(AgentProperties.DEFAULT_USER_ID, PageRequest.of(0, 50)).stream()
             .map(sessionMapper::toDomain)
             .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
@@ -300,7 +300,7 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public List<ActiveAgentDto> listActiveAgents() {
-        return sessionRepository.findAllByUserId("user-1", PageRequest.of(0, 50)).stream()
+        return sessionRepository.findAllByUserId(AgentProperties.DEFAULT_USER_ID, PageRequest.of(0, 50)).stream()
             .map(e -> new ActiveAgentDto(
                 e.getId().toString(),
                 "active",
@@ -318,7 +318,7 @@ public class AgentRuntimeService {
     @Transactional
     public void restart() {
         log.info("Restarting agent — clearing all session messages for user-1");
-        for (SessionEntity session : sessionRepository.findAllByUserId("user-1")) {
+        for (SessionEntity session : sessionRepository.findAllByUserId(AgentProperties.DEFAULT_USER_ID)) {
             messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId()));
         }
         log.info("Agent restart complete — all session messages cleared");
@@ -415,7 +415,7 @@ public class AgentRuntimeService {
         if (entity != null) {
             session = sessionMapper.toDomain(entity);
         } else {
-            session = createSession("user-1", "openai-compatible", "");
+            session = createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "");
         }
         TurnResult result = agentRuntime.runTurn(session, prompt);
         persistMessages(session.id(), result.messages());
@@ -437,7 +437,7 @@ public class AgentRuntimeService {
      */
     public String runBackground(String prompt, String sessionId, boolean skipBackgroundReview) {
         // Background task — just run a turn in a new session
-        Session baseSession = createSession("user-1", "openai-compatible", "");
+        Session baseSession = createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "");
         final Session session = skipBackgroundReview
             ? baseSession.withMetadata("skip_background_review", "true")
             : baseSession;

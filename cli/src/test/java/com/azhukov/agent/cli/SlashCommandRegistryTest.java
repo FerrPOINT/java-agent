@@ -435,7 +435,7 @@ class SlashCommandRegistryTest {
         s1.put("id", "sess-1");
         s1.put("title", "Test session");
         arr.add(s1);
-        when(client.listSessions("default")).thenReturn(arr);
+        when(client.listSessions("user-1")).thenReturn(arr);
         String result = registry.execute("/resume", client, "sid");
         assertThat(result).contains("Available sessions");
         assertThat(result).contains("sess-1");

@@ -40,12 +40,92 @@ public class CheckpointManager {
     private final ObjectMapper objectMapper;
 
     private static final int MAX_FILES = 10000;
+
+    /** Hermes parity (tools/checkpoint_manager.py DEFAULT_EXCLUDES): build
+     *  outputs, caches, VCS dirs, virtualenvs, compiled binaries and media
+     *  are never snapshotted. Before this list every checkpoint of the repo
+     *  walked .git/build/.gradle — 9999 files, ~128MB stored PER CHECKPOINT. */
+    private static final java.util.List<String> EXCLUDED_DIRS = java.util.List.of(
+        "node_modules", "dist", "build", "target", "out", ".next", ".nuxt",
+        "__pycache__", ".cache", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        "coverage", ".venv", "venv", "env",
+        ".git", ".hg", ".svn", ".worktrees", ".gradle", ".idea", ".vscode");
+    private static final java.util.List<String> EXCLUDED_SUFFIXES = java.util.List.of(
+        ".pyc", ".pyo", ".so", ".dylib", ".dll", ".o", ".a", ".jar", ".class",
+        ".exe", ".obj", ".mp4", ".mov", ".mkv", ".webm", ".zip", ".tar", ".gz");
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB per file
     /**
      * Maximum file size for storing content in the DB.
      * Files larger than this are tracked by hash only and cannot be restored.
      */
     private static final long MAX_STORED_CONTENT_SIZE = 512 * 1024; // 512KB
+
+
+    /** Raw .gitignore lines of the walk root (comments/empty/negations dropped). */
+    private static java.util.List<String> readGitignoreRules(Path root) {
+        java.util.List<String> rules = new java.util.ArrayList<>();
+        Path gi = root.resolve(".gitignore");
+        if (Files.isRegularFile(gi)) {
+            try {
+                for (String line : Files.readAllLines(gi)) {
+                    String t = line.strip();
+                    if (!t.isEmpty() && !t.startsWith("#") && !t.startsWith("!")) {
+                        rules.add(t);
+                    }
+                }
+            } catch (Exception ignore) { /* unreadable → no extra excludes */ }
+        }
+        return rules;
+    }
+
+    /** gitignore-pattern check for one root-relative path (dir suffix aware). */
+    private static boolean matchesGitignore(String rel, String rule) {
+        boolean dirOnly = rule.endsWith("/");
+        String body = dirOnly ? rule.substring(0, rule.length() - 1) : rule;
+        String regex;
+        if (body.startsWith("*.")) {                       // *.jar
+            regex = ".*" + java.util.regex.Pattern.quote(body.substring(1)).replace("*", ".*");
+        } else if (body.startsWith("/")) {                 // /prototype → root-anchored
+            regex = body.substring(1).replace("*", ".*");
+        } else if (body.contains("/")) {                   // path-anchored
+            regex = "(.*/)?" + body.replace("*", ".*");
+        } else {                                            // name anywhere
+            regex = "(.*/)?" + body.replace("*", ".*");
+        }
+        if (dirOnly) {
+            regex = regex + "(/.*)?";
+        }
+        try {
+            java.util.regex.Pattern pat = java.util.regex.Pattern.compile(regex);
+            return pat.matcher(rel).matches() || pat.matcher(rel + "/").matches();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Recursive walk that never descends into excluded/gitignored directories. */
+    private static void collectFiles(Path root, Path dir, java.util.List<String> ignoreRules, List<Path> out) {
+        String relDir = root.relativize(dir).toString().replace('\\', '/');
+        if (!relDir.isEmpty()
+            && (EXCLUDED_DIRS.contains(dir.getFileName().toString())
+                || ignoreRules.stream().anyMatch(r -> matchesGitignore(relDir, r)))) {
+            return; // pruned
+        }
+        try (Stream<Path> children = Files.list(dir)) {
+            for (Path child : (Iterable<Path>) children::iterator) {
+                if (Files.isDirectory(child)) {
+                    collectFiles(root, child, ignoreRules, out);
+                } else if (Files.isRegularFile(child)) {
+                    String rel = root.relativize(child).toString().replace('\\', '/');
+                    boolean suffixHit = EXCLUDED_SUFFIXES.stream().anyMatch(s -> child.getFileName().toString().endsWith(s));
+                    boolean ignoreHit = ignoreRules.stream().anyMatch(r -> matchesGitignore(rel, r));
+                    if (!suffixHit && !ignoreHit) {
+                        out.add(child);
+                    }
+                }
+            }
+        } catch (Exception ignore) { /* unreadable dir → skip */ }
+    }
 
     @Transactional
     public CheckpointEntity snapshot(String description) {
@@ -61,9 +141,15 @@ public class CheckpointManager {
         entity.setDescription(description);
         entity.setCreatedAt(Instant.now());
 
-        try (Stream<Path> paths = Files.walk(root)) {
-            List<Path> fileList = paths
-                .filter(Files::isRegularFile)
+        // Root-relative .gitignore rules + dir pruning: Files.walk with a
+        // per-file filter still DESCENDS into excluded dirs (and nested git
+        // repos resolve their own root). Walk with pruning instead.
+        java.util.List<String> ignoreRules = readGitignoreRules(root);
+        List<Path> fileList = new java.util.ArrayList<>();
+        collectFiles(root, root, ignoreRules, fileList);
+
+        try (Stream<Path> paths = fileList.stream()) {
+            fileList = paths
                 .filter(p -> !isHidden(p))
                 .limit(MAX_FILES)
                 .toList();
@@ -106,8 +192,8 @@ public class CheckpointManager {
                     log.debug("Failed to hash file {}: {}", p, e.getMessage());
                 }
             }
-        } catch (IOException e) {
-            log.error("Failed to walk directory {}: {}", workingDir, e.getMessage());
+        } catch (Exception e) {
+            log.error("Snapshot walk failed for {}: {}", workingDir, e.getMessage());
         }
 
         entity.setFileCount(fileCount);

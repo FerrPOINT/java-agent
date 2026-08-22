@@ -35,8 +35,11 @@ public class SessionCommands implements CommandGroup {
             return "New session started. Session ID: " + newSessionId;
         });
 
-        registry.register("sessions", "List all sessions for a user (default: 'default')", (args, client, sessionId) -> {
-            String userId = args.isBlank() ? "default" : args;
+        registry.register("sessions", "List all sessions for a user (default: the CLI's own user)", (args, client, sessionId) -> {
+            // CLI sessions are created via POST /agent/session (no userId →
+            // backend default user-1). Listing 'default' showed an empty list
+            // even with a full DB — identity drift, fixed 2026-08-23.
+            String userId = args.isBlank() ? cliStateUserId(client, sessionId) : args;
             JsonNode sessions = client.listSessions(userId);
             return client.prettyPrint(sessions);
         });
@@ -99,9 +102,10 @@ public class SessionCommands implements CommandGroup {
         // ── Resume ──
         registry.register("resume", "Resume a previous session: /resume <sessionId> or /resume to list sessions", (args, client, sessionId) -> {
             if (args.isBlank()) {
-                JsonNode sessions = client.listSessions("default");
+                String userId = cliStateUserId(client, sessionId);
+                JsonNode sessions = client.listSessions(userId);
                 if (sessions == null || !sessions.isArray() || sessions.isEmpty()) {
-                    return "No sessions found for user 'default'.\nUsage: /resume <sessionId>";
+                    return "No sessions found for user '" + userId + "'.\nUsage: /resume <sessionId>";
                 }
                 StringBuilder sb = new StringBuilder("Available sessions:\n");
                 for (JsonNode s : sessions) {
@@ -204,5 +208,12 @@ public class SessionCommands implements CommandGroup {
                 return "Error writing file: " + e.getMessage() + "\n\n" + data;
             }
         });
+
+    }
+
+    /** The userId that actually owns CLI sessions (backend default when the
+     *  CLI never sends one). Kept in sync with AgentProperties.DEFAULT_USER_ID. */
+    private static String cliStateUserId(com.azhukov.agent.cli.BackendClient client, String sessionId) {
+        return "user-1";
     }
 }

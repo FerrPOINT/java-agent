@@ -36,7 +36,7 @@ import java.util.UUID;
 @Slf4j
 public class SessionCrudService {
 
-    private static final String DEFAULT_USER_ID = "user-1";
+    private static final String DEFAULT_USER_ID = AgentProperties.DEFAULT_USER_ID;
     private static final String DEFAULT_TITLE = "New chat";
     private static final String SOURCE = "api_server";
 

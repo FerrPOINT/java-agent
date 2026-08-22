@@ -86,7 +86,7 @@ public class SessionCrudController {
     ) {
         int cappedLimit = Math.min(Math.max(limit, 1), 200);
         int cappedOffset = Math.max(offset, 0);
-        String effectiveUserId = userId != null ? userId : "user-1";
+        String effectiveUserId = userId != null ? userId : AgentProperties.DEFAULT_USER_ID;
 
         List<SessionSummaryDto> sessions = sessionRepository
             .findAllByUserId(effectiveUserId, PageRequest.of(cappedOffset / cappedLimit, cappedLimit))
@@ -115,7 +115,7 @@ public class SessionCrudController {
     @Operation(summary = "Create a new session")
     @PostMapping
     public ResponseEntity<Map<String, Object>> createSession(@RequestBody(required = false) CreateSessionBody body) {
-        String userId = body != null && body.userId() != null ? body.userId() : "user-1";
+        String userId = body != null && body.userId() != null ? body.userId() : AgentProperties.DEFAULT_USER_ID;
         String model = body != null && body.model() != null && !body.model().isBlank()
             ? body.model() : properties.getModel().getModelName();
         String title = body != null && body.title() != null ? body.title() : "New chat";

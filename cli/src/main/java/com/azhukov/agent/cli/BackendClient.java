@@ -995,10 +995,11 @@ public class BackendClient {
 
     public String config() {
         try {
-            JsonNode node = restClient.get()
+            String raw = restClient.get()
                 .uri("/api/v1/agent/config")
                 .retrieve()
-                .body(JsonNode.class);
+                .body(String.class);
+            JsonNode node = raw == null ? null : objectMapper.readTree(raw);
             return formatter.formatConfig(node);
         } catch (Exception e) {
             return handleErr("config", e);
@@ -1007,10 +1008,11 @@ public class BackendClient {
 
     public String doctor() {
         try {
-            JsonNode node = restClient.get()
+            String raw = restClient.get()
                 .uri("/api/v1/agent/doctor")
                 .retrieve()
-                .body(JsonNode.class);
+                .body(String.class);
+            JsonNode node = raw == null ? null : objectMapper.readTree(raw);
             return formatter.formatDoctor(node);
         } catch (Exception e) {
             return handleErr("doctor", e);

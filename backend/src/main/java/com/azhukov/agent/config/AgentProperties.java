@@ -16,6 +16,11 @@ import java.util.Map;
 @Setter
 public class AgentProperties {
 
+    /** Single identity used by every surface that has no auth context
+     *  (CLI, REST defaults, background/cron sessions). The CLI /sessions
+     *  bug was two hard-coded strings drifting apart ('user-1' vs 'default'). */
+    public static final String DEFAULT_USER_ID = "user-1";
+
     private String name = "Джава агент";
     private final ModelProperties model = new ModelProperties();
     private final AuxiliaryProperties auxiliary = new AuxiliaryProperties();

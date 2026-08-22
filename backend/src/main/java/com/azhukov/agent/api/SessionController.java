@@ -57,7 +57,7 @@ public class SessionController {
     @Operation(summary = "Create a new chat session")
     @PostMapping("/agent/session")
     public ResponseEntity<SessionSummaryDto> createSession(@RequestBody(required = false) CreateSessionRequest request) {
-        String userId = request != null && request.userId() != null ? request.userId() : "user-1";
+        String userId = request != null && request.userId() != null ? request.userId() : AgentProperties.DEFAULT_USER_ID;
         Session session = agentRuntimeService.createSession(userId, "openai-compatible", properties.getModel().getModelName());
         SessionSummaryDto dto = domainDtoMapper.toSessionSummaryDto(session);
         return ResponseEntity.created(URI.create("/api/v1/agent/session/" + session.id())).body(dto);

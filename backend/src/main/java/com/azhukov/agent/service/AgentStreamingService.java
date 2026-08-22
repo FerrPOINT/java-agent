@@ -245,7 +245,7 @@ public class AgentStreamingService {
         // which is separate from backend's sessions table).
         var resolved = sessionResolver.resolveOrCreate(
             request.sessionId(),
-            request.userId() != null && !request.userId().isBlank() ? request.userId() : "user-1",
+            request.userId() != null && !request.userId().isBlank() ? request.userId() : AgentProperties.DEFAULT_USER_ID,
             properties.getModel().getModelName());
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
