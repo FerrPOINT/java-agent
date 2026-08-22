@@ -74,6 +74,7 @@ class AgentControllerBranchCoverageTest {
     @Mock private SkillManager skillManager;
     @Mock private com.azhukov.agent.persistence.repository.SkillAuditLogRepository skillAuditLogRepository;
     @Mock private CheckpointManager checkpointManager;
+    @Mock private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
     @Mock private TtsService ttsService;
     @Mock private TranscriptionService transcriptionService;
     @Mock private AgentProperties agentProperties;
@@ -117,8 +118,7 @@ class AgentControllerBranchCoverageTest {
 
     private MockMvc sessionMockMvc() {
         SessionController controller = new SessionController(
-            agentRuntimeService, domainDtoMapper, agentProperties, checkpointManager, todoService, null
-        );
+            agentRuntimeService, domainDtoMapper, agentProperties, checkpointManager, todoService, null, sessionRepository);
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
@@ -633,12 +633,17 @@ class AgentControllerBranchCoverageTest {
         when(agentRuntimeService.getContext(SESSION_ID))
             .thenReturn(new ContextInfoDto(
                 SESSION_ID, 5, 100, List.of(), null, null, null));
+        com.azhukov.agent.persistence.entity.SessionEntity se = new com.azhukov.agent.persistence.entity.SessionEntity();
+        se.setId(SESSION_ID);
+        se.setModelName("app-test");
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(java.util.Optional.of(se));
 
         mockMvc.perform(get("/api/v1/agent/model")
                 .param("sessionId", SESSION_ID.toString()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.sessionId").value(SESSION_ID.toString()))
-            .andExpect(jsonPath("$.messageCount").value(5));
+            .andExpect(jsonPath("$.messageCount").value(5))
+            .andExpect(jsonPath("$.model").value("app-test"));
     }
 
     @Test

@@ -84,7 +84,8 @@ class CronJobControllerTest {
     @Test
     void deleteEndpoint() throws Exception {
         UUID id = UUID.randomUUID();
+        // unknown id → 404 (REST hygiene; double-delete must not be 200)
         mockMvc.perform(delete("/api/v1/agent/cron/{id}", id))
-            .andExpect(status().isOk());
+            .andExpect(status().isNotFound());
     }
 }
