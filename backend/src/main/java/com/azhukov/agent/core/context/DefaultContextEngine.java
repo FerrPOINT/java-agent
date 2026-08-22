@@ -471,9 +471,24 @@ public class DefaultContextEngine implements ContextEngine {
          for (MessageEntity e : ascHistory) {
              String role = e.getRole();
              String content = e.getContent() != null ? e.getContent() : "";
+             int turnIdx = e.getTurnIndex() != null ? e.getTurnIndex() : 0;
              context.add(switch (role) {
-                 case "assistant" -> Message.assistant(content, e.getTurnIndex() != null ? e.getTurnIndex() : 0);
-                 case "tool" -> Message.toolResult(e.getToolCallId(), content, e.getTurnIndex() != null ? e.getTurnIndex() : 0);
+                 // Hermes parity: history loaded from the DB must carry the
+                 // assistant's tool_call (id/name/args) in toolCalls — the
+                 // sanitizer and the wire mapper match tool results against
+                 // that list. Mapping to a bare assistant() message left the
+                 // following TOOL result "orphaned" → dropped → strict
+                 // providers 400 → CONTEXT_OVERFLOW misclassification.
+                 case "assistant" -> {
+                     if (e.getToolCallId() != null || e.getToolCallName() != null) {
+                         yield Message.assistantWithToolCalls(content,
+                             List.of(new com.azhukov.agent.core.model.ToolCall(
+                                 e.getToolCallId(), e.getToolCallName(), e.getToolCallArguments())),
+                             turnIdx);
+                     }
+                     yield Message.assistant(content, turnIdx);
+                 }
+                 case "tool" -> Message.toolResult(e.getToolCallId(), content, turnIdx);
                  default -> Message.user(content);
              });
          }

@@ -451,7 +451,8 @@ public class SessionSearchService {
         boolean isAnchor = anchorId != null && anchorId.equals(m.getId());
         return new ShapedMessage(m.getId(), m.getRole(), content,
             m.getCreatedAt() != null ? m.getCreatedAt().toString() : null,
-            m.getToolCallName(), m.getToolCallId(), truncated, originalChars, isAnchor);
+            m.getToolCallName(), m.getToolCallId(), m.getToolCallArguments(),
+            truncated, originalChars, isAnchor);
     }
 
     private List<ShapedMessage> filterCompaction(List<ShapedMessage> messages) {
@@ -572,15 +573,23 @@ public class SessionSearchService {
         UUID id, String role, String content, String timestamp,
         @com.fasterxml.jackson.annotation.JsonProperty("tool_name") String toolName,
         @com.fasterxml.jackson.annotation.JsonProperty("tool_call_id") String toolCallId,
+        @com.fasterxml.jackson.annotation.JsonProperty("tool_call_arguments") String toolCallArguments,
         @com.fasterxml.jackson.annotation.JsonProperty("content_truncated") boolean contentTruncated,
         @com.fasterxml.jackson.annotation.JsonProperty("original_content_chars") Integer originalContentChars,
         @com.fasterxml.jackson.annotation.JsonProperty("anchor") boolean anchor) {
         @com.fasterxml.jackson.annotation.JsonGetter("tool_calls")
         public List<Map<String, Object>> toolCalls() {
             if (toolName == null || toolCallId == null) return null;
+            // Assistant tool-call rows carry the call in tool_call_arguments;
+            // content is null for tool-call-only turns (633 such rows in the
+            // live DB). Map.of() rejects nulls — NPE through Jackson — so
+            // fall back to content and finally an empty string. Hermes shape:
+            // tool_calls: [{id, function: {name, arguments}}].
+            String args = toolCallArguments != null ? toolCallArguments
+                : content != null ? content : "";
             return List.of(Map.of(
                 "id", toolCallId,
-                "function", Map.of("name", toolName, "arguments", content)
+                "function", Map.of("name", toolName, "arguments", args)
             ));
         }
     }

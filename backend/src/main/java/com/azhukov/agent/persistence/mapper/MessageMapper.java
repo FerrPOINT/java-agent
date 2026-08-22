@@ -10,6 +10,7 @@ import org.mapstruct.Mapping;
 import org.mapstruct.Named;
 
 import java.util.Collections;
+import java.util.List;
 
 /**
  * Maps between {@link MessageEntity} and {@link Message} domain model.
@@ -25,7 +26,19 @@ public interface MessageMapper {
         boolean isTool = role == Role.TOOL;
         ToolCall toolCall = isTool ? null : extractToolCall(entity);
         String toolCallId = isTool ? entity.getToolCallId() : null;
-        return new Message(role, entity.getContent(), toolCall, null, toolCallId, entity.getTurnIndex());
+        // Hermes parity (agent_runtime_helpers.py #58168): an assistant
+        // tool_call must surface in toolCalls (the list) — HistorySanitizer
+        // Pass 1 and the OpenAI wire mapper validate tool results against
+        // the LIST. A call held only in the singular toolCall field looks
+        // like an unanswered tool_call: the sanitizer drops the tool result
+        // as an "orphan", strict providers then 400 on the dangling call,
+        // and the error is misclassified as CONTEXT_OVERFLOW (fake
+        // compression, lost context, incoherent replies).
+        List<ToolCall> toolCalls = null;
+        if (toolCall != null) {
+            toolCalls = List.of(toolCall);
+        }
+        return new Message(role, entity.getContent(), toolCall, toolCalls, toolCallId, entity.getTurnIndex());
     }
 
     default boolean isTool(String role) {

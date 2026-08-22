@@ -1,5 +1,6 @@
 package com.azhukov.agent.persistence.mapper;
 
+import com.azhukov.agent.core.context.HistorySanitizer;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.ToolCall;
@@ -81,5 +82,40 @@ class MessageMapperTest {
     void nullValuesRoundTrip() {
         assertThat(mapper.toDomain(null)).isNull();
         assertThat(mapper.toEntity(null)).isNull();
+    }
+
+    @Test
+    void toDomainSurfacesAssistantToolCallInList() {
+        // Regression (Hermes parity #58168): an assistant row persisted with
+        // tool-call metadata must load back with the call in toolCalls (the
+        // list). HistorySanitizer Pass 1 matches tool results against that
+        // list; a call held only in the singular toolCall field made every
+        // DB-loaded tool result look orphaned → dropped → Gemini 400 →
+        // CONTEXT_OVERFLOW misclassification → fake compression, lost
+        // context, incoherent replies.
+        MessageEntity entity = new MessageEntity();
+        entity.setRole("assistant");
+        entity.setContent("");
+        entity.setToolCallId("call-9");
+        entity.setToolCallName("session_search");
+        entity.setToolCallArguments("{\"query\":\"репозиторий\"}");
+        entity.setTurnIndex(1);
+
+        Message domain = mapper.toDomain(entity);
+
+        assertThat(domain.role()).isEqualTo(Role.ASSISTANT);
+        assertThat(domain.toolCalls()).isNotNull();
+        assertThat(domain.toolCalls()).hasSize(1);
+        assertThat(domain.toolCalls().get(0).id()).isEqualTo("call-9");
+        assertThat(domain.toolCalls().get(0).name()).isEqualTo("session_search");
+
+        // End-to-end through the sanitizer: the pair must survive intact.
+        List<Message> history = List.of(
+            Message.user("При чем тут репозиторий?"),
+            domain,
+            Message.toolResult("call-9", "{\"success\":true}", 1));
+        List<Message> sanitized = HistorySanitizer.sanitize(history);
+        assertThat(sanitized).hasSize(3);
+        assertThat(sanitized.get(2).role()).isEqualTo(Role.TOOL);
     }
 }
