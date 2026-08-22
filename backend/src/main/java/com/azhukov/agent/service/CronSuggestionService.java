@@ -199,7 +199,7 @@ public class CronSuggestionService {
          "0 8 * * *", "Daily briefing"},
      new Object[]{"catalog:important-mail-monitor", "Important-mail monitor",
          "Check your inbox periodically and ping you ONLY about mail that actually needs attention — never the newsletters.",
-         "Check the user's inbox for new messages since the last run. For each candidate, judge urgency against this rule: surface only mail that needs a reply today, is from a manager/family member, or mentions a deadline. Deliver ONLY what clears that bar. If nothing clears the bar, respond with [SILENT] so the user is not pinged. Requires a connected mail source; if none is configured, explain how to connect one and then stop.",
+         "Check the user's inbox for new messages since the last run. For each candidate, judge urgency against this rule: surface only mail that needs a reply today, is from a manager/family member, or mentions a deadline. Pipe candidates through the urgency classifier (run `python3 -m cron.scripts.classify_items --threshold 7 --criteria ...` from the hermes-agent install — resolve the script path at run time, do not assume a fixed location) and deliver ONLY what it returns. If nothing clears the bar, respond with [SILENT] so the user is not pinged. Requires a connected mail source; if none is configured, explain how to connect one and then stop.",
          "every 30m", "Important-mail monitor"},
      new Object[]{"catalog:weekly-review", "Weekly review",
          "Every Sunday evening, a recap of the week: what got done, what's still open, and what's coming up next week.",

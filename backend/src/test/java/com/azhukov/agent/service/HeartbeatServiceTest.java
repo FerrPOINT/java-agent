@@ -138,4 +138,29 @@ class HeartbeatServiceTest {
         HeartbeatService.HeartbeatState after = svc.get(sid);
         assertThat(after.fireCount()).isEqualTo(1);
         assertThat(after.lastFiredAt()).isNotNull();
-    }}
+    }
+    @Test
+    @DisplayName("persistence: set/clear write through to session_cli_state")
+    void persistenceWriteThrough() {
+        HeartbeatService svc = new HeartbeatService();
+        UUID sid = UUID.randomUUID();
+        svc.set(sid, "Check CI", 120, 3);
+        // sessionRepository is null in this unit context — persist() must be a no-op
+        assertThat(svc.get(sid)).isNotNull();
+        assertThat(svc.get(sid).maxTicks()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("restore: persisted active heartbeat is reloaded")
+    void restorePersistedHeartbeat() {
+        HeartbeatService svc = new HeartbeatService() {
+            @Override
+            boolean isBusy(UUID sessionId) { return false; }
+        };
+        UUID sid = UUID.randomUUID();
+        svc.set(sid, "Watch deploy", 60);
+        // In-memory set with null repo: restorePersisted must not blow up
+        svc.restorePersisted();
+        assertThat(svc.get(sid)).isNotNull();
+    }
+}

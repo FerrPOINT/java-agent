@@ -108,6 +108,69 @@ public class HeartbeatService {
     private AgentRuntimeService agentRuntimeService;
 
     @Autowired(required = false)
+    private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+
+    @Autowired(required = false)
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    /** Hermes persists heartbeat state in SessionDB state_meta (heartbeat:<id>)
+     *  so /resume picks it up after a restart. We persist in session_cli_state. */
+    private static final String STATE_KEY = "heartbeat";
+    /** Field separator for the persisted state (prompt may contain anything else). */
+    private static final String SEP = "\u0001";
+
+    private void persist(UUID sessionId, HeartbeatState st) {
+        if (sessionRepository == null) return;
+        try {
+            sessionRepository.findById(sessionId).ifPresent(e -> {
+                if (st == null) {
+                    e.getCliState().remove(STATE_KEY);
+                } else {
+                    e.setCliStateValue(STATE_KEY, String.join(SEP,
+                        st.prompt(), String.valueOf(st.intervalSeconds()), st.status(),
+                        String.valueOf(st.maxTicks()), String.valueOf(st.fireCount())));
+                }
+                sessionRepository.save(e);
+            });
+        } catch (Exception ex) {
+            log.warn("Heartbeat persist failed for {}: {}", sessionId, ex.getMessage());
+        }
+    }
+
+    /** Restore persisted heartbeats at startup (Hermes /resume picks up state_meta). */
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    public void restorePersisted() {
+        if (jdbcTemplate == null) return;
+        try {
+            int restored = 0;
+            var rows = jdbcTemplate.queryForList(
+                "SELECT session_id, state_value FROM session_cli_state WHERE state_key = ?", STATE_KEY);
+            for (var row : rows) {
+                UUID sid = java.util.UUID.fromString(String.valueOf(row.get("session_id")));
+                String raw = String.valueOf(row.get("state_value"));
+                if (raw == null || raw.isBlank()) continue;
+                String[] parts = raw.split(Pattern.quote(SEP), -1);
+                if (parts.length < 5) continue;
+                try {
+                    HeartbeatState st = new HeartbeatState(parts[0],
+                        Integer.parseInt(parts[1]), parts[2], Instant.now(), null,
+                        Integer.parseInt(parts[4]), Integer.parseInt(parts[3]));
+                    if ("active".equals(st.status()) || "paused".equals(st.status())) {
+                        states.put(sid, st);
+                        restored++;
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+            if (restored > 0) {
+                ensureWatchdog();
+                log.info("Restored {} persisted heartbeat(s) after restart", restored);
+            }
+        } catch (Exception ex) {
+            log.warn("Heartbeat restore failed: {}", ex.getMessage());
+        }
+    }
+
+    @Autowired(required = false)
     private AgentRuntime agentRuntime;
 
     // ── Interval parsing (Hermes parse_interval) ──
@@ -142,6 +205,7 @@ public class HeartbeatService {
         HeartbeatState st = new HeartbeatState(prompt.strip(), intervalSeconds, "active",
             Instant.now(), null, 0, maxTicks);
         states.put(sessionId, st);
+        persist(sessionId, st);
         ensureWatchdog();
         return st;
     }
@@ -152,6 +216,7 @@ public class HeartbeatService {
         st = new HeartbeatState(st.prompt(), st.intervalSeconds(), "paused",
             st.createdAt(), st.lastFiredAt(), st.fireCount(), st.maxTicks());
         states.put(sessionId, st);
+        persist(sessionId, st);
         return st;
     }
 
@@ -166,7 +231,9 @@ public class HeartbeatService {
     }
 
     public synchronized boolean clear(UUID sessionId) {
-        return states.remove(sessionId) != null;
+        boolean removed = states.remove(sessionId) != null;
+        if (removed) persist(sessionId, null);
+        return removed;
     }
 
     public HeartbeatState get(UUID sessionId) {
@@ -256,9 +323,13 @@ public class HeartbeatService {
         if (responseSignalsComplete(response)) {
             log.info("Heartbeat/loop for session {} signalled LOOP_COMPLETE — clearing", sessionId);
             states.remove(sessionId);
+            persist(sessionId, null);
         } else if (fired.maxTicks() > 0 && fired.fireCount() >= fired.maxTicks()) {
             log.info("Heartbeat/loop for session {} reached --times cap ({}); clearing", sessionId, fired.maxTicks());
             states.remove(sessionId);
+            persist(sessionId, null);
+        } else {
+            persist(sessionId, fired);   // keep fireCount durable
         }
     }
 
