@@ -1,0 +1,34 @@
+# Guardrails: session busy signal, unknown session 404s, steer/stop surface
+name: guardrails
+steps:
+  - name: unknown session refine rejected
+    method: POST
+    path: /agent/refine
+    body: { sessionId: "00000000-0000-0000-0000-0000000000aa" }
+    assert: { accepted: false }
+
+  - name: unknown session context is empty but not a 500
+    path: /agent/session/00000000-0000-0000-0000-0000000000bb/context
+    assert: { status: 200 }
+
+  - name: heartbeat pause on unknown session rejected
+    method: POST
+    path: /agent/cron/heartbeat/00000000-0000-0000-0000-0000000000cc/pause
+    assert: { ok: false }
+
+  - name: heartbeat clear on unknown session rejected
+    method: POST
+    path: /agent/cron/heartbeat/00000000-0000-0000-0000-0000000000dd/clear
+    assert: { ok: false }
+
+  - name: malformed body rejected (interval as string)
+    method: POST
+    path: /agent/cron/heartbeat
+    body: { sessionId: "00000000-0000-0000-0000-0000000000ee", prompt: "x", intervalSeconds: "not-a-number" }
+    assert: { status: 400 }
+
+  - name: stop endpoint exists (no active turn)
+    method: POST
+    path: /agent/stop
+    body: { sessionId: "00000000-0000-0000-0000-0000000000ff" }
+    assert: { status: 200 }

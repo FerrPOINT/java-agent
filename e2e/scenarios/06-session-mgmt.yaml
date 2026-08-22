@@ -1,0 +1,42 @@
+# Session management: context, title, undo, compress, snapshot/restore
+name: session-mgmt
+steps:
+  - name: probe turn
+    step: turn
+    message: "Ответь одним словом: ок"
+
+  - name: context endpoint returns counters
+    path: /agent/session/{session_id}/context
+    assert:
+      - { path: messageCount, gte: 1 }
+
+  - name: usage endpoint responds
+    path: /agent/session/{session_id}/usage
+    assert: { status: 200 }
+
+  - name: set title
+    method: POST
+    path: /agent/session/title
+    body: { sessionId: "{session_id}", title: "e2e-title-test" }
+    assert: { status: 200 }
+
+  - name: undo last turn
+    method: POST
+    path: /agent/session/{session_id}/undo
+    assert: { status: 200 }
+
+  - name: history after undo is still readable
+    path: /agent/session/{session_id}/history
+    assert: { status: 200 }
+
+  - name: snapshot before compress
+    method: POST
+    path: /agent/snapshot
+    body: { sessionId: "{session_id}" }
+    assert: { status: 200 }
+
+  - name: compress session
+    method: POST
+    path: /agent/session/{session_id}/compress
+    body: { focus: "e2e test compression" }
+    assert: { status: 200 }

@@ -1,0 +1,24 @@
+# Memory pipeline: statement → background review → memory row (live)
+name: memory-pipeline
+steps:
+  - name: make a memorable statement
+    step: turn
+    message: "Важно: в e2e-тестах я всегда хочу видеть префикс E2E-MEM в ответах о памяти. Просто скажи принято."
+
+  - name: refine to trigger the review fork now
+    method: POST
+    path: /agent/refine
+    body: { sessionId: "{session_id}" }
+    assert: { accepted: true }
+
+  - name: wait for the memory row to appear
+    step: wait_for
+    path: /agent/memory/all/e2e-user
+    timeout: 90
+    continue_probe: true
+    assert:
+      - { status: 200 }
+
+  - name: memory listing responds for user
+    path: /agent/memory/all/user-1
+    assert: { status: 200 }

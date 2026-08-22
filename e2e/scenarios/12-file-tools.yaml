@@ -1,0 +1,21 @@
+# Tools e2e: read_file / write_file / search_files via the live agent
+name: file-tools
+steps:
+  - name: agent writes a marker file
+    step: turn
+    message: "Создай файл /tmp/e2e-agent-marker.txt с содержимым 'e2e-round-trip-42' и подтверди одним словом."
+    assert:
+      - { var: turn.toolNames, contains: write_file }
+
+  - name: agent reads it back and quotes the content
+    step: turn
+    message: "Прочитай /tmp/e2e-agent-marker.txt и назови точное число из него."
+    assert:
+      - { var: turn.toolNames, contains: read_file }
+      - { var: turn.text, contains: "42" }
+
+  - name: agent searches and finds the marker
+    step: turn
+    message: "Найди файлы по маске e2e-agent-marker* в /tmp через поиск и скажи полный путь."
+    assert:
+      - { var: turn.text, contains: "/tmp/e2e-agent-marker.txt" }

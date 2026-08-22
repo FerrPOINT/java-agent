@@ -1,0 +1,68 @@
+# Heartbeat/loop: set, status, validation, LOOP_COMPLETE auto-stop, persistence
+name: heartbeat-loop
+steps:
+  - name: reject interval below minimum
+    method: POST
+    path: /agent/cron/heartbeat
+    body: { sessionId: "00000000-0000-0000-0000-000000000001", prompt: x, intervalSeconds: 30 }
+    assert: { ok: false }
+
+  - name: create probe session
+    step: turn
+    message: "скажи ок"
+
+  - name: set heartbeat (1 min, max 2 ticks)
+    method: POST
+    path: /agent/cron/heartbeat
+    body:
+      sessionId: "{session_id}"
+      prompt: "Say: nothing changed. Then end your reply with LOOP_COMPLETE on its own line to stop the loop."
+      intervalSeconds: 60
+      maxTicks: 2
+    assert: { ok: true }
+
+  - name: status reflects active state
+    path: /agent/cron/heartbeat/{session_id}
+    assert:
+      - { path: set, eq: true }
+      - { path: status, eq: active }
+      - { path: intervalSeconds, eq: 60 }
+
+  - name: pause
+    method: POST
+    path: /agent/cron/heartbeat/{session_id}/pause
+    assert: { ok: true }
+
+  - name: double pause rejected
+    method: POST
+    path: /agent/cron/heartbeat/{session_id}/pause
+    assert: { ok: false }
+
+  - name: resume
+    method: POST
+    path: /agent/cron/heartbeat/{session_id}/resume
+    assert: { ok: true }
+
+  - name: wait for the tick to fire and the loop to self-stop
+    step: wait_for
+    path: /agent/cron/heartbeat/{session_id}
+    timeout: 150
+    assert:
+      - { path: set, eq: false }
+
+  - name: fired result available for delivery
+    method: GET
+    path: /agent/cron/heartbeat/{session_id}/result
+    assert:
+      - { path: hasResult, eq: true }
+      - { path: result, contains: "LOOP_COMPLETE" }
+
+  - name: ack clears the result
+    method: POST
+    path: /agent/cron/heartbeat/{session_id}/result/ack
+    assert: { acked: true }
+
+  - name: clear no-op after auto-stop
+    method: POST
+    path: /agent/cron/heartbeat/{session_id}/clear
+    assert: { ok: false }

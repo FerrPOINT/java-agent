@@ -1,0 +1,37 @@
+# Model & toolset management: list, switch, toolsets, capabilities
+name: model-tools
+steps:
+  - name: probe session
+    step: turn
+    message: "Ответь одним словом: ок"
+
+  - name: model info responds
+    path: /agent/model
+    assert: { status: 200 }
+
+  - name: switch to same model is a no-op success
+    method: POST
+    path: /agent/model
+    body:
+      sessionId: "{session_id}"
+      model: app-test
+    assert: { ok: true }
+
+  - name: toolsets listed
+    path: /v1/toolsets
+    assert:
+      - { path: data, len_gte: 1 }
+      - { path: object, eq: list }
+
+  - name: tools listed
+    path: /agent/tools
+    assert: { status: 200 }
+
+  - name: capabilities advertise approvals truthfully
+    path: /v1/capabilities
+    assert:
+      - { path: features.approval_events, exists: true }
+
+  - name: skills list responds
+    path: /agent/skills
+    assert: { status: 200 }

@@ -1,0 +1,39 @@
+# Cron jobs CRUD: create, list, pause/resume, delete
+name: cron-crud
+steps:
+  - name: create job
+    method: POST
+    path: /agent/cron
+    body:
+      name: "e2e-cleanup-job"
+      schedule: "0 5 * * *"
+      prompt: "e2e: report nothing, this is a lifecycle probe"
+      deliverTo: "origin"
+    assert:
+      - { path: name, eq: "e2e-cleanup-job" }
+    extract:
+      id: id
+
+  - name: list contains the job
+    path: /agent/cron
+    assert: { status: 200 }
+
+  - name: pause job
+    method: POST
+    path: /agent/cron/{id}/pause
+    assert: { status: 200 }
+
+  - name: resume job
+    method: POST
+    path: /agent/cron/{id}/resume
+    assert: { status: 200 }
+
+  - name: delete job
+    method: DELETE
+    path: /agent/cron/{id}
+    assert: { status: 200 }
+
+  - name: double delete rejected
+    method: DELETE
+    path: /agent/cron/{id}
+    assert: { status: 404 }

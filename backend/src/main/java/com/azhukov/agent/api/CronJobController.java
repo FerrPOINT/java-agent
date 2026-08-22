@@ -166,8 +166,12 @@ public class CronJobController {
     }
 
     @DeleteMapping("/{id}")
-    public void delete(@PathVariable UUID id) {
+    public org.springframework.http.ResponseEntity<Void> delete(@PathVariable UUID id) {
+        if (!cronJobService.exists(id)) {
+            return org.springframework.http.ResponseEntity.notFound().build();
+        }
         cronJobService.remove(id);
+        return org.springframework.http.ResponseEntity.ok().build();
     }
 
     @PostMapping("/{id}/run")

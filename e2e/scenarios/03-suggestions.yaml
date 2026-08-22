@@ -1,0 +1,42 @@
+# Suggestions catalog: seed, list, accept, dismiss latch, re-seed idempotency
+name: suggestions-catalog
+steps:
+  - name: pending list empty or array
+    path: /agent/cron/suggestions
+    assert: { status: 200 }
+
+  - name: seed catalog
+    method: POST
+    path: /agent/cron/suggestions/catalog
+    assert:
+      - { path: added, gte: 0 }
+
+  - name: pending list has entries
+    path: /agent/cron/suggestions
+    assert:
+      - { path: "[0].id", exists: true }
+
+  - name: extract first suggestion id
+    path: /agent/cron/suggestions
+    extract:
+      "[0].id": first_id
+
+  - name: dismiss first suggestion
+    method: POST
+    path: /agent/cron/suggestions/{first_id}/dismiss
+    assert: { dismissed: true }
+
+  - name: dismissed one is gone from pending
+    path: /agent/cron/suggestions
+    assert:
+      - { var: first_id, exists: true }
+
+  - name: re-seed never resurrects dismissed
+    method: POST
+    path: /agent/cron/suggestions/catalog
+    assert: { added: 0 }
+
+  - name: accept unknown id rejected
+    method: POST
+    path: /agent/cron/suggestions/no-such-id/accept
+    assert: { accepted: false }

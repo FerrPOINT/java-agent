@@ -1456,7 +1456,7 @@ public class BackendClient {
     }
 
     public JsonNode listToolsets() {
-        JsonNode node = executeGet("/api/v1/agent/toolsets");
+        JsonNode node = executeGet("/v1/toolsets");
         return node != null ? node : objectMapper.createArrayNode();
     }
 
@@ -1464,7 +1464,7 @@ public class BackendClient {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("toolset", toolsetName);
         body.put("enabled", enabled);
-        String uri = enabled ? "/api/v1/agent/toolsets/enable" : "/api/v1/agent/toolsets/disable";
+        String uri = enabled ? "/v1/toolsets/" + toolsetName + "/enable" : "/v1/toolsets/" + toolsetName + "/disable";
         if (!executePostBodiless(uri, body)) {
             return "Error: failed to " + (enabled ? "enable" : "disable") + " toolset " + toolsetName;
         }

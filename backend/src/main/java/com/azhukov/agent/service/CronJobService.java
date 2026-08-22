@@ -330,6 +330,10 @@ public class CronJobService {
         return entity;
     }
 
+    public boolean exists(UUID id) {
+        return cronJobRepository.existsById(id);
+    }
+
     public void remove(UUID id) {
         cancelJob(id);
         cronJobRepository.deleteById(id);

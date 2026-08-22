@@ -1,0 +1,17 @@
+# Terminal tool: exit-code failure must reach the model with output intact
+name: terminal-tool
+steps:
+  - name: successful command round-trip
+    step: turn
+    message: "Выполни через терминал: echo e2e-marker-123. Верни только вывод команды."
+    assert:
+      - { var: turn.toolNames, contains: terminal }
+      - { var: turn.text, contains: "e2e-marker-123" }
+
+  - name: failing command — model sees exit code and stderr
+    step: turn
+    message: "Выполни через терминал команду ls /nonexistent_e2e_dir. Назови точный код возврата и текст ошибки."
+    assert:
+      - { var: turn.toolNames, contains: terminal }
+      - { var: turn.text, matches: "(?i)(2|exit)" }
+      - { var: turn.text, contains: "nonexistent_e2e_dir" }

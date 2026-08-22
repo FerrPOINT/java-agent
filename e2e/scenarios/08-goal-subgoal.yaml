@@ -1,0 +1,66 @@
+# Goal & subgoal lifecycle: set, show, pause, resume, clear
+name: goal-subgoal
+steps:
+  - name: probe session
+    step: turn
+    message: "Ответь одним словом: ок"
+
+  - name: set goal
+    method: POST
+    path: /agent/goal
+    body:
+      sessionId: "{session_id}"
+      goal: "e2e: verify goal lifecycle"
+    assert: { status: 200 }
+
+  - name: context shows the goal
+    path: /agent/session/{session_id}/context
+    assert:
+      - { path: goal, contains: "verify goal" }
+
+  - name: add subgoal
+    method: POST
+    path: /agent/subgoal
+    body:
+      sessionId: "{session_id}"
+      subgoal: "e2e subgoal criterion"
+    assert: { status: 200 }
+
+  - name: context shows subgoals
+    path: /agent/session/{session_id}/context
+    assert:
+      - { path: subgoals, contains: "e2e subgoal" }
+
+  - name: pause goal
+    method: POST
+    path: /agent/goal/pause
+    body: { sessionId: "{session_id}" }
+    assert: { status: 200 }
+
+  - name: context shows paused
+    path: /agent/session/{session_id}/context
+    assert:
+      - { path: goalPaused, eq: true }
+
+  - name: resume goal
+    method: POST
+    path: /agent/goal/resume
+    body: { sessionId: "{session_id}" }
+    assert: { status: 200 }
+
+  - name: clear subgoals
+    method: POST
+    path: /agent/subgoal/clear
+    body: { sessionId: "{session_id}" }
+    assert: { status: 200 }
+
+  - name: clear goal
+    method: POST
+    path: /agent/goal/clear
+    body: { sessionId: "{session_id}" }
+    assert: { status: 200 }
+
+  - name: context no longer shows the goal
+    path: /agent/session/{session_id}/context
+    assert:
+      - { path: goal, eq: null }

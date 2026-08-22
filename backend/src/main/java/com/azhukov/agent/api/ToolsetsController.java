@@ -66,4 +66,31 @@ public class ToolsetsController {
             "data", data
         );
     }
+
+    /** Toggle a toolset for NEW sessions (default-toolsets override). */
+    @org.springframework.web.bind.annotation.PostMapping("/{toolset}/enable")
+    public Map<String, Object> enable(@org.springframework.web.bind.annotation.PathVariable String toolset) {
+        return toggle(toolset, true);
+    }
+
+    @org.springframework.web.bind.annotation.PostMapping("/{toolset}/disable")
+    public Map<String, Object> disable(@org.springframework.web.bind.annotation.PathVariable String toolset) {
+        return toggle(toolset, false);
+    }
+
+    private Map<String, Object> toggle(String toolset, boolean enabled) {
+        Set<String> all = toolRegistry.getToolsets();
+        if (!all.contains(toolset)) {
+            return Map.of("ok", false, "reason", "unknown toolset: " + toolset);
+        }
+        List<String> current = new ArrayList<>(properties.getSkills() != null
+            ? properties.getSkills().getDefaultToolsets() : List.of());
+        if (enabled && !current.contains(toolset)) {
+            current.add(toolset);
+        } else if (!enabled) {
+            current.remove(toolset);
+        }
+        properties.getSkills().setDefaultToolsets(current);
+        return Map.of("ok", true, "toolset", toolset, "enabled", enabled);
+    }
 }

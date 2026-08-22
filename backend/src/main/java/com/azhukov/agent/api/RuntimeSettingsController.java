@@ -146,7 +146,9 @@ public class RuntimeSettingsController {
     public ResponseEntity<Void> setSubgoal(@Valid @RequestBody SubgoalRequest body) {
         UUID sessionId = UUID.fromString(body.sessionId());
         String subgoal = body.subgoal();
-        String append = body.append() != null ? body.append() : "false";
+        // Hermes /subgoal <text> ALWAYS appends a criterion (cli_commands_mixin.py:2970).
+        // append=false is the explicit replace escape hatch.
+        String append = body.append() != null ? body.append() : "true";
         if (Boolean.parseBoolean(append)) {
             cliRuntimeSettingsService.appendSubgoal(sessionId, subgoal);
         } else {

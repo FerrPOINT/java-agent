@@ -1,0 +1,26 @@
+# /refine: on-demand background review with optional focus
+name: refine
+steps:
+  - name: seed a memorable fact into a fresh session
+    step: turn
+    message: "Запомни: я люблю краткие ответы. Просто подтверди одним словом."
+
+  - name: refine accepted (no focus)
+    method: POST
+    path: /agent/refine
+    body: { sessionId: "{session_id}" }
+    assert: { accepted: true }
+
+  - name: refine with focus accepted
+    method: POST
+    path: /agent/refine
+    body:
+      sessionId: "{session_id}"
+      focus: "communication preferences"
+    assert: { accepted: true }
+
+  - name: refine unknown session rejected
+    method: POST
+    path: /agent/refine
+    body: { sessionId: "00000000-0000-0000-0000-0000000000ff" }
+    assert: { accepted: false }
