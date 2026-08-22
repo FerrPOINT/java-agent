@@ -176,6 +176,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
     }
 
     @Override
+    public boolean isSessionBusy(UUID sessionId) {
+        java.util.concurrent.locks.ReentrantLock lock = sessionLocks.get(sessionId);
+        return lock != null && lock.isLocked();
+    }
+
+    @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {
         List<Message> sanitized = messageSanitizer.sanitize(messages);
         List<Message> context = contextEngine.prepareContext(

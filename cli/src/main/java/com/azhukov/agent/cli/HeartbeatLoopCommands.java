@@ -173,8 +173,12 @@ public final class HeartbeatLoopCommands implements CommandGroup {
             .append("say so and end your reply with ").append(LOOP_COMPLETE_MARKER)
             .append(" on its own line — that stops the loop.");
 
-        JsonNode r = client.executePost("/api/v1/agent/cron/heartbeat",
-            java.util.Map.of("sessionId", sid, "prompt", loopPrompt.toString(), "intervalSeconds", effective));
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("sessionId", sid);
+        body.put("prompt", loopPrompt.toString());
+        body.put("intervalSeconds", effective);
+        if (times != null) body.put("maxTicks", times);
+        JsonNode r = client.executePost("/api/v1/agent/cron/heartbeat", body);
         if (!r.path("ok").asBoolean(false)) {
             return "/loop failed: " + r.path("reason").asText("rejected");
         }

@@ -27,6 +27,7 @@ import java.util.regex.Pattern;
 public class HeartbeatCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
+    private final com.azhukov.agent.bot.cron.HeartbeatDeliveryPoller deliveryPoller;
 
     private static final Pattern INTERVAL_TOKEN_RE =
         Pattern.compile("^(?=\\d)(?:(\\d+)h)?(?:(\\d+)m)?(?:(\\d+)s)?$", Pattern.CASE_INSENSITIVE);
@@ -57,10 +58,10 @@ public class HeartbeatCommand implements CommandHandler {
         java.util.UUID backend = session.getBackendSessionId();
         String sid = backend != null ? backend.toString() : session.getId().toString();
         String arg = event.commandArgs() == null ? "" : event.commandArgs().strip();
-        return handleHeartbeat(arg, sid);
+        return handleHeartbeat(arg, sid, event.chatId());
     }
 
-    private String handleHeartbeat(String arg, String sid) {
+    private String handleHeartbeat(String arg, String sid, long chatId) {
         String lower = arg.toLowerCase();
 
         if (arg.isEmpty() || lower.equals("status")) {
@@ -113,6 +114,9 @@ public class HeartbeatCommand implements CommandHandler {
         if (r == null || !r.path("ok").asBoolean(false)) {
             return "Invalid heartbeat: " + (r == null ? "backend unavailable" : r.path("reason").asText("rejected"));
         }
+        // Deliver subsequent fire results to this chat (Hermes: the wakeup
+        // watcher forwards each tick's reply to the user).
+        deliveryPoller.watch(java.util.UUID.fromString(sid), chatId);
         return "♥ " + r.path("message").asText("Heartbeat set.")
             + "\nFires as a normal turn when the session is idle. Use /cron for durable schedules.";
     }

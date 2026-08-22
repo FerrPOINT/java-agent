@@ -218,4 +218,33 @@ class CronSuggestionServiceTest {
         assertThat(all.stream().filter(s -> s.status().equals("dismissed"))).hasSize(1);
         assertThat(all.stream().filter(s -> s.status().equals("pending"))).hasSize(1);
     }
+
+    @Test
+    void reseedNeverResurrectsDismissed() {
+        service.seedCatalogSuggestions();
+        List<com.azhukov.agent.service.CronSuggestionService.SuggestionRecord> first = service.listPending();
+        assertThat(first).isNotEmpty();
+        for (var rec : first) {
+            service.dismissSuggestion(rec.id());
+        }
+        assertThat(service.listPending()).isEmpty();
+        // Re-seed: the dismiss latch must hold — nothing comes back
+        int added = service.seedCatalogSuggestions();
+        assertThat(added).isZero();
+        assertThat(service.listPending()).isEmpty();
+    }
+
+    @Test
+    void acceptRemovesFromPendingAndLatches() {
+        service.seedCatalogSuggestions();
+        var rec = service.listPending().get(0);
+        when(cronJobService.create(any(), any(), any(), any(), any())).thenReturn(new CronJobEntity());
+        service.acceptSuggestion(rec.id());
+        // Only the accepted one leaves pending; the rest stay
+        assertThat(service.listPending()).hasSize(3);
+        assertThat(service.listPending().stream().map(s -> s.id())).doesNotContain(rec.id());
+        // Re-seed after accept: the accepted dedup key is latched — not re-offered
+        assertThat(service.seedCatalogSuggestions()).isZero();
+        assertThat(service.listPending()).hasSize(3);
+    }
 }

@@ -9,8 +9,9 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Hermes parity tests for HeartbeatService (hermes_cli/heartbeat.py):
- * interval parsing, formatting, the state machine and due-fire logic.
+ * Hermes parity tests for HeartbeatService (hermes_cli/heartbeat.py +
+ * hermes_cli/loops.py): interval parsing, formatting, the state machine,
+ * idle-coalescing, LOOP_COMPLETE detection and --times caps.
  */
 class HeartbeatServiceTest {
 
@@ -59,7 +60,6 @@ class HeartbeatServiceTest {
 
         HeartbeatService.HeartbeatState resumed = svc.resume(sid);
         assertThat(resumed.status()).isEqualTo("active");
-        // resume re-anchors: not due immediately after resuming
         assertThat(resumed.isDue(Instant.now().plusSeconds(10))).isFalse();
 
         assertThat(svc.clear(sid)).isTrue();
@@ -77,4 +77,65 @@ class HeartbeatServiceTest {
         assertThat(prompt).contains("Check the deployment");
         assertThat(prompt).contains("do not invent work");
     }
-}
+
+    // ── /loop semantics (Hermes loops.py) ──
+
+    @Test
+    @DisplayName("responseSignalsComplete: marker on its own line, trailing .! tolerated")
+    void loopCompleteDetection() {
+        assertThat(HeartbeatService.responseSignalsComplete("All done.\nLOOP_COMPLETE")).isTrue();
+        assertThat(HeartbeatService.responseSignalsComplete("LOOP_COMPLETE.")).isTrue();
+        assertThat(HeartbeatService.responseSignalsComplete("  LOOP_COMPLETE  ")).isTrue();
+        // NOT on its own line / embedded:
+        assertThat(HeartbeatService.responseSignalsComplete("The LOOP_COMPLETE thing is done")).isFalse();
+        // Hermes (?i): case-insensitive — lowercase marker on its own line DOES match
+        assertThat(HeartbeatService.responseSignalsComplete("loop_complete")).isTrue();
+        assertThat(HeartbeatService.responseSignalsComplete("")).isFalse();
+        assertThat(HeartbeatService.responseSignalsComplete(null)).isFalse();
+    }
+
+    @Test
+    @DisplayName("--times cap: isDue false once fireCount reaches maxTicks")
+    void timesCap() {
+        HeartbeatService.HeartbeatState st = new HeartbeatService.HeartbeatState(
+            "Watch CI", 60, "active", Instant.now().minusSeconds(500), null, 3, 3);
+        assertThat(st.fireCount()).isEqualTo(3);
+        assertThat(st.maxTicks()).isEqualTo(3);
+        assertThat(st.isDue(Instant.now())).isFalse();   // cap reached
+    }
+
+    @Test
+    @DisplayName("tick(): busy session coalesces — anchor NOT advanced, no fire")
+    void busySessionCoalesces() {
+        HeartbeatService svc = new HeartbeatService() {
+            @Override
+            boolean isBusy(UUID sessionId) { return true; }
+        };
+        UUID sid = UUID.randomUUID();
+        HeartbeatService.HeartbeatState st = svc.set(sid, "check", 60);
+        Instant dueAt = Instant.now().plusSeconds(120);
+
+        svc.tick(sid, st, dueAt);
+
+        HeartbeatService.HeartbeatState after = svc.get(sid);
+        assertThat(after.fireCount()).isZero();          // did not fire
+        assertThat(after.lastFiredAt()).isNull();        // anchor unchanged → will fire when idle
+    }
+
+    @Test
+    @DisplayName("tick(): idle session fires exactly once (anchor advanced)")
+    void idleSessionFires() {
+        HeartbeatService svc = new HeartbeatService() {
+            @Override
+            boolean isBusy(UUID sessionId) { return false; }
+        };
+        UUID sid = UUID.randomUUID();
+        HeartbeatService.HeartbeatState st = svc.set(sid, "check", 60);
+        Instant dueAt = Instant.now().plusSeconds(120);
+
+        svc.tick(sid, st, dueAt);
+
+        HeartbeatService.HeartbeatState after = svc.get(sid);
+        assertThat(after.fireCount()).isEqualTo(1);
+        assertThat(after.lastFiredAt()).isNotNull();
+    }}

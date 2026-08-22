@@ -82,7 +82,7 @@ public class CronJobController {
 
     // ── Heartbeat (Hermes /heartbeat parity) ──
 
-    public record HeartbeatSetRequest(UUID sessionId, String prompt, Integer intervalSeconds) {}
+    public record HeartbeatSetRequest(UUID sessionId, String prompt, Integer intervalSeconds, Integer maxTicks) {}
 
     @GetMapping("/heartbeat/{sessionId}")
     public java.util.Map<String, Object> heartbeatStatus(@PathVariable UUID sessionId) {
@@ -99,12 +99,14 @@ public class CronJobController {
 
     @PostMapping("/heartbeat")
     public java.util.Map<String, Object> heartbeatSet(@org.springframework.web.bind.annotation.RequestBody HeartbeatSetRequest request) {
+        // /loop --times N reaches here with maxTicks
         if (request.sessionId() == null || request.prompt() == null || request.prompt().isBlank()
             || request.intervalSeconds() == null || request.intervalSeconds() < HeartbeatService.MIN_INTERVAL_SECONDS) {
             return java.util.Map.of("ok", false,
                 "reason", "sessionId, prompt and intervalSeconds >= " + HeartbeatService.MIN_INTERVAL_SECONDS + " required");
         }
-        HeartbeatService.HeartbeatState st = heartbeatService.set(request.sessionId(), request.prompt(), request.intervalSeconds());
+        HeartbeatService.HeartbeatState st = heartbeatService.set(request.sessionId(), request.prompt(), request.intervalSeconds(),
+            request.maxTicks() != null ? request.maxTicks() : 0);
         return java.util.Map.of("ok", true, "message",
             "Heartbeat set (every " + HeartbeatService.formatInterval(st.intervalSeconds()) + "): " + st.prompt());
     }
@@ -124,6 +126,15 @@ public class CronJobController {
             ? java.util.Map.of("ok", false, "reason", "no paused heartbeat")
             : java.util.Map.of("ok", true, "message",
                 "Heartbeat resumed (every " + HeartbeatService.formatInterval(st.intervalSeconds()) + "): " + st.prompt());
+    }
+
+    /** Bot polls this to deliver heartbeat/loop results to the chat. */
+    @GetMapping("/heartbeat/{sessionId}/result")
+    public java.util.Map<String, Object> heartbeatResult(@PathVariable UUID sessionId) {
+        String result = heartbeatService.pollLastFireResult(sessionId);
+        return result == null
+            ? java.util.Map.of("hasResult", false)
+            : java.util.Map.of("hasResult", true, "result", result);
     }
 
     @PostMapping("/heartbeat/{sessionId}/clear")

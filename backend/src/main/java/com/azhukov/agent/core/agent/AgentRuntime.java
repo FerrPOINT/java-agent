@@ -8,6 +8,7 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.TurnResult;
 
 import java.util.List;
+import java.util.UUID;
 
 public interface AgentRuntime {
 
@@ -22,4 +23,15 @@ public interface AgentRuntime {
     TurnResult runTurn(Session session, String userInput, List<String> references, ModelRequestOptions options);
 
     ChatResponse run(List<Message> messages, List<ToolDefinition> tools);
+
+    /**
+     * Hermes parity (heartbeat.py: "heartbeats only fire into an idle session;
+     * a real user message always wins — the tick coalesces"): true while a
+     * turn is in progress for the session. Heartbeat/loop watchdogs skip the
+     * tick; the interval anchor stays put, so the wakeup fires when the
+     * session next goes idle.
+     */
+    default boolean isSessionBusy(UUID sessionId) {
+        return false;
+    }
 }

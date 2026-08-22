@@ -25,6 +25,7 @@ public class LoopCommand implements CommandHandler {
     public static final String LOOP_COMPLETE_MARKER = "LOOP_COMPLETE";
 
     private final AgentBackendClient backendClient;
+    private final com.azhukov.agent.bot.cron.HeartbeatDeliveryPoller deliveryPoller;
 
     @Override
     public String name() {
@@ -49,6 +50,9 @@ public class LoopCommand implements CommandHandler {
         if (lower.equals("pause") || lower.equals("resume") || lower.equals("stop") || lower.equals("off")) {
             JsonNode r = backendClient.suggestionPost("/api/v1/agent/cron/heartbeat/" + sid
                 + "/" + ("off".equals(lower) ? "clear" : lower));
+            if ("off".equals(lower) || "stop".equals(lower)) {
+                deliveryPoller.unwatch(java.util.UUID.fromString(sid));
+            }
             return r != null && r.path("ok").asBoolean(false)
                 ? r.path("message").asText("Done.") : "No loop set.";
         }
@@ -94,11 +98,16 @@ public class LoopCommand implements CommandHandler {
             .append("say so and end your reply with ").append(LOOP_COMPLETE_MARKER)
             .append(" on its own line — that stops the loop.");
 
-        JsonNode r = backendClient.suggestionPostJson("/api/v1/agent/cron/heartbeat",
-            Map.of("sessionId", sid, "prompt", loopPrompt.toString(), "intervalSeconds", effective));
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("sessionId", sid);
+        body.put("prompt", loopPrompt.toString());
+        body.put("intervalSeconds", effective);
+        if (times != null) body.put("maxTicks", times);
+        JsonNode r = backendClient.suggestionPostJson("/api/v1/agent/cron/heartbeat", body);
         if (r == null || !r.path("ok").asBoolean(false)) {
             return "/loop failed: " + (r == null ? "backend unavailable" : r.path("reason").asText("rejected"));
         }
+        deliveryPoller.watch(java.util.UUID.fromString(sid), event.chatId());
         return "🔁 Loop set (every " + (interval != null ? interval + "s" : "5m") + "): " + prompt + "\n"
             + (times != null ? "Max " + times + " iterations.\n" : "")
             + (until != null ? "Stop condition: " + until + "\n" : "")

@@ -15,8 +15,7 @@ Focus on:
 1. Has the user revealed things about themselves — their persona, desires, preferences, or personal details worth remembering?
 2. Has the user expressed expectations about how you should behave, their work style, or ways they want you to operate?
 
-If something stands out, save it using the memory tool. If nothing is worth saving, just say 'Nothing to save.' and stop.
-""";
+If something stands out, save it using the memory tool. If nothing is worth saving, just say 'Nothing to save.' and stop.""";
 
  public static final String SKILL_REVIEW_PROMPT = """
 Review the conversation above and update the skill library. Be ACTIVE — most sessions produce at least one skill update, even if small. A pass that does nothing is a missed learning opportunity, not a neutral outcome.
@@ -62,8 +61,7 @@ Do NOT capture (these become persistent self-imposed constraints that bite you l
 
 If a tool failed because of setup state, capture the FIX (install command, config step, env var to set) under an existing setup or troubleshooting skill — never 'this tool does not work' as a standalone constraint.
 
-'Nothing to save.' is a real option but should NOT be the default. If the session ran smoothly with no corrections and produced no new technique, just say 'Nothing to save.' and stop. Otherwise, act.
-""";
+'Nothing to save.' is a real option but should NOT be the default. If the session ran smoothly with no corrections and produced no new technique, just say 'Nothing to save.' and stop. Otherwise, act.""";
 
  public static final String COMBINED_REVIEW_PROMPT = """
 Review the conversation above and update two things:
@@ -108,8 +106,7 @@ Do NOT capture as skills (these become persistent self-imposed constraints that 
 
 If a tool failed because of setup state, capture the FIX (install command, config step, env var to set) under an existing setup or troubleshooting skill — never 'this tool does not work' as a standalone constraint.
 
-Act on whichever of the two dimensions has real signal. If genuinely nothing stands out on either, say 'Nothing to save.' and stop — but don't reach for that conclusion as a default.
-""";
+Act on whichever of the two dimensions has real signal. If genuinely nothing stands out on either, say 'Nothing to save.' and stop — but don't reach for that conclusion as a default.""";
 
  /**
  * System prompt for the review agent — explains the whitelist and constraints.
