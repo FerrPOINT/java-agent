@@ -44,6 +44,7 @@ public class SessionController {
     private final AgentProperties properties;
     private final CheckpointManager checkpointManager;
     private final TodoService todoService;
+    private final com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
 
     @Operation(summary = "List all sessions")
     @GetMapping("/sessions")
@@ -61,6 +62,21 @@ public class SessionController {
     }
 
     public record CreateSessionRequest(String userId) {}
+
+    /**
+     * Hermes parity (/save): full message history for session export.
+     * Returns id, role, content, turnIndex, createdAt per message.
+     */
+    @GetMapping("/agent/session/{sessionId}/history")
+    public java.util.List<java.util.Map<String, Object>> history(@PathVariable java.util.UUID sessionId) {
+        return messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+            .map(m -> java.util.Map.<String, Object>of(
+                "role", m.getRole() == null ? "?" : m.getRole(),
+                "content", m.getContent() == null ? "" : m.getContent(),
+                "turnIndex", m.getTurnIndex() == null ? 0 : m.getTurnIndex(),
+                "createdAt", m.getCreatedAt() == null ? "" : m.getCreatedAt().toString()))
+            .toList();
+    }
 
     @GetMapping("/agent/session/{sessionId}/context")
     public ContextInfoDto getContext(@PathVariable UUID sessionId) {

@@ -117,7 +117,7 @@ class AgentControllerBranchCoverageTest {
 
     private MockMvc sessionMockMvc() {
         SessionController controller = new SessionController(
-            agentRuntimeService, domainDtoMapper, agentProperties, checkpointManager, todoService
+            agentRuntimeService, domainDtoMapper, agentProperties, checkpointManager, todoService, null
         );
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
