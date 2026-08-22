@@ -66,9 +66,15 @@ public class SkillViewTool implements ToolHandler {
     }
 
     @org.springframework.beans.factory.annotation.Autowired
-    public SkillViewTool(SkillManager skillManager, AgentProperties agentProperties) {
+    public SkillViewTool(SkillManager skillManager, AgentProperties agentProperties,
+                         SkillPreprocessor skillPreprocessor) {
         this.skillManager = skillManager;
         this.agentProperties = agentProperties;
+        // Hermes parity (skills_tool.py:1013/1686): skill_view ALWAYS
+        // preprocesses content (template vars + inline shell). The setter-only
+        // wiring meant the preprocessor was never injected — preprocess=True
+        // silently degraded to raw content.
+        this.skillPreprocessor = skillPreprocessor;
     }
 
     @Autowired(required = false)
