@@ -80,7 +80,9 @@ class AgentControllerTest {
             ttsService, transcriptionService,
             new com.azhukov.agent.core.agent.SteerBuffer(),
             new com.azhukov.agent.core.agent.InterruptToken(),
-            null, null, null, null,
+            null,
+            org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.BackgroundJobRepository.class),
+            null, null, null,
             new com.azhukov.agent.core.security.ApprovalQueue(),
             agentProperties,
             null

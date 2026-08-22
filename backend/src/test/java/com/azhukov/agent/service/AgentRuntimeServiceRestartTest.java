@@ -40,11 +40,15 @@ class AgentRuntimeServiceRestartTest {
     private AgentRuntimeService agentRuntimeService;
     private SessionRepository sessionRepository;
     private MessageRepository messageRepository;
+    private SkillManager skillManager;
+    private McpLifecycleManager mcpLifecycleManager;
 
     @BeforeEach
     void setUp() {
         sessionRepository = mock(SessionRepository.class);
         messageRepository = mock(MessageRepository.class);
+        skillManager = mock(SkillManager.class);
+        mcpLifecycleManager = mock(McpLifecycleManager.class);
         TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
         when(transactionTemplate.execute(any())).thenAnswer(inv -> {
             org.springframework.transaction.support.TransactionCallback<?> callback = inv.getArgument(0);
@@ -53,6 +57,7 @@ class AgentRuntimeServiceRestartTest {
 
         agentRuntimeService = new AgentRuntimeService(
             mock(AgentRuntime.class),
+            org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.BackgroundJobRepository.class),
             sessionRepository,
             messageRepository,
             mock(SessionTitleService.class),
@@ -67,10 +72,10 @@ class AgentRuntimeServiceRestartTest {
             Mappers.getMapper(MessageMapper.class),
             Mappers.getMapper(DomainDtoMapper.class),
             mock(SkillBundleService.class),
-            mock(SkillManager.class),
-            mock(McpLifecycleManager.class),
+            skillManager,
+            mcpLifecycleManager,
             new com.fasterxml.jackson.databind.ObjectMapper(),
-            new RuntimeConfigService(),
+            org.mockito.Mockito.mock(RuntimeConfigService.class),
             transactionTemplate,
             new AgentSessionResolver(sessionRepository, Mappers.getMapper(SessionEntityMapper.class), transactionTemplate, messageRepository, mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
             new CliStateApplier(),
@@ -82,32 +87,18 @@ class AgentRuntimeServiceRestartTest {
     }
 
     @Test
-    void restart_clearsAllSessionsBeyond50() {
-        // Create 75 sessions — more than the old 50-item page limit
-        List<SessionEntity> sessions = new ArrayList<>();
-        for (int i = 0; i < 75; i++) {
-            SessionEntity entity = new SessionEntity();
-            entity.setId(UUID.randomUUID());
-            entity.setUserId("user-1");
-            entity.setTitle("session-" + i);
-            entity.setCreatedAt(Instant.now());
-            entity.setUpdatedAt(Instant.now());
-            sessions.add(entity);
-        }
-
-        // findAllByUserId(String) should return ALL sessions (no pagination)
-        when(sessionRepository.findAllByUserId("user-1")).thenReturn(sessions);
-        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class)))
-            .thenReturn(List.of());
-
+    void restart_preservesHistoryAndReloadsRuntime() {
+        // Hermes parity (gateway/slash_commands.py _handle_restart_command):
+        // restart drains and reloads runtime state; it NEVER wipes messages.
+        // The old implementation deleted every message of the default user.
         agentRuntimeService.restart();
 
-        // Verify all 75 sessions had their messages cleared
-        verify(messageRepository, times(75)).deleteAll(any());
-        // Verify the non-paginated method was used
-        verify(sessionRepository).findAllByUserId("user-1");
-        // Verify the paginated method was NOT used
-        verify(sessionRepository, never()).findAllByUserId(eq("user-1"), any());
+        verify(messageRepository, never()).deleteAll(any());
+        verifyNoInteractions(messageRepository);
+        // runtime reload path exercised: skills + mcp + model override
+        verify(skillManager).reload();
+        verify(mcpLifecycleManager).closeAll();
+        verify(mcpLifecycleManager).connectConfiguredServers();
     }
 
     @Test

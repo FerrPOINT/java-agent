@@ -30,7 +30,20 @@ public class AdminCommands implements CommandGroup {
 
         registry.register("usage", "Show token/cost usage for the current session", (args, client, sessionId) -> {
             JsonNode usage = client.getUsage(sessionId);
-            return usage != null ? client.prettyPrint(usage) : "No usage data available.";
+            if (usage == null) {
+                return "No usage data available.";
+            }
+            StringBuilder sb = new StringBuilder("Session usage:\n");
+            sb.append("  Messages: ").append(usage.path("messageCount").asInt(0)).append("\n");
+            sb.append("  Tokens:   ").append(usage.path("tokenEstimate").asInt(0)).append("\n");
+            if (usage.hasNonNull("cost")) {
+                sb.append("  Cost:     $").append(String.format("%.5f", usage.path("cost").asDouble(0))).append("\n");
+            }
+            JsonNode models = usage.path("models");
+            if (models.isArray() && !models.isEmpty()) {
+                sb.append("  Models:   ").append(models.toString().replace("[", "").replace("]", "").replace("\"", "")).append("\n");
+            }
+            return sb.toString();
         });
 
         registry.register("insights", "Show agent insights dashboard", (args, client, sessionId) -> {

@@ -23,6 +23,12 @@ public class ExternalEditor {
      * @return the edited content, or null if the editor couldn't be opened
      */
     public static String edit(String initialContent) {
+        // Hermes parity: refuse to spawn $EDITOR without a terminal — vim
+        // without a TTY spews "Error reading input" garbage into the stream.
+        if (System.console() == null && System.getenv("JAVA_AGENT_CLI_FORCE_EDITOR") == null) {
+            log.warn("Editor requested but no TTY is attached — refusing to spawn {}", System.getenv().getOrDefault("EDITOR", "vi"));
+            return null;
+        }
         String editor = System.getenv().getOrDefault("EDITOR", "vi");
         Path tempFile = null;
         try {

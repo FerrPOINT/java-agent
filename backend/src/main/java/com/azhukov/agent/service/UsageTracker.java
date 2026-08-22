@@ -133,7 +133,18 @@ public class UsageTracker {
         List<UsageEntity> records = usageRepository.findBySessionId(sessionId);
         int messageCount = records.size();
         int totalTokens = records.stream().mapToInt(UsageEntity::getTotalTokens).sum();
-        return new UsageDto(sessionId, messageCount, totalTokens);
+        double cost = records.stream()
+            .map(UsageEntity::getCost)
+            .filter(c -> c != null)
+            .mapToDouble(Double::doubleValue)
+            .sum();
+        java.util.List<String> models = records.stream()
+            .map(UsageEntity::getModel)
+            .filter(m -> m != null && !m.isBlank())
+            .distinct()
+            .sorted()
+            .toList();
+        return new UsageDto(sessionId, messageCount, totalTokens, cost, models);
     }
 
     /**

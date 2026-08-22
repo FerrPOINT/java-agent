@@ -49,12 +49,14 @@ class DebugReportControllerTest {
         AgentChatController controller = new AgentChatController(
             agentRuntimeService, streamingService, memoryProvider, skillManager,
             ttsService, transcriptionService,
-            new SteerBuffer(),
-            new InterruptToken(),
-            null, null, null, null,
+            new com.azhukov.agent.core.agent.SteerBuffer(),
+            new com.azhukov.agent.core.agent.InterruptToken(),
+            null,
+            org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.BackgroundJobRepository.class),
+            null, null, null,
             new com.azhukov.agent.core.security.ApprovalQueue(),
             agentProperties,
-            agentMetrics
+            null
         );
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }

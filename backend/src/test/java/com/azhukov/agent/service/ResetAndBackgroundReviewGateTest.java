@@ -59,7 +59,8 @@ class ResetAndBackgroundReviewGateTest {
                 inv.getArgument(1), inv.getArgument(2), null, java.util.Map.of(), null));
         service = new AgentRuntimeService(
             agentRuntime,                      // 1 agentRuntime
-            null,                              // 2 sessionRepository
+            org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.BackgroundJobRepository.class), // 2 backgroundJobRepository
+            null,                              // 3 sessionRepository
             messageRepository,                 // 3 messageRepository
             null,                              // 4 sessionTitleService
             null,                              // 5 memoryProvider

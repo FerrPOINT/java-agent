@@ -107,8 +107,11 @@ class AgentControllerBranchCoverageTest {
             agentRuntimeService, streamingService, memoryProvider, skillManager,
             ttsService, transcriptionService,
             steerBuffer, interruptToken,
-            null, null, null, null,
-            approvalQueue, agentProperties,
+            null,
+            org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.BackgroundJobRepository.class),
+            null, null, null,
+            approvalQueue,
+            agentProperties,
             null
         );
         return MockMvcBuilders.standaloneSetup(controller)
@@ -997,8 +1000,8 @@ class AgentControllerBranchCoverageTest {
     @Test
     void backgroundReturnsSessionId() throws Exception {
         mockMvc = chatMockMvc();
-        when(agentRuntimeService.runBackground(any(), any()))
-            .thenReturn("new-session-id");
+        when(agentRuntimeService.submitBackgroundJob(any(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+            .thenReturn(java.util.UUID.randomUUID());
 
         mockMvc.perform(post("/api/v1/agent/background")
                 .contentType(MediaType.APPLICATION_JSON)

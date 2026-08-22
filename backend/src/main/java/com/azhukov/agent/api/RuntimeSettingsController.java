@@ -94,6 +94,12 @@ public class RuntimeSettingsController {
     private static final java.util.Set<String> VALID_REASONING = java.util.Set.of(
         "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra");
 
+    /** Valid reasoning efforts (single source of truth for CLI + backend). */
+    @GetMapping("/agent/reasoning-levels")
+    public java.util.List<String> reasoningLevels() {
+        return java.util.List.copyOf(VALID_REASONING.stream().sorted().toList());
+    }
+
     @PostMapping("/agent/reasoning")
     public ResponseEntity<Void> setReasoning(@Valid @RequestBody ReasoningRequest body) {
         UUID sessionId = UUID.fromString(body.sessionId());

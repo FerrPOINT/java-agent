@@ -1,4 +1,22 @@
-# Open TODO — manual audit (2026-08-23, 0.1.34) + e2e audit (0.1.33)
+# Open TODO — ВСЕ 8 ПУНКТОВ ЗАКРЫТЫ (2026-08-23, 0.1.35)
+
+| # | Было | Стало |
+|---|------|-------|
+| 1 | background-результат недоступен | job-модель: POST /agent/background → {jobId,status}; GET /agent/background/{id} → status/result/finishedAt (миграция V32) |
+| 2 | reasoning-уровни CLI≠backend | единый набор + GET /agent/reasoning-levels; CLI синхронизирован (max/ultra) |
+| 3 | health 6-30 сек | e2e/health-gates → /actuator/health/readiness (3 мс); тяжёлые проверки только в infrastructure-группе |
+| 4 | heartbeat-доставка без следов | HEARTBEAT_DELIVERED/_FAILED/_TOTAL в journalctl бота |
+| 5 | /editor без TTY спавнил vim | System.console()==null → отказ + внятное сообщение |
+| 6 | «нет /restore в CLI» | ложная тревога: /rollback <id> уже был (endpoint тот же) |
+| 7 | /usage без стоимости | UsageDto + cost + models; CLI печатает Cost $X.XXXXX |
+| 8 | /restart чистил всю историю | Hermes-паритет: drain + reload (skills/mcp/model-override), история НИКОГДА не трогается |
+
+Бонус-фиксы этого раунда: CLI /reasoning слал поле reasoningEffort вместо
+effort (400 на валидных уровнях) — исправлено; дублированные YAML-ключи
+health-групп (старт падал) — исправлено; CURRENT_TIMESTAMP vs Instant в
+JPQL finish() — параметризовано.
+
+Ниже — исторические записи (0.1.33/0.1.34), уже закрытые.
 
 ## FIXED in 0.1.34 (was below): checkpoint snapshots captured the world
 ~~checkpoints «9999 files / 128 MB каждый»~~ — ИСПРАВЛЕНО: gitignore-aware

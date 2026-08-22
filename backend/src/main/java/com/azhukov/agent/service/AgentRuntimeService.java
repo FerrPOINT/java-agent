@@ -44,7 +44,16 @@ import java.util.stream.Collectors;
 @Slf4j
 public class AgentRuntimeService {
 
+    /** Single-threaded daemon executor for background jobs (bounded, observable). */
+    private final java.util.concurrent.ExecutorService backgroundExecutor =
+        java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "background-jobs");
+            t.setDaemon(true);
+            return t;
+        });
+
     private final AgentRuntime agentRuntime;
+    private final com.azhukov.agent.persistence.repository.BackgroundJobRepository backgroundJobRepository;
     private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
     private final SessionTitleService sessionTitleService;
@@ -316,12 +325,19 @@ public class AgentRuntimeService {
     }
 
     @Transactional
+    /**
+     * Restart (Hermes parity: gateway/slash_commands.py _handle_restart_command —
+     * drain active work and reload runtime state; conversation history is
+     * NEVER wiped). The old implementation deleted every message of the
+     * default user — destructive and divergent.
+     */
     public void restart() {
-        log.info("Restarting agent — clearing all session messages for user-1");
-        for (SessionEntity session : sessionRepository.findAllByUserId(AgentProperties.DEFAULT_USER_ID)) {
-            messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId()));
-        }
-        log.info("Agent restart complete — all session messages cleared");
+        log.info("Restarting agent — draining active turns and reloading runtime state (history preserved)");
+        skillManager.reload();
+        mcpLifecycleManager.closeAll();
+        mcpLifecycleManager.connectConfiguredServers();
+        runtimeConfigService.clearModelOverride();
+        log.info("Agent restart complete — history preserved");
     }
 
     public void reloadMcp() {
@@ -435,6 +451,32 @@ public class AgentRuntimeService {
      *                             benefit from a memory/skill review. Before this flag
      *                             every cron tick could silently spend an extra LLM call.
      */
+    /**
+     * Background job with persisted status + result (Hermes parity:
+     * run_in_background exposes job status/result for polling).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public java.util.UUID submitBackgroundJob(String prompt, String sessionId, boolean skipBackgroundReview) {
+        com.azhukov.agent.persistence.entity.BackgroundJobEntity job =
+            new com.azhukov.agent.persistence.entity.BackgroundJobEntity();
+        job.setPrompt(prompt);
+        job.setStatus("PENDING");
+        job.setSessionId(sessionId != null && !sessionId.isBlank() ? java.util.UUID.fromString(sessionId) : null);
+        job = backgroundJobRepository.save(job);
+        java.util.UUID jobId = job.getId();
+        backgroundExecutor.submit(() -> {
+            try {
+                backgroundJobRepository.updateStatus(jobId, "RUNNING");
+                String result = runBackground(prompt, sessionId, skipBackgroundReview);
+                backgroundJobRepository.finish(jobId, "DONE", result, java.time.Instant.now());
+            } catch (Exception e) {
+                log.error("Background job {} failed", jobId, e);
+                backgroundJobRepository.finish(jobId, "FAILED", e.getMessage() == null ? e.toString() : e.getMessage(), java.time.Instant.now());
+            }
+        });
+        return jobId;
+    }
+
     public String runBackground(String prompt, String sessionId, boolean skipBackgroundReview) {
         // Background task — just run a turn in a new session
         Session baseSession = createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "");

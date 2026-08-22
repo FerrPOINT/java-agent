@@ -103,6 +103,7 @@ class AgentRuntimeServiceTest {
 
         agentRuntimeService = new AgentRuntimeService(
             agentRuntime,
+            org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.BackgroundJobRepository.class),
             sessionRepository,
             messageRepository,
             sessionTitleService,

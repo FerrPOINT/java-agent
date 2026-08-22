@@ -59,6 +59,7 @@ public class AgentChatController {
     private final SteerBuffer steerBuffer;
     private final InterruptToken interruptToken;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.memory.BackgroundReviewService> backgroundReviewServiceProvider;
+    private final com.azhukov.agent.persistence.repository.BackgroundJobRepository backgroundJobRepository;
     private final com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
     private final com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     private final com.azhukov.agent.persistence.mapper.MessageMapper messageMapper;
@@ -138,8 +139,30 @@ public class AgentChatController {
     // ── Background ──
 
     @PostMapping("/agent/background")
-    public String background(@Valid @RequestBody BackgroundRequest request) {
-        return agentRuntimeService.runBackground(request.prompt(), request.sessionId());
+    public java.util.Map<String, Object> background(@Valid @RequestBody BackgroundRequest request) {
+        // Hermes parity: job model — id + status, result via GET /agent/background/{id}
+        java.util.UUID jobId = agentRuntimeService.submitBackgroundJob(
+            request.prompt(), request.sessionId(), false);
+        return java.util.Map.of("jobId", jobId.toString(), "status", "PENDING");
+    }
+
+    @org.springframework.web.bind.annotation.GetMapping("/agent/background/{id}")
+    public java.util.Map<String, Object> backgroundStatus(@org.springframework.web.bind.annotation.PathVariable java.util.UUID id) {
+        var job = backgroundJobRepository.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("Unknown background job: " + id));
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("jobId", job.getId().toString());
+        out.put("status", job.getStatus());
+        if (job.getSessionId() != null) {
+            out.put("sessionId", job.getSessionId().toString());
+        }
+        if (job.getResult() != null) {
+            out.put("result", job.getResult());
+        }
+        if (job.getFinishedAt() != null) {
+            out.put("finishedAt", job.getFinishedAt().toString());
+        }
+        return out;
     }
 
     // ── Refine (Hermes /refine) ──

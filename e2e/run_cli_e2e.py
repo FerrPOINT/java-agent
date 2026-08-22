@@ -139,7 +139,7 @@ def run_case(name, lines, expected):
 
 def main():
     try:
-        h = requests.get("http://localhost:8090/actuator/health", timeout=60).json()
+        h = requests.get("http://localhost:8090/actuator/health/readiness", timeout=60).json()
         assert h["status"] == "UP"
         print("backend health: UP")
     except Exception as e:

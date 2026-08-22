@@ -97,7 +97,9 @@ class AgentControllerPhase2Test {
             ttsService, transcriptionService,
             new com.azhukov.agent.core.agent.SteerBuffer(),
             new com.azhukov.agent.core.agent.InterruptToken(),
-            null, null, null, null,
+            null,
+            org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.BackgroundJobRepository.class),
+            null, null, null,
             new com.azhukov.agent.core.security.ApprovalQueue(),
             agentProperties,
             null
@@ -176,9 +178,11 @@ class AgentControllerPhase2Test {
     }
 
     @Test
-    void backgroundReturns200WithString() throws Exception {
+    void backgroundReturns200WithJobId() throws Exception {
         mockMvc = chatMockMvc();
-        when(agentRuntimeService.runBackground(any(String.class), any())).thenReturn(SESSION_ID.toString());
+        java.util.UUID jobId = java.util.UUID.randomUUID();
+        when(agentRuntimeService.submitBackgroundJob(any(String.class), any(), any(Boolean.class)))
+            .thenReturn(jobId);
 
         String requestBody = objectMapper.writeValueAsString(
             new BackgroundRequest("do something", null));
@@ -187,6 +191,6 @@ class AgentControllerPhase2Test {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(requestBody))
             .andExpect(status().isOk())
-            .andExpect(content().string(SESSION_ID.toString()));
+            .andExpect(content().json("{\"jobId\": \"" + jobId + "\", \"status\": \"PENDING\"}"));
     }
 }

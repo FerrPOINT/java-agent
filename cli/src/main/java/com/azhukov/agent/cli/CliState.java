@@ -105,7 +105,9 @@ public class CliState {
      */
     public void setCurrentSessionId(String currentSessionId) { this.currentSessionId = currentSessionId; }
 
-    private static final String[] REASONING_LEVELS = {"none", "minimal", "low", "medium", "high", "xhigh"};
+    /** MUST mirror RuntimeSettingsController.VALID_REASONING (backend parity);
+     *  synced 2026-08-23 after the CLI set drifted (max/ultra missing). */
+    private static final String[] REASONING_LEVELS = {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"};
 
     public String cycleReasoningEffort() {
         int idx = -1;

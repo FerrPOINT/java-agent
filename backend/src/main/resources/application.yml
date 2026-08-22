@@ -375,6 +375,8 @@ management:
     health:
       show-details: when_authorized
       groups:
+        # readiness/liveness stay FAST — browser/chromium checks (30s+ with a
+        # cold browser) live only in the explicit infrastructure group.
         readiness:
           include: db,model
         liveness:

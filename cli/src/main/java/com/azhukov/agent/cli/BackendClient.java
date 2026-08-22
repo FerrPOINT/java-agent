@@ -1276,7 +1276,9 @@ public class BackendClient {
     public String setReasoningEffort(String sessionId, String level) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("sessionId", sessionId);
-        body.put("reasoningEffort", level);
+        // POST /agent/reasoning expects 'effort' (ReasoningRequest);
+        // 'reasoningEffort' is the chat-stream field — they differ.
+        body.put("effort", level);
         try {
             String json = restClient.post()
                 .uri("/api/v1/agent/reasoning")

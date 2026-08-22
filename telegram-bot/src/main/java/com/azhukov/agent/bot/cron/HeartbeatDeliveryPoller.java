@@ -26,6 +26,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public class HeartbeatDeliveryPoller {
 
     private final AgentBackendClient backendClient;
+    // Delivery observability (no micrometer in the bot module — logged counters)
+    private final java.util.concurrent.atomic.AtomicLong delivered = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong failed = new java.util.concurrent.atomic.AtomicLong();
     private final com.azhukov.agent.bot.client.TelegramClient telegramClient;
     private final BotProperties properties;
 
@@ -58,11 +61,17 @@ public class HeartbeatDeliveryPoller {
                         "♥ Heartbeat:\n\n" + truncate(text));
                     if (sent.isPresent()) {
                         // Delivery succeeded — ACK so the result is dropped server-side
+                        log.info("HEARTBEAT_DELIVERED chatId={} sessionId={} msgId={} chars={}",
+                            e.getValue(), e.getKey(), sent.get(), text.length());
+                        log.info("HEARTBEAT_DELIVERY_TOTAL delivered={}", delivered.incrementAndGet());
                         backendClient.suggestionPost(
                             "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack");
                     } else {
                         // Send failed — NACK; after 5 attempts the backend drops
                         // the poisoned result instead of retrying forever
+                        log.warn("HEARTBEAT_DELIVERY_FAILED chatId={} sessionId={} — nacking for retry",
+                            e.getValue(), e.getKey());
+                        log.warn("HEARTBEAT_DELIVERY_TOTAL failed={}", failed.incrementAndGet());
                         JsonNode nack = backendClient.suggestionPost(
                             "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/nack");
                         if (nack != null && nack.path("drop").asBoolean(false)) {
