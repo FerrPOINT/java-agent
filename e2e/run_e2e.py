@@ -183,7 +183,19 @@ class Runner:
         # Store basics even on failure so asserts can inspect status
         self.vars["status"] = r.status_code
         self.vars["response"] = safe_json(r)
+        self.track_session_in_response(self.vars["response"])
         return r
+
+    def track_session_in_response(self, response):
+        """Track any sessionId the backend reports — covers branch sessions,
+        compression rotation (new id after /compress) and background forks;
+        all of them must be cleaned up, not just the turn's session."""
+        if not isinstance(response, dict):
+            return
+        for key in ("sessionId", "session_id", "id"):
+            v = response.get(key)
+            if isinstance(v, str) and len(v) == 36 and v.count("-") == 4:
+                self.session_ids.append(v)
 
     def do_turn(self, step: dict):
         """Streaming chat turn; message + optional sessionId; captures summary."""
@@ -259,7 +271,14 @@ class Runner:
 
     def do_extracts(self, extracts: dict):
         for path, var in extracts.items():
-            self.vars[var] = json_path(self.vars["response"], path)
+            value = json_path(self.vars["response"], path)
+            self.vars[var] = value
+            # Track every session id extracted from a response (branch/fork
+            # sessions have their own id — cleanup must cover them too).
+            if var in ("id", "session_id", "sessionId"):
+                s = value if isinstance(value, str) else None
+                if s is not None and len(s) == 36 and s.count("-") == 4:
+                    self.session_ids.append(s)
 
     def run_scenario(self, file: Path) -> tuple[bool, list[str]]:
         scenario = yaml.safe_load(file.read_text())

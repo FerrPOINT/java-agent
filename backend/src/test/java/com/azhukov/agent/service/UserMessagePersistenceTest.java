@@ -62,6 +62,7 @@ class UserMessagePersistenceTest {
     private ModelClient modelClient;
     private AgentStreamingService streamingService;
     private MessageRepository messageRepository;
+    private UsageTracker usageTracker;
 
     @BeforeEach
     void setUp() {
@@ -71,7 +72,7 @@ class UserMessagePersistenceTest {
         PromptBuilder promptBuilder = mock(PromptBuilder.class);
         ContextEngine contextEngine = mock(ContextEngine.class);
         ObjectMapper objectMapper = new ObjectMapper();
-        var usageTracker = mock(UsageTracker.class);
+        usageTracker = mock(UsageTracker.class);
         AgentProperties properties = new AgentProperties();
         properties.getCore().setEmptyBackoffBaseMs(10L);
         properties.getCore().setEmptyBackoffCapMs(50L);
@@ -182,6 +183,28 @@ class UserMessagePersistenceTest {
             verify(messageRepository, times(1)).save(captor.capture());
             assertThat(captor.getValue().getRole()).isEqualTo("user");
         });
+    }
+
+    @Test
+    @DisplayName("streamed turn records usage into usage_log")
+    void streamedTurnRecordsUsage() throws Exception {
+        // Live defect: usage_log stayed empty for every streamed turn —
+        // recordTurn was only wired on the sync path (AgentRuntimeService).
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            handler.onToken("Ок");
+            handler.onComplete("STOP");
+            return null;
+        }).when(modelClient).stream(anyList(), anyList(), any(), any(StreamingResponseHandler.class));
+
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 30_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        await().atMost(5, java.util.concurrent.TimeUnit.SECONDS).untilAsserted(() ->
+            verify(usageTracker).recordTurn(any(UUID.class), any(), any(),
+                any(int.class), any(int.class)));
     }
 
     // CollectingEmitter — same pattern as AgentStreamingServiceDoublePersistenceTest

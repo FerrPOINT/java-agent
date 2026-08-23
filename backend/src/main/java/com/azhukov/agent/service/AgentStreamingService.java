@@ -476,6 +476,20 @@ public class AgentStreamingService {
                 budget = iterationBudget.recordModelCall(budget,
                     tokenEstimator.estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
 
+                // Record usage for the streaming path — /usage, /credits and
+                // /insights read from usage_log; without this every streamed
+                // turn (bot, CLI, e2e) was invisible to usage stats.
+                if (capturedError.get() == null) {
+                    try {
+                        usageTracker.recordTurn(session.id(), session.userId(),
+                            properties.getModel().getModelName(),
+                            tokenEstimator.estimateTokens(context),
+                            estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
+                    } catch (Exception usageEx) {
+                        log.debug("Failed to record streaming usage: {}", usageEx.getMessage());
+                    }
+                }
+
                 // Handle errors with retry
                 if (capturedError.get() != null) {
                     Throwable error = capturedError.get();
