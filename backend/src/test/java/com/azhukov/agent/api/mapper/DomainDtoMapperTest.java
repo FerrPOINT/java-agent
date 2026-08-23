@@ -32,7 +32,26 @@ class DomainDtoMapperTest {
 
     @Test
     void toSessionSummaryDtoHandlesNull() {
-        assertThat(mapper.toSessionSummaryDto(null)).isNull();
+        assertThat(mapper.toSessionSummaryDto((Session) null)).isNull();
+        assertThat(mapper.toSessionSummaryDto((com.azhukov.agent.persistence.entity.SessionEntity) null)).isNull();
+    }
+
+    @Test
+    void entityOverloadCarriesTimestampsAndParent() {
+        com.azhukov.agent.persistence.entity.SessionEntity e =
+            new com.azhukov.agent.persistence.entity.SessionEntity();
+        e.setId(UUID.randomUUID());
+        e.setUserId("u1");
+        e.setTitle("T");
+        e.setModelProvider("openai-compatible");
+        e.setModelName("app-test");
+        e.setCreatedAt(java.time.Instant.parse("2026-08-23T00:00:00Z"));
+        e.setUpdatedAt(java.time.Instant.parse("2026-08-23T01:00:00Z"));
+        e.setParentSessionId(UUID.randomUUID());
+        SessionSummaryDto dto = mapper.toSessionSummaryDto(e);
+        assertThat(dto.createdAt()).isEqualTo(java.time.Instant.parse("2026-08-23T00:00:00Z"));
+        assertThat(dto.updatedAt()).isEqualTo(java.time.Instant.parse("2026-08-23T01:00:00Z"));
+        assertThat(dto.parentSessionId()).isEqualTo(e.getParentSessionId());
     }
 
     @Test

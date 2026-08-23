@@ -14,7 +14,6 @@ spring:
       ddl-auto: none
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
     show-sql: false
 
@@ -139,8 +138,7 @@ spring:
     hibernate:
       ddl-auto: create-drop
     properties:
-      hibernate:
-        dialect: org.hibernate.dialect.H2Dialect
+      hibernate: {}
 
   flyway:
     enabled: false

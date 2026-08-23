@@ -62,7 +62,10 @@ public class AgentSessionResolver {
             }
             return new ResolvedSession(loadSession(resolvedId), false);
         } catch (IllegalArgumentException e) {
-            log.warn("Session {} not found in backend, creating new session", sessionId);
+            // Fail-open by design (bot keeps its own bot_sessions table; the
+            // backend session may legitimately not exist yet) — not a fault,
+            // keep it out of the WARN noise that journal forensics scans.
+            log.info("Session {} not found in backend, creating new session", sessionId);
             return new ResolvedSession(createSession(userId, "openai-compatible", modelName), true);
         }
     }
