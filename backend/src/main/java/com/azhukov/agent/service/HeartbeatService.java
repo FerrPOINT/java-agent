@@ -113,25 +113,41 @@ public class HeartbeatService {
     @Autowired(required = false)
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
+    @Autowired(required = false)
+    private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+
     /** Hermes persists heartbeat state in SessionDB state_meta (heartbeat:<id>)
      *  so /resume picks it up after a restart. We persist in session_cli_state. */
     private static final String STATE_KEY = "heartbeat";
     /** Field separator for the persisted state (prompt may contain anything else). */
     private static final String SEP = "\u0001";
 
+    /**
+     * cliState is a LAZY @ElementCollection: touching the detached entity's map
+     * outside a persistence context throws LazyInitializationException now that
+     * OSIV is off. A @Transactional annotation would NOT help — persist() is
+     * private and self-invoked (proxy never engaged), so the write runs inside
+     * an explicit TransactionTemplate block instead. Short write-only tx, no
+     * LLM calls inside — pool-safe.
+     */
     private void persist(UUID sessionId, HeartbeatState st) {
         if (sessionRepository == null) return;
+        Runnable write = () -> sessionRepository.findById(sessionId).ifPresent(e -> {
+            if (st == null) {
+                e.getCliState().remove(STATE_KEY);
+            } else {
+                e.setCliStateValue(STATE_KEY, String.join(SEP,
+                    st.prompt(), String.valueOf(st.intervalSeconds()), st.status(),
+                    String.valueOf(st.maxTicks()), String.valueOf(st.fireCount())));
+            }
+            sessionRepository.save(e);
+        });
         try {
-            sessionRepository.findById(sessionId).ifPresent(e -> {
-                if (st == null) {
-                    e.getCliState().remove(STATE_KEY);
-                } else {
-                    e.setCliStateValue(STATE_KEY, String.join(SEP,
-                        st.prompt(), String.valueOf(st.intervalSeconds()), st.status(),
-                        String.valueOf(st.maxTicks()), String.valueOf(st.fireCount())));
-                }
-                sessionRepository.save(e);
-            });
+            if (transactionTemplate != null) {
+                transactionTemplate.executeWithoutResult(tx -> write.run());
+            } else {
+                write.run();
+            }
         } catch (Exception ex) {
             log.warn("Heartbeat persist failed for {}: {}", sessionId, ex.getMessage());
         }

@@ -236,8 +236,16 @@ public class BackgroundReviewService {
  List<Message> reviewMessages = new ArrayList<>();
  reviewMessages.add(Message.system(ReviewPrompts.REVIEW_SYSTEM_PROMPT));
 
- // Add conversation snapshot (last few messages for context)
+ // Add conversation snapshot (last few messages for context).
+ // Hermes parity (background_review.py _digest_history): never let the
+ // snapshot START with a tool message — a tool result whose assistant
+ // tool_call fell outside the window is an orphan that Gemini/LiteLLM
+ // reject with "Missing corresponding tool call for tool response"
+ // (observed live: review retried forever on a memory-limit error result).
  int start = Math.max(0, messages.size() - 10);
+ while (start < messages.size() && "tool".equals(messages.get(start).role())) {
+ start++;
+ }
  for (Message m : messages.subList(start, messages.size())) {
  if (m.content() != null && !m.content().isBlank()) {
  reviewMessages.add(m);
