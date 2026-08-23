@@ -1,11 +1,13 @@
 # Parity Dashboard (auto-generated 2026-08-23)
 
-- **Deployed**: 0.1.35 (active/active)
+- **Deployed**: 0.1.36 (active/active)
 - **Migrations**: 30
-- **Tests (last run)**: 1991 backend 156 / telegram-bot 1511 / cli 324
+- **Tests (last run)**: 6524 backend 4689 / telegram-bot 1511 / cli 324
 
 ## Recent commits
 
+- eae87c7 fix: clean 404/405 for unknown API paths instead of 500+stacktrace
+- d55a226 docs: dashboard after wire-clamp fix
 - 263ff66 fix: clamp reasoning effort to the provider wire set (Hermes parity)
 - bc8514c docs: TODO all-closed state + parity dashboard
 - 25792ba feat: close all 8 audit TODO items (0.1.35)
@@ -14,7 +16,5 @@
 - ce86f64 docs: TODO from live feature audit — background-result API, reasoning levels sync, heavy health, delivery logs
 - 87c3a4b docs: parity dashboard refresh (feature audit)
 - ae83cee feat: full-feature audit round — 2 more live defects fixed
-- 3d77d99 docs: parity dashboard refresh (per-tool e2e)
-- d44128b feat: per-tool/feature e2e coverage — 13 new scenarios, 2 live defects fixed
 
 **CI (last)**: success
