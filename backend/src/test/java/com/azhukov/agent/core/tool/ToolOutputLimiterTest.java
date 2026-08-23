@@ -19,12 +19,25 @@ class ToolOutputLimiterTest {
     }
 
     @Test
-    void truncate_longContent_truncatesWithWarning() {
-        String content = "x".repeat(500);
+    void truncate_longContent_keepsHeadAndTail() {
+        // Hermes parity (terminal_tool.py:3451): 40% head + 60% tail + notice
+        String head = "H".repeat(300);
+        String tail = "T".repeat(300);
+        String content = head + "M".repeat(400) + tail; // 1000 chars, cap 200
+        String result = limiter.truncate(content, 200);
+        assertThat(result).contains("OUTPUT TRUNCATED - 800 chars omitted out of 1000 total");
+        assertThat(result).startsWith("H".repeat(80));   // 40% of 200
+        assertThat(result).endsWith("T".repeat(120));    // 60% of 200
+        // the middle is gone
+        assertThat(result).doesNotContain("M");
+    }
+
+    @Test
+    void truncate_longContent_tailKeepsRecentOutput() {
+        // the tail must survive: exit codes / test summaries ride the end
+        String content = "A".repeat(900) + "EXIT=0";
         String result = limiter.truncate(content, 100);
-        assertThat(result).hasSize(100 + "\n[output truncated at 100 chars]".length());
-        assertThat(result).startsWith("x".repeat(100));
-        assertThat(result).endsWith("[output truncated at 100 chars]");
+        assertThat(result).endsWith("EXIT=0");
     }
 
     @Test

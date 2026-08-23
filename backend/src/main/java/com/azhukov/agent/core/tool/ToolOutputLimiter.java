@@ -18,17 +18,23 @@ public class ToolOutputLimiter {
     private final AgentProperties properties;
 
     /**
-     * Truncates {@code content} to at most {@code maxChars} characters.
-     * If the content fits, it is returned unchanged.
-     * If truncation occurs, a warning suffix is appended.
+     * Truncates {@code content} to at most {@code maxChars} characters,
+     * Hermes-style (tools/terminal_tool.py:3451-3462): keep a 40% HEAD and a
+     * 60% TAIL with an omission notice between them. Error messages tend to
+     * appear early, while the most recent/relevant output (exit codes, test
+     * summaries) rides the tail — a head-only cut hides both.
      */
     public String truncate(String content, int maxChars) {
         if (content == null || content.length() <= maxChars) {
             return content;
         }
-        String warning = "\n[output truncated at " + maxChars + " chars]";
-        log.warn("Tool output truncated from {} to {} chars", content.length(), maxChars);
-        return content.substring(0, maxChars) + warning;
+        int headChars = (int) (maxChars * 0.4);
+        int tailChars = maxChars - headChars;
+        int omitted = content.length() - headChars - tailChars;
+        String notice = "\n\n... [OUTPUT TRUNCATED - " + omitted
+            + " chars omitted out of " + content.length() + " total] ...\n\n";
+        log.warn("Tool output truncated from {} to {} chars (head+tail)", content.length(), maxChars);
+        return content.substring(0, headChars) + notice + content.substring(content.length() - tailChars);
     }
 
     /**

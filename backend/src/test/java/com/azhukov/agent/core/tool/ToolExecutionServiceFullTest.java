@@ -74,7 +74,10 @@ class ToolExecutionServiceFullTest {
 
         ToolResult result = service.execute("ok", "c1", "{}", null, null);
 
-        assertThat(result.content()).isEqualTo("12345\n[output truncated at 5 chars]");
+        // head+tail truncation (Hermes parity): 5-char cap → 2 head + notice + 3 tail
+        assertThat(result.content()).startsWith("12");
+        assertThat(result.content()).endsWith("890");
+        assertThat(result.content()).contains("OUTPUT TRUNCATED");
     }
 
     @Test

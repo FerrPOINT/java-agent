@@ -165,9 +165,10 @@ class ToolExecutionServiceParallelTest {
             ToolExecutionService service = buildService(registry);
             ToolResult result = service.execute("big", "c1", "{}", null, null);
 
-            assertThat(result.content()).hasSizeLessThanOrEqualTo(50); // 10 + suffix
-            assertThat(result.content()).startsWith("1234567890");
-            assertThat(result.content()).contains("[output truncated");
+            // head+tail truncation (Hermes parity): 4 head + notice + 6 tail
+            assertThat(result.content()).startsWith("1234");
+            assertThat(result.content()).endsWith("ABCDEF");
+            assertThat(result.content()).contains("OUTPUT TRUNCATED");
         }
 
         @Test
@@ -196,7 +197,7 @@ class ToolExecutionServiceParallelTest {
             ToolResult result = service.execute("fail", "c1", "{}", null, null);
 
             assertThat(result.success()).isFalse();
-            assertThat(result.error()).contains("[output truncated");
+            assertThat(result.error()).contains("OUTPUT TRUNCATED");
         }
 
         @Test
