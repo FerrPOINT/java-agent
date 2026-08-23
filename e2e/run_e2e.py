@@ -398,10 +398,29 @@ def main(argv):
     print("\n" + "═" * 60)
     failed = [n for n, ok in results.items() if not ok]
     print(f"RESULT: {len(results) - len(failed)}/{len(results)} scenarios passed")
+    final_sweep(base)
     if failed:
         print("FAILED:", ", ".join(failed))
         return 1
     return 0
+
+
+def final_sweep(base: str) -> None:
+    """Post-suite backstop: background-review forks (refine/learn) create
+    their sessions ASYNC, after the per-scenario cleanup already ran. Delete
+    every remaining e2e session (user_id 'user-1' is the runner's identity —
+    the real Telegram user owns '754334329')."""
+    root = base.rsplit("/api/v1", 1)[0]
+    try:
+        r = requests.get(f"{root}/api/v2/sessions?limit=200&userId=user-1", timeout=15)
+        r.raise_for_status()
+        victims = [s["id"] for s in r.json().get("data", [])]
+        for v in victims:
+            requests.delete(f"{root}/api/v2/sessions/{v}", timeout=15)
+        if victims:
+            print(f"  ⚙ final sweep: {len(victims)} background-fork session(s) removed")
+    except Exception as e:  # noqa: BLE001
+        print(f"  ⚠ final sweep failed: {e}")
 
 
 if __name__ == "__main__":
