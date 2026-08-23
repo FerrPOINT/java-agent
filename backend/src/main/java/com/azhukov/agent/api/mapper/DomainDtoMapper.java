@@ -28,6 +28,27 @@ public interface DomainDtoMapper {
         );
     }
 
+    /**
+     * Entity-backed mapping: carries createdAt/updatedAt/parentSessionId that
+     * the domain record doesn't hold. Used by session listings so clients can
+     * sort by date and follow compression-rotation children.
+     */
+    default SessionSummaryDto toSessionSummaryDto(com.azhukov.agent.persistence.entity.SessionEntity e) {
+        if (e == null) {
+            return null;
+        }
+        return new SessionSummaryDto(
+            e.getId(),
+            e.getUserId(),
+            e.getTitle(),
+            e.getModelProvider(),
+            e.getModelName(),
+            e.getCreatedAt(),
+            e.getUpdatedAt(),
+            e.getParentSessionId()
+        );
+    }
+
     default List<SessionSummaryDto> toSessionSummaryDtoList(List<Session> sessions) {
         if (sessions == null) {
             return Collections.emptyList();

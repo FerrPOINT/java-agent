@@ -320,6 +320,23 @@ class Runner:
                     print(f"  ⚠ cleanup: session {sid} -> HTTP {r.status_code}")
             except Exception as e:  # noqa: BLE001
                 print(f"  ⚠ cleanup: session {sid} failed: {e}")
+        # Rotation-tail sweep: mid-turn compression rotates the session; the
+        # metadata id of the LAST turn is tracked, but earlier links in the
+        # chain (or a rotation on the very first turn) can escape. Rotation
+        # children are recognizable by the " (compressed)" title suffix.
+        try:
+            for _ in range(4):  # chains are shallow
+                r = requests.get(f"{root}/api/v2/sessions?limit=200", timeout=15)
+                r.raise_for_status()
+                victims = [s["id"] for s in r.json().get("data", [])
+                           if isinstance(s.get("title"), str)
+                           and s["title"].endswith(" (compressed)")]
+                if not victims:
+                    return
+                for v in victims:
+                    requests.delete(f"{root}/api/v2/sessions/{v}", timeout=15)
+        except Exception as e:  # noqa: BLE001
+            print(f"  ⚠ rotation sweep failed: {e}")
 
 
 def safe_json(r) -> object:

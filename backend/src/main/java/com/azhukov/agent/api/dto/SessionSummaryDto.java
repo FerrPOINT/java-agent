@@ -10,5 +10,12 @@ public record SessionSummaryDto(
     String modelProvider,
     String modelName,
     Instant createdAt,
-    Instant updatedAt
-) {}
+    Instant updatedAt,
+    UUID parentSessionId
+) {
+    /** Backward-compatible constructor for domain-record mapping (no timestamps). */
+    public SessionSummaryDto(UUID id, String userId, String title, String modelProvider,
+                             String modelName, Instant createdAt, Instant updatedAt) {
+        this(id, userId, title, modelProvider, modelName, createdAt, updatedAt, null);
+    }
+}

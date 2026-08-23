@@ -91,7 +91,6 @@ public class SessionCrudController {
         List<SessionSummaryDto> sessions = sessionRepository
             .findAllByUserId(effectiveUserId, PageRequest.of(cappedOffset / cappedLimit, cappedLimit))
             .stream()
-            .map(sessionMapper::toDomain)
             .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
 

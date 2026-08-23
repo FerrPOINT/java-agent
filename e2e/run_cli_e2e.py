@@ -127,6 +127,16 @@ def run_case(name, lines, expected):
     import re
     out_clean = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", out)
 
+    # Session hygiene: the CLI prints "Session: <uuid>" on startup; delete it
+    # after the case so e2e runs don't litter the live DB. Rotation children
+    # go first: fk_sessions_parent is ON DELETE SET NULL — delete the parent
+    # and the child's link is severed, making it unfindable.
+
+    banner_ids = {m.group(1) for m in re.finditer(r"Session:\s*([0-9a-f-]{36})", out_clean)}
+    cleanup_rotation_children(banner_ids)
+    for sid in banner_ids:
+        cleanup_session(sid)
+
     missing = [exp for exp in expected if exp.lower() not in out_clean.lower()]
     # exit-error regression guard: /exit must NOT log a stacktrace
     exit_bug = "Command /exit failed" in out_clean
@@ -135,6 +145,35 @@ def run_case(name, lines, expected):
     if missing:
         return False, f"missing: {missing} (output tail: {out_clean[-300:]!r})"
     return True, f"{dt:.1f}s"
+
+
+
+def cleanup_rotation_children(banner_ids: set) -> None:
+    """Delete compression-rotation children of the given sessions, deepest
+    first (grandchildren point at children; the FK is SET NULL on delete, so
+    each level must be removed before its parent)."""
+    try:
+        for _ in range(3):  # chains deeper than 3 don't occur in e2e
+            r = requests.get("http://localhost:8090/api/v2/sessions?limit=200", timeout=15)
+            r.raise_for_status()
+            victims = [s["id"] for s in r.json().get("data", [])
+                       if s.get("parentSessionId") in banner_ids]
+            if not victims:
+                return
+            for v in victims:
+                cleanup_session(v)
+                banner_ids.add(v)
+    except Exception as e:  # noqa: BLE001
+        print(f"  ⚠ rotation cleanup failed: {e}")
+
+
+def cleanup_session(sid):
+    try:
+        r = requests.delete(f"http://localhost:8090/api/v2/sessions/{sid}", timeout=15)
+        if r.status_code not in (200, 404):
+            print(f"  ⚠ cleanup: session {sid} -> HTTP {r.status_code}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  ⚠ cleanup: session {sid} failed: {e}")
 
 
 def main():
