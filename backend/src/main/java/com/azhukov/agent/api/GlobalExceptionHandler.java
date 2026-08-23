@@ -136,6 +136,44 @@ public class GlobalExceptionHandler {
         ));
     }
 
+    /**
+     * Unknown API paths must return a clean 404, not fall into the generic
+     * 500 handler with a full stack trace. NoResourceFoundException is thrown
+     * by Spring MVC's resource chain when no controller matches the path
+     * (Hermes-parity behaviour for wrong API paths).
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResourceFound(
+            org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+        String path = "unknown";
+        try {
+            RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
+            if (attrs instanceof ServletRequestAttributes sra) {
+                path = sra.getRequest().getRequestURI();
+            }
+        } catch (Exception ignored) {
+            // path is informational only
+        }
+        log.debug("No handler for path: {}", path);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
+            "type", "not_found",
+            "error", "No such endpoint: " + path
+        ));
+    }
+
+    /**
+     * Wrong HTTP method on a known path: clean 405 instead of a 500.
+     */
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, Object>> handleMethodNotSupported(
+            org.springframework.web.HttpRequestMethodNotSupportedException ex) {
+        log.debug("Method not supported: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(Map.of(
+            "type", "method_not_allowed",
+            "error", ex.getMessage()
+        ));
+    }
+
     @ExceptionHandler(Exception.class)
     public Object handleGeneric(Exception ex) {
         log.error("Unhandled exception", ex);

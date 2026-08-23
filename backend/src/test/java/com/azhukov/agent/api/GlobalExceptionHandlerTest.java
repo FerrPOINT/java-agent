@@ -177,4 +177,26 @@ class GlobalExceptionHandlerTest {
         Map<String, String> errors = (Map<String, String>) r.getBody().get("errors");
         assertThat(errors).isEmpty();
     }
+
+    @Test
+    void noResourceFoundReturnsClean404InsteadOf500() {
+        org.springframework.web.servlet.resource.NoResourceFoundException ex =
+            new org.springframework.web.servlet.resource.NoResourceFoundException(
+                org.springframework.http.HttpMethod.GET, "/api/v1/agent/capabilities", null);
+        ResponseEntity<Map<String, Object>> r = h.handleNoResourceFound(ex);
+        assertThat(r.getStatusCode().value()).isEqualTo(404);
+        assertThat(r.getBody()).isNotNull();
+        assertThat(r.getBody().get("type")).isEqualTo("not_found");
+        assertThat((String) r.getBody().get("error")).contains("No such endpoint");
+    }
+
+    @Test
+    void methodNotSupportedReturnsClean405() {
+        org.springframework.web.HttpRequestMethodNotSupportedException ex =
+            new org.springframework.web.HttpRequestMethodNotSupportedException("DELETE");
+        ResponseEntity<Map<String, Object>> r = h.handleMethodNotSupported(ex);
+        assertThat(r.getStatusCode().value()).isEqualTo(405);
+        assertThat(r.getBody()).isNotNull();
+        assertThat(r.getBody().get("type")).isEqualTo("method_not_allowed");
+    }
 }
