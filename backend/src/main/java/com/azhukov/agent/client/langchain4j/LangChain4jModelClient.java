@@ -277,7 +277,16 @@ public class LangChain4jModelClient implements ModelClient {
                     } catch (Exception e) {
                         log.debug("Could not extract finishReason: {}", e.getMessage());
                     }
-                    handler.onComplete(finishReason);
+                    Long outputTokens = null;
+                    try {
+                        if (completeResponse.tokenUsage() != null
+                            && completeResponse.tokenUsage().outputTokenCount() != null) {
+                            outputTokens = completeResponse.tokenUsage().outputTokenCount().longValue();
+                        }
+                    } catch (Exception e) {
+                        log.debug("Could not extract outputTokens: {}", e.getMessage());
+                    }
+                    handler.onComplete(finishReason, outputTokens);
                 } finally {
                     latch.countDown();
                 }

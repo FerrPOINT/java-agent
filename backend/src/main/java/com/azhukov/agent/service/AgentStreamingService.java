@@ -417,6 +417,7 @@ public class AgentStreamingService {
                 final List<ToolCall> collectedToolCalls = new ArrayList<>();
                 final AtomicReference<Throwable> capturedError = new AtomicReference<>();
                 final AtomicReference<String> capturedFinishReason = new AtomicReference<>();
+                final AtomicReference<Long> capturedOutputTokens = new AtomicReference<>();
                 // Hermes parity: think-scrub state is per-RESPONSE (_strip_think_blocks is
                 // stateless); reset so hadThinkContent() reflects THIS iteration only.
                 scrubber.reset();
@@ -454,9 +455,13 @@ public class AgentStreamingService {
                         }
 
                         @Override
-                        public void onComplete(String finishReason) {
+                        public void onComplete(String finishReason, Long outputTokens) {
                             // Store finish_reason for post-stream routing (LENGTH, CONTENT_FILTER)
+                            // and the streamed usage so the deterministic-empty guard (Hermes
+                            // empty_response_guard.py) can see zero-output attempts instead of
+                            // failing open forever on the streaming path.
                             capturedFinishReason.set(finishReason);
+                            capturedOutputTokens.set(outputTokens);
                             onComplete();
                         }
 
@@ -695,7 +700,7 @@ public class AgentStreamingService {
                 streamEmptyGuard.recordEmptyAttempt(
                     properties.getModel().getModelName(),
                     properties.getModel().getProvider(),
-                    capturedFinishReason.get(), null /* usage not on streaming handler yet — fail-open */);
+                    capturedFinishReason.get(), capturedOutputTokens.get());
                 boolean streamDeterministicEmpty = streamEmptyGuard.deterministicEmpty();
                 if (streamDeterministicEmpty) {
                     log.warn("Deterministic empty response in stream (consecutive zero-output) — skipping remaining retries");
