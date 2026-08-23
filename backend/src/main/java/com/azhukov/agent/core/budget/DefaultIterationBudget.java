@@ -108,6 +108,25 @@ public class DefaultIterationBudget implements IterationBudget {
     }
 
     @Override
+    public TurnSnapshot refundToolExecution(TurnSnapshot snapshot) {
+        if (!properties.getBudget().isEnabled() || snapshot.toolExecutions() <= 0) {
+            return snapshot;
+        }
+        return new TurnSnapshot(
+            snapshot.sessionId(),
+            snapshot.startedAt(),
+            snapshot.turnIndex(),
+            snapshot.modelCalls(),
+            snapshot.toolExecutions() - 1,
+            snapshot.totalInputTokens(),
+            snapshot.totalOutputTokens(),
+            snapshot.totalToolDurationMs(),
+            false,
+            null
+        );
+    }
+
+    @Override
     public boolean isExhausted(TurnSnapshot snapshot) {
         if (snapshot.exhausted()) {
             return true;

@@ -11,6 +11,15 @@ public interface IterationBudget {
 
     TurnSnapshot recordToolExecution(TurnSnapshot snapshot, String toolName, long durationMs);
 
+    /**
+     * Hermes parity (conversation_loop.py:7277-7280): refund one tool execution
+     * when the ONLY tool(s) called in the iteration were execute_code — cheap
+     * RPC-style programmatic calls must not eat the per-turn budget.
+     */
+    default TurnSnapshot refundToolExecution(TurnSnapshot snapshot) {
+        return snapshot;
+    }
+
     boolean isExhausted(TurnSnapshot snapshot);
 
     BudgetStatus status(TurnSnapshot snapshot);

@@ -923,6 +923,15 @@ public class AgentStreamingService {
                 long duration = System.currentTimeMillis() - toolStart;
 
                 budget = iterationBudget.recordToolExecution(budget, call.name(), duration);
+                // Hermes parity (conversation_loop.py:7277-7280): when the ONLY
+                // tool(s) called in this iteration were execute_code, the tool
+                // executions are refunded — programmatic calls are cheap RPCs
+                // and must not starve the per-turn budget.
+                boolean onlyExecuteCodeThisIteration = response.toolCalls().stream()
+                    .allMatch(tc -> "execute_code".equals(tc.name()));
+                if (onlyExecuteCodeThisIteration && "execute_code".equals(call.name())) {
+                    budget = iterationBudget.refundToolExecution(budget);
+                }
 
                 String resultPreview = formatResultPreview(result);
                 send(emitter, new StreamEvent("tool_result", null, null, null,
