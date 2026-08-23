@@ -98,12 +98,12 @@ def check_condition(value, cond: str, expected):
 # SSE / streaming helpers
 # ─────────────────────────────────────────────────────────────────────
 
-def run_streaming_turn(base: str, body: dict) -> dict:
+def run_streaming_turn(base: str, body: dict, timeout: int = SSE_TIMEOUT) -> dict:
     """POST /agent/chat/stream, collect tokens/tool events; return summary."""
     tokens, tool_calls, tool_results = [], [], []
     session_id, error = None, None
     r = requests.post(f"{base}/agent/chat/stream", json=body, stream=True,
-                      timeout=SSE_TIMEOUT)
+                      timeout=timeout)
     r.raise_for_status()
     for line in r.iter_lines(decode_unicode=True):
         if not line or not line.startswith("data:"):
@@ -202,7 +202,7 @@ class Runner:
         msg = self.subst(step["message"])
         sid = self.subst(step.get("sessionId", "")) or None
         body = {"sessionId": sid or str(uuid.uuid4()), "message": msg}
-        summary = run_streaming_turn(self.base, body)
+        summary = run_streaming_turn(self.base, body, timeout=step.get("timeout", SSE_TIMEOUT))
         if summary["sessionId"]:
             self.vars["session_id"] = summary["sessionId"]
             self.session_ids.append(summary["sessionId"])
