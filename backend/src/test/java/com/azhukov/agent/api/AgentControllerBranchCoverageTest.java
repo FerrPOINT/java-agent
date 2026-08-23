@@ -43,6 +43,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
@@ -135,7 +136,7 @@ class AgentControllerBranchCoverageTest {
     }
 
     private MockMvc skillMockMvc() {
-        SkillController controller = new SkillController(skillManager, agentRuntimeService, skillAuditLogRepository);
+        SkillController controller = new SkillController(skillManager, agentRuntimeService, skillAuditLogRepository, mock(com.azhukov.agent.core.skill.SkillsHubService.class));
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

@@ -1,0 +1,23 @@
+# Features: blueprints (Hermes /blueprint parity) + simplified skills hub
+name: blueprint-hub
+steps:
+  - name: blueprint catalog lists starter blueprints
+    method: GET
+    path: /agent/cron/blueprints
+    assert:
+      - { status: 200 }
+      - { path: "blueprints[0].key", eq: morning-brief }
+      - { path: "blueprints[0].slots[0].name", eq: time }
+
+  - name: unknown blueprint key rejected with 4xx
+    method: POST
+    path: /agent/cron/blueprints/no-such-blueprint/create
+    body: '{"values":{}}'
+    assert:
+      - { status: 400 }
+
+  - name: hub search reachable
+    method: GET
+    path: /agent/skills-hub/search?q=hardening
+    assert:
+      - { status: 200 }

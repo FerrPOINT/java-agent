@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -29,11 +30,43 @@ public class SkillController {
     private final SkillManager skillManager;
     private final AgentRuntimeService agentRuntimeService;
     private final SkillAuditLogRepository skillAuditLogRepository;
+    private final com.azhukov.agent.core.skill.SkillsHubService skillsHubService;
 
     @Operation(summary = "List all skill names")
     @GetMapping("/agent/skills")
     public List<String> skills() {
         return skillManager.listSkillNames();
+    }
+
+    // ── Skills hub (SIMPLIFIED Hermes parity: one GitHub repo source) ──
+
+    @Operation(summary = "List skills available in the hub repo")
+    @GetMapping("/agent/skills-hub")
+    public List<com.azhukov.agent.core.skill.SkillsHubService.RemoteSkillInfo> hubList() {
+        return skillsHubService.listRemoteSkills();
+    }
+
+    @Operation(summary = "Search hub skills by substring over names+descriptions")
+    @GetMapping("/agent/skills-hub/search")
+    public List<com.azhukov.agent.core.skill.SkillsHubService.RemoteSkillInfo> hubSearch(@RequestParam String q) {
+        return skillsHubService.searchRemoteSkills(q);
+    }
+
+    public record HubInstallRequest(String skill, Boolean overwrite) {}
+
+    @Operation(summary = "Install a skill from the hub repo (threat-scanned)")
+    @PostMapping("/agent/skills-hub/install")
+    public java.util.Map<String, Object> hubInstall(@RequestBody HubInstallRequest body) {
+        if (body.skill() == null || body.skill().isBlank()) {
+            return Map.of("ok", false, "error", "skill is required");
+        }
+        var result = skillsHubService.install(
+            com.azhukov.agent.core.skill.SkillsHubService.DEFAULT_HUB_REPO,
+            body.skill(), Boolean.TRUE.equals(body.overwrite()));
+        if (result.success()) {
+            agentRuntimeService.reloadSkills();
+        }
+        return Map.of("ok", result.success(), "message", result.message());
     }
 
     // ── Skill content ──

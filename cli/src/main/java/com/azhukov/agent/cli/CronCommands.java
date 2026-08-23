@@ -36,5 +36,26 @@ public class CronCommands implements CommandGroup {
             if (parts.length < 3) return "Usage: /cron-create <name> <schedule> <prompt>";
             return client.createCronJob(parts[0], parts[1], parts[2], null);
         });
+
+        // /blueprint (Hermes hermes_cli/blueprint_cmd.py parity): no args = list
+        // the catalog; "<key> slot=value …" = fill typed slots and create the
+        // cron job directly. Missing slots use their defaults; enum/time slots
+        // are validated server-side (BlueprintFillException surfaces as text).
+        registry.register("blueprint", "Set up an automation from a blueprint: /blueprint [key] [slot=value ...]", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                return client.prettyPrint(client.listBlueprints());
+            }
+            String[] parts = args.split("\\s+");
+            String key = parts[0];
+            java.util.Map<String, String> values = new java.util.LinkedHashMap<>();
+            for (int i = 1; i < parts.length; i++) {
+                int eq = parts[i].indexOf('=');
+                if (eq <= 0) {
+                    return "Invalid slot spec '" + parts[i] + "'. Usage: /blueprint <key> [slot=value ...]";
+                }
+                values.put(parts[i].substring(0, eq), parts[i].substring(eq + 1));
+            }
+            return client.createFromBlueprint(key, values);
+        });
     }
 }

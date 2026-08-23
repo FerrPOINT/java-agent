@@ -32,6 +32,8 @@ public class SlashAutoSuggest {
         SUBCOMMANDS.put("reasoning", new String[]{"none", "minimal", "low", "medium", "high", "xhigh", "cycle"});
         SUBCOMMANDS.put("model", new String[]{"gpt-4o", "gpt-4o-mini", "claude-3-opus", "claude-3-sonnet"});
         SUBCOMMANDS.put("cron", new String[]{"create", "pause", "resume", "delete"});
+        SUBCOMMANDS.put("blueprint", new String[]{});  // keys listed at runtime via GET /cron/blueprints
+        SUBCOMMANDS.put("skills-install", new String[]{"overwrite"});
         SUBCOMMANDS.put("approvals", new String[]{"list", "approve", "deny"});
         SUBCOMMANDS.put("goal", new String[]{"set", "clear", "show"});
         SUBCOMMANDS.put("snapshot", new String[]{"list", "create", "restore"});

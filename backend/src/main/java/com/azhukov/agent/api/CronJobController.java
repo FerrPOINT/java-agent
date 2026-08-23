@@ -26,6 +26,7 @@ public class CronJobController {
     private final HeartbeatService heartbeatService;
     private final CronExecutionLogRepository cronExecutionLogRepository;
     private final CronJobDtoMapper cronJobDtoMapper;
+    private final com.azhukov.agent.service.CronBlueprintService cronBlueprintService;
 
     @PostMapping
     public CronJobDto create(@Valid @RequestBody CreateCronRequest request) {
@@ -206,4 +207,50 @@ public class CronJobController {
         String deliverTo,
         Boolean enabled
     ) {}
+
+    // ------------------------------------------------------------------
+    // Blueprints (Hermes hermes_cli/blueprint_cmd.py parity): /blueprint
+    // without args lists the catalog; /blueprint <key> slot=val … fills the
+    // typed slots and creates the cron job directly. No agent turn — the
+    // deterministic power-user shortcut.
+    // ------------------------------------------------------------------
+
+    @GetMapping("/blueprints")
+    public java.util.Map<String, Object> listBlueprints() {
+        var svc = cronBlueprintService;
+        return java.util.Map.of(
+            "blueprints", svc.listBlueprints().stream()
+                .map(bp -> java.util.Map.of(
+                    "key", bp.key(),
+                    "title", bp.title(),
+                    "description", bp.description(),
+                    "category", bp.category(),
+                    "slots", bp.slots().stream()
+                        .map(s -> java.util.Map.of(
+                            "name", s.name(),
+                            "type", s.type(),
+                            "label", s.label(),
+                            "default", s.defaultValue() == null ? "" : s.defaultValue(),
+                            "optional", s.optional(),
+                            "help", s.help() == null ? "" : s.help()))
+                        .toList()))
+                .toList());
+    }
+
+    public record BlueprintFillRequest(java.util.Map<String, String> values) {}
+
+    @PostMapping("/blueprints/{key}/create")
+    public CronJobDto createFromBlueprint(@PathVariable String key,
+                                          @RequestBody(required = false) BlueprintFillRequest body) {
+        var bp = cronBlueprintService.getBlueprint(key)
+            .orElseThrow(() -> new IllegalArgumentException(
+                "Unknown blueprint: " + key + ". GET /api/v1/agent/cron/blueprints for the catalog."));
+        // fillBlueprintWithTime (not fillBlueprint): only the WithTime variant
+        // decomposes the time slot into {hour}/{minute} and maps weekday
+        // presets to {dow} — fillBlueprint leaves raw placeholders and the
+        // resulting cron fails validation.
+        var spec = cronBlueprintService.fillBlueprintWithTime(bp, body == null ? java.util.Map.of() : body.values());
+        return cronJobDtoMapper.toDto(cronJobService.create(
+            spec.name(), spec.schedule(), spec.prompt(), spec.deliverTo(), spec.skills()));
+    }
 }

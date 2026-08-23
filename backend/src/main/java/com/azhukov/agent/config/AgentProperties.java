@@ -228,6 +228,14 @@ public class AgentProperties {
         private int inlineShellTimeout = 30;
         /** How many tool-calling iterations between skill reviews (0 = disabled, default 10). */
         private int creationNudgeInterval = 10;
+        /**
+         * SIMPLIFIED skills hub: single GitHub repository used as the skill
+         * source (Hermes routes 9 sources; we use one repo). Default points at
+         * our own skills collection.
+         */
+        private String hubRepo = "https://github.com/FerrPOINT/skills";
+        /** Optional GitHub token for a private hub repo (env HUB_GITHUB_TOKEN overrides). */
+        private String hubToken;
         /** Require approval before writing skill files (default false). */
         private boolean writeApproval = false;
         /** Extra security checks for agent-created skills (default false). */

@@ -210,6 +210,21 @@ public class UtilityCommands implements CommandGroup {
             return client.prettyPrint(skills);
         });
 
+        // Skills hub (SIMPLIFIED Hermes parity): /skills-hub [query] lists or
+        // searches skills in the configured hub repo (default FerrPOINT/skills);
+        // /skills-install <name> installs it locally after a threat scan.
+        registry.register("skills-hub", "List or search hub skills: /skills-hub [query]", (args, client, sessionId) -> {
+            JsonNode result = args.isBlank() ? client.hubList() : client.hubSearch(args.strip());
+            return client.prettyPrint(result);
+        });
+
+        registry.register("skills-install", "Install a skill from the hub: /skills-install <name> [overwrite]", (args, client, sessionId) -> {
+            if (args.isBlank()) return "Usage: /skills-install <name> [overwrite]";
+            String[] parts = args.split("\\s+");
+            boolean overwrite = parts.length > 1 && "overwrite".equalsIgnoreCase(parts[1]);
+            return client.hubInstall(parts[0], overwrite);
+        });
+
         registry.register("bundles", "List available bundles", (args, client, sessionId) -> {
             JsonNode bundles = client.listBundles();
             return client.prettyPrint(bundles);

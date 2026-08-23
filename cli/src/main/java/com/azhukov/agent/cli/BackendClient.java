@@ -690,6 +690,29 @@ public class BackendClient {
     // Memory management (C2)
     // ------------------------------------------------------------------
 
+    // ------------------------------------------------------------------
+    // Blueprints (Hermes /blueprint parity)
+    // ------------------------------------------------------------------
+
+    public JsonNode listBlueprints() {
+        return executeGet("/api/v1/agent/cron/blueprints");
+    }
+
+    public String createFromBlueprint(String key, java.util.Map<String, String> values) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("values", values);
+        try {
+            return restClient.post()
+                .uri("/api/v1/agent/cron/blueprints/{key}/create", key)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+        } catch (Exception e) {
+            return handleErr("createFromBlueprint", e);
+        }
+    }
+
     public String approveMemory(String userId, String entryId) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("userId", userId);
@@ -870,6 +893,34 @@ public class BackendClient {
     public JsonNode getMemory() {
         JsonNode node = executeGet("/api/v1/agent/memory");
         return node != null ? node : objectMapper.createArrayNode();
+    }
+
+    // ------------------------------------------------------------------
+    // Skills hub (SIMPLIFIED Hermes parity: one GitHub repo source)
+    // ------------------------------------------------------------------
+
+    public JsonNode hubList() {
+        return executeGet("/api/v1/agent/skills-hub");
+    }
+
+    public JsonNode hubSearch(String query) {
+        return executeGet("/api/v1/agent/skills-hub/search?q=" + java.net.URLEncoder.encode(query, java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    public String hubInstall(String skill, boolean overwrite) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("skill", skill);
+        body.put("overwrite", overwrite);
+        try {
+            return restClient.post()
+                .uri("/api/v1/agent/skills-hub/install")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+        } catch (Exception e) {
+            return handleErr("hubInstall", e);
+        }
     }
 
     public JsonNode getSkills() {

@@ -41,6 +41,10 @@ public class ToolExecutionService {
     // tool RESULT, never the system prompt). Optional wiring — tests construct
     // this service directly with @RequiredArgsConstructor semantics.
     private com.azhukov.agent.core.context.SubdirectoryHintsService subdirectoryHints;
+    // Security guidance (Hermes plugins/security-guidance transform_tool_result
+    // hook): pattern-matched warnings appended to write_file/patch results.
+    // Non-blocking — the write already happened; the model self-corrects.
+    private com.azhukov.agent.core.security.SecurityGuidanceScanner securityGuidanceScanner;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final Retry retry = Retry.of("tool", RetryConfig.custom()
             .maxAttempts(3)
@@ -125,6 +129,28 @@ public class ToolExecutionService {
                 log.debug("subdirectory hints skipped for {}: {}", toolName, hintEx.getMessage());
             }
         }
+        // Security guidance (Hermes plugins/security-guidance): scan the content
+        // being written by write_file/patch and append a ⚠️ warning block to the
+        // result. Non-blocking — matches are often false positives; the model
+        // reads the warning and self-corrects (or documents why it's safe).
+        if (securityGuidanceScanner != null && result.success()) {
+            try {
+                java.util.Map<String, Object> sgArgs = com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
+                    .readValue(arguments, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() {});
+                String sgContent = sgArgs.get("content") instanceof String c ? c
+                    : sgArgs.get("new_string") instanceof String n ? n
+                    : sgArgs.get("patch") instanceof String pt ? pt : null;
+                String sgPath = sgArgs.get("path") instanceof String pp ? pp : "";
+                if (sgContent != null && ("write_file".equals(toolName) || "patch".equals(toolName))) {
+                    String warning = securityGuidanceScanner.scanAndFormat(sgContent, sgPath);
+                    if (!warning.isBlank()) {
+                        safeContent = safeContent + warning;
+                    }
+                }
+            } catch (Exception sgEx) {
+                log.debug("security guidance skipped for {}: {}", toolName, sgEx.getMessage());
+            }
+        }
         ToolResult safeResult = result.success() ? ToolResult.ok(safeContent) : ToolResult.fail(safeContent);
         // Classify result
         if (toolResultClassifier != null) {
@@ -160,6 +186,16 @@ public class ToolExecutionService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setSubdirectoryHints(com.azhukov.agent.core.context.SubdirectoryHintsService hints) {
         this.subdirectoryHints = hints;
+    }
+
+    /**
+     * Optional wiring for security guidance (Hermes parity). Setter injection
+     * keeps the @RequiredArgsConstructor signature stable for direct test
+     * constructions.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSecurityGuidanceScanner(com.azhukov.agent.core.security.SecurityGuidanceScanner scanner) {
+        this.securityGuidanceScanner = scanner;
     }
 
     @jakarta.annotation.PreDestroy
