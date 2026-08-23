@@ -341,6 +341,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
     private final MemoryProvider memoryProvider;
     private final SkillManager skillManager;
     private final com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot;
+    private final EnvironmentProbe environmentProbe;
 
     // C2: Per-session memory snapshot cache — frozen for the session lifetime.
     // Only refreshed on new session or when the PromptCacheTracker is invalidated
@@ -348,23 +349,32 @@ public class DefaultPromptBuilder implements PromptBuilder {
     private final java.util.concurrent.ConcurrentHashMap<String, String> memoryPrefixCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry) {
-        this(properties, toolRegistry, new DefaultAgentConstants(), null, null, null, null, null);
+        this(properties, toolRegistry, new DefaultAgentConstants(), null, null, null, null, null, null);
     }
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants) {
-        this(properties, toolRegistry, constants, null, null, null, null, null);
+        this(properties, toolRegistry, constants, null, null, null, null, null, null);
     }
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants, PromptCacheTracker cacheTracker) {
-        this(properties, toolRegistry, constants, cacheTracker, null, null, null, null);
+        this(properties, toolRegistry, constants, cacheTracker, null, null, null, null, null);
     }
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants, PromptCacheTracker cacheTracker, CodingContextDetector codingContextDetector) {
-        this(properties, toolRegistry, constants, cacheTracker, codingContextDetector, null, null, null);
+        this(properties, toolRegistry, constants, cacheTracker, codingContextDetector, null, null, null, null);
     }
 
     public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants, PromptCacheTracker cacheTracker, CodingContextDetector codingContextDetector, MemoryProvider memoryProvider) {
-        this(properties, toolRegistry, constants, cacheTracker, codingContextDetector, memoryProvider, null, null);
+        this(properties, toolRegistry, constants, cacheTracker, codingContextDetector, memoryProvider, null, null, null);
+    }
+
+    /** 8-arg compatibility overload (pre-environmentProbe call sites, tests). */
+    public DefaultPromptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants constants,
+                                 PromptCacheTracker cacheTracker, CodingContextDetector codingContextDetector,
+                                 MemoryProvider memoryProvider, SkillManager skillManager,
+                                 com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot) {
+        this(properties, toolRegistry, constants, cacheTracker, codingContextDetector,
+            memoryProvider, skillManager, codingWorkspaceSnapshot, null);
     }
 
     @Autowired
@@ -372,7 +382,9 @@ public class DefaultPromptBuilder implements PromptBuilder {
                                  PromptCacheTracker cacheTracker, CodingContextDetector codingContextDetector,
                                  MemoryProvider memoryProvider, SkillManager skillManager,
                                  @org.springframework.beans.factory.annotation.Autowired(required = false)
-                                 com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot) {
+                                 com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot,
+                                 @org.springframework.beans.factory.annotation.Autowired(required = false)
+                                 EnvironmentProbe environmentProbe) {
         this.properties = properties;
         this.toolRegistry = toolRegistry;
         this.constants = constants;
@@ -381,6 +393,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         this.memoryProvider = memoryProvider;
         this.skillManager = skillManager;
         this.codingWorkspaceSnapshot = codingWorkspaceSnapshot;
+        this.environmentProbe = environmentProbe;
     }
 
     @Override
@@ -1284,6 +1297,22 @@ public class DefaultPromptBuilder implements PromptBuilder {
                         .append(", buildTool=").append(ctx.buildTool())
                         .append(", gitRepo=").append(ctx.isGitRepo()).append("\n\n");
                 }
+            }
+        }
+
+        // Environment probe (Hermes system_prompt.py:576-590, tools/env_probe.py):
+        // one line when the local Python toolchain is non-default (PEP-668,
+        // uv vs pip, missing pip) so the model picks the right install
+        // strategy up front. Emits NOTHING when the environment is clean —
+        // zero token cost. Probe failure never blocks prompt build.
+        if (environmentProbe != null) {
+            try {
+                String probeLine = environmentProbe.getProbeLine();
+                if (probeLine != null && !probeLine.isBlank()) {
+                    contextTier.append(probeLine).append("\n\n");
+                }
+            } catch (Exception probeEx) {
+                // Probe failure must never block prompt build (Hermes parity).
             }
         }
 

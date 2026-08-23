@@ -29,8 +29,9 @@ public class PromptConfig {
     public PromptBuilder promptBuilder(AgentProperties properties, ToolRegistry toolRegistry, AgentConstants agentConstants,
                                        PromptCacheTracker cacheTracker, CodingContextDetector codingContextDetector,
                                        MemoryProvider memoryProvider, SkillManager skillManager,
-                                       com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot) {
+                                       com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot,
+                                       com.azhukov.agent.core.prompt.EnvironmentProbe environmentProbe) {
         return new DefaultPromptBuilder(properties, toolRegistry, agentConstants, cacheTracker, codingContextDetector,
-            memoryProvider, skillManager, codingWorkspaceSnapshot);
+            memoryProvider, skillManager, codingWorkspaceSnapshot, environmentProbe);
     }
 }

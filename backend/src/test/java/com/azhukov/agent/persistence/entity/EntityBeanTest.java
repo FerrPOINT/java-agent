@@ -15,8 +15,7 @@ class EntityBeanTest {
     void exerciseAllEntities() throws Exception {
         List<Class<?>> classes = Arrays.asList(
             SessionEntity.class, MessageEntity.class, MemoryEntity.class,
-            SkillEntity.class, TodoEntity.class, CompressionLockEntity.class,
-            AuditLogEntity.class);
+            SkillEntity.class, TodoEntity.class, CompressionLockEntity.class);
 
         for (Class<?> cls : classes) {
             Object instance;

@@ -37,6 +37,10 @@ public class ToolExecutionService {
     private final ToolResultClassifier toolResultClassifier;
     private final ToolOutputLimiter toolOutputLimiter;
     private final AgentMetrics agentMetrics;
+    // Subdirectory hints (Hermes agent/subdirectory_hints.py: appended to the
+    // tool RESULT, never the system prompt). Optional wiring — tests construct
+    // this service directly with @RequiredArgsConstructor semantics.
+    private com.azhukov.agent.core.context.SubdirectoryHintsService subdirectoryHints;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final Retry retry = Retry.of("tool", RetryConfig.custom()
             .maxAttempts(3)
@@ -105,6 +109,22 @@ public class ToolExecutionService {
         }
 
         String safeContent = result.success() ? redactor.redact(result.content()) : redactor.redact(result.error());
+        // Subdirectory hints (Hermes tool_executor.py:1768): on first visit to a
+        // directory via a path/command argument, append AGENTS.md/CLAUDE.md/
+        // .cursorrules content to the tool result. Only successful results get
+        // hints (a failed call tells the model nothing about the project layout).
+        if (subdirectoryHints != null && result.success()) {
+            try {
+                java.util.Map<String, Object> argsMap = com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
+                    .readValue(arguments, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() {});
+                String hints = subdirectoryHints.checkToolCall(toolName, argsMap);
+                if (hints != null && !hints.isBlank()) {
+                    safeContent = safeContent + hints;
+                }
+            } catch (Exception hintEx) {
+                log.debug("subdirectory hints skipped for {}: {}", toolName, hintEx.getMessage());
+            }
+        }
         ToolResult safeResult = result.success() ? ToolResult.ok(safeContent) : ToolResult.fail(safeContent);
         // Classify result
         if (toolResultClassifier != null) {
@@ -130,6 +150,16 @@ public class ToolExecutionService {
         String truncated = result.content().substring(0, max);
         log.warn("Tool {} output truncated from {} to {} chars", toolName, result.content().length(), max);
         return ToolResult.ok(truncated + "\n[output truncated]");
+    }
+
+    /**
+     * Optional wiring for subdirectory hints (Hermes parity). Setter injection
+     * keeps the @RequiredArgsConstructor signature stable for the many direct
+     * constructions in tests.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSubdirectoryHints(com.azhukov.agent.core.context.SubdirectoryHintsService hints) {
+        this.subdirectoryHints = hints;
     }
 
     @jakarta.annotation.PreDestroy
