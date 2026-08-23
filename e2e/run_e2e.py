@@ -268,23 +268,39 @@ class Runner:
         print(f"\n▶ {name}  [{file.name}, {len(steps)} steps]")
         log: list[str] = []
         ok = True
-        for i, step in enumerate(steps, 1):
-            label = step.get("name", f"step {i}")
-            t0 = time.time()
-            try:
-                _, detail = self.run_step(step, i)
-                dt = time.time() - t0
-                brief = summarize(detail)
-                print(f"  ✓ {label} ({dt:.1f}s) {brief}")
-                log.append(f"PASS {label}")
-            except Exception as e:  # noqa: BLE001
-                ok = False
-                dt = time.time() - t0
-                print(f"  ✗ {label} ({dt:.1f}s): {e}")
-                log.append(f"FAIL {label}: {e}")
-                if not scenario.get("continue_on_error"):
-                    break
+        try:
+            for i, step in enumerate(steps, 1):
+                label = step.get("name", f"step {i}")
+                t0 = time.time()
+                try:
+                    _, detail = self.run_step(step, i)
+                    dt = time.time() - t0
+                    brief = summarize(detail)
+                    print(f"  ✓ {label} ({dt:.1f}s) {brief}")
+                    log.append(f"PASS {label}")
+                except Exception as e:  # noqa: BLE001
+                    ok = False
+                    dt = time.time() - t0
+                    print(f"  ✗ {label} ({dt:.1f}s): {e}")
+                    log.append(f"FAIL {label}: {e}")
+                    if not scenario.get("continue_on_error"):
+                        break
+        finally:
+            self.cleanup_sessions()
         return ok, log
+
+    def cleanup_sessions(self):
+        """Delete every session this scenario created — e2e runs must not
+        litter the live DB (961 orphan 'New chat' sessions accumulated before
+        this guard existed). Failures here are logged, never fatal."""
+        root = self.base.rsplit("/api/v1", 1)[0]
+        for sid in self.session_ids:
+            try:
+                r = requests.delete(f"{root}/api/v2/sessions/{sid}", timeout=15)
+                if r.status_code not in (200, 404):
+                    print(f"  ⚠ cleanup: session {sid} -> HTTP {r.status_code}")
+            except Exception as e:  # noqa: BLE001
+                print(f"  ⚠ cleanup: session {sid} failed: {e}")
 
 
 def safe_json(r) -> object:
