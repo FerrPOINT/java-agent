@@ -102,6 +102,7 @@ class UserMessagePersistenceTest {
         sessionEntity.setCreatedAt(Instant.now());
         sessionEntity.setUpdatedAt(Instant.now());
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionEntity));
+        when(sessionRepository.existsById(any(UUID.class))).thenReturn(true);
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID)).thenReturn(List.of());
 
         IterationBudget.TurnSnapshot snapshot = mock(IterationBudget.TurnSnapshot.class);

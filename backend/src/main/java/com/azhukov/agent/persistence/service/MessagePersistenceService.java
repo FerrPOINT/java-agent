@@ -76,6 +76,12 @@ public class MessagePersistenceService {
     private void saveMessage(UUID sessionId, String role, String content,
                              String toolCallId, String toolCallName,
                              String toolCallArguments, int turnIndex) {
+        // Deleted-session guard: skip silently when the session row is gone
+        // (deleted mid-turn race) — mirrors MidTurnPersistenceService.
+        if (!sessionRepository.existsById(sessionId)) {
+            log.debug("saveMessage skipped: session {} no longer exists", sessionId);
+            return;
+        }
         MessageEntity entity = new MessageEntity();
         entity.setSessionId(sessionId);
         entity.setRole(role);

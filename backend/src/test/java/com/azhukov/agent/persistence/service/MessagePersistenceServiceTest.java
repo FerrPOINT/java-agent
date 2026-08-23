@@ -20,11 +20,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 class MessagePersistenceServiceTest {
 
     private MessageRepository repository;
+    private SessionRepository sessionRepo;
     private MessagePersistenceService service;
 
     private static final UUID SESSION_ID = UUID.fromString("aaaa1111-2222-3333-4444-555566667777");
@@ -34,8 +36,9 @@ class MessagePersistenceServiceTest {
     @BeforeEach
     void setUp() {
         repository = mock(MessageRepository.class);
-        SessionRepository sessionRepo = mock(SessionRepository.class);
+        sessionRepo = mock(SessionRepository.class);
         when(repository.countBySessionId(any(UUID.class))).thenReturn(0L);
+        when(sessionRepo.existsById(any(UUID.class))).thenReturn(true);
         service = new MessagePersistenceService(repository, sessionRepo);
     }
 
@@ -104,5 +107,14 @@ class MessagePersistenceServiceTest {
         for (MessageEntity entity : captor.getAllValues()) {
             assertThat(entity.getCreatedAt()).isNotNull();
         }
+    }
+
+    @Test
+    void persistTurn_skipsQuietlyWhenSessionDeleted() {
+        // Live defect (deleted-mid-turn race): no FK violation, no WARN spam.
+        when(sessionRepo.existsById(SESSION_ID)).thenReturn(false);
+        TurnResult result = new TurnResult(List.of(Message.assistant("Hello!", 1)), true, null);
+        service.persistTurn(SESSION, "hi", result);
+        verify(repository, never()).save(any(MessageEntity.class));
     }
 }

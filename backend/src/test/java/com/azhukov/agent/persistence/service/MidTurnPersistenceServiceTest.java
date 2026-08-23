@@ -1,7 +1,6 @@
 package com.azhukov.agent.persistence.service;
 
 import com.azhukov.agent.core.model.Message;
-import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -28,6 +27,8 @@ class MidTurnPersistenceServiceTest {
     private MessageRepository messageRepository;
     @Mock
     private TransactionTemplate transactionTemplate;
+    @Mock
+    private SessionRepository sessionRepository;
 
     private MidTurnPersistenceService service;
 
@@ -35,9 +36,9 @@ class MidTurnPersistenceServiceTest {
     void setUp() {
         // Use Mappers.getMapper for real mapper (per AGENTS.md: don't mock mappers)
         MessageMapper messageMapper = org.mapstruct.factory.Mappers.getMapper(MessageMapper.class);
-        SessionRepository sessionRepo = mock(SessionRepository.class);
         lenient().when(messageRepository.countBySessionId(any())).thenReturn(0L);
-        service = new MidTurnPersistenceService(messageRepository, messageMapper, transactionTemplate, sessionRepo);
+        lenient().when(sessionRepository.existsById(any())).thenReturn(true);
+        service = new MidTurnPersistenceService(messageRepository, messageMapper, transactionTemplate, sessionRepository);
     }
 
     private void stubTransaction() {
@@ -127,5 +128,18 @@ class MidTurnPersistenceServiceTest {
 
         assertThat(result).isFalse();
         verify(messageRepository).save(any());
+    }
+
+    @Test
+    void persistNewMessages_skipsQuietlyWhenSessionDeleted() {
+        // Live defect (0.1.35 e2e run): session deleted mid-turn -> every tool
+        // batch retried the INSERT and logged an FK-violation WARN.
+        when(sessionRepository.existsById(any())).thenReturn(false);
+        UUID sessionId = UUID.randomUUID();
+        List<Message> messages = List.of(Message.user("hi"));
+        boolean result = service.persistNewMessages(sessionId, messages, 0);
+        assertThat(result).isTrue(); // treated as flushed, caller advances cursor
+        verify(messageRepository, never()).save(any());
+        verify(transactionTemplate, never()).execute(any());
     }
 }

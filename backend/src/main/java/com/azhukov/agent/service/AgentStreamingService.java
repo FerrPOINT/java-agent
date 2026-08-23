@@ -1077,6 +1077,13 @@ public class AgentStreamingService {
     }
 
     private void persistTurn(Session session, List<Message> turnMessages, boolean isNew, int fromIndex) {
+        // Deleted-session guard (same race as MidTurnPersistenceService): the
+        // session row can be removed while the turn is still streaming; a
+        // pre-check keeps the FK violation out of the journal entirely.
+        if (!sessionRepository.existsById(session.id())) {
+            log.debug("persistTurn skipped: session {} no longer exists", session.id());
+            return;
+        }
         try {
             transactionTemplate.execute(status -> {
                 Instant now = Instant.now();
