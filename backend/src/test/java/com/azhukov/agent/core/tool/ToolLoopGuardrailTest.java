@@ -139,4 +139,74 @@ class ToolLoopGuardrailTest {
         String result = ToolLoopGuardrail.appendWarning("output", null);
         assertThat(result).isEqualTo("output");
     }
+
+
+    // ── Hermes parity: idempotent no-progress detection ─────────────────
+
+    @Test
+    void idempotentSameResultWarnsOnSecondSuccess() {
+        ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 50, 50);
+        String args = "{\"path\":\"README.md\"}";
+
+        assertThat(guardrail.afterCall("read_file", args, "same content", false)).isNull();
+        String warning = guardrail.afterCall("read_file", args, "same content", false);
+
+        assertThat(warning).contains("read_file");
+        assertThat(warning).contains("same result 2 times");
+    }
+
+    @Test
+    void idempotentChangedResultResetsNoProgressCount() {
+        ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 50, 50);
+        String args = "{\"path\":\"README.md\"}";
+
+        guardrail.afterCall("read_file", args, "version one", false);
+        assertThat(guardrail.afterCall("read_file", args, "version two", false)).isNull();
+    }
+
+    @Test
+    void mutatingSameResultDoesNotTriggerNoProgressWarning() {
+        ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 50, 50);
+        String args = "{\"path\":\"config.yml\"}";
+
+        assertThat(guardrail.afterCall("write_file", args, "written", false)).isNull();
+        assertThat(guardrail.afterCall("write_file", args, "written", false)).isNull();
+    }
+
+    // ── Hermes parity: LoopCapConfig ────────────────────────────────────
+
+    @Test
+    void webSearchCapBlocksCapPlusOneCall() {
+        ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 2, 50);
+
+        assertThat(guardrail.beforeCall("web_search", "{\"query\":\"one\"}")).isNull();
+        assertThat(guardrail.beforeCall("web_search", "{\"query\":\"two\"}")).isNull();
+        String blocked = guardrail.beforeCall("web_search", "{\"query\":\"three\"}");
+
+        assertThat(blocked).startsWith("Blocked web_search");
+        assertThat(blocked).contains("2 web searches");
+    }
+
+    @Test
+    void delegateTaskCapBlocksCapPlusOneCall() {
+        ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 50, 1);
+
+        assertThat(guardrail.beforeCall("delegate_task", "{\"goal\":\"one\"}")).isNull();
+        String blocked = guardrail.beforeCall("delegate_task", "{\"goal\":\"two\"}");
+
+        assertThat(blocked).startsWith("Blocked delegate_task");
+        assertThat(blocked).contains("limit 1");
+    }
+
+    @Test
+    void resetForTurnResetsRunawayCaps() {
+        ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 1, 1);
+        guardrail.beforeCall("web_search", "{\"query\":\"one\"}");
+        assertThat(guardrail.beforeCall("web_search", "{\"query\":\"two\"}")).startsWith("Blocked");
+
+        guardrail.resetForTurn();
+
+        assertThat(guardrail.beforeCall("web_search", "{\"query\":\"three\"}")).isNull();
+    }
+
 }

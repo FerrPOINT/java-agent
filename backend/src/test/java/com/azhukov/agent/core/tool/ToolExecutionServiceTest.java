@@ -289,4 +289,80 @@ class ToolExecutionServiceTest {
         assertThat(result.success()).isTrue();
         assertThat(result.content()).isEqualTo("ok");
     }
+
+
+    @Test
+    @DisplayName("Should append idempotent no-progress warning to a successful tool result")
+    void shouldAppendNoProgressWarning() {
+        ToolLoopGuardrail loopGuardrail = new ToolLoopGuardrail(true, 2, 3, 2, 50, 50);
+        service.setToolLoopGuardrail(loopGuardrail);
+        String toolName = "read_file";
+        String arguments = "{\"path\":\"README.md\"}";
+        ToolResult rawResult = ToolResult.ok("same content");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(rawResult);
+        when(redactor.redact("same content")).thenReturn("same content");
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.execute(toolName, "call-1", arguments, LAST_MSG, SESSION);
+        ToolResult second = service.execute(toolName, "call-2", arguments, LAST_MSG, SESSION);
+
+        assertThat(second.success()).isTrue();
+        assertThat(second.content()).contains("Tool loop guardrail");
+        assertThat(second.content()).contains("same result 2 times");
+    }
+
+    @Test
+    @DisplayName("Should block web_search after the per-turn cap before registry execution")
+    void shouldBlockWebSearchAfterCap() {
+        ToolLoopGuardrail loopGuardrail = new ToolLoopGuardrail(true, 2, 3, 2, 1, 50);
+        service.setToolLoopGuardrail(loopGuardrail);
+        String toolName = "web_search";
+        String arguments = "{\"query\":\"test\"}";
+        ToolResult rawResult = ToolResult.ok("result");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(rawResult);
+        when(redactor.redact("result")).thenReturn("result");
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.execute(toolName, "call-1", arguments, LAST_MSG, SESSION);
+        ToolResult blocked = service.execute(toolName, "call-2", arguments, LAST_MSG, SESSION);
+
+        assertThat(blocked.success()).isFalse();
+        assertThat(blocked.error()).startsWith("Blocked web_search");
+        verify(toolRegistry, org.mockito.Mockito.times(1)).execute(anyString(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Reset loop guardrail clears the per-turn web_search cap")
+    void resetLoopGuardrailClearsCap() {
+        ToolLoopGuardrail loopGuardrail = new ToolLoopGuardrail(true, 2, 3, 2, 1, 50);
+        service.setToolLoopGuardrail(loopGuardrail);
+        String toolName = "web_search";
+        String arguments = "{\"query\":\"test\"}";
+        ToolResult rawResult = ToolResult.ok("result");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(rawResult);
+        when(redactor.redact("result")).thenReturn("result");
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.execute(toolName, "call-1", arguments, LAST_MSG, SESSION);
+        service.resetLoopGuardrailForTurn();
+        ToolResult afterReset = service.execute(toolName, "call-2", arguments, LAST_MSG, SESSION);
+
+        assertThat(afterReset.success()).isTrue();
+    }
+
 }

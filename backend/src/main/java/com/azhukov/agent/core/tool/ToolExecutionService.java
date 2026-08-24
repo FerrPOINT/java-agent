@@ -60,6 +60,19 @@ public class ToolExecutionService {
             return ToolResult.fail(before.message());
         }
 
+        // Tool loop guardrail (Hermes parity: tool_guardrails.py before_call)
+        if (toolLoopGuardrail != null) {
+            String loopWarning = toolLoopGuardrail.beforeCall(toolName, arguments);
+            if (loopWarning != null) {
+                log.warn("Tool loop guardrail: {}", loopWarning);
+                // Runaway caps (web_search/delegate_task) are hard blocks;
+                // repeat warnings are advisory (append to result, don't block).
+                if (loopWarning.startsWith("Blocked ")) {
+                    return ToolResult.fail(loopWarning);
+                }
+            }
+        }
+
         long start = System.currentTimeMillis();
         Callable<ToolResult> callable = () -> toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session);
         Supplier<ToolResult> decorated = Retry.decorateSupplier(retry, () -> {
@@ -152,6 +165,17 @@ public class ToolExecutionService {
             }
         }
         ToolResult safeResult = result.success() ? ToolResult.ok(safeContent) : ToolResult.fail(safeContent);
+        // Tool loop guardrail (Hermes parity: tool_guardrails.py after_call)
+        if (toolLoopGuardrail != null) {
+            String loopWarning = toolLoopGuardrail.afterCall(toolName, arguments,
+                safeResult.content(), !safeResult.success());
+            if (loopWarning != null) {
+                log.debug("Tool loop guardrail after {}: {}", toolName, loopWarning);
+                safeResult = safeResult.success()
+                    ? ToolResult.ok(ToolLoopGuardrail.appendWarning(safeResult.content(), loopWarning))
+                    : ToolResult.fail(ToolLoopGuardrail.appendWarning(safeResult.content(), loopWarning));
+            }
+        }
         // Classify result
         if (toolResultClassifier != null) {
             var resultType = toolResultClassifier.classify(safeResult);
@@ -196,6 +220,22 @@ public class ToolExecutionService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setSecurityGuidanceScanner(com.azhukov.agent.core.security.SecurityGuidanceScanner scanner) {
         this.securityGuidanceScanner = scanner;
+    }
+
+    // Tool loop guardrail (Hermes parity: tool_guardrails.py). Optional —
+    // setter injection keeps the @RequiredArgsConstructor signature stable.
+    private ToolLoopGuardrail toolLoopGuardrail;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setToolLoopGuardrail(ToolLoopGuardrail toolLoopGuardrail) {
+        this.toolLoopGuardrail = toolLoopGuardrail;
+    }
+
+    /** Reset per-turn guardrail counters at the start of every agent turn. */
+    public void resetLoopGuardrailForTurn() {
+        if (toolLoopGuardrail != null) {
+            toolLoopGuardrail.resetForTurn();
+        }
     }
 
     @jakarta.annotation.PreDestroy

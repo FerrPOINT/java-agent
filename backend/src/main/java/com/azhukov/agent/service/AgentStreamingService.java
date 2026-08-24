@@ -282,6 +282,9 @@ public class AgentStreamingService {
 
         try {
 
+        // Reset per-turn loop counters before any model/tool execution.
+        toolExecutionService.resetLoopGuardrailForTurn();
+
         // Build messages with full session context (system + user)
         // History is loaded by contextEngine.prepareContext() via appendRecentHistory().
         // Do NOT load history here — that would duplicate it in the context.

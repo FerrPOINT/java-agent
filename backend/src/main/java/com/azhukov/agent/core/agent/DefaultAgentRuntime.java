@@ -224,6 +224,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         UUID sessionIdUuid = session.id();
         String sessionId = sessionIdUuid.toString();
         guardrail.reset(sessionIdUuid);
+        toolExecutionService.resetLoopGuardrailForTurn();
         turnStateManager.clear(sessionIdUuid);
         // Clear any pending steer from a previous turn (parity with Hermes
         // _drain_pending_steer clearing on turn start).
