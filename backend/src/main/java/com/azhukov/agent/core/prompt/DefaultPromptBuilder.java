@@ -1289,10 +1289,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
         boolean shouldEmitCodingBlock = true;
         if (codingPostureResolver != null) {
             String mode = properties.getCore().getCodingContext();
-            // Java agent surfaces: cli, telegram. CLI is interactive-coding;
-            // Telegram is not. When platform is unknown, default to "cli" so
-            // the coding workspace snapshot is emitted for local development.
-            String platform = "cli";
+            // Platform from session metadata: "telegram" → messaging surface
+            // (not coding); "cli"/null → interactive coding surface (default).
+            String platform = session != null ? session.getMetadata("platform") : null;
+            if (platform == null || platform.isBlank()) {
+                platform = "cli"; // default: local development surface
+            }
             String workingDir0 = properties.getCore().getWorkingDirectory();
             if (workingDir0 == null || workingDir0.isBlank()) {
                 workingDir0 = System.getProperty("user.dir");
