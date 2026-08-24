@@ -132,9 +132,14 @@ public class StreamingOrchestrator {
                         streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
                         accumulated.setLength(0);
                     }
-                    // Send tool call as a separate message (progress bubble) with args preview
-                    String toolDisplay = ToolEmojiMap.formatToolCall(toolName, toolArgs);
-                    streamEditor.sendProgressMessage(chatId, toolDisplay);
+                    // Hermes parity (gateway/display_config.py): Telegram defaults
+                    // to tool_progress="off" — don't spam the chat with per-tool
+                    // progress bubbles. Only send when explicitly enabled.
+                    String toolProgress = properties.getDisplay().getToolProgress();
+                    if (!"hidden".equalsIgnoreCase(toolProgress) && !"off".equalsIgnoreCase(toolProgress)) {
+                        String toolDisplay = ToolEmojiMap.formatToolCall(toolName, toolArgs);
+                        streamEditor.sendProgressMessage(chatId, toolDisplay);
+                    }
                 },
                 // toolResultConsumer — called when backend emits tool_result event.
                 // No segment break here: the text after a tool call is a NEW segment
