@@ -76,6 +76,12 @@ public class AgentStreamingService {
     private final ModelClient modelClient;
     private final ToolRegistry toolRegistry;
     private final ToolExecutionService toolExecutionService;
+    // Verify-on-stop guard (Hermes parity: verification_stop.py)
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.azhukov.agent.core.agent.VerifyOnStopGuard verifyOnStopGuard;
+    // Coding workspace snapshot for verify commands
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot;
     private final PromptBuilder promptBuilder;
     private final ContextEngine contextEngine;
     private final ObjectMapper objectMapper;
@@ -957,6 +963,38 @@ public class AgentStreamingService {
 
             // No tool calls → turn is complete
             if (!response.hasToolCalls()) {
+                // ── Verify-on-stop guard (Hermes parity: verification_stop.py) ──
+                // When the model finishes (STOP) after editing code without fresh
+                // verification evidence, inject a nudge requesting tests/build.
+                if (properties.getVerifyOnStop().isEnabled()
+                    && toolExecutionService.getFileMutationTracker() != null) {
+                    var tracker = toolExecutionService.getFileMutationTracker();
+                    var changedPaths = tracker.getTurnMutationPaths();
+                    if (!changedPaths.isEmpty()
+                        && tracker.getVerificationStopNudges() < verifyOnStopGuard.getMaxNudgeAttempts()) {
+                        java.util.List<String> verifyCommands = codingWorkspaceSnapshot != null
+                            ? codingWorkspaceSnapshot.getVerifyCommands() : java.util.List.of();
+                        String nudge = verifyOnStopGuard.buildNudge(
+                            changedPaths, tracker.getVerificationStopNudges(), verifyCommands);
+                        if (nudge != null) {
+                            tracker.incrementVerificationStopNudges();
+                            log.info("Verify-on-stop nudge (streaming) for session {} (attempt {}, {} changed paths)",
+                                session.id(), tracker.getVerificationStopNudges(), changedPaths.size());
+                            // Emit the assistant response as interim, then inject nudge
+                            turnMessages.add(Message.assistant(response.content(), turnIndex));
+                            turnMessages.add(Message.user(nudge));
+                            // Persist interim before continuing
+                            if (midTurnPersistenceCallback != null) {
+                                if (midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
+                                    persistedUpTo = turnMessages.size();
+                                }
+                            }
+                            // Continue the agentic loop — model gets another turn to verify
+                            continue;
+                        }
+                    }
+                }
+
                 // ── Background self-improvement review (Hermes parity:
                 // turn_finalizer.py:790-802) ──
                 // Fire AFTER the final response is delivered, not before:
