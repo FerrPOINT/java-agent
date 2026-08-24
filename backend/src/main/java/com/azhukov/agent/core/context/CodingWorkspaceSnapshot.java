@@ -82,6 +82,67 @@ public class CodingWorkspaceSnapshot {
         return String.join("\n", lines);
     }
 
+    /**
+     * Return detected verify commands (test, build, lint) for the workspace.
+     * Used by VerifyOnStopGuard to include specific commands in the nudge.
+     */
+    public java.util.List<String> getVerifyCommands() {
+        String workingDir = System.getProperty("user.dir");
+        if (workingDir == null || workingDir.isBlank()) {
+            return java.util.List.of();
+        }
+        Path resolved = Path.of(workingDir);
+        if (!Files.isDirectory(resolved)) {
+            return java.util.List.of();
+        }
+        Path gitRoot = gitRoot(resolved);
+        Path root = gitRoot != null ? gitRoot : markerRoot(resolved);
+        if (root == null) {
+            return java.util.List.of();
+        }
+        return detectVerifyCommands(root);
+    }
+
+    private java.util.List<String> detectVerifyCommands(Path root) {
+        List<String> verify = new ArrayList<>();
+        if (Files.isRegularFile(root.resolve("scripts/run_tests.sh"))) {
+            verify.add("scripts/run_tests.sh");
+        }
+        if (Files.isRegularFile(root.resolve("build.gradle")) || Files.isRegularFile(root.resolve("build.gradle.kts"))) {
+            verify.add("./gradlew test");
+        }
+        if (Files.isRegularFile(root.resolve("pom.xml"))) {
+            verify.add("mvn test");
+        }
+        Path pkg = root.resolve("package.json");
+        if (Files.isRegularFile(pkg)) {
+            String pm = jsPackageManager(root);
+            String scripts = readSmall(pkg);
+            if (scripts != null) {
+                for (String t : VERIFY_TARGETS) {
+                    if (Pattern.compile("\"" + t + "\"\\s*:").matcher(scripts).find()) {
+                        verify.add(pm + " run " + t);
+                    }
+                }
+            }
+        }
+        boolean pytestIni = Files.isRegularFile(root.resolve("pytest.ini"));
+        String pyproject = readSmall(root.resolve("pyproject.toml"));
+        if (pytestIni || (pyproject != null && pyproject.contains("[tool.pytest"))) {
+            verify.add("pytest");
+        }
+        String makefile = readSmall(root.resolve("Makefile"));
+        if (makefile != null) {
+            for (String t : VERIFY_TARGETS) {
+                if (Pattern.compile("^" + Pattern.quote(t) + "\\s*:", Pattern.MULTILINE).matcher(makefile).find()) {
+                    verify.add("make " + t);
+                }
+            }
+        }
+        LinkedHashSet<String> unique = new LinkedHashSet<>(verify);
+        return new ArrayList<>(unique).subList(0, Math.min(unique.size(), MAX_VERIFY_COMMANDS));
+    }
+
     private void appendGitState(Path root, List<String> lines) {
         try {
             String statusOut = git(root, "status", "--porcelain=2", "--branch");

@@ -44,6 +44,8 @@ public class ToolExecutionService {
     // snapshot the workspace before file-mutating tools (write_file, patch) and
     // before destructive terminal commands. Disabled via agent.checkpoints.enabled.
     private com.azhukov.agent.service.CheckpointManager checkpointManager;
+    // Per-turn file mutation tracking for VerifyOnStopGuard.
+    private FileMutationTracker fileMutationTracker;
     // Subdirectory hints (Hermes agent/subdirectory_hints.py: appended to the
     // tool RESULT, never the system prompt). Optional wiring — tests construct
     // this service directly with @RequiredArgsConstructor semantics.
@@ -199,6 +201,12 @@ public class ToolExecutionService {
             var resultType = toolResultClassifier.classify(safeResult);
             log.debug("Tool {} result classified as: {}", toolName, resultType);
         }
+        // Track file mutations for VerifyOnStopGuard (Hermes parity:
+        // run_agent.py:3569 — record paths mutated by write_file/patch).
+        if (fileMutationTracker != null && safeResult.success()
+            && ("write_file".equals(toolName) || "patch".equals(toolName))) {
+            fileMutationTracker.recordMutation(toolName, arguments, safeResult.content(), true);
+        }
         // Truncate output
         if (toolOutputLimiter != null) {
             return toolOutputLimiter.truncate(safeResult);
@@ -259,11 +267,24 @@ public class ToolExecutionService {
         this.checkpointManager = checkpointManager;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setFileMutationTracker(FileMutationTracker fileMutationTracker) {
+        this.fileMutationTracker = fileMutationTracker;
+    }
+
     /** Reset per-turn guardrail counters at the start of every agent turn. */
     public void resetLoopGuardrailForTurn() {
         if (toolLoopGuardrail != null) {
             toolLoopGuardrail.resetForTurn();
         }
+        if (fileMutationTracker != null) {
+            fileMutationTracker.resetForTurn();
+        }
+    }
+
+    /** Access the file mutation tracker (used by VerifyOnStopGuard in DefaultAgentRuntime). */
+    public FileMutationTracker getFileMutationTracker() {
+        return fileMutationTracker;
     }
 
     /**

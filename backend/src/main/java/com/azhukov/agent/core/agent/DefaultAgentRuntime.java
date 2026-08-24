@@ -77,6 +77,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ModelClient modelClient;
     private final ToolRegistry toolRegistry;
     private final ToolExecutionService toolExecutionService;
+    // Verify-on-stop guard (Hermes parity: verification_stop.py)
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private VerifyOnStopGuard verifyOnStopGuard;
+    // Coding workspace snapshot for verify commands
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot;
     private final PromptBuilder promptBuilder;
     private final ContextEngine contextEngine;
     private final MemoryProvider memoryProvider;
@@ -778,6 +784,32 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // Mirrors Hermes: memory review every N user turns, skill review every M tool iterations.
                 boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
                 triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+
+                // ── Verify-on-stop guard (Hermes parity: verification_stop.py) ──
+                // When the model finishes (STOP) after editing code without fresh
+                // verification evidence, inject a nudge requesting tests/build.
+                if (properties.getVerifyOnStop().isEnabled() && toolExecutionService != null
+                    && toolExecutionService.getFileMutationTracker() != null) {
+                    var tracker = toolExecutionService.getFileMutationTracker();
+                    var changedPaths = tracker.getTurnMutationPaths();
+                    if (!changedPaths.isEmpty()
+                        && tracker.getVerificationStopNudges() < verifyOnStopGuard.getMaxNudgeAttempts()) {
+                        List<String> verifyCommands = codingWorkspaceSnapshot != null
+                            ? codingWorkspaceSnapshot.getVerifyCommands() : List.of();
+                        String nudge = verifyOnStopGuard.buildNudge(
+                            changedPaths, tracker.getVerificationStopNudges(), verifyCommands);
+                        if (nudge != null) {
+                            tracker.incrementVerificationStopNudges();
+                            log.info("Verify-on-stop nudge issued for session {} (attempt {}, {} changed paths)",
+                                session.id(), tracker.getVerificationStopNudges(), changedPaths.size());
+                            turnMessages.add(Message.assistant(visibleContent, turnIndex));
+                            turnMessages.add(Message.user(nudge));
+                            // Continue the loop — model gets another turn to verify
+                            continue;
+                        }
+                    }
+                }
+
                 TurnExitReason reason = (visibleContent == null || visibleContent.isBlank())
                     ? TurnExitReason.EMPTY_RESPONSE : TurnExitReason.COMPLETED;
                 if (turnFinalizer != null) {

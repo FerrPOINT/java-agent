@@ -43,6 +43,7 @@ public class AgentProperties {
     private final BudgetProperties budget = new BudgetProperties();
     private final PromptCachingProperties promptCaching = new PromptCachingProperties();
     private final CheckpointProperties checkpoints = new CheckpointProperties();
+    private final VerifyOnStopProperties verifyOnStop = new VerifyOnStopProperties();
     private final UsageProperties usage = new UsageProperties();
     private final ImageGenProperties imageGen = new ImageGenProperties();
     private final TtsProperties tts = new TtsProperties();
@@ -474,6 +475,12 @@ public class AgentProperties {
         private boolean enabled = true;
         private int maxSnapshots = 20;
         private int maxSizeMb = 500;
+    }
+
+    @Getter @Setter
+    public static class VerifyOnStopProperties {
+        /** Whether to nudge the model to verify after editing code. Default false (opt-in). */
+        private boolean enabled = false;
     }
 
     @Getter @Setter

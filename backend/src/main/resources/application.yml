@@ -295,6 +295,10 @@ agent:
     max-snapshots: ${AGENT_CHECKPOINTS_MAX_SNAPSHOTS:20}
     max-size-mb: ${AGENT_CHECKPOINTS_MAX_SIZE_MB:500}
   
+  # ─── Verify on stop ───
+  verify-on-stop:
+    enabled: ${AGENT_VERIFY_ON_STOP:false}
+  
   # ─── Usage tracking ───
   usage:
     track-enabled: ${AGENT_USAGE_TRACK_ENABLED:true}
