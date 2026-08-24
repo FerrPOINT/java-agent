@@ -48,3 +48,5 @@ replay_pid*
 /backend/.gradle/
 *.env
 /backend/.env
+repomix-output.*
+repomix-output.xml

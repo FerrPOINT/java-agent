@@ -228,7 +228,15 @@ agent:
     enabled: ${AGENT_MCP_ENABLED:false}
     # Feature 4: OSV malware check before launching MCP servers (default true)
     osv-check-enabled: ${AGENT_MCP_OSV_CHECK_ENABLED:true}
-    servers: []
+    servers:
+      # Repomix: repository-to-text packing for AI context analysis.
+      # Provides pack_codebase, read_repomix_output, grep_repomix_output,
+      # pack_remote_repository, generate_skill, attach_packed_output tools.
+      # Enabled when AGENT_MCP_ENABLED=true and AGENT_MCP_REPOMIX=true.
+      - name: ${AGENT_MCP_REPOMIX_NAME:repomix}
+        transport: stdio
+        command: repomix
+        args: ["--mcp", "--sandbox", "."]
     # MCP server mode: expose agent tools to external MCP clients
     server:
       enabled: ${AGENT_MCP_SERVER_ENABLED:false}

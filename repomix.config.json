@@ -1,0 +1,34 @@
+{
+  "output": {
+    "style": "markdown",
+    "filePath": "repomix-output.md",
+    "headerText": "Java Agent — Repository Context for AI"
+  },
+  "include": [
+    "**/*.java",
+    "**/*.yml",
+    "**/*.yaml",
+    "**/*.gradle",
+    "**/*.groovy",
+    "**/*.sql",
+    "**/*.properties"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "**/build/**",
+      "**/.gradle/**",
+      "**/node_modules/**",
+      "**/prototype/**",
+      "**/*.class",
+      "**/out/**",
+      "**/bin/**",
+      "**/docs/**"
+    ]
+  },
+  "tokenCount": {
+    "encoding": "cl100k_base"
+  },
+  "topFilesLength": 20
+}
