@@ -422,7 +422,7 @@ class MemoryTodoBranchTest {
         t2.setTitle("Task2");
         t2.setStatus("done");
         t2.setPriority("low");
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(List.of(t1, t2));
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of(t1, t2));
 
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(
@@ -438,7 +438,7 @@ class MemoryTodoBranchTest {
         TodoEntity t1 = new TodoEntity();
         t1.setTitle("Task1");
         t1.setStatus("pending");
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(List.of(t1));
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of(t1));
 
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(

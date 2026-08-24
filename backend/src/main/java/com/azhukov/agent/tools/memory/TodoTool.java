@@ -55,6 +55,33 @@ public class TodoTool implements ToolHandler {
         return ToolResult.fail("Unknown action: " + args.action() + ". Supported: create, update, merge, set, list.");
     }
 
+    /**
+     * Resolve a todo id string to UUID. Accepts:
+     * - Full UUID string (e.g. "550e8400-e29b-41d4-a716-446655440000")
+     * - 1-based position number (e.g. "1", "2") — resolves to the Nth todo
+     *   in list order (oldest first)
+     * Returns null if not found or invalid.
+     */
+    private UUID resolveTodoId(String idStr, Session session) {
+        if (idStr == null || idStr.isBlank()) return null;
+        idStr = idStr.trim();
+        // Try UUID parse first
+        try {
+            return UUID.fromString(idStr);
+        } catch (IllegalArgumentException notUuid) {
+            // Try numeric position (1-based)
+            try {
+                int pos = Integer.parseInt(idStr);
+                if (pos < 1) return null;
+                var todos = todoRepository.findByUserIdOrderByCreatedAtAsc(session.userId());
+                if (pos > todos.size()) return null;
+                return todos.get(pos - 1).getId();
+            } catch (NumberFormatException notNumber) {
+                return null;
+            }
+        }
+    }
+
     private ToolResult handleCreate(TodoArgs args, Session session) {
         String title = args.title();
         if (title == null || title.isBlank()) {
@@ -87,7 +114,11 @@ public class TodoTool implements ToolHandler {
         if (args.id() == null) {
             return ToolResult.fail("id is required for update action.");
         }
-        TodoEntity existing = todoRepository.findById(args.id()).orElse(null);
+        UUID todoId = resolveTodoId(args.id(), session);
+        if (todoId == null) {
+            return ToolResult.fail("Todo not found: " + args.id());
+        }
+        TodoEntity existing = todoRepository.findById(todoId).orElse(null);
         if (existing == null) {
             return ToolResult.fail("Todo not found: " + args.id());
         }
@@ -116,7 +147,8 @@ public class TodoTool implements ToolHandler {
     }
 
     private ToolResult handleList(TodoArgs args, Session session) {
-        var todos = todoRepository.findByUserId(session.userId());
+        // Numeric update ids refer to this same stable, oldest-first order.
+        var todos = todoRepository.findByUserIdOrderByCreatedAtAsc(session.userId());
         int limit = args.limit() != null && args.limit() > 0 ? args.limit() : todos.size();
         return ToolResult.ok(todos.stream()
             .limit(limit)
@@ -176,7 +208,10 @@ public class TodoTool implements ToolHandler {
         for (TodoItem item : items) {
             TodoEntity entity = null;
             if (merge && item.id() != null) {
-                entity = todoRepository.findById(item.id()).orElse(null);
+                UUID itemId = resolveTodoId(item.id(), session);
+                if (itemId != null) {
+                    entity = todoRepository.findById(itemId).orElse(null);
+                }
                 if (entity == null || !entity.getUserId().equals(session.userId())) {
                     entity = null;
                 }
@@ -220,8 +255,8 @@ public class TodoTool implements ToolHandler {
         private String priority;
         @ToolParam(description = "max items to list", required = false)
         private Integer limit;
-        @ToolParam(description = "todo id (for update/merge)", required = false)
-        private UUID id;
+        @ToolParam(description = "todo id (UUID or 1-based position number for update/merge)", required = false)
+        private String id;
         @ToolParam(description = "status: pending, in_progress, completed, cancelled", required = false)
         private String status;
         @ToolParam(description = "when true, update existing items by id instead of replacing all", required = false)
@@ -233,14 +268,14 @@ public class TodoTool implements ToolHandler {
         public String title() { return title; }
         public String priority() { return priority; }
         public Integer limit() { return limit; }
-        public UUID id() { return id; }
+        public String id() { return id; }
         public String status() { return status; }
         public Boolean merge() { return merge != null && merge; }
         public List<TodoItem> items() { return items; }
     }
 
     public record TodoItem(
-        @ToolParam(description = "todo id (for update/merge mode)", required = false) UUID id,
+        @ToolParam(description = "todo id (UUID or 1-based position number for update/merge mode)", required = false) String id,
         @ToolParam(description = "todo title (max 4000 chars)", required = false) String title,
         @ToolParam(description = "status: pending, in_progress, completed, cancelled", required = false) String status,
         @ToolParam(description = "low/medium/high", required = false) String priority

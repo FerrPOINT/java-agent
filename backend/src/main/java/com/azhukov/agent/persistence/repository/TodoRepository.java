@@ -16,6 +16,8 @@ public interface TodoRepository extends JpaRepository<TodoEntity, UUID> {
 
     List<TodoEntity> findByUserId(String userId);
 
+    List<TodoEntity> findByUserIdOrderByCreatedAtAsc(String userId);
+
     List<TodoEntity> findBySessionId(UUID sessionId);
 
     Page<TodoEntity> findByUserId(String userId, Pageable pageable);

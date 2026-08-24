@@ -177,7 +177,7 @@ class TodoToolTest {
         t3.setTitle("Done task");
         t3.setStatus("cancelled");
         t3.setPriority("low");
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(List.of(t1, t2, t3));
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of(t1, t2, t3));
         String args = "{\"action\":\"list\"}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
@@ -192,7 +192,7 @@ class TodoToolTest {
     @DisplayName("Should list no todos")
     void shouldListNoTodos() {
         TodoTool tool = new TodoTool(todoRepository);
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(List.of());
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
         String args = "{\"action\":\"list\"}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
@@ -213,7 +213,7 @@ class TodoToolTest {
             e.setPriority("medium");
             todos.add(e);
         }
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(todos);
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(todos);
         String args = "{\"action\":\"list\",\"limit\":3}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
@@ -246,6 +246,46 @@ class TodoToolTest {
         assertThat(existing.getTitle()).isEqualTo("New title");
         assertThat(existing.getStatus()).isEqualTo("in_progress");
         verify(todoRepository).save(existing);
+    }
+
+    @Test
+    @DisplayName("Should update an item by its one-based list position")
+    void shouldUpdateTodoByOneBasedPosition() {
+        TodoTool tool = new TodoTool(todoRepository);
+        UUID firstId = UUID.randomUUID();
+        UUID secondId = UUID.randomUUID();
+        TodoEntity first = new TodoEntity();
+        first.setId(firstId);
+        first.setUserId(USER_ID);
+        TodoEntity second = new TodoEntity();
+        second.setId(secondId);
+        second.setUserId(USER_ID);
+        second.setTitle("Second");
+        second.setStatus("pending");
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of(first, second));
+        when(todoRepository.findById(secondId)).thenReturn(Optional.of(second));
+
+        ToolResult result = tool.execute(
+            "{\"action\":\"update\",\"id\":\"2\",\"status\":\"completed\"}",
+            LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        assertThat(second.getStatus()).isEqualTo("completed");
+        verify(todoRepository).save(second);
+    }
+
+    @Test
+    @DisplayName("Should reject out-of-range numeric todo position")
+    void shouldRejectOutOfRangeNumericPosition() {
+        TodoTool tool = new TodoTool(todoRepository);
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+
+        ToolResult result = tool.execute(
+            "{\"action\":\"update\",\"id\":\"1\",\"status\":\"completed\"}",
+            LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("not found");
     }
 
     @Test
