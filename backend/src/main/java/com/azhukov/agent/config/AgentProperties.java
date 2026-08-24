@@ -440,6 +440,8 @@ public class AgentProperties {
         private int httpClientTimeoutSeconds = 30;
         private int maxReferenceFileBytes = 100_000;
         private String workingDirectory = System.getProperty("user.dir");
+        /** Coding posture: auto, focus, on, off. Hermes parity: agent.coding_context. */
+        private String codingContext = "auto";
         private String httpUserAgent = "AzhukovAgent/1.0";
         /** Finding 10.1: Configurable SOUL.md path (default: ~/.hermes/soul.md). */
         private String soulMdPath = "";

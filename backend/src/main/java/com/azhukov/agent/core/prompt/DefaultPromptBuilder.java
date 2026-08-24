@@ -342,6 +342,9 @@ public class DefaultPromptBuilder implements PromptBuilder {
     private final SkillManager skillManager;
     private final com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot;
     private final EnvironmentProbe environmentProbe;
+    // Hermes coding_context.py posture resolver. Setter injection keeps existing
+    // prompt-builder constructor seams source-compatible for unit tests.
+    private com.azhukov.agent.core.context.CodingPostureResolver codingPostureResolver;
 
     // C2: Per-session memory snapshot cache — frozen for the session lifetime.
     // Only refreshed on new session or when the PromptCacheTracker is invalidated
@@ -394,6 +397,11 @@ public class DefaultPromptBuilder implements PromptBuilder {
         this.skillManager = skillManager;
         this.codingWorkspaceSnapshot = codingWorkspaceSnapshot;
         this.environmentProbe = environmentProbe;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCodingPostureResolver(com.azhukov.agent.core.context.CodingPostureResolver resolver) {
+        this.codingPostureResolver = resolver;
     }
 
     @Override
@@ -1276,7 +1284,23 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // commits + manifests + package managers + VERIFY COMMANDS + context
         // files), not a one-line language hint. The snapshot hands the model
         // its verify loop up front so it doesn't rediscover it every session.
-        if (codingContextDetector != null
+        // Gated by CodingPostureResolver (Hermes resolve_runtime_mode) — a
+        // notes/writing repo must NOT flip into coding posture.
+        boolean shouldEmitCodingBlock = true;
+        if (codingPostureResolver != null) {
+            String mode = properties.getCore().getCodingContext();
+            // Java agent surfaces: cli, telegram. CLI is interactive-coding;
+            // Telegram is not. When platform is unknown, default to "cli" so
+            // the coding workspace snapshot is emitted for local development.
+            String platform = "cli";
+            String workingDir0 = properties.getCore().getWorkingDirectory();
+            if (workingDir0 == null || workingDir0.isBlank()) {
+                workingDir0 = System.getProperty("user.dir");
+            }
+            shouldEmitCodingBlock = codingPostureResolver.isCodingContext(mode, platform, workingDir0);
+        }
+        if (shouldEmitCodingBlock
+                && codingContextDetector != null
                 && properties.getCodingContext() != null
                 && properties.getCodingContext().isEnabled()) {
             // application.yml binds working-directory to "" when the env var

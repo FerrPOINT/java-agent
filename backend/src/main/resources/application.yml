@@ -274,6 +274,8 @@ agent:
     http-client-timeout-seconds: ${AGENT_CORE_HTTP_CLIENT_TIMEOUT_SECONDS:30}
     max-reference-file-bytes: ${AGENT_CORE_MAX_REFERENCE_FILE_BYTES:100000}
     working-directory: ${AGENT_CORE_WORKING_DIRECTORY:}
+    # Coding posture: auto (interactive code workspace), focus, on, off.
+    coding-context: ${AGENT_CORE_CODING_CONTEXT:auto}
     http-user-agent: ${AGENT_CORE_HTTP_USER_AGENT:AzhukovAgent/1.0}
   
   # ─── Budget ───
