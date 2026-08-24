@@ -70,6 +70,10 @@ agent:
     temperature: ${AGENT_MODEL_TEMPERATURE:0.7}
     reasoning-effort: ${AGENT_MODEL_REASONING_EFFORT:100}
     fast-mode: ${AGENT_MODEL_FAST_MODE:false}
+    # Hermes parity: reasoning_content echo-back for DeepSeek/Kimi/MiMo.
+    # Enable when targeting these providers directly (not through LiteLLM).
+    return-thinking: ${AGENT_MODEL_RETURN_THINKING:false}
+    thinking-field-name: ${AGENT_MODEL_THINKING_FIELD_NAME:reasoning_content}
     max-image-size-bytes: ${AGENT_MODEL_MAX_IMAGE_SIZE_BYTES:4194304}
     max-total-image-size-bytes: ${AGENT_MODEL_MAX_TOTAL_IMAGE_SIZE_BYTES:20971520}
     image-jpeg-quality: ${AGENT_MODEL_IMAGE_JPEG_QUALITY:0.85}

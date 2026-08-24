@@ -88,6 +88,14 @@ public class AgentProperties {
         private final Map<String, String> headers = new HashMap<>();
         private int reasoningEffort = 70;
         private boolean fastMode = false;
+        /** Hermes parity: reasoning_content echo-back for DeepSeek/Kimi/MiMo.
+         *  When true, LangChain4j sends thinking/reasoning_content on assistant
+         *  message replays. Default false — only enable for providers that
+         *  require it (DeepSeek, Kimi, MiMo). */
+        private boolean returnThinking = false;
+        /** Wire field name for reasoning_content: "reasoning_content" (DeepSeek/Kimi/MiMo)
+         *  or "thinking" (generic). Default "reasoning_content". */
+        private String thinkingFieldName = "reasoning_content";
         /** Maximum size in bytes per image before shrinking (default 4 MB). */
         private int maxImageSizeBytes = 4 * 1024 * 1024;
         /** Maximum total image payload in bytes before shrinking (default 20 MB). */

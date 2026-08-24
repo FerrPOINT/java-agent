@@ -91,6 +91,9 @@ public class LangChain4jModelClient implements ModelClient {
             .timeout(java.time.Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
             .maxRetries(0) // H21: Let DefaultAgentRuntime handle retries — avoids double-retry.
             .temperature(properties.getModel().getTemperature())
+            .returnThinking(properties.getModel().isReturnThinking())
+            .sendThinking(properties.getModel().isReturnThinking(),
+                          properties.getModel().getThinkingFieldName())
             .build();
         this.streamingChatModel = dev.langchain4j.model.openai.OpenAiStreamingChatModel.builder()
             .baseUrl(baseUrl)
@@ -98,6 +101,9 @@ public class LangChain4jModelClient implements ModelClient {
             .modelName(properties.getModel().getModelName())
             .timeout(java.time.Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
             .temperature(properties.getModel().getTemperature())
+            .returnThinking(properties.getModel().isReturnThinking())
+            .sendThinking(properties.getModel().isReturnThinking(),
+                          properties.getModel().getThinkingFieldName())
             .build();
     }
 
