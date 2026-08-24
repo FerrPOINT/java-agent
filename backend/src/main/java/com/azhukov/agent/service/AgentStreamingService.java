@@ -5,6 +5,7 @@ import com.azhukov.agent.api.dto.StreamEvent;
 import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.core.agent.TurnExitReason;
 import com.azhukov.agent.core.agent.TurnFinalizer;
+import com.azhukov.agent.core.agent.ThinkingTimeoutGuidance;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
@@ -607,6 +608,24 @@ public class AgentStreamingService {
                     String errorMsg = streamRetries >= MAX_STREAM_RETRIES
                         ? "Model call failed after " + MAX_STREAM_RETRIES + " retries: " + error.getMessage()
                         : "Model call failed: " + error.getMessage();
+                    // Hermes parity (thinking_timeout_guidance.py): detect reasoning
+                    // model thinking-phase transport kill and append specific guidance.
+                    String modelName = streamOptions != null ? streamOptions.modelName() : null;
+                    if (modelName == null) modelName = properties.getModel().getModelName();
+                    ErrorClassifier.ErrorType finalErrorType;
+                    try {
+                        finalErrorType = errorClassifier.classify(
+                            error instanceof Exception e ? e : new RuntimeException(error));
+                    } catch (Exception ce) {
+                        finalErrorType = ErrorClassifier.ErrorType.RETRYABLE;
+                    }
+                    if (ThinkingTimeoutGuidance.isThinkingTimeout(finalErrorType, modelName, error.getMessage())) {
+                        log.info("Thinking-phase timeout detected for reasoning model {} — appending guidance", modelName);
+                        String provider = !properties.getFallbackChain().isEmpty()
+                            ? properties.getFallbackChain().get(0).getProvider()
+                            : "your-provider";
+                        errorMsg += ThinkingTimeoutGuidance.buildGuidance(provider, modelName);
+                    }
                     send(emitter, new StreamEvent("error", null, null, errorMsg), streamCtx);
                     safeCompleteWithError(emitter, error instanceof Exception
                         ? (Exception) error : new RuntimeException(error));

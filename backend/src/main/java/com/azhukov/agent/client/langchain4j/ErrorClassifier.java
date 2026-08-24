@@ -505,6 +505,10 @@ public class ErrorClassifier {
             || lowerMessage.contains("network connection lost")
             || lowerMessage.contains("unexpected eof")
             || lowerMessage.contains("incomplete chunked read")
+            // thinking_timeout_guidance.py parity: OSS-level transport kill
+            || lowerMessage.contains("broken pipe")
+            || lowerMessage.contains("errno 32")
+            || lowerMessage.contains("remote protocol")
             // TLS certificate verify failures (retryable via different route/credential)
             || lowerMessage.contains("certificate verify failed") || lowerMessage.contains("certificate_verify_failed")
             || lowerMessage.contains("unable to get local issuer certificate")
