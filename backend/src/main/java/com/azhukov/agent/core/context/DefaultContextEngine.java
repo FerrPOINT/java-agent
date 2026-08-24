@@ -187,6 +187,12 @@ public class DefaultContextEngine implements ContextEngine {
  context.addAll(messages.subList(from, messages.size()));
 
  List<Message> trimmed = trimToFit(context);
+ // Hermes parity (replay_cleanup.py): strip interrupted/dangling tool tails
+ // from replay history BEFORE the orphaned-tool repair pass. A process kill
+ // mid-tool-call leaves an assistant(tool_calls) with no tool answers (or an
+ // interrupted tool result) at the tail; without stripping, the model
+ // re-issues the call on resume → infinite reboot loop (#49201, #29086).
+ trimmed = ReplayCleanup.sanitize(trimmed);
  // Hermes parity: repair orphaned tool results / consecutive user turns
  // BEFORE sending to the model — strict providers (Gemini via litellm,
  // DeepSeek, Kimi) reject a tool message without a matching assistant
