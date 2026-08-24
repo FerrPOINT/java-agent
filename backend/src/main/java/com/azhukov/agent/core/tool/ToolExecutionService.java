@@ -40,6 +40,10 @@ public class ToolExecutionService {
     // Optional result storage (Hermes tools/tool_result_storage.py): spill a
     // full oversized result to disk BEFORE the in-context output limiter runs.
     private ToolResultStorage toolResultStorage;
+    // Optional checkpoint manager (Hermes tool_executor.py:_ensure_file_checkpoint):
+    // snapshot the workspace before file-mutating tools (write_file, patch) and
+    // before destructive terminal commands. Disabled via agent.checkpoints.enabled.
+    private com.azhukov.agent.service.CheckpointManager checkpointManager;
     // Subdirectory hints (Hermes agent/subdirectory_hints.py: appended to the
     // tool RESULT, never the system prompt). Optional wiring — tests construct
     // this service directly with @RequiredArgsConstructor semantics.
@@ -75,6 +79,11 @@ public class ToolExecutionService {
                 }
             }
         }
+
+        // Hermes parity (tool_executor.py:1025-1033): checkpoint the workspace
+        // before file-mutating tools and destructive terminal commands. This
+        // enables /undo rollback to the state before the mutation.
+        ensureFileCheckpoint(toolName, arguments);
 
         long start = System.currentTimeMillis();
         Callable<ToolResult> callable = () -> toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session);
@@ -245,6 +254,11 @@ public class ToolExecutionService {
         this.toolResultStorage = toolResultStorage;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCheckpointManager(com.azhukov.agent.service.CheckpointManager checkpointManager) {
+        this.checkpointManager = checkpointManager;
+    }
+
     /** Reset per-turn guardrail counters at the start of every agent turn. */
     public void resetLoopGuardrailForTurn() {
         if (toolLoopGuardrail != null) {
@@ -283,6 +297,38 @@ public class ToolExecutionService {
             }
         }
         return result;
+    }
+
+    /**
+     * Hermes parity (tool_executor.py:_ensure_file_checkpoint): snapshot the
+     * workspace before file-mutating tools (write_file, patch) and destructive
+     * terminal commands. Failures are swallowed (best-effort, same as Hermes).
+     */
+    private void ensureFileCheckpoint(String toolName, String arguments) {
+        if (checkpointManager == null) {
+            return;
+        }
+        boolean isFileMutation = "write_file".equals(toolName) || "patch".equals(toolName);
+        boolean isDestructiveTerminal = "terminal".equals(toolName) && isDestructiveCommand(arguments);
+        if (!isFileMutation && !isDestructiveTerminal) {
+            return;
+        }
+        try {
+            checkpointManager.snapshot("before " + toolName);
+        } catch (Exception e) {
+            log.debug("Checkpoint before {} failed (best-effort): {}", toolName, e.getMessage());
+        }
+    }
+
+    /** Check if terminal command is destructive (rm, mv, truncate, etc). */
+    private boolean isDestructiveCommand(String arguments) {
+        if (arguments == null || arguments.isBlank()) return false;
+        String lower = arguments.toLowerCase();
+        return lower.contains("rm ") || lower.contains("rm -") || lower.contains(" rmdir")
+            || lower.contains("mv ") || lower.contains("> ") || lower.contains(">> ")
+            || lower.contains("truncate") || lower.contains("shred")
+            || lower.contains("dd if=") || lower.contains("git clean")
+            || lower.contains("git reset --hard");
     }
 
     @jakarta.annotation.PreDestroy

@@ -393,4 +393,116 @@ class ToolExecutionServiceTest {
         verify(toolOutputLimiter).truncate(eq(persisted));
     }
 
+
+
+    @Test
+    @DisplayName("Should checkpoint before write_file execution")
+    void shouldCheckpointBeforeWriteFile() {
+        com.azhukov.agent.service.CheckpointManager ckptMgr = org.mockito.Mockito.mock(com.azhukov.agent.service.CheckpointManager.class);
+        service.setCheckpointManager(ckptMgr);
+        String toolName = "write_file";
+        String arguments = "{\"path\":\"/tmp/test.txt\",\"content\":\"hello\"}";
+        ToolResult okResult = ToolResult.ok("File written");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(okResult);
+        when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.execute(toolName, "call-ckpt-1", arguments, LAST_MSG, SESSION);
+
+        verify(ckptMgr).snapshot("before write_file");
+    }
+
+    @Test
+    @DisplayName("Should checkpoint before patch execution")
+    void shouldCheckpointBeforePatch() {
+        com.azhukov.agent.service.CheckpointManager ckptMgr = org.mockito.Mockito.mock(com.azhukov.agent.service.CheckpointManager.class);
+        service.setCheckpointManager(ckptMgr);
+        String toolName = "patch";
+        String arguments = "{\"path\":\"/tmp/test.txt\",\"old_string\":\"a\",\"new_string\":\"b\"}";
+        ToolResult okResult = ToolResult.ok("Patched");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(okResult);
+        when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.execute(toolName, "call-ckpt-2", arguments, LAST_MSG, SESSION);
+
+        verify(ckptMgr).snapshot("before patch");
+    }
+
+    @Test
+    @DisplayName("Should NOT checkpoint for read-only tools")
+    void shouldNotCheckpointForReadFile() {
+        com.azhukov.agent.service.CheckpointManager ckptMgr = org.mockito.Mockito.mock(com.azhukov.agent.service.CheckpointManager.class);
+        service.setCheckpointManager(ckptMgr);
+        String toolName = "read_file";
+        String arguments = "{\"path\":\"/tmp/test.txt\"}";
+        ToolResult okResult = ToolResult.ok("content");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(okResult);
+        when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.execute(toolName, "call-ckpt-3", arguments, LAST_MSG, SESSION);
+
+        verify(ckptMgr, org.mockito.Mockito.never()).snapshot(anyString());
+    }
+
+    @Test
+    @DisplayName("Should checkpoint before destructive terminal command")
+    void shouldCheckpointForDestructiveTerminal() {
+        com.azhukov.agent.service.CheckpointManager ckptMgr = org.mockito.Mockito.mock(com.azhukov.agent.service.CheckpointManager.class);
+        service.setCheckpointManager(ckptMgr);
+        String toolName = "terminal";
+        String arguments = "{\"command\":\"rm -rf /tmp/test\"}";
+        ToolResult okResult = ToolResult.ok("done");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(okResult);
+        when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.execute(toolName, "call-ckpt-4", arguments, LAST_MSG, SESSION);
+
+        verify(ckptMgr).snapshot("before terminal");
+    }
+
+    @Test
+    @DisplayName("Should NOT checkpoint for non-destructive terminal command")
+    void shouldNotCheckpointForSafeTerminal() {
+        com.azhukov.agent.service.CheckpointManager ckptMgr = org.mockito.Mockito.mock(com.azhukov.agent.service.CheckpointManager.class);
+        service.setCheckpointManager(ckptMgr);
+        String toolName = "terminal";
+        String arguments = "{\"command\":\"ls -la /tmp\"}";
+        ToolResult okResult = ToolResult.ok("output");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(okResult);
+        when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.execute(toolName, "call-ckpt-5", arguments, LAST_MSG, SESSION);
+
+        verify(ckptMgr, org.mockito.Mockito.never()).snapshot(anyString());
+    }
+
 }
