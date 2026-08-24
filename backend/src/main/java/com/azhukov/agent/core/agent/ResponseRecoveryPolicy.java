@@ -21,6 +21,8 @@ public final class ResponseRecoveryPolicy {
     public static final int MAX_EMPTY_RESPONSE_ATTEMPTS = 3;
     /** Hermes _DROPPED_TOOLCALL_RETRIES: 3 consecutive stalls, reset on a successful tool round. */
     public static final int MAX_DROPPED_TOOLCALL_RETRIES = 3;
+    /** Hermes truncated_tool_call_retries ceiling (conversation_loop.py:3829): 4 retries with max_tokens boost. */
+    public static final int MAX_TRUNCATED_TOOL_CALL_RETRIES = 4;
 
     /** Hermes _LENGTH_CONTINUATION_OUTPUT_LIMIT (conversation_loop.py:1044): output-length truncation. */
     public static final String LENGTH_NUDGE =
@@ -113,5 +115,29 @@ public final class ResponseRecoveryPolicy {
      */
     public static int resetOnLandedToolCall(int droppedRetries, boolean hasToolCalls) {
         return hasToolCalls ? 0 : droppedRetries;
+    }
+
+    /**
+     * LENGTH finish_reason WITH tool calls — the model hit the output cap
+     * mid-tool-call JSON. The arguments are truncated and must NOT be executed.
+     * Hermes parity (conversation_loop.py:3829): {@code _trunc_has_tool_calls}.
+     */
+    public static boolean isTruncatedToolCall(String finishReason, boolean hasToolCalls) {
+        return "LENGTH".equals(finishReason) && hasToolCalls;
+    }
+
+    /**
+     * Boost max_tokens for a truncated-tool-call retry. Hermes doubles the
+     * budget per attempt (conversation_loop.py:3851: {@code _tc_boost_base * (2 ** retries)}),
+     * capped at 32768 (or the requested cap if higher).
+     *
+     * @param baseMaxTokens the current max_tokens setting
+     * @param attempt       1-based retry number
+     * @return the boosted max_tokens, capped at 32768
+     */
+    public static int boostedMaxTokens(int baseMaxTokens, int attempt) {
+        int base = baseMaxTokens > 0 ? baseMaxTokens : 4096;
+        int boosted = base * (int) Math.pow(2, attempt);
+        return Math.min(boosted, 32768);
     }
 }

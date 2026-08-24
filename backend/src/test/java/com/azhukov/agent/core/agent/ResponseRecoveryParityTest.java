@@ -83,4 +83,49 @@ class ResponseRecoveryParityTest {
         guard.recordEmptyAttempt("m2", "p", "STOP", 0L); // signature changed
         assertThat(guard.deterministicEmpty()).isFalse();
     }
+
+
+    // ── Truncated tool call recovery (Hermes parity: conversation_loop.py:3829) ──
+
+    @Test
+    void isTruncatedToolCallDetectsLengthWithToolCalls() {
+        assertThat(ResponseRecoveryPolicy.isTruncatedToolCall("LENGTH", true)).isTrue();
+    }
+
+    @Test
+    void isTruncatedToolCallRejectsLengthWithoutToolCalls() {
+        assertThat(ResponseRecoveryPolicy.isTruncatedToolCall("LENGTH", false)).isFalse();
+    }
+
+    @Test
+    void isTruncatedToolCallRejectsNonLengthWithToolCalls() {
+        assertThat(ResponseRecoveryPolicy.isTruncatedToolCall("STOP", true)).isFalse();
+        assertThat(ResponseRecoveryPolicy.isTruncatedToolCall("TOOL_EXECUTION", true)).isFalse();
+    }
+
+    @Test
+    void isTruncatedToolCallRejectsNullFinishReason() {
+        assertThat(ResponseRecoveryPolicy.isTruncatedToolCall(null, true)).isFalse();
+    }
+
+    @Test
+    void boostedMaxTokensDoublesPerAttempt() {
+        // base 4096: attempt1=8192, attempt2=16384, attempt3=32768, attempt4=32768 (capped)
+        assertThat(ResponseRecoveryPolicy.boostedMaxTokens(4096, 1)).isEqualTo(8192);
+        assertThat(ResponseRecoveryPolicy.boostedMaxTokens(4096, 2)).isEqualTo(16384);
+        assertThat(ResponseRecoveryPolicy.boostedMaxTokens(4096, 3)).isEqualTo(32768);
+        assertThat(ResponseRecoveryPolicy.boostedMaxTokens(4096, 4)).isEqualTo(32768); // capped
+    }
+
+    @Test
+    void boostedMaxTokensUses4096DefaultWhenBaseIsZeroOrNegative() {
+        assertThat(ResponseRecoveryPolicy.boostedMaxTokens(0, 1)).isEqualTo(8192);
+        assertThat(ResponseRecoveryPolicy.boostedMaxTokens(-1, 1)).isEqualTo(8192);
+    }
+
+    @Test
+    void maxTruncatedToolCallRetriesIs4() {
+        assertThat(ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES).isEqualTo(4);
+    }
+
 }

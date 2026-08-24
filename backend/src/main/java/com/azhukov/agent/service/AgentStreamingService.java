@@ -145,6 +145,8 @@ public class AgentStreamingService {
         com.azhukov.agent.core.agent.ResponseRecoveryPolicy.MAX_EMPTY_RESPONSE_ATTEMPTS;
     private static final int MAX_DROPPED_TOOLCALL_RETRIES =
         com.azhukov.agent.core.agent.ResponseRecoveryPolicy.MAX_DROPPED_TOOLCALL_RETRIES;
+    private static final int MAX_TRUNCATED_TOOL_CALL_RETRIES =
+        com.azhukov.agent.core.agent.ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES;
     /** Hermes jittered_backoff for empty-response retries: base 5s, cap 60s, interruptible. */
     private static final long EMPTY_BACKOFF_BASE_MS = 5_000L;
     private static final long EMPTY_BACKOFF_CAP_MS = 60_000L;
@@ -391,6 +393,7 @@ public class AgentStreamingService {
             int lengthContinueRetries = 0;
             int emptyContentRetries = 0;
             int droppedToolcallRetries = 0;
+            int truncatedToolCallRetries = 0;
             StringBuilder truncatedParts = new StringBuilder();
             boolean lastResponseHadToolCalls = false;
             // R3/R4 (Hermes 7728-7760 + empty_response_guard): per-turn fallback chain
@@ -623,6 +626,93 @@ public class AgentStreamingService {
                     send(emitter, new StreamEvent("token", filterMsg, null, null), streamCtx);
                     response = ChatResponse.text(filterMsg);
                     break;
+                }
+
+                // ── Truncated tool call recovery (Hermes parity: conversation_loop.py:3829-3860) ──
+                // LENGTH finish_reason WITH tool calls: the model hit the output cap
+                // mid-tool-call JSON. The arguments are truncated/incomplete and must
+                // NOT be executed. Re-run the same API call with a boosted max_tokens
+                // (2^attempt × base, capped at 32768) giving the model room to finish.
+                if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
+                        && truncatedToolCallRetries < MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+                    truncatedToolCallRetries++;
+                    int boostedMax = com.azhukov.agent.core.agent.ResponseRecoveryPolicy.boostedMaxTokens(
+                        properties.getModel().getMaxTokens(), truncatedToolCallRetries);
+                    log.warn("Truncated tool call detected (LENGTH + {} tool call(s), session {}) — retrying with boosted max_tokens={} (attempt {}/{})",
+                        collectedToolCalls.size(), session.id(), boostedMax, truncatedToolCallRetries, MAX_TRUNCATED_TOOL_CALL_RETRIES);
+                    send(emitter, new StreamEvent("retry", null, null,
+                        "Truncated tool call — retrying with larger output budget ("
+                            + truncatedToolCallRetries + "/" + MAX_TRUNCATED_TOOL_CALL_RETRIES + ")"), streamCtx);
+                    // Don't append the broken response; re-run from current context
+                    // with a boosted max_tokens so the model has room to complete the JSON.
+                    contentBuilder.setLength(0);
+                    collectedToolCalls.clear();
+                    scrubber.reset();
+                    com.azhukov.agent.core.client.ModelRequestOptions boostedOptions =
+                        new com.azhukov.agent.core.client.ModelRequestOptions(
+                        streamOptions.modelName(), streamOptions.reasoningEffort(),
+                        streamOptions.fastMode(), streamOptions.voiceMode(),
+                        streamOptions.personality(), streamOptions.subgoal(),
+                        boostedMax);
+                    context = contextEngine.prepareContext(session, turnMessages);
+                    session = resolveRotatedSession(session);
+                    // Re-issue the stream call with boosted max_tokens
+                    activeStreamClient.stream(context, tools, boostedOptions, new StreamingResponseHandler() {
+                        @Override
+                        public void onToken(String token) {
+                            String scrubbed = scrubber.scrub(token);
+                            if (!scrubbed.isEmpty()) {
+                                contentBuilder.append(scrubbed);
+                            }
+                        }
+
+                        @Override
+                        public void onToolCalls(List<ToolCall> toolCalls) {
+                            collectedToolCalls.addAll(toolCalls);
+                        }
+
+                        @Override
+                        public void onComplete() {
+                            // No-op — finish_reason + outputTokens come via the 2-arg overload
+                        }
+
+                        @Override
+                        public void onComplete(String finishReason2, Long outputTokens2) {
+                            capturedFinishReason.set(finishReason2);
+                            capturedOutputTokens.set(outputTokens2);
+                        }
+
+                        @Override
+                        public void onError(Throwable error) {
+                            capturedError.set(error);
+                        }
+                    });
+                    continue;
+                }
+
+                // Truncated tool call ceiling reached — refuse to execute incomplete arguments.
+                if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
+                        && truncatedToolCallRetries >= MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+                    log.warn("Truncated tool call after {} retries — refusing to execute incomplete tool arguments (session {})",
+                        truncatedToolCallRetries, session.id());
+                    send(emitter, new StreamEvent("token", "\n\n⚠️ Tool call remained truncated after "
+                        + truncatedToolCallRetries + " retries — the action was not executed.", null, null), streamCtx);
+                    // Close the interrupted tool sequence with a recovery stub
+                    for (ToolCall tc : collectedToolCalls) {
+                        turnMessages.add(Message.assistantWithToolCalls(contentBuilder.toString(),
+                            List.of(tc), turnIndex));
+                        turnMessages.add(Message.toolResult(tc.id(),
+                            "[Truncated tool call — arguments were incomplete after "
+                            + truncatedToolCallRetries + " retries. The tool was not executed.]",
+                            turnIndex));
+                    }
+                    contentBuilder.setLength(0);
+                    collectedToolCalls.clear();
+                    // Continue the loop — the model sees the stub and can retry properly
+                    turnIndex++;
+                    context = contextEngine.prepareContext(session, turnMessages);
+                    session = resolveRotatedSession(session);
+                    continue;
                 }
 
                 // LENGTH: model hit max output tokens — partial content.

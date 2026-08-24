@@ -417,6 +417,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         // c2: shared recovery counters (ResponseRecoveryPolicy) — same budgets as streaming
         int lengthContinueRetries = 0;
         int droppedToolcallRetries = 0;
+        int truncatedToolCallRetries = 0;
         StringBuilder truncatedParts = new StringBuilder();
         // Empty response retry counter (parity with Hermes _empty_content_retries: max 3)
         int retryStateEmptyResponse = 0;
@@ -524,6 +525,51 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
             // Reset incomplete scratchpad counter on clean response
             incompleteScratchpadRetries = 0;
+
+            // ── Truncated tool call recovery (Hermes parity: conversation_loop.py:3829-3860) ──
+            // LENGTH finish_reason WITH tool calls: the model hit the output cap
+            // mid-tool-call JSON. The arguments are truncated/incomplete and must
+            // NOT be executed. Re-run the same API call with a boosted max_tokens
+            // (2^attempt × base, capped at 32768) giving the model room to finish.
+            if (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
+                    && truncatedToolCallRetries < ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+                truncatedToolCallRetries++;
+                int boostedMax = ResponseRecoveryPolicy.boostedMaxTokens(
+                    properties.getModel().getMaxTokens(), truncatedToolCallRetries);
+                log.warn("Truncated tool call detected (LENGTH + tool calls) — retrying with boosted max_tokens={} (attempt {}/{})",
+                    boostedMax, truncatedToolCallRetries, ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES);
+                // Don't append the broken response; re-run from current context
+                // with a boosted max_tokens so the model has room to complete the JSON.
+                ModelRequestOptions boostedOptions = new ModelRequestOptions(
+                    options.modelName(), options.reasoningEffort(),
+                    options.fastMode(), options.voiceMode(),
+                    options.personality(), options.subgoal(),
+                    boostedMax);
+                context = contextEngine.prepareContext(session, turnMessages);
+                session = resolveRotatedSession(session);
+                response = callModelWithRetry(context, tools, session, boostedOptions);
+                continue;
+            }
+
+            // Truncated tool call ceiling reached — refuse to execute incomplete arguments.
+            if (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
+                    && truncatedToolCallRetries >= ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+                log.warn("Truncated tool call after {} retries — refusing to execute incomplete tool arguments",
+                    truncatedToolCallRetries);
+                // Close the interrupted tool sequence with recovery stubs
+                for (ToolCall tc : response.toolCalls()) {
+                    turnMessages.add(Message.assistantWithToolCalls(response.content(), List.of(tc), turnIndex));
+                    turnMessages.add(Message.toolResult(tc.id(),
+                        "[Truncated tool call — arguments were incomplete after "
+                        + truncatedToolCallRetries + " retries. The tool was not executed.]",
+                        turnIndex));
+                }
+                turnIndex++;
+                context = contextEngine.prepareContext(session, turnMessages);
+                session = resolveRotatedSession(session);
+                response = callModelWithRetry(context, tools, session, options);
+                continue;
+            }
 
             // ── c2: LENGTH continuation (Hermes conversation_loop.py:3711-3775) ──
             // Sync-path parity with the streaming loop: the partial fragment is
