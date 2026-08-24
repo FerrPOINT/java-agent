@@ -172,9 +172,16 @@ public class LangChain4jModelClient implements ModelClient {
             persistUsage(response);
 
             if (aiMessage.hasToolExecutionRequests()) {
-                List<ToolCall> calls = aiMessage.toolExecutionRequests().stream()
-                    .map(r -> new ToolCall(r.id(), r.name(), r.arguments()))
-                    .collect(Collectors.toList());
+                List<ToolCall> calls = new java.util.ArrayList<>();
+                int callIdx = 0;
+                for (var r : aiMessage.toolExecutionRequests()) {
+                    String id = r.id();
+                    if (id == null || id.isBlank()) {
+                        id = ToolCall.deterministicCallId(r.name(), r.arguments(), callIdx);
+                    }
+                    calls.add(new ToolCall(id, r.name(), r.arguments()));
+                    callIdx++;
+                }
                 // Preserve text alongside tool calls — the text is "commentary"
                 // (interim assistant message) shown to the user before tool execution.
                 // Mirrors Hermes _emit_interim_assistant_message().
@@ -266,9 +273,16 @@ public class LangChain4jModelClient implements ModelClient {
                     // mirroring what complete() does for the non-streaming path.
                     persistUsage(completeResponse);
                     if (completeResponse.aiMessage().hasToolExecutionRequests()) {
-                        List<ToolCall> calls = completeResponse.aiMessage().toolExecutionRequests().stream()
-                            .map(r -> new ToolCall(r.id(), r.name(), r.arguments()))
-                            .collect(Collectors.toList());
+                        List<ToolCall> calls = new java.util.ArrayList<>();
+                        int callIdx = 0;
+                        for (var r : completeResponse.aiMessage().toolExecutionRequests()) {
+                            String id = r.id();
+                            if (id == null || id.isBlank()) {
+                                id = ToolCall.deterministicCallId(r.name(), r.arguments(), callIdx);
+                            }
+                            calls.add(new ToolCall(id, r.name(), r.arguments()));
+                            callIdx++;
+                        }
                         handler.onToolCalls(calls);
                     } else if (content.isEmpty() && completeResponse.aiMessage().text() != null) {
                         handler.onToken(completeResponse.aiMessage().text());
