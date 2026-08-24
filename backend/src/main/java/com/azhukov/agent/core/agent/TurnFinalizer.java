@@ -62,6 +62,15 @@ public class TurnFinalizer {
  public FinalizationResult finalize(UUID sessionId, List<Message> messages, boolean success, TurnExitReason exitReason) {
  int msgCount = messages != null ? messages.size() : 0;
 
+ // Hermes parity (message_sanitization.py:296): close interrupted tool sequence.
+ // When a turn is cut short (interrupt, error, budget) and the last message
+ // is a TOOL result, persisting it as-is creates a tool→user role-alternation
+ // violation on the next turn → Gemini/Claude 400 or hallucinated continuation
+ // (#48879). Append a synthetic assistant message to close the sequence.
+ if (messages != null && !messages.isEmpty() && !success) {
+     closeInterruptedToolSequence(messages, exitReason);
+ }
+
  if (!success) {
  promptCacheTracker.invalidate(sessionId.toString());
  log.debug("Turn FAILED for session {}: {} messages, prompt cache evicted", sessionId, msgCount);
@@ -333,4 +342,28 @@ public class TurnFinalizer {
  public record FinalizationResult(String fileMutationFooter, String completionExplanation) {}
 
  private record MutationRecord(String path, boolean success, String toolCallId) {}
-}
+
+ /**
+  * Hermes parity (message_sanitization.py:296 close_interrupted_tool_sequence):
+  * When a turn ends abnormally and the last message is a TOOL result, append
+  * a synthetic assistant message to close the sequence. Without this, the
+  * persisted history ends on tool→user (role-alternation violation) which
+  * strict providers (Gemini, Claude) reject or hallucinate over (#48879).
+  *
+  * Mutates {@code messages} in place. Returns true if a closing message was appended.
+  */
+ public static boolean closeInterruptedToolSequence(List<Message> messages, TurnExitReason exitReason) {
+     if (messages == null || messages.isEmpty()) {
+         return false;
+     }
+     Message last = messages.get(messages.size() - 1);
+     if (last.role() != Role.TOOL) {
+         return false;
+     }
+     String text = (exitReason != null && exitReason.explanation() != null)
+         ? exitReason.explanation()
+         : "Operation interrupted.";
+     messages.add(Message.assistant(text.strip().isEmpty() ? "Operation interrupted." : text, 0));
+     return true;
+ }
+ }

@@ -3,6 +3,8 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.StreamEvent;
 import com.azhukov.agent.api.dto.UsageDto;
+import com.azhukov.agent.core.agent.TurnExitReason;
+import com.azhukov.agent.core.agent.TurnFinalizer;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
@@ -690,7 +692,30 @@ public class AgentStreamingService {
                             capturedError.set(error);
                         }
                     });
-                    continue;
+                    // Re-stream completed (blocking call) — check for error first,
+                    // then re-read routing flags and fall through to finish_reason
+                    // routing in THIS iteration. Do NOT 'continue' back to while(true)
+                    // — that would recreate contentBuilder/collectedToolCalls/captured*
+                    // and silently discard the re-streamed response.
+                    if (capturedError.get() != null) {
+                        Throwable retryError = capturedError.get();
+                        log.error("Re-stream with boosted max_tokens failed for session {}: {}",
+                            session.id(), retryError.getMessage());
+                        send(emitter, new StreamEvent("error", null, null,
+                            "Model call failed during truncated tool call retry: " + retryError.getMessage()), streamCtx);
+                        safeCompleteWithError(emitter, retryError instanceof Exception
+                            ? (Exception) retryError : new RuntimeException(retryError));
+                        if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew,
+                            midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                        return;
+                    }
+                    // Re-read routing flags from the re-streamed response
+                    finishReason = capturedFinishReason.get();
+                    hasContent = contentBuilder.length() > 0;
+                    hasToolCalls = !collectedToolCalls.isEmpty();
+                    log.info("Re-stream finish_reason={} for session {} (content={} chars, toolCalls={})",
+                        finishReason, session.id(), contentBuilder.length(), collectedToolCalls.size());
+                    // Fall through to ceiling check + normal finish_reason routing below
                 }
 
                 // Truncated tool call ceiling reached — refuse to execute incomplete arguments.
@@ -1231,6 +1256,12 @@ public class AgentStreamingService {
             log.debug("persistTurn skipped: session {} no longer exists", session.id());
             return;
         }
+        // Hermes parity (message_sanitization.py:296): close interrupted tool
+        // sequence before persisting. If the last message is a TOOL result
+        // (interrupt/error/budget cut the turn short), append a synthetic
+        // assistant message so the persisted history doesn't end on tool→user
+        // (role-alternation violation → Gemini/Claude 400, #48879).
+        TurnFinalizer.closeInterruptedToolSequence(turnMessages, TurnExitReason.INTERRUPTED);
         try {
             transactionTemplate.execute(status -> {
                 Instant now = Instant.now();

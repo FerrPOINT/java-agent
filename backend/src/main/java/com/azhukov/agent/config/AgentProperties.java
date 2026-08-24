@@ -257,14 +257,6 @@ public class AgentProperties {
         private int truncateWarningChars = 12000;
         private int timeoutSeconds = 300;
         private boolean includeTimestamps = true;
-        /** Feature 7: Terminal output max chars (default 50000). */
-        private int terminalMaxChars = 50000;
-        /** Feature 7: Read file max lines (default 2000). */
-        private int readFileMaxLines = 2000;
-        /** Feature 7: Per-line max chars (default 2000). */
-        private int perLineMaxChars = 2000;
-        /** Feature 7: Web extract max chars (default 5000). */
-        private int webExtractMaxChars = 5000;
         /** Feature 8: Tool result persistence threshold in bytes (default 51200 = 50KB). */
         private int persistThresholdBytes = 51200;
         /** Feature 8: Per-turn aggregate budget in bytes (default 204800 = 200KB). */
