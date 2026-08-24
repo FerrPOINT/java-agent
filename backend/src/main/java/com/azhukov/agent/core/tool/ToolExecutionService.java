@@ -37,6 +37,9 @@ public class ToolExecutionService {
     private final ToolResultClassifier toolResultClassifier;
     private final ToolOutputLimiter toolOutputLimiter;
     private final AgentMetrics agentMetrics;
+    // Optional result storage (Hermes tools/tool_result_storage.py): spill a
+    // full oversized result to disk BEFORE the in-context output limiter runs.
+    private ToolResultStorage toolResultStorage;
     // Subdirectory hints (Hermes agent/subdirectory_hints.py: appended to the
     // tool RESULT, never the system prompt). Optional wiring — tests construct
     // this service directly with @RequiredArgsConstructor semantics.
@@ -176,6 +179,12 @@ public class ToolExecutionService {
                     : ToolResult.fail(ToolLoopGuardrail.appendWarning(safeResult.content(), loopWarning));
             }
         }
+        // Preserve oversized successful output before the in-context limiter
+        // truncates it. The replacement contains a preview + absolute temp
+        // path so the model can call read_file for the complete result.
+        if (toolResultStorage != null && safeResult.success()) {
+            safeResult = toolResultStorage.maybePersist(safeResult, toolName, toolCallId);
+        }
         // Classify result
         if (toolResultClassifier != null) {
             var resultType = toolResultClassifier.classify(safeResult);
@@ -231,11 +240,49 @@ public class ToolExecutionService {
         this.toolLoopGuardrail = toolLoopGuardrail;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setToolResultStorage(ToolResultStorage toolResultStorage) {
+        this.toolResultStorage = toolResultStorage;
+    }
+
     /** Reset per-turn guardrail counters at the start of every agent turn. */
     public void resetLoopGuardrailForTurn() {
         if (toolLoopGuardrail != null) {
             toolLoopGuardrail.resetForTurn();
         }
+    }
+
+    /**
+     * Apply Hermes per-turn aggregate output budget after a complete tool batch.
+     * Replaces only TOOL message contents; other message shapes are preserved.
+     */
+    public java.util.List<Message> enforceToolResultBudget(java.util.List<Message> toolMessages) {
+        if (toolResultStorage == null || toolMessages == null || toolMessages.isEmpty()) {
+            return toolMessages;
+        }
+        java.util.List<String> contents = new java.util.ArrayList<>();
+        java.util.List<String> callIds = new java.util.ArrayList<>();
+        java.util.List<Integer> indices = new java.util.ArrayList<>();
+        for (int i = 0; i < toolMessages.size(); i++) {
+            Message message = toolMessages.get(i);
+            if (message.role() == com.azhukov.agent.core.model.Role.TOOL) {
+                contents.add(message.content() == null ? "" : message.content());
+                callIds.add(message.toolCallId());
+                indices.add(i);
+            }
+        }
+        if (contents.isEmpty()) {
+            return toolMessages;
+        }
+        java.util.List<String> bounded = toolResultStorage.enforceTurnBudget(contents, callIds);
+        java.util.List<Message> result = new java.util.ArrayList<>(toolMessages);
+        for (int i = 0; i < indices.size(); i++) {
+            int index = indices.get(i);
+            if (!java.util.Objects.equals(contents.get(i), bounded.get(i))) {
+                result.set(index, Message.withContent(result.get(index), bounded.get(i)));
+            }
+        }
+        return result;
     }
 
     @jakarta.annotation.PreDestroy

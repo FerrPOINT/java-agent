@@ -365,4 +365,32 @@ class ToolExecutionServiceTest {
         assertThat(afterReset.success()).isTrue();
     }
 
+
+
+    @Test
+    @DisplayName("Should persist oversized successful result before the output limiter")
+    void shouldPersistBeforeOutputLimiter() {
+        ToolResultStorage storage = org.mockito.Mockito.mock(ToolResultStorage.class);
+        service.setToolResultStorage(storage);
+        String toolName = "terminal";
+        String arguments = "{\"command\":\"long-output\"}";
+        ToolResult rawResult = ToolResult.ok("very large output");
+        ToolResult persisted = ToolResult.ok("[Full output saved to /tmp/java-agent-results/id.txt]\npreview");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(rawResult);
+        when(redactor.redact("very large output")).thenReturn("very large output");
+        when(storage.maybePersist(any(ToolResult.class), eq(toolName), eq("call-persist"))).thenReturn(persisted);
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ToolResult result = service.execute(toolName, "call-persist", arguments, LAST_MSG, SESSION);
+
+        assertThat(result.content()).contains("Full output saved to");
+        verify(storage).maybePersist(any(ToolResult.class), eq(toolName), eq("call-persist"));
+        verify(toolOutputLimiter).truncate(eq(persisted));
+    }
+
 }

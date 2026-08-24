@@ -108,12 +108,13 @@ public class ToolResultStorage {
             threshold = 51200; // 50KB default
         }
 
-        if (content.length() <= threshold) {
+        if (content.getBytes(java.nio.charset.StandardCharsets.UTF_8).length <= threshold) {
             return content;
         }
 
-        // Write to temp file
-        String fileName = (toolCallId != null ? toolCallId : UUID.randomUUID().toString()) + ".txt";
+        // Write to temp file. toolCallId originates from a model/provider, so
+        // use only a generated UUID on disk — never allow it to shape a path.
+        String fileName = UUID.randomUUID() + ".txt";
         Path tempDir;
         Path outputPath;
         try {

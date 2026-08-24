@@ -130,4 +130,32 @@ class ToolResultStorageTest {
 
         assertThat(result).isEqualTo(contents);
     }
+
+
+    @Test
+    void unicodeContentUsesUtf8ByteThresholdNotCharacterCount() {
+        AgentProperties props = new AgentProperties();
+        props.getToolOutput().setPersistThresholdBytes(10);
+        ToolResultStorage store = storage(props);
+
+        // Four Cyrillic chars are 8 UTF-8 bytes; five are 10. Six = 12 bytes.
+        String content = "яяяяяя";
+        String result = store.maybePersist(content, "test_tool", "unicode-call");
+
+        assertThat(result).contains("[Full output saved to");
+    }
+
+    @Test
+    void hostileToolCallIdCannotControlPersistedPath() {
+        AgentProperties props = new AgentProperties();
+        props.getToolOutput().setPersistThresholdBytes(10);
+        ToolResultStorage store = storage(props);
+
+        String result = store.maybePersist("A".repeat(100), "test_tool", "../../outside.txt");
+
+        assertThat(result).contains("[Full output saved to");
+        assertThat(result).doesNotContain("outside.txt");
+        assertThat(result).doesNotContain("../");
+    }
+
 }

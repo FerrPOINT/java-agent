@@ -985,6 +985,7 @@ public class AgentStreamingService {
             }
 
             TurnState turnState = turnStateManager.getOrStart(session.id(), 1);
+            int toolBatchStart = turnMessages.size();
             for (ToolCall call : response.toolCalls()) {
                 // Skill-creation nudge (Hermes parity: conversation_loop.py:1977-1980):
                 // each tool-calling iteration counts toward the skill review threshold;
@@ -1032,6 +1033,25 @@ public class AgentStreamingService {
 
                 String toolResultContent = toolResultFormatter.formatResult(result);
                 turnMessages.add(Message.toolResult(call.id(), toolResultContent, turnIndex));
+            }
+
+            // Aggregate budget comes AFTER the batch, as in Hermes
+            // enforce_turn_budget: many individually-small results can still
+            // overflow the model context together.
+            java.util.List<Message> batchToolMessages = new java.util.ArrayList<>();
+            for (int batchIndex = toolBatchStart; batchIndex < turnMessages.size(); batchIndex++) {
+                Message message = turnMessages.get(batchIndex);
+                if (message.role() == com.azhukov.agent.core.model.Role.TOOL) {
+                    batchToolMessages.add(message);
+                }
+            }
+            java.util.List<Message> boundedToolMessages = toolExecutionService.enforceToolResultBudget(batchToolMessages);
+            if (!boundedToolMessages.isEmpty()) {
+                for (int batchIndex = toolBatchStart, toolIndex = 0; batchIndex < turnMessages.size(); batchIndex++) {
+                    if (turnMessages.get(batchIndex).role() == com.azhukov.agent.core.model.Role.TOOL) {
+                        turnMessages.set(batchIndex, boundedToolMessages.get(toolIndex++));
+                    }
+                }
             }
 
             // M1: Inject pending steer note into the last tool result after all tools complete,

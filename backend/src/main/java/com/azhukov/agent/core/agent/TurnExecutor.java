@@ -654,7 +654,7 @@ public class TurnExecutor {
                 }
             }
             injectSteer(toolResults, session.id(), currentTurnIndex);
-            return new ToolBatchResult(toolResults, false);
+            return new ToolBatchResult(toolExecutionService.enforceToolResultBudget(toolResults), false);
         } else {
             // Parallel path
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
@@ -672,7 +672,7 @@ public class TurnExecutor {
                 return new ToolBatchResult(toolResults, true);
             }
             injectSteer(toolResults, session.id(), currentTurnIndex);
-            return new ToolBatchResult(toolResults, false);
+            return new ToolBatchResult(toolExecutionService.enforceToolResultBudget(toolResults), false);
         }
     }
 
