@@ -35,20 +35,23 @@ class DefaultContextCompressorTest {
         props.getContext().setProtectFirstN(1);
         props.getContext().setProtectLastN(1);
         var compressor = new DefaultContextCompressor(model, null, props);
+        // Hermes parity tail floor: protectLastN=1 floors to 3 → conversation
+        // needs head(1) + middle(2) + tail(3) = 6 messages to compress
         var messages = List.of(
             Message.user("a".repeat(2000)),
             Message.assistant("b".repeat(2000), 1),
+            Message.user("filler-1 ".repeat(200)),
+            Message.assistant("filler-2 ".repeat(200), 2),
+            Message.user("pre-current"),
             Message.user("current")
         );
         var result = compressor.compress(messages, 100);
-        // protectFirstN=1 → head = [user "a"×2000], protectLastN=1 → tail = [user "current"]
-        // middle = [assistant "b"×2000] → summarized
-        // result = head(1) + summary(1) + tail(1) = 3
-        assertThat(result).hasSize(3); // head + summary + tail
+        // head(1) + summary(1) + tail(3) = 5
+        assertThat(result).hasSize(5);
         assertThat(result.get(0).role()).isEqualTo(Role.USER); // head preserved
         assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM); // summary
-        assertThat(result.get(2).role()).isEqualTo(Role.USER); // tail preserved
-        assertThat(result.get(2).content()).isEqualTo("current");
+        assertThat(result.get(4).role()).isEqualTo(Role.USER); // tail preserved
+        assertThat(result.get(4).content()).isEqualTo("current");
     }
 
     @Test
@@ -111,13 +114,15 @@ class DefaultContextCompressorTest {
         messages.add(Message.user("head".repeat(500)));
         // Middle: user message with 2 images and some text
         messages.add(Message.userWithImages("look at these screenshots".repeat(50), 2));
+        messages.add(Message.user("filler-1 ".repeat(200)));
+        messages.add(Message.assistant("filler-2 ".repeat(200), 1));
         messages.add(Message.user("current query"));
 
         // Compress with small target to trigger compression
         var result = compressor.compress(messages, 100);
 
-        // The summary system message should contain the image placeholder
-        assertThat(result).hasSize(3); // head + summary + tail
+        // head(1)+summary(1)+tail(3): the summary system message contains the placeholder
+        assertThat(result).hasSize(5);
         assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
         assertThat(result.get(1).content()).contains("[image: 2 images attached]");
     }
@@ -131,11 +136,13 @@ class DefaultContextCompressorTest {
         messages.add(Message.user("head".repeat(500)));
         // Middle: user message with 1 image and no meaningful text content
         messages.add(Message.userWithImages("", 1));
+        messages.add(Message.user("filler-1 ".repeat(200)));
+        messages.add(Message.assistant("filler-2 ".repeat(200), 1));
         messages.add(Message.user("current query"));
 
         var result = compressor.compress(messages, 100);
 
-        assertThat(result).hasSize(3);
+        assertThat(result).hasSize(5);
         assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
         assertThat(result.get(1).content()).contains("[image: 1 image attached]");
     }
@@ -149,11 +156,13 @@ class DefaultContextCompressorTest {
         messages.add(Message.user("head".repeat(500)));
         // Middle: plain text message (no images)
         messages.add(Message.assistant("some important discussion".repeat(50), 1));
+        messages.add(Message.user("filler-1 ".repeat(200)));
+        messages.add(Message.assistant("filler-2 ".repeat(200), 2));
         messages.add(Message.user("current query"));
 
         var result = compressor.compress(messages, 100);
 
-        assertThat(result).hasSize(3);
+        assertThat(result).hasSize(5);
         assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
         assertThat(result.get(1).content()).doesNotContain("[image:");
     }

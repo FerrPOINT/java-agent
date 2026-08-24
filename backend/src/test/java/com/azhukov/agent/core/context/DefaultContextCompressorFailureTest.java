@@ -29,11 +29,13 @@ class DefaultContextCompressorFailureTest {
         var messages = List.of(
             Message.user("a".repeat(2000)),
             Message.assistant("b".repeat(2000), 1),
+            Message.user("filler q ".repeat(100)),
+            Message.assistant("filler a ".repeat(100), 2),
             Message.user("current")
         );
         var result = compressor.compress(messages, 100);
-        // Should produce head + summary + tail (fallback truncation preserves content)
-        assertThat(result).hasSize(3);
+        // head(1) + summary(1) + tail(3, Hermes floor) = 5
+        assertThat(result).hasSize(5);
         assertThat(result.get(1).role()).isEqualTo(com.azhukov.agent.core.model.Role.SYSTEM);
         // h61: The summary should contain some content (not empty/silent)
         assertThat(result.get(1).content()).isNotEmpty();
@@ -54,11 +56,13 @@ class DefaultContextCompressorFailureTest {
         var messages = List.of(
             Message.user("a".repeat(2000)),
             Message.assistant("b".repeat(2000), 1),
+            Message.user("filler q ".repeat(100)),
+            Message.assistant("filler a ".repeat(100), 2),
             Message.user("current")
         );
         var result = compressor.compress(messages, 100);
-        // After retry, the summary should be the model's response
-        assertThat(result).hasSize(3);
+        // head(1) + summary(1) + tail(3, Hermes floor) = 5
+        assertThat(result).hasSize(5);
         assertThat(result.get(1).content()).contains("Summary after retry.");
     }
 
@@ -76,12 +80,14 @@ class DefaultContextCompressorFailureTest {
         var messages = List.of(
             Message.user("a".repeat(2000)),
             Message.assistant("b".repeat(2000), 1),
+            Message.user("filler q ".repeat(100)),
+            Message.assistant("filler a ".repeat(100), 2),
             Message.user("current")
         );
         var result = compressor.compress(messages, 100);
         // h62: Should fall back to truncation (preserving content) rather than dropping messages
-        assertThat(result).hasSize(3);
-        assertThat(result.get(2).content()).isEqualTo("current");
+        assertThat(result).hasSize(5);
+        assertThat(result.get(4).content()).isEqualTo("current");
         // The summary system message should have content (from fallback truncation)
         assertThat(result.get(1).content()).isNotEmpty();
     }
@@ -99,11 +105,13 @@ class DefaultContextCompressorFailureTest {
         var messages = List.of(
             Message.user("a".repeat(2000)),
             Message.assistant("b".repeat(2000), 1),
+            Message.user("filler q ".repeat(100)),
+            Message.assistant("filler a ".repeat(100), 2),
             Message.user("current")
         );
         var result = compressor.compress(messages, 100);
         // h61: Should fall back to truncation with a clear log message
-        assertThat(result).hasSize(3);
+        assertThat(result).hasSize(5);
         assertThat(result.get(1).content()).isNotEmpty();
     }
 
@@ -120,12 +128,14 @@ class DefaultContextCompressorFailureTest {
         var messages = List.of(
             Message.user("a".repeat(2000)),
             Message.assistant("b".repeat(2000), 1),
+            Message.user("filler q ".repeat(100)),
+            Message.assistant("filler a ".repeat(100), 2),
             Message.user("current")
         );
         var result = compressor.compress(messages, 100);
         // Should fall back to truncation preserving content
-        assertThat(result).hasSize(3);
-        assertThat(result.get(2).content()).isEqualTo("current");
+        assertThat(result).hasSize(5);
+        assertThat(result.get(4).content()).isEqualTo("current");
     }
 
     @Test
@@ -141,10 +151,12 @@ class DefaultContextCompressorFailureTest {
         var messages = List.of(
             Message.user("a".repeat(2000)),
             Message.assistant("b".repeat(2000), 1),
+            Message.user("filler q ".repeat(100)),
+            Message.assistant("filler a ".repeat(100), 2),
             Message.user("current")
         );
         var result = compressor.compress(messages, 100);
-        assertThat(result).hasSize(3);
+        assertThat(result).hasSize(5);
         assertThat(result.get(1).content()).isNotEmpty();
     }
 }

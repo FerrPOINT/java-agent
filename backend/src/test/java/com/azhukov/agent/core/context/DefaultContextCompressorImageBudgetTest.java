@@ -140,13 +140,15 @@ class DefaultContextCompressorImageBudgetTest {
             List<Message> messages = List.of(
                 Message.user("a".repeat(20)),
                 Message.userWithImages("b".repeat(10), 1),
+                Message.user("filler q ".repeat(100)),
+                Message.assistant("filler a ".repeat(100), 1),
                 Message.user("current")
             );
 
             List<Message> result = compressor.compress(messages, 100);
 
-            // Should have compressed (head + summary + tail)
-            assertThat(result).hasSize(3);
+            // head(1) + summary(1) + tail(3, Hermes floor)
+            assertThat(result).hasSize(5);
             assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
         }
 
@@ -160,13 +162,15 @@ class DefaultContextCompressorImageBudgetTest {
             List<Message> messages = List.of(
                 Message.user("head"),
                 Message.userWithImages("", 5),
+                Message.user("filler q ".repeat(100)),
+                Message.assistant("filler a ".repeat(100), 1),
                 Message.user("tail")
             );
 
             List<Message> result = compressor.compress(messages, 10_000);
 
-            // Should have compressed
-            assertThat(result).hasSize(3);
+            // head(1) + summary(1) + tail(3, Hermes floor)
+            assertThat(result).hasSize(5);
             assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
         }
 

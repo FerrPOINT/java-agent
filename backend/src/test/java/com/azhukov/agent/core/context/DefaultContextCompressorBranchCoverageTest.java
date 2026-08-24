@@ -116,11 +116,13 @@ class DefaultContextCompressorBranchCoverageTest {
         List<Message> messages = List.of(
             Message.user("task"),
             Message.toolResult("call-1", longToolOutput, 1),
+            Message.user("filler-1 ".repeat(200)),
+            Message.assistant("filler-2 ".repeat(200), 1),
             Message.assistant("done", 2)
         );
 
         List<Message> result = comp.compress(messages, 100);
-        assertThat(result).hasSize(3); // head + summary + tail
+        assertThat(result).hasSize(5); // head + summary + tail(3, Hermes floor)
         assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
     }
 
@@ -141,12 +143,14 @@ class DefaultContextCompressorBranchCoverageTest {
         List<Message> messages = List.of(
             Message.user("a".repeat(2000)),  // Large enough to exceed target
             Message.assistantToolCalls(List.of(tc), 1),
+            Message.user("filler-1 ".repeat(200)),
+            Message.assistant("filler-2 ".repeat(200), 1),
             Message.assistant("done", 2)
         );
 
         List<Message> result = comp.compress(messages, 100);
-        // head(1) + summary(1) + tail(1) = 3
-        assertThat(result).hasSize(3);
+        // head(1) + summary(1) + tail(3, Hermes floor) = 5
+        assertThat(result).hasSize(5);
         assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
     }
 
@@ -166,11 +170,13 @@ class DefaultContextCompressorBranchCoverageTest {
         List<Message> messages = List.of(
             Message.user("a".repeat(2000)),  // Large enough to exceed target
             Message.assistantToolCalls(List.of(tc), 1),
+            Message.user("filler-1 ".repeat(200)),
+            Message.assistant("filler-2 ".repeat(200), 1),
             Message.assistant("done", 2)
         );
 
         List<Message> result = comp.compress(messages, 100);
-        assertThat(result).hasSize(3);
+        assertThat(result).hasSize(5);
     }
 
     @Test
@@ -189,11 +195,13 @@ class DefaultContextCompressorBranchCoverageTest {
         List<Message> messages = List.of(
             Message.user("a".repeat(2000)),  // Large enough to exceed target
             Message.assistantToolCalls(List.of(tc), 1),
+            Message.user("filler-1 ".repeat(200)),
+            Message.assistant("filler-2 ".repeat(200), 1),
             Message.assistant("done", 2)
         );
 
         List<Message> result = comp.compress(messages, 100);
-        assertThat(result).hasSize(3);
+        assertThat(result).hasSize(5);
     }
 
     // ── Previous summary extraction ──
@@ -214,11 +222,13 @@ class DefaultContextCompressorBranchCoverageTest {
         List<Message> messages = List.of(
             Message.user("task"),
             Message.system(previousSummary),
+            Message.user("filler-1 ".repeat(200)),
+            Message.assistant("filler-2 ".repeat(200), 1),
             Message.assistant("done", 2)
         );
 
         List<Message> result = comp.compress(messages, 100);
-        assertThat(result).hasSize(3);
+        assertThat(result).hasSize(5);
         assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
     }
 
@@ -238,11 +248,13 @@ class DefaultContextCompressorBranchCoverageTest {
         List<Message> messages = List.of(
             Message.user("a".repeat(2000)),
             Message.assistant("b".repeat(2000), 1),
+            Message.user("filler-1 ".repeat(200)),
+            Message.assistant("filler-2 ".repeat(200), 2),
             Message.user("current")
         );
 
         List<Message> result = comp.compress(messages, 100);
-        assertThat(result).hasSize(3);
+        assertThat(result).hasSize(5);
         assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
         assertThat(result.get(1).content()).contains("REFERENCE ONLY");
     }
@@ -261,11 +273,13 @@ class DefaultContextCompressorBranchCoverageTest {
         List<Message> messages = List.of(
             Message.user("a".repeat(2000)),
             Message.assistant("b".repeat(2000), 1),
+            Message.user("filler-1 ".repeat(200)),
+            Message.assistant("filler-2 ".repeat(200), 2),
             Message.user("current")
         );
 
         List<Message> result = comp.compress(messages, 100);
-        assertThat(result).hasSize(3);
+        assertThat(result).hasSize(5);
     }
 
     @Test
@@ -282,11 +296,13 @@ class DefaultContextCompressorBranchCoverageTest {
         List<Message> messages = List.of(
             Message.user("a".repeat(2000)),
             Message.assistant("b".repeat(2000), 1),
+            Message.user("filler-1 ".repeat(200)),
+            Message.assistant("filler-2 ".repeat(200), 2),
             Message.user("current")
         );
 
         List<Message> result = comp.compress(messages, 100);
-        assertThat(result).hasSize(3);
+        assertThat(result).hasSize(5);
         assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
         assertThat(result.get(1).content()).isNotBlank();
     }
@@ -439,9 +455,8 @@ class DefaultContextCompressorBranchCoverageTest {
         messages.add(Message.user("last"));
 
         List<Message> result = comp.compress(messages, 100);
-        // ensureLastUserAndAssistantInTail pulls tail back to include last user message
-        // result = head(1) + summary(1) + tail(2) = 4
-        assertThat(result).hasSize(4);
+        // Hermes tail floor: tail = max(3, min(1, 8)) = 3 → head(1)+summary(1)+tail(3) = 5
+        assertThat(result).hasSize(5);
         // Summary should be truncated
         assertThat(result.get(1).content()).isNotBlank();
     }

@@ -68,6 +68,8 @@ class DefaultContextCompressorEnhancementsTest {
             List<Message> messages = List.of(
                 Message.user("a".repeat(2000)),
                 Message.assistant("b".repeat(2000), 1),
+                Message.user("filler q ".repeat(100)),
+                Message.assistant("filler a ".repeat(100), 2),
                 Message.user("current")
             );
 
@@ -87,6 +89,8 @@ class DefaultContextCompressorEnhancementsTest {
             List<Message> messages = List.of(
                 Message.user("a".repeat(2000)),
                 Message.assistant("b".repeat(2000), 1),
+                Message.user("filler q ".repeat(100)),
+                Message.assistant("filler a ".repeat(100), 2),
                 Message.user("current")
             );
 
@@ -148,7 +152,7 @@ class DefaultContextCompressorEnhancementsTest {
             // tail = [assistant "Python is great", user "current question"]
             List<Message> result = compressor.compress(messages, 100);
 
-            assertThat(result).hasSize(4);
+            assertThat(result).hasSize(5);
             assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
             assertThat(result.get(1).content()).contains("Updated summary");
         }
@@ -186,9 +190,8 @@ class DefaultContextCompressorEnhancementsTest {
 
             List<Message> result = compressor.compress(messages, 100);
 
-            // ensureLastUserAndAssistantInTail pulls tail back to include last user message
-            // result = head(1) + summary(1) + tail(2) = 4
-            assertThat(result).hasSize(4);
+            // Hermes tail floor: result = head(1) + summary(1) + tail(3) = 5
+            assertThat(result).hasSize(5);
         }
 
         @Test
@@ -237,6 +240,8 @@ class DefaultContextCompressorEnhancementsTest {
             List<Message> messages = List.of(
                 Message.user("a".repeat(2000)),
                 Message.assistant("b".repeat(2000), 1),
+                Message.user("filler q ".repeat(100)),
+                Message.assistant("filler a ".repeat(100), 2),
                 Message.user("current")
             );
 
@@ -299,9 +304,8 @@ class DefaultContextCompressorEnhancementsTest {
 
             // Should not NPE on null content in assistant tool call message
             List<Message> result = compressor.compress(messages, 100);
-            // ensureLastUserAndAssistantInTail pulls tail back to include last user message
-            // result = head(1) + summary(1) + tail(2) = 4
-            assertThat(result).hasSize(4);
+            // Hermes tail floor: result = head(1) + summary(1) + tail(3) = 5
+            assertThat(result).hasSize(5);
         }
     }
 }

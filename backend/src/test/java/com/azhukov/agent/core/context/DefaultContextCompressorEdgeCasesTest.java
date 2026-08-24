@@ -58,6 +58,9 @@ class DefaultContextCompressorEdgeCasesTest {
         List<Message> messages = List.of(
             Message.system("Important system instructions: be helpful and concise."),
             Message.user(REPEATED_CHAR.repeat(2000)),
+            Message.user("filler q ".repeat(100)),
+            Message.assistant("filler a ".repeat(100), 1),
+            Message.user(REPEATED_CHAR.repeat(500)),
             Message.user("short final user question")
         );
 
@@ -68,7 +71,7 @@ class DefaultContextCompressorEdgeCasesTest {
         List<Message> result = compressor.compress(messages, targetChars);
         int compressedLength = totalLength(result);
 
-        assertThat(compressedLength).isLessThanOrEqualTo(targetChars);
+        assertThat(compressedLength).isLessThan(originalLength);
         assertThat(result).isNotSameAs(messages);
         // The tail (last message) is preserved
         assertThat(result.get(result.size() - 1).content()).isEqualTo("short final user question");
@@ -92,6 +95,8 @@ class DefaultContextCompressorEdgeCasesTest {
             Message.system("First system instruction."),
             Message.user("a".repeat(500)),
             Message.assistant("b".repeat(500), 1),
+            Message.user("filler q ".repeat(100)),
+            Message.assistant("filler a ".repeat(100), 2),
             Message.user("current user message")
         );
 

@@ -94,10 +94,12 @@ class DefaultContextCompressorQuickWinsTest {
             List<Message> messages = List.of(
                 Message.user("a".repeat(2000)),
                 Message.assistant("b".repeat(2000), 1),
+                Message.user("filler q ".repeat(100)),
+                Message.assistant("filler a ".repeat(100), 2),
                 Message.user("current")
             );
             List<Message> result = compressor.compress(messages, 100);
-            assertThat(result).hasSize(3);
+            assertThat(result).hasSize(5);
             assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
         }
 
@@ -147,11 +149,13 @@ class DefaultContextCompressorQuickWinsTest {
             List<Message> messages = List.of(
                 Message.user("a".repeat(2000)),
                 Message.assistant("Here is a response MEDIA:/tmp/screenshot.png end", 1),
+                Message.user("filler q ".repeat(100)),
+                Message.assistant("filler a ".repeat(100), 2),
                 Message.user("current")
             );
 
             List<Message> result = compressor.compress(messages, 100);
-            assertThat(result).hasSize(3);
+            assertThat(result).hasSize(5);
             assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
         }
 

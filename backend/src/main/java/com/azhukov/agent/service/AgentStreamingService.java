@@ -986,9 +986,15 @@ public class AgentStreamingService {
                     int targetChars = properties.getContext().getTargetTokens() * 4;
                     List<Message> compressed = dce.getContextCompressor()
                         .compress(turnMessages, targetChars);
-                    if (compressed.size() < turnMessages.size()) {
-                        log.info("Proactive compression after tool batch: {} → {} messages for session {}",
-                            turnMessages.size(), compressed.size(), session.id());
+                    int charsBefore = turnMessages.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum();
+                    int charsAfter = compressed.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum();
+                    // Hermes parity: judge compression by CONTENT REDUCTION (bytes), not message
+                    // count — a protected-tail pressure pass prunes bulky messages in place,
+                    // keeping the count equal while cutting chars (the live 'from 2 to 2' no-op
+                    // class, 2026-08-23).
+                    if (compressed.size() < turnMessages.size() || charsAfter < charsBefore) {
+                        log.info("Proactive compression after tool batch: {} → {} messages, {} → {} chars for session {}",
+                            turnMessages.size(), compressed.size(), charsBefore, charsAfter, session.id());
                         turnMessages.clear();
                         turnMessages.addAll(compressed);
                         persistedUpTo = turnMessages.size();
