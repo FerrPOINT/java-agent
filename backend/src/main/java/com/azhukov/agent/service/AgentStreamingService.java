@@ -400,6 +400,10 @@ public class AgentStreamingService {
             int emptyContentRetries = 0;
             int droppedToolcallRetries = 0;
             int truncatedToolCallRetries = 0;
+            // Hermes parity (conversation_loop.py:1862): per-turn compression
+            // attempt cap — prevents infinite compress→retry→overflow loops.
+            int compressionAttempts = 0;
+            final int MAX_COMPRESSION_ATTEMPTS = 3;
             StringBuilder truncatedParts = new StringBuilder();
             boolean lastResponseHadToolCalls = false;
             // R3/R4 (Hermes 7728-7760 + empty_response_guard): per-turn fallback chain
@@ -570,9 +574,11 @@ public class AgentStreamingService {
                         }
 
                         // Context overflow: compress and retry without counting as a retry attempt
-                        if (errorType == ErrorClassifier.ErrorType.CONTEXT_OVERFLOW) {
-                            log.warn("Context overflow detected during streaming, triggering compression: {}",
-                                error.getMessage());
+                        if (errorType == ErrorClassifier.ErrorType.CONTEXT_OVERFLOW
+                            && compressionAttempts < MAX_COMPRESSION_ATTEMPTS) {
+                            compressionAttempts++;
+                            log.warn("Context overflow detected during streaming, triggering compression attempt {}/{}: {}",
+                                compressionAttempts, MAX_COMPRESSION_ATTEMPTS, error.getMessage());
                             send(emitter, new StreamEvent("retry", null, null,
                                 "Compressing context..."), streamCtx);
                             try {
