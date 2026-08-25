@@ -103,7 +103,10 @@ public final class ResponseRecoveryPolicy {
      * the response should be continued (stitched), not finalized.
      */
     public static boolean isLengthContinuable(ChatResponse response, int lengthRetries) {
-        return "LENGTH".equals(response.finishReason())
+        // Hermes parity (conversation_loop.py:3555-3563): "incomplete" finish_reason
+        // with incomplete_details.reason="max_output_tokens" is a synonym for LENGTH.
+        String fr = response.finishReason();
+        return ("LENGTH".equals(fr) || "incomplete".equalsIgnoreCase(fr))
             && response.hasContent()
             && !response.hasToolCalls()
             && lengthRetries < MAX_LENGTH_CONTINUATION_ATTEMPTS;
@@ -133,7 +136,11 @@ public final class ResponseRecoveryPolicy {
      * Hermes parity (conversation_loop.py:3829): {@code _trunc_has_tool_calls}.
      */
     public static boolean isTruncatedToolCall(String finishReason, boolean hasToolCalls) {
-        return "LENGTH".equals(finishReason) && hasToolCalls;
+        // Hermes parity (conversation_loop.py:3555-3563): finish_reason="incomplete"
+        // with incomplete_details.reason="max_output_tokens" is treated as a synonym
+        // for "LENGTH" — both mean the output was truncated.
+        return ("LENGTH".equals(finishReason) || "incomplete".equalsIgnoreCase(finishReason))
+            && hasToolCalls;
     }
 
     /**

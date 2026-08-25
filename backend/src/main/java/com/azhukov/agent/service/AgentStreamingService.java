@@ -844,7 +844,12 @@ public class AgentStreamingService {
                 // Hermes parity (conversation_loop.py:3711-3775): the partial fragment is
                 // ACCUMULATED into truncatedParts and stitched into the final response;
                 // ceiling is 4 attempts; on exhaustion the stitched partial is KEPT.
-                if ("LENGTH".equals(finishReason) && hasContent && !hasToolCalls
+                // Also handle finish_reason="incomplete" with incomplete_details.reason
+                // = "max_output_tokens" — Hermes treats this as a synonym for LENGTH
+                // (conversation_loop.py:3555-3563).
+                boolean isLengthTruncation = "LENGTH".equals(finishReason)
+                    || "incomplete".equalsIgnoreCase(finishReason);
+                if (isLengthTruncation && hasContent && !hasToolCalls
                         && lengthContinueRetries < MAX_LENGTH_CONTINUATION_ATTEMPTS) {
                     log.info("LENGTH truncation detected for session {} — partial content ({} chars), sending continuation (attempt {}/{})",
                         session.id(), contentBuilder.length(), lengthContinueRetries + 1, MAX_LENGTH_CONTINUATION_ATTEMPTS);
@@ -867,7 +872,7 @@ public class AgentStreamingService {
 
                 // LENGTH ceiling reached with partial content — Hermes keeps the stitched
                 // partial instead of discarding it (conversation_loop.py:3779-3813).
-                if ("LENGTH".equals(finishReason) && hasContent && !hasToolCalls
+                if (isLengthTruncation && hasContent && !hasToolCalls
                         && lengthContinueRetries >= MAX_LENGTH_CONTINUATION_ATTEMPTS) {
                     String stitched = truncatedParts.toString() + contentBuilder;
                     log.warn("Response still truncated after {} continuation attempts for session {} — keeping partial ({} chars)",

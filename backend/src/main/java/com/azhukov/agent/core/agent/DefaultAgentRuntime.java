@@ -667,7 +667,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 session = resolveRotatedSession(session);
                 continue;
             }
-            if ("LENGTH".equals(response.finishReason()) && response.hasContent() && !response.hasToolCalls()
+            if (("LENGTH".equals(response.finishReason()) || "incomplete".equalsIgnoreCase(response.finishReason()))
+                    && response.hasContent() && !response.hasToolCalls()
                     && lengthContinueRetries >= ResponseRecoveryPolicy.MAX_LENGTH_CONTINUATION_ATTEMPTS) {
                 String stitched = truncatedParts + response.content();
                 log.warn("Response still truncated after {} continuation attempts — keeping partial ({} chars)",
