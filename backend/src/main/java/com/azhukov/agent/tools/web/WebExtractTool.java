@@ -81,7 +81,7 @@ public class WebExtractTool implements ToolHandler {
         Connection connection = Jsoup.connect(url)
             .userAgent("Mozilla/5.0 (compatible; JavaAgent/1.0)")
             .timeout(timeoutSeconds * 1000)
-            .followRedirects(false);
+            .followRedirects(true);
 
         // M11: Check content-type before parsing — detect PDFs which jsoup can't handle
         Connection.Response response = connection.execute();

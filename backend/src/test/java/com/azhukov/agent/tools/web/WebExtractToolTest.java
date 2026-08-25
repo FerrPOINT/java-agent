@@ -79,7 +79,7 @@ class WebExtractToolTest {
         Connection connection = mock(Connection.class);
         when(connection.userAgent(anyString())).thenReturn(connection);
         when(connection.timeout(anyInt())).thenReturn(connection);
-        when(connection.followRedirects(false)).thenReturn(connection);
+        when(connection.followRedirects(true)).thenReturn(connection);
         when(connection.execute()).thenReturn(response);
 
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
@@ -194,7 +194,7 @@ class WebExtractToolTest {
         Connection connection = mock(Connection.class);
         when(connection.userAgent(anyString())).thenReturn(connection);
         when(connection.timeout(anyInt())).thenReturn(connection);
-        when(connection.followRedirects(false)).thenReturn(connection);
+        when(connection.followRedirects(true)).thenReturn(connection);
         when(connection.execute()).thenReturn(response);
 
         try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
