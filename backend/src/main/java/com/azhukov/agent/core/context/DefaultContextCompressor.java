@@ -481,6 +481,17 @@ public class DefaultContextCompressor implements ContextCompressor {
 
      // Detect and extract any previous summary from middle messages for iterative compaction
      String previousSummary = extractPreviousSummary(sanitizedMiddle);
+     // A persisted handoff summary means this session was already compressed,
+     // so protectFirstN must decay even after a process restart (Hermes parity).
+     if (previousSummary != null) {
+         protectFirstN = 0;
+         headEnd = Math.min(systemMsgCount, messages.size());
+         tailStart = Math.max(headEnd, messages.size() - tailFloor);
+         tailStart = alignBoundaryForward(messages, tailStart);
+         middleMessages = messages.subList(headEnd, tailStart);
+         tailMessages = messages.subList(tailStart, messages.size());
+         sanitizedMiddle = sanitizeToolPairs(dedupToolResults(middleMessages));
+     }
 
      // 1.5: Auto-focus topic — extract the topic from recent user messages to guide
      // the LLM summariser toward what's currently relevant.
@@ -550,7 +561,11 @@ public class DefaultContextCompressor implements ContextCompressor {
      List<Message> compressed = new ArrayList<>();
      // Preserve protected head messages (includes system message)
      compressed.addAll(headMessages);
-     // Add summary as a system message with anti-injection prefix and end marker
+
+     // Add the summary as a SYSTEM message. The actual provider-wire sanitizer
+     // handles strict-template role alternation immediately before requests;
+     // preserving the internal summary carrier as SYSTEM prevents model output
+     // from treating a historical summary as a fresh user prompt.
      compressed.add(Message.system(ANTI_INJECTION_PREFIX + "Earlier conversation (summarized):\n" + summary + SUMMARY_END_MARKER));
      // Preserve protected tail messages. Hermes parity (issue #61932): when the
      // protected tail alone still exceeds the soft budget (targetChars * 1.5), a
