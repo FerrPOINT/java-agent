@@ -304,7 +304,7 @@ public class SkillManageTool implements ToolHandler {
         Boolean replace_all,
         @ToolParam(description = "Skill name that absorbs this skill during deletion (for delete action, optional)", required = false)
         String absorbed_into,
-        @ToolParam(description = "Optional category subdirectory for create (e.g. 'devops'). Maps to skills/<category>/<name>/.", required = false)
+        @ToolParam(description = "(Reserved, not yet implemented — ignored)", required = false)
         String category
     ) {}
 }
