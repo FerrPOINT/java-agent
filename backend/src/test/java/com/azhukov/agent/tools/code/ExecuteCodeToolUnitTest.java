@@ -24,7 +24,7 @@ class ExecuteCodeToolUnitTest {
         ExecuteCodeTool tool = new ExecuteCodeTool();
         ToolResult r = tool.execute("{\"code\":\"\"}", null, session);
         assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Code is required");
+        assertThat(r.error()).contains("execute_code requires Python source");
     }
 
     @Test
@@ -32,7 +32,7 @@ class ExecuteCodeToolUnitTest {
         ExecuteCodeTool tool = new ExecuteCodeTool();
         ToolResult r = tool.execute("{}", null, session);
         assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Code is required");
+        assertThat(r.error()).contains("execute_code requires Python source");
     }
 
     @Test

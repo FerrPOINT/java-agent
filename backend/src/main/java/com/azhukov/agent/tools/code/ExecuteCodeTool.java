@@ -28,7 +28,10 @@ public class ExecuteCodeTool implements ToolHandler {
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         ExecuteCodeArgs args = ToolHandler.parseJson(arguments, ExecuteCodeArgs.class);
         if (args.code() == null || args.code().isBlank()) {
-            return ToolResult.fail("Code is required");
+            return ToolResult.fail(
+                "execute_code requires Python source in 'code'. " +
+                "Use terminal(command=...) for shell commands; " +
+                "for Python, retry as execute_code(code=...).");
         }
         int timeout = 300;
         if (args.timeout() != null && !args.timeout().isBlank()) {
