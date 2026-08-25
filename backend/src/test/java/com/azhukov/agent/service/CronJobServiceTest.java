@@ -613,7 +613,7 @@ class CronJobServiceTest {
     }
 
     @Test
-    void runNowWithOverrides_injectsOverrideInfoIntoPrompt() {
+    void runNowWithOverrides_appliesRuntimeConstraintsWithoutPromptLeakage() {
         UUID id = UUID.randomUUID();
         CronJobEntity job = new CronJobEntity();
         job.setId(id);
@@ -630,10 +630,7 @@ class CronJobServiceTest {
 
         service.runNow(id);
 
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron toolset restriction: web,terminal]"), eq(null), eq(true));
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron workdir: /opt/dev]"), eq(null), eq(true));
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron model provider: openai]"), eq(null), eq(true));
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron model name: gpt-4]"), eq(null), eq(true));
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("[Cron base URL: https://api.openai.com]"), eq(null), eq(true));
+        verify(agentRuntimeService).runBackground(eq("Do something"), eq(null), eq(true),
+            eq(java.util.Map.of("delegation_toolsets", "web,terminal", "cron_workdir", "/opt/dev")));
     }
 }

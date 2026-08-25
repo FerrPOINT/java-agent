@@ -2,6 +2,7 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.tools.terminal.TerminalTool;
 import com.azhukov.agent.persistence.entity.CronExecutionLogEntity;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
@@ -504,34 +505,19 @@ public class CronJobService {
                 log.debug("Injected context_from output into cron job '{}'", job.getName());
             }
 
-            // ── Fix 5/6/7: Pass enabledToolsets, workdir, model overrides to the agent runtime ──
-            // For now, we log these overrides. The AgentRuntimeService.runBackground signature
-            // would need to be extended to accept these; we pass them as metadata in the prompt
-            // context block so the agent is aware of its configured overrides.
-            StringBuilder overrideInfo = new StringBuilder();
+            // Cron runtime constraints must be enforced by the runtime, not merely
+            // exposed to the model as advisory prompt text.
+            Map<String, String> runtimeMetadata = new java.util.HashMap<>();
             if (job.getEnabledToolsets() != null && !job.getEnabledToolsets().isBlank()) {
-                overrideInfo.append("[Cron toolset restriction: ").append(job.getEnabledToolsets()).append("]\n");
-                log.debug("Cron job '{}' toolset restriction: {}", job.getName(), job.getEnabledToolsets());
+                runtimeMetadata.put("delegation_toolsets", job.getEnabledToolsets());
+                log.debug("Cron job '{}' restricts toolsets to {}", job.getName(), job.getEnabledToolsets());
             }
             if (job.getWorkdir() != null && !job.getWorkdir().isBlank()) {
-                overrideInfo.append("[Cron workdir: ").append(job.getWorkdir()).append("]\n");
-                log.debug("Cron job '{}' workdir: {}", job.getName(), job.getWorkdir());
+                runtimeMetadata.put(TerminalTool.META_WORKDIR, job.getWorkdir());
+                log.debug("Cron job '{}' uses workdir {}", job.getName(), job.getWorkdir());
             }
-            if (job.getModelProvider() != null && !job.getModelProvider().isBlank()) {
-                overrideInfo.append("[Cron model provider: ").append(job.getModelProvider()).append("]\n");
-                log.debug("Cron job '{}' model provider: {}", job.getName(), job.getModelProvider());
-            }
-            if (job.getModelName() != null && !job.getModelName().isBlank()) {
-                overrideInfo.append("[Cron model name: ").append(job.getModelName()).append("]\n");
-                log.debug("Cron job '{}' model name: {}", job.getName(), job.getModelName());
-            }
-            if (job.getBaseUrl() != null && !job.getBaseUrl().isBlank()) {
-                overrideInfo.append("[Cron base URL: ").append(job.getBaseUrl()).append("]\n");
-                log.debug("Cron job '{}' base URL: {}", job.getName(), job.getBaseUrl());
-            }
-            if (overrideInfo.length() > 0) {
-                enhancedPrompt = overrideInfo.toString() + enhancedPrompt;
-            }
+            // Model settings still require provider-transport support; do not claim
+            // they are applied until a request-scoped client override exists.
 
             // Run the prompt through the agent runtime with retry on failure
             AgentRuntimeService runtimeService = agentRuntimeServiceProvider.getIfAvailable();
@@ -542,7 +528,9 @@ public class CronJobService {
                 boolean success = false;
                 while (attempt <= maxRetries && !success) {
                     try {
-                        lastRunSessionId = runtimeService.runBackground(enhancedPrompt, null, true); // Hermes: skip_background_review for cron
+                        lastRunSessionId = runtimeMetadata.isEmpty()
+                            ? runtimeService.runBackground(enhancedPrompt, null, true)
+                            : runtimeService.runBackground(enhancedPrompt, null, true, runtimeMetadata);
                         success = true;
                     } catch (Exception llmEx) {
                         attempt++;

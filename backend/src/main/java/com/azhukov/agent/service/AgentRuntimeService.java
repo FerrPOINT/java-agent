@@ -478,11 +478,32 @@ public class AgentRuntimeService {
     }
 
     public String runBackground(String prompt, String sessionId, boolean skipBackgroundReview) {
+        return runBackground(prompt, sessionId, skipBackgroundReview, java.util.Map.of());
+    }
+
+    /**
+     * Background task with isolated-session runtime metadata.
+     * Metadata is consumed by the runtime/tool layer, not rendered into the model prompt.
+     */
+    public String runBackground(String prompt, String sessionId, boolean skipBackgroundReview,
+                                java.util.Map<String, String> runtimeMetadata) {
         // Background task — just run a turn in a new session
         Session baseSession = createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "");
-        final Session session = skipBackgroundReview
-            ? baseSession.withMetadata("skip_background_review", "true")
-            : baseSession;
+        java.util.Map<String, String> metadata = new java.util.HashMap<>();
+        if (runtimeMetadata != null) {
+            runtimeMetadata.forEach((key, value) -> {
+                if (key != null && value != null && !value.isBlank()) {
+                    metadata.put(key, value);
+                }
+            });
+        }
+        if (skipBackgroundReview) {
+            metadata.put("skip_background_review", "true");
+        }
+        final Session session = metadata.isEmpty() ? baseSession
+            : new Session(baseSession.id(), baseSession.userId(), baseSession.title(),
+                baseSession.modelProvider(), baseSession.modelName(), baseSession.systemPrompt(),
+                java.util.Map.copyOf(metadata), baseSession.subgoal());
         // P1-5: Persist user message before turn when mid-turn persistence is active
         if (midTurnPersistenceCallback != null) {
             transactionTemplate.execute(status -> {

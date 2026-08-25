@@ -40,6 +40,9 @@ public class TerminalTool implements ToolHandler {
     private final CheckpointManager checkpointManager;
     private final InterruptToken interruptToken;
 
+    // Passes an enforced cron workdir to tools through the isolated session.
+    public static final String META_WORKDIR = "cron_workdir";
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         TerminalArgs args = ToolHandler.parseJson(arguments, TerminalArgs.class);
@@ -69,6 +72,11 @@ public class TerminalTool implements ToolHandler {
 
         int timeout = args.timeout() > 0 ? args.timeout() : properties.getTerminal().getDefaultTimeoutSeconds();
         timeout = Math.min(timeout, properties.getTerminal().getMaxTimeoutSeconds());
+        // A cron workdir is an execution constraint, not advisory prompt text.
+        String workdir = args.workdir();
+        if ((workdir == null || workdir.isBlank()) && session != null) {
+            workdir = session.getMetadata(META_WORKDIR);
+        }
 
         if (args.background()) {
             try {
@@ -82,7 +90,7 @@ public class TerminalTool implements ToolHandler {
                         // this callback ensures the process is tracked for completion notifications.
                     };
                 }
-                ProcessTool.ManagedProcess mp = processTool.spawn(command, timeout, args.pty(), notifyCallback, args.workdir());
+                ProcessTool.ManagedProcess mp = processTool.spawn(command, timeout, args.pty(), notifyCallback, workdir);
                 String result = String.format(
                     "Background process started\nsession_id: %s\npid: %s",
                     mp.id, mp.pid
@@ -102,7 +110,7 @@ public class TerminalTool implements ToolHandler {
         }
 
         UUID sessionId = session != null ? session.id() : null;
-        return runCommand(command, timeout, sessionId, args.pty(), args.workdir(), guard);
+        return runCommand(command, timeout, sessionId, args.pty(), workdir, guard);
     }
 
     private ToolResult runCommand(String command, int timeoutSeconds, UUID sessionId, boolean usePty, String workdir,

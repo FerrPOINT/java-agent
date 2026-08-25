@@ -179,6 +179,18 @@ class TerminalToolTest {
         assertThat(result.content()).contains("[cwd: /tmp]");
     }
 
+    @Test
+    void executeUsesCronSessionWorkdirWhenCallOmitsWorkdir() {
+        AgentProperties p = properties();
+        TerminalTool tool = newTool(p);
+        Session cronSession = session().withMetadata(TerminalTool.META_WORKDIR, "/tmp");
+
+        ToolResult result = tool.execute("{\"command\":\"pwd\"}", null, cronSession);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("[cwd: /tmp]");
+    }
+
     // ── 6. Blocked command — rm -rf / → fail ──────────────────────────────
 
     @Test
