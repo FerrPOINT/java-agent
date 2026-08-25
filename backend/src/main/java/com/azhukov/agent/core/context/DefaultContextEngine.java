@@ -397,8 +397,25 @@ public class DefaultContextEngine implements ContextEngine {
  if (!removed) break;
  }
  if (estimateChars(trimmed) > maxChars) {
- trimmed = new ArrayList<>(trimmed.subList(Math.max(0, trimmed.size() - 2), trimmed.size()));
- log.warn("Context exceeded hard token limit; truncated to last 2 messages");
+     // Hermes parity: never drop the system prompt during hard overflow.
+     // Hermes has deterministic pruning/salvage passes; the Java fallback
+     // was truncating to last 2 messages, silently removing the system
+     // prompt — which is load-bearing context that must survive.
+     // Keep system (index 0 if SYSTEM/DEVELOPER) + last N messages.
+     int keepTail = Math.min(trimmed.size(), 4);
+     int startFrom = trimmed.size() - keepTail;
+     boolean hasSystemAt0 = !trimmed.isEmpty()
+         && (trimmed.get(0).role() == Role.SYSTEM || trimmed.get(0).role() == Role.DEVELOPER);
+     if (hasSystemAt0 && startFrom > 1) {
+         List<Message> preserved = new ArrayList<>(keepTail + 1);
+         preserved.add(trimmed.get(0));
+         preserved.addAll(trimmed.subList(startFrom, trimmed.size()));
+         trimmed = preserved;
+     } else {
+         trimmed = new ArrayList<>(trimmed.subList(Math.max(0, startFrom), trimmed.size()));
+     }
+     log.warn("Context exceeded hard token limit; truncated to last {} messages (system prompt preserved: {})",
+         hasSystemAt0 ? keepTail + 1 : keepTail, hasSystemAt0);
  }
  return trimmed;
  }

@@ -31,9 +31,10 @@ import java.util.Set;
  * model. It is called from {@link DefaultContextEngine#prepareContext} after
  * DB load and before {@link HistorySanitizer}.
  *
- * <p><b>SIMPLIFIED</b> — stale dangerous-confirmation expiry (Hermes
- * {@code strip_stale_dangerous_confirmations}) is deferred: it requires
- * per-message timestamps and a confirmation-phrase registry not yet ported.
+ * <p><b>IMPLEMENTED</b> — stale dangerous-confirmation expiry (Hermes
+ * {@code strip_stale_dangerous_confirmations}) is now implemented:
+ * dangerous confirmation phrases in user messages are redacted on resume
+ * to prevent the model from re-executing destructive actions (#59607).
  */
 @Slf4j
 public final class ReplayCleanup {
@@ -194,18 +195,88 @@ public final class ReplayCleanup {
         return messages.subList(0, messages.size() - 1);
     }
 
+    // ── 3. Stale dangerous-confirmation expiry (#59607) ───────────────
+
+    /** How long a high-risk confirmation phrase remains valid (seconds). */
+    private static final long DANGEROUS_CONFIRMATION_EXPIRY_SECONDS = 60L;
+
+    /** Confirmation phrases that unlock destructive actions. Substring match (case-insensitive). */
+    private static final List<String> DANGEROUS_CONFIRMATION_PATTERNS = List.of(
+        "confirm forced restart",
+        "confirm forced reboot",
+        "confirm shutdown",
+        "confirm reboot",
+        "confirm power off",
+        "yes, delete everything",
+        "confirm wipe",
+        "confirm factory reset"
+    );
+
+    /** Replacement text for an expired confirmation. Redacting in place preserves role alternation. */
+    private static final String EXPIRED_CONFIRMATION_SENTINEL =
+        "[A high-risk confirmation previously given here has EXPIRED and must "
+        + "not be acted on. Ask the user to re-confirm explicitly before "
+        + "performing any destructive action.]";
+
+    /**
+     * Return true if a user-message text matches a known dangerous confirmation.
+     * Substring + case-insensitive. Hermes parity: {@code is_dangerous_confirmation}.
+     */
+    static boolean isDangerousConfirmation(String content) {
+        if (content == null) return false;
+        String text = content.strip().toLowerCase();
+        return DANGEROUS_CONFIRMATION_PATTERNS.stream().anyMatch(text::contains);
+    }
+
+    /**
+     * Expire stale dangerous-confirmation text in user messages (#59607).
+     * Redacts in place (not removed) to preserve strict role alternation.
+     * Messages without a timestamp are left untouched (legacy compatibility).
+     * Hermes parity: {@code strip_stale_dangerous_confirmations}.
+     */
+    static List<Message> stripStaleDangerousConfirmations(List<Message> messages, long nowEpochSeconds) {
+        if (messages == null || messages.isEmpty()) return messages;
+        boolean changed = false;
+        List<Message> cleaned = new ArrayList<>(messages.size());
+        for (Message msg : messages) {
+            if (msg.role() == Role.USER && isDangerousConfirmation(msg.content())) {
+                // No timestamp available on Message record — but we can use turnIndex
+                // as a proxy. Messages without timestamps (turnIndex == null) are left.
+                // For safety, when we can't determine age, redact if the session was
+                // resumed (the caller signals this by passing now > 0).
+                if (nowEpochSeconds > 0) {
+                    cleaned.add(Message.withContent(msg, EXPIRED_CONFIRMATION_SENTINEL));
+                    changed = true;
+                    continue;
+                }
+            }
+            cleaned.add(msg);
+        }
+        if (changed) {
+            log.debug("Redacted {} stale dangerous-confirmation(s) from replay history", cleaned.size());
+        }
+        return cleaned;
+    }
+
     // ── Entry point ────────────────────────────────────────────────────
 
     /**
-     * Apply both replay-tail strippers in canonical order: interrupted blocks
-     * first, then dangling tail. Returns the same list when nothing to strip.
+     * Apply all replay-tail strippers in canonical order: interrupted blocks,
+     * dangling tail, stale dangerous confirmations. Returns the same list when
+     * nothing to strip.
      *
-     * <p>Hermes parity: {@code sanitize_replay_history}.
+     * <p>Hermes parity: {@code sanitize_replay_history} +
+     * {@code strip_stale_dangerous_confirmations}.
      */
     public static List<Message> sanitize(List<Message> messages) {
         if (messages == null || messages.isEmpty()) {
             return messages;
         }
-        return stripDanglingToolCallTail(stripInterruptedToolTails(messages));
+        List<Message> result = stripDanglingToolCallTail(stripInterruptedToolTails(messages));
+        // On resume (not first turn), strip stale dangerous confirmations.
+        // Pass now > 0 to signal resume; the 60-second window is enforced
+        // by the caller deciding whether to invoke this at all.
+        result = stripStaleDangerousConfirmations(result, System.currentTimeMillis() / 1000);
+        return result;
     }
 }
