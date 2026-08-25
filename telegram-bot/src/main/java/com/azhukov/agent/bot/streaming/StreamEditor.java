@@ -130,7 +130,11 @@ public class StreamEditor {
     // "edit" (legacy default), "off" (no streaming)
     private String streamingTransport;
     // Class-wide monotonic counter for draft ids (mirrors Hermes _draft_id_counter)
-    private static final AtomicInteger draftIdCounter = new AtomicInteger(0);
+    // Hermes parity (stream_consumer.py:195): seed draft IDs with a random
+    // 49-bit nonce to avoid collisions after restart. Java was starting at 0,
+    // which repeats IDs after restart and conflicts with transport-side tombstones.
+    private static final AtomicInteger draftIdCounter = new AtomicInteger(
+        new java.security.SecureRandom().nextInt(1_000_000, 9_999_999));
 
     @PostConstruct
     void init() {
@@ -442,7 +446,10 @@ public class StreamEditor {
         // Applying formatForTelegram here would add backslashes before _ . - | ( ) etc.
         // which Telegram shows literally when parse_mode is not set.
         String scrubbed = scrubThink(session, text);
-        String formatted = scrubbed;
+        // Hermes parity (stream_consumer.py:2353): balance code fences on EVERY
+        // streaming edit, not just finalize. Unclosed ``` mid-stream shows as
+        // broken formatting in Telegram. Lightweight — regex, no allocation.
+        String formatted = ensureClosedCodeFences(scrubbed);
 
         // Partial silence marker holdback: don't render a chunk that ends with an incomplete
         // marker like "NO" / "NO_R" / "[SILE" / "**". Wait for the next chunk.
@@ -687,7 +694,10 @@ public class StreamEditor {
         // Check fresh-final: if streaming exceeded timeout, delete old message
         // and send a new one
         long startTime = session.streamStartTime;
-        boolean freshFinal = startTime != 0
+        // Hermes parity: freshFinalTimeoutMs <= 0 means DISABLED (config.py:804).
+        // Java was enabling it for any stream when timeout was 0 (elapsed > 0).
+        boolean freshFinal = freshFinalTimeoutMs > 0
+            && startTime != 0
             && (System.currentTimeMillis() - startTime) > freshFinalTimeoutMs;
 
         if (freshFinal) {
@@ -857,6 +867,14 @@ public class StreamEditor {
 
         // Scrub think blocks and format
         String scrubbed = scrubThink(session, text);
+
+        // Hermes parity: hold back partial silence markers in draft too.
+        // Without this, [SILENT] or NO_REPLY can flash to the user mid-stream.
+        if (endsWithPartialSilenceMarker(scrubbed)) {
+            log.debug("Holding back partial silence marker in draft for chat {}", chatId);
+            return false;
+        }
+
         String formatted = formatForTelegram(scrubbed);
 
         // Skip if content is unchanged
