@@ -3,6 +3,8 @@ package com.azhukov.agent.tools.vision;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
@@ -67,7 +69,8 @@ public class VisionAnalyzeTool implements ToolHandler {
     }
 
     public record VisionArgs(
-        @ToolParam(description = "local file path or URL of the image") String image,
-        @ToolParam(description = "question or instructions about the image") String prompt
+        @ToolParam(description = "Image URL (http/https), local file path, or data URL to load.") @JsonProperty("image_url") @JsonAlias("image") String image,
+        @ToolParam(description = "Your specific question or request about the image.") @JsonProperty("question") @JsonAlias("prompt") String prompt,
+        @ToolParam(description = "Optional [x1, y1, x2, y2] crop region in pixel coordinates.", required = false) int[] region
     ) {}
 }
