@@ -328,6 +328,9 @@ public class AgentStreamingService {
         int maxTurns = properties.getCore().getMaxTurns();
         int turnIndex = 1;
         var budget = iterationBudget.startTurn(session.id());
+        // Hermes parity: wall-clock run-budget wrap-up notice latch (one-shot per turn)
+        final long turnStartMillis = System.currentTimeMillis();
+        boolean runBudgetWrapupInjected = false;
         turnStateManager.clear(session.id());
 
         // P1-5: Initialize persistence cursor. The user message is persisted
@@ -474,6 +477,28 @@ public class AgentStreamingService {
                             if (!injected) {
                                 // No tool message to inject into — put it back for post-batch drain
                                 steerBuffer.steer(session.id(), preApiSteer);
+                            }
+                        }
+                    }
+                    // Hermes parity (conversation_loop.py:2154-2172): wall-clock
+                    // run-budget wrap-up notice. At 80% of runBudgetSeconds, inject
+                    // a one-shot "wrap up and deliver" notice into the newest tool
+                    // result. Dormant when runBudgetSeconds is 0 or unset.
+                    int runBudget = properties.getBudget().getRunBudgetSeconds();
+                    if (runBudget > 0 && !runBudgetWrapupInjected) {
+                        long elapsed = (System.currentTimeMillis() - turnStartMillis) / 1000;
+                        if (elapsed >= 0.8 * runBudget) {
+                            for (int si = context.size() - 1; si >= 0; si--) {
+                                Message sm = context.get(si);
+                                if (sm.toolCallId() != null || sm.role() == Role.TOOL) {
+                                    String enhanced = (sm.content() != null ? sm.content() : "")
+                                        + "\n\n" + DefaultPromptBuilder.RUN_BUDGET_WRAPUP_NOTICE;
+                                    context.set(si, Message.toolResult(sm.toolCallId(), enhanced, sm.turnIndex()));
+                                    runBudgetWrapupInjected = true;
+                                    log.info("Run budget wrap-up notice injected (budget={}s, elapsed={}s)",
+                                        runBudget, elapsed);
+                                    break;
+                                }
                             }
                         }
                     }

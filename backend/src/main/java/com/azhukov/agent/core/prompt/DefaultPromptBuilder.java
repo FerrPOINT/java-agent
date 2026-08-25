@@ -200,6 +200,15 @@ public class DefaultPromptBuilder implements PromptBuilder {
     /** Closing marker for mid-turn steer notes appended to tool results. */
     public static final String STEER_MARKER_CLOSE = "[/OUT-OF-BAND USER MESSAGE]";
 
+    /** Hermes parity (conversation_loop.py:117-122): one-time wrap-up notice
+     *  injected at 80% of agent.run_budget_seconds. Cache-safe — appended to
+     *  the newest tool result (same channel as /steer). */
+    public static final String RUN_BUDGET_WRAPUP_NOTICE =
+        "[SYSTEM NOTICE — run time budget nearly exhausted] "
+        + "Run time budget nearly exhausted. Stop new discovery/verification work "
+        + "now. Produce the required final deliverable (answer/JSON/summary) from "
+        + "the state you already have, completing only mandatory writes.";
+
     /**
      * System-prompt guidance explaining the out-of-band steer marker to the model.
      * Mirrors Hermes {@code STEER_CHANNEL_NOTE} in {@code prompt_builder.py}.

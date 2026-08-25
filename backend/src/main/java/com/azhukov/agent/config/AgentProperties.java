@@ -472,6 +472,12 @@ public class AgentProperties {
         private int maxTokensPerTurn = 200000;
         private int maxToolDurationMsPerTurn = 600000;
         private boolean enabled = true;
+        /** Hermes parity (agent.run_budget_seconds / --run-budget):
+         *  wall-clock budget in seconds for the entire agent turn. At 80%
+         *  elapsed, a one-shot "wrap up and deliver" notice is injected into
+         *  the newest tool result so the model stops new work and delivers
+         *  from current state. 0 = disabled (default). */
+        private int runBudgetSeconds = 0;
     }
 
     @Getter @Setter
