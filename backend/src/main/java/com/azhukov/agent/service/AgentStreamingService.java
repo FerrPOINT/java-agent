@@ -447,6 +447,36 @@ public class AgentStreamingService {
                     // provider call. prepareContext() alone is insufficient:
                     // continuations/compression mutate context afterward.
                     context = HistorySanitizer.sanitizeForModelRequest(context);
+                    // Hermes parity: pre-API-call /steer drain (conversation_loop.py:2104-2153).
+                    // If a steer arrived during the previous API call, inject it into the
+                    // last tool message NOW so the model sees it on THIS iteration. Without
+                    // this, steers sent during an API call only land after the NEXT tool batch,
+                    // which may never come if the model returns a final response.
+                    if (steerBuffer != null) {
+                        String preApiSteer = steerBuffer.consume(session.id());
+                        if (preApiSteer != null) {
+                            String sanitizedSteer = preApiSteer
+                                .replace(DefaultPromptBuilder.STEER_MARKER_OPEN, "")
+                                .replace(DefaultPromptBuilder.STEER_MARKER_CLOSE, "");
+                            String steerMarker = DefaultPromptBuilder.STEER_MARKER_OPEN + "\n"
+                                + sanitizedSteer + "\n" + DefaultPromptBuilder.STEER_MARKER_CLOSE;
+                            boolean injected = false;
+                            for (int si = context.size() - 1; si >= 0; si--) {
+                                Message sm = context.get(si);
+                                if (sm.toolCallId() != null || sm.role() == Role.TOOL) {
+                                    String enhanced = (sm.content() != null ? sm.content() : "") + "\n\n" + steerMarker;
+                                    context.set(si, Message.toolResult(sm.toolCallId(), enhanced, sm.turnIndex()));
+                                    injected = true;
+                                    log.info("Pre-API steer drain: injected into tool msg at index {}", si);
+                                    break;
+                                }
+                            }
+                            if (!injected) {
+                                // No tool message to inject into — put it back for post-batch drain
+                                steerBuffer.steer(session.id(), preApiSteer);
+                            }
+                        }
+                    }
                     activeStreamClient.stream(context, tools, streamOptions, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
