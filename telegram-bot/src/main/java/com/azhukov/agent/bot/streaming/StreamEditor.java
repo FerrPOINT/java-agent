@@ -999,11 +999,10 @@ public class StreamEditor {
         long msgId = session.currentMessageId.get();
         // M5: For draft streaming, currentMessageId is null (no edit message to update).
         boolean draftActive = session.useDraftStreaming;
-        if (startTime == 0 || lastToken == 0 || msgId < 0) {
-            // M5: If draft streaming is active but no messageId, still can't edit — skip
-            if (!draftActive) {
-                return;
-            }
+        if (startTime == 0 || lastToken == 0) {
+            return;
+        }
+        if (msgId < 0 && !draftActive) {
             return;
         }
 
@@ -1027,13 +1026,22 @@ public class StreamEditor {
             heartbeatText += " — " + toolName;
         }
         boolean disableNotification = streamingSilent;
-        log.debug("Heartbeat for chat {}: {}", chatId, heartbeatText);
+        log.debug("Heartbeat for chat {}: {} (msgId={}, draft={})", chatId, heartbeatText, msgId, draftActive);
         try {
-            // Hermes: raw text (no parse_mode) during streaming
-            telegramClient.editMessageText(chatId, msgId, heartbeatText, null, disableNotification);
+            if (msgId >= 0) {
+                // Edit-based streaming: edit the existing message in-place
+                // Hermes: raw text (no parse_mode) during streaming
+                telegramClient.editMessageText(chatId, msgId, heartbeatText, null, disableNotification);
+            } else {
+                // Draft streaming: no message_id to edit — send heartbeat as a
+                // separate silent message (Hermes parity: _notify_long_running sends
+                // a new message when edit-in-place isn't available, and tracks
+                // _heartbeat_msg_id for future edits).
+                telegramClient.sendMessage(chatId, heartbeatText, null, null, null, disableNotification);
+            }
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
-                log.debug("Heartbeat edit 429 rate limited for chat {}, skipping", chatId);
+                log.debug("Heartbeat 429 rate limited for chat {}, skipping", chatId);
             } else {
                 throw e;
             }
