@@ -166,19 +166,13 @@ public class StreamingOrchestrator {
                 },
                 // onComplete
                 result -> {
-                    // If messageId is still -1 (startStream didn't send initial text because
-                    // it was < 4 chars), but we have accumulated text, send it as a new message
-                    // before finalizing. Hermes handles this via the 'off' transport fallback.
+                    // A native draft stream intentionally has no message id. Its final
+                    // regular message must be sent by finalizeStream so it can cancel the
+                    // heartbeat and remove the draft session. Sending directly here leaked
+                    // the StreamSession indefinitely after a successful response.
                     if (messageId[0] < 0 && accumulated.length() > 0) {
-                        String display = accumulated.toString();
-                        messageId[0] = streamEditor.startStream(chatId, display, "dm", messageThreadId)
-                            .orElse(-1L);
-                        // If startStream still returns empty (text < 4 chars), send directly
-                        // via sendMessage to avoid losing the response (Hermes 'off' transport).
-                        if (messageId[0] < 0) {
-                            streamEditor.sendFormattedFinalMessage(chatId, display);
-                            finalized[0] = true;
-                        }
+                        streamEditor.finalizeStream(chatId, -1L, accumulated.toString());
+                        finalized[0] = true;
                     }
                     if (messageId[0] >= 0 && accumulated.length() > 0) {
                         // Append footer to the streaming message before finalizing
@@ -309,10 +303,9 @@ public class StreamingOrchestrator {
             return new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, finalized[0], false);
         } catch (Exception e) {
             log.warn("Streaming failed for chat {}: {}", chatId, e.getMessage());
-            // Clean up the initial message if streaming failed
-            if (messageId[0] >= 0) {
-                streamEditor.clearStream(chatId);
-            }
+            // A native draft owns a StreamSession despite having no message id. Always
+            // remove it on an exceptional stream exit or its heartbeat keeps posting.
+            streamEditor.clearStream(chatId);
             throw new RuntimeException("Streaming failed: " + e.getMessage(), e);
         }
     }

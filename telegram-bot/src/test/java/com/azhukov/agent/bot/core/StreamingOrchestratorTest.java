@@ -160,6 +160,24 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void streamChat_draftCompletionFinalizesTheDraftSession() {
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong()))
+            .thenReturn(Optional.empty()); // Native drafts intentionally have no message id.
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("draft answer");
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult("draft answer", "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult("draft answer", "model", 1, 10, true, false, null);
+        });
+
+        AgentBackendClient.ChatResult result = orchestrator.streamChat(100L, "hi", null, session(),
+            5L, 0L, hooks);
+
+        assertThat(result.streamFinalized()).isTrue();
+        verify(streamEditor).finalizeStream(100L, -1L, "draft answer");
+        verify(streamEditor, never()).sendFormattedFinalMessage(anyLong(), anyString());
+    }
+
+    @Test
     void streamChat_interrupted_finalizesWithAccumulatedContent() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(),
             any(), any(), any(), any(), any(), any()))
@@ -245,8 +263,8 @@ class StreamingOrchestratorTest {
     }
 
     @Test
-    void streamChat_chatStreamThrows_whenNoMessage_doesNotClearStream() {
-        // startStream returns empty → messageId stays -1 → clearStream NOT called
+    void streamChat_chatStreamThrows_whenNoMessage_clearsDraftSessionAndRethrows() {
+        // Native drafts have no message id but still own a heartbeat/session that must be cleared.
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.empty());
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.empty());
         when(backendClient.chatStream(anyString(), nullable(String.class), any(),
@@ -257,7 +275,7 @@ class StreamingOrchestratorTest {
                 orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks))
             .isInstanceOf(RuntimeException.class);
 
-        verify(streamEditor, never()).clearStream(anyLong());
+        verify(streamEditor).clearStream(100L);
     }
 
     @Test

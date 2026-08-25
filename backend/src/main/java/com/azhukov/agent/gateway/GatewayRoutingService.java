@@ -60,4 +60,5 @@ public class GatewayRoutingService {
     public Optional<BasePlatformAdapter> adapterFor(Platform platform) {
         return Optional.ofNullable(adapters.get(platform));
     }
+
 }
