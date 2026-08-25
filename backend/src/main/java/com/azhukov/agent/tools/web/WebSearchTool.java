@@ -104,7 +104,7 @@ public class WebSearchTool implements ToolHandler {
             Map<String, String> item = new LinkedHashMap<>();
             item.put("title", titleLink.text());
             item.put("url", absUrl(titleLink));
-            item.put("snippet", snippetEl != null ? snippetEl.text() : "");
+            item.put("description", snippetEl != null ? snippetEl.text() : "");
             out.add(item);
             if (out.size() >= limit) {
                 break;

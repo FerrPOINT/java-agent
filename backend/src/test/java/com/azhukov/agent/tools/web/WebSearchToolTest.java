@@ -79,7 +79,7 @@ class WebSearchToolTest {
             assertThat(items).hasSize(2);
             assertThat(items.get(0)).containsEntry("title", "OpenAI - Wikipedia");
             assertThat(items.get(0)).containsEntry("url", "https://en.wikipedia.org/wiki/OpenAI");
-            assertThat(items.get(0)).containsEntry("snippet", "OpenAI is an AI research and deployment company.");
+            assertThat(items.get(0)).containsEntry("description", "OpenAI is an AI research and deployment company.");
             assertThat(items.get(1)).containsEntry("url", "https://duckduckgo.com/l/?rut=abc&uddg=https://openai.com");
         }
     }

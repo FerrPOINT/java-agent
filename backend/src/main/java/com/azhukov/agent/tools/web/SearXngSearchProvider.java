@@ -50,7 +50,7 @@ public class SearXngSearchProvider {
      *
      * @param query the search query
      * @param limit maximum number of results
-     * @return list of result maps with keys: title, url, snippet
+     * @return list of result maps with keys: title, url, description
      */
     public List<Map<String, String>> search(String query, int limit) throws IOException {
         if (!isAvailable()) {
@@ -108,7 +108,7 @@ public class SearXngSearchProvider {
             Map<String, String> item = new LinkedHashMap<>();
             item.put("title", r.path("title").asText(""));
             item.put("url", r.path("url").asText(""));
-            item.put("snippet", r.path("content").asText(""));
+            item.put("description", r.path("content").asText(""));
             out.add(item);
             count++;
         }
