@@ -42,6 +42,8 @@ public class TerminalTool implements ToolHandler {
 
     // Passes an enforced cron workdir to tools through the isolated session.
     public static final String META_WORKDIR = "cron_workdir";
+    /** Hermes parity: FOREGROUND_MAX_TIMEOUT = 600s. Foreground timeout above this is rejected. */
+    private static final int FOREGROUND_MAX_TIMEOUT = 600;
 
     // Hermes parity (terminal_tool.py:1240-1276): track per-session cwd so that
     // `cd /opt/dev` in one call persists to the next. Without this, each
@@ -93,6 +95,13 @@ public class TerminalTool implements ToolHandler {
         }
 
         int timeout = args.timeout() > 0 ? args.timeout() : properties.getTerminal().getDefaultTimeoutSeconds();
+        // Hermes parity: reject foreground timeout > 600s — nudge toward background.
+        if (!args.background() && timeout > FOREGROUND_MAX_TIMEOUT) {
+            return ToolResult.fail(
+                "Foreground timeout " + timeout + "s exceeds the maximum of "
+                + FOREGROUND_MAX_TIMEOUT + "s. Use background=true with "
+                + "notify_on_complete=true for long-running commands.");
+        }
         timeout = Math.min(timeout, properties.getTerminal().getMaxTimeoutSeconds());
         // A cron workdir is an execution constraint, not advisory prompt text.
         // Hermes parity (terminal_tool.py:2710-2740): if no explicit workdir is
