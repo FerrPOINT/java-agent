@@ -428,6 +428,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
         StringBuilder truncatedParts = new StringBuilder();
         // Empty response retry counter (parity with Hermes _empty_content_retries: max 3)
         int retryStateEmptyResponse = 0;
+        // Hermes parity: wall-clock run-budget wrap-up notice latch (one-shot per turn)
+        final long turnStartMillis = System.currentTimeMillis();
+        boolean runBudgetWrapupInjected = false;
         // Hermes: whether the PREVIOUS model round landed tool calls — drives the
         // empty-recovery nudge choice (post-tool stub vs plain backoff).
         boolean lastResponseHadToolCalls = false;
@@ -481,6 +484,50 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }
 
             List<Message> context = contextEngine.prepareContext(session, turnMessages);
+            // Hermes parity: pre-API-call /steer drain (conversation_loop.py:2104-2153).
+            if (steerBuffer != null) {
+                String preApiSteer = steerBuffer.consume(session.id());
+                if (preApiSteer != null) {
+                    String sanitizedSteer = preApiSteer
+                        .replace(DefaultPromptBuilder.STEER_MARKER_OPEN, "")
+                        .replace(DefaultPromptBuilder.STEER_MARKER_CLOSE, "");
+                    String steerMarker = DefaultPromptBuilder.STEER_MARKER_OPEN + "\n"
+                        + sanitizedSteer + "\n" + DefaultPromptBuilder.STEER_MARKER_CLOSE;
+                    boolean injected = false;
+                    for (int si = context.size() - 1; si >= 0; si--) {
+                        Message sm = context.get(si);
+                        if (sm.toolCallId() != null || sm.role() == Role.TOOL) {
+                            String enhanced = (sm.content() != null ? sm.content() : "") + "\n\n" + steerMarker;
+                            context.set(si, Message.toolResult(sm.toolCallId(), enhanced, sm.turnIndex()));
+                            injected = true;
+                            log.info("Pre-API steer drain (sync): injected into tool msg at index {}", si);
+                            break;
+                        }
+                    }
+                    if (!injected) {
+                        steerBuffer.steer(session.id(), preApiSteer);
+                    }
+                }
+            }
+            // Hermes parity: wall-clock run-budget wrap-up notice (conversation_loop.py:2154-2172).
+            int runBudget = properties.getBudget().getRunBudgetSeconds();
+            if (runBudget > 0 && !runBudgetWrapupInjected) {
+                long elapsed = (System.currentTimeMillis() - turnStartMillis) / 1000;
+                if (elapsed >= 0.8 * runBudget) {
+                    for (int si = context.size() - 1; si >= 0; si--) {
+                        Message sm = context.get(si);
+                        if (sm.toolCallId() != null || sm.role() == Role.TOOL) {
+                            String enhanced = (sm.content() != null ? sm.content() : "")
+                                + "\n\n" + DefaultPromptBuilder.RUN_BUDGET_WRAPUP_NOTICE;
+                            context.set(si, Message.toolResult(sm.toolCallId(), enhanced, sm.turnIndex()));
+                            runBudgetWrapupInjected = true;
+                            log.info("Run budget wrap-up notice injected (sync) (budget={}s, elapsed={}s)",
+                                runBudget, elapsed);
+                            break;
+                        }
+                    }
+                }
+            }
             ChatResponse response;
             try {
                 long callStart = System.currentTimeMillis();
