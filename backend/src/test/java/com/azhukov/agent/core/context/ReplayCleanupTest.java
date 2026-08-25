@@ -6,6 +6,7 @@ import com.azhukov.agent.core.model.ToolCall;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.DisplayName;
 
+import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -176,6 +177,49 @@ class ReplayCleanupTest {
         List<Message> result = ReplayCleanup.stripDanglingToolCallTail(input);
 
         assertEquals(input, result);
+    }
+
+    // ── stale dangerous confirmation expiry ─────────────────────────────
+
+    @Test
+    @DisplayName("dangerous confirmation detection is case-insensitive substring match")
+    void detectsDangerousConfirmation() {
+        assertTrue(ReplayCleanup.isDangerousConfirmation("Please CONFIRM forced restart now"));
+        assertTrue(ReplayCleanup.isDangerousConfirmation("yes, delete everything in this folder"));
+        assertFalse(ReplayCleanup.isDangerousConfirmation("restart the service normally"));
+    }
+
+    @Test
+    @DisplayName("stale dangerous confirmation is redacted in place")
+    void redactsStaleDangerousConfirmationInPlace() {
+        long now = 1_000L;
+        Message confirmation = new Message(Role.USER, "confirm shutdown", null, null, null, null, 0,
+            Instant.ofEpochSecond(now - 61));
+        List<Message> result = ReplayCleanup.stripStaleDangerousConfirmations(List.of(confirmation), now);
+
+        assertEquals(1, result.size());
+        assertEquals(Role.USER, result.get(0).role());
+        assertTrue(result.get(0).content().contains("has EXPIRED"));
+    }
+
+    @Test
+    @DisplayName("fresh and legacy dangerous confirmations are preserved")
+    void preservesFreshAndLegacyDangerousConfirmations() {
+        long now = 1_000L;
+        Message fresh = new Message(Role.USER, "confirm shutdown", null, null, null, null, 0,
+            Instant.ofEpochSecond(now - 60));
+        Message legacy = new Message(Role.USER, "confirm reboot", null, null, null, null, 0, null);
+
+        List<Message> result = ReplayCleanup.stripStaleDangerousConfirmations(List.of(fresh, legacy), now);
+        assertEquals(List.of(fresh, legacy), result);
+    }
+
+    @Test
+    @DisplayName("non-dangerous user messages are preserved")
+    void preservesNonDangerousUserMessages() {
+        Message harmless = Message.user("are you there?");
+        List<Message> result = ReplayCleanup.stripStaleDangerousConfirmations(List.of(harmless), 1L);
+        assertEquals(harmless, result.get(0));
     }
 
     // ── sanitize (entry point) ─────────────────────────────────────────

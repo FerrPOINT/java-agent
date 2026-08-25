@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.model;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
@@ -10,7 +11,8 @@ public record Message(
     List<ToolCall> toolCalls,
     String toolCallId,
     Integer turnIndex,
-    Integer imageCount
+    Integer imageCount,
+    Instant createdAt
 ) {
     public Message {
         Objects.requireNonNull(role, "role must not be null");
@@ -22,7 +24,13 @@ public record Message(
     // ── Full-arity constructor for backward compatibility (7 fields) ──
     public Message(Role role, String content, ToolCall toolCall, List<ToolCall> toolCalls,
                    String toolCallId, Integer turnIndex) {
-        this(role, content, toolCall, toolCalls, toolCallId, turnIndex, 0);
+        this(role, content, toolCall, toolCalls, toolCallId, turnIndex, 0, null);
+    }
+
+    /** Compatibility constructor for existing seven-field domain call sites. */
+    public Message(Role role, String content, ToolCall toolCall, List<ToolCall> toolCalls,
+                   String toolCallId, Integer turnIndex, Integer imageCount) {
+        this(role, content, toolCall, toolCalls, toolCallId, turnIndex, imageCount, null);
     }
 
     public static Message user(String content) {
@@ -59,11 +67,11 @@ public record Message(
 
     public static Message withContent(Message message, String content) {
         return new Message(message.role(), content, message.toolCall(), message.toolCalls(),
-            message.toolCallId(), message.turnIndex(), message.imageCount());
+            message.toolCallId(), message.turnIndex(), message.imageCount(), message.createdAt());
     }
 
     public static Message withImageCount(Message message, int imageCount) {
         return new Message(message.role(), message.content(), message.toolCall(), message.toolCalls(),
-            message.toolCallId(), message.turnIndex(), imageCount);
+            message.toolCallId(), message.turnIndex(), imageCount, message.createdAt());
     }
 }

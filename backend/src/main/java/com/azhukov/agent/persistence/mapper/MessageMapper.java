@@ -38,7 +38,8 @@ public interface MessageMapper {
         if (toolCall != null) {
             toolCalls = List.of(toolCall);
         }
-        return new Message(role, entity.getContent(), toolCall, toolCalls, toolCallId, entity.getTurnIndex());
+        return new Message(role, entity.getContent(), toolCall, toolCalls, toolCallId,
+            entity.getTurnIndex(), 0, entity.getCreatedAt());
     }
 
     default boolean isTool(String role) {

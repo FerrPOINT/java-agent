@@ -6,6 +6,7 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.tool.ToolResultClassifier;
 import lombok.extern.slf4j.Slf4j;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -237,25 +238,28 @@ public final class ReplayCleanup {
     static List<Message> stripStaleDangerousConfirmations(List<Message> messages, long nowEpochSeconds) {
         if (messages == null || messages.isEmpty()) return messages;
         boolean changed = false;
+        int redacted = 0;
         List<Message> cleaned = new ArrayList<>(messages.size());
         for (Message msg : messages) {
             if (msg.role() == Role.USER && isDangerousConfirmation(msg.content())) {
-                // No timestamp available on Message record — but we can use turnIndex
-                // as a proxy. Messages without timestamps (turnIndex == null) are left.
-                // For safety, when we can't determine age, redact if the session was
-                // resumed (the caller signals this by passing now > 0).
-                if (nowEpochSeconds > 0) {
+                Instant createdAt = msg.createdAt();
+                // Hermes parity: legacy/in-memory messages without a timestamp
+                // must remain untouched. Only an actually expired confirmation
+                // is redacted; fresh confirmation remains valid for 60 seconds.
+                if (createdAt != null
+                    && nowEpochSeconds - createdAt.getEpochSecond() > DANGEROUS_CONFIRMATION_EXPIRY_SECONDS) {
                     cleaned.add(Message.withContent(msg, EXPIRED_CONFIRMATION_SENTINEL));
                     changed = true;
+                    redacted++;
                     continue;
                 }
             }
             cleaned.add(msg);
         }
         if (changed) {
-            log.debug("Redacted {} stale dangerous-confirmation(s) from replay history", cleaned.size());
+            log.debug("Redacted {} stale dangerous confirmation(s) from replay history", redacted);
         }
-        return cleaned;
+        return changed ? cleaned : messages;
     }
 
     // ── Entry point ────────────────────────────────────────────────────
