@@ -11,6 +11,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -20,10 +22,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class TodoToolTest {
 
     private static final String USER_ID = "user-42";
@@ -33,287 +35,97 @@ class TodoToolTest {
     @Mock
     private TodoRepository todoRepository;
 
-    // ── Existing create/list tests (kept and enhanced) ──
+    // ── Read (no args = list) ──
 
     @Test
-    @DisplayName("Should create a todo with default pending status")
-    void shouldCreateTodoWithPendingStatus() {
-        TodoTool tool = new TodoTool(todoRepository);
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(List.of());
-        String args = "{\"action\":\"create\",\"title\":\"Write tests\",\"priority\":\"high\"}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isTrue();
-        assertThat(result.content()).isEqualTo("Created todo: Write tests");
-        ArgumentCaptor<TodoEntity> captor = ArgumentCaptor.forClass(TodoEntity.class);
-        verify(todoRepository).save(captor.capture());
-        TodoEntity saved = captor.getValue();
-        assertThat(saved.getSessionId()).isEqualTo(SESSION.id());
-        assertThat(saved.getUserId()).isEqualTo(USER_ID);
-        assertThat(saved.getTitle()).isEqualTo("Write tests");
-        assertThat(saved.getStatus()).isEqualTo("pending");
-        assertThat(saved.getPriority()).isEqualTo("high");
-        assertThat(saved.getCreatedAt()).isNotNull();
-    }
-
-    @Test
-    @DisplayName("Should create a todo with in_progress status")
-    void shouldCreateTodoWithInProgressStatus() {
-        TodoTool tool = new TodoTool(todoRepository);
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(List.of());
-        String args = "{\"action\":\"create\",\"title\":\"Active task\",\"status\":\"in_progress\"}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isTrue();
-        ArgumentCaptor<TodoEntity> captor = ArgumentCaptor.forClass(TodoEntity.class);
-        verify(todoRepository).save(captor.capture());
-        assertThat(captor.getValue().getStatus()).isEqualTo("in_progress");
-    }
-
-    @Test
-    @DisplayName("Should create a todo with cancelled status")
-    void shouldCreateTodoWithCancelledStatus() {
-        TodoTool tool = new TodoTool(todoRepository);
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(List.of());
-        String args = "{\"action\":\"create\",\"title\":\"Cancelled task\",\"status\":\"cancelled\"}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isTrue();
-        ArgumentCaptor<TodoEntity> captor = ArgumentCaptor.forClass(TodoEntity.class);
-        verify(todoRepository).save(captor.capture());
-        assertThat(captor.getValue().getStatus()).isEqualTo("cancelled");
-    }
-
-    @Test
-    @DisplayName("Should create a todo with completed status")
-    void shouldCreateTodoWithCompletedStatus() {
-        TodoTool tool = new TodoTool(todoRepository);
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(List.of());
-        String args = "{\"action\":\"create\",\"title\":\"Done task\",\"status\":\"completed\"}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isTrue();
-        ArgumentCaptor<TodoEntity> captor = ArgumentCaptor.forClass(TodoEntity.class);
-        verify(todoRepository).save(captor.capture());
-        assertThat(captor.getValue().getStatus()).isEqualTo("completed");
-    }
-
-    @Test
-    @DisplayName("Should reject invalid status on create")
-    void shouldRejectInvalidStatusOnCreate() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String args = "{\"action\":\"create\",\"title\":\"Test\",\"status\":\"done\"}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Invalid status");
-        assertThat(result.error()).contains("done");
-    }
-
-    @Test
-    @DisplayName("Should reject blank title on create")
-    void shouldRejectBlankTitleOnCreate() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String args = "{\"action\":\"create\",\"title\":\"  \"}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Title is required");
-    }
-
-    @Test
-    @DisplayName("Should reject title exceeding MAX_CONTENT_CHARS")
-    void shouldRejectTitleExceedingMaxChars() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String longTitle = "x".repeat(TodoTool.MAX_CONTENT_CHARS + 1);
-        String args = "{\"action\":\"create\",\"title\":\"" + longTitle + "\"}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("exceeds " + TodoTool.MAX_CONTENT_CHARS);
-    }
-
-    @Test
-    @DisplayName("Should reject create when MAX_ITEMS reached")
-    void shouldRejectCreateWhenMaxItemsReached() {
-        TodoTool tool = new TodoTool(todoRepository);
-        List<TodoEntity> existing = new ArrayList<>();
-        for (int i = 0; i < TodoTool.MAX_ITEMS; i++) {
-            TodoEntity e = new TodoEntity();
-            e.setTitle("Todo " + i);
-            existing.add(e);
-        }
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(existing);
-        String args = "{\"action\":\"create\",\"title\":\"One too many\"}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Maximum of " + TodoTool.MAX_ITEMS);
-    }
-
-    // ── List tests ──
-
-    @Test
-    @DisplayName("Should list todos with all statuses")
-    void shouldListTodosWithAllStatuses() {
-        TodoTool tool = new TodoTool(todoRepository);
-        TodoEntity t1 = new TodoEntity();
-        t1.setTitle("Write tests");
-        t1.setStatus("pending");
-        t1.setPriority("high");
-        TodoEntity t2 = new TodoEntity();
-        t2.setTitle("Refactor code");
-        t2.setStatus("in_progress");
-        t2.setPriority("medium");
-        TodoEntity t3 = new TodoEntity();
-        t3.setTitle("Done task");
-        t3.setStatus("cancelled");
-        t3.setPriority("low");
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of(t1, t2, t3));
-        String args = "{\"action\":\"list\"}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("[pending]");
-        assertThat(result.content()).contains("[in_progress]");
-        assertThat(result.content()).contains("[cancelled]");
-    }
-
-    @Test
-    @DisplayName("Should list no todos")
-    void shouldListNoTodos() {
+    @DisplayName("No todos arg → read current list")
+    void noArgs_readsList() {
         TodoTool tool = new TodoTool(todoRepository);
         when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
-        String args = "{\"action\":\"list\"}";
+
+        ToolResult result = tool.execute("{}", LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("No todos");
+    }
+
+    @Test
+    @DisplayName("Empty list returns 'No todos'")
+    void emptyList_returnsNoTodos() {
+        TodoTool tool = new TodoTool(todoRepository);
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+
+        ToolResult result = tool.execute("{\"todos\":null}", LAST_MESSAGE, SESSION);
+
+        // todos=null → read mode (Hermes parity)
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("No todos");
+    }
+
+    // ── Write (merge=false = replace) ──
+
+    @Test
+    @DisplayName("merge=false (default): replace entire list")
+    void write_replaceAll() {
+        TodoTool tool = new TodoTool(todoRepository);
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        doNothing().when(todoRepository).deleteByUserId(USER_ID);
+
+        String args = "{\"todos\":[{\"id\":\"1\",\"content\":\"Task A\",\"status\":\"pending\"}," +
+            "{\"id\":\"2\",\"content\":\"Task B\",\"status\":\"in_progress\"}]}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).isEqualTo("No todos.");
+        // Should delete all existing todos (replace mode)
+        verify(todoRepository).deleteByUserId(USER_ID);
+        // Should save 2 new entities
+        verify(todoRepository, times(2)).save(any(TodoEntity.class));
     }
 
-    @Test
-    @DisplayName("Should list todos with limit applied")
-    void shouldListTodosWithLimit() {
-        TodoTool tool = new TodoTool(todoRepository);
-        List<TodoEntity> todos = new ArrayList<>();
-        for (int i = 0; i < 10; i++) {
-            TodoEntity e = new TodoEntity();
-            e.setTitle("Todo " + i);
-            e.setStatus("pending");
-            e.setPriority("medium");
-            todos.add(e);
-        }
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(todos);
-        String args = "{\"action\":\"list\",\"limit\":3}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isTrue();
-        long lines = result.content().lines().count();
-        assertThat(lines).isEqualTo(3);
-    }
-
-    // ── Update tests ──
+    // ── Write (merge=true = update by id) ──
 
     @Test
-    @DisplayName("Should update existing todo by id")
-    void shouldUpdateExistingTodoById() {
+    @DisplayName("merge=true: update existing items by id")
+    void merge_updateById() {
         TodoTool tool = new TodoTool(todoRepository);
-        UUID todoId = UUID.randomUUID();
+        UUID existingId = UUID.randomUUID();
         TodoEntity existing = new TodoEntity();
-        existing.setId(todoId);
+        existing.setId(existingId);
         existing.setUserId(USER_ID);
         existing.setTitle("Old title");
         existing.setStatus("pending");
-        existing.setPriority("low");
-        when(todoRepository.findById(todoId)).thenReturn(Optional.of(existing));
-        String args = "{\"action\":\"update\",\"id\":\"" + todoId + "\",\"title\":\"New title\",\"status\":\"in_progress\"}";
+        existing.setPriority("medium");
+        existing.setCreatedAt(Instant.now());
+        existing.setUpdatedAt(Instant.now());
+
+        when(todoRepository.findById(existingId)).thenReturn(Optional.of(existing));
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID))
+            .thenReturn(List.of(existing));
+
+        String args = "{\"todos\":[{\"id\":\"" + existingId + "\",\"content\":\"Updated title\",\"status\":\"completed\"}],\"merge\":true}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("Updated todo");
-        assertThat(existing.getTitle()).isEqualTo("New title");
-        assertThat(existing.getStatus()).isEqualTo("in_progress");
-        verify(todoRepository).save(existing);
+        // Should NOT delete (merge mode)
+        verify(todoRepository, never()).deleteByUserId(any());
+        // Should update existing entity
+        ArgumentCaptor<TodoEntity> captor = ArgumentCaptor.forClass(TodoEntity.class);
+        verify(todoRepository).save(captor.capture());
+        assertThat(captor.getValue().getTitle()).isEqualTo("Updated title");
+        assertThat(captor.getValue().getStatus()).isEqualTo("completed");
     }
 
-    @Test
-    @DisplayName("Should update an item by its one-based list position")
-    void shouldUpdateTodoByOneBasedPosition() {
-        TodoTool tool = new TodoTool(todoRepository);
-        UUID firstId = UUID.randomUUID();
-        UUID secondId = UUID.randomUUID();
-        TodoEntity first = new TodoEntity();
-        first.setId(firstId);
-        first.setUserId(USER_ID);
-        TodoEntity second = new TodoEntity();
-        second.setId(secondId);
-        second.setUserId(USER_ID);
-        second.setTitle("Second");
-        second.setStatus("pending");
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of(first, second));
-        when(todoRepository.findById(secondId)).thenReturn(Optional.of(second));
-
-        ToolResult result = tool.execute(
-            "{\"action\":\"update\",\"id\":\"2\",\"status\":\"completed\"}",
-            LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isTrue();
-        assertThat(second.getStatus()).isEqualTo("completed");
-        verify(todoRepository).save(second);
-    }
+    // ── Validation ──
 
     @Test
-    @DisplayName("Should reject out-of-range numeric todo position")
-    void shouldRejectOutOfRangeNumericPosition() {
+    @DisplayName("Reject invalid status")
+    void rejectInvalidStatus() {
         TodoTool tool = new TodoTool(todoRepository);
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
 
-        ToolResult result = tool.execute(
-            "{\"action\":\"update\",\"id\":\"1\",\"status\":\"completed\"}",
-            LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("not found");
-    }
-
-    @Test
-    @DisplayName("Should reject update when todo not found")
-    void shouldRejectUpdateWhenTodoNotFound() {
-        TodoTool tool = new TodoTool(todoRepository);
-        UUID todoId = UUID.randomUUID();
-        when(todoRepository.findById(todoId)).thenReturn(Optional.empty());
-        String args = "{\"action\":\"update\",\"id\":\"" + todoId + "\",\"status\":\"completed\"}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("not found");
-    }
-
-    @Test
-    @DisplayName("Should reject update with invalid status")
-    void shouldRejectUpdateWithInvalidStatus() {
-        TodoTool tool = new TodoTool(todoRepository);
-        UUID todoId = UUID.randomUUID();
-        TodoEntity existing = new TodoEntity();
-        existing.setId(todoId);
-        existing.setUserId(USER_ID);
-        existing.setTitle("Test");
-        existing.setStatus("pending");
-        when(todoRepository.findById(todoId)).thenReturn(Optional.of(existing));
-        String args = "{\"action\":\"update\",\"id\":\"" + todoId + "\",\"status\":\"archived\"}";
+        String args = "{\"todos\":[{\"id\":\"1\",\"content\":\"Bad\",\"status\":\"invalid\"}]}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
@@ -322,258 +134,158 @@ class TodoToolTest {
     }
 
     @Test
-    @DisplayName("Should reject update without id")
-    void shouldRejectUpdateWithoutId() {
+    @DisplayName("Reject content exceeding max chars")
+    void rejectContentTooLong() {
         TodoTool tool = new TodoTool(todoRepository);
-        String args = "{\"action\":\"update\",\"status\":\"completed\"}";
+        String longContent = "x".repeat(TodoTool.MAX_CONTENT_CHARS + 1);
+
+        String args = "{\"todos\":[{\"id\":\"1\",\"content\":\"" + longContent + "\",\"status\":\"pending\"}]}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("id is required");
+        assertThat(result.error()).contains("exceeds");
     }
 
     @Test
-    @DisplayName("Should reject update when todo belongs to different user")
-    void shouldRejectUpdateWhenTodoBelongsToDifferentUser() {
+    @DisplayName("Reject missing content")
+    void rejectMissingContent() {
         TodoTool tool = new TodoTool(todoRepository);
-        UUID todoId = UUID.randomUUID();
-        TodoEntity existing = new TodoEntity();
-        existing.setId(todoId);
-        existing.setUserId("different-user");
-        existing.setStatus("pending");
-        when(todoRepository.findById(todoId)).thenReturn(Optional.of(existing));
-        String args = "{\"action\":\"update\",\"id\":\"" + todoId + "\",\"status\":\"completed\"}";
+
+        String args = "{\"todos\":[{\"id\":\"1\",\"status\":\"pending\"}]}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("not found");
+        assertThat(result.error()).contains("content");
     }
 
-    // ── Merge mode tests ──
+    @Test
+    @DisplayName("Reject exceeding max items")
+    void rejectTooManyItems() {
+        TodoTool tool = new TodoTool(todoRepository);
+
+        StringBuilder items = new StringBuilder("[");
+        for (int i = 0; i < TodoTool.MAX_ITEMS + 1; i++) {
+            if (i > 0) items.append(",");
+            items.append("{\"id\":\"").append(i).append("\",\"content\":\"T").append(i).append("\",\"status\":\"pending\"}");
+        }
+        items.append("]");
+
+        String args = "{\"todos\":" + items + "}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("maximum");
+    }
+
+    // ── Default status ──
 
     @Test
-    @DisplayName("Should merge update existing item by id when merge=true")
-    void shouldMergeUpdateExistingItemById() {
+    @DisplayName("Default status is pending when not specified")
+    void defaultStatusPending() {
         TodoTool tool = new TodoTool(todoRepository);
-        UUID todoId = UUID.randomUUID();
-        TodoEntity existing = new TodoEntity();
-        existing.setId(todoId);
-        existing.setUserId(USER_ID);
-        existing.setTitle("Old");
-        existing.setStatus("pending");
-        existing.setPriority("low");
-        when(todoRepository.findById(todoId)).thenReturn(Optional.of(existing));
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        doNothing().when(todoRepository).deleteByUserId(USER_ID);
 
-        String itemsJson = "[{\"id\":\"" + todoId + "\",\"title\":\"Updated\",\"status\":\"in_progress\"}]";
-        String args = "{\"action\":\"merge\",\"items\":" + itemsJson + "}";
+        String args = "{\"todos\":[{\"id\":\"1\",\"content\":\"No status\"}]}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("updated");
-        assertThat(existing.getTitle()).isEqualTo("Updated");
-        assertThat(existing.getStatus()).isEqualTo("in_progress");
-        verify(todoRepository).save(existing);
-    }
-
-    @Test
-    @DisplayName("Should merge create new items when no id provided")
-    void shouldMergeCreateNewItemsWhenNoId() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String itemsJson = "[{\"title\":\"New task\",\"status\":\"pending\"}]";
-        String args = "{\"action\":\"merge\",\"items\":" + itemsJson + "}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("created");
         ArgumentCaptor<TodoEntity> captor = ArgumentCaptor.forClass(TodoEntity.class);
         verify(todoRepository).save(captor.capture());
-        assertThat(captor.getValue().getTitle()).isEqualTo("New task");
         assertThat(captor.getValue().getStatus()).isEqualTo("pending");
     }
 
-    @Test
-    @DisplayName("Should set replace all items when action=set")
-    void shouldSetReplaceAllItems() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String itemsJson = "[{\"title\":\"Task A\"},{\"title\":\"Task B\"}]";
-        String args = "{\"action\":\"set\",\"items\":" + itemsJson + "}";
+    // ── Read returns summary ──
 
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+    @Test
+    @DisplayName("Read returns summary with counts")
+    void read_returnsSummary() {
+        TodoTool tool = new TodoTool(todoRepository);
+        TodoEntity t1 = new TodoEntity();
+        t1.setId(UUID.randomUUID());
+        t1.setUserId(USER_ID);
+        t1.setTitle("Pending task");
+        t1.setStatus("pending");
+        t1.setCreatedAt(Instant.now());
+        t1.setUpdatedAt(Instant.now());
+
+        TodoEntity t2 = new TodoEntity();
+        t2.setId(UUID.randomUUID());
+        t2.setUserId(USER_ID);
+        t2.setTitle("Completed task");
+        t2.setStatus("completed");
+        t2.setCreatedAt(Instant.now());
+        t2.setUpdatedAt(Instant.now());
+
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID))
+            .thenReturn(List.of(t1, t2));
+
+        ToolResult result = tool.execute("{}", LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("Set todos");
-        verify(todoRepository).deleteByUserId(USER_ID);
-        ArgumentCaptor<TodoEntity> captor = ArgumentCaptor.forClass(TodoEntity.class);
-        verify(todoRepository, org.mockito.Mockito.times(2)).save(captor.capture());
-        assertThat(captor.getAllValues()).hasSize(2);
+        assertThat(result.content()).contains("pending=1");
+        assertThat(result.content()).contains("completed=1");
+        assertThat(result.content()).contains("total=2");
     }
 
-    @Test
-    @DisplayName("Should merge not delete existing items")
-    void shouldMergeNotDeleteExisting() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String itemsJson = "[{\"title\":\"Task A\"}]";
-        String args = "{\"action\":\"merge\",\"items\":" + itemsJson + "}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isTrue();
-        // merge mode should NOT call deleteByUserId
-        verify(todoRepository, org.mockito.Mockito.never()).deleteByUserId(any());
-    }
+    // ── Numeric id resolution ──
 
     @Test
-    @DisplayName("Should merge handle mixed update and create")
-    void shouldMergeHandleMixedUpdateAndCreate() {
+    @DisplayName("Numeric id resolves to position in merge mode")
+    void numericId_resolvesToPosition() {
         TodoTool tool = new TodoTool(todoRepository);
-        UUID todoId = UUID.randomUUID();
+        UUID existingId = UUID.randomUUID();
         TodoEntity existing = new TodoEntity();
-        existing.setId(todoId);
+        existing.setId(existingId);
         existing.setUserId(USER_ID);
         existing.setTitle("Old");
         existing.setStatus("pending");
-        existing.setPriority("low");
-        when(todoRepository.findById(todoId)).thenReturn(Optional.of(existing));
+        existing.setCreatedAt(Instant.now());
+        existing.setUpdatedAt(Instant.now());
 
-        String itemsJson = "["
-            + "{\"id\":\"" + todoId + "\",\"title\":\"Updated\",\"status\":\"completed\"},"
-            + "{\"title\":\"Brand new\",\"status\":\"pending\"}"
-            + "]";
-        String args = "{\"action\":\"merge\",\"items\":" + itemsJson + "}";
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID))
+            .thenReturn(List.of(existing));
+        when(todoRepository.findById(existingId)).thenReturn(Optional.of(existing));
 
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("1 updated");
-        assertThat(result.content()).contains("1 created");
-        assertThat(existing.getTitle()).isEqualTo("Updated");
-        assertThat(existing.getStatus()).isEqualTo("completed");
-    }
-
-    @Test
-    @DisplayName("Should merge reject invalid status in items")
-    void shouldMergeRejectInvalidStatusInItems() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String itemsJson = "[{\"title\":\"Test\",\"status\":\"archived\"}]";
-        String args = "{\"action\":\"merge\",\"items\":" + itemsJson + "}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Invalid status");
-    }
-
-    @Test
-    @DisplayName("Should merge reject title exceeding MAX_CONTENT_CHARS")
-    void shouldMergeRejectTitleExceedingMaxChars() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String longTitle = "x".repeat(TodoTool.MAX_CONTENT_CHARS + 1);
-        String itemsJson = "[{\"title\":\"" + longTitle + "\"}]";
-        String args = "{\"action\":\"merge\",\"items\":" + itemsJson + "}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("exceeds " + TodoTool.MAX_CONTENT_CHARS);
-    }
-
-    @Test
-    @DisplayName("Should merge reject items exceeding MAX_ITEMS")
-    void shouldMergeRejectItemsExceedingMax() {
-        TodoTool tool = new TodoTool(todoRepository);
-        StringBuilder items = new StringBuilder("[");
-        for (int i = 0; i <= TodoTool.MAX_ITEMS; i++) {
-            if (i > 0) items.append(",");
-            items.append("{\"title\":\"T").append(i).append("\"}");
-        }
-        items.append("]");
-        String args = "{\"action\":\"merge\",\"items\":" + items + "}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("maximum of " + TodoTool.MAX_ITEMS);
-    }
-
-    @Test
-    @DisplayName("Should merge with cancelled status in items")
-    void shouldMergeWithCancelledStatus() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String itemsJson = "[{\"title\":\"Cancelled task\",\"status\":\"cancelled\"}]";
-        String args = "{\"action\":\"merge\",\"items\":" + itemsJson + "}";
+        // Use "1" (1-based position) instead of UUID
+        String args = "{\"todos\":[{\"id\":\"1\",\"content\":\"Updated\",\"status\":\"completed\"}],\"merge\":true}";
 
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        ArgumentCaptor<TodoEntity> captor = ArgumentCaptor.forClass(TodoEntity.class);
-        verify(todoRepository).save(captor.capture());
-        assertThat(captor.getValue().getStatus()).isEqualTo("cancelled");
+        verify(todoRepository).findById(existingId);
+        verify(todoRepository).save(any(TodoEntity.class));
     }
 
-    @Test
-    @DisplayName("Should set handle empty items list")
-    void shouldSetHandleEmptyItems() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String args = "{\"action\":\"set\",\"items\":[]}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isTrue();
-        verify(todoRepository).deleteByUserId(USER_ID);
-    }
-
-    // ── Unknown action ──
+    // ── Status validation helper ──
 
     @Test
-    @DisplayName("Should reject unknown action")
-    void shouldRejectUnknownAction() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String args = "{\"action\":\"delete\"}";
-
-        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Unknown action");
-    }
-
-    // ── validateStatus helper ──
-
-    @Test
-    @DisplayName("validateStatus should return fallback for null input")
-    void validateStatusShouldReturnFallbackForNull() {
+    @DisplayName("validateStatus: null/blank returns fallback")
+    void validateStatus_nullReturnsFallback() {
         assertThat(TodoTool.validateStatus(null, "pending")).isEqualTo("pending");
-    }
-
-    @Test
-    @DisplayName("validateStatus should return fallback for blank input")
-    void validateStatusShouldReturnFallbackForBlank() {
+        assertThat(TodoTool.validateStatus("", "pending")).isEqualTo("pending");
         assertThat(TodoTool.validateStatus("  ", "pending")).isEqualTo("pending");
     }
 
     @Test
-    @DisplayName("validateStatus should normalize to lowercase")
-    void validateStatusShouldNormalizeToLowercase() {
-        assertThat(TodoTool.validateStatus("IN_PROGRESS", null)).isEqualTo("in_progress");
-        assertThat(TodoTool.validateStatus("Completed", null)).isEqualTo("completed");
-    }
-
-    @Test
-    @DisplayName("validateStatus should return null for invalid status")
-    void validateStatusShouldReturnNullForInvalid() {
-        assertThat(TodoTool.validateStatus("archived", null)).isNull();
-        assertThat(TodoTool.validateStatus("done", null)).isNull();
-    }
-
-    @Test
-    @DisplayName("validateStatus should accept all 4 allowed values")
-    void validateStatusShouldAcceptAllAllowedValues() {
-        assertThat(TodoTool.validateStatus("pending", null)).isEqualTo("pending");
-        assertThat(TodoTool.validateStatus("in_progress", null)).isEqualTo("in_progress");
-        assertThat(TodoTool.validateStatus("completed", null)).isEqualTo("completed");
+    @DisplayName("validateStatus: valid returns normalized")
+    void validateStatus_validReturnsNormalized() {
+        assertThat(TodoTool.validateStatus("PENDING", null)).isEqualTo("pending");
+        assertThat(TodoTool.validateStatus("In_Progress", null)).isEqualTo("in_progress");
+        assertThat(TodoTool.validateStatus("COMPLETED", null)).isEqualTo("completed");
         assertThat(TodoTool.validateStatus("cancelled", null)).isEqualTo("cancelled");
+    }
+
+    @Test
+    @DisplayName("validateStatus: invalid returns null")
+    void validateStatus_invalidReturnsNull() {
+        assertThat(TodoTool.validateStatus("done", null)).isNull();
+        assertThat(TodoTool.validateStatus("waiting", null)).isNull();
+        assertThat(TodoTool.validateStatus("todo", null)).isNull();
     }
 }

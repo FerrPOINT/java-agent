@@ -235,60 +235,49 @@ class MemoryTodoBranchTest {
         assertThat(result.success()).isTrue();
     }
 
-    // ── TodoTool branch coverage ──
+    // ── TodoTool branch coverage (Hermes-parity schema: todos + merge) ──
 
     @Test
-    void todo_createWithDefaultPriority_usesMedium() {
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(List.of());
+    void todo_writeWithDefaultPriority_usesMedium() {
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        doNothing().when(todoRepository).deleteByUserId(any());
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(
-            "{\"action\":\"create\",\"title\":\"task\"}", LAST_MESSAGE, SESSION);
+            "{\"todos\":[{\"id\":\"1\",\"content\":\"task\",\"status\":\"pending\"}]}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
         verify(todoRepository).save(argThat(e -> "medium".equals(e.getPriority())));
     }
 
     @Test
-    void todo_updateWithTitleAndPriority_updatesBoth() {
-        UUID todoId = UUID.randomUUID();
-        TodoEntity existing = new TodoEntity();
-        existing.setId(todoId);
-        existing.setUserId(USER_ID);
-        existing.setTitle("Old");
-        existing.setStatus("pending");
-        when(todoRepository.findById(todoId)).thenReturn(Optional.of(existing));
-
+    void todo_writeWithNullStatus_defaultsToPending() {
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        doNothing().when(todoRepository).deleteByUserId(any());
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(
-            "{\"action\":\"update\",\"id\":\"" + todoId + "\",\"title\":\"New\",\"priority\":\"high\"}",
-            LAST_MESSAGE, SESSION);
+            "{\"todos\":[{\"id\":\"1\",\"content\":\"task\"}]}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
-        assertThat(existing.getTitle()).isEqualTo("New");
-        assertThat(existing.getPriority()).isEqualTo("high");
+        verify(todoRepository).save(argThat(e -> "pending".equals(e.getStatus())));
     }
 
     @Test
-    void todo_updateWithTitleExceedingMax_returnsFail() {
-        UUID todoId = UUID.randomUUID();
-        TodoEntity existing = new TodoEntity();
-        existing.setId(todoId);
-        existing.setUserId(USER_ID);
-        existing.setStatus("pending");
-        when(todoRepository.findById(todoId)).thenReturn(Optional.of(existing));
-
+    void todo_writeWithBlankStatus_defaultsToPending() {
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        doNothing().when(todoRepository).deleteByUserId(any());
         TodoTool tool = new TodoTool(todoRepository);
-        String longTitle = "x".repeat(TodoTool.MAX_CONTENT_CHARS + 1);
         ToolResult result = tool.execute(
-            "{\"action\":\"update\",\"id\":\"" + todoId + "\",\"title\":\"" + longTitle + "\"}",
-            LAST_MESSAGE, SESSION);
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("exceeds");
+            "{\"todos\":[{\"id\":\"1\",\"content\":\"task\",\"status\":\"\"}]}", LAST_MESSAGE, SESSION);
+        assertThat(result.success()).isTrue();
     }
 
     @Test
-    void todo_mergeWithNullItems_treatedAsEmpty() {
+    void todo_mergeWithEmptyItems_noDelete() {
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(
-            "{\"action\":\"merge\"}", LAST_MESSAGE, SESSION);
+            "{\"todos\":[],\"merge\":true}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
         verify(todoRepository, never()).deleteByUserId(any());
     }
@@ -297,13 +286,14 @@ class MemoryTodoBranchTest {
     void todo_mergeItemWithExistingNotFound_createsNew() {
         UUID todoId = UUID.randomUUID();
         when(todoRepository.findById(todoId)).thenReturn(Optional.empty());
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         TodoTool tool = new TodoTool(todoRepository);
-        String itemsJson = "[{\"id\":\"" + todoId + "\",\"title\":\"New\",\"status\":\"pending\"}]";
+        String itemsJson = "[{\"id\":\"" + todoId + "\",\"content\":\"New\",\"status\":\"pending\"}]";
         ToolResult result = tool.execute(
-            "{\"action\":\"merge\",\"items\":" + itemsJson + "}", LAST_MESSAGE, SESSION);
+            "{\"todos\":" + itemsJson + ",\"merge\":true}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("created");
     }
 
     @Test
@@ -313,20 +303,23 @@ class MemoryTodoBranchTest {
         existing.setId(todoId);
         existing.setUserId("different-user");
         when(todoRepository.findById(todoId)).thenReturn(Optional.of(existing));
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         TodoTool tool = new TodoTool(todoRepository);
-        String itemsJson = "[{\"id\":\"" + todoId + "\",\"title\":\"New\",\"status\":\"pending\"}]";
+        String itemsJson = "[{\"id\":\"" + todoId + "\",\"content\":\"New\",\"status\":\"pending\"}]";
         ToolResult result = tool.execute(
-            "{\"action\":\"merge\",\"items\":" + itemsJson + "}", LAST_MESSAGE, SESSION);
+            "{\"todos\":" + itemsJson + ",\"merge\":true}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("created");
     }
 
     @Test
-    void todo_setWithNullItems_deletesAllAndCreatesNone() {
+    void todo_replaceWithEmptyItems_deletesAll() {
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        doNothing().when(todoRepository).deleteByUserId(USER_ID);
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(
-            "{\"action\":\"set\"}", LAST_MESSAGE, SESSION);
+            "{\"todos\":[]}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
         verify(todoRepository).deleteByUserId(USER_ID);
     }
@@ -355,61 +348,26 @@ class MemoryTodoBranchTest {
     }
 
     @Test
-    void todo_createWithNullStatus_defaultsToPending() {
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(List.of());
+    void todo_mergeWithFlagTrue_noDelete() {
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         TodoTool tool = new TodoTool(todoRepository);
+        String itemsJson = "[{\"id\":\"1\",\"content\":\"Task\",\"status\":\"pending\"}]";
         ToolResult result = tool.execute(
-            "{\"action\":\"create\",\"title\":\"task\",\"status\":null}", LAST_MESSAGE, SESSION);
+            "{\"todos\":" + itemsJson + ",\"merge\":true}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
-        verify(todoRepository).save(argThat(e -> "pending".equals(e.getStatus())));
-    }
-
-    @Test
-    void todo_createWithBlankStatus_defaultsToPending() {
-        when(todoRepository.findByUserId(USER_ID)).thenReturn(List.of());
-        TodoTool tool = new TodoTool(todoRepository);
-        ToolResult result = tool.execute(
-            "{\"action\":\"create\",\"title\":\"task\",\"status\":\"\"}", LAST_MESSAGE, SESSION);
-        assertThat(result.success()).isTrue();
-    }
-
-    @Test
-    void todo_mergeItemWithNullStatus_defaultsToPending() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String itemsJson = "[{\"title\":\"New\",\"status\":null}]";
-        ToolResult result = tool.execute(
-            "{\"action\":\"merge\",\"items\":" + itemsJson + "}", LAST_MESSAGE, SESSION);
-        assertThat(result.success()).isTrue();
-    }
-
-    @Test
-    void todo_mergeItemWithBlankStatus_defaultsToPending() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String itemsJson = "[{\"title\":\"New\",\"status\":\"\"}]";
-        ToolResult result = tool.execute(
-            "{\"action\":\"merge\",\"items\":" + itemsJson + "}", LAST_MESSAGE, SESSION);
-        assertThat(result.success()).isTrue();
-    }
-
-    @Test
-    void todo_mergeItemWithNullPriority_defaultsToMedium() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String itemsJson = "[{\"title\":\"New\"}]";
-        ToolResult result = tool.execute(
-            "{\"action\":\"merge\",\"items\":" + itemsJson + "}", LAST_MESSAGE, SESSION);
-        assertThat(result.success()).isTrue();
-        verify(todoRepository).save(argThat(e -> "medium".equals(e.getPriority())));
-    }
-
-    @Test
-    void todo_setActionWithMergeFlag_mergeIsTrue() {
-        TodoTool tool = new TodoTool(todoRepository);
-        String itemsJson = "[{\"title\":\"Task\"}]";
-        ToolResult result = tool.execute(
-            "{\"action\":\"set\",\"merge\":true,\"items\":" + itemsJson + "}", LAST_MESSAGE, SESSION);
-        assertThat(result.success()).isTrue();
-        // merge=true means no deleteByUserId
         verify(todoRepository, never()).deleteByUserId(any());
+    }
+
+    @Test
+    void todo_contentExceedingMax_returnsFail() {
+        TodoTool tool = new TodoTool(todoRepository);
+        String longContent = "x".repeat(TodoTool.MAX_CONTENT_CHARS + 1);
+        ToolResult result = tool.execute(
+            "{\"todos\":[{\"id\":\"1\",\"content\":\"" + longContent + "\",\"status\":\"pending\"}]}",
+            LAST_MESSAGE, SESSION);
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("exceeds");
     }
 
     @Test
@@ -447,21 +405,6 @@ class MemoryTodoBranchTest {
         assertThat(result.content()).contains("Task1");
     }
 
-    @Test
-    void todo_updateOnlyPriority_updatesPriority() {
-        UUID todoId = UUID.randomUUID();
-        TodoEntity existing = new TodoEntity();
-        existing.setId(todoId);
-        existing.setUserId(USER_ID);
-        existing.setTitle("Title");
-        existing.setStatus("pending");
-        when(todoRepository.findById(todoId)).thenReturn(Optional.of(existing));
-
-        TodoTool tool = new TodoTool(todoRepository);
-        ToolResult result = tool.execute(
-            "{\"action\":\"update\",\"id\":\"" + todoId + "\",\"priority\":\"high\"}",
-            LAST_MESSAGE, SESSION);
-        assertThat(result.success()).isTrue();
-        assertThat(existing.getPriority()).isEqualTo("high");
-    }
+    // Removed: todo_updateOnlyPriority_updatesPriority — Hermes-parity schema
+    // has no 'priority' field; only {id, content, status} are supported.
 }
