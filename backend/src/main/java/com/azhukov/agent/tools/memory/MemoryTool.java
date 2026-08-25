@@ -9,6 +9,8 @@ import com.azhukov.agent.core.memory.WriteApprovalGate;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -77,6 +79,12 @@ public class MemoryTool implements ToolHandler {
         MemoryArgs args = ToolHandler.parseJson(arguments, MemoryArgs.class);
         String target = args.target() != null && !args.target().isBlank() ? args.target() : "memory";
 
+        // Hermes parity (memory_tool.py:1115-1117): accept new_text as alias for content.
+        // If content is null/blank and new_text is set, use new_text.
+        String effectiveContent = (args.content() != null && !args.content().isBlank())
+            ? args.content()
+            : args.new_text();
+
         // H4: Validate target against allowed enum
         if (!VALID_TARGETS.contains(target.toLowerCase())) {
             return ToolResult.fail("Invalid target: '" + target + "'. Must be one of: " + VALID_TARGETS);
@@ -100,10 +108,15 @@ public class MemoryTool implements ToolHandler {
             return buildSuccessResponse(session, target, null);
         }
 
+        // Resolve new_text alias for single-op path.
+        MemoryArgs effectiveArgs = new MemoryArgs(
+            args.action(), args.target(), effectiveContent, args.old_text(), args.new_text(),
+            args.limit(), args.operations());
+
         return switch (args.action().toLowerCase()) {
-            case "add" -> doAdd(session, target, args, provenance);
-            case "replace" -> doReplace(session, target, args, provenance);
-            case "remove" -> doRemove(session, target, args, provenance);
+            case "add" -> doAdd(session, target, effectiveArgs, provenance);
+            case "replace" -> doReplace(session, target, effectiveArgs, provenance);
+            case "remove" -> doRemove(session, target, effectiveArgs, provenance);
             default -> ToolResult.fail("Unknown action: " + args.action());
         };
     }
@@ -132,9 +145,13 @@ public class MemoryTool implements ToolHandler {
 
         List<MemoryProvider.MemoryBatchOperation> batch = new ArrayList<>(operations.size());
         for (MemoryOperation op : operations) {
+            // Hermes parity (memory_tool.py:626): accept new_text as alias for content in batch ops.
+            String opContent = (op != null && op.content() != null && !op.content().isBlank())
+                ? op.content()
+                : (op != null ? op.new_text() : null);
             batch.add(new MemoryProvider.MemoryBatchOperation(
                 op == null ? null : op.action(),
-                op == null ? null : op.content(),
+                opContent,
                 op == null ? null : op.old_text()));
         }
         try {
@@ -283,16 +300,18 @@ public class MemoryTool implements ToolHandler {
     public record MemoryArgs(
         @ToolParam(description = "The action to perform. Omit when using 'operations' array.", required = false, enumValues = {"add", "replace", "remove"}) String action,
         @ToolParam(description = "Which memory store: 'memory' for personal notes, 'user' for user profile.", enumValues = {"memory", "user"}, required = true) String target,
-        @ToolParam(description = "The entry content. Required for 'add' and 'replace'.", required = false) String content,
-        @ToolParam(description = "Short unique substring identifying the entry to replace or remove.", required = false) String old_text,
+        @ToolParam(description = "The entry content. Required for 'add' and 'replace'. Alias: 'new_text' is also accepted (mirrors old_text).", required = false) String content,
+        @JsonProperty("old_text") String old_text,
+        @JsonProperty("new_text") @JsonAlias("new_text") String new_text,
         @ToolParam(description = "Max results for read", required = false) int limit,
-        @ToolParam(description = "Batch shape: a list of operations applied atomically in one call (all-or-nothing). Each item: {action, content?, old_text?}. When provided, the single action/content/old_text fields are ignored.", required = false)
+        @ToolParam(description = "Batch shape: a list of operations applied atomically in one call (all-or-nothing). Each item: {action, content?, old_text?, new_text?}. When provided, the single action/content/old_text fields are ignored.", required = false)
         List<MemoryOperation> operations
     ) {}
 
     public record MemoryOperation(
         @ToolParam(description = "Action: add, replace, or remove") String action,
-        @ToolParam(description = "Entry content for add/replace", required = false) String content,
-        @ToolParam(description = "Substring identifying entry to replace/remove", required = false) String old_text
+        @ToolParam(description = "Entry content for add/replace. Alias: 'new_text'.", required = false) String content,
+        @JsonProperty("old_text") String old_text,
+        @JsonProperty("new_text") @JsonAlias("new_text") String new_text
     ) {}
 }
