@@ -49,6 +49,10 @@ public class TerminalTool implements ToolHandler {
     // claim "current working directory persists between calls" is a lie.
     private static final java.util.concurrent.ConcurrentHashMap<UUID, String> SESSION_CWD = new java.util.concurrent.ConcurrentHashMap<>();
 
+    // Hermes parity: track per-session exported env vars so that
+    // `export FOO=bar` in one call persists to the next.
+    private static final java.util.concurrent.ConcurrentHashMap<UUID, java.util.Map<String, String>> SESSION_ENV = new java.util.concurrent.ConcurrentHashMap<>();
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         TerminalArgs args = ToolHandler.parseJson(arguments, TerminalArgs.class);
@@ -153,11 +157,15 @@ public class TerminalTool implements ToolHandler {
             // Hermes parity (terminal_tool.py:3559): track session cwd by
             // appending a marker + pwd after the command. The marker lets us
             // extract the post-command cwd and persist it for the next call.
+            // Also capture exported env vars by printing them after the command.
             // Only for foreground non-PTY commands (PTY output is messy).
             String cwdMarker = null;
             if (!usePty && sessionId != null) {
                 cwdMarker = "\n__CWD_MARKER__:";
-                pb = new ProcessBuilder("bash", "-c", command + "; printf '" + cwdMarker + "' && pwd");
+                // Capture both cwd and exported env vars after the command runs.
+                // env_marker uses a unique format unlikely to appear in command output.
+                String envCapture = "; printf '" + cwdMarker + "' && pwd && printf '\\n__ENV_MARKER__\\n' && env -0";
+                pb = new ProcessBuilder("bash", "-c", command + envCapture);
             } else if (usePty) {
                 pb = new ProcessBuilder("script", "-qec", command, "/dev/null");
             } else {
@@ -184,6 +192,15 @@ public class TerminalTool implements ToolHandler {
                 }
             }
             pb.redirectErrorStream(true);
+
+            // Hermes parity: apply previously exported env vars to this process.
+            if (sessionId != null) {
+                java.util.Map<String, String> savedEnv = SESSION_ENV.get(sessionId);
+                if (savedEnv != null && !savedEnv.isEmpty()) {
+                    pb.environment().putAll(savedEnv);
+                }
+            }
+
             process = pb.start();
 
             // Start reading output in a separate thread concurrent with waitFor()
@@ -254,13 +271,32 @@ public class TerminalTool implements ToolHandler {
             output = AnsiStrip.strip(output);
 
             // Hermes parity (terminal_tool.py:3559): extract post-command cwd
-            // from the marker and persist it for the next call.
+            // and exported env vars from markers and persist for the next call.
             if (cwdMarker != null) {
                 int markerIdx = output.indexOf("__CWD_MARKER__:");
                 if (markerIdx >= 0) {
-                    String postCwd = output.substring(markerIdx + "__CWD_MARKER__:".length()).trim();
-                    // Remove the marker line(s) from the visible output
-                    output = output.substring(0, markerIdx).trim();
+                    String afterMarker = output.substring(markerIdx + "__CWD_MARKER__:".length());
+                    // cwd is the first line after the marker
+                    int newlineIdx = afterMarker.indexOf('\n');
+                    String postCwd = newlineIdx >= 0
+                        ? afterMarker.substring(0, newlineIdx).trim()
+                        : afterMarker.trim();
+                    // Check for env marker
+                    int envMarkerIdx = output.indexOf("__ENV_MARKER__");
+                    if (envMarkerIdx >= 0) {
+                        // Everything after __ENV_MARKER__\n is env -0 output
+                        String envBlob = output.substring(envMarkerIdx + "__ENV_MARKER__\n".length());
+                        parseAndStoreEnv(sessionId, envBlob);
+                        // Remove env marker section from visible output
+                        output = output.substring(0, envMarkerIdx).trim();
+                    } else {
+                        // Remove cwd marker from visible output
+                        output = output.substring(0, markerIdx).trim();
+                    }
+                    // Also remove the cwd marker line if env marker was found after it
+                    if (envMarkerIdx >= 0 && markerIdx < envMarkerIdx) {
+                        output = output.substring(0, markerIdx).trim();
+                    }
                     if (!postCwd.isEmpty() && new java.io.File(postCwd).isDirectory()) {
                         SESSION_CWD.put(sessionId, postCwd);
                         actualCwd = postCwd;
@@ -307,6 +343,33 @@ public class TerminalTool implements ToolHandler {
 
     private String redact(String output) {
         return redactor.redact(output);
+    }
+
+    /**
+     * Hermes parity: parse {@code env -0} output (NUL-separated KEY=VALUE entries)
+     * and store them for the next terminal call. Only stores non-system env vars
+     * that are likely user-set (exported in the shell session).
+     */
+    private void parseAndStoreEnv(UUID sessionId, String envBlob) {
+        if (envBlob == null || envBlob.isEmpty()) return;
+        // env -0 produces NUL-separated KEY=VALUE entries
+        String[] entries = envBlob.split("\0");
+        java.util.Map<String, String> envMap = new java.util.HashMap<>();
+        for (String entry : entries) {
+            int eqIdx = entry.indexOf('=');
+            if (eqIdx > 0) {
+                String key = entry.substring(0, eqIdx);
+                String value = entry.substring(eqIdx + 1);
+                // Skip internal/system vars that shouldn't be persisted
+                if (!key.startsWith("_") && !key.equals("PWD")
+                    && !key.equals("SHLVL") && !key.equals("_")) {
+                    envMap.put(key, value);
+                }
+            }
+        }
+        if (!envMap.isEmpty()) {
+            SESSION_ENV.put(sessionId, java.util.Map.copyOf(envMap));
+        }
     }
 
     /**
