@@ -465,7 +465,7 @@ class DefaultPromptBuilderTest {
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, constants);
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
 
-        assertThat(msg.content()).contains("Model-Specific Guidance (Google)"); // Google guidance header unchanged
+        assertThat(msg.content()).contains("Google model operational directives"); // Google guidance header
         assertThat(msg.content()).contains("Absolute paths");
         assertThat(msg.content()).contains("Verify first");
         assertThat(msg.content()).contains("Dependency checks");

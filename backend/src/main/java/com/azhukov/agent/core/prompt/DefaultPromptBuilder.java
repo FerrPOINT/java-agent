@@ -53,6 +53,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
     /** Model name prefixes indicating OpenAI family (GPT, o1/o3 reasoning, Codex). */
     static final Set<String> OPENAI_FAMILY_PREFIXES = Set.of("gpt", "o1", "o3", "codex", "grok");
 
+    /** Hermes parity (prompt_builder.py EXECUTION_GUIDANCE_MODELS): models that
+     *  need execution-discipline guidance (finish the job, don't fabricate). */
+    static final Set<String> EXECUTION_GUIDANCE_PREFIXES = Set.of(
+        "gpt", "codex", "grok", "deepseek", "kimi", "qwen", "glm", "minimax", "mimo", "mistral"
+    );
+
     /** Model name prefixes indicating Google family (Gemini, Gemma). */
     static final Set<String> GOOGLE_FAMILY_PREFIXES = Set.of("gemini", "gemma");
 
@@ -337,12 +343,14 @@ public class DefaultPromptBuilder implements PromptBuilder {
      * Injected into the system prompt when the configured model belongs to the Google family.
      */
     static final String GOOGLE_MODEL_GUIDANCE = """
-        ## Model-Specific Guidance (Google)
-        - **Absolute paths**: Always use absolute file paths in tool calls. Relative paths may not resolve correctly.
-        - **Verify first**: Before making changes, verify the current state by reading files or checking existing output. Do not assume state from prior context.
-        - **Dependency checks**: Before running builds, tests, or scripts, verify required dependencies are installed and available.
-        - **Conciseness**: Keep responses concise. Avoid restating the task or summarizing what you will do — just do it.
-        - **Keep going**: Work autonomously until the task is fully resolved. Don't stop after a single step.""";
+        # Google model operational directives
+        Follow these operational rules strictly:
+        - **Absolute paths:** Always construct and use absolute file paths for all file system operations. Combine the project root with relative paths.
+        - **Verify first:** Use read_file/search_files to check file contents and project structure before making changes. Never guess at file contents.
+        - **Dependency checks:** Never assume a library is available. Check package.json, requirements.txt, Cargo.toml, etc. before importing.
+        - **Conciseness:** Keep explanatory text brief — a few sentences, not paragraphs. Focus on actions and results over narration.
+        - **Non-interactive commands:** Use flags like -y, --yes, --non-interactive to prevent CLI tools from hanging on prompts.
+        - **Keep going:** Work autonomously until the task is fully resolved. Don't stop with a plan — execute it.""";
 
     private final AgentProperties properties;
     private final ToolRegistry toolRegistry;
@@ -506,14 +514,23 @@ public class DefaultPromptBuilder implements PromptBuilder {
      */
     String getModelGuidance() {
         String family = detectModelFamily();
-        if (family == null) {
-            return "";
+        String modelName = properties.getModel().getModelName();
+        String lowerModel = modelName != null ? modelName.toLowerCase() : "";
+
+        // Google family gets its own operational directives
+        if ("google".equals(family)) {
+            return GOOGLE_MODEL_GUIDANCE;
         }
-        return switch (family) {
-            case "openai" -> OPENAI_MODEL_GUIDANCE;
-            case "google" -> GOOGLE_MODEL_GUIDANCE;
-            default -> "";
-        };
+        // OpenAI family gets OpenAI-specific guidance
+        if ("openai".equals(family)) {
+            return OPENAI_MODEL_GUIDANCE;
+        }
+        // Hermes parity: execution-discipline models (deepseek, kimi, qwen, glm, etc.)
+        // get the OpenAI-style execution guidance — same "finish the job" message
+        if (EXECUTION_GUIDANCE_PREFIXES.stream().anyMatch(lowerModel::startsWith)) {
+            return OPENAI_MODEL_GUIDANCE;
+        }
+        return "";
     }
 
     /**
