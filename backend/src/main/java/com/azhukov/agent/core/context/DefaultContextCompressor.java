@@ -217,6 +217,10 @@ public class DefaultContextCompressor implements ContextCompressor {
  /** SessionRepository for session rotation — non-final to avoid breaking existing constructor signature. */
  // Finding 5.1: Kept as non-final with setter because adding to the @RequiredArgsConstructor
  // would break ~49 test call sites that use the 3-arg constructor. The setter is called
+
+ /** Hermes parity: redact secrets in compression content (_redact_compaction_text). */
+ @org.springframework.beans.factory.annotation.Autowired(required = false)
+ private com.azhukov.agent.core.security.SecretRedactor secretRedactor;
  // by the @Bean factory after construction. This is a known trade-off documented in the audit.
  // WARNING 2: volatile — the setter is called from a different thread (Spring @Bean factory)
  // than the readers (turn loop threads), so visibility must be guaranteed.
@@ -639,6 +643,12 @@ public class DefaultContextCompressor implements ContextCompressor {
      // summary generation takes longer than the configured budget, fall back to
      // fallbackSummarize() to ensure compression completes without hanging.
      String summary = summarizeWithTimeout(boundSummaryInput(summaryInput.toString()), summaryBudget);
+
+     // Hermes parity: _redact_compaction_text — redact secrets from the
+     // summary output so credentials never persist in the compressed context.
+     if (secretRedactor != null) {
+         summary = secretRedactor.redact(summary);
+     }
 
      List<Message> compressed = new ArrayList<>();
      // Preserve protected head messages (includes system message)
