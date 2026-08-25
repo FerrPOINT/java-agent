@@ -180,7 +180,7 @@ class CronJobToolBranchTest {
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"pause\"}", assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("name is required");
+        assertThat(result.error()).contains("Cron job not found: null");
     }
 
     @Test
@@ -212,7 +212,7 @@ class CronJobToolBranchTest {
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"resume\"}", assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("name is required");
+        assertThat(result.error()).contains("Cron job not found: null");
     }
 
     @Test
@@ -262,7 +262,7 @@ class CronJobToolBranchTest {
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"remove\"}", assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("name is required");
+        assertThat(result.error()).contains("Cron job not found: null");
     }
 
     @Test
@@ -308,7 +308,7 @@ class CronJobToolBranchTest {
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"run\"}", assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("name is required");
+        assertThat(result.error()).contains("Cron job not found: null");
     }
 
     @Test

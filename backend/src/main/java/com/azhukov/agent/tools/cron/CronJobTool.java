@@ -8,6 +8,7 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -56,7 +57,7 @@ public class CronJobTool implements ToolHandler {
         }
         try {
             CronJobEntity entity = cronJobService.create(
-                args.name(), args.schedule(), args.prompt(), args.deliverTo(),
+                args.name(), args.schedule(), args.prompt(), args.deliver(),
                 args.skills(), args.contextFrom(),
                 args.repeat(),
                 args.script(), args.noAgent() != null && args.noAgent(),
@@ -84,10 +85,9 @@ public class CronJobTool implements ToolHandler {
     }
 
     private ToolResult pauseJob(CronJobArgs args) {
-        if (args.name() == null || args.name().isBlank()) return ToolResult.fail("name is required");
+        Optional<CronJobEntity> job = resolveJob(args);
+        if (job.isEmpty()) return ToolResult.fail(jobNotFoundMsg(args));
         try {
-            Optional<CronJobEntity> job = cronJobService.findByName(args.name());
-            if (job.isEmpty()) return ToolResult.fail("Cron job not found: " + args.name());
             CronJobEntity entity = cronJobService.pause(job.get().getId());
             return ToolResult.ok("Paused cron job: " + entity.getName());
         } catch (Exception e) {
@@ -96,10 +96,9 @@ public class CronJobTool implements ToolHandler {
     }
 
     private ToolResult resumeJob(CronJobArgs args) {
-        if (args.name() == null || args.name().isBlank()) return ToolResult.fail("name is required");
+        Optional<CronJobEntity> job = resolveJob(args);
+        if (job.isEmpty()) return ToolResult.fail(jobNotFoundMsg(args));
         try {
-            Optional<CronJobEntity> job = cronJobService.findByName(args.name());
-            if (job.isEmpty()) return ToolResult.fail("Cron job not found: " + args.name());
             CronJobEntity entity = cronJobService.resume(job.get().getId());
             return ToolResult.ok("Resumed cron job: " + entity.getName());
         } catch (Exception e) {
@@ -108,22 +107,20 @@ public class CronJobTool implements ToolHandler {
     }
 
     private ToolResult removeJob(CronJobArgs args) {
-        if (args.name() == null || args.name().isBlank()) return ToolResult.fail("name is required");
+        Optional<CronJobEntity> job = resolveJob(args);
+        if (job.isEmpty()) return ToolResult.fail(jobNotFoundMsg(args));
         try {
-            Optional<CronJobEntity> job = cronJobService.findByName(args.name());
-            if (job.isEmpty()) return ToolResult.fail("Cron job not found: " + args.name());
             cronJobService.remove(job.get().getId());
-            return ToolResult.ok("Removed cron job: " + args.name());
+            return ToolResult.ok("Removed cron job: " + job.get().getName());
         } catch (Exception e) {
             return ToolResult.fail("Failed to remove cron job: " + e.getMessage());
         }
     }
 
     private ToolResult runJob(CronJobArgs args) {
-        if (args.name() == null || args.name().isBlank()) return ToolResult.fail("name is required");
+        Optional<CronJobEntity> job = resolveJob(args);
+        if (job.isEmpty()) return ToolResult.fail(jobNotFoundMsg(args));
         try {
-            Optional<CronJobEntity> job = cronJobService.findByName(args.name());
-            if (job.isEmpty()) return ToolResult.fail("Cron job not found: " + args.name());
             CronJobEntity entity = cronJobService.runNow(job.get().getId());
             return ToolResult.ok("Triggered cron job: " + entity.getName());
         } catch (Exception e) {
@@ -132,12 +129,11 @@ public class CronJobTool implements ToolHandler {
     }
 
     private ToolResult updateJob(CronJobArgs args) {
-        if (args.name() == null || args.name().isBlank()) return ToolResult.fail("name is required");
+        Optional<CronJobEntity> job = resolveJob(args);
+        if (job.isEmpty()) return ToolResult.fail(jobNotFoundMsg(args));
         try {
-            Optional<CronJobEntity> job = cronJobService.findByName(args.name());
-            if (job.isEmpty()) return ToolResult.fail("Cron job not found: " + args.name());
             CronJobEntity entity = cronJobService.update(
-                job.get().getId(), args.name(), args.schedule(), args.prompt(), args.deliverTo(), null,
+                job.get().getId(), args.name(), args.schedule(), args.prompt(), args.deliver(), null,
                 args.skills(), args.contextFrom(),
                 args.repeat(),
                 args.script(), args.noAgent(),
@@ -148,6 +144,31 @@ public class CronJobTool implements ToolHandler {
         } catch (Exception e) {
             return ToolResult.fail("Failed to update cron job: " + e.getMessage());
         }
+    }
+
+    /**
+     * Hermes parity: resolve a job by job_id first (as the tool description says),
+     * falling back to name if job_id is absent.
+     */
+    private Optional<CronJobEntity> resolveJob(CronJobArgs args) {
+        if (args.jobId() != null && !args.jobId().isBlank()) {
+            try {
+                return cronJobService.findById(java.util.UUID.fromString(args.jobId()));
+            } catch (IllegalArgumentException e) {
+                return Optional.empty();
+            }
+        }
+        if (args.name() != null && !args.name().isBlank()) {
+            return cronJobService.findByName(args.name());
+        }
+        return Optional.empty();
+    }
+
+    private static String jobNotFoundMsg(CronJobArgs args) {
+        if (args.jobId() != null && !args.jobId().isBlank()) {
+            return "Cron job not found: job_id=" + args.jobId();
+        }
+        return "Cron job not found: " + args.name();
     }
 
     private String formatJob(CronJobEntity job) {
@@ -184,10 +205,11 @@ public class CronJobTool implements ToolHandler {
 
     record CronJobArgs(
         @ToolParam(description = "One of: create, list, update, pause, resume, remove, run.", required = true) String action,
+        @ToolParam(description = "Required for update/pause/resume/remove/run", required = false) @JsonProperty("job_id") @JsonAlias("jobId") String jobId,
         @ToolParam(description = "Human-friendly job name.", required = false) String name,
         @ToolParam(description = "Schedule: '30m', 'every 2h', '0 9 * * *', or ISO timestamp.", required = false) String schedule,
         @ToolParam(description = "Self-contained prompt for the agent to execute each tick.", required = false) String prompt,
-        @JsonProperty("deliver_to") String deliverTo,
+        @JsonProperty("deliver") @JsonAlias({"deliver_to", "deliverTo"}) String deliver,
         @ToolParam(description = "Ordered list of skill names to load before executing the prompt.", required = false) String skills,
         @JsonProperty("context_from") String contextFrom,
         @ToolParam(description = "Repeat count (omit for defaults).", required = false) Integer repeat,

@@ -352,6 +352,10 @@ public class CronJobService {
         return cronJobRepository.findByName(name);
     }
 
+    public Optional<CronJobEntity> findById(UUID id) {
+        return cronJobRepository.findById(id);
+    }
+
     // ── Scheduling ──
 
     private void scheduleJob(CronJobEntity job) {
