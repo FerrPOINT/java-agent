@@ -49,10 +49,15 @@ public class WebExtractTool implements ToolHandler {
             return ToolResult.fail("URLs are required");
         }
 
+        // Use per-call char_limit if provided, otherwise fall back to config default
+        int effectiveMaxChars = args.char_limit() != null && args.char_limit() > 0
+            ? args.char_limit() : maxChars;
+
         StringBuilder sb = new StringBuilder();
         for (String url : args.urls()) {
             String trimmed = url.trim();
             if (trimmed.isBlank()) continue;
+            if (args.urls().size() > 5) break; // Hermes parity: max 5 URLs per call
             sb.append("--- URL: ").append(trimmed).append(" ---\n");
             if (!urlSafety.isUrlAllowed(trimmed)) {
                 sb.append("URL blocked by safety policy\n\n");
@@ -66,8 +71,8 @@ public class WebExtractTool implements ToolHandler {
         }
 
         String text = sb.toString();
-        if (text.length() > maxChars) {
-            text = text.substring(0, maxChars) + "\n[truncated]";
+        if (text.length() > effectiveMaxChars) {
+            text = text.substring(0, effectiveMaxChars) + "\n[truncated]";
         }
         return ToolResult.ok(redactor.redact(text));
     }
@@ -103,6 +108,7 @@ public class WebExtractTool implements ToolHandler {
 
     // M12: Changed from comma-separated String to List<String> for proper JSON array support
     public record ExtractArgs(
-        @ToolParam(description = "List of URLs to extract content from") List<String> urls
+        @ToolParam(description = "List of URLs to extract content from (max 5 URLs per call)") List<String> urls,
+        @ToolParam(description = "Optional per-page character budget. Pages larger than this return a head+tail window with a footer telling you the full text's saved file path. Default 15000.", required = false) Integer char_limit
     ) {}
 }
