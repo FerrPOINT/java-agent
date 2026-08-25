@@ -4,6 +4,7 @@ import com.azhukov.agent.service.CronJobService;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
+import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
@@ -182,18 +183,18 @@ public class CronJobTool implements ToolHandler {
     }
 
     record CronJobArgs(
-        String action,
-        String name,
-        String schedule,
-        String prompt,
+        @ToolParam(description = "One of: create, list, update, pause, resume, remove, run.", required = true) String action,
+        @ToolParam(description = "Human-friendly job name.", required = false) String name,
+        @ToolParam(description = "Schedule: '30m', 'every 2h', '0 9 * * *', or ISO timestamp.", required = false) String schedule,
+        @ToolParam(description = "Self-contained prompt for the agent to execute each tick.", required = false) String prompt,
         @JsonProperty("deliver_to") String deliverTo,
-        String skills,
+        @ToolParam(description = "Ordered list of skill names to load before executing the prompt.", required = false) String skills,
         @JsonProperty("context_from") String contextFrom,
-        Integer repeat,
-        String script,
+        @ToolParam(description = "Repeat count (omit for defaults).", required = false) Integer repeat,
+        @ToolParam(description = "Script path that runs each tick (relative to ~/.hermes/scripts/).", required = false) String script,
         @JsonProperty("no_agent") Boolean noAgent,
         @JsonProperty("enabled_toolsets") String enabledToolsets,
-        String workdir,
+        @ToolParam(description = "Absolute working directory for the job.", required = false) String workdir,
         @JsonProperty("model_provider") String modelProvider,
         @JsonProperty("model_name") String modelName,
         @JsonProperty("base_url") String baseUrl

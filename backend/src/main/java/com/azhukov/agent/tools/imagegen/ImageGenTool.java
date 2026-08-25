@@ -6,6 +6,7 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.service.imagegen.ImageGenProvider;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
+import com.azhukov.agent.tools.ToolParam;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 
@@ -63,7 +65,9 @@ public class ImageGenTool implements ToolHandler {
     }
 
     record ImageGenArgs(
-        String prompt,
-        @JsonProperty("aspect_ratio") String aspectRatio
+        @ToolParam(description = "Text prompt describing the image to generate.") String prompt,
+        @ToolParam(description = "Aspect ratio (e.g. 1:1, 16:9, 9:16, 4:3, 3:4). Default 1:1.", required = false) @JsonProperty("aspect_ratio") String aspectRatio,
+        @ToolParam(description = "Optional source image URL for image-to-image editing (model must support edit endpoint).", required = false) @JsonProperty("image_url") String imageUrl,
+        @ToolParam(description = "Optional list of reference image URLs for multi-image editing.", required = false) @JsonProperty("reference_image_urls") List<String> referenceImageUrls
     ) {}
 }
