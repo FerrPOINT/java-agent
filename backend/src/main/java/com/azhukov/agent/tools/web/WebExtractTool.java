@@ -8,6 +8,7 @@ import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.security.UrlSafety;
+import com.vladsch.flexmark.html2md.converter.FlexmarkHtmlConverter;
 import com.azhukov.agent.core.security.Redactor;
 import org.jsoup.Connection;
 import org.jsoup.Jsoup;
@@ -94,16 +95,30 @@ public class WebExtractTool implements ToolHandler {
 
         Document doc = response.parse();
 
+        // Hermes parity: remove non-content elements before conversion
         for (Element el : doc.select("script, style, nav, header, footer, aside, form")) {
             el.remove();
         }
 
         String title = doc.title();
-        String body = doc.body() != null ? doc.body().text() : "";
-        if (title.isBlank()) {
-            return body;
+        // Hermes parity: return markdown, not flat text. flexmark preserves
+        // headings, lists, links, code blocks, tables — doc.body().text() flattened
+        // everything into a single text blob.
+        String html = doc.body() != null ? doc.body().html() : "";
+        String markdown;
+        try {
+            markdown = FlexmarkHtmlConverter.builder().build().convert(html);
+            // Trim excessive blank lines (flexmark can produce many)
+            markdown = markdown.replaceAll("\\n{3,}", "\n\n").trim();
+        } catch (Exception e) {
+            // Fallback to plain text if markdown conversion fails
+            markdown = doc.body() != null ? doc.body().text() : "";
         }
-        return "Title: " + title + "\n" + body;
+
+        if (title.isBlank()) {
+            return markdown;
+        }
+        return "# " + title + "\n\n" + markdown;
     }
 
     // M12: Changed from comma-separated String to List<String> for proper JSON array support

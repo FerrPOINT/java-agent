@@ -89,7 +89,7 @@ class WebExtractToolTest {
             ToolResult result = tool.execute("{\"urls\":[\"https://example.com\"]}", null, session());
 
             assertThat(result.success()).isTrue();
-            assertThat(result.content()).contains("Title: Hello");
+            assertThat(result.content()).contains("# Hello");
             assertThat(result.content()).contains("World");
             assertThat(result.content()).contains("--- URL: https://example.com ---");
         }
