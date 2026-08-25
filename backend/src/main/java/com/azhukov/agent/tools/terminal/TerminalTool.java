@@ -43,6 +43,12 @@ public class TerminalTool implements ToolHandler {
     // Passes an enforced cron workdir to tools through the isolated session.
     public static final String META_WORKDIR = "cron_workdir";
 
+    // Hermes parity (terminal_tool.py:1240-1276): track per-session cwd so that
+    // `cd /opt/dev` in one call persists to the next. Without this, each
+    // ProcessBuilder starts at the JVM default cwd and the tool description's
+    // claim "current working directory persists between calls" is a lie.
+    private static final java.util.concurrent.ConcurrentHashMap<UUID, String> SESSION_CWD = new java.util.concurrent.ConcurrentHashMap<>();
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         TerminalArgs args = ToolHandler.parseJson(arguments, TerminalArgs.class);
@@ -73,9 +79,17 @@ public class TerminalTool implements ToolHandler {
         int timeout = args.timeout() > 0 ? args.timeout() : properties.getTerminal().getDefaultTimeoutSeconds();
         timeout = Math.min(timeout, properties.getTerminal().getMaxTimeoutSeconds());
         // A cron workdir is an execution constraint, not advisory prompt text.
+        // Hermes parity (terminal_tool.py:2710-2740): if no explicit workdir is
+        // given, use the session's tracked cwd (from a previous `cd` command).
         String workdir = args.workdir();
         if ((workdir == null || workdir.isBlank()) && session != null) {
             workdir = session.getMetadata(META_WORKDIR);
+        }
+        if ((workdir == null || workdir.isBlank()) && session != null) {
+            String trackedCwd = SESSION_CWD.get(session.id());
+            if (trackedCwd != null && !trackedCwd.isBlank()) {
+                workdir = trackedCwd;
+            }
         }
 
         if (args.background()) {
@@ -136,10 +150,15 @@ public class TerminalTool implements ToolHandler {
         Thread outputReader = null;
         try {
             ProcessBuilder pb;
-            if (usePty) {
-                // PTY mode: use 'script' to allocate a pseudo-terminal.
-                // 'script -qec "command" /dev/null' runs the command in a PTY
-                // silently (quiet, no typescript file to /dev/null).
+            // Hermes parity (terminal_tool.py:3559): track session cwd by
+            // appending a marker + pwd after the command. The marker lets us
+            // extract the post-command cwd and persist it for the next call.
+            // Only for foreground non-PTY commands (PTY output is messy).
+            String cwdMarker = null;
+            if (!usePty && sessionId != null) {
+                cwdMarker = "\n__CWD_MARKER__:";
+                pb = new ProcessBuilder("bash", "-c", command + "; printf '" + cwdMarker + "' && pwd");
+            } else if (usePty) {
                 pb = new ProcessBuilder("script", "-qec", command, "/dev/null");
             } else {
                 pb = new ProcessBuilder("bash", "-c", command);
@@ -233,6 +252,22 @@ public class TerminalTool implements ToolHandler {
             // Hermes parity (tools/terminal_tool.py:3466): strip ANSI escapes from ALL
             // terminal output — full ECMA-48 coverage (CSI private-mode, OSC, DCS, 8-bit C1).
             output = AnsiStrip.strip(output);
+
+            // Hermes parity (terminal_tool.py:3559): extract post-command cwd
+            // from the marker and persist it for the next call.
+            if (cwdMarker != null) {
+                int markerIdx = output.indexOf("__CWD_MARKER__:");
+                if (markerIdx >= 0) {
+                    String postCwd = output.substring(markerIdx + "__CWD_MARKER__:".length()).trim();
+                    // Remove the marker line(s) from the visible output
+                    output = output.substring(0, markerIdx).trim();
+                    if (!postCwd.isEmpty() && new java.io.File(postCwd).isDirectory()) {
+                        SESSION_CWD.put(sessionId, postCwd);
+                        actualCwd = postCwd;
+                    }
+                }
+            }
+
             String redactedOutput = redact(output);
 
             // Finding 1.3: Call notifyPostExecution after process completes
