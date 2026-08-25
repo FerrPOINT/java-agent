@@ -69,4 +69,54 @@ class RuntimeFooterTest {
         String result = footer.format("model", 0, 1000, cwd);
         assertThat(result).contains("~/work");
     }
+
+    // ─── Latency support (Hermes parity) ───────────────────────────
+
+    @Test
+    void format_withLatency_includesHumanizedDuration() {
+        properties.getFooter().setEnabled(true);
+        properties.getFooter().getFields().add("latency");
+        String result = footer.format("model", 1000, 10000, "/tmp", 22);
+        assertThat(result).contains("22s");
+    }
+
+    @Test
+    void format_withLatency_under1s() {
+        properties.getFooter().setEnabled(true);
+        properties.getFooter().getFields().clear();
+        properties.getFooter().getFields().add("latency");
+        String result = footer.format("model", 0, 1000, "/tmp", 0);
+        assertThat(result).contains("<1s");
+    }
+
+    @Test
+    void format_withLatency_over1m() {
+        properties.getFooter().setEnabled(true);
+        properties.getFooter().getFields().clear();
+        properties.getFooter().getFields().add("latency");
+        String result = footer.format("model", 0, 1000, "/tmp", 125);
+        assertThat(result).contains("2m05s");
+    }
+
+    @Test
+    void format_negativeLatency_skipped() {
+        properties.getFooter().setEnabled(true);
+        properties.getFooter().getFields().clear();
+        properties.getFooter().getFields().add("latency");
+        properties.getFooter().getFields().add("model");
+        String result = footer.format("model", 0, 1000, "/tmp", -1);
+        // latency should be skipped, only model included
+        assertThat(result).contains("model");
+        assertThat(result).doesNotContain("s");
+    }
+
+    @Test
+    void formatLatency_variousValues() {
+        assertThat(RuntimeFooter.formatLatency(0)).isEqualTo("<1s");
+        assertThat(RuntimeFooter.formatLatency(1)).isEqualTo("1s");
+        assertThat(RuntimeFooter.formatLatency(59)).isEqualTo("59s");
+        assertThat(RuntimeFooter.formatLatency(60)).isEqualTo("1m00s");
+        assertThat(RuntimeFooter.formatLatency(125)).isEqualTo("2m05s");
+        assertThat(RuntimeFooter.formatLatency(3661)).isEqualTo("61m01s");
+    }
 }

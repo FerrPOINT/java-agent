@@ -189,6 +189,41 @@ public class StreamingOrchestrator {
                             properties.getWorkingDirectory()
                         );
                         String finalText = accumulated.toString();
+
+                        // Reasoning display (Hermes parity: show_reasoning).
+                        // When enabled, prepend the last reasoning/thinking block before the response.
+                        if (properties.getReasoningDisplay().isEnabled() && result.lastReasoning() != null
+                                && !result.lastReasoning().isBlank()) {
+                            String reasoning = result.lastReasoning().strip();
+                            // Collapse long reasoning to keep messages readable (Hermes: 15 lines)
+                            var lines = reasoning.split("\\n");
+                            if (lines.length > 15) {
+                                StringBuilder sb = new StringBuilder();
+                                for (int i = 0; i < 15; i++) sb.append(lines[i]).append("\n");
+                                sb.append("_... (").append(lines.length - 15).append(" more lines)_");
+                                reasoning = sb.toString();
+                            }
+                            String style = properties.getReasoningDisplay().getStyle();
+                            String reasoningBlock;
+                            if ("blockquote".equals(style)) {
+                                StringBuilder sb = new StringBuilder("> 💭 **Reasoning:**\n");
+                                for (String ln : reasoning.split("\\n")) {
+                                    sb.append(ln.isEmpty() ? ">" : "> " + ln).append("\n");
+                                }
+                                reasoningBlock = sb.toString();
+                            } else if ("subtext".equals(style)) {
+                                StringBuilder sb = new StringBuilder("-# 💭 Reasoning\n");
+                                for (String ln : reasoning.split("\\n")) {
+                                    sb.append(ln.isEmpty() ? "-#" : "-# " + ln).append("\n");
+                                }
+                                reasoningBlock = sb.toString();
+                            } else {
+                                // "code" style (default): fenced code block
+                                reasoningBlock = "💭 **Reasoning:**\n```\n" + reasoning + "\n```\n";
+                            }
+                            finalText = reasoningBlock + "\n" + finalText;
+                        }
+
                         if (!footer.isEmpty()) {
                             finalText = finalText + footer;
                         }

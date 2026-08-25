@@ -212,6 +212,15 @@ public final class MarkdownConverter {
     private static final Pattern ITALIC_PATTERN =
         Pattern.compile("(?<!\\*)(?<!\\w)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)");
 
+    // Spoiler: ||text|| → ||text|| (protect | from escaping, Hermes parity)
+    private static final Pattern SPOILER_PATTERN =
+        Pattern.compile("\\|\\|(.+?)\\|\\|");
+
+    // Blockquote: > text, >> text, >>> text at line start (Hermes parity)
+    // Also handles expandable blockquotes: **> text (Telegram MarkdownV2)
+    private static final Pattern BLOCKQUOTE_PATTERN =
+        Pattern.compile("(?m)^((?:\\*\\*)?>{1,3})\\s+(.+)$");
+
     /** Placeholder prefix for protected segments (code blocks, inline code, links, formatting). */
     private static final String PROTECT_PREFIX = "\u0000P";
     private static final String PROTECT_SUFFIX = "\u0000";
@@ -263,6 +272,12 @@ public final class MarkdownConverter {
 
         // 8. Convert italic *text* → _escaped(text)_, protect result
         text = convertItalic(text, protectedSegments);
+
+        // 8a. Convert spoiler ||text|| → ||escaped(text)|| (Hermes parity)
+        text = convertSpoiler(text, protectedSegments);
+
+        // 8b. Convert blockquotes > text → protect > from escaping (Hermes parity)
+        text = convertBlockquotes(text, protectedSegments);
 
         // 9. Escape special characters in remaining plain text
         text = escapePlain(text);
@@ -385,6 +400,44 @@ public final class MarkdownConverter {
         while (matcher.find()) {
             String content = matcher.group(1);
             String replacement = "_" + escapePlain(content) + "_";
+            String placeholder = makePlaceholder(protectedSegments.size());
+            protectedSegments.add(replacement);
+            matcher.appendReplacement(sb, Matcher.quoteReplacement(placeholder));
+        }
+        matcher.appendTail(sb);
+        return sb.toString();
+    }
+
+    /**
+     * Convert spoiler: ||text|| → ||escaped(text)|| (Hermes parity).
+     * The || markers are protected from | escaping.
+     */
+    private static String convertSpoiler(String text, List<String> protectedSegments) {
+        Matcher matcher = SPOILER_PATTERN.matcher(text);
+        StringBuffer sb = new StringBuffer();
+        while (matcher.find()) {
+            String content = matcher.group(1);
+            String replacement = "||" + escapePlain(content) + "||";
+            String placeholder = makePlaceholder(protectedSegments.size());
+            protectedSegments.add(replacement);
+            matcher.appendReplacement(sb, Matcher.quoteReplacement(placeholder));
+        }
+        matcher.appendTail(sb);
+        return sb.toString();
+    }
+
+    /**
+     * Convert blockquotes: > text, >> text, >>> text → protect > from escaping.
+     * Also handles expandable blockquotes: **> text (Telegram MarkdownV2).
+     * Hermes parity: prefix and content are protected from > escaping.
+     */
+    private static String convertBlockquotes(String text, List<String> protectedSegments) {
+        Matcher matcher = BLOCKQUOTE_PATTERN.matcher(text);
+        StringBuffer sb = new StringBuffer();
+        while (matcher.find()) {
+            String prefix = matcher.group(1);  // >, >>, >>>, **>, **>>
+            String content = matcher.group(2);
+            String replacement = prefix + " " + escapePlain(content);
             String placeholder = makePlaceholder(protectedSegments.size());
             protectedSegments.add(replacement);
             matcher.appendReplacement(sb, Matcher.quoteReplacement(placeholder));

@@ -307,4 +307,70 @@ class MarkdownConverterTest {
         String result = MarkdownConverter.convert(".*-_");
         assertThat(result).isEqualTo("\\.\\*\\-\\_");
     }
+
+    // ─── Spoiler support (Hermes parity) ───────────────────────────
+
+    @Test
+    void spoiler_convertedAndProtected() {
+        String result = MarkdownConverter.convert("||secret text||");
+        assertThat(result).isEqualTo("||secret text||");
+    }
+
+    @Test
+    void spoiler_withSpecialChars_escaped() {
+        String result = MarkdownConverter.convert("||hello.world!||");
+        assertThat(result).isEqualTo("||hello\\.world\\!||");
+    }
+
+    @Test
+    void spoiler_mixedWithBold() {
+        String result = MarkdownConverter.convert("**bold** and ||spoiler||");
+        assertThat(result).isEqualTo("*bold* and ||spoiler||");
+    }
+
+    @Test
+    void spoiler_pipeInsideText_notBroken() {
+        // || a | b || — pipe inside spoiler content should not break
+        String result = MarkdownConverter.convert("||a|b||");
+        // The | in the content is escaped as part of the spoiler content
+        assertThat(result).contains("||");
+    }
+
+    // ─── Blockquote support (Hermes parity) ───────────────────────
+
+    @Test
+    void blockquote_singleLevel_protected() {
+        String result = MarkdownConverter.convert("> quoted text");
+        // > at start of line should NOT be escaped (blockquote syntax)
+        assertThat(result).startsWith(">");
+        assertThat(result).doesNotContain("\\>");
+    }
+
+    @Test
+    void blockquote_multiLevel_protected() {
+        String result = MarkdownConverter.convert(">> nested quote");
+        assertThat(result).startsWith(">>");
+        assertThat(result).doesNotContain("\\>");
+    }
+
+    @Test
+    void blockquote_withSpecialChars_escaped() {
+        String result = MarkdownConverter.convert("> hello.world!");
+        // > is protected, but . and ! in content are escaped
+        assertThat(result).contains("hello\\.world\\!");
+        assertThat(result).doesNotContain("\\>");
+    }
+
+    @Test
+    void blockquote_expandable_protected() {
+        String result = MarkdownConverter.convert("**> expandable quote");
+        assertThat(result).startsWith("**>");
+    }
+
+    @Test
+    void blockquote_notMatchedWhenNotAtStartOfLine() {
+        String result = MarkdownConverter.convert("text > not a quote");
+        // > in the middle of text is NOT a blockquote — it's escaped
+        assertThat(result).contains("\\>");
+    }
 }

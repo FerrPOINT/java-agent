@@ -92,6 +92,7 @@ public class BotProperties {
     private boolean cronDeliveryEnabled = true;
 
     private final Footer footer = new Footer();
+    private final ReasoningDisplay reasoningDisplay = new ReasoningDisplay();
     private final Reactions reactions = new Reactions();
     private final TextBatch textBatch = new TextBatch();
     private final Group group = new Group();
@@ -163,6 +164,15 @@ public class BotProperties {
     public static class Footer {
         private boolean enabled = false;
         private final List<String> fields = new ArrayList<>(List.of("model", "context_pct", "cwd"));
+    }
+
+    @Getter
+    @Setter
+    public static class ReasoningDisplay {
+        /** Whether to prepend reasoning/thinking to the response (off by default, Hermes parity). */
+        private boolean enabled = false;
+        /** Render style: "code" (default), "blockquote", or "subtext". */
+        private String style = "code";
     }
 
     @Getter

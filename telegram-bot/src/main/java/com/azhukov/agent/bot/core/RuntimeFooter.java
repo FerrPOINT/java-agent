@@ -30,6 +30,20 @@ public class RuntimeFooter {
      * @return formatted footer string, or empty string if disabled or no fields
      */
     public String format(String model, int contextTokens, int contextLength, String cwd) {
+        return format(model, contextTokens, contextLength, cwd, -1);
+    }
+
+    /**
+     * Format the footer string from runtime metadata, with optional latency.
+     *
+     * @param model           the full model name (e.g. "moonshotai/kimi-k2.6")
+     * @param contextTokens   current context tokens used
+     * @param contextLength   total context length
+     * @param cwd             current working directory path
+     * @param turnSeconds     wall-clock turn duration in seconds (negative = skip)
+     * @return formatted footer string, or empty string if disabled or no fields
+     */
+    public String format(String model, int contextTokens, int contextLength, String cwd, long turnSeconds) {
         if (!properties.getFooter().isEnabled()) {
             return "";
         }
@@ -44,6 +58,7 @@ public class RuntimeFooter {
             String value = switch (field) {
                 case "model" -> shortModelName(model);
                 case "context_pct" -> formatContextPct(contextTokens, contextLength);
+                case "latency" -> turnSeconds >= 0 ? formatLatency(turnSeconds) : null;
                 case "cwd" -> formatCwd(cwd);
                 default -> null;
             };
@@ -57,6 +72,18 @@ public class RuntimeFooter {
             return ""; // no valid fields produced output
         }
         return sb.toString();
+    }
+
+    /**
+     * Humanize a turn duration: &lt;1s, 22s, 1m05s.
+     */
+    static String formatLatency(long seconds) {
+        if (seconds < 1) return "<1s";
+        long total = Math.round(seconds);
+        if (total < 60) return total + "s";
+        long m = total / 60;
+        long sec = total % 60;
+        return String.format("%dm%02ds", m, sec);
     }
 
     /**
