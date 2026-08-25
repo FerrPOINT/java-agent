@@ -80,7 +80,7 @@ public class SpringToolRegistry implements ToolRegistry {
                     if (jp != null && !jp.value().isEmpty()) {
                         propName = jp.value();
                     }
-                    addProperty(properties, required, propName, rc.getType(), rc.getAnnotation(ToolParam.class));
+                    addProperty(properties, required, propName, rc.getType(), rc.getGenericType(), rc.getAnnotation(ToolParam.class));
                 }
             } else {
                 for (java.lang.reflect.Field field : argsClass.getDeclaredFields()) {
@@ -89,7 +89,7 @@ public class SpringToolRegistry implements ToolRegistry {
                     if (jp != null && !jp.value().isEmpty()) {
                         propName = jp.value();
                     }
-                    addProperty(properties, required, propName, field.getType(), field.getAnnotation(ToolParam.class));
+                    addProperty(properties, required, propName, field.getType(), field.getGenericType(), field.getAnnotation(ToolParam.class));
                 }
             }
         }
@@ -102,22 +102,62 @@ public class SpringToolRegistry implements ToolRegistry {
     }
 
     private void addProperty(Map<String, Object> properties, List<String> required,
-                             String name, Class<?> type, ToolParam param) {
+                             String name, Class<?> type, java.lang.reflect.Type genericType, ToolParam param) {
         Map<String, Object> field = new LinkedHashMap<>();
         field.put("type", param != null && !param.type().isBlank() ? param.type() : mapType(type));
         field.put("description", param != null ? param.description() : "");
         if (param != null && param.enumValues().length > 0) {
             field.put("enum", java.util.Arrays.asList(param.enumValues()));
         }
+        // Hermes parity: for array types backed by a List<Record>, generate
+        // "items" with nested object properties so the model knows the element
+        // structure (e.g. tasks[] → {goal, context, role, output_schema}).
+        if ("array".equals(field.get("type")) && genericType instanceof java.lang.reflect.ParameterizedType pt) {
+            java.lang.reflect.Type[] typeArgs = pt.getActualTypeArguments();
+            if (typeArgs.length > 0 && typeArgs[0] instanceof Class<?> elementClass && elementClass.isRecord()) {
+                Map<String, Object> itemsSchema = buildRecordSchema(elementClass);
+                if (itemsSchema != null) {
+                    field.put("items", itemsSchema);
+                }
+            }
+        }
         properties.put(name, field);
-        // Hermes parity: when @ToolParam is absent, the parameter defaults to
-        // OPTIONAL (not required). Previously, all unannotated record components
-        // were marked required=true with description="", making the model think
-        // it must supply 7-15 parameters for tools like terminal/cronjob/session_search.
-        // Only explicitly marked required=true (default for @ToolParam) adds to required.
         if (param != null && param.required()) {
             required.add(name);
         }
+    }
+
+    /**
+     * Build a JSON schema fragment for a record type's properties.
+     * Returns {"type":"object","properties":{...}} or null if the record
+     * has no components.
+     */
+    private Map<String, Object> buildRecordSchema(Class<?> recordClass) {
+        Map<String, Object> props = new LinkedHashMap<>();
+        List<String> req = new ArrayList<>();
+        for (java.lang.reflect.RecordComponent rc : recordClass.getRecordComponents()) {
+            String propName = rc.getName();
+            com.fasterxml.jackson.annotation.JsonProperty jp = rc.getAnnotation(com.fasterxml.jackson.annotation.JsonProperty.class);
+            if (jp != null && !jp.value().isEmpty()) {
+                propName = jp.value();
+            }
+            ToolParam tp = rc.getAnnotation(ToolParam.class);
+            Map<String, Object> field = new LinkedHashMap<>();
+            field.put("type", tp != null && !tp.type().isBlank() ? tp.type() : mapType(rc.getType()));
+            field.put("description", tp != null ? tp.description() : "");
+            if (tp != null && tp.enumValues().length > 0) {
+                field.put("enum", java.util.Arrays.asList(tp.enumValues()));
+            }
+            props.put(propName, field);
+            if (tp != null && tp.required()) {
+                req.add(propName);
+            }
+        }
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", props);
+        schema.put("required", req);
+        return schema;
     }
 
     private String mapType(Class<?> type) {
