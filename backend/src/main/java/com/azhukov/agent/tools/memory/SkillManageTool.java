@@ -290,17 +290,21 @@ public class SkillManageTool implements ToolHandler {
         String action,
         @ToolParam(description = "Skill name (lowercase, hyphens)", required = true)
         String name,
-        @ToolParam(description = "Skill markdown content (required for create/update/patch)", required = false)
-        String content,
-        @ToolParam(description = "Text to find and replace (for patch action)", required = false)
-        String old_text,
-        @ToolParam(description = "Replacement text (for patch action)", required = false)
-        String new_text,
+        @ToolParam(description = "Skill markdown content (required for create/update). For write_file, this is the file content (alias: file_content).", required = false)
+        @com.fasterxml.jackson.annotation.JsonAlias("file_content") String content,
+        @ToolParam(description = "Text to find and replace (for patch action). Alias: old_string.", required = false)
+        @com.fasterxml.jackson.annotation.JsonProperty("old_text")
+        @com.fasterxml.jackson.annotation.JsonAlias("old_string") String old_text,
+        @ToolParam(description = "Replacement text (for patch action). Alias: new_string.", required = false)
+        @com.fasterxml.jackson.annotation.JsonProperty("new_text")
+        @com.fasterxml.jackson.annotation.JsonAlias("new_string") String new_text,
         @ToolParam(description = "File path under references/, templates/, or scripts/ (for write_file/remove_file/patch with file)", required = false)
         String file_path,
         @ToolParam(description = "Replace all occurrences (default false = first only) (for patch action)", required = false)
         Boolean replace_all,
         @ToolParam(description = "Skill name that absorbs this skill during deletion (for delete action, optional)", required = false)
-        String absorbed_into
+        String absorbed_into,
+        @ToolParam(description = "Optional category subdirectory for create (e.g. 'devops'). Maps to skills/<category>/<name>/.", required = false)
+        String category
     ) {}
 }
