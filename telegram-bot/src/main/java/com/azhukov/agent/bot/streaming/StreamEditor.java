@@ -597,6 +597,12 @@ public class StreamEditor {
         // Stop heartbeat
         stopHeartbeat(session);
 
+        // Hermes parity: scrub think tags BEFORE silence marker check.
+        // Hermes (stream_consumer.py:968) works with already-scrubbed accumulated
+        // display text, then suppresses the marker. Java was checking raw text
+        // first, so a NO_REPLY wrapped in <think> tags would leak to the user.
+        finalText = scrubThinkFinal(session, finalText);
+
         // Silence marker suppression (Hermes parity: _is_intentional_silence_response).
         // If the final text is a silence marker, retract the streaming message instead
         // of showing NO_REPLY/[SILENT]/*** to the user.
@@ -617,7 +623,8 @@ public class StreamEditor {
         // real message arrives. Try rich message delivery first (same as the
         // edit-based finalize path), then fall back to MarkdownV2 sendMessage.
         if (session.useDraftStreaming) {
-            String scrubbed = scrubThinkFinal(session, finalText);
+            // finalText already scrubbed above (before silence marker check)
+            String scrubbed = finalText;
 
             // P1: Try rich message delivery first
             if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
@@ -674,7 +681,8 @@ public class StreamEditor {
         long effectiveMessageId = currentMsg >= 0 ? currentMsg : messageId;
 
         // B6: Final scrub — also flush any remaining think-block state
-        String scrubbed = scrubThinkFinal(session, finalText);
+        // finalText already scrubbed above (before silence marker check)
+        String scrubbed = finalText;
 
         // Check fresh-final: if streaming exceeded timeout, delete old message
         // and send a new one
@@ -1290,12 +1298,22 @@ public class StreamEditor {
          * If we were inside a think block, return empty (the think content
          * was suppressed and never displayed).
          */
+        /**
+         * Flush any remaining state. Hermes parity (stream_consumer.py:830):
+         * if there's a pending partial opening tag that didn't turn out to be
+         * a think tag, release it as visible text instead of silently dropping it.
+         */
         String flush() {
+            String released = "";
+            if (pendingTag.length() > 0 && !insideThinkBlock) {
+                // Partial tag that was never confirmed as a think tag — release it
+                released = pendingTag.toString();
+            }
             insideThinkBlock = false;
             pendingTag.setLength(0);
             pendingClosingTag = null;
             accumulatedBefore = "";
-            return "";
+            return released;
         }
 
         /**
@@ -1415,16 +1433,25 @@ public class StreamEditor {
         return scrubThink(session, text);
     }
 
+    /**
+     * Stateless think-tag scrubbing for streaming display.
+     * Uses regex on the full accumulated text — safe because it doesn't
+     * maintain cross-call state. The stateful ThinkScrubber is reserved
+     * for finalizeStream where boundary precision matters.
+     *
+     * Hermes parity: Hermes (stream_consumer.py) feeds delta to a stateful
+     * filter, but java-agent passes accumulated text per token. Using the
+     * stateful scrubber on accumulated text causes state corruption
+     * (insideThinkBlock persists across re-processing). The regex approach
+     * is equivalent for display purposes and avoids the state bug.
+     */
     String scrubThink(StreamSession session, String text) {
         if (text == null || text.isEmpty()) {
             return "";
         }
-        ThinkScrubber scrubber = session.thinkScrubber;
-        if (scrubber == null) {
-            scrubber = new ThinkScrubber();
-            session.thinkScrubber = scrubber;
-        }
-        String result = scrubber.scrub(text);
+        // Stateless regex scrub — handles closed tags, orphaned open tags,
+        // and stray tags without cross-call state.
+        String result = stripThinkTagsRegex(text);
         // S-2: Strip MEDIA: tags from streaming display
         result = mediaDeliveryService.stripMediaTagsForDisplay(result);
         return result;
@@ -1449,15 +1476,19 @@ public class StreamEditor {
         if (text == null || text.isEmpty()) {
             return "";
         }
+        // Use stateful scrubber for final — processes the complete text
+        // with boundary-precise logic, then flushes any pending state.
+        // Hermes parity: flush() releases pending partial tags as visible text
+        // if they weren't confirmed as think tags (stream_consumer.py:830).
         ThinkScrubber scrubber = session.thinkScrubber;
         if (scrubber == null) {
-            // No scrubber exists (e.g. finalizeStream called without prior startStream).
-            // Create a temporary one to scrub the final text.
             scrubber = new ThinkScrubber();
         }
-        // Process the final text through the scrubber and flush
         String result = scrubber.scrub(text);
-        scrubber.flush();
+        String flushed = scrubber.flush();
+        if (!flushed.isEmpty()) {
+            result = result + flushed;
+        }
         // S-2: Strip MEDIA: tags as a safety net
         result = mediaDeliveryService.stripMediaTagsForDisplay(result);
         return result;
