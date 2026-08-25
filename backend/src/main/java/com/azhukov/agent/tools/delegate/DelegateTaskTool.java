@@ -2,6 +2,7 @@ package com.azhukov.agent.tools.delegate;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
+import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
@@ -151,6 +152,15 @@ public class DelegateTaskTool implements ToolHandler {
         }
 
         DelegateArgs args = ToolHandler.parseJson(arguments, DelegateArgs.class);
+
+        // ── Live orchestration control actions (Hermes parity) ──────────
+        // action=list/steer/stop are synchronous control-plane operations
+        // that do NOT spawn children.
+        String action = args.action();
+        if (action != null && !action.isBlank() && !"spawn".equalsIgnoreCase(action)) {
+            return handleControlAction(action.trim().toLowerCase(),
+                args.subagentId(), args.message(), session);
+        }
 
         // ── Normalize tasks to a list ──────────────────────────────────
         List<TaskSpec> taskList;
@@ -320,7 +330,9 @@ public class DelegateTaskTool implements ToolHandler {
         }
 
         // Register in active subagent registry
-        SubagentRecord record = new SubagentRecord(subagentId, childDepth, goal, System.currentTimeMillis());
+        SteerBuffer childSteer = new SteerBuffer();
+        SubagentRecord record = new SubagentRecord(subagentId, childDepth, goal, System.currentTimeMillis(),
+            parentSession.id().toString(), childSteer);
         activeSubagents.put(subagentId, record);
         // Finding 3.2: Register per-subagent interrupt token
         java.util.concurrent.atomic.AtomicBoolean interruptFlag = new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -737,6 +749,57 @@ public class DelegateTaskTool implements ToolHandler {
 
     // ── Utility ────────────────────────────────────────────────────────
 
+    /**
+     * Handle live orchestration control actions: list, steer, stop.
+     * Hermes parity (delegate_tool.py:466-579): these run synchronously
+     * in-turn and operate on this conversation's active subagents.
+     */
+    private ToolResult handleControlAction(String action, String subagentId, String message, Session session) {
+        switch (action) {
+            case "list" -> {
+                var entries = activeSubagents.entrySet().stream()
+                    .filter(e -> session.id().toString().equals(e.getValue().parentSessionId()))
+                    .map(e -> "{subagent_id:" + e.getKey() + ",goal:" + e.getValue().goal() + "}")
+                    .toList();
+                if (entries.isEmpty()) {
+                    return ToolResult.ok("No active subagents. Use action='spawn' (or omit action) to delegate a task.");
+                }
+                return ToolResult.ok("Active subagents: " + entries);
+            }
+            case "stop" -> {
+                if (subagentId == null || subagentId.isBlank()) {
+                    return ToolResult.fail("action='stop' requires subagent_id (from the spawn dispatch response or action='list').");
+                }
+                var record = activeSubagents.get(subagentId);
+                if (record == null || !session.id().toString().equals(record.parentSessionId())) {
+                    return ToolResult.fail("Subagent '" + subagentId + "' not found or already finished. Use action='list' to see live children.");
+                }
+                subagentInterrupts.computeIfAbsent(subagentId, k -> new java.util.concurrent.atomic.AtomicBoolean(true));
+                return ToolResult.ok("Subagent stops at its next iteration boundary — its partial result still returns as a completion message.");
+            }
+            case "steer" -> {
+                if (subagentId == null || subagentId.isBlank()) {
+                    return ToolResult.fail("action='steer' requires subagent_id (from the spawn dispatch response or action='list').");
+                }
+                if (message == null || message.isBlank()) {
+                    return ToolResult.fail("action='steer' requires a non-empty 'message' describing the course correction.");
+                }
+                var record = activeSubagents.get(subagentId);
+                if (record == null || !session.id().toString().equals(record.parentSessionId())) {
+                    return ToolResult.fail("Subagent '" + subagentId + "' is no longer accepting steering (finishing or not found). Use action='list' to see live children.");
+                }
+                if (record.steerBuffer() != null) {
+                    record.steerBuffer().steer(java.util.UUID.fromString(subagentId), message);
+                    return ToolResult.ok("Steer text queued — the child sees it appended to its next tool result mid-run.");
+                }
+                return ToolResult.fail("Subagent '" + subagentId + "' does not support steering.");
+            }
+            default -> {
+                return ToolResult.fail("Unknown action '" + action + "'. Use spawn, list, steer, or stop.");
+            }
+        }
+    }
+
     private static int parseInt(Object value, int fallback) {
         if (value == null) return fallback;
         try {
@@ -779,7 +842,15 @@ public class DelegateTaskTool implements ToolHandler {
         @ToolParam(description = "Override ACP command for child agents (e.g. 'copilot'). When set, children use ACP subprocess transport instead of inheriting the parent's transport. Requires an ACP-compatible CLI. Do NOT set unless the user explicitly told you an ACP CLI is installed.",
             required = false) @JsonProperty("acp_command") @JsonAlias("acpCommand") String acpCommand,
         @ToolParam(description = "Arguments for the ACP command (default: ['--acp', '--stdio']). Only used when acpCommand is set.",
-            required = false) @JsonProperty("acp_args") @JsonAlias("acpArgs") List<String> acpArgs
+            required = false) @JsonProperty("acp_args") @JsonAlias("acpArgs") List<String> acpArgs,
+        @ToolParam(description = "Default 'spawn' (omit for normal delegation). Live orchestration of running subagents: 'list' shows live children (ids, goals, status, transcript paths); 'steer' queues course-correction text into one child (requires subagent_id + message) without stopping it; 'stop' ends one child early (requires subagent_id) — its partial result still returns. Control actions return immediately; goal/tasks are ignored when action is not 'spawn'.",
+            required = false) String action,
+        @ToolParam(description = "Target for action='steer'/'stop'. Ids are returned in the spawn dispatch response (subagent_ids) and by action='list'.",
+            required = false) @JsonProperty("subagent_id") @JsonAlias("subagentId") String subagentId,
+        @ToolParam(description = "For action='steer': the course correction. Be directive and specific — the child sees it appended to its next tool result mid-run.",
+            required = false) String message,
+        @ToolParam(description = "Optional JSON Schema the child's final answer must validate against. When set, the child is told the contract and its output is validated; a malformed result triggers one bounded correction retry.",
+            required = false) @JsonProperty("output_schema") @JsonAlias("outputSchema") java.util.Map<String, Object> outputSchema
     ) {}
 
     /**
@@ -826,6 +897,8 @@ public class DelegateTaskTool implements ToolHandler {
         String subagentId,
         int depth,
         String goal,
-        long startedAtMs
+        long startedAtMs,
+        String parentSessionId,
+        SteerBuffer steerBuffer
     ) {}
 }
