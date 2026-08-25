@@ -585,6 +585,20 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // Reset incomplete scratchpad counter on clean response
             incompleteScratchpadRetries = 0;
 
+            // Hermes parity (conversation_loop.py:3606-3692): a successful HTTP
+            // response may still carry a content_filter finish reason. Treat it
+            // as a terminal policy refusal, preserving any provider refusal text
+            // and adding the shared actionable recovery hint.
+            if ("CONTENT_FILTER".equals(response.finishReason()) && !response.hasToolCalls()) {
+                String policyMsg = (response.hasContent() ? response.content().strip() + "\n\n" : "")
+                    + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
+                turnMessages.add(Message.assistant(policyMsg, turnIndex));
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.CONTENT_POLICY);
+                }
+                return new TurnResult(turnMessages, true, null);
+            }
+
             // ── Truncated tool call recovery (Hermes parity: conversation_loop.py:3829-3860) ──
             // LENGTH finish_reason WITH tool calls: the model hit the output cap
             // mid-tool-call JSON. The arguments are truncated/incomplete and must

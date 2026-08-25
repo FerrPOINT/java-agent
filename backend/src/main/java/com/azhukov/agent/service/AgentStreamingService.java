@@ -723,8 +723,8 @@ public class AgentStreamingService {
                 // CONTENT_FILTER: model declined due to content policy
                 if ("CONTENT_FILTER".equals(finishReason) && !hasToolCalls) {
                     log.warn("Content filter triggered for session {} — model declined response", session.id());
-                    String filterMsg = "⚠️ Модель отклонила ответ из-за фильтра контента. " +
-                        "Попробуйте переформулировать запрос, сузить контекст или добавить fallback провайдер.";
+                    String filterMsg = (contentBuilder.length() > 0 ? contentBuilder.toString().strip() + "\n\n" : "")
+                        + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
                     send(emitter, new StreamEvent("token", filterMsg, null, null), streamCtx);
                     response = ChatResponse.text(filterMsg);
                     break;
