@@ -28,6 +28,7 @@ import static com.azhukov.agent.core.agent.ThinkBlockProcessor.hasIncompleteScra
 import static com.azhukov.agent.core.agent.ThinkBlockProcessor.isThinkingBudgetExhausted;
 import static com.azhukov.agent.core.agent.ThinkBlockProcessor.stripThinkBlocksFromString;
 import static com.azhukov.agent.core.agent.TurnExecutor.ContentPolicyException;
+import com.azhukov.agent.core.agent.ResponseRecoveryPolicy;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
@@ -543,7 +544,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
             } catch (ContentPolicyException e) {
                 // ── Part F: Content policy handling — user-friendly message, terminal ──
                 log.warn("Content policy block: {}", e.getMessage());
-                turnMessages.add(Message.assistant(e.getMessage(), turnIndex));
+                String policyMsg = e.getMessage();
+                if (!policyMsg.contains(ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT)) {
+                    policyMsg = policyMsg + "\n\n" + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
+                }
+                turnMessages.add(Message.assistant(policyMsg, turnIndex));
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.CONTENT_POLICY);
                 }

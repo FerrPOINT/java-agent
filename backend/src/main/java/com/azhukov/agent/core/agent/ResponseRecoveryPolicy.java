@@ -77,6 +77,12 @@ public final class ResponseRecoveryPolicy {
         "Your previous turn indicated a tool call but none was included. "
             + "Do not narrate a plan or restate intent — issue the actual tool call now to continue the task.";
 
+    /** Hermes _CONTENT_POLICY_RECOVERY_HINT (conversation_loop.py:1259-1261):
+     *  shared recovery hint appended to every content-policy refusal message. */
+    public static final String CONTENT_POLICY_RECOVERY_HINT =
+        "Try rephrasing the request, narrowing the context, or "
+            + "adding a fallback provider with `hermes fallback add`.";
+
     private ResponseRecoveryPolicy() {
     }
 

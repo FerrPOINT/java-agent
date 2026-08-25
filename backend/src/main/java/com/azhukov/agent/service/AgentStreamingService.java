@@ -6,6 +6,7 @@ import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.core.agent.TurnExitReason;
 import com.azhukov.agent.core.agent.TurnFinalizer;
 import com.azhukov.agent.core.agent.ThinkingTimeoutGuidance;
+import com.azhukov.agent.core.agent.ResponseRecoveryPolicy;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
@@ -696,6 +697,12 @@ public class AgentStreamingService {
                             ? properties.getFallbackChain().get(0).getProvider()
                             : "your-provider";
                         errorMsg += ThinkingTimeoutGuidance.buildGuidance(provider, modelName);
+                    }
+                    // Hermes parity (_CONTENT_POLICY_RECOVERY_HINT): append recovery hint
+                    // to content-policy refusal messages so the user gets actionable advice.
+                    if (finalErrorType == ErrorClassifier.ErrorType.CONTENT_POLICY
+                        && !errorMsg.contains(ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT)) {
+                        errorMsg += "\n\n" + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
                     }
                     send(emitter, new StreamEvent("error", null, null, errorMsg), streamCtx);
                     safeCompleteWithError(emitter, error instanceof Exception
