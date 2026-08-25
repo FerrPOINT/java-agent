@@ -80,14 +80,22 @@ public class TerminalTool implements ToolHandler {
 
         if (args.background()) {
             try {
+                // Hermes parity (terminal_tool.py:3419-3427): mutual exclusion —
+                // if both notify_on_complete and watch_patterns are set, drop
+                // watch_patterns. The combination produces duplicate notifications.
+                boolean useNotify = args.notifyOnComplete();
+                var effectiveWatchPatterns = args.watchPatterns();
+                if (useNotify && effectiveWatchPatterns != null && !effectiveWatchPatterns.isEmpty()) {
+                    log.info("watch_patterns ignored because notify_on_complete=true (mutual exclusion)");
+                    effectiveWatchPatterns = List.of();
+                }
+
                 // BUG 4: Pass workdir to spawn() — was previously ignored for background processes
                 // Feature 3: Pass notifyOnComplete callback when notify_on_complete=true
                 java.util.function.Consumer<String> notifyCallback = null;
-                if (args.notifyOnComplete()) {
+                if (useNotify) {
                     notifyCallback = processId -> {
                         log.info("Background process {} completed (notify_on_complete)", processId);
-                        // The actual notification delivery is handled by ProcessTool's exit watcher;
-                        // this callback ensures the process is tracked for completion notifications.
                     };
                 }
                 ProcessTool.ManagedProcess mp = processTool.spawn(command, timeout, args.pty(), notifyCallback, workdir);
@@ -95,13 +103,18 @@ public class TerminalTool implements ToolHandler {
                     "Background process started\nsession_id: %s\npid: %s",
                     mp.id, mp.pid
                 );
-                // Feature 3: If watch_patterns are specified, start a pattern monitor
-                if (args.watchPatterns() != null && !args.watchPatterns().isEmpty()) {
-                    result += "\nwatch_patterns: " + String.join(", ", args.watchPatterns());
-                    startWatchPatternMonitor(mp, args.watchPatterns());
+                if (effectiveWatchPatterns != null && !effectiveWatchPatterns.isEmpty()) {
+                    result += "\nwatch_patterns: " + String.join(", ", effectiveWatchPatterns);
+                    startWatchPatternMonitor(mp, effectiveWatchPatterns);
                 }
-                if (args.notifyOnComplete()) {
+                if (useNotify) {
                     result += "\nnotify_on_complete: enabled";
+                } else if (effectiveWatchPatterns == null || effectiveWatchPatterns.isEmpty()) {
+                    // Hermes parity nudge (terminal_tool.py:3259-3279): background
+                    // without notify_on_complete or watch_patterns runs silently.
+                    result += "\n[hint: background=true without notify_on_complete=true means "
+                        + "you won't know when it finishes. Add notify_on_complete=true, or "
+                        + "call process(action=\"poll\") to check.]";
                 }
                 return ToolResult.ok(result);
             } catch (Exception e) {
