@@ -359,6 +359,7 @@ public class PatchTool implements ToolHandler {
         @ToolParam(description = "old string to find (replace mode)", required = false) @JsonProperty("old_string") String oldString,
         @ToolParam(description = "new string to substitute (replace mode)", required = false) @JsonProperty("new_string") String newString,
         @ToolParam(description = "replace all occurrences", required = false) @JsonProperty("replace_all") boolean replaceAll,
-        @ToolParam(description = "V4A patch content (patch mode)", required = false) String patch
+        @ToolParam(description = "V4A patch content (patch mode)", required = false) String patch,
+        @ToolParam(description = "Opt out of the cross-profile soft guard. Defaults to false. Set true ONLY after explicit user direction to edit another Hermes profile's skills/plugins/cron/memories.", required = false) @JsonProperty("cross_profile") Boolean crossProfile
     ) {}
 }

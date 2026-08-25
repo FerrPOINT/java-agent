@@ -304,10 +304,14 @@ public class TerminalTool implements ToolHandler {
         monitor.start();
     }
 
-    record TerminalArgs(String command, int timeout, boolean background, boolean pty,
-                        String workdir,
-                        @JsonProperty("notify_on_complete") @JsonAlias("notify-on-complete") boolean notifyOnComplete,
-                        @JsonProperty("watch_patterns") @JsonAlias("watch-patterns") List<String> watchPatterns) {
+    record TerminalArgs(
+        @ToolParam(description = "The command to execute on the VM") String command,
+        @ToolParam(description = "Max seconds to wait (default 180, foreground max 600).", required = false) int timeout,
+        @ToolParam(description = "Run in the background, returning a session_id.", required = false) boolean background,
+        @ToolParam(description = "Run in pseudo-terminal for interactive CLIs.", required = false) boolean pty,
+        @ToolParam(description = "Working directory for this command.", required = false) String workdir,
+        @JsonProperty("notify_on_complete") @JsonAlias("notify-on-complete") @ToolParam(description = "Get notified when the process exits.", required = false) boolean notifyOnComplete,
+        @JsonProperty("watch_patterns") @JsonAlias("watch-patterns") @ToolParam(description = "Strings to watch for in background output.", required = false) List<String> watchPatterns) {
         TerminalArgs {
             if (command == null) command = "";
             if (timeout < 0) timeout = 0;
