@@ -2,6 +2,7 @@ package com.azhukov.agent.tools.delegate;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
+import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.model.Message;
@@ -105,6 +106,8 @@ public class DelegateTaskTool implements ToolHandler {
     final AgentProperties properties;
     final ObjectProvider<AgentRuntime> agentRuntimeProvider;
     final ObjectProvider<ToolRegistry> toolRegistryProvider;
+    final ObjectProvider<InterruptToken> interruptTokenProvider;
+    final ObjectProvider<SteerBuffer> steerBufferProvider;
 
     /** Virtual thread executor for parallel child runs. */
     private final ExecutorService childExecutor = Executors.newVirtualThreadPerTaskExecutor();
@@ -115,18 +118,19 @@ public class DelegateTaskTool implements ToolHandler {
     /** Active subagent registry for observability. */
     private final Map<String, SubagentRecord> activeSubagents = new java.util.concurrent.ConcurrentHashMap<>();
 
-    // Finding 3.2: Per-subagent interrupt tokens and pause flag
-    private final Map<String, java.util.concurrent.atomic.AtomicBoolean> subagentInterrupts =
-        new java.util.concurrent.ConcurrentHashMap<>();
     private volatile boolean spawnPaused = false;
 
     @org.springframework.beans.factory.annotation.Autowired
     public DelegateTaskTool(AgentProperties properties,
                             ObjectProvider<AgentRuntime> agentRuntimeProvider,
-                            ObjectProvider<ToolRegistry> toolRegistryProvider) {
+                            ObjectProvider<ToolRegistry> toolRegistryProvider,
+                            ObjectProvider<InterruptToken> interruptTokenProvider,
+                            ObjectProvider<SteerBuffer> steerBufferProvider) {
         this.properties = properties;
         this.agentRuntimeProvider = agentRuntimeProvider;
         this.toolRegistryProvider = toolRegistryProvider;
+        this.interruptTokenProvider = interruptTokenProvider;
+        this.steerBufferProvider = steerBufferProvider;
         int maxChildren = Math.max(1, properties.getDelegation().getMaxConcurrentChildren());
         this.concurrencyLimit = new Semaphore(maxChildren, true);
     }
@@ -141,6 +145,8 @@ public class DelegateTaskTool implements ToolHandler {
         this.properties = properties;
         this.agentRuntimeProvider = agentRuntimeProvider;
         this.toolRegistryProvider = toolRegistryProvider;
+        this.interruptTokenProvider = null;
+        this.steerBufferProvider = null;
         this.concurrencyLimit = new Semaphore(Math.max(1, maxConcurrentChildren), true);
     }
 
@@ -176,7 +182,7 @@ public class DelegateTaskTool implements ToolHandler {
         } else if (args.goal() != null && !args.goal().isBlank()) {
             String role = normalizeRole(args.role());
             taskList = List.of(new TaskSpec(args.goal(), args.context(), args.toolsets(),
-                role, args.timeoutSeconds(), args.acpCommand(), args.acpArgs()));
+                role, args.timeoutSeconds(), args.acpCommand(), args.acpArgs(), args.outputSchema()));
         } else {
             return ToolResult.fail("Provide either 'goal' (single task) or 'tasks' (batch)");
         }
@@ -223,7 +229,7 @@ public class DelegateTaskTool implements ToolHandler {
                         entry = CompletableFuture.supplyAsync(
                             () -> runSingleChild(taskList.get(0), session, childDepth,
                                 childTimeoutSeconds, 0, parentToolsets, effectiveMaxIterations,
-                                args.acpCommand(), args.acpArgs()),
+                                args.acpCommand(), args.acpArgs(), taskList.get(0).outputSchema()),
                             childExecutor
                         ).get(childTimeoutSeconds, TimeUnit.SECONDS);
                     } catch (TimeoutException e) {
@@ -238,7 +244,7 @@ public class DelegateTaskTool implements ToolHandler {
                 } else {
                     entry = runSingleChild(taskList.get(0), session, childDepth,
                         childTimeoutSeconds, 0, parentToolsets, effectiveMaxIterations,
-                        args.acpCommand(), args.acpArgs());
+                        args.acpCommand(), args.acpArgs(), taskList.get(0).outputSchema());
                 }
                 resultJson = formatResults(List.of(entry));
             } else {
@@ -274,7 +280,7 @@ public class DelegateTaskTool implements ToolHandler {
             List<String> taskAcpArgs = task.acpArgs() != null ? task.acpArgs() : topAcpArgs;
             futures.add(childExecutor.submit(() ->
                 runSingleChild(task, parentSession, childDepth, taskTimeout, index,
-                    parentToolsets, effectiveMaxIterations, taskAcpCommand, taskAcpArgs)));
+                    parentToolsets, effectiveMaxIterations, taskAcpCommand, taskAcpArgs, task.outputSchema())));
         }
 
         List<TaskResult> results = new ArrayList<>(tasks.size());
@@ -308,7 +314,8 @@ public class DelegateTaskTool implements ToolHandler {
     private TaskResult runSingleChild(TaskSpec task, Session parentSession,
                                       int childDepth, int childTimeoutSeconds, int taskIndex,
                                       Set<String> parentToolsets, int effectiveMaxIterations,
-                                      String acpCommand, List<String> acpArgs) {
+                                      String acpCommand, List<String> acpArgs,
+                                      java.util.Map<String, Object> outputSchema) {
         String subagentId = "sa-" + taskIndex + "-" + UUID.randomUUID().toString().substring(0, 8);
         long startTime = System.nanoTime();
         String goal = task.goal();
@@ -329,15 +336,6 @@ public class DelegateTaskTool implements ToolHandler {
             return TaskResult.error(taskIndex, goal, "Subagent spawning is paused");
         }
 
-        // Register in active subagent registry
-        SteerBuffer childSteer = new SteerBuffer();
-        SubagentRecord record = new SubagentRecord(subagentId, childDepth, goal, System.currentTimeMillis(),
-            parentSession.id().toString(), childSteer);
-        activeSubagents.put(subagentId, record);
-        // Finding 3.2: Register per-subagent interrupt token
-        java.util.concurrent.atomic.AtomicBoolean interruptFlag = new java.util.concurrent.atomic.AtomicBoolean(false);
-        subagentInterrupts.put(subagentId, interruptFlag);
-
         try {
             // Resolve role
             String requestedRole = normalizeRole(task.role());
@@ -353,9 +351,22 @@ public class DelegateTaskTool implements ToolHandler {
             // Build child system prompt
             String childPrompt = buildChildSystemPrompt(goal, task.context(), effectiveRole,
                 properties.getDelegation().getMaxSpawnDepth(), childDepth);
+            String schemaError = validateOutputSchemaDefinition(outputSchema);
+            if (schemaError != null) {
+                return TaskResult.error(taskIndex, goal, "output_schema invalid: " + schemaError);
+            }
+            if (outputSchema != null) {
+                childPrompt += "\n\n" + buildOutputSchemaContract(outputSchema);
+            }
 
             // Apply the child prompt as the session's system prompt
             Session sessionWithPrompt = childSession.withMetadata("system_prompt_override", childPrompt);
+
+            // Register live control state against the child's actual isolated session.
+            // DefaultAgentRuntime reads this shared SteerBuffer and InterruptToken.
+            SubagentRecord record = new SubagentRecord(subagentId, childDepth, goal,
+                System.currentTimeMillis(), parentSession.id().toString(), childSession.id());
+            activeSubagents.put(subagentId, record);
 
             // Build the user message for the child
             String userMessage = buildChildUserMessage(goal, task.context());
@@ -363,13 +374,9 @@ public class DelegateTaskTool implements ToolHandler {
             log.info("[{}] Starting subagent (depth={}, role={}, goal='{}', toolsets={})",
                 subagentId, childDepth, effectiveRole, truncate(goal, 80), childToolsets);
 
-            // Finding 3.2: Check if this subagent was interrupted before starting
-            // WARNING 5: Interrupt is only checked before the turn starts. If the subagent
-            // is already inside runTurn(), the interrupt flag is not checked until the next
-            // turn iteration. A full fix would register the subagent's interrupt flag with
-            // the InterruptToken mechanism so DefaultAgentRuntime checks it during the turn
-            // loop. For now, this is a known limitation documented here.
-            if (interruptFlag.get()) {
+            // A stop may have arrived between registration and the first child call.
+            InterruptToken interruptToken = interruptTokenProvider != null ? interruptTokenProvider.getIfAvailable() : null;
+            if (interruptToken != null && interruptToken.isCancelled(childSession.id())) {
                 return TaskResult.error(taskIndex, goal, "Subagent interrupted before start");
             }
 
@@ -412,7 +419,6 @@ public class DelegateTaskTool implements ToolHandler {
         } finally {
             concurrencyLimit.release();
             activeSubagents.remove(subagentId);
-            subagentInterrupts.remove(subagentId);
         }
     }
 
@@ -725,26 +731,22 @@ public class DelegateTaskTool implements ToolHandler {
 
     /**
      * Interrupt a specific running subagent by id.
-     * Sets the interrupt flag; the subagent's turn loop checks it and stops.
      * Mirrors Hermes {@code interrupt_subagent(subagent_id)}.
-     *
-     * @param subagentId the subagent id to interrupt
-     * @return true if the subagent was found and interrupted, false if not found
      */
     public boolean interruptSubagent(String subagentId) {
-        java.util.concurrent.atomic.AtomicBoolean flag = subagentInterrupts.get(subagentId);
-        if (flag != null) {
-            flag.set(true);
-            log.info("Interrupted subagent {}", subagentId);
-            return true;
-        }
-        return false;
+        SubagentRecord record = activeSubagents.get(subagentId);
+        InterruptToken interruptToken = interruptTokenProvider != null ? interruptTokenProvider.getIfAvailable() : null;
+        if (record == null || interruptToken == null) return false;
+        interruptToken.cancel(record.childSessionId());
+        log.info("Interrupted subagent {}", subagentId);
+        return true;
     }
 
     /** Check whether a subagent has been interrupted. */
     boolean isSubagentInterrupted(String subagentId) {
-        java.util.concurrent.atomic.AtomicBoolean flag = subagentInterrupts.get(subagentId);
-        return flag != null && flag.get();
+        SubagentRecord record = activeSubagents.get(subagentId);
+        InterruptToken interruptToken = interruptTokenProvider != null ? interruptTokenProvider.getIfAvailable() : null;
+        return record != null && interruptToken != null && interruptToken.isCancelled(record.childSessionId());
     }
 
     // ── Utility ────────────────────────────────────────────────────────
@@ -774,7 +776,11 @@ public class DelegateTaskTool implements ToolHandler {
                 if (record == null || !session.id().toString().equals(record.parentSessionId())) {
                     return ToolResult.fail("Subagent '" + subagentId + "' not found or already finished. Use action='list' to see live children.");
                 }
-                subagentInterrupts.computeIfAbsent(subagentId, k -> new java.util.concurrent.atomic.AtomicBoolean(true));
+                InterruptToken interruptToken = interruptTokenProvider != null ? interruptTokenProvider.getIfAvailable() : null;
+                if (interruptToken == null) {
+                    return ToolResult.fail("Subagent interruption service is unavailable.");
+                }
+                interruptToken.cancel(record.childSessionId());
                 return ToolResult.ok("Subagent stops at its next iteration boundary — its partial result still returns as a completion message.");
             }
             case "steer" -> {
@@ -788,15 +794,47 @@ public class DelegateTaskTool implements ToolHandler {
                 if (record == null || !session.id().toString().equals(record.parentSessionId())) {
                     return ToolResult.fail("Subagent '" + subagentId + "' is no longer accepting steering (finishing or not found). Use action='list' to see live children.");
                 }
-                if (record.steerBuffer() != null) {
-                    record.steerBuffer().steer(java.util.UUID.fromString(subagentId), message);
+                SteerBuffer steerBuffer = steerBufferProvider != null ? steerBufferProvider.getIfAvailable() : null;
+                if (steerBuffer != null) {
+                    steerBuffer.steer(record.childSessionId(), message);
                     return ToolResult.ok("Steer text queued — the child sees it appended to its next tool result mid-run.");
                 }
-                return ToolResult.fail("Subagent '" + subagentId + "' does not support steering.");
+                return ToolResult.fail("Subagent steering service is unavailable.");
             }
             default -> {
                 return ToolResult.fail("Unknown action '" + action + "'. Use spawn, list, steer, or stop.");
             }
+        }
+    }
+
+    /** Validate that the provided object is a syntactically valid JSON Schema object.
+     *  Returns null when valid, or an error message string. */
+    static String validateOutputSchemaDefinition(java.util.Map<String, Object> schema) {
+        if (schema == null || schema.isEmpty()) return null;
+        Object type = schema.get("type");
+        if (type == null) {
+            return "JSON Schema must have a top-level 'type' property.";
+        }
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            mapper.writeValueAsString(schema); // round-trip serialisation check
+        } catch (Exception e) {
+            return "JSON Schema is not serialisable: " + e.getMessage();
+        }
+        return null;
+    }
+
+    /** Build the natural-language output contract appended to the child system prompt. */
+    static String buildOutputSchemaContract(java.util.Map<String, Object> schema) {
+        try {
+            String schemaJson = new com.fasterxml.jackson.databind.ObjectMapper()
+                .writerWithDefaultPrettyPrinter().writeValueAsString(schema);
+            return "## Output Contract\n\n"
+                + "Your final answer MUST be valid JSON that conforms to this JSON Schema:\n\n"
+                + "```json\n" + schemaJson + "\n```\n\n"
+                + "Do not include any text outside the JSON object.";
+        } catch (Exception e) {
+            return "## Output Contract\n\nProvide your answer as valid JSON.";
         }
     }
 
@@ -866,7 +904,9 @@ public class DelegateTaskTool implements ToolHandler {
         @ToolParam(description = "Per-task ACP command override (e.g. 'copilot'). Overrides the top-level acpCommand for this task only.",
             required = false) @JsonProperty("acp_command") @JsonAlias("acpCommand") String acpCommand,
         @ToolParam(description = "Per-task ACP args override. Leave empty unless acpCommand is set.",
-            required = false) @JsonProperty("acp_args") @JsonAlias("acpArgs") List<String> acpArgs
+            required = false) @JsonProperty("acp_args") @JsonAlias("acpArgs") List<String> acpArgs,
+        @ToolParam(description = "Optional JSON Schema the child's final answer must validate against. Overrides top-level output_schema for this task.",
+            required = false) @JsonProperty("output_schema") @JsonAlias("outputSchema") java.util.Map<String, Object> outputSchema
     ) {}
 
     /**
@@ -899,6 +939,6 @@ public class DelegateTaskTool implements ToolHandler {
         String goal,
         long startedAtMs,
         String parentSessionId,
-        SteerBuffer steerBuffer
+        UUID childSessionId
     ) {}
 }

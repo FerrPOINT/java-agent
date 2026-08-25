@@ -231,6 +231,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
         UUID sessionIdUuid = session.id();
         String sessionId = sessionIdUuid.toString();
         guardrail.reset(sessionIdUuid);
+        // Clear stale cancellation from an earlier child turn before this new turn starts.
+        if (interruptToken != null) {
+            interruptToken.reset(sessionIdUuid);
+        }
         toolExecutionService.resetLoopGuardrailForTurn();
         turnStateManager.clear(sessionIdUuid);
         // Clear any pending steer from a previous turn (parity with Hermes
