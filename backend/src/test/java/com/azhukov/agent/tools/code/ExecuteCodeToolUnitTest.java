@@ -213,4 +213,55 @@ class ExecuteCodeToolUnitTest {
         assertThat(r.success()).isFalse();
         assertThat(r.error()).contains("Failed to execute code");
     }
+
+    @Test
+    void runPythonReturnsErrorOnNonZeroExitCode() throws Exception {
+        ExecuteCodeTool tool = spy(new ExecuteCodeTool());
+
+        doAnswer(inv -> {
+            ExecuteCodeTool.ProcessBuilderLike pbl = mock(ExecuteCodeTool.ProcessBuilderLike.class);
+            when(pbl.redirectErrorStream(true)).thenReturn(pbl);
+            Process mockProcess = mock(Process.class);
+            when(pbl.start()).thenReturn(mockProcess);
+            when(mockProcess.waitFor(anyLong(), any())).thenReturn(true);
+            when(mockProcess.exitValue()).thenReturn(1);
+            when(mockProcess.getInputStream()).thenReturn(
+                new ByteArrayInputStream("Traceback (most recent call last):\nValueError: bad value".getBytes()));
+            return pbl;
+        }).when(tool).createProcessBuilder(anyString());
+
+        ToolResult r = tool.execute("{\"code\":\"raise ValueError('bad value')\"}", null, session);
+        assertThat(r.success()).isFalse();
+        assertThat(r.error()).contains("Script exited with code 1");
+        assertThat(r.error()).contains("ValueError");
+    }
+
+    @Test
+    void runPythonTruncatesLargeStdout() throws Exception {
+        ExecuteCodeTool tool = spy(new ExecuteCodeTool());
+
+        // Generate >50KB of output
+        StringBuilder largeOutput = new StringBuilder();
+        for (int i = 0; i < 60000; i++) {
+            largeOutput.append("x");
+        }
+        String bigOutput = largeOutput.toString();
+
+        doAnswer(inv -> {
+            ExecuteCodeTool.ProcessBuilderLike pbl = mock(ExecuteCodeTool.ProcessBuilderLike.class);
+            when(pbl.redirectErrorStream(true)).thenReturn(pbl);
+            Process mockProcess = mock(Process.class);
+            when(pbl.start()).thenReturn(mockProcess);
+            when(mockProcess.waitFor(anyLong(), any())).thenReturn(true);
+            when(mockProcess.exitValue()).thenReturn(0);
+            when(mockProcess.getInputStream()).thenReturn(
+                new ByteArrayInputStream(bigOutput.getBytes()));
+            return pbl;
+        }).when(tool).createProcessBuilder(anyString());
+
+        ToolResult r = tool.execute("{\"code\":\"print('x'*60000)\"}", null, session);
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("bytes omitted");
+        assertThat(r.content().length()).isLessThan(bigOutput.length());
+    }
 }

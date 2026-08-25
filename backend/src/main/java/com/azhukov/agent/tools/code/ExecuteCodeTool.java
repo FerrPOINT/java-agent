@@ -6,6 +6,8 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.security.Redactor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -22,7 +24,24 @@ import java.util.concurrent.TimeUnit;
     toolset = "coding"
 )
 @Component
+@RequiredArgsConstructor
 public class ExecuteCodeTool implements ToolHandler {
+    private static final int DEFAULT_TIMEOUT_SECONDS = 300;
+    private static final int MAX_TIMEOUT_SECONDS = 300;
+    private static final int MAX_STDOUT_BYTES = 50_000;
+
+    private final Redactor redactor;
+
+    // Kept for direct unit construction; Spring uses the required constructor.
+    ExecuteCodeTool() {
+        this(new NoopRedactor());
+    }
+
+    /** No-op redactor for unit tests that construct the tool directly. */
+    private static class NoopRedactor implements Redactor {
+        @Override public String redact(String output) { return output; }
+        @Override public String redactEnvVars(String output) { return output; }
+    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -33,14 +52,14 @@ public class ExecuteCodeTool implements ToolHandler {
                 "Use terminal(command=...) for shell commands; " +
                 "for Python, retry as execute_code(code=...).");
         }
-        int timeout = 300;
+        int timeout = DEFAULT_TIMEOUT_SECONDS;
         if (args.timeout() != null && !args.timeout().isBlank()) {
             try {
                 timeout = Integer.parseInt(args.timeout().replaceAll("[^0-9]", ""));
             } catch (NumberFormatException ignored) {
             }
         }
-        return runPython(args.code(), timeout);
+        return runPython(args.code(), Math.min(timeout, MAX_TIMEOUT_SECONDS));
     }
 
     private ToolResult runPython(String code, int timeoutSeconds) {
@@ -53,8 +72,8 @@ public class ExecuteCodeTool implements ToolHandler {
             pb.redirectErrorStream(true);
             Process process = pb.start();
             // Audit C5: read the merged stdout/stderr on a separate thread WHILE
-            // waiting for the process. Reading only after waitFor deadlocks when the
-            // child fills the OS pipe buffer (~64KB) and blocks on write() forever.
+            // waiting for the process. Reading only after waitFor deadlocks when
+            // the child fills the OS pipe buffer (~64KB) and blocks on write() forever.
             var outputFuture = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
                 try (var reader = new BufferedReader(
                         new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
@@ -70,6 +89,22 @@ public class ExecuteCodeTool implements ToolHandler {
                 return ToolResult.fail("Code execution timed out after " + timeoutSeconds + " seconds");
             }
             String output = outputFuture.get(5, TimeUnit.SECONDS);
+            int exitCode = process.exitValue();
+
+            // Hermes parity (code_execution_tool.py:1220-1230): truncate stdout to
+            // 50KB head+tail, strip ANSI, and redact secrets before returning.
+            output = truncateStdout(output);
+            output = redactor.redact(output);
+
+            if (exitCode != 0) {
+                // Hermes parity: non-zero exit returns error with output content
+                // so the model can see what went wrong.
+                String errorMsg = "Script exited with code " + exitCode;
+                if (output != null && !output.isBlank()) {
+                    return ToolResult.fail(errorMsg + "\n" + output);
+                }
+                return ToolResult.fail(errorMsg);
+            }
             return ToolResult.ok(output);
         } catch (Exception e) {
             return ToolResult.fail("Failed to execute code: " + e.getMessage());
@@ -83,6 +118,23 @@ public class ExecuteCodeTool implements ToolHandler {
                 }
             }
         }
+    }
+
+    /** Hermes parity: 50KB head+tail stdout cap (code_execution_tool.py:76,122-132). */
+    private String truncateStdout(String output) {
+        if (output == null || output.isEmpty()) {
+            return output == null ? "" : output;
+        }
+        byte[] bytes = output.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length <= MAX_STDOUT_BYTES) {
+            return output;
+        }
+        int headBytes = MAX_STDOUT_BYTES * 3 / 4; // 75% head
+        int tailBytes = MAX_STDOUT_BYTES - headBytes; // 25% tail
+        String head = new String(bytes, 0, headBytes, StandardCharsets.UTF_8);
+        String tail = new String(bytes, bytes.length - tailBytes, tailBytes, StandardCharsets.UTF_8);
+        int omitted = bytes.length - MAX_STDOUT_BYTES;
+        return head + "\n[... " + omitted + " bytes omitted ...]\n" + tail;
     }
 
     interface ProcessBuilderLike {
