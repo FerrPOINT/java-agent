@@ -223,9 +223,17 @@ public class ToolExecutionService {
         if (result.content() == null || result.content().length() <= max) {
             return result;
         }
-        String truncated = result.content().substring(0, max);
-        log.warn("Tool {} output truncated from {} to {} chars", toolName, result.content().length(), max);
-        return ToolResult.ok(truncated + "\n[output truncated]");
+        // Hermes parity: head+tail truncation so the model sees both how
+        // the output started and how it ended (error messages, exit codes,
+        // summaries are typically at the end). Head-only truncation loses
+        // the tail entirely.
+        int half = max / 2;
+        int omitted = result.content().length() - 2 * half;
+        String truncated = result.content().substring(0, half)
+            + "\n[... " + omitted + " chars omitted ...]\n"
+            + result.content().substring(result.content().length() - half);
+        log.warn("Tool {} output truncated from {} to {} chars (head+tail)", toolName, result.content().length(), max);
+        return ToolResult.ok(truncated);
     }
 
     /**
