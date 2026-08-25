@@ -6,6 +6,8 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.azhukov.agent.gateway.GatewayRoutingService;
 import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.SendResult;
@@ -35,7 +37,7 @@ public class SendMessageTool implements ToolHandler {
 
     public record SendMessageArgs(
         @ToolParam(description = "Target platform: telegram, whatsapp, slack, etc.") String platform,
-        @ToolParam(description = "Platform-specific chat identifier") String chatId,
+        @ToolParam(description = "Platform-specific chat identifier") @JsonProperty("chat_id") @JsonAlias("chatId") String chatId,
         @ToolParam(description = "Message text to send") String text
     ) {}
 

@@ -11,6 +11,8 @@ import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -769,15 +771,15 @@ public class DelegateTaskTool implements ToolHandler {
         @ToolParam(description = "role: 'leaf' (default, cannot delegate) or 'orchestrator' (can spawn own subagents)",
             required = false) String role,
         @ToolParam(description = "timeout in seconds for each child (0 = use config default)",
-            required = false) int timeoutSeconds,
+            required = false) @JsonProperty("timeout_seconds") @JsonAlias("timeoutSeconds") int timeoutSeconds,
         @ToolParam(description = "batch mode: JSON array of {goal, context, toolsets, role, timeoutSeconds, acpCommand, acpArgs} objects",
             required = false) List<TaskSpec> tasks,
         @ToolParam(description = "maximum iterations (model calls) per child subagent (0 = use config default delegation.max_iterations)",
-            required = false) Integer maxIterations,
+            required = false) @JsonProperty("max_iterations") @JsonAlias("maxIterations") Integer maxIterations,
         @ToolParam(description = "Override ACP command for child agents (e.g. 'copilot'). When set, children use ACP subprocess transport instead of inheriting the parent's transport. Requires an ACP-compatible CLI. Do NOT set unless the user explicitly told you an ACP CLI is installed.",
-            required = false) String acpCommand,
+            required = false) @JsonProperty("acp_command") @JsonAlias("acpCommand") String acpCommand,
         @ToolParam(description = "Arguments for the ACP command (default: ['--acp', '--stdio']). Only used when acpCommand is set.",
-            required = false) List<String> acpArgs
+            required = false) @JsonProperty("acp_args") @JsonAlias("acpArgs") List<String> acpArgs
     ) {}
 
     /**
@@ -789,11 +791,11 @@ public class DelegateTaskTool implements ToolHandler {
         @ToolParam(description = "optional toolsets to enable for this child (overrides top-level toolsets). When omitted, inherits parent's or top-level toolsets.",
             required = false) List<String> toolsets,
         @ToolParam(description = "role: 'leaf' or 'orchestrator'", required = false) String role,
-        @ToolParam(description = "timeout in seconds (0 = use config default)", required = false) int timeoutSeconds,
+        @ToolParam(description = "timeout in seconds (0 = use config default)", required = false) @JsonProperty("timeout_seconds") @JsonAlias("timeoutSeconds") int timeoutSeconds,
         @ToolParam(description = "Per-task ACP command override (e.g. 'copilot'). Overrides the top-level acpCommand for this task only.",
-            required = false) String acpCommand,
+            required = false) @JsonProperty("acp_command") @JsonAlias("acpCommand") String acpCommand,
         @ToolParam(description = "Per-task ACP args override. Leave empty unless acpCommand is set.",
-            required = false) List<String> acpArgs
+            required = false) @JsonProperty("acp_args") @JsonAlias("acpArgs") List<String> acpArgs
     ) {}
 
     /**

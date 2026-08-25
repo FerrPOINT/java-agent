@@ -8,6 +8,8 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -90,8 +92,8 @@ public class McpTool implements ToolHandler {
     }
 
     public record McpArgs(
-        @ToolParam(description = "MCP server name") @com.fasterxml.jackson.annotation.JsonProperty("server_name") String serverName,
-        @ToolParam(description = "tool name") @com.fasterxml.jackson.annotation.JsonProperty("tool_name") String toolName,
+        @ToolParam(description = "MCP server name") @JsonProperty("server_name") @JsonAlias("serverName") String serverName,
+        @ToolParam(description = "tool name") @JsonProperty("tool_name") @JsonAlias("toolName") String toolName,
         @ToolParam(description = "tool arguments JSON") @com.fasterxml.jackson.annotation.JsonProperty("arguments") String arguments
     ) {}
 }

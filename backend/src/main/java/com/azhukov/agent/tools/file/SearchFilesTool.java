@@ -3,6 +3,8 @@ package com.azhukov.agent.tools.file;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
@@ -195,8 +197,8 @@ public class SearchFilesTool implements ToolHandler {
         @ToolParam(description = "'content' for regex search inside files or 'files' for file name search") String target,
         @ToolParam(description = "regex pattern for content search or glob for file search") String pattern,
         @ToolParam(description = "directory to search in", required = false) String path,
-        @ToolParam(description = "glob filter for content search files", required = false) String fileGlob,
-        @ToolParam(description = "output mode: 'content' (default), 'files_only' (file paths), or 'count' (match counts per file)", required = false) @com.fasterxml.jackson.annotation.JsonProperty("output_mode") String outputMode,
+        @ToolParam(description = "glob filter for content search files", required = false) @JsonProperty("file_glob") @JsonAlias("fileGlob") String fileGlob,
+        @ToolParam(description = "output mode: 'content' (default), 'files_only' (file paths), or 'count' (match counts per file)", required = false) @JsonProperty("output_mode") @JsonAlias("outputMode") String outputMode,
         @ToolParam(description = "max results", required = false) int limit,
         @ToolParam(description = "skip first N results", required = false) int offset,
         @ToolParam(description = "context lines around match", required = false) int context

@@ -146,7 +146,7 @@ public class ProcessTool implements ToolHandler {
         return ToolResult.ok(formatResult(p, false));
     }
 
-    private ToolResult log(String sessionId, int offset, int limit) {
+    private ToolResult log(@JsonProperty("session_id") @JsonAlias("sessionId") String sessionId, int offset, int limit) {
         ManagedProcess p = findProcess(sessionId);
         if (p == null) {
             return ToolResult.fail("Process not found: " + sessionId);
@@ -233,7 +233,7 @@ public class ProcessTool implements ToolHandler {
 
     public record ProcessArgs(
         @ToolParam(description = "list, poll, log, wait, kill, write, submit, close") String action,
-        @ToolParam(description = "process session_id for non-list actions") @JsonAlias("session_id") String sessionId,
+        @ToolParam(description = "process session_id for non-list actions") @JsonProperty("session_id") String sessionId,
         @ToolParam(description = "timeout in seconds for wait", required = false) int timeout,
         @ToolParam(description = "offset for log pagination", required = false) int offset,
         @ToolParam(description = "max lines for log pagination", required = false) int limit,
