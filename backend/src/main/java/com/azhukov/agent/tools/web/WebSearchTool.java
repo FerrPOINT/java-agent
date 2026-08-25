@@ -75,10 +75,23 @@ public class WebSearchTool implements ToolHandler {
             } else {
                 results = searchDuckDuckGo(query, limit);
             }
-            if (results.isEmpty()) {
-                return ToolResult.ok("No results found.");
+
+            // Hermes parity: return {"data":{"web":[{title,url,description,position}]}}
+            // instead of a flat array. Add position field for result ordering.
+            List<Map<String, Object>> webResults = new java.util.ArrayList<>();
+            for (int i = 0; i < results.size(); i++) {
+                Map<String, Object> entry = new java.util.LinkedHashMap<>();
+                Map<String, String> src = results.get(i);
+                entry.put("title", src.getOrDefault("title", ""));
+                entry.put("url", src.getOrDefault("url", ""));
+                entry.put("description", src.getOrDefault("description", ""));
+                entry.put("position", i);
+                webResults.add(entry);
             }
-            return ToolResult.ok(objectMapper.writeValueAsString(results));
+            Map<String, Object> response = new java.util.LinkedHashMap<>();
+            response.put("success", true);
+            response.put("data", java.util.Map.of("web", webResults));
+            return ToolResult.ok(objectMapper.writeValueAsString(response));
         } catch (IOException e) {
             return ToolResult.fail("Web search failed: " + e.getMessage());
         }

@@ -75,12 +75,14 @@ class WebSearchToolTest {
             var result = tool.execute("{\"query\":\"OpenAI\",\"limit\":2}", null, null);
 
             assertThat(result.success()).isTrue();
-            List<Map<String, Object>> items = objectMapper.readValue(result.content(), new TypeReference<>() {});
+            var root = objectMapper.readTree(result.content());
+            assertThat(root.path("success").asBoolean()).isTrue();
+            var items = root.path("data").path("web");
             assertThat(items).hasSize(2);
-            assertThat(items.get(0)).containsEntry("title", "OpenAI - Wikipedia");
-            assertThat(items.get(0)).containsEntry("url", "https://en.wikipedia.org/wiki/OpenAI");
-            assertThat(items.get(0)).containsEntry("description", "OpenAI is an AI research and deployment company.");
-            assertThat(items.get(1)).containsEntry("url", "https://duckduckgo.com/l/?rut=abc&uddg=https://openai.com");
+            assertThat(items.get(0).path("title").asText()).isEqualTo("OpenAI - Wikipedia");
+            assertThat(items.get(0).path("url").asText()).isEqualTo("https://en.wikipedia.org/wiki/OpenAI");
+            assertThat(items.get(0).path("description").asText()).isEqualTo("OpenAI is an AI research and deployment company.");
+            assertThat(items.get(1).path("url").asText()).isEqualTo("https://duckduckgo.com/l/?rut=abc&uddg=https://openai.com");
         }
     }
 
@@ -109,8 +111,8 @@ class WebSearchToolTest {
             var result = tool.execute("{\"query\":\"many\",\"limit\":3}", null, null);
 
             assertThat(result.success()).isTrue();
-            List<Map<String, Object>> items = objectMapper.readValue(result.content(), new TypeReference<>() {});
-            assertThat(items).hasSize(3);
+            var root = objectMapper.readTree(result.content());
+            assertThat(root.path("data").path("web")).hasSize(3);
         }
     }
 
@@ -132,7 +134,9 @@ class WebSearchToolTest {
             var result = tool.execute("{\"query\":\"nothing\",\"limit\":5}", null, null);
 
             assertThat(result.success()).isTrue();
-            assertThat(result.content()).isEqualTo("No results found.");
+            var root = objectMapper.readTree(result.content());
+            assertThat(root.path("success").asBoolean()).isTrue();
+            assertThat(root.path("data").path("web")).isEmpty();
         }
     }
 
@@ -204,8 +208,8 @@ class WebSearchToolTest {
             var result = tool.execute("{\"query\":\"default\"}", null, null);
 
             assertThat(result.success()).isTrue();
-            List<Map<String, Object>> items = objectMapper.readValue(result.content(), new TypeReference<>() {});
-            assertThat(items).hasSize(1);
+            var root = objectMapper.readTree(result.content());
+            assertThat(root.path("data").path("web")).hasSize(1);
         }
     }
 }
