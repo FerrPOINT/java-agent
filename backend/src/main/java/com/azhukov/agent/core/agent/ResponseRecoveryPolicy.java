@@ -64,9 +64,13 @@ public final class ResponseRecoveryPolicy {
             + "empty response. Please process the tool "
             + "results above and continue with the task.";
 
-    /** Empty-response nudge without a preceding tool round. */
+    /** Empty-response nudge without a preceding tool round.
+     *  Hermes parity: the plain-empty path uses retry-with-backoff, not a
+     *  user-visible nudge text. When a nudge IS needed (e.g. streaming), use
+     *  the same English text as the post-tool nudge. The previous Russian text
+     *  was a Java-only invention. */
     public static final String EMPTY_NUDGE =
-        "Пожалуйста, продолжи свой ответ на языке пользователя.";
+        "Please continue your response in the user's language.";
 
     /** Hermes _DROPPED_TOOLCALL_NUDGE_CONTENT: narration without the actual call. */
     public static final String DROPPED_TOOLCALL_NUDGE =
