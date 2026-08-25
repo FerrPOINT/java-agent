@@ -630,9 +630,9 @@ public class StreamEditor {
                 log.debug("Rich message delivery failed for chat {}, falling back to MarkdownV2", chatId);
             }
 
-            // Send the final text as a regular message (commits the draft)
-            String formatted = scrubbed;
-            Optional<Long> finalMsgId = sendPlainMessage(chatId, formatted);
+            // Send the final text as a formatted message (commits the draft)
+            // Hermes parity: apply MarkdownConverter before delivery, not raw markdown
+            Optional<Long> finalMsgId = sendFormattedFinalMessage(chatId, scrubbed);
             removeSession(chatId);
             if (finalMsgId.isPresent()) {
                 log.debug("Draft finalized for chat {}, messageId={}", chatId, finalMsgId.get());
@@ -694,10 +694,9 @@ public class StreamEditor {
                     return true;
                 }
             }
-            // Delete old message and send new one (plain text — streaming output is raw)
+            // Delete old message and send new one (formatted — Hermes parity)
             telegramClient.deleteMessage(chatId, effectiveMessageId);
-            String formatted = scrubbed;
-            Optional<Long> newMsgId = sendPlainMessage(chatId, formatted);
+            Optional<Long> newMsgId = sendFormattedFinalMessage(chatId, scrubbed);
             removeSession(chatId);
             if (newMsgId.isPresent()) {
                 log.debug("Fresh-final sent for chat {}, new messageId={}", chatId, newMsgId.get());
@@ -1517,6 +1516,26 @@ public class StreamEditor {
             return last;
         }
         return telegramClient.sendMessage(chatId, text, null, null, null, false);
+    }
+
+    /**
+     * Send a formatted final message with MarkdownV2 conversion applied.
+     * Used by draft finalize and fresh-final paths — raw markdown from the model
+     * is converted to Telegram MarkdownV2 before sending (Hermes parity:
+     * format_message is always applied before delivery).
+     */
+    public Optional<Long> sendFormattedFinalMessage(long chatId, String text) {
+        String formatted = formatForTelegram(text);
+        if (formatted.length() > MessageSplitter.TELEGRAM_MAX_LENGTH) {
+            List<String> chunks = MessageSplitter.splitAndFormat(text, parseMode);
+            Optional<Long> last = Optional.empty();
+            for (String chunk : chunks) {
+                if (chunk.isBlank()) continue;
+                last = telegramClient.sendMessage(chatId, chunk, parseMode, null, null, false);
+            }
+            return last;
+        }
+        return telegramClient.sendMessage(chatId, formatted, parseMode, null, null, false);
     }
 
     /**

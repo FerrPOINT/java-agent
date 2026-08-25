@@ -176,9 +176,9 @@ class StreamEditorDraftStreamingTest {
         boolean result = editor.finalizeStream(123L, -1, "Hello world final");
 
         assertThat(result).isTrue();
-        // Final message is sent RAW (parseMode=null): streaming output is unescaped,
-        // MarkdownV2 escaping only applies to edit-path finalization.
-        verify(client).sendMessage(eq(123L), anyString(), isNull(), any(), any(), anyBoolean());
+        // Final message is sent WITH parseMode (MarkdownV2): Hermes parity —
+        // format_message is always applied before delivery, even for draft finalize.
+        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), anyBoolean());
         // Should NOT call editMessageText (drafts have no message_id)
         verify(client, never()).editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
         // Draft streaming should be cleaned up
