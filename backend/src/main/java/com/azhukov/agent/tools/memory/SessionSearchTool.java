@@ -30,63 +30,79 @@ import java.util.*;
 @AgentTool(
     name = "session_search",
     description = "Search past sessions stored in the local session DB, or scroll inside one. " +
-        "FTS-backed retrieval over the message store. No LLM calls — every shape returns actual messages from the DB.\n\n" +
+        "FTS5-backed retrieval over the SQLite message store. No LLM calls — every " +
+        "shape returns actual messages from the DB.\n\n" +
         "SOURCE-FIRST LIMIT\n\n" +
-        "  This tool searches conversation history only. It is not evidence about the current contents of " +
-        "external sources. If the user provided a direct source such as a URL, phone number/contact, app/thread, " +
-        "file path, account, website, or live system, inspect that original source before or instead of session_search " +
-        "when accessible. Use session_search as secondary context for what was previously said, not as primary proof " +
-        "of what the source currently contains. If the original source is inaccessible, say so and why before falling " +
-        "back to session history. Do not conclude 'not found' or 'no prior correspondence' from session_search alone " +
-        "when a direct source was provided.\n\n" +
+        "  This tool searches Hermes conversation history only. It is not evidence " +
+        "about the current contents of external sources. If the user provided a " +
+        "direct source such as a URL, phone number/contact, app/thread, file path, " +
+        "account, website, or live system, inspect that original source before or " +
+        "instead of session_search when accessible. Use session_search as secondary " +
+        "context for what was previously said, not as primary proof of what the " +
+        "source currently contains. If the original source is inaccessible, say so " +
+        "and why before falling back to session history. Do not conclude 'not found' " +
+        "or 'no prior correspondence' from session_search alone when a direct source " +
+        "was provided.\n\n" +
         "FOUR CALLING SHAPES\n\n" +
         "  1) DISCOVERY — pass `query`:\n" +
         "     session_search(query=\"auth refactor\", limit=3)\n" +
-        "     Runs FTS, dedupes hits by session lineage, and returns the top N sessions. " +
-        "Adaptive detail is the default: the top-ranked result carries full context, while lower-ranked " +
-        "results stay compact. Pass detail=\"full\" to fully hydrate every result. Every result carries:\n" +
+        "     Runs FTS5, dedupes hits by session lineage, and returns the top N " +
+        "sessions. Adaptive detail is the default: the top-ranked result carries " +
+        "full context, while lower-ranked results stay compact. Pass `detail=\"full\"` " +
+        "to fully hydrate every result. Every result carries:\n" +
         "       - session_id, title, when, source\n" +
-        "       - snippet: FTS-highlighted match excerpt\n" +
-        "       - detail: full or compact\n" +
-        "       - bookend_start/bookend_end: the first/last 3 user+assistant messages for full results; " +
-        "empty lists for compact results\n" +
-        "       - messages: ±5 messages around the FTS match for full results; only the flagged anchor " +
-        "message for compact results\n" +
+        "       - snippet: FTS5-highlighted match excerpt\n" +
+        "       - detail: `full` or `compact`\n" +
+        "       - bookend_start/bookend_end: the first/last 3 user+assistant messages " +
+        "for full results; empty lists for compact results\n" +
+        "       - messages: ±5 messages around the FTS5 match for full results; only " +
+        "the flagged anchor message for compact results\n" +
         "       - match_message_id, messages_before, messages_after\n" +
-        "     The top result's bookends + window let you reconstruct goal → match → resolution immediately. " +
-        "Scroll a compact result when another session looks more promising.\n\n" +
+        "     The top result's bookends + window let you reconstruct goal → match → " +
+        "resolution immediately. Scroll a compact result when another session looks " +
+        "more promising.\n\n" +
         "  2) SCROLL — pass `session_id` + `around_message_id`:\n" +
         "     session_search(session_id=\"...\", around_message_id=12345, window=10)\n" +
-        "     Returns a window of ±window messages centered on the anchor. No FTS, no bookends — just the slice. " +
-        "Use after a discovery call when you need more context than the ±5 default window.\n" +
+        "     Returns a window of ±`window` messages centered on the anchor. No FTS5, " +
+        "no bookends — just the slice. Use after a discovery call when you need more " +
+        "context than the ±5 default window.\n" +
         "       - To scroll FORWARD: pass messages[-1].id back as around_message_id.\n" +
         "       - To scroll BACKWARD: pass messages[0].id back as around_message_id.\n" +
         "       - The boundary message appears in both windows — orientation marker.\n" +
-        "       - When messages_before or messages_after is < window, you're at the start or end of the session.\n\n" +
+        "       - When messages_before or messages_after is < window, you're at the " +
+        "start or end of the session.\n\n" +
         "  3) READ — pass `session_id` only (no around_message_id):\n" +
         "     session_search(session_id=\"...\", profile=\"work\")\n" +
-        "     Dumps the whole session by id (first 20 + last 10 messages when large). " +
-        "This is how you resolve an @session:<profile>/<id> link the user dropped into the chat: " +
-        "split the value on / into profile + id and call session_search(session_id=id, profile=profile).\n\n" +
+        "     Dumps the whole session by id (first 20 + last 10 messages when " +
+        "large). This is how you resolve an `@session:<profile>/<id>` link the " +
+        "user dropped into the chat: split the value on `/` into profile + id " +
+        "and call session_search(session_id=id, profile=profile).\n\n" +
         "  4) BROWSE — no args:\n" +
         "     session_search()\n" +
         "     Returns recent sessions chronologically: titles, previews, timestamps. " +
         "Use when the user asks \"what was I working on\" without naming a topic.\n\n" +
         "LINKING THE USER TO A SESSION\n\n" +
-        "  When you refer the user to a session, write its `link` value inline in your reply — " +
-        "every result carries one, e.g. @session:default/20260722_204335_d62c16. Copy it verbatim; " +
-        "do not reformat it as a markdown link or wrap it in backticks. Use it as a noun mid-sentence " +
-        "(\"that's @session:default/... — want me to pick it up?\"), never alone on its own line, " +
-        "and never alongside the title, id, or date spelled out — that shows the user the same session twice.\n\n" +
-        "FTS SYNTAX\n\n" +
-        "  AND is the default — multi-word queries require all terms. Use OR explicitly for broader recall " +
-        "(alpha OR beta OR gamma), quoted phrases for exact match (\"docker networking\"), boolean (python NOT java), " +
-        "or prefix wildcards (deploy*).\n\n" +
+        "  When you refer the user to a session, write its `link` value inline in " +
+        "your reply — every result carries one, e.g. " +
+        "`@session:default/20260722_204335_d62c16`. Copy it verbatim; do not " +
+        "reformat it as a markdown link or wrap it in backticks. Hermes renders " +
+        "it as a link showing the session's title, so the link IS the title: " +
+        "use it as a noun mid-sentence (\"that's @session:default/... — want me " +
+        "to pick it up?\"), never alone on its own line, and never alongside the " +
+        "title, id, or date spelled out — that shows the user the same session " +
+        "twice.\n\n" +
+        "FTS5 SYNTAX\n\n" +
+        "  AND is the default — multi-word queries require all terms. Use OR explicitly " +
+        "for broader recall (`alpha OR beta OR gamma`), quoted phrases for exact match " +
+        "(`\"docker networking\"`), boolean (`python NOT java`), or prefix wildcards " +
+        "(`deploy*`).\n\n" +
         "WHEN TO USE\n\n" +
-        "  Reach for this on questions about conversation history itself, such as \"what did we do about X\", " +
-        "\"where did we leave Y\", or \"find the session where Z\". If the user provided a direct source identifier, " +
-        "inspect that source first when accessible; session_search can then supply historical context. " +
-        "The session DB carries what was said when; external tools show current source/world state.",
+        "  Reach for this on questions about Hermes conversation history itself, such " +
+        "as \"what did we do about X\", \"where did we leave Y\", or \"find the " +
+        "session where Z\". If the user provided a direct source identifier, inspect " +
+        "that source first when accessible; session_search can then supply historical " +
+        "context. The session DB carries what was said when; external tools show " +
+        "current source/world state.",
     toolset = "memory"
 )
 @Component

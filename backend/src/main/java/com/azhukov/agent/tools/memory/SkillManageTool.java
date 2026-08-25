@@ -24,7 +24,38 @@ import static com.azhukov.agent.tools.ToolHandler.parseJson;
  * {@code BACKGROUND_REVIEW} instead of {@code FOREGROUND}.
  */
 @AgentTool(name = "skill_manage",
-    description = "Create, update, delete, patch a skill, or manage support files (references/, templates/, scripts/). Actions: create, update (alias: edit), delete, patch, write_file, remove_file.",
+    description = "Manage skills (create, update, delete). Skills are your procedural "
+        + "memory — reusable approaches for recurring task types. "
+        + "New skills go to ~/.hermes/skills/; existing skills can be modified wherever they live.\n\n"
+        + "Actions: create (full SKILL.md + optional category), "
+        + "patch (old_string/new_string — preferred for fixes), "
+        + "edit (full SKILL.md rewrite — major overhauls only), "
+        + "delete, write_file, remove_file.\n\n"
+        + "On delete, pass `absorbed_into=<umbrella>` when you're merging this "
+        + "skill's content into another one, or `absorbed_into=\"\"` when you're "
+        + "pruning it with no forwarding target. This lets the curator tell "
+        + "consolidation from pruning without guessing, so downstream consumers "
+        + "(cron jobs that reference the old skill name, etc.) get updated "
+        + "correctly. The target you name in `absorbed_into` must already "
+        + "exist — create/patch the umbrella first, then delete.\n\n"
+        + "Create when: complex task succeeded (5+ calls), errors overcome, "
+        + "user-corrected approach worked, non-trivial workflow discovered, "
+        + "or user asks you to remember a procedure.\n"
+        + "Update when: instructions stale/wrong, OS-specific failures, "
+        + "missing steps or pitfalls found during use. "
+        + "If you used a skill and hit issues not covered by it, patch it immediately.\n\n"
+        + "After difficult/iterative tasks, offer to save as a skill. "
+        + "Skip for simple one-offs. Confirm with user before creating/deleting.\n\n"
+        + "Good skills: trigger conditions, numbered steps with exact commands, "
+        + "pitfalls section, verification steps. Use skill_view() to see format examples.\n\n"
+        + "Description: long descriptions are truncated to the first 57 chars "
+        + "plus '...' in the system prompt skill index; longer text is visible "
+        + "via skills_list/skill_view. Keep the trigger self-contained in that "
+        + "first 57-char window: 'Use when <trigger>. <one-line behavior>.'\n\n"
+        + "Pinned skills are protected from deletion only — skill_manage(action='delete') "
+        + "will refuse with a message pointing the user to `hermes curator unpin <name>`. "
+        + "Patches and edits go through on pinned skills so you can still improve them as "
+        + "pitfalls come up; pin only guards against irrecoverable loss.",
     toolset = "skills")
 @Component
 @Slf4j

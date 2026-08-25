@@ -21,7 +21,7 @@ import java.util.Locale;
 @Component
 @AgentTool(
     name = "read_file",
-    description = "Read a text file with optional offset and limit. Returns content with line numbers. Paths outside allowed directories are blocked when file safety is enabled. Binary files and device paths are blocked.",
+    description = "Read a text file with line numbers and pagination. Use this instead of cat/head/tail in terminal. Output format: 'LINE_NUM|CONTENT'. Suggests similar filenames if not found. Use offset and limit for large files. Reads exceeding ~100K characters are truncated on a line boundary and return a next_offset; continue with offset to read the rest. Jupyter notebooks (.ipynb), Word documents (.docx), and Excel workbooks (.xlsx) are auto-extracted to readable text; PDF, legacy Office (.doc/.ppt/.xls), OpenDocument, RTF, and EPUB convert too when the optional anydoc converter is available (auto-installed on first use where installs are permitted). PDF conversion reads the text layer only: scanned/image pages yield no text, and when many pages come back empty the output ends with an EXTRACTION COVERAGE WARNING listing the affected pages — follow its instructions (render pages with pdftoppm and inspect via vision_analyze, or OCR) instead of treating the extraction as complete. NOTE: Cannot read images or other binary files — use vision_analyze for images.",
     toolset = "file"
 )
 @RequiredArgsConstructor

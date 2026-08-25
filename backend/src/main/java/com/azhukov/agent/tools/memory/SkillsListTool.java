@@ -20,8 +20,7 @@ import java.util.List;
  */
 @AgentTool(
     name = "skills_list",
-    description = "List available skills with name, category, and trust level. "
-        + "Optionally filter by category.",
+    description = "List available skills (name + description). Use skill_view(name) to load full content.",
     toolset = "core"
 )
 @Component

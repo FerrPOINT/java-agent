@@ -27,7 +27,7 @@ import jakarta.annotation.PostConstruct;
 
 @AgentTool(
     name = "web_search",
-    description = "Search the web via DuckDuckGo and return a list of relevant results with titles, URLs, and snippets.",
+    description = "Search the web for information. Returns up to 5 results by default with titles, URLs, and descriptions. The query is passed through to the configured backend, so operators such as site:domain, filetype:pdf, intitle:word, -term, and \"exact phrase\" may work when the backend supports them.",
     toolset = "web"
 )
 @Component

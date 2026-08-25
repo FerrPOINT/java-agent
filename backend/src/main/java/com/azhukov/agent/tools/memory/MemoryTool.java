@@ -27,35 +27,26 @@ import java.util.Set;
  */
 @AgentTool(
     name = "memory",
-    description = """
-        Save durable information to persistent memory that survives across sessions.
-        Memory is injected into future turns, so keep it compact and focused on facts
-        that will still matter later.
-
-        WHEN TO SAVE (do this proactively, don't wait to be asked):
-        - User corrects you or says 'remember this' / 'don't do that again'
-        - User shares a preference, habit, or personal detail (name, role, timezone, coding style)
-        - You discover something about the environment (OS, installed tools, project structure)
-        - You learn a convention, API quirk, or workflow specific to this user's setup
-        - You identify a stable fact that will be useful again in future sessions
-
-        PRIORITY: User preferences and corrections > environment facts > procedural knowledge.
-        The most valuable memory prevents the user from having to repeat themselves.
-
-        Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO
-        state to memory; use session_search to recall those from past transcripts.
-        If you've discovered a new way to do something, solved a problem that could be
-        necessary later, save it as a skill with the skill tool.
-
-        TWO TARGETS:
-        - 'user': who the user is — name, role, preferences, communication style, pet peeves
-        - 'memory': your notes — environment facts, project conventions, tool quirks, lessons learned
-
-        ACTIONS: add (new entry), replace (update existing — old_text identifies it),
-        remove (delete — old_text identifies it).
-
-        SKIP: trivial/obvious info, things easily re-discovered, raw data dumps, and temporary task state.
-        """,
+    description = "Save durable facts to persistent memory that survive across sessions. Memory is "
+        + "injected into every future turn, so keep entries compact and high-signal.\n\n"
+        + "HOW: make ALL your changes in ONE call via an 'operations' array (each item: "
+        + "{action, content?, old_text?}). The batch applies atomically and the char limit is "
+        + "checked only on the FINAL result — so a single call can remove/replace stale entries "
+        + "to free room AND add new ones, even when an add alone would overflow. The response "
+        + "reports current/limit chars and confirms completion; one batch call finishes the "
+        + "update, so don't repeat it. Use the bare action/content/old_text fields only for a "
+        + "single lone change.\n\n"
+        + "WHEN: save proactively when the user states a preference, correction, or personal "
+        + "detail, or you learn a stable fact about their environment, conventions, or workflow. "
+        + "Priority: user preferences & corrections > environment facts > procedures. The best "
+        + "memory stops the user repeating themselves.\n\n"
+        + "IF FULL: an add is rejected with the current entries shown. Reissue as ONE batch that "
+        + "removes or shortens enough stale entries and adds the new one together.\n\n"
+        + "TARGETS: 'user' = who the user is (name, role, preferences, style). 'memory' = your "
+        + "notes (environment, conventions, tool quirks, lessons).\n\n"
+        + "SKIP: trivial/obvious info, easily re-discovered facts, raw data dumps, task progress, "
+        + "completed-work logs, temporary TODO state (use session_search for those). Reusable "
+        + "procedures belong in a skill, not memory.",
     toolset = "memory"
 )
 @Component

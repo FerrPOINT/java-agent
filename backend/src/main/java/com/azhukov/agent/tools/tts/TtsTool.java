@@ -23,7 +23,7 @@ import lombok.RequiredArgsConstructor;
  */
 @AgentTool(
     name = "text_to_speech",
-    description = "Convert text to speech audio. Returns a MEDIA: path to the generated audio file.",
+    description = "Convert text to speech audio. Returns a MEDIA: path that the platform delivers as native audio. Compatible providers render as a voice bubble on Telegram; otherwise audio is sent as a regular attachment. In CLI mode, saves to ~/voice-memos/. Voice and provider are user-configured (built-in providers like edge/openai or custom command providers under tts.providers.<name>), not model-selected.",
     toolset = "core"
 )
 @Component

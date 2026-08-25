@@ -24,7 +24,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 @AgentTool(
     name = "send_message",
-    description = "Send a message to a user via an external platform (e.g. telegram). Requires platform, chatId, and text.",
+    description = "Send a message to a connected messaging platform, or list available targets.\n\nIMPORTANT: When the user asks to send to a specific channel or person (not just a bare platform name), call send_message(action='list') FIRST to see available targets, then send to the correct one.\nIf the user just says a platform name like 'send to telegram', send directly to the home channel without listing first.",
     toolset = "gateway"
 )
 public class SendMessageTool implements ToolHandler {
