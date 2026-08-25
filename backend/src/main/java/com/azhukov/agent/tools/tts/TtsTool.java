@@ -9,11 +9,11 @@ import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 
@@ -31,7 +31,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class TtsTool implements ToolHandler {
 
-    private final ObjectProvider<TtsProvider> providerProvider;
+    private final List<TtsProvider> providers;
     private final AgentProperties properties;
 
 
@@ -43,15 +43,23 @@ public class TtsTool implements ToolHandler {
             return ToolResult.fail("text is required");
         }
 
-        TtsProvider provider = providerProvider.getIfAvailable();
-        if (provider == null) {
-            return ToolResult.fail("TTS is not enabled. Set agent.tts.enabled=true to use this tool.");
+        if (args.outputPath() != null && !args.outputPath().isBlank()) {
+            ToolResult pathError = validateOutputPath(args.outputPath());
+            if (pathError != null) return pathError;
         }
 
+        TtsProvider provider = resolveProvider(args.provider());
+        if (provider == null) {
+            String requested = args.provider() != null && !args.provider().isBlank()
+                ? " '" + args.provider() + "'" : "";
+            return ToolResult.fail("TTS provider" + requested + " is not enabled or unavailable.");
+        }
+
+        Double speed = args.speed() == null ? null : Math.clamp(args.speed(), 0.25, 4.0);
         String voice = args.voice() != null ? args.voice() : properties.getTts().getVoice();
 
         try {
-            byte[] audio = provider.synthesize(args.text(), voice);
+            byte[] audio = provider.synthesize(args.text(), voice, speed, args.instructions());
             String fileName = "tts_" + UUID.randomUUID() + ".mp3";
             Path outputPath;
             if (args.outputPath() != null && !args.outputPath().isBlank()) {
@@ -71,6 +79,30 @@ public class TtsTool implements ToolHandler {
             log.error("TTS failed: {}", e.getMessage(), e);
             return ToolResult.fail("TTS failed: " + e.getMessage());
         }
+    }
+
+    private ToolResult validateOutputPath(String outputPath) {
+        String normalized = outputPath.replace('\\', '/');
+        if (normalized.matches(".*(^|/)\\.\\.(/|$).*$")) {
+            return ToolResult.fail("output_path contains '..' traversal component. Use an absolute path or a relative path without '..'.");
+        }
+        Path resolved = Path.of(outputPath).toAbsolutePath().normalize();
+        Path home = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
+        Path etc = Path.of("/etc").toAbsolutePath().normalize();
+        Path proc = Path.of("/proc").toAbsolutePath().normalize();
+        if (resolved.startsWith(home.resolve(".ssh")) || resolved.startsWith(etc) || resolved.startsWith(proc)) {
+            return ToolResult.fail("output_path targets a protected credential or system path. Choose a normal audio output location.");
+        }
+        return null;
+    }
+
+    private TtsProvider resolveProvider(String requested) {
+        String name = requested != null && !requested.isBlank()
+            ? requested.trim() : properties.getTts().getProvider();
+        return providers.stream()
+            .filter(provider -> provider.name().equalsIgnoreCase(name))
+            .findFirst()
+            .orElse(null);
     }
 
     record TtsArgs(

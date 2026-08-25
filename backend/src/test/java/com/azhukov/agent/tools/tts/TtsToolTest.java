@@ -10,38 +10,39 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.ObjectProvider;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class TtsToolTest {
 
     @Mock
-    private ObjectProvider<TtsProvider> providerProvider;
+    private TtsProvider provider;
 
     @Mock
-    private TtsProvider provider;
+    private TtsProvider alternateProvider;
 
     private TtsTool tool;
 
     @BeforeEach
     void setUp() {
         AgentProperties properties = new AgentProperties();
-        tool = new TtsTool(providerProvider, properties);
+        lenient().when(provider.name()).thenReturn("edge");
+        tool = new TtsTool(List.of(provider), properties);
     }
 
     @Test
     void synthesize_audioSavedAndReturnsMediaPath() throws Exception {
-        when(providerProvider.getIfAvailable()).thenReturn(provider);
         byte[] audioBytes = "fake-mp3-data".getBytes();
-        when(provider.synthesize(eq("Hello world"), any())).thenReturn(audioBytes);
+        when(provider.synthesize(eq("Hello world"), any(), any(), any())).thenReturn(audioBytes);
 
         String args = """
             {"text":"Hello world"}
@@ -67,9 +68,8 @@ class TtsToolTest {
 
     @Test
     void synthesize_outputPathUsesRequestedFile() throws Exception {
-        when(providerProvider.getIfAvailable()).thenReturn(provider);
         byte[] audioBytes = "custom-output".getBytes();
-        when(provider.synthesize(eq("Hello"), any())).thenReturn(audioBytes);
+        when(provider.synthesize(eq("Hello"), any(), any(), any())).thenReturn(audioBytes);
         Path requested = Files.createTempDirectory("tts-output-").resolve("nested/custom.mp3");
 
         ToolResult result = tool.execute("{\"text\":\"Hello\",\"output_path\":\"" + requested + "\"}", null, null);
@@ -83,8 +83,31 @@ class TtsToolTest {
     }
 
     @Test
+    void synthesize_usesRequestedProviderAndClampsSpeed() throws Exception {
+        lenient().when(alternateProvider.name()).thenReturn("openai");
+        tool = new TtsTool(List.of(provider, alternateProvider), new AgentProperties());
+        when(alternateProvider.synthesize(eq("Hello"), any(), eq(4.0), any())).thenReturn("audio".getBytes());
+
+        ToolResult result = tool.execute("{\"text\":\"Hello\",\"provider\":\"openai\",\"speed\":99}", null, null);
+
+        assertThat(result.success()).isTrue();
+        verify(alternateProvider).synthesize(eq("Hello"), any(), eq(4.0), any());
+        verify(provider, never()).synthesize(any(), any(), any(), any());
+        Path mediaPath = Path.of(result.content().lines().filter(line -> line.startsWith("MEDIA:")).findFirst().orElseThrow().substring(6));
+        Files.deleteIfExists(mediaPath);
+    }
+
+    @Test
+    void synthesize_rejectsTraversalOutputPath() {
+        ToolResult result = tool.execute("{\"text\":\"Hello\",\"output_path\":\"tmp/../secret.mp3\"}", null, null);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("traversal");
+    }
+
+    @Test
     void synthesize_noProvider_returnsFail() {
-        when(providerProvider.getIfAvailable()).thenReturn(null);
+        tool = new TtsTool(List.of(), new AgentProperties());
 
         String args = """
             {"text":"Hello"}
@@ -92,7 +115,7 @@ class TtsToolTest {
         ToolResult result = tool.execute(args, null, null);
 
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("not enabled");
+        assertThat(result.error()).contains("unavailable");
     }
 
     @Test

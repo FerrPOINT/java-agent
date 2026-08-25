@@ -32,6 +32,11 @@ public class EdgeTtsProvider implements TtsProvider {
     }
 
     @Override
+    public String name() {
+        return "edge";
+    }
+
+    @Override
     public byte[] synthesize(String text, String voice) {
         String usedVoice = (voice != null && !voice.isBlank()) ? voice : defaultVoice;
         if (usedVoice == null || usedVoice.isBlank()) {

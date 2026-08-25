@@ -42,15 +42,26 @@ public class OpenAiTtsProvider implements TtsProvider {
     }
 
     @Override
+    public String name() {
+        return "openai";
+    }
+
+    @Override
     public byte[] synthesize(String text, String voice) {
+        return synthesize(text, voice, null, null);
+    }
+
+    @Override
+    public byte[] synthesize(String text, String voice, Double speed, String instructions) {
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("OpenAI TTS requires agent.tts.api-key to be set");
         }
         String usedVoice = (voice != null && !voice.isBlank()) ? voice : defaultVoice;
+        double usedSpeed = speed == null ? 1.0 : Math.clamp(speed, 0.25, 4.0);
         try {
             String body = String.format(
-                "{\"model\":\"%s\",\"input\":\"%s\",\"voice\":\"%s\",\"format\":\"mp3\"}",
-                model, escapeJson(text), escapeJson(usedVoice)
+                "{\"model\":\"%s\",\"input\":\"%s\",\"voice\":\"%s\",\"speed\":%s,\"format\":\"mp3\"}",
+                model, escapeJson(text), escapeJson(usedVoice), usedSpeed
             );
 
             String endpoint = baseUrl.endsWith("/")

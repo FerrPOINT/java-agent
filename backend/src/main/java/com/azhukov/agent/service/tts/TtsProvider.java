@@ -5,12 +5,24 @@ package com.azhukov.agent.service.tts;
  */
 public interface TtsProvider {
 
+    /** Returns the configured provider name used to select this implementation. */
+    String name();
+
     /**
-     * Synthesize text into audio.
+     * Synthesize with optional provider-native controls. Implementations that
+     * do not support a control ignore it while preserving the core behavior.
+     */
+    default byte[] synthesize(String text, String voice, Double speed, String instructions) {
+        return synthesize(text, voice);
+    }
+
+    /**
+     * Basic synthesis contract retained for providers that do not expose
+     * provider-native speed/instructions controls.
      *
-     * @param text  the text to synthesize
-     * @param voice the voice to use (provider-specific, may be ignored)
-     * @return the synthesized audio as raw bytes (MP3/OGG)
+     * @param text text to synthesize
+     * @param voice provider-specific voice
+     * @return synthesized audio bytes
      */
     byte[] synthesize(String text, String voice);
 }
