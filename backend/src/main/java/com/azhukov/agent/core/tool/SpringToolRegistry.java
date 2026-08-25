@@ -130,6 +130,12 @@ public class SpringToolRegistry implements ToolRegistry {
         if (type == boolean.class || type == Boolean.class) {
             return "boolean";
         }
+        if (type.isArray() || java.util.Collection.class.isAssignableFrom(type)) {
+            return "array";
+        }
+        if (java.util.Map.class.isAssignableFrom(type)) {
+            return "object";
+        }
         return "string";
     }
 
