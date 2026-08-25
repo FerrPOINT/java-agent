@@ -269,8 +269,8 @@ class StreamEditorDraftStreamingTest {
         boolean result = offEditor.finalizeStream(123L, -1, "Hello world final");
 
         assertThat(result).isTrue();
-        // 'off' transport finalize sends RAW text (parseMode=null) — no escaping applied.
-        verify(client).sendMessage(eq(123L), anyString(), isNull(), any(), any(), anyBoolean());
+        // 'off' transport finalize now sends formatted text (parseMode=MarkdownV2) — Hermes parity.
+        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), anyBoolean());
     }
 
     // ─── Draft transport (explicit) tests ────────────────────────

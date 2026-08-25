@@ -176,7 +176,7 @@ public class StreamingOrchestrator {
                         // If startStream still returns empty (text < 4 chars), send directly
                         // via sendMessage to avoid losing the response (Hermes 'off' transport).
                         if (messageId[0] < 0) {
-                            streamEditor.sendPlainMessage(chatId, display);
+                            streamEditor.sendFormattedFinalMessage(chatId, display);
                             finalized[0] = true;
                         }
                     }
@@ -276,7 +276,7 @@ public class StreamingOrchestrator {
                             // all). Deliver the error text as a standalone message so
                             // the user is never left in silence. clearStream drops the
                             // draft StreamSession and its heartbeat.
-                            streamEditor.sendPlainMessage(chatId, errorText);
+                            streamEditor.sendFormattedFinalMessage(chatId, errorText);
                             streamEditor.clearStream(chatId);
                             finalized[0] = true;
                         }

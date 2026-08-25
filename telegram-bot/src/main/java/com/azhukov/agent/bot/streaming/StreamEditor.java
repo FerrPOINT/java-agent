@@ -656,8 +656,8 @@ public class StreamEditor {
             if (oldMsgId > 0) {
                 telegramClient.deleteMessage(chatId, oldMsgId);
             }
-            // Send the buffered content as a new message (plain text — no MarkdownV2 escaping)
-            Optional<Long> newMsgId = sendPlainMessage(chatId, bufferedContent);
+            // Send the buffered content as a formatted message (Hermes parity: apply MarkdownV2)
+            Optional<Long> newMsgId = sendFormattedFinalMessage(chatId, bufferedContent);
             removeSession(chatId);
             if (newMsgId.isPresent()) {
                 log.debug("Flood fallback sent for chat {}, new messageId={}", chatId, newMsgId.get());

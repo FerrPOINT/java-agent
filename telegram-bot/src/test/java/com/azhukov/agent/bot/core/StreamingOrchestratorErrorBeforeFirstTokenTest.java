@@ -58,7 +58,7 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
         // Draft streaming: startStream returns empty — no message id exists yet
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong()))
             .thenReturn(Optional.empty());
-        when(streamEditor.sendPlainMessage(anyLong(), anyString())).thenReturn(Optional.of(5L));
+        when(streamEditor.sendFormattedFinalMessage(anyLong(), anyString())).thenReturn(Optional.of(5L));
         when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString())).thenReturn(true);
     }
 
@@ -88,7 +88,7 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
             100L, "hi", null, session(), 1L, 0L, hooks);
 
         // The user MUST receive a standalone message with the friendly error
-        verify(streamEditor).sendPlainMessage(eq(100L), contains("usage limit reached"));
+        verify(streamEditor).sendFormattedFinalMessage(eq(100L), contains("usage limit reached"));
         // The draft session and its heartbeat must be cleaned up
         verify(streamEditor).clearStream(100L);
         // The turn is finalized so the processor does NOT send a footer-only garbage message
@@ -103,7 +103,7 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
 
         orchestrator.streamChat(100L, "hi", null, session(), 1L, 0L, hooks);
 
-        verify(streamEditor).sendPlainMessage(eq(100L), argThat(text ->
+        verify(streamEditor).sendFormattedFinalMessage(eq(100L), argThat(text ->
             text != null && text.toLowerCase().contains("billing")));
     }
 
@@ -114,7 +114,7 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
 
         orchestrator.streamChat(100L, "hi", null, session(), 1L, 0L, hooks);
 
-        verify(streamEditor).sendPlainMessage(eq(100L), argThat(text ->
+        verify(streamEditor).sendFormattedFinalMessage(eq(100L), argThat(text ->
             text != null && text.toLowerCase().contains("rate limited")
                 && !text.toLowerCase().contains("billing")));
     }

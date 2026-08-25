@@ -122,9 +122,9 @@ class StreamEditorFloodFallbackTest {
         boolean result = editor.finalizeStream(123L, 42L, "Hello world final buffered content");
 
         assertThat(result).isTrue();
-        // Flood fallback sends RAW text (parseMode=null) — streaming output is unescaped.
+        // Flood fallback now sends formatted text (parseMode=MarkdownV2) — Hermes parity.
         // Anchor on the buffered content to exclude the earlier delayed-start message.
-        verify(client).sendMessage(eq(123L), contains("buffered content"), isNull(), any(), any(), anyBoolean());
+        verify(client).sendMessage(eq(123L), contains("buffered content"), eq("MarkdownV2"), any(), any(), anyBoolean());
         // Should have deleted the old streaming message
         verify(client).deleteMessage(123L, 42L);
     }
