@@ -73,7 +73,32 @@ public class WebExtractTool implements ToolHandler {
 
         String text = sb.toString();
         if (text.length() > effectiveMaxChars) {
-            text = text.substring(0, effectiveMaxChars) + "\n[truncated]";
+            // Hermes parity: head+tail truncation (75% head / 25% tail)
+            // instead of cutting only the head. Snap to line boundaries.
+            int headBudget = (int) (effectiveMaxChars * 0.75);
+            int tailBudget = effectiveMaxChars - headBudget;
+
+            String head = text.substring(0, headBudget);
+            String tail = text.substring(text.length() - tailBudget);
+
+            // Snap head back to last newline
+            int headNl = head.lastIndexOf('\n');
+            if (headNl > headBudget * 0.5) {
+                head = head.substring(0, headNl);
+            }
+            // Snap tail forward to next newline
+            int tailNl = tail.indexOf('\n');
+            if (tailNl >= 0 && tailNl < tailBudget * 0.5) {
+                tail = tail.substring(tailNl + 1);
+            }
+
+            text = head
+                + "\n\n[... middle omitted — use a more specific URL or browser tool for the full page ...]\n\n"
+                + tail
+                + "\n\n──────── [TRUNCATED] ────────\n"
+                + "Showing " + head.length() + " chars (head) + " + tail.length() + " chars (tail)"
+                + " of " + text.length() + " total characters.\n"
+                + "─────────────────────────────";
         }
         return ToolResult.ok(redactor.redact(text));
     }

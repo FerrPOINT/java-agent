@@ -228,8 +228,8 @@ class WebExtractToolTest {
         ToolResult result = spy.execute("{\"urls\":[\"https://long.example\"]}", null, session());
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("[truncated]");
-        // Content should be capped — the [truncated] marker is appended after the cap
-        assertThat(result.content().length()).isLessThanOrEqualTo(70);
+        assertThat(result.content()).contains("[TRUNCATED]");
+        // Head+tail truncation: should contain both head and tail content
+        assertThat(result.content()).contains("middle omitted");
     }
 }
