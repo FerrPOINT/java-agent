@@ -192,26 +192,26 @@ public class SessionSearchTool implements ToolHandler {
     }
 
     public record SearchArgs(
-        @ToolParam(description = "Search query (discovery shape). Keywords, phrases, or boolean expressions to find in past sessions. Omit to browse recent sessions. Ignored when session_id + around_message_id are set (scroll shape).")
+        @ToolParam(description = "Search query (discovery shape). Keywords, phrases, or boolean expressions to find in past sessions. Omit to browse recent sessions. Ignored when session_id + around_message_id are set (scroll shape).", required = false)
         String query,
-        @ToolParam(description = "Discovery shape only. Max sessions to return (default 3, max 10). Bump to 5-10 when the topic likely spans several sessions and you want to pick the right one to scroll into.")
+        @ToolParam(description = "Discovery shape only. Max sessions to return (default 3, max 10). Bump to 5-10 when the topic likely spans several sessions and you want to pick the right one to scroll into.", required = false)
         Integer limit,
-        @ToolParam(description = "Discovery shape only. Temporal bias: 'newest' or 'oldest'. Omit for relevance-only ordering (suitable for exploratory recall — \"what do we know about X\"). Set 'newest' for recency-shaped questions (\"where did we leave X\"). Set 'oldest' for origin-shaped questions (\"how did X start\"). Ignored in scroll and browse shapes.")
+        @ToolParam(description = "Discovery shape only. Temporal bias: 'newest' or 'oldest'. Omit for relevance-only ordering (suitable for exploratory recall — \"what do we know about X\"). Set 'newest' for recency-shaped questions (\"where did we leave X\"). Set 'oldest' for origin-shaped questions (\"how did X start\"). Ignored in scroll and browse shapes.", required = false)
         String sort,
-        @ToolParam(description = "Discovery shape only. 'adaptive' (default) fully hydrates the top-ranked result and returns only the anchor message for lower-ranked results. 'full' returns bookends and the complete anchored window for every result.")
+        @ToolParam(description = "Discovery shape only. 'adaptive' (default) fully hydrates the top-ranked result and returns only the anchor message for lower-ranked results. 'full' returns bookends and the complete anchored window for every result.", required = false)
         String detail,
-        @ToolParam(description = "Scroll shape. Session to read inside. Use the session_id returned from a prior discovery call. Must be paired with around_message_id. Can also be an @session:<profile>/<id> link.")
+        @ToolParam(description = "Scroll shape. Session to read inside. Use the session_id returned from a prior discovery call. Must be paired with around_message_id. Can also be an @session:<profile>/<id> link.", required = false)
         @JsonProperty("session_id")
         String sessionId,
-        @ToolParam(description = "Scroll shape. Message id to center the window on. From a discovery result use match_message_id, or any id seen in a prior window. To scroll forward pass the last window message's id; to scroll backward pass the first.")
+        @ToolParam(description = "Scroll shape. Message id to center the window on. From a discovery result use match_message_id, or any id seen in a prior window. To scroll forward pass the last window message's id; to scroll backward pass the first.", required = false)
         @JsonProperty("around_message_id")
         String aroundMessageId,
-        @ToolParam(description = "Scroll shape only. Messages to return on each side of the anchor (anchor itself always included). Clamped to [1, 20]. Default 5.")
+        @ToolParam(description = "Scroll shape only. Messages to return on each side of the anchor (anchor itself always included). Clamped to [1, 20]. Default 5.", required = false)
         Integer window,
-        @ToolParam(description = "Optional. Comma-separated roles to include. Discovery defaults to 'user,assistant' (tool output is usually noise). Pass 'user,assistant,tool' to include tool output (debugging tool behaviour) or 'tool' to search tool output only.")
+        @ToolParam(description = "Optional. Comma-separated roles to include. Discovery defaults to 'user,assistant' (tool output is usually noise). Pass 'user,assistant,tool' to include tool output (debugging tool behaviour) or 'tool' to search tool output only.", required = false)
         @JsonProperty("role_filter")
         String roleFilter,
-        @ToolParam(description = "Optional. Read sessions from another profile's database (read-only). Use when resolving an @session:<profile>/<id> link: pass the profile segment here with session_id as the id segment. Omit to use the current profile.")
+        @ToolParam(description = "Optional. Read sessions from another profile's database (read-only). Use when resolving an @session:<profile>/<id> link: pass the profile segment here with session_id as the id segment. Omit to use the current profile.", required = false)
         String profile
     ) {}
 }

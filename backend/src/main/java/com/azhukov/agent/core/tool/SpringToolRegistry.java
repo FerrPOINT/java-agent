@@ -96,7 +96,12 @@ public class SpringToolRegistry implements ToolRegistry {
             field.put("enum", java.util.Arrays.asList(param.enumValues()));
         }
         properties.put(name, field);
-        if (param == null || param.required()) {
+        // Hermes parity: when @ToolParam is absent, the parameter defaults to
+        // OPTIONAL (not required). Previously, all unannotated record components
+        // were marked required=true with description="", making the model think
+        // it must supply 7-15 parameters for tools like terminal/cronjob/session_search.
+        // Only explicitly marked required=true (default for @ToolParam) adds to required.
+        if (param != null && param.required()) {
             required.add(name);
         }
     }

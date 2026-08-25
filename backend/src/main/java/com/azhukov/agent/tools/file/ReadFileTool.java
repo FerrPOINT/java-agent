@@ -172,7 +172,7 @@ public class ReadFileTool implements ToolHandler {
 
     public record ReadFileArgs(
         @ToolParam(description = "absolute or relative path to the file") String path,
-        @ToolParam(description = "starting line number (1-based)") int offset,
-        @ToolParam(description = "maximum number of lines to read") int limit
+        @ToolParam(description = "starting line number (1-based)", required = false) int offset,
+        @ToolParam(description = "maximum number of lines to read", required = false) int limit
     ) {}
 }
