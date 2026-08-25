@@ -513,11 +513,21 @@ public class StreamEditor {
         // First portion: first streamingMaxChars chars (minus cursor space)
         int firstLen = streamingMaxChars - streamCursor.length();
         if (firstLen <= 0) firstLen = streamingMaxChars;
+        firstLen = Math.min(firstLen, withCursor.length());
+
+        // Hermes parity (stream_consumer.py:1146 _custom_unit_to_cp): avoid
+        // splitting a Java UTF-16 surrogate pair. If the char at firstLen-1 is
+        // a high surrogate, step back one to include the full pair in the first
+        // chunk (the remainder starts at a code point boundary).
+        if (firstLen > 0 && firstLen < withCursor.length()
+            && Character.isHighSurrogate(withCursor.charAt(firstLen - 1))) {
+            firstLen--;
+        }
 
         // Code fence balancing: if the split point falls inside an open ``` block,
         // close the fence at the end of the first chunk and reopen it at the start
         // of the remainder (Hermes balance_fences_across_chunks).
-        String firstPart = withCursor.substring(0, Math.min(firstLen, withCursor.length()));
+        String firstPart = withCursor.substring(0, firstLen);
         String remainder = withCursor.length() > firstLen ? withCursor.substring(firstLen) : "";
 
         // Count ``` (triple backtick) occurrences in firstPart
