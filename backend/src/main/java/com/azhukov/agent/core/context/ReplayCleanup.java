@@ -210,7 +210,11 @@ public final class ReplayCleanup {
         "confirm power off",
         "yes, delete everything",
         "confirm wipe",
-        "confirm factory reset"
+        "confirm factory reset",
+        // i18n variants observed in the original incident (#59607)
+        "確認強制重開機",
+        "確認強制重開",
+        "確認重啟"
     );
 
     /** Replacement text for an expired confirmation. Redacting in place preserves role alternation. */
