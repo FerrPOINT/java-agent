@@ -71,11 +71,25 @@ public class SpringToolRegistry implements ToolRegistry {
         if (argsClass != null) {
             if (argsClass.isRecord()) {
                 for (java.lang.reflect.RecordComponent rc : argsClass.getRecordComponents()) {
-                    addProperty(properties, required, rc.getName(), rc.getType(), rc.getAnnotation(ToolParam.class));
+                    // Hermes parity: use @JsonProperty value (snake_case) as the schema
+                    // field name when present, falling back to the Java field name.
+                    // Without this, the model sees "sessionId" in the schema but
+                    // Hermes sends "session_id" — the schema must match the wire format.
+                    String propName = rc.getName();
+                    com.fasterxml.jackson.annotation.JsonProperty jp = rc.getAnnotation(com.fasterxml.jackson.annotation.JsonProperty.class);
+                    if (jp != null && !jp.value().isEmpty()) {
+                        propName = jp.value();
+                    }
+                    addProperty(properties, required, propName, rc.getType(), rc.getAnnotation(ToolParam.class));
                 }
             } else {
                 for (java.lang.reflect.Field field : argsClass.getDeclaredFields()) {
-                    addProperty(properties, required, field.getName(), field.getType(), field.getAnnotation(ToolParam.class));
+                    String propName = field.getName();
+                    com.fasterxml.jackson.annotation.JsonProperty jp = field.getAnnotation(com.fasterxml.jackson.annotation.JsonProperty.class);
+                    if (jp != null && !jp.value().isEmpty()) {
+                        propName = jp.value();
+                    }
+                    addProperty(properties, required, propName, field.getType(), field.getAnnotation(ToolParam.class));
                 }
             }
         }
