@@ -6,6 +6,7 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -17,40 +18,90 @@ import static com.azhukov.agent.tools.ToolHandler.parseJson;
 public class ClarifyTool implements ToolHandler {
 
     static final int MAX_CHOICES = 4;
+    static final int MAX_QUESTIONS = 5;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         ClarifyArgs args = parseJson(arguments, ClarifyArgs.class);
-        String formatted = formatQuestion(args);
-        return ToolResult.ok(formatted);
+        if (args.questions() != null && !args.questions().isEmpty()) {
+            return formatBatch(args.questions());
+        }
+        if (args.question() == null || args.question().isBlank()) {
+            return ToolResult.fail("question is required when questions is not provided");
+        }
+        return ToolResult.ok(formatQuestion(args));
+    }
+
+    static ToolResult formatBatch(List<ClarifyQuestion> questions) {
+        if (questions.size() > MAX_QUESTIONS) {
+            return ToolResult.fail("questions supports at most " + MAX_QUESTIONS + " items.");
+        }
+        StringBuilder output = new StringBuilder();
+        for (int i = 0; i < questions.size(); i++) {
+            ClarifyQuestion item = questions.get(i);
+            if (item == null || item.question() == null || item.question().isBlank()) {
+                return ToolResult.fail("questions[" + i + "].question must be non-empty text.");
+            }
+            if (i > 0) output.append("\n\n");
+            output.append("Question ").append(i + 1).append(":\n");
+            output.append(formatQuestion(item.question(), item.choices(), item.multiSelect()));
+        }
+        return ToolResult.ok(output.toString());
     }
 
     static String formatQuestion(ClarifyArgs args) {
-        List<String> choices = args.choices();
+        return formatQuestion(args.question(), args.choices(), args.multiSelect());
+    }
+
+    static String formatQuestion(String question, List<String> choices, boolean multiSelect) {
         if (choices == null || choices.isEmpty()) {
-            return args.question();
+            return question;
         }
-        // Truncate to MAX_CHOICES + append "Other" option
         List<String> truncated = choices.size() > MAX_CHOICES
             ? choices.subList(0, MAX_CHOICES)
             : choices;
-        StringBuilder sb = new StringBuilder(args.question());
+        StringBuilder sb = new StringBuilder(question);
         sb.append("\n");
         for (int i = 0; i < truncated.size(); i++) {
             sb.append(i + 1).append(". ").append(truncated.get(i)).append("\n");
         }
         sb.append(truncated.size() + 1).append(". Other (type answer)");
+        if (multiSelect) {
+            sb.append("\nSelect all that apply.");
+        }
         return sb.toString();
     }
 
     public static class ClarifyArgs {
-        @ToolParam(description = "The clarifying question to present to the user", required = true)
+        @ToolParam(description = "The clarifying question to present to the user. Required unless questions is provided.", required = false)
         private String question;
 
         @ToolParam(description = "Up to 4 predefined answer choices for multi-choice mode. When provided, a numbered list with an 'Other (type answer)' option is appended. When omitted, the question is open-ended.", required = false)
         private List<String> choices;
 
+        @JsonProperty("multi_select")
+        @ToolParam(description = "When true, the user may select multiple choices. Has no effect without choices.", required = false)
+        private boolean multiSelect;
+
+        @ToolParam(description = "Up to 5 independent questions asked in one batch. Each item: {id?, question, choices?, multi_select?}. When present, single-question fields are ignored.", required = false)
+        private List<ClarifyQuestion> questions;
+
         public String question() { return question; }
         public List<String> choices() { return choices; }
+        public boolean multiSelect() { return multiSelect; }
+        public List<ClarifyQuestion> questions() { return questions; }
+    }
+
+    public static class ClarifyQuestion {
+        private String id;
+        private String question;
+        private List<String> choices;
+        @JsonProperty("multi_select")
+        private boolean multiSelect;
+
+        public String id() { return id; }
+        public String question() { return question; }
+        public List<String> choices() { return choices; }
+        public boolean multiSelect() { return multiSelect; }
     }
 }

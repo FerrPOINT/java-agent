@@ -33,22 +33,22 @@ class ClarifyToolTest {
     }
 
     @Test
-    @DisplayName("Should handle empty question")
-    void shouldHandleEmptyQuestion() {
+    @DisplayName("Should reject empty question")
+    void shouldRejectEmptyQuestion() {
         String args = "{\"question\":\"\"}";
         ToolResult result = tool.execute(args, dummyMessage(), dummySession());
 
-        assertTrue(result.success());
-        assertEquals("", result.content());
+        assertFalse(result.success());
+        assertTrue(result.error().contains("question is required"));
     }
 
     @Test
-    @DisplayName("Should handle null question gracefully")
-    void shouldHandleNullQuestion() {
+    @DisplayName("Should reject null question")
+    void shouldRejectNullQuestion() {
         String args = "{\"question\":null}";
-        assertThrows(NullPointerException.class, () -> {
-            tool.execute(args, dummyMessage(), dummySession());
-        });
+        ToolResult result = tool.execute(args, dummyMessage(), dummySession());
+        assertFalse(result.success());
+        assertTrue(result.error().contains("question is required"));
     }
 
     @Test
@@ -62,12 +62,11 @@ class ClarifyToolTest {
     }
 
     @Test
-    @DisplayName("Should handle missing question field")
-    void shouldHandleMissingQuestionField() {
-        String args = "{}";
-        assertThrows(NullPointerException.class, () -> {
-            tool.execute(args, dummyMessage(), dummySession());
-        });
+    @DisplayName("Should reject a missing question")
+    void shouldRejectMissingQuestionField() {
+        ToolResult result = tool.execute("{}", dummyMessage(), dummySession());
+        assertFalse(result.success());
+        assertTrue(result.error().contains("question is required"));
     }
 
     @Test
@@ -206,6 +205,52 @@ class ClarifyToolTest {
         int questionEnd = content.indexOf("Which language?");
         int firstChoice = content.indexOf("1. Java");
         assertTrue(questionEnd < firstChoice, "Question should appear before choices");
+    }
+
+    @Test
+    @DisplayName("Should format batch questions with independent choices")
+    void shouldFormatBatchQuestions() {
+        String args = """
+            {"questions":[
+              {"id":"target","question":"Which target?","choices":["staging","production"]},
+              {"id":"regions","question":"Which regions?","choices":["EU","US"],"multi_select":true}
+            ]}
+            """;
+
+        ToolResult result = tool.execute(args, dummyMessage(), dummySession());
+
+        assertTrue(result.success());
+        assertTrue(result.content().contains("Question 1:"));
+        assertTrue(result.content().contains("Which target?"));
+        assertTrue(result.content().contains("Question 2:"));
+        assertTrue(result.content().contains("Select all that apply."));
+    }
+
+    @Test
+    @DisplayName("Should reject more than five batch questions")
+    void shouldRejectOversizedBatch() {
+        String args = """
+            {"questions":[
+              {"question":"1"},{"question":"2"},{"question":"3"},
+              {"question":"4"},{"question":"5"},{"question":"6"}
+            ]}
+            """;
+
+        ToolResult result = tool.execute(args, dummyMessage(), dummySession());
+
+        assertFalse(result.success());
+        assertTrue(result.error().contains("at most 5"));
+    }
+
+    @Test
+    @DisplayName("Should render multi-select instruction for a single question")
+    void shouldRenderMultiSelectInstruction() {
+        ToolResult result = tool.execute(
+            "{\"question\":\"Pick tools\",\"choices\":[\"web\",\"terminal\"],\"multi_select\":true}",
+            dummyMessage(), dummySession());
+
+        assertTrue(result.success());
+        assertTrue(result.content().contains("Select all that apply."));
     }
 
     @Test
