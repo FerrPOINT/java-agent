@@ -102,13 +102,17 @@ class DefaultContextCompressorEdgeCasesTest {
 
         List<Message> result = compressor.compress(messages, 100);
 
-        // With protectFirstN=1: head = [system msg], protectLastN=1: tail = ["current user message"]
+        // Hermes parity: protectFirstN is ADDITIONAL beyond system message.
+        // With protectFirstN=1: head = [system, first user], protectLastN=1: tail = [current user]
         // Original system message is preserved as first message (protected head)
         assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
         assertThat(result.get(0).content()).isEqualTo("First system instruction.");
-        // Summary system message is second
-        assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
-        assertThat(result.get(1).content()).contains("Earlier conversation (summarized):");
+        // First non-system user message is also protected (protectFirstN=1 additional)
+        assertThat(result.get(1).role()).isEqualTo(Role.USER);
+        // Summary system message follows the protected head
+        int summaryIdx = 2;
+        assertThat(result.get(summaryIdx).role()).isEqualTo(Role.SYSTEM);
+        assertThat(result.get(summaryIdx).content()).contains("Earlier conversation (summarized):");
     }
 
     @Test

@@ -142,6 +142,12 @@ public class DefaultContextCompressor implements ContextCompressor {
  private volatile SessionRepository sessionRepository;
  private final ConcurrentHashMap<String, Integer> inMemoryLocks = new ConcurrentHashMap<>();
 
+    /** Per-session compression count — mirrors Hermes compression_count for protectFirstN decay. */
+    private final ConcurrentHashMap<String, Integer> sessionCompressionCounts = new ConcurrentHashMap<>();
+
+    /** Global compression count — used when session-specific count is unavailable. */
+    private final java.util.concurrent.atomic.AtomicInteger globalCompressionCount = new java.util.concurrent.atomic.AtomicInteger(0);
+
  /**
   * P2-51: Dynamic compression threshold in chars, recalculated when the model switches.
   * 0 means "not set" — fall back to config-based targetTokens at call sites.
@@ -329,6 +335,11 @@ public class DefaultContextCompressor implements ContextCompressor {
          ? ((double) (originalTokens - compressedTokens) / originalTokens * 100.0)
          : 0.0;
      this.lastCompressionSavingsPct = savingsPct;
+     // Hermes parity: increment compression_count after each compression.
+     // Used for protectFirstN decay (context_compressor.py:5954).
+     if (savingsPct >= LOW_SAVINGS_THRESHOLD_PCT) {
+         globalCompressionCount.incrementAndGet();
+     }
      if (savingsPct < LOW_SAVINGS_THRESHOLD_PCT) {
          this.consecutiveLowSavings++;
          log.warn("Low-savings compression: {}% saved (consecutive count now {}/{})",
@@ -393,6 +404,26 @@ public class DefaultContextCompressor implements ContextCompressor {
      }
 
      int protectFirstN = properties.getContext().getProtectFirstN();
+
+     // Hermes parity (context_compressor.py:5970-5993): protectFirstN is
+     // ADDITIONAL messages beyond the system prompt. The system message at
+     // index 0 is always implicitly protected — it must never be summarised.
+     // Java was counting system as one of protectFirstN, shifting the
+     // protected head and losing one non-system slot.
+     int systemMsgCount = 0;
+     if (!messages.isEmpty() && messages.get(0).role() == Role.SYSTEM) {
+         systemMsgCount = 1;
+     }
+
+     // Hermes parity: protectFirstN decays to 0 after the first compression
+     // cycle (#11996). Early user turns are captured in the handoff summary
+     // after first compaction, so re-protecting them fossilizes old messages
+     // and grows the head unboundedly across long sessions.
+     int compressionCount = globalCompressionCount.get();
+     if (compressionCount >= 1) {
+         protectFirstN = 0;
+     }
+
      int protectLastN = properties.getContext().getProtectLastN();
 
      // Hermes parity (context_compressor.py:5987): the protected tail is CAPPED
@@ -406,8 +437,9 @@ public class DefaultContextCompressor implements ContextCompressor {
              return messages;
      }
 
-     // Protect head: first N messages (system + first user + first assistant, etc.)
-     int headEnd = Math.min(protectFirstN, messages.size());
+     // Protect head: system message (if present) + first N non-system messages.
+     // Hermes parity: _protect_head_size = system_count + effective_protect_first_n
+     int headEnd = Math.min(systemMsgCount + protectFirstN, messages.size());
      // Protect tail: last N messages (recent context) — floored to the Hermes
      // cap so bulky protected tails remain prunable (#61932 parity).
      int tailStart = Math.max(headEnd, messages.size() - tailFloor);

@@ -176,18 +176,20 @@ class DefaultContextCompressorGapTest {
 
             List<Message> result = compressor.compress(messages, 100);
 
-            // Hermes tail floor: tail = last 3 → head(1: system) + summary(1) + tail(3) = 5
-            assertThat(result).hasSize(5);
+            // Hermes parity: protectFirstN=1 is ADDITIONAL beyond system message.
+            // head = [system, first user "aaa..."], tail = last 3.
             // First message is the original system message, preserved
             assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
             assertThat(result.get(0).content()).isEqualTo("IMPORTANT: You are a specialized medical assistant.");
-            // Second message is the summary system message with anti-injection prefix
-            assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
-            assertThat(result.get(1).content()).startsWith("[REFERENCE ONLY");
-            assertThat(result.get(1).content()).contains("Earlier conversation (summarized):");
-            assertThat(result.get(1).content()).contains("LLM summary text");
-            // Tail messages: last is the current question
-            assertThat(result.get(4).content()).isEqualTo("current question");
+            // Second message is the protected first user (protectFirstN=1 additional)
+            assertThat(result.get(1).role()).isEqualTo(Role.USER);
+            // Summary system message is third
+            assertThat(result.get(2).role()).isEqualTo(Role.SYSTEM);
+            assertThat(result.get(2).content()).startsWith("[REFERENCE ONLY");
+            assertThat(result.get(2).content()).contains("Earlier conversation (summarized):");
+            assertThat(result.get(2).content()).contains("LLM summary text");
+            // Tail: last is the current question
+            assertThat(result.get(result.size() - 1).content()).isEqualTo("current question");
         }
 
         @Test
@@ -210,12 +212,14 @@ class DefaultContextCompressorGapTest {
             // The original system message is preserved as the first message (protected head)
             assertThat(result.get(0).role()).isEqualTo(Role.SYSTEM);
             assertThat(result.get(0).content()).isEqualTo("You must respond only in JSON format.");
-            // The summary system message is second
-            assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
-            assertThat(result.get(1).content()).startsWith("[REFERENCE ONLY");
-            assertThat(result.get(1).content()).contains("Earlier conversation (summarized):");
+            // Second message is the protected first user (protectFirstN=1 additional)
+            assertThat(result.get(1).role()).isEqualTo(Role.USER);
+            // Summary system message is third
+            assertThat(result.get(2).role()).isEqualTo(Role.SYSTEM);
+            assertThat(result.get(2).content()).startsWith("[REFERENCE ONLY");
+            assertThat(result.get(2).content()).contains("Earlier conversation (summarized):");
             // The original system prompt content is NOT in the summary (it was in the protected head)
-            assertThat(result.get(1).content()).doesNotContain("You must respond only in JSON format.");
+            assertThat(result.get(2).content()).doesNotContain("You must respond only in JSON format.");
         }
     }
 
