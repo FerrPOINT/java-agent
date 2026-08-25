@@ -70,8 +70,8 @@ public class DefaultContextCompressor implements ContextCompressor {
  private static final int MIN_SUMMARY_TOKENS = 2_000;
  /** Proportion of compressed content to allocate for summary. */
  private static final double SUMMARY_RATIO = 0.20;
- /** Absolute ceiling for summary tokens. */
- private static final int SUMMARY_TOKENS_CEILING = 12_000;
+ /** Absolute ceiling for summary tokens. Hermes parity: _SUMMARY_TOKENS_CEILING = 10_000. */
+ private static final int SUMMARY_TOKENS_CEILING = 10_000;
  /** Chars per token rough estimate. */
  private static final int CHARS_PER_TOKEN = 4;
 

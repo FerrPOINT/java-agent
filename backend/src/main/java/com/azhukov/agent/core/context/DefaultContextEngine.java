@@ -29,7 +29,11 @@ public class DefaultContextEngine implements ContextEngine {
 
  private static final int RECALL_LIMIT = 5;
  private static final long COMPRESSION_COOLDOWN_SECONDS = 600;
- private static final double PREFLIGHT_THRESHOLD = 0.8;
+ // Hermes parity: preflight threshold must match the compressor's threshold.
+ // Previously 0.8 (80%) while thresholdTokens was 0.75 (75%) — two
+ // desynchronized triggers (context_compressor.py uses one consistent
+ // threshold). The compressor fires at 75% so preflight must too.
+ private static final double PREFLIGHT_THRESHOLD = 0.75;
 
  private final MemoryProvider memoryProvider;
  private final SkillManager skillManager;

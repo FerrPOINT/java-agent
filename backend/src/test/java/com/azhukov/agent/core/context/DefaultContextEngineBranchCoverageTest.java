@@ -285,7 +285,7 @@ class DefaultContextEngineBranchCoverageTest {
     void shouldCompressPreflightOverThresholdReturnsTrue() {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
-        // maxTokens=100, threshold = 100 * 0.8 = 80 tokens = 320 chars
+        // maxTokens=100, threshold = 100 * 0.75 = 75 tokens = 300 chars
         String bigContent = "x".repeat(500);
         List<Message> bigMessages = List.of(Message.user(bigContent));
         assertThat(engine.shouldCompressPreflight(bigMessages)).isTrue();
