@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -451,7 +452,8 @@ public class TurnExecutor {
                     // ── Permanent errors that don't trigger fallback ──
                     if (errorType == ErrorClassifier.ErrorType.PERMANENT
                         || errorType == ErrorClassifier.ErrorType.BILLING
-                        || errorType == ErrorClassifier.ErrorType.PROVIDER_POLICY_BLOCKED) {
+                        || errorType == ErrorClassifier.ErrorType.PROVIDER_POLICY_BLOCKED
+                        || errorType == ErrorClassifier.ErrorType.SSL_CERT_VERIFICATION) {
                         log.warn("Model call failed with {} error, not retrying: {}", errorType, e.getMessage());
                         break;
                     }
@@ -919,11 +921,54 @@ public class TurnExecutor {
     }
 
     /**
-     * Strip grammar-incompatible patterns from tool definitions.
+     * Strip {@code pattern} and {@code format} JSON Schema keywords from tool schemas.
+     * <p>
+     * Hermes parity (tools/schema_sanitizer.py:550): reactive sanitizer invoked
+     * only when llama.cpp's json-schema-to-grammar converter rejects a tool
+     * schema with HTTP 400. llama.cpp's regex engine supports only a small
+     * subset of ECMAScript regex — it rejects escape classes like \d, \w, \s
+     * and most format values. Cloud providers accept these fine, so we keep
+     * them by default and only strip on demand.
+     * <p>
+     * Only strips as a sibling of {@code type}/{@code anyOf}/{@code oneOf}/
+     * {@code allOf} — avoids stripping literal property keys named "pattern".
      */
     public static List<ToolDefinition> stripGrammarPatternsFromTools(List<ToolDefinition> tools) {
-        log.debug("stripGrammarPatternsFromTools: would strip pattern/format from {} tools", tools.size());
-        return tools;
+        if (tools == null || tools.isEmpty()) return tools;
+        var stripped = new java.util.ArrayList<ToolDefinition>(tools.size());
+        int count = 0;
+        for (ToolDefinition tool : tools) {
+            var newParams = new java.util.HashMap<String, Object>(tool.parameters());
+            count += stripPatternAndFormat(newParams);
+            stripped.add(new ToolDefinition(tool.name(), tool.description(), Map.copyOf(newParams)));
+        }
+        log.info("stripGrammarPatternsFromTools: stripped {} pattern/format keywords from {} tools", count, tools.size());
+        return stripped;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int stripPatternAndFormat(Map<String, Object> schema) {
+        int stripped = 0;
+        boolean isSchemaNode = schema.containsKey("type") || schema.containsKey("anyOf")
+            || schema.containsKey("oneOf") || schema.containsKey("allOf");
+        for (String key : new java.util.ArrayList<>(schema.keySet())) {
+            if (isSchemaNode && ("pattern".equals(key) || "format".equals(key))) {
+                schema.remove(key);
+                stripped++;
+                continue;
+            }
+            Object value = schema.get(key);
+            if (value instanceof Map<?, ?> map) {
+                stripped += stripPatternAndFormat((Map<String, Object>) map);
+            } else if (value instanceof List<?> list) {
+                for (Object item : list) {
+                    if (item instanceof Map<?, ?> m) {
+                        stripped += stripPatternAndFormat((Map<String, Object>) m);
+                    }
+                }
+            }
+        }
+        return stripped;
     }
 
     /**

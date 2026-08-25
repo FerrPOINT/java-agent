@@ -42,7 +42,11 @@ public class ErrorClassifier {
         MULTIMODAL_TOOL_CONTENT,        // 400 — provider rejected list-type content in tool messages
         // h81: Empty-response advisory — model returned a deterministic empty response.
         // This is advisory only — it should NOT trigger compression or retry.
-        EMPTY_RESPONSE
+        EMPTY_RESPONSE,
+        // SSL certificate verification failure — non-retryable (Hermes parity:
+        // FailoverReason.ssl_cert_verification). Broken cert chain is deterministic
+        // for the host; retrying burns budget without chance of success.
+        SSL_CERT_VERIFICATION
     }
 
     /**
@@ -478,6 +482,23 @@ public class ErrorClassifier {
             return new ClassificationResult(ErrorType.PERMANENT, RecoveryHints.noRetry());
         }
 
+        // ── 20b. SSL certificate verification failures → fail fast ──────
+        // Hermes parity (error_classifier.py:1100-1114): a broken certificate
+        // chain (TLS-inspecting proxy, missing custom CA, expired/self-signed
+        // cert) is deterministic for the host — every retry reproduces the
+        // identical handshake failure. Fail immediately instead of burning
+        // the retry budget. Checked BEFORE the transient-SSL/connection block
+        // because cert-verify messages also contain "ssl:" / "certificate"
+        // which would otherwise match the transient list.
+        if (lowerMessage.contains("certificate verify failed") || lowerMessage.contains("certificate_verify_failed")
+            || lowerMessage.contains("unable to get local issuer certificate")
+            || lowerMessage.contains("self-signed certificate") || lowerMessage.contains("self signed certificate")
+            || lowerMessage.contains("certificate has expired")
+            || lowerMessage.contains("hostname mismatch, certificate is not valid")
+            || lowerMessage.contains("unable to verify the first certificate")) {
+            return new ClassificationResult(ErrorType.SSL_CERT_VERIFICATION, RecoveryHints.noRetry());
+        }
+
         // ── 21. Connection issues ──
         // h80: Match on message content for connect/DNS failures on generic exception types,
         // not just specific exception classes.
@@ -509,14 +530,8 @@ public class ErrorClassifier {
             || lowerMessage.contains("broken pipe")
             || lowerMessage.contains("errno 32")
             || lowerMessage.contains("remote protocol")
-            // TLS certificate verify failures (retryable via different route/credential)
-            || lowerMessage.contains("certificate verify failed") || lowerMessage.contains("certificate_verify_failed")
-            || lowerMessage.contains("unable to get local issuer certificate")
-            || lowerMessage.contains("self-signed certificate") || lowerMessage.contains("self signed certificate")
-            || lowerMessage.contains("certificate has expired")
-            || lowerMessage.contains("hostname mismatch, certificate is not valid")
-            || lowerMessage.contains("unable to verify the first certificate")
-            // Transient TLS/SSL alerts
+            // SSL cert verify patterns are handled above (20b) as non-retryable.
+            // Only transient TLS/SSL alerts remain here:
             || lowerMessage.contains("bad record mac") || lowerMessage.contains("bad_record_mac")
             || lowerMessage.contains("ssl alert") || lowerMessage.contains("ssl_alert")
             || lowerMessage.contains("tls alert") || lowerMessage.contains("tls_alert")
