@@ -172,6 +172,17 @@ public class DefaultPromptBuilder implements PromptBuilder {
         3. **WAIT** — If a skill is loading or was just pruned, wait for the reload confirmation before proceeding.
         4. **DEDUP** — After reloading a pruned skill, **ignore any remaining `[SKILL_PRUNED]` markers for that same skill** — they are historical artifacts from previous compactions and do not need further action.""";
 
+    /** Variant when skill tools are NOT available — removes dangling skill_view reference.
+     *  Hermes parity: HERMES_AGENT_HELP_GUIDANCE_NO_SKILLS. */
+    static final String HERMES_AGENT_HELP_GUIDANCE_NO_SKILLS =
+        "You run on Hermes Agent (by Nous Research). When the user needs help with "
+        + "Hermes itself — configuring, setting up, using, extending, or troubleshooting "
+        + "it — or when you need to understand your own features, tools, or capabilities, "
+        + "the documentation at https://hermes-agent.nousresearch.com/docs is your "
+        + "authoritative reference and always holds the latest, most up-to-date "
+        + "information. Point the user there (or read it yourself if you have a way to "
+        + "fetch web content).";
+
     // ── Out-of-band steer markers (mirrors Hermes prompt_builder.py) ──
 
     /** Opening marker for mid-turn steer notes appended to tool results. */
@@ -1179,14 +1190,23 @@ public class DefaultPromptBuilder implements PromptBuilder {
         }
 
         // HERMES_AGENT_HELP_GUIDANCE — tells the model where to find docs and self-help
-        stable.append("You run on Hermes Agent (by Nous Research). When the user needs help with ")
-            .append("Hermes itself — configuring, setting up, using, extending, or troubleshooting ")
-            .append("it — or when you need to understand your own features, tools, or capabilities, ")
-            .append("the documentation at https://hermes-agent.nousresearch.com/docs is your ")
-            .append("authoritative reference and always holds the latest, most up-to-date ")
-            .append("information. Load the `hermes-agent` skill with skill_view(name='hermes-agent') ")
-            .append("for additional guidance and proven workflows, but treat the docs as the source ")
-            .append("of truth when the two differ.\n\n");
+        // Hermes parity: use NO_SKILLS variant when skill_view is not available
+        Set<String> availableTools = getAvailableToolNames();
+        boolean hasSkillTools = availableTools.contains("skill_view")
+            || availableTools.contains("skills_list")
+            || availableTools.contains("skill_manage");
+        if (hasSkillTools) {
+            stable.append("You run on Hermes Agent (by Nous Research). When the user needs help with ")
+                .append("Hermes itself — configuring, setting up, using, extending, or troubleshooting ")
+                .append("it — or when you need to understand your own features, tools, or capabilities, ")
+                .append("the documentation at https://hermes-agent.nousresearch.com/docs is your ")
+                .append("authoritative reference and always holds the latest, most up-to-date ")
+                .append("information. Load the `hermes-agent` skill with skill_view(name='hermes-agent') ")
+                .append("for additional guidance and proven workflows, but treat the docs as the source ")
+                .append("of truth when the two differ.\n\n");
+        } else {
+            stable.append(HERMES_AGENT_HELP_GUIDANCE_NO_SKILLS).append("\n\n");
+        }
 
         stable.append("## Rules\n");
         stable.append("1. **Use tools actively** — don't just talk about what you could do, actually call tools to accomplish the task. NEVER describe results you didn't produce. NEVER fabricate output. If you didn't call a tool, you don't have the data.\n");
