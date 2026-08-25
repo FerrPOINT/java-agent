@@ -64,6 +64,7 @@ public class DefaultContextCompressor implements ContextCompressor {
 
  /** Hard ceiling for fallback summary to prevent unbounded transcript copy. */
  private static final int FALLBACK_SUMMARY_MAX_CHARS = 8_000;
+ private static final int FALLBACK_PREVIOUS_SUMMARY_MAX_CHARS = 3_000;
  /** Per-turn cap in fallback summary to keep each message's contribution bounded. */
  private static final int FALLBACK_TURN_MAX_CHARS = 700;
  /** Minimum summary token budget. */
