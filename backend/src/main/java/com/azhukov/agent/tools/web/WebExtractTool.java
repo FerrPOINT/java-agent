@@ -50,9 +50,14 @@ public class WebExtractTool implements ToolHandler {
             return ToolResult.fail("URLs are required");
         }
 
-        // Use per-call char_limit if provided, otherwise fall back to config default
-        int effectiveMaxChars = args.char_limit() != null && args.char_limit() > 0
-            ? args.char_limit() : maxChars;
+        // Use per-call char_limit if provided, otherwise fall back to config default.
+        // Hermes parity: clamp to [2000, 500000] range.
+        int effectiveMaxChars;
+        if (args.char_limit() != null && args.char_limit() > 0) {
+            effectiveMaxChars = Math.max(2000, Math.min(args.char_limit(), 500_000));
+        } else {
+            effectiveMaxChars = Math.max(2000, Math.min(maxChars, 500_000));
+        }
 
         StringBuilder sb = new StringBuilder();
         for (String url : args.urls()) {

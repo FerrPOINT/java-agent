@@ -216,14 +216,15 @@ class WebExtractToolTest {
     @Test
     void executeTruncatesContentExceedingMaxChars() throws Exception {
         AgentProperties p = properties();
-        p.getWeb().setExtractMaxChars(50);
+        // Use a large maxChars so the clamping to [2000, 500000] doesn't override it
+        p.getWeb().setExtractMaxChars(3000);
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
         when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         WebExtractTool tool = newTool(p);
         WebExtractTool spy = org.mockito.Mockito.spy(tool);
-        // Return content longer than maxChars (50)
-        doReturn("x".repeat(200)).when(spy).extract(anyString());
+        // Return content longer than maxChars (3000)
+        doReturn("line\n".repeat(2000)).when(spy).extract(anyString()); // 10_000 chars
 
         ToolResult result = spy.execute("{\"urls\":[\"https://long.example\"]}", null, session());
 

@@ -36,7 +36,7 @@ public class WebSearchTool implements ToolHandler {
 
     private static final String DUCKDUCKGO_HTML = "https://html.duckduckgo.com/html/";
     private static final int DEFAULT_LIMIT = 5;
-    private static final int MAX_LIMIT = 20;
+    private static final int MAX_LIMIT = 100;
 
     private final AgentProperties agentProperties;
     private int configuredLimit;
