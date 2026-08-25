@@ -66,6 +66,23 @@ class TtsToolTest {
     }
 
     @Test
+    void synthesize_outputPathUsesRequestedFile() throws Exception {
+        when(providerProvider.getIfAvailable()).thenReturn(provider);
+        byte[] audioBytes = "custom-output".getBytes();
+        when(provider.synthesize(eq("Hello"), any())).thenReturn(audioBytes);
+        Path requested = Files.createTempDirectory("tts-output-").resolve("nested/custom.mp3");
+
+        ToolResult result = tool.execute("{\"text\":\"Hello\",\"output_path\":\"" + requested + "\"}", null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("MEDIA:" + requested.toAbsolutePath());
+        assertThat(Files.readAllBytes(requested)).isEqualTo(audioBytes);
+        Files.deleteIfExists(requested);
+        Files.deleteIfExists(requested.getParent());
+        Files.deleteIfExists(requested.getParent().getParent());
+    }
+
+    @Test
     void synthesize_noProvider_returnsFail() {
         when(providerProvider.getIfAvailable()).thenReturn(null);
 

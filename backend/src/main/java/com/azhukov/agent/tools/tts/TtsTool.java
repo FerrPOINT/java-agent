@@ -53,7 +53,16 @@ public class TtsTool implements ToolHandler {
         try {
             byte[] audio = provider.synthesize(args.text(), voice);
             String fileName = "tts_" + UUID.randomUUID() + ".mp3";
-            Path outputPath = Path.of("/tmp", fileName);
+            Path outputPath;
+            if (args.outputPath() != null && !args.outputPath().isBlank()) {
+                outputPath = Path.of(args.outputPath()).toAbsolutePath().normalize();
+                Path parent = outputPath.getParent();
+                if (parent != null) {
+                    Files.createDirectories(parent);
+                }
+            } else {
+                outputPath = Path.of("/tmp", fileName);
+            }
             Files.write(outputPath, audio);
             String result = "MEDIA:" + outputPath.toString() + "\nAudio generated and saved to " + outputPath;
             log.debug("TTS generated: {} ({} bytes)", outputPath, audio.length);
@@ -66,6 +75,10 @@ public class TtsTool implements ToolHandler {
 
     record TtsArgs(
         String text,
-        @JsonProperty("voice") String voice
+        @JsonProperty("output_path") String outputPath,
+        @JsonProperty("voice") String voice,
+        @JsonProperty("speed") Double speed,
+        @JsonProperty("instructions") String instructions,
+        @JsonProperty("provider") String provider
     ) {}
 }
