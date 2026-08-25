@@ -2,6 +2,7 @@ package com.azhukov.agent.tools.web;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.AgentTool;
@@ -17,7 +18,10 @@ import org.jsoup.nodes.Element;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import jakarta.annotation.PostConstruct;
 
@@ -59,54 +63,93 @@ public class WebExtractTool implements ToolHandler {
             effectiveMaxChars = Math.max(2000, Math.min(maxChars, 500_000));
         }
 
-        StringBuilder sb = new StringBuilder();
-        for (String url : args.urls()) {
-            String trimmed = url.trim();
-            if (trimmed.isBlank()) continue;
-            if (args.urls().size() > 5) break; // Hermes parity: max 5 URLs per call
-            sb.append("--- URL: ").append(trimmed).append(" ---\n");
-            if (!urlSafety.isUrlAllowed(trimmed)) {
-                sb.append("URL blocked by safety policy\n\n");
-                continue;
+        List<Map<String, Object>> results = new ArrayList<>();
+        // The public schema caps a call at five URLs. Process the first five even
+        // when a malformed caller bypasses schema validation.
+        int urlCount = Math.min(args.urls().size(), 5);
+        for (int index = 0; index < urlCount; index++) {
+            String suppliedUrl = args.urls().get(index);
+            String url = suppliedUrl == null ? "" : suppliedUrl.trim();
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("url", url);
+            result.put("title", "");
+            result.put("content", "");
+            result.put("error", null);
+
+            if (url.isBlank()) {
+                result.put("error", "URL must not be blank");
+            } else if (!urlSafety.isUrlAllowed(url)) {
+                result.put("error", "URL blocked by safety policy");
+                result.put("blocked_by_policy", true);
+            } else {
+                try {
+                    String extracted = extract(url);
+                    if (extracted.startsWith("PDF content detected.")) {
+                        result.put("error", extracted);
+                    } else {
+                        PageContent page = toPageContent(extracted);
+                        result.put("title", page.title());
+                        result.put("content", truncatePageContent(page.content(), effectiveMaxChars));
+                    }
+                } catch (IOException e) {
+                    result.put("error", "Failed to extract: " + e.getMessage());
+                }
             }
-            try {
-                sb.append(extract(trimmed)).append("\n\n");
-            } catch (IOException e) {
-                sb.append("Failed to extract: ").append(e.getMessage()).append("\n\n");
-            }
+            results.add(result);
         }
 
-        String text = sb.toString();
-        if (text.length() > effectiveMaxChars) {
-            // Hermes parity: head+tail truncation (75% head / 25% tail)
-            // instead of cutting only the head. Snap to line boundaries.
-            int headBudget = (int) (effectiveMaxChars * 0.75);
-            int tailBudget = effectiveMaxChars - headBudget;
-
-            String head = text.substring(0, headBudget);
-            String tail = text.substring(text.length() - tailBudget);
-
-            // Snap head back to last newline
-            int headNl = head.lastIndexOf('\n');
-            if (headNl > headBudget * 0.5) {
-                head = head.substring(0, headNl);
-            }
-            // Snap tail forward to next newline
-            int tailNl = tail.indexOf('\n');
-            if (tailNl >= 0 && tailNl < tailBudget * 0.5) {
-                tail = tail.substring(tailNl + 1);
-            }
-
-            text = head
-                + "\n\n[... middle omitted — use a more specific URL or browser tool for the full page ...]\n\n"
-                + tail
-                + "\n\n──────── [TRUNCATED] ────────\n"
-                + "Showing " + head.length() + " chars (head) + " + tail.length() + " chars (tail)"
-                + " of " + text.length() + " total characters.\n"
-                + "─────────────────────────────";
+        try {
+            return ToolResult.ok(redactor.redact(
+                new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("results", results))));
+        } catch (Exception e) {
+            return ToolResult.fail("Failed to serialize extraction results: " + e.getMessage());
         }
-        return ToolResult.ok(redactor.redact(text));
     }
+
+    private PageContent toPageContent(String extracted) {
+        if (extracted == null || extracted.isBlank()) {
+            return new PageContent("", "");
+        }
+        if (extracted.startsWith("# ")) {
+            int titleEnd = extracted.indexOf('\n');
+            if (titleEnd > 2) {
+                String title = extracted.substring(2, titleEnd).trim();
+                String content = extracted.substring(titleEnd).stripLeading();
+                return new PageContent(title, content);
+            }
+        }
+        return new PageContent("", extracted);
+    }
+
+    private String truncatePageContent(String content, int charLimit) {
+        if (content.length() <= charLimit) {
+            return content;
+        }
+
+        int headBudget = (int) (charLimit * 0.75);
+        int tailBudget = charLimit - headBudget;
+        String head = content.substring(0, headBudget);
+        String tail = content.substring(content.length() - tailBudget);
+
+        int headNl = head.lastIndexOf('\n');
+        if (headNl > headBudget * 0.5) {
+            head = head.substring(0, headNl);
+        }
+        int tailNl = tail.indexOf('\n');
+        if (tailNl >= 0 && tailNl < tailBudget * 0.5) {
+            tail = tail.substring(tailNl + 1);
+        }
+
+        return head
+            + "\n\n[... middle omitted — use a more specific URL or browser tool for the full page ...]\n\n"
+            + tail
+            + "\n\n──────── [TRUNCATED] ────────\n"
+            + "Showing " + head.length() + " chars (head) + " + tail.length() + " chars (tail)"
+            + " of " + content.length() + " total characters.\n"
+            + "─────────────────────────────";
+    }
+
+    private record PageContent(String title, String content) {}
 
     protected String extract(String url) throws IOException {
         Connection connection = Jsoup.connect(url)

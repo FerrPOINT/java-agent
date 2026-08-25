@@ -6,6 +6,8 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.Redactor;
 import com.azhukov.agent.core.security.UrlSafety;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -64,6 +66,12 @@ class WebExtractToolTest {
         return Session.create("user", "openai", "gpt-4");
     }
 
+    private JsonNode onlyResult(ToolResult result) throws Exception {
+        JsonNode results = new ObjectMapper().readTree(result.content()).path("results");
+        assertThat(results).hasSize(1);
+        return results.get(0);
+    }
+
     // ── 1. Valid URL — extract returns title + body, success ─────────────
 
     @Test
@@ -89,9 +97,11 @@ class WebExtractToolTest {
             ToolResult result = tool.execute("{\"urls\":[\"https://example.com\"]}", null, session());
 
             assertThat(result.success()).isTrue();
-            assertThat(result.content()).contains("# Hello");
-            assertThat(result.content()).contains("World");
-            assertThat(result.content()).contains("--- URL: https://example.com ---");
+            JsonNode page = onlyResult(result);
+            assertThat(page.path("url").asText()).isEqualTo("https://example.com");
+            assertThat(page.path("title").asText()).isEqualTo("Hello");
+            assertThat(page.path("content").asText()).contains("World");
+            assertThat(page.path("error").isNull()).isTrue();
         }
     }
 
@@ -125,7 +135,7 @@ class WebExtractToolTest {
     // ── 4. Blocked URL — appends safety message, does not extract ─────────
 
     @Test
-    void executeWithBlockedUrlAppendsSafetyMessage() {
+    void executeWithBlockedUrlAppendsSafetyMessage() throws Exception {
         AgentProperties p = properties();
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(false);
         when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
@@ -134,8 +144,9 @@ class WebExtractToolTest {
         ToolResult result = tool.execute("{\"urls\":[\"https://blocked.example\"]}", null, session());
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("URL blocked by safety policy");
-        assertThat(result.content()).contains("--- URL: https://blocked.example ---");
+        JsonNode page = onlyResult(result);
+        assertThat(page.path("error").asText()).isEqualTo("URL blocked by safety policy");
+        assertThat(page.path("blocked_by_policy").asBoolean()).isTrue();
     }
 
     // ── 5. IO error during extract — appends failure message ──────────────
@@ -155,7 +166,7 @@ class WebExtractToolTest {
         ToolResult result = spy.execute("{\"urls\":[\"https://fail.example\"]}", null, session());
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("Failed to extract: connection refused");
+        assertThat(onlyResult(result).path("error").asText()).isEqualTo("Failed to extract: connection refused");
     }
 
     // ── 6. Multiple URLs — processes each independently ───────────────────
@@ -175,10 +186,12 @@ class WebExtractToolTest {
             "{\"urls\":[\"https://a.example\",\"https://b.example\"]}", null, session());
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("Page A content");
-        assertThat(result.content()).contains("Page B content");
-        assertThat(result.content()).contains("--- URL: https://a.example ---");
-        assertThat(result.content()).contains("--- URL: https://b.example ---");
+        JsonNode pages = new ObjectMapper().readTree(result.content()).path("results");
+        assertThat(pages).hasSize(2);
+        assertThat(pages.get(0).path("content").asText()).isEqualTo("Page A content");
+        assertThat(pages.get(1).path("content").asText()).isEqualTo("Page B content");
+        assertThat(pages.get(0).path("url").asText()).isEqualTo("https://a.example");
+        assertThat(pages.get(1).path("url").asText()).isEqualTo("https://b.example");
     }
 
     // ── 7. PDF content-type — returns helpful error, does not parse ───────
@@ -204,8 +217,9 @@ class WebExtractToolTest {
             ToolResult result = tool.execute("{\"urls\":[\"https://example.com/doc.pdf\"]}", null, session());
 
             assertThat(result.success()).isTrue();
-            assertThat(result.content()).contains("PDF content detected");
-            assertThat(result.content()).contains("cannot extract text from PDF");
+            JsonNode page = onlyResult(result);
+            assertThat(page.path("error").asText()).contains("PDF content detected");
+            assertThat(page.path("error").asText()).contains("cannot extract text from PDF");
             // parse() should never be called for PDF
             verify(response, never()).parse();
         }
@@ -229,8 +243,8 @@ class WebExtractToolTest {
         ToolResult result = spy.execute("{\"urls\":[\"https://long.example\"]}", null, session());
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("[TRUNCATED]");
+        assertThat(onlyResult(result).path("content").asText()).contains("[TRUNCATED]");
         // Head+tail truncation: should contain both head and tail content
-        assertThat(result.content()).contains("middle omitted");
+        assertThat(onlyResult(result).path("content").asText()).contains("middle omitted");
     }
 }
