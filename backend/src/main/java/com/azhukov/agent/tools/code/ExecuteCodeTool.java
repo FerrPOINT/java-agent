@@ -47,6 +47,16 @@ public class ExecuteCodeTool implements ToolHandler {
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         ExecuteCodeArgs args = ToolHandler.parseJson(arguments, ExecuteCodeArgs.class);
         if (args.code() == null || args.code().isBlank()) {
+            // Hermes parity: check if 'command' was sent instead of 'code'
+            try {
+                var tree = new com.fasterxml.jackson.databind.ObjectMapper().readTree(arguments);
+                if (tree.has("command") && !tree.get("command").isNull() && !tree.get("command").asText().isBlank()) {
+                    return ToolResult.fail(
+                        "execute_code received a 'command' parameter, but it requires " +
+                        "Python source in 'code'. Use terminal(command=...) for shell " +
+                        "commands; for Python, retry as execute_code(code=...).");
+                }
+            } catch (Exception ignored) { }
             return ToolResult.fail(
                 "execute_code requires Python source in 'code'. " +
                 "Use terminal(command=...) for shell commands; " +

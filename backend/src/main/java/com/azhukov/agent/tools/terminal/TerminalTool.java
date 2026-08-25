@@ -56,8 +56,20 @@ public class TerminalTool implements ToolHandler {
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         TerminalArgs args = ToolHandler.parseJson(arguments, TerminalArgs.class);
-        // TerminalArgs is package-private inner record defined below
-        if (args.command() == null || args.command().isBlank()) {
+        // Hermes parity: models sometimes send execute_code's 'code' argument here.
+        // Without this, the call falls through to command=None and fails with
+        // "Command is required" — naming neither the stray argument nor the right tool.
+        if ((args.command() == null || args.command().isBlank())) {
+            // Check if 'code' was sent instead of 'command'
+            try {
+                var tree = new com.fasterxml.jackson.databind.ObjectMapper().readTree(arguments);
+                if (tree.has("code") && !tree.get("code").isNull() && !tree.get("code").asText().isBlank()) {
+                    return ToolResult.fail(
+                        "terminal received a 'code' parameter, but it requires a shell " +
+                        "command in 'command'. Use execute_code(code=...) for Python; " +
+                        "for shell, retry as terminal(command=...).");
+                }
+            } catch (Exception ignored) { }
             return ToolResult.fail("Command is required");
         }
         String command = args.command();
