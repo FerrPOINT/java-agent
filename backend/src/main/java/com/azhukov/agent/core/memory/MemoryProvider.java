@@ -55,6 +55,20 @@ public interface MemoryProvider {
         store(userId, target, category, fact);
     }
 
+    /**
+     * Apply memory operations atomically. The default implementation is not
+     * available because arbitrary providers may not support transactions.
+     * Providers that persist entries must override this method.
+     */
+    default String applyBatch(String userId, String target,
+                              List<MemoryBatchOperation> operations,
+                              Map<String, String> provenance) {
+        throw new UnsupportedOperationException("atomic batch updates not supported");
+    }
+
+    /** One add/replace/remove operation in an atomic memory batch. */
+    record MemoryBatchOperation(String action, String content, String oldText) {}
+
     default String replace(String userId, String target, String oldText, String newText) {
         throw new UnsupportedOperationException("replace not supported");
     }

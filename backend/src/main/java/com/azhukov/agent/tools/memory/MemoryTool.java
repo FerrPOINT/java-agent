@@ -130,63 +130,27 @@ public class MemoryTool implements ToolHandler {
             return ToolResult.ok("Staged for approval (id: " + id + ")");
         }
 
-        // Apply each operation sequentially. On first failure, return error
-        // without committing any changes (all-or-nothing).
-        // NOTE: the current MemoryProvider interface doesn't have a true batch
-        // method, so we apply ops sequentially. If any fails, the earlier ones
-        // are already committed — this is NOT truly atomic like Hermes.
-        // A true atomic batch would require a new MemoryProvider.applyBatch method.
-        int applied = 0;
-        for (int i = 0; i < operations.size(); i++) {
-            MemoryOperation op = operations.get(i);
-            String action = op.action() != null ? op.action().toLowerCase() : "";
-            String content = op.content() != null ? op.content().strip() : "";
-            String oldText = op.old_text() != null ? op.old_text().strip() : "";
-            String pos = "Operation " + (i + 1) + " (" + action + ")";
-
-            try {
-                switch (action) {
-                    case "add" -> {
-                        if (content.isBlank()) {
-                            return ToolResult.fail(pos + ": content is required.");
-                        }
-                        memoryProvider.store(session.userId(), target, "auto", content, provenance);
-                        applied++;
-                    }
-                    case "replace" -> {
-                        if (oldText.isBlank()) {
-                            return ToolResult.fail(pos + ": old_text is required.");
-                        }
-                        if (content.isBlank()) {
-                            return ToolResult.fail(pos + ": content is required (use action='remove' to delete).");
-                        }
-                        String error = memoryProvider.replace(session.userId(), target, oldText, content, provenance);
-                        if (error != null) {
-                            return buildErrorResponse(session, target, pos + ": " + error);
-                        }
-                        applied++;
-                    }
-                    case "remove" -> {
-                        if (oldText.isBlank()) {
-                            return ToolResult.fail(pos + ": old_text is required.");
-                        }
-                        String error = memoryProvider.remove(session.userId(), target, oldText, provenance);
-                        if (error != null) {
-                            return buildErrorResponse(session, target, pos + ": " + error);
-                        }
-                        applied++;
-                    }
-                    default -> {
-                        return ToolResult.fail(pos + ": unknown action. Use add, replace, or remove.");
-                    }
-                }
-            } catch (IllegalStateException ex) {
-                return buildErrorResponse(session, target, pos + ": " + ex.getMessage());
+        List<MemoryProvider.MemoryBatchOperation> batch = new ArrayList<>(operations.size());
+        for (MemoryOperation op : operations) {
+            batch.add(new MemoryProvider.MemoryBatchOperation(
+                op == null ? null : op.action(),
+                op == null ? null : op.content(),
+                op == null ? null : op.old_text()));
+        }
+        try {
+            String error = memoryProvider.applyBatch(session.userId(), target, batch, provenance);
+            if (error != null) {
+                return buildErrorResponse(session, target, error);
             }
+        } catch (UnsupportedOperationException ex) {
+            return ToolResult.fail("Atomic batch updates are not supported by memory provider '"
+                + memoryProvider.name() + "'.");
+        } catch (IllegalStateException ex) {
+            return buildErrorResponse(session, target, ex.getMessage());
         }
 
-        log.info("Applied {} of {} batch memory operations for target {}", applied, operations.size(), target);
-        return buildSuccessResponse(session, target, "Applied " + applied + " operation(s).");
+        log.info("Applied {} atomic batch memory operations for target {}", operations.size(), target);
+        return buildSuccessResponse(session, target, "Applied " + operations.size() + " operation(s).");
     }
 
     private ToolResult doAdd(Session session, String target, MemoryArgs args, Map<String, String> provenance) {

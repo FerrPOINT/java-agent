@@ -253,6 +253,101 @@ public class DatabaseMemoryProvider implements MemoryProvider {
 
     @Override
     @Transactional
+    public String applyBatch(String userId, String target,
+                             List<MemoryBatchOperation> operations,
+                             Map<String, String> provenance) {
+        if (operations == null || operations.isEmpty()) {
+            return "operations list is empty.";
+        }
+        String effectiveTarget = target != null ? target : "memory";
+        List<MemoryEntity> working = new java.util.ArrayList<>(
+            memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, effectiveTarget));
+        int limit = charLimitFor(effectiveTarget);
+
+        // Validate and apply to an in-memory working copy first. No database
+        // mutation happens until EVERY operation and the final char budget pass.
+        for (int i = 0; i < operations.size(); i++) {
+            MemoryBatchOperation operation = operations.get(i);
+            String action = operation == null || operation.action() == null
+                ? "" : operation.action().trim().toLowerCase();
+            String content = operation == null || operation.content() == null
+                ? "" : operation.content().trim();
+            String oldText = operation == null || operation.oldText() == null
+                ? "" : operation.oldText().trim();
+            String position = "Operation " + (i + 1) + " (" + action + ")";
+
+            switch (action) {
+                case "add" -> {
+                    if (content.isBlank()) return position + ": content is required.";
+                    String threat = scanForThreats(content);
+                    if (threat != null) return position + ": Blocked: " + threat;
+                    if (working.stream().anyMatch(e -> e.getFact() != null && e.getFact().trim().equals(content))) {
+                        continue; // Hermes idempotent duplicate add
+                    }
+                    MemoryEntity entity = new MemoryEntity();
+                    entity.setUserId(userId);
+                    entity.setTarget(effectiveTarget);
+                    entity.setCategory("auto");
+                    entity.setFact(content);
+                    entity.setCreatedAt(Instant.now());
+                    entity.setUpdatedAt(Instant.now());
+                    working.add(entity);
+                }
+                case "replace" -> {
+                    if (oldText.isBlank()) return position + ": old_text is required.";
+                    if (content.isBlank()) return position + ": content is required (use action='remove' to delete).";
+                    String threat = scanForThreats(content);
+                    if (threat != null) return position + ": Blocked: " + threat;
+                    List<MemoryEntity> matches = working.stream()
+                        .filter(e -> e.getFact() != null && e.getFact().contains(oldText)).toList();
+                    if (matches.isEmpty()) return position + ": no entry matched '" + oldText + "'.";
+                    if (matches.stream().map(MemoryEntity::getFact).distinct().count() > 1) {
+                        return position + ": '" + oldText + "' matched multiple distinct entries -- be more specific.";
+                    }
+                    matches.getFirst().setFact(content);
+                    matches.getFirst().setUpdatedAt(Instant.now());
+                }
+                case "remove" -> {
+                    if (oldText.isBlank()) return position + ": old_text is required.";
+                    List<MemoryEntity> matches = working.stream()
+                        .filter(e -> e.getFact() != null && e.getFact().contains(oldText)).toList();
+                    if (matches.isEmpty()) return position + ": no entry matched '" + oldText + "'.";
+                    if (matches.stream().map(MemoryEntity::getFact).distinct().count() > 1) {
+                        return position + ": '" + oldText + "' matched multiple distinct entries -- be more specific.";
+                    }
+                    working.remove(matches.getFirst());
+                }
+                default -> { return position + ": unknown action. Use add, replace, or remove."; }
+            }
+        }
+
+        if (maxFactsPerUser() > 0 && working.size() > maxFactsPerUser()) {
+            return "Memory store '" + effectiveTarget + "' would exceed the maximum of "
+                + maxFactsPerUser() + " facts per user.";
+        }
+        int finalChars = working.isEmpty() ? 0 : String.join(DELIMITER,
+            working.stream().map(MemoryEntity::getFact).toList()).length();
+        if (finalChars > limit) {
+            return "After applying all " + operations.size() + " operations, memory would be at "
+                + finalChars + "/" + limit + " chars.";
+        }
+
+        List<MemoryEntity> original = memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, effectiveTarget);
+        try {
+            // Delete only rows absent from the validated final state, then save all
+            // remaining/created rows. Transaction rolls back on an optimistic-lock error.
+            for (MemoryEntity entity : original) {
+                if (!working.contains(entity)) memoryRepository.delete(entity);
+            }
+            for (MemoryEntity entity : working) memoryRepository.save(entity);
+        } catch (ObjectOptimisticLockingFailureException ex) {
+            throw new IllegalStateException(driftErrorFromLock(effectiveTarget), ex);
+        }
+        return null;
+    }
+
+    @Override
+    @Transactional
     public String replace(String userId, String target, String oldText, String newText) {
         // H2: Trim new content before saving
         String trimmedNewText = newText != null ? newText.trim() : newText;
