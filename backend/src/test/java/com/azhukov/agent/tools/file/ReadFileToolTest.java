@@ -134,9 +134,10 @@ class ReadFileToolTest {
         ToolResult r = tool.execute("{\"path\":\"" + dir.resolve("big.txt") + "\",\"offset\":1,\"limit\":10000}", null, session);
         assertThat(r.success()).isTrue();
         assertThat(r.content().length()).isGreaterThan(100_000);
-        assertThat(r.content()).contains("[... file truncated at 100000 chars]");
+        assertThat(r.content()).contains("Use offset=");
+        assertThat(r.content()).contains("to continue reading.");
         // The truncation marker should be near the end
-        int markerIndex = r.content().indexOf("[... file truncated at 100000 chars]");
+        int markerIndex = r.content().indexOf("Use offset=");
         assertThat(markerIndex).isGreaterThan(99_000);
     }
 

@@ -103,14 +103,38 @@ public class ReadFileTool implements ToolHandler {
                 result += "\n[truncated: showing lines " + offset + "-" + (start + shown) + " of " + lines.size() + " total, " + remaining + " remaining]";
             }
 
-            // Char cap truncation
+            // Char cap truncation — Hermes parity: return next_offset so the
+            // model can continue reading from where it left off.
             if (result.length() > MAX_READ_CHARS) {
-                result = result.substring(0, MAX_READ_CHARS) + "\n[... file truncated at " + MAX_READ_CHARS + " chars]";
+                // Find the last complete line boundary within MAX_READ_CHARS
+                int cutAt = MAX_READ_CHARS;
+                // Walk back to the last newline so we don't split a line
+                int lastNewline = result.lastIndexOf('\n', cutAt - 1);
+                if (lastNewline > MAX_READ_CHARS / 2) {
+                    cutAt = lastNewline;
+                }
+                String truncated = result.substring(0, cutAt);
+                // Count how many lines were included to compute next_offset
+                int linesShown = countLines(truncated);
+                int nextOffset = offset + linesShown;
+                result = truncated
+                    + "\n[... file truncated at ~" + cutAt + " chars. "
+                    + "Use offset=" + nextOffset + " to continue reading.]";
             }
             return ToolResult.ok(result);
         } catch (IOException e) {
             return ToolResult.fail("Failed to read file: " + e.getMessage());
         }
+    }
+
+    /** Count the number of newline-separated lines in a string. */
+    private static int countLines(String s) {
+        if (s == null || s.isEmpty()) return 0;
+        int count = 0;
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) == '\n') count++;
+        }
+        return count;
     }
 
     /**
