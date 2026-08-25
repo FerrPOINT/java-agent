@@ -167,8 +167,10 @@ public final class MarkdownConverter {
     private MarkdownConverter() {
     }
 
-    /** Characters that must be escaped with backslash in MarkdownV2 plain text. */
-    private static final String SPECIAL_CHARS = "_*[]()~`>#+-=|{}.!";
+    /** Characters that must be escaped with backslash in MarkdownV2 plain text.
+     *  Hermes parity: {@code _MDV2_ESCAPE_RE = re.compile(r'([_*\[\]()~`>#+\-=|{}.!\\])')}
+     *  — includes backslash itself, which Java was missing. */
+    private static final String SPECIAL_CHARS = "_*[]()~`>#+-=|{}.!\\";
 
     // Headings: # Heading → **Heading** (processed before escaping, then converted to bold)
     private static final Pattern HEADING_PATTERN =
