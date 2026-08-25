@@ -859,11 +859,13 @@ class AgentStreamingServiceBranchTest {
         List<Message> msgs = capturedMessages.get();
         assertThat(msgs).isNotNull();
         // Should contain: system, history(user "previous message"), current user("Hello")
+        // After sanitizeForModelRequest, consecutive user messages may be merged:
+        // "previous message" + "Hello" → "previous message\n\nHello"
         boolean hasPreviousMessage = msgs.stream()
-            .anyMatch(m -> "previous message".equals(m.content()));
+            .anyMatch(m -> m.content() != null && m.content().contains("previous message"));
         assertThat(hasPreviousMessage).isTrue();
         boolean hasCurrentMessage = msgs.stream()
-            .anyMatch(m -> "Hello".equals(m.content()));
+            .anyMatch(m -> m.content() != null && m.content().contains("Hello"));
         assertThat(hasCurrentMessage).isTrue();
     }
 

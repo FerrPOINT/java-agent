@@ -34,6 +34,37 @@ public final class HistorySanitizer {
     }
 
     /**
+     * Final wire-level sanitization before every model request.
+     * <p>
+     * Extends structural {@link #sanitize(List)} with template-aware alternation:
+     * system/developer/tool rows are exempt, while visible user/assistant rows
+     * must alternate for Mistral/llama.cpp style templates. Historical summary
+     * system carriers are intentionally left system-role here: providers receive
+     * system separately or accept it as an exempt row.
+     */
+    public static List<Message> sanitizeForModelRequest(List<Message> messages) {
+        List<Message> repaired = sanitize(messages);
+        if (repaired == null || repaired.isEmpty()) {
+            return repaired;
+        }
+        List<Message> result = new ArrayList<>(repaired.size());
+        for (Message message : repaired) {
+            if (message.role() == Role.USER
+                && !result.isEmpty()
+                && result.get(result.size() - 1).role() == Role.USER) {
+                Message previous = result.remove(result.size() - 1);
+                String previousContent = previous.content() == null ? "" : previous.content();
+                String content = message.content() == null ? "" : message.content();
+                result.add(Message.withContent(previous, previousContent.isEmpty()
+                    ? content : content.isEmpty() ? previousContent : previousContent + "\n\n" + content));
+            } else {
+                result.add(message);
+            }
+        }
+        return result;
+    }
+
+    /**
      * Repairs the message list; returns a NEW list (the input is not mutated).
      *
      * @return the sanitized history, or the original reference when no

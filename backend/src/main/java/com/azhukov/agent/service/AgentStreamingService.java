@@ -443,6 +443,10 @@ public class AgentStreamingService {
 
                 try {
                     long llmStart = System.currentTimeMillis();
+                    // Final wire-level repair must run immediately before EVERY
+                    // provider call. prepareContext() alone is insufficient:
+                    // continuations/compression mutate context afterward.
+                    context = HistorySanitizer.sanitizeForModelRequest(context);
                     activeStreamClient.stream(context, tools, streamOptions, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
