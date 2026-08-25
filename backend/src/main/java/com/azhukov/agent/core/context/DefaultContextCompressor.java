@@ -104,7 +104,35 @@ public class DefaultContextCompressor implements ContextCompressor {
      + "with [REDACTED]. Note that credentials were present, but do not "
      + "preserve their values.";
 
- /** Hermes parity: structured summary template sections (prompt_builder.py:4862-4916). */
+ /** Hermes parity: max chars per message body in summarizer input (_CONTENT_MAX = 6000). */
+ private static final int CONTENT_MAX_CHARS = 6_000;
+
+ /** Hermes parity: max total summarizer input chars (_SUMMARY_INPUT_MAX_CHARS = 160_000). */
+ private static final int SUMMARY_INPUT_MAX_CHARS = 160_000;
+
+ /** Hermes parity: per-message truncation of summary input content. */
+ private static String truncateForSummary(String content) {
+     if (content == null) return null;
+     if (content.length() <= CONTENT_MAX_CHARS) return content;
+     return content.substring(0, CONTENT_MAX_CHARS - 15).strip() + " ...[truncated]";
+ }
+
+ /** Hermes parity: _bound_summary_input — head+tail truncation with omitted-middle marker. */
+ private static String boundSummaryInput(String content) {
+     if (content == null || content.length() <= SUMMARY_INPUT_MAX_CHARS) return content;
+     String markerTemplate = "\n\n...[summary input truncated: omitted {omitted} chars from the middle to keep compression prompt bounded]...\n\n";
+     // Estimate, then rebuild with exact omitted span
+     String marker = markerTemplate.replace("{omitted}", String.valueOf(content.length()));
+     int remaining = Math.max(SUMMARY_INPUT_MAX_CHARS - marker.length(), 0);
+     int headChars = (int) (remaining * 0.45);
+     int tailChars = remaining - headChars;
+     int omitted = Math.max(content.length() - headChars - tailChars, 0);
+     marker = markerTemplate.replace("{omitted}", String.valueOf(omitted));
+     remaining = Math.max(SUMMARY_INPUT_MAX_CHARS - marker.length(), 0);
+     headChars = (int) (remaining * 0.45);
+     tailChars = remaining - headChars;
+     return content.substring(0, headChars) + marker + content.substring(content.length() - tailChars);
+ }
  private static final String SUMMARY_TEMPLATE = """
      ## Goal
      [The user's primary objective in this session]
@@ -590,6 +618,7 @@ public class DefaultContextCompressor implements ContextCompressor {
          }
          if (content != null && !content.isBlank()) {
              content = MEDIA_DIRECTIVE_RE.matcher(content).replaceAll("").strip();
+             content = truncateForSummary(content);
          }
          if (content != null && !content.isBlank()) {
              summaryInput.append(m.role()).append(": ").append(content).append("\n\n");
@@ -608,7 +637,7 @@ public class DefaultContextCompressor implements ContextCompressor {
      // Wrap the summarize() call in a CompletableFuture with a timeout. If the LLM
      // summary generation takes longer than the configured budget, fall back to
      // fallbackSummarize() to ensure compression completes without hanging.
-     String summary = summarizeWithTimeout(summaryInput.toString(), summaryBudget);
+     String summary = summarizeWithTimeout(boundSummaryInput(summaryInput.toString()), summaryBudget);
 
      List<Message> compressed = new ArrayList<>();
      // Preserve protected head messages (includes system message)
