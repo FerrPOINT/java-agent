@@ -67,7 +67,7 @@ public class ReadFileTool implements ToolHandler {
 
         // Binary file detection by extension
         if (isBinaryFile(path)) {
-            return ToolResult.fail("Binary file detected: " + rawPath + ". Use terminal tool for binary files.");
+            return ToolResult.fail("Cannot read binary file: " + rawPath + ". Use vision_analyze for images.");
         }
 
         try {
@@ -78,7 +78,7 @@ public class ReadFileTool implements ToolHandler {
             List<String> lines = content.isEmpty() ? List.of() : List.of(content.split("\n", -1));
             int offset = Math.max(1, args.offset());
             int start = offset - 1;
-            int limit = args.limit() > 0 ? args.limit() : Integer.MAX_VALUE;
+            int limit = args.limit() > 0 ? args.limit() : 2000;
             int end = Math.min(lines.size(), start + limit);
 
             if (start >= lines.size()) {

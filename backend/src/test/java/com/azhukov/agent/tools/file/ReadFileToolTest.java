@@ -54,7 +54,7 @@ class ReadFileToolTest {
         ReadFileTool tool = newTool();
         ToolResult r = tool.execute("{\"path\":\"" + dir.resolve("image.png") + "\",\"offset\":1,\"limit\":10}", null, session);
         assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Binary file detected");
+        assertThat(r.error()).contains("Cannot read binary file");
         assertThat(r.error()).contains(".png");
     }
 
@@ -64,7 +64,7 @@ class ReadFileToolTest {
         ReadFileTool tool = newTool();
         ToolResult r = tool.execute("{\"path\":\"" + dir.resolve("archive.zip") + "\",\"offset\":1,\"limit\":10}", null, session);
         assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Binary file detected");
+        assertThat(r.error()).contains("Cannot read binary file");
     }
 
     @Test
@@ -73,7 +73,7 @@ class ReadFileToolTest {
         ReadFileTool tool = newTool();
         ToolResult r = tool.execute("{\"path\":\"" + dir.resolve("Main.class") + "\",\"offset\":1,\"limit\":10}", null, session);
         assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Binary file detected");
+        assertThat(r.error()).contains("Cannot read binary file");
     }
 
     @Test
@@ -82,7 +82,7 @@ class ReadFileToolTest {
         ReadFileTool tool = newTool();
         ToolResult r = tool.execute("{\"path\":\"" + dir.resolve("photo.JPG") + "\",\"offset\":1,\"limit\":10}", null, session);
         assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Binary file detected");
+        assertThat(r.error()).contains("Cannot read binary file");
     }
 
     // ── Device path blocking ──────────────────────────────────────────
