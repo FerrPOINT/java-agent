@@ -108,6 +108,9 @@ class SyncRecoveryParityTest {
 
         assertThat(calls.get()).isEqualTo(2);
         assertThat(lastAssistant(result)).isEqualTo("abcdef");
+        // The second model call must see the persisted partial and explicit nudge,
+        // not the original request alone.
+        assertThat(total.get()).isGreaterThan(0);
     }
 
     @Test

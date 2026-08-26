@@ -91,6 +91,9 @@ public class DefaultContextCompressor implements ContextCompressor {
  private static final int TOOL_OUTPUT_KEEP_HEAD = 200;
  private static final int TOOL_OUTPUT_KEEP_TAIL = 200;
 
+ /** Hermes parity: truncate tool_call arguments > 500 chars (Pass 3, context_compressor.py:3926). */
+ private static final int TOOL_CALL_ARGS_MAX = 500;
+
  /** Hard ceiling for fallback summary to prevent unbounded transcript copy. */
  private static final int FALLBACK_SUMMARY_MAX_CHARS = 8_000;
  private static final int FALLBACK_PREVIOUS_SUMMARY_MAX_CHARS = 3_000;
@@ -259,6 +262,12 @@ public class DefaultContextCompressor implements ContextCompressor {
       policy.recalculateThreshold(newContextWindowSize, model, modelThresholds);
   }
 
+  /** Hermes parity: reserve the configured output budget from the input window. */
+  public void recalculateThreshold(int newContextWindowSize, String model,
+                                   java.util.Map<String, Double> modelThresholds, int maxOutputTokens) {
+      policy.recalculateThreshold(newContextWindowSize, model, modelThresholds, maxOutputTokens);
+  }
+
  /**
   * P2-51: Returns the dynamic compression threshold in chars, or 0 if not yet set.
   * Delegates to {@link CompressionPolicy#getCompressionThresholdChars()}.
@@ -416,6 +425,12 @@ public class DefaultContextCompressor implements ContextCompressor {
      // (whose results were dropped). This prevents API 400 "No tool call found" errors.
      List<Message> sanitizedMiddle = sanitizeToolPairs(dedupedMiddle);
 
+     // 1.2a: Hermes Pass 3 (context_compressor.py:3926): truncate large tool_call
+     // arguments in assistant messages outside the protected tail. write_file with
+     // 50KB content survives pruning entirely without this. The shrinking preserves
+     // valid JSON so downstream providers don't 400 on the next replay.
+     sanitizedMiddle = truncateToolCallArgs(sanitizedMiddle);
+
      // 1.3: Ensure last user and last assistant messages are in the protected tail.
      // If they ended up in the middle (compressed) region, pull the tail boundary back.
      // This prevents the user's latest request or the agent's latest reply from being
@@ -425,7 +440,7 @@ public class DefaultContextCompressor implements ContextCompressor {
          tailStart = adjustedTailStart;
          middleMessages = messages.subList(headEnd, tailStart);
          tailMessages = messages.subList(tailStart, messages.size());
-         sanitizedMiddle = sanitizeToolPairs(dedupToolResults(middleMessages));
+         sanitizedMiddle = truncateToolCallArgs(sanitizeToolPairs(dedupToolResults(middleMessages)));
      }
 
      // Detect and extract any previous summary from middle messages for iterative compaction
@@ -439,7 +454,7 @@ public class DefaultContextCompressor implements ContextCompressor {
          tailStart = alignBoundaryForward(messages, tailStart);
          middleMessages = messages.subList(headEnd, tailStart);
          tailMessages = messages.subList(tailStart, messages.size());
-         sanitizedMiddle = sanitizeToolPairs(dedupToolResults(middleMessages));
+         sanitizedMiddle = truncateToolCallArgs(sanitizeToolPairs(dedupToolResults(middleMessages)));
      }
 
      // 1.5: Auto-focus topic — extract the topic from recent user messages to guide
@@ -778,6 +793,79 @@ public class DefaultContextCompressor implements ContextCompressor {
      * Mirrors Hermes _prune_tool_results Pass 1: MD5-hash content > 200 chars, keep
      * the most recent occurrence, replace older duplicates with "[Duplicate tool output]".
      */
+    /**
+     * Hermes parity: Pass 3 (context_compressor.py:3926): truncate large tool_call
+     * arguments in assistant messages outside the protected tail. The shrinking
+     * preserves valid JSON so downstream providers don't 400 on the next replay.
+     */
+    private List<Message> truncateToolCallArgs(List<Message> messages) {
+        List<Message> result = new ArrayList<>(messages.size());
+        for (Message m : messages) {
+            if (m.role() != Role.ASSISTANT || m.toolCalls() == null || m.toolCalls().isEmpty()) {
+                result.add(m);
+                continue;
+            }
+            List<ToolCall> truncated = new ArrayList<>();
+            boolean modified = false;
+            for (ToolCall tc : m.toolCalls()) {
+                String args = tc.arguments();
+                if (args != null && args.length() > TOOL_CALL_ARGS_MAX) {
+                    truncated.add(new ToolCall(tc.id(), tc.name(),
+                        truncateJsonArgs(args, TOOL_CALL_ARGS_MAX)));
+                    modified = true;
+                } else {
+                    truncated.add(tc);
+                }
+            }
+            if (modified) {
+                result.add(Message.assistantWithToolCalls(m.content(), truncated, m.turnIndex()));
+            } else {
+                result.add(m);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Truncate JSON arguments to maxLen while keeping valid JSON.
+     * Hermes _truncate_tool_call_args_json: keeps top-level keys, truncates long string values.
+     */
+    private String truncateJsonArgs(String args, int maxLen) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(args);
+            var truncated = truncateJsonNode(node, maxLen);
+            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(truncated);
+        } catch (Exception e) {
+            // Fallback: hard-truncate with ellipsis indicator
+            if (args.length() > maxLen) {
+                return args.substring(0, maxLen - 20) + "...[truncated]";
+            }
+            return args;
+        }
+    }
+
+    private com.fasterxml.jackson.databind.JsonNode truncateJsonNode(com.fasterxml.jackson.databind.JsonNode node, int maxLen) {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        if (node.isObject()) {
+            var obj = mapper.createObjectNode();
+            var fields = node.fields();
+            while (fields.hasNext()) {
+                var entry = fields.next();
+                String key = entry.getKey();
+                var val = entry.getValue();
+                if (val.isTextual() && val.asText().length() > 200) {
+                    obj.put(key, val.asText().substring(0, 100) + "...[truncated]");
+                } else if (val.isObject() || val.isArray()) {
+                    obj.set(key, truncateJsonNode(val, maxLen));
+                } else {
+                    obj.set(key, val);
+                }
+            }
+            return obj;
+        }
+        return node;
+    }
+
     private List<Message> dedupToolResults(List<Message> messages) {
         List<Message> result = new ArrayList<>(messages);
         Map<String, Integer> contentHashes = new LinkedHashMap<>();

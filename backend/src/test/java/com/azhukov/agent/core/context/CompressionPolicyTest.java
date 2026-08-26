@@ -52,10 +52,18 @@ class CompressionPolicyTest {
         }
 
         @Test
-        @DisplayName("Threshold uses 64K floor for small context windows (8K)")
-        void smallContextUsesFloor() {
+        @DisplayName("Small context uses reachable 85% trigger instead of an unreachable 64K floor")
+        void smallContextUsesReachableTrigger() {
             policy.recalculateThreshold(8_192);
-            int expected = Math.max((int) (8_192 * 0.75), CompressionPolicy.MINIMUM_CONTEXT_LENGTH) * 4;
+            int expected = (int) (8_192 * CompressionPolicy.MIN_CTX_TRIGGER_RATIO) * 4;
+            assertThat(policy.getCompressionThresholdChars()).isEqualTo(expected);
+        }
+
+        @Test
+        @DisplayName("Threshold reserves max output tokens from the provider context window")
+        void thresholdReservesOutputBudget() {
+            policy.recalculateThreshold(128_000, "test", null, 32_000);
+            int expected = (int) (96_000 * CompressionPolicy.SMALL_CTX_THRESHOLD_PERCENT) * 4;
             assertThat(policy.getCompressionThresholdChars()).isEqualTo(expected);
         }
 
@@ -73,7 +81,7 @@ class CompressionPolicyTest {
         void thresholdUpdatedOnModelSwitch() {
             policy.recalculateThreshold(32_768);
             int first = policy.getCompressionThresholdChars();
-            assertThat(first).isEqualTo(Math.max((int) (32_768 * 0.75), CompressionPolicy.MINIMUM_CONTEXT_LENGTH) * 4);
+            assertThat(first).isEqualTo((int) (32_768 * CompressionPolicy.MIN_CTX_TRIGGER_RATIO) * 4);
 
             policy.recalculateThreshold(131_072);
             int second = policy.getCompressionThresholdChars();

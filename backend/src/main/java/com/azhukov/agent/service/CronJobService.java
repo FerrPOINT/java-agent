@@ -40,6 +40,12 @@ import java.util.concurrent.locks.ReentrantLock;
 @RequiredArgsConstructor
 public class CronJobService {
 
+    /** Hermes parity: every agent-driven cron run is auto-delivered and may suppress an empty report. */
+    private static final String CRON_EXECUTION_HINT = """
+        [IMPORTANT: You are running as a scheduled cron job. DELIVERY: Your final response will be automatically delivered to the user — do NOT use send_message or try to deliver the output yourself. Just produce your report/output as your final response and the system handles the rest. SILENT: If there is genuinely nothing new to report, respond with exactly \"[SILENT]\" (nothing else) to suppress delivery. Never combine [SILENT] with content — either report your findings normally, or say [SILENT] and nothing more.]
+
+        """;
+
     private final CronJobRepository cronJobRepository;
     private final ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider;
     private final AgentProperties properties;
@@ -485,6 +491,10 @@ public class CronJobService {
                 enhancedPrompt = contextFromOutput + "\n\n" + enhancedPrompt;
                 log.debug("Injected context_from output into cron job '{}'", job.getName());
             }
+
+            // Hermes cron/scheduler.py: scheduled output is auto-delivered; the
+            // model must use [SILENT] for a genuinely empty report.
+            enhancedPrompt = CRON_EXECUTION_HINT + enhancedPrompt;
 
             // Cron runtime constraints must be enforced by the runtime, not merely
             // exposed to the model as advisory prompt text.

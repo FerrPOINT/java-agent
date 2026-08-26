@@ -78,6 +78,9 @@ class CompressionPolicy {
     /** Hermes parity: _SMALL_CTX_THRESHOLD_PERCENT — floor for small-context models (raise-only). */
     static final double SMALL_CTX_THRESHOLD_PERCENT = 0.75;
 
+    /** Hermes parity: _MIN_CTX_TRIGGER_RATIO — reachable trigger when the 64K floor fills the input budget. */
+    static final double MIN_CTX_TRIGGER_RATIO = 0.85;
+
     /**
      * Hermes parity: resolve_model_threshold — resolve the effective compression threshold
      * for a given model, supporting per-model substring overrides (longest match wins).
@@ -175,6 +178,15 @@ class CompressionPolicy {
      * @param modelThresholds per-model threshold overrides (substring→fraction), or null
      */
     void recalculateThreshold(int newContextWindowSize, String model, java.util.Map<String, Double> modelThresholds) {
+        recalculateThreshold(newContextWindowSize, model, modelThresholds, 0);
+    }
+
+    /**
+     * Hermes parity: calculate the trigger against the effective input budget,
+     * reserving output tokens so compaction runs before a provider rejects a full request.
+     */
+    void recalculateThreshold(int newContextWindowSize, String model,
+                              java.util.Map<String, Double> modelThresholds, int maxOutputTokens) {
         if (newContextWindowSize <= 0) {
             log.debug("recalculateThreshold: ignoring non-positive context window size {}", newContextWindowSize);
             return;
@@ -182,22 +194,24 @@ class CompressionPolicy {
         // h60: Reset compression failure cooldown when the model/context switches.
         resetCompressionFailureCooldown("ctx-" + newContextWindowSize);
 
-        // Step 1-2: resolve threshold fraction (default + per-model overrides)
         double thresholdFraction = resolveModelThreshold(model, modelThresholds, COMPRESSION_THRESHOLD_FRACTION);
-
-        // Step 3: small-context floor — raise-only
         if (newContextWindowSize < SMALL_CTX_WINDOW_LIMIT && thresholdFraction < SMALL_CTX_THRESHOLD_PERCENT) {
             thresholdFraction = SMALL_CTX_THRESHOLD_PERCENT;
         }
 
-        // Step 4: compute token threshold with minimum floor
-        int thresholdTokens = Math.max(
-            (int) (newContextWindowSize * thresholdFraction),
-            MINIMUM_CONTEXT_LENGTH
-        );
+        // Hermes _compute_threshold_tokens: reserve output capacity from the same
+        // context window. A nonsensical reservation falls back to the full window.
+        int effectiveWindow = newContextWindowSize - Math.max(0, maxOutputTokens);
+        if (effectiveWindow <= 0) {
+            effectiveWindow = newContextWindowSize;
+        }
+        int floorAdjusted = Math.max((int) (effectiveWindow * thresholdFraction), MINIMUM_CONTEXT_LENGTH);
+        int thresholdTokens = floorAdjusted >= effectiveWindow
+            ? Math.max(1, Math.min((int) (effectiveWindow * MIN_CTX_TRIGGER_RATIO), effectiveWindow - 1))
+            : floorAdjusted;
         this.compressionThresholdChars = thresholdTokens * CHARS_PER_TOKEN;
-        log.info("Compression threshold recalculated for context window {} (model={}, fraction={}): thresholdTokens={}, thresholdChars={}",
-            newContextWindowSize, model, thresholdFraction, thresholdTokens, this.compressionThresholdChars);
+        log.info("Compression threshold recalculated for context window {} (model={}, fraction={}, outputReservation={}): thresholdTokens={}, thresholdChars={}",
+            newContextWindowSize, model, thresholdFraction, maxOutputTokens, thresholdTokens, this.compressionThresholdChars);
     }
 
     /**

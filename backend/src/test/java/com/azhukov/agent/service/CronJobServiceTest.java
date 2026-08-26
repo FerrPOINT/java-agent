@@ -157,7 +157,9 @@ class CronJobServiceTest {
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         service.runNow(id);
-        verify(agentRuntimeService).runBackground("Do something", null, true);
+        verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
+            org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
+            org.mockito.ArgumentMatchers.contains("Do something")), eq(null), eq(true));
     }
 
     @Test
@@ -235,7 +237,9 @@ class CronJobServiceTest {
 
         service.runNow(id);
 
-        verify(agentRuntimeService).runBackground("Do something plain", null, true);
+        verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
+            org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
+            org.mockito.ArgumentMatchers.contains("Do something plain")), eq(null), eq(true));
         verifyNoInteractions(skillManager);
     }
 
@@ -677,7 +681,9 @@ class CronJobServiceTest {
 
         service.runNow(id);
 
-        verify(agentRuntimeService).runBackground(eq("Do something"), eq(null), eq(true),
+        verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
+            org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
+            org.mockito.ArgumentMatchers.contains("Do something")), eq(null), eq(true),
             eq(java.util.Map.of("delegation_toolsets", "web,terminal", "cron_workdir", "/opt/dev")));
     }
 }

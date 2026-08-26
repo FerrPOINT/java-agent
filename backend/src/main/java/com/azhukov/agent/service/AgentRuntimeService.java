@@ -381,7 +381,7 @@ public class AgentRuntimeService {
             // compression policy can apply per-model and small-context floor adjustments.
             if (contextCompressor instanceof DefaultContextCompressor dcc) {
                 dcc.recalculateThreshold(newContextWindowSize, model,
-                    properties.getContext().getModelThresholds());
+                    properties.getContext().getModelThresholds(), properties.getModel().getMaxTokens());
             } else {
                 contextCompressor.recalculateThreshold(newContextWindowSize);
             }

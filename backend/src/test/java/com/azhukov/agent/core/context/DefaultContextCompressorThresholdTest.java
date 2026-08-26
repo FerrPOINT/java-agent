@@ -47,13 +47,11 @@ class DefaultContextCompressorThresholdTest {
         }
 
         @Test
-        @DisplayName("Threshold for a small context window (8K) uses 64K floor")
+        @DisplayName("Threshold for a small context window (8K) uses reachable 85% trigger")
         void smallContextWindow() {
-            // 8K → 0.75 × 8192 = 6144 tokens, but MINIMUM_CONTEXT_LENGTH = 64000 floor applies
-            // → threshold = max(6144, 64000) = 64000 → × 4 = 256000 chars
             DefaultContextCompressor compressor = createCompressor();
             compressor.recalculateThreshold(8_192);
-            int expected = Math.max((int) (8_192 * 0.75), DefaultContextCompressor.MINIMUM_CONTEXT_LENGTH) * 4;
+            int expected = (int) (8_192 * CompressionPolicy.MIN_CTX_TRIGGER_RATIO) * 4;
             assertThat(compressor.getCompressionThresholdChars()).isEqualTo(expected);
         }
 
@@ -72,10 +70,10 @@ class DefaultContextCompressorThresholdTest {
         void thresholdUpdatedOnModelSwitch() {
             DefaultContextCompressor compressor = createCompressor();
 
-            // First model: 32K context → 0.75 × 32768 = 24576, floored to 64000
+            // First model: 32K context → min floor would fill the window, so 85% reachable trigger.
             compressor.recalculateThreshold(32_768);
             int firstThreshold = compressor.getCompressionThresholdChars();
-            assertThat(firstThreshold).isEqualTo(Math.max((int) (32_768 * 0.75), DefaultContextCompressor.MINIMUM_CONTEXT_LENGTH) * 4);
+            assertThat(firstThreshold).isEqualTo((int) (32_768 * CompressionPolicy.MIN_CTX_TRIGGER_RATIO) * 4);
 
             // Switch to a model with 128K context → 0.75 × 131072 = 98304 (above floor)
             compressor.recalculateThreshold(131_072);
@@ -83,10 +81,10 @@ class DefaultContextCompressorThresholdTest {
             assertThat(secondThreshold).isEqualTo(Math.max((int) (131_072 * 0.75), DefaultContextCompressor.MINIMUM_CONTEXT_LENGTH) * 4);
             assertThat(secondThreshold).isGreaterThan(firstThreshold);
 
-            // Switch to a model with 8K context (smaller) → floored to 64000
+            // Switch to a model with 8K context — use 85% reachable trigger.
             compressor.recalculateThreshold(8_192);
             int thirdThreshold = compressor.getCompressionThresholdChars();
-            assertThat(thirdThreshold).isEqualTo(Math.max((int) (8_192 * 0.75), DefaultContextCompressor.MINIMUM_CONTEXT_LENGTH) * 4);
+            assertThat(thirdThreshold).isEqualTo((int) (8_192 * CompressionPolicy.MIN_CTX_TRIGGER_RATIO) * 4);
             assertThat(thirdThreshold).isLessThan(secondThreshold);
         }
 

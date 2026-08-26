@@ -116,21 +116,19 @@ class DefaultContextEngineUpdateModelTest {
     }
 
     @Test
-    @DisplayName("updateModel applies 64K floor to compressor threshold")
-    void updateModelApplies64KFloor() {
+    @DisplayName("updateModel applies reachable trigger to a small compressor threshold")
+    void updateModelAppliesReachableTrigger() {
         var compressor = new DefaultContextCompressor(null, null, properties);
         var engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, compressor, properties, null, modelMetadataService
         );
 
-        // 8K context model → 0.75 × 8192 = 6144, floored to 64000
         when(modelMetadataService.detectContextLength("small-model")).thenReturn(8_192);
 
         engine.updateModel("small-model");
 
         assertThat(engine.getContextLength()).isEqualTo(8_192);
-        // Compressor threshold should use the 64K floor
-        int expectedThreshold = DefaultContextCompressor.MINIMUM_CONTEXT_LENGTH * 4;
+        int expectedThreshold = (int) (8_192 * CompressionPolicy.MIN_CTX_TRIGGER_RATIO) * 4;
         assertThat(compressor.getCompressionThresholdChars()).isEqualTo(expectedThreshold);
     }
 

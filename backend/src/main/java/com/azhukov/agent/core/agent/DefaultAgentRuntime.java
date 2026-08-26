@@ -663,12 +663,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     response.content().length(), lengthContinueRetries,
                     ResponseRecoveryPolicy.MAX_LENGTH_CONTINUATION_ATTEMPTS);
                 String partialContent = response.content();
-                truncatedParts.append(partialContent);
-                List<Message> lengthContext = new ArrayList<>(turnMessages);
-                lengthContext.add(Message.assistant(partialContent, turnIndex));
-                lengthContext.add(Message.user(ResponseRecoveryPolicy.LENGTH_NUDGE));
+                // The continuation fragment and nudge must become part of the live
+                // transcript. Building a throwaway context loses both at the next loop
+                // iteration, so the model simply repeats the original request.
+                if (partialContent != null && !partialContent.isEmpty()) {
+                    truncatedParts.append(partialContent);
+                    turnMessages.add(Message.assistant(partialContent, turnIndex));
+                }
+                turnMessages.add(Message.user(ResponseRecoveryPolicy.LENGTH_NUDGE));
                 turnIndex++;
-                context = contextEngine.prepareContext(session, lengthContext);
                 session = resolveRotatedSession(session);
                 continue;
             }
