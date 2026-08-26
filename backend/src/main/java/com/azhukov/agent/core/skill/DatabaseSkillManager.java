@@ -86,8 +86,17 @@ public class DatabaseSkillManager implements SkillManager {
  TrustLevel trustLevel = determineTrustLevelForSave(name);
  String scanError = SkillSecurityScanner.scanAndGuard(name, content, trustLevel);
  if (scanError != null) {
- log.warn("Security scan blocked skill save '{}': {}", name, scanError);
- throw new SecurityException(scanError);
+     log.warn("Security scan blocked skill save '{}': {}", name, scanError);
+     throw new SecurityException(scanError);
+ }
+
+ // Hermes parity (skill_linter.py create-path contract): advisory convention
+ // findings are surfaced as guidance, NEVER as a hard reject — the hard
+ // rejects already live in validateFrontmatter/scanAndGuard above.
+ List<SkillConventionLinter.LintFinding> lintFindings = SkillConventionLinter.lintContent(name, content);
+ if (!lintFindings.isEmpty()) {
+     log.info("Skill '{}' advisory convention findings (non-blocking): {}", name,
+         SkillConventionLinter.formatFindings(lintFindings));
  }
 
  SkillEntity e = skillRepository.findByName(name).orElse(new SkillEntity());

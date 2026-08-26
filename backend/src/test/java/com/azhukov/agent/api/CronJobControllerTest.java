@@ -18,6 +18,10 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -46,7 +50,7 @@ class CronJobControllerTest {
         entity.setSchedule("0 * * * *");
         entity.setPrompt("test prompt");
         entity.setEnabled(true);
-        when(cronJobService.create(any(), any(), any(), any(), any())).thenReturn(entity);
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
 
         mockMvc.perform(post("/api/v1/agent/cron")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -55,6 +59,32 @@ class CronJobControllerTest {
                     """))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.name").value("test-job"));
+    }
+
+    @Test
+    void createEndpoint_withContextFrom_passesChainingFields() throws Exception {
+        CronJobEntity entity = new CronJobEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setName("chained");
+        entity.setSchedule("0 * * * *");
+        entity.setPrompt("p");
+        entity.setEnabled(true);
+        entity.setContextFrom("11111111-1111-1111-1111-111111111111");
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
+
+        mockMvc.perform(post("/api/v1/agent/cron")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"name":"chained","schedule":"0 * * * *","prompt":"p",
+                     "contextFrom":"11111111-1111-1111-1111-111111111111",
+                     "enabledToolsets":"web","workdir":"/tmp"}
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.contextFrom").value("11111111-1111-1111-1111-111111111111"));
+
+        verify(cronJobService).create(eq("chained"), eq("0 * * * *"), eq("p"), isNull(), isNull(),
+            eq("11111111-1111-1111-1111-111111111111"),
+            isNull(), isNull(), eq(false), eq("web"), eq("/tmp"), isNull(), isNull(), isNull());
     }
 
     @Test

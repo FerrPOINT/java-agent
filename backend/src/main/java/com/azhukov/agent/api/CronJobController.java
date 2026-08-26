@@ -30,7 +30,11 @@ public class CronJobController {
 
     @PostMapping
     public CronJobDto create(@Valid @RequestBody CreateCronRequest request) {
-        return cronJobDtoMapper.toDto(cronJobService.create(request.name(), request.schedule(), request.prompt(), request.deliverTo(), request.skills()));
+        return cronJobDtoMapper.toDto(cronJobService.create(
+            request.name(), request.schedule(), request.prompt(), request.deliverTo(),
+            request.skills(), request.contextFrom(),
+            null, null, false, request.enabledToolsets(), request.workdir(),
+            null, null, null));
     }
 
     @GetMapping
@@ -40,8 +44,12 @@ public class CronJobController {
 
     @PutMapping("/{id}")
     public CronJobDto update(@PathVariable UUID id, @Valid @RequestBody UpdateCronRequest request) {
-        return cronJobDtoMapper.toDto(cronJobService.update(id, request.name(), request.schedule(), request.prompt(),
-            request.deliverTo(), request.enabled()));
+        return cronJobDtoMapper.toDto(cronJobService.update(id, request.name(), request.schedule(),
+            request.prompt(), request.deliverTo(), request.enabled(),
+            null, request.contextFrom(),
+            null, null, null,
+            request.enabledToolsets(), request.workdir(),
+            null, null, null));
     }
 
     // ── Suggestions (Hermes /suggestions parity) ──
@@ -198,14 +206,20 @@ public class CronJobController {
         @jakarta.validation.constraints.NotBlank String schedule,
         @jakarta.validation.constraints.NotBlank String prompt,
         String deliverTo,
-        String skills
+        String skills,
+        String contextFrom,
+        String enabledToolsets,
+        String workdir
     ) {}
     public record UpdateCronRequest(
         @jakarta.validation.constraints.NotBlank String name,
         @jakarta.validation.constraints.NotBlank String schedule,
         String prompt,
         String deliverTo,
-        Boolean enabled
+        Boolean enabled,
+        String contextFrom,
+        String enabledToolsets,
+        String workdir
     ) {}
 
     // ------------------------------------------------------------------

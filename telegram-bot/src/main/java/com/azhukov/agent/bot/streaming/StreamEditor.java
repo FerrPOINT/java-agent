@@ -92,11 +92,7 @@ public class StreamEditor {
     // c6: All per-chat streaming state consolidated into a single map.
     private final ConcurrentHashMap<Long, StreamSession> sessions = new ConcurrentHashMap<>();
 
-    // B5: Adaptive rate limiting — Hermes uses x2 multiplier, 10s max, 3 strikes
-    private static final long MAX_INTERVAL_MS = 10000;
-    private static final double FLOOD_MULTIPLIER = 2.0;
-    private static final int MAX_FLOOD_STRIKES = 3;
-    private static final int FLOOD_WARN_THRESHOLD = 3;
+    // B5: Adaptive rate limiting constants extracted to EditThrottlePolicy
 
     // B7: Silent notification config
     private boolean streamingSilent;
@@ -425,7 +421,7 @@ public class StreamEditor {
         long now = System.currentTimeMillis();
         long last = session.lastEditTime;
         // B5: Use adaptive interval (may have been adjusted by flood handling)
-        long currentInterval = getEffectiveInterval(session);
+        long currentInterval = EditThrottlePolicy.getEffectiveInterval(session, minIntervalMs);
 
         // Buffer threshold: Hermes measures TOTAL accumulated text length (not delta since last edit).
         // The accumulated text is the full scrubbed text passed to editStream.
@@ -482,7 +478,7 @@ public class StreamEditor {
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
                 // 429 from editMessageText — apply adaptive flood handling.
-                success = handleEditFailure(chatId, effectiveMessageId, formatted, session, 429);
+                success = EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, formatted, session, 429, minIntervalMs, streamingSilent, streamingMaxChars, this::formatForTelegramDelegate);
             } else {
                 throw e;
             }
@@ -498,8 +494,8 @@ public class StreamEditor {
             // B5: Edit failed. BUG FIX: use the error code from the typed exception —
             // TelegramClient.getLastApiErrorCode() is a shared mutable side-channel
             // and races between concurrently streaming chats (wrong flood strikes).
-            success = handleEditFailure(chatId, effectiveMessageId, formatted, session,
-                telegramClient.getLastApiErrorCode());
+            success = EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, formatted, session,
+                telegramClient.getLastApiErrorCode(), minIntervalMs, streamingSilent, streamingMaxChars, this::formatForTelegramDelegate);
         }
         return success;
     }
@@ -545,7 +541,7 @@ public class StreamEditor {
             success = telegramClient.editMessageText(chatId, messageId, firstPart, null, disableNotification);
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
-                handleEditFailure(chatId, messageId, firstPart, session, 429);
+                EditThrottlePolicy.handleEditFailure(telegramClient, chatId, messageId, firstPart, session, 429, minIntervalMs, streamingSilent, streamingMaxChars, this::formatForTelegramDelegate);
                 return false;
             } else {
                 throw e;
@@ -556,7 +552,7 @@ public class StreamEditor {
             session.lastEditTime = System.currentTimeMillis();
             session.floodStrikes.set(0);
         } else {
-            handleEditFailure(chatId, messageId, firstPart, session, 400);
+            EditThrottlePolicy.handleEditFailure(telegramClient, chatId, messageId, firstPart, session, 400, minIntervalMs, streamingSilent, streamingMaxChars, this::formatForTelegramDelegate);
             return false;
         }
 
@@ -864,7 +860,7 @@ public class StreamEditor {
         // Throttle draft frames the same way as edits
         long now = System.currentTimeMillis();
         long last = session.lastEditTime;
-        long currentInterval = getEffectiveInterval(session);
+        long currentInterval = EditThrottlePolicy.getEffectiveInterval(session, minIntervalMs);
         int charsAccumulated = text.length();
         boolean intervalElapsed = last == 0 || (now - last) >= currentInterval;
         boolean thresholdReached = bufferThreshold > 0 && charsAccumulated >= bufferThreshold;
@@ -1091,99 +1087,10 @@ public class StreamEditor {
         }
     }
 
-    // ─── B5: Adaptive rate limiting ──────────────────────────────
-
-    private long getEffectiveInterval(StreamSession session) {
-        long interval = session.editInterval.get();
-        if (interval == 0L) {
-            return minIntervalMs;
-        }
-        return interval;
-    }
-
-    private void increaseInterval(StreamSession session) {
-        long current = session.editInterval.get();
-        if (current == 0L) {
-            current = minIntervalMs;
-        }
-        long newInterval = Math.min((long) (current * FLOOD_MULTIPLIER), MAX_INTERVAL_MS);
-        if (newInterval != current) {
-            log.info("Increasing edit interval from {}ms to {}ms due to flood", current, newInterval);
-            session.editInterval.set(newInterval);
-        }
-    }
+    // ─── B5: Adaptive rate limiting (delegated to EditThrottlePolicy) ──
 
     // Note: Hermes does not decrease the interval on success.
     // The interval stays at the backoff level and only flood strikes are reset to 0.
-
-    /**
-     * Handle edit failure. Distinguishes 400 (message too long) from 429 (flood).
-     * - 400: don't increment flood strikes, just truncate and retry.
-     *   Returns true if the truncated retry succeeds, false otherwise.
-     * - 429: increment flood strikes, increase interval, possibly disable.
-     *   Returns false.
-     * - Other: treat as generic failure (increment flood strikes conservatively).
-     *   Returns false.
-     *
-     * @return true if the failure was handled successfully (e.g. truncated retry
-     *         succeeded), false otherwise
-     */
-    private boolean handleEditFailure(long chatId, long messageId, String formatted, StreamSession session,
-                                      int errorCode) {
-        if (errorCode == 400) {
-            // Message too long — don't increment flood strikes, just truncate and retry.
-            // BUG FIX (audit H14): the truncation target must respect the Telegram
-            // editMessageText limit (4096 UTF-16 units), NOT streamingMaxChars —
-            // the configured split threshold (32768) is a rich-message limit and
-            // exceeds what editMessageText accepts, so truncating to it was a no-op
-            // and the edit froze.
-            log.debug("Edit failed with 400 (message too long) for chat {}, truncating and retrying", chatId);
-            int safeLen = Math.min(streamingMaxChars > 0 ? streamingMaxChars : 4000, 4000);
-            String truncated = formatted.length() > safeLen ? formatted.substring(0, safeLen) : formatted;
-            boolean disableNotification = streamingSilent;
-            boolean retried;
-            try {
-                // L12: Use null parseMode in retry — the original editMessageText call for
-                // streaming content uses null (raw text), so the truncated retry should match.
-                retried = telegramClient.editMessageText(chatId, messageId, truncated, null, disableNotification);
-            } catch (TelegramApiException retryEx) {
-                if (retryEx.isRateLimit()) {
-                    // Truncated retry also got 429 — treat as flood
-                    log.debug("Truncated retry got 429 for chat {}", chatId);
-                    return false;
-                }
-                throw retryEx;
-            }
-            if (retried) {
-                session.lastEditTime = System.currentTimeMillis();
-                session.floodStrikes.set(0);
-            }
-            return retried;
-        }
-
-        // 429 or other failure — increment flood strikes
-        int strikes = session.floodStrikes.incrementAndGet();
-        log.debug("Edit failure (errorCode={}) for chat {}, flood strikes: {}", errorCode, chatId, strikes);
-
-        // Increase interval on flood
-        increaseInterval(session);
-
-        if (strikes >= FLOOD_WARN_THRESHOLD) {
-            log.warn("Flood strike threshold ({}) reached for chat {}, current interval: {}ms",
-                strikes, chatId, getEffectiveInterval(session));
-        }
-
-        if (strikes >= MAX_FLOOD_STRIKES) {
-            log.warn("Max flood strikes ({}) exceeded for chat {}, disabling streaming edits — buffering until final",
-                MAX_FLOOD_STRIKES, chatId);
-            session.streamingDisabled = true;
-            // P2-16: Initialize the flood fallback buffer with the current content.
-            // The buffer is sent via sendFormattedMessage (parseMode=MarkdownV2) on finalize,
-            // so apply formatForTelegram here to escape special chars correctly.
-            session.floodFallbackBuffer.append(formatForTelegramDelegate(formatted));
-        }
-        return false;
-    }
 
     // ─── B6: Think-block filtering (delegated to ThinkTagFilter) ───
 
