@@ -114,6 +114,18 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
 
             String response = turnResult.finalText();
 
+            // P8 parity (turn_finalizer.py:756): a steer received after the
+            // turn's last model boundary becomes the next user event instead of
+            // being silently cleared from SteerBuffer.
+            String lateSteer = turnResult.pendingSteer();
+            if (lateSteer != null && !lateSteer.isBlank()) {
+                pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(
+                    new MessageEvent(java.util.UUID.randomUUID().toString(), source,
+                        event.type(), lateSteer, List.of(), java.util.Map.of("steer_handoff", "true"),
+                        java.time.Instant.now()));
+                log.info("Queued late steer handoff for session {}", session.id());
+            }
+
             if (response == null || response.isBlank()) {
                 response = "(пустой ответ от модели)";
             }

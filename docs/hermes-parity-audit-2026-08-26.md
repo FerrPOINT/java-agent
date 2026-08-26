@@ -46,6 +46,7 @@
 - **Impact:** A user interrupt during a long parallel-safe tool batch is not honored until all tools finish, including tools that may hang or take minutes.
 
 ### P8: Seam 1 [HIGH]
+- **Status:** ✅ FIXED 2026-08-26 — TurnResult carries pendingSteer; DefaultAgentRuntime drains the SteerBuffer in the finally block and hands it to the caller instead of clearing it; InboundMessageProcessor re-queues it as the next user MessageEvent (steer_handoff metadata). Regression test: InboundMessageProcessorTest.acceptQueuesLateSteerReturnedByRuntimeForNextTurn.
 - **Hermes:** `agent/turn_finalizer.py:756` - At turn finalization drains an undelivered mid-turn steer and returns it as `pending_steer`, allowing the caller to deliver it as the next user turn rather than lose it.
 - **Java:** `core/agent/DefaultAgentRuntime.java:380` - Unconditionally clears `SteerBuffer` in `runTurnInternal`'s `finally` block after the loop returns, with no equivalent handoff result.
 - **Impact:** A steer that arrives after the final model response, or is requeued because no tool result exists, is silently discarded instead of becoming the next user instruction.

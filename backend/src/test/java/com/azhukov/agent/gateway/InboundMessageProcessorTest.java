@@ -29,6 +29,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.timeout;
 
 class InboundMessageProcessorTest {
 
@@ -90,6 +91,25 @@ class InboundMessageProcessorTest {
         assertThat(runtimeSession.title()).isEqualTo("Telegram " + USERNAME);
 
         verify(routingService).send(Platform.TELEGRAM, source, REPLY_TEXT);
+    }
+
+    @Test
+    void acceptQueuesLateSteerReturnedByRuntimeForNextTurn() {
+        agentProperties.getGateway().getTelegram().setAllowByDefault(true);
+        SessionSource source = new SessionSource(Platform.TELEGRAM, CHAT_ID, USER_ID, USERNAME, USERNAME);
+        MessageEvent event = messageEvent(source, USER_TEXT);
+        Session session = new Session(SESSION_ID, USER_ID, "Telegram " + USERNAME,
+            MODEL_PROVIDER, MODEL_NAME, null, Map.of());
+        when(sessionResolver.resolve(source)).thenReturn(session);
+        when(agentRuntime.runTurn(any(Session.class), eq(USER_TEXT), eq(List.of())))
+            .thenReturn(new TurnResult(List.of(Message.assistant(REPLY_TEXT, 1)), true, null, "do the late thing"));
+        when(routingService.send(Platform.TELEGRAM, source, REPLY_TEXT))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "msg-late", null)));
+
+        processor.accept(event);
+
+        // The result handoff is immediately drained through the normal queue path.
+        verify(agentRuntime, timeout(1_000)).runTurn(any(Session.class), eq("do the late thing"), eq(List.of()));
     }
 
     @Test

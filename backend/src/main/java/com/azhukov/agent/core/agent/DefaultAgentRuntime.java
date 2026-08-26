@@ -376,16 +376,18 @@ public class DefaultAgentRuntime implements AgentRuntime {
         }
 
         TurnResult result = null;
+        String pendingSteer = null;
         try {
         result = runTurnLoop(session, turnMessages, tools, maxTurns, turnIndex, budget, turnState, sessionId, sessionIdUuid, options, effectiveToolsets);
         } finally {
+            // P8 parity (turn_finalizer.py:756): a steer arriving after the last
+            // model/tool boundary must be handed to the caller for the next turn,
+            // never cleared as a lost in-flight note. consume() atomically drains it.
+            if (steerBuffer != null) {
+                pendingSteer = steerBuffer.consume(sessionIdUuid);
+            }
             // Clean up per-session guardrail state to prevent memory leaks (REM-2)
             guardrail.reset(sessionIdUuid);
-            // Clear any pending steer that wasn't consumed (e.g. turn was
-            // interrupted before the next tool batch could drain it).
-            if (steerBuffer != null) {
-                steerBuffer.clear(sessionIdUuid);
-            }
             // S14: MemoryManager — sync turn data + queue prefetch for next turn
             if (memoryManager != null && memoryManager.hasProviders()) {
                 try {
@@ -418,6 +420,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
         if (fallbackManager != null && fallbackManager.isFallbackActivated()) {
             fallbackManager.restorePrimary();
             activeModelClient = modelClient;
+        }
+        // Preserve a late steer as a first-class handoff to the caller. The
+        // gateway turns this into the next queued user event after this turn exits.
+        if (result != null && pendingSteer != null && !pendingSteer.isBlank()) {
+            return new TurnResult(result.messages(), result.completed(), result.error(), pendingSteer);
         }
         return result;
     }

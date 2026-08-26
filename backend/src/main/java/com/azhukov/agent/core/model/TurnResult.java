@@ -7,14 +7,20 @@ import java.util.stream.Collectors;
 public record TurnResult(
     List<Message> messages,
     boolean completed,
-    String error
+    String error,
+    String pendingSteer
 ) {
     public TurnResult {
         Objects.requireNonNull(messages, "messages");
     }
 
+    /** Backward-compatible result without an undelivered mid-turn steer. */
+    public TurnResult(List<Message> messages, boolean completed, String error) {
+        this(messages, completed, error, null);
+    }
+
     public static TurnResult error(String error) {
-        return new TurnResult(List.of(), false, error);
+        return new TurnResult(List.of(), false, error, null);
     }
 
     public String finalText() {
