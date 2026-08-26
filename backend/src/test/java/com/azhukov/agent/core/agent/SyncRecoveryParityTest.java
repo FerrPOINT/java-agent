@@ -65,8 +65,10 @@ class SyncRecoveryParityTest {
         when(contextEngine.prepareContext(any(), any()))
             .thenReturn(List.of(Message.system("sys"), Message.user("hi")));
 
+        java.util.concurrent.atomic.AtomicInteger lastPromptSize = new java.util.concurrent.atomic.AtomicInteger(0);
         com.azhukov.agent.core.client.ModelClient model = (msgs, tools, opts) -> {
             int n = calls.incrementAndGet();
+            lastPromptSize.set(msgs.size());
             return responder.apply(n, calls.get());
         };
 
@@ -108,9 +110,17 @@ class SyncRecoveryParityTest {
 
         assertThat(calls.get()).isEqualTo(2);
         assertThat(lastAssistant(result)).isEqualTo("abcdef");
-        // The second model call must see the persisted partial and explicit nudge,
-        // not the original request alone.
-        assertThat(total.get()).isGreaterThan(0);
+        // Hermes parity: the stitched partial AND the continuation nudge must reach
+        // the second model call (turn transcript grows by 2 rows), not a throwaway
+        // context that repeats the original request.
+        assertThat(result.messages().stream()
+            .filter(m -> m.role() == Role.USER
+                && m.content() != null
+                && m.content().contains("Continue exactly where you left off"))
+            .count()).isEqualTo(1);
+        assertThat(result.messages().stream()
+            .filter(m -> m.role() == Role.ASSISTANT && "abc".equals(m.content()))
+            .count()).isEqualTo(1);
     }
 
     @Test
