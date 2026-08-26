@@ -52,6 +52,7 @@
 - **Impact:** A steer that arrives after the final model response, or is requeued because no tool result exists, is silently discarded instead of becoming the next user instruction.
 
 ### P9: Seam 10 - Tool execution [HIGH]
+- **Status:** ✅ FIXED 2026-08-26 — TurnExecutor.executeToolBatch pre-scans the batch for approval-required tools and forces the sequential gated path for the whole batch (tool_executor.py:661,726 parity); parallel dispatch only for batches with zero approval-required calls. Regression tests: ParallelApprovalGateParityTest (gated batch blocks fail-closed; clean batch still parallelizes).
 - **Hermes:** `agent/tool_executor.py:661; agent/tool_executor.py:726` - Every dispatched tool, including one admitted to a concurrent segment, traverses the serialized authorization/pre-tool middleware before execution.
 - **Java:** `backend/src/main/java/com/azhukov/agent/core/agent/TurnExecutor.java:603; backend/src/main/java/com/azhukov/agent/core/agent/TurnExecutor.java:661` - Approval requests, waits, and fail-closed approval checks exist only in the sequential branch. If ToolParallelSafety selects the parallel branch, calls go directly to executeToolsInParallel and ToolExecutionService without requiresApproval or ApprovalQueue checks.
 - **Impact:** Any tool configured in alwaysRequireApprovalTools that is also admitted as parallel-safe can run without the required user approval.

@@ -588,9 +588,23 @@ public class TurnExecutor {
      *         (caller should return the interrupted TurnResult)
      */
     public ToolBatchResult executeToolBatch(List<ToolCall> toolCalls, Set<String> registeredToolNames,
-                                              Session session, TurnState turnState, int currentTurnIndex,
-                                              boolean skipApproval) {
-        boolean shouldParallel = ToolParallelSafety.shouldParallelize(toolCalls, registeredToolNames);
+                                             Session session, TurnState turnState, int currentTurnIndex,
+                                             boolean skipApproval) {
+        // P9 parity (tool_executor.py:661,726): EVERY dispatched tool — including
+        // concurrent-segment members — traverses the authorization gate before
+        // execution. If any call in the batch requires approval, force the
+        // sequential path so the per-call approval/wait/re-validate flow runs.
+        boolean anyApprovalRequired = false;
+        if (!skipApproval && approvalQueue != null && toolGuardrails != null) {
+            for (ToolCall call : toolCalls) {
+                if (toolGuardrails.requiresApproval(call)) {
+                    anyApprovalRequired = true;
+                    break;
+                }
+            }
+        }
+        boolean shouldParallel = !anyApprovalRequired
+            && ToolParallelSafety.shouldParallelize(toolCalls, registeredToolNames);
 
         if (!shouldParallel) {
             // Sequential path
