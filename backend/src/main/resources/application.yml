@@ -203,9 +203,12 @@ agent:
     target-tokens: ${AGENT_CONTEXT_TARGET_TOKENS:12000}
     summary-chunk-tokens: ${AGENT_CONTEXT_SUMMARY_CHUNK_TOKENS:2000}
     max-context-messages: ${AGENT_CONTEXT_MAX_CONTEXT_MESSAGES:10000}
-    # Hermes parity: per-model compression threshold overrides (substring→fraction, longest match wins)
-    # Example: model-thresholds: { "glm-5.2-1M": 0.85, "gpt-5": 0.80 }
-    model-thresholds: ${AGENT_CONTEXT_MODEL_THRESHOLDS:{}}
+    # Hermes parity: per-model compression threshold overrides (substring→fraction, longest match wins).
+    # Set via AGENT_CONTEXT_MODEL_THRESHOLDS env var or here as an inline YAML map, e.g.:
+    #   model-thresholds:
+    #     glm-5.2-1M: 0.85
+    #     gpt-5: 0.80
+    # (Placeholder defaults are NOT supported for Map binding — leave unset for empty.)
   
   # ─── Compression ───
   compression:
