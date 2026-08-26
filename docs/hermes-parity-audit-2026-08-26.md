@@ -6,11 +6,13 @@
 
 ## Findings
 ### P1: Seam 1 [CRITICAL]
+- **Status:** ✅ FIXED 2026-08-26 — continuation fragment + nudge now go into the live turnMessages transcript (DefaultAgentRuntime LENGTH branch); regression test in SyncRecoveryParityTest asserts nudge + partial reach the model.
 - **Hermes:** `agent/conversation_loop.py:3892` - Appends the truncated assistant fragment and a marked continuation user nudge to the live transcript before the next model call, then removes scaffolding or persists the stitched partial at the retry ceiling.
 - **Java:** `core/agent/DefaultAgentRuntime.java:665` - Builds `lengthContext` containing the fragment and nudge, but never assigns it to `turnMessages`; the next loop rebuilds context from the unchanged transcript. It therefore repeats the same request up to four times and stitches responses that were not continuations.
 - **Impact:** LENGTH recovery does not supply either the continuation point or instruction to the model, causing repeated output, unrelated stitched text, and failed recovery of truncated answers.
 
 ### P2: Seam 2 [CRITICAL]
+- **Status:** ✅ FIXED 2026-08-26 — rotateSession deactivates ancestor rows (active=false, compacted=true); DefaultContextEngine.persistRotatedTranscript writes summary+tail into the child session; SessionLineageService loads active rows only.
 - **Hermes:** `agent/conversation_loop.py:2740` - After compaction, replaces the active transcript and updates the conversation-history/persistence state so subsequent model calls use the compacted history rather than the dropped messages.
 - **Java:** `core/agent/DefaultAgentRuntime.java:1195; core/context/DefaultContextEngine.java:171` - The post-tool proactive path replaces only in-memory `turnMessages` and does not persist or otherwise suppress the already persisted original rows. The next `prepareContext` reloads those full database rows and then appends the compressed `turnMessages` tail.
 - **Impact:** The intended compaction can fail to reduce the next request and can duplicate the current turn (original history plus compressed tail), worsening context pressure and potentially triggering overflow.
@@ -19,8 +21,10 @@
 - **Hermes:** `cron/scheduler.py:6893; cron/scheduler.py:6973` - Saves the run result and actively routes the final response or failure alert through resolved origin/platform/bot-chat delivery targets.
 - **Java:** `service/CronJobService.java:470; service/CronJobService.java:770` - Stores deliverTo and logs it, but CronJobService never invokes a transport or gateway delivery API; the noAgent path explicitly says delivery is only logged.
 - **Impact:** Java scheduled jobs produce orphaned session output and users receive no cron notifications regardless of deliverTo.
+- **Status:** FALSE POSITIVE (parent verification 2026-08-26). Delivery is implemented in the telegram-bot module: `CronDeliveryPoller` (bot/cron/CronDeliveryPoller.java) polls every 30s, delivers run output to the resolved chat, sends the one-time failure nudge, honors `[SILENT]` via AutonomousSilenceFilter, and advances lastDeliveredRunAt. `bot.cron-delivery-enabled` defaults true. The subagent audited only backend sources.
 
 ### P4: Seam 1 [HIGH]
+- **Status:** ✅ FIXED 2026-08-26 — ChatResponse carries TokenUsage (withUsage); LangChain4jModelClient extracts provider usage on all 3 sync return sites; DefaultAgentRuntime passes completionTokens to EmptyResponseGuard.recordEmptyAttempt — deterministic-empty detection is now reachable.
 - **Hermes:** `agent/conversation_loop.py:7029` - Uniquifies and repairs tool calls before `_build_assistant_message` and before the assistant tool-call message is persisted, so persisted call IDs/names match tool results.
 - **Java:** `core/agent/DefaultAgentRuntime.java:919` - Adds and persists `response.toolCalls()` first, then copies and mutates only the local `toolCalls` list for ID uniquification and name repair.
 - **Impact:** Tool results can use repaired names or IDs that do not exist in the persisted assistant tool-call message; replay sanitizers can drop those results and strict providers can reject the next request as an orphaned tool result.

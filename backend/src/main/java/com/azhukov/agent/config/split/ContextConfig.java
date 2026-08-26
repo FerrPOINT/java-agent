@@ -27,9 +27,11 @@ public class ContextConfig {
 
     @Bean
     public ContextCompressor contextCompressor(ModelClient modelClient, CompressionLockRepository lockRepository,
-                                               AgentProperties properties, SessionRepository sessionRepository) {
+                                               AgentProperties properties, SessionRepository sessionRepository,
+                                               MessageRepository messageRepository) {
         DefaultContextCompressor compressor = new DefaultContextCompressor(modelClient, lockRepository, properties);
         compressor.setSessionRepository(sessionRepository);
+        compressor.setMessageRepository(messageRepository);
         return compressor;
     }
 

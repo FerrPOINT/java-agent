@@ -55,7 +55,7 @@ public interface OpenAiMapper {
         if (toolCalls.isEmpty()) {
             return com.azhukov.agent.core.model.ChatResponse.text(content);
         }
-        return new com.azhukov.agent.core.model.ChatResponse(content, toolCalls);
+        return new com.azhukov.agent.core.model.ChatResponse(content, toolCalls, "TOOL_EXECUTION");
     }
 
     @Named("roleToString")

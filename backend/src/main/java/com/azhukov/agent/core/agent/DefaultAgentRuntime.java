@@ -788,10 +788,14 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     // R3: nudges/stubs live in a LOCAL retry list — they are never appended to
                     // turnMessages and thus never persisted (Hermes strips this scaffolding before
                     // persistence; we keep it out of the durable list entirely).
+                    // P4 parity: pass the provider-reported usage so deterministic-empty
+                    // detection (≥2 consecutive zero-output attempts) can actually fire.
+                    // Hermes empty_response_guard.py:172 — cost-aware early stop.
                     emptyGuard.recordEmptyAttempt(
                         properties.getModel().getModelName(),
                         properties.getModel().getProvider(),
-                        response.finishReason(), null /* usage not on ChatResponse yet — fail-open */);
+                        response.finishReason(),
+                        response.usage() != null ? (long) response.usage().completionTokens() : null);
                     boolean deterministicEmpty = emptyGuard.deterministicEmpty();
                     if (deterministicEmpty) {
                         log.warn("Deterministic empty response detected (consecutive zero-output, "

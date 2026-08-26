@@ -219,6 +219,11 @@ public class DefaultContextEngine implements ContextEngine {
                  rotatedSessionIds.put(session.id(), newId);
                  log.info("Session rotated: old={}, new={}, title='{}'",
                          session.id(), newId, rotationResult.get().newTitle());
+                 // P2 (Hermes conversation_loop.py:2740): the compacted transcript
+                 // (summary + protected tail) becomes the child session's rows, so
+                 // the next turn loads the post-compaction state instead of the
+                 // deactivated ancestor history.
+                 persistRotatedTranscript(newId, trimmed);
              } else {
                  // Fall back to legacy compression boundary logging
                  dcc.logCompressionBoundary(String.valueOf(session.id()), ts -> {
@@ -235,6 +240,45 @@ public class DefaultContextEngine implements ContextEngine {
      }
  }
  return trimmed;
+ }
+
+ /**
+  * P2 (Hermes conversation_loop.py:2740): persist the compacted transcript
+  * (compaction summary + protected tail) as the rotated child session's rows.
+  * The next turn then loads the post-compaction state; ancestor rows were
+  * deactivated by the rotation and never re-enter the model context.
+  */
+ private void persistRotatedTranscript(UUID childSessionId, List<Message> compacted) {
+     if (messageRepository == null || compacted == null || compacted.isEmpty()) {
+         return;
+     }
+     try {
+         Instant now = Instant.now();
+         int order = 0;
+         for (Message m : compacted) {
+             MessageEntity e = new MessageEntity();
+             e.setSessionId(childSessionId);
+             e.setRole(m.role() != null ? m.role().name().toLowerCase() : "user");
+             e.setContent(m.content() != null ? m.content() : "");
+             if (m.toolCalls() != null && !m.toolCalls().isEmpty()) {
+                 var first = m.toolCalls().get(0);
+                 e.setToolCallId(first.id());
+                 e.setToolCallName(first.name());
+                 e.setToolCallArguments(first.arguments());
+             }
+             if (m.role() == Role.TOOL && m.toolCallId() != null) {
+                 e.setToolCallId(m.toolCallId());
+             }
+             e.setTurnIndex(m.turnIndex() > 0 ? m.turnIndex() : order);
+             e.setActive(true);
+             e.setCompacted(false);
+             e.setCreatedAt(now.plusNanos(order++)); // stable ascending order
+             messageRepository.save(e);
+         }
+         log.info("Rotated transcript persisted: {} rows into child session {}", compacted.size(), childSessionId);
+     } catch (RuntimeException e) {
+         log.warn("Failed to persist rotated transcript into child session {}", childSessionId, e);
+     }
  }
 
  @Override

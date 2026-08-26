@@ -10,6 +10,7 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.persistence.entity.CompressionLockEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.CompressionLockRepository;
+import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -238,6 +239,13 @@ public class DefaultContextCompressor implements ContextCompressor {
  /** Sets the SessionRepository — called by the @Bean factory after construction. */
  public void setSessionRepository(SessionRepository sessionRepository) {
      this.sessionRepository = sessionRepository;
+ }
+
+ private volatile MessageRepository messageRepository;
+
+ /** Sets the MessageRepository — needed to deactivate ancestor rows on rotation. */
+ public void setMessageRepository(MessageRepository messageRepository) {
+     this.messageRepository = messageRepository;
  }
 
  /**
@@ -759,6 +767,33 @@ public class DefaultContextCompressor implements ContextCompressor {
          oldSession.setSessionStatus("compressed");
          oldSession.setUpdatedAt(Instant.now());
          sessionRepository.save(oldSession);
+
+         // P2 (Hermes conversation_loop.py:2740): the ancestor's raw rows must not
+         // re-enter the model context after rotation. Deactivate them so the
+         // lineage loader (active-only) skips them; the compaction summary in the
+         // child session replaces them. Without this, every later turn rebuilds
+         // the full uncompressed history and the compaction achieves nothing.
+         if (messageRepository != null) {
+             try {
+                 var ancestorRows = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+                 int deactivated = 0;
+                 Instant now = Instant.now();
+                 for (var row : ancestorRows) {
+                     if (!Boolean.FALSE.equals(row.getActive())) {
+                         row.setActive(false);
+                         row.setCompacted(true);
+                         messageRepository.save(row);
+                         deactivated++;
+                     }
+                 }
+                 if (deactivated > 0) {
+                     log.info("Compression rotation: deactivated {} ancestor rows in session {}", deactivated, sessionId);
+                 }
+             } catch (RuntimeException e) {
+                 log.warn("Compression rotation: failed to deactivate ancestor rows for session {} — " +
+                     "lineage loading may duplicate history", sessionId, e);
+             }
+         }
 
          // Create child session
          SessionEntity childSession = new SessionEntity();

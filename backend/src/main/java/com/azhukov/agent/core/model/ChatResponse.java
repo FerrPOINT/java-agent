@@ -19,7 +19,8 @@ import java.util.Objects;
 public record ChatResponse(
     String content,
     List<ToolCall> toolCalls,
-    String finishReason
+    String finishReason,
+    TokenUsage usage
 ) {
     public ChatResponse {
         Objects.requireNonNull(content, "content must not be null");
@@ -27,9 +28,19 @@ public record ChatResponse(
         finishReason = finishReason != null ? finishReason : "STOP";
     }
 
-    /** Legacy 2-arg canonical constructor: finish reason defaults to STOP. */
+    /** Canonical 3-arg constructor: no provider usage (recovery paths fail open). */
+    public ChatResponse(String content, List<ToolCall> toolCalls, String finishReason) {
+        this(content, toolCalls, finishReason, null);
+    }
+
+    /** Legacy 2-arg constructor: tool-call response with default finish reason. */
     public ChatResponse(String content, List<ToolCall> toolCalls) {
-        this(content, toolCalls, "STOP");
+        this(content, toolCalls, "TOOL_EXECUTION", null);
+    }
+
+    /** Returns a copy carrying the provider-reported usage, or this when usage is null. */
+    public ChatResponse withUsage(TokenUsage usage) {
+        return usage == null ? this : new ChatResponse(content, toolCalls, finishReason, usage);
     }
 
     public static ChatResponse text(String content) {

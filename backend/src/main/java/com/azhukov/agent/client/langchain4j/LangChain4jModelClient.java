@@ -187,14 +187,14 @@ public class LangChain4jModelClient implements ModelClient {
                 // Mirrors Hermes _emit_interim_assistant_message().
                 String text = aiMessage.text();
                 if (text != null && !text.isBlank()) {
-                    return new ChatResponse(text, calls, finishReasonOf(response));
+                    return new ChatResponse(text, calls, finishReasonOf(response)).withUsage(extractUsage(response));
                 }
-                return new ChatResponse("", calls, finishReasonOf(response));
+                return new ChatResponse("", calls, finishReasonOf(response)).withUsage(extractUsage(response));
             }
 
             // c2: carry the provider finish reason so BOTH runtimes can run the
             // shared recovery policies (LENGTH continuation). Missing → "STOP".
-            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "", finishReasonOf(response));
+            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "", finishReasonOf(response)).withUsage(extractUsage(response));
         } catch (Exception e) {
             ErrorClassifier.ErrorType errorType = errorClassifier != null ? errorClassifier.classify(e) : ErrorClassifier.ErrorType.RETRYABLE;
             log.warn("Model complete() failed — errorType={}: {}", errorType, e.getMessage());
@@ -649,6 +649,19 @@ public class LangChain4jModelClient implements ModelClient {
             usageConsumer.accept(new Usage(properties.getModel().getProvider(), properties.getModel().getModelName(), prompt, completion));
         } catch (Exception e) {
             log.warn("Could not persist model usage: {}", e.getMessage());
+        }
+    }
+
+    /** Extract provider usage for the returned ChatResponse (null when absent). */
+    private TokenUsage extractUsage(dev.langchain4j.model.chat.response.ChatResponse response) {
+        try {
+            var tu = response.tokenUsage();
+            if (tu == null) return null;
+            Integer input = tu.inputTokenCount();
+            Integer output = tu.outputTokenCount();
+            return TokenUsage.of(input != null ? input : 0, output != null ? output : 0);
+        } catch (Exception e) {
+            return null;
         }
     }
 

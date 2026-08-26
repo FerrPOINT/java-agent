@@ -139,7 +139,11 @@ public class SessionLineageService implements SessionLineagePort {
      * @return list of messages in ascending order by creation time
      */
     private List<Message> loadMessagesForSession(UUID sessionId) {
-        List<MessageEntity> entities = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        // P2 parity: ancestors of a compression-rotated session have their raw rows
+        // deactivated (active=false, compacted=true) at rotation time; their content
+        // lives on as the compaction summary in the child session. Load active rows
+        // only, so the rebuilt context reflects the post-compaction transcript.
+        List<MessageEntity> entities = messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtAsc(sessionId);
         if (entities == null || entities.isEmpty()) {
             return Collections.emptyList();
         }
