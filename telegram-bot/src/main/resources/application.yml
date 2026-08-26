@@ -44,7 +44,9 @@ bot:
   heartbeat-interval-seconds: ${BOT_HEARTBEAT_INTERVAL:30}
   initial-stream-text: ""
   streaming-max-chars: 32768
-  streaming-transport: ${AGENT_STREAMING_TRANSPORT:auto}
+  # Match Hermes Telegram UX: progressive message edits rather than native
+  # drafts, so partial text remains visible and tool/segment boundaries work.
+  streaming-transport: ${AGENT_STREAMING_TRANSPORT:edit}
   busy-mode: queue
   busy-input-mode: ${BOT_BUSY_INPUT_MODE:interrupt}
   busy-ack-enabled: ${BOT_BUSY_ACK_ENABLED:true}
@@ -109,6 +111,8 @@ bot:
       max-pending: 3
 
   display:
+    # Hermes Telegram default: commentary and heartbeats show progress; per-tool
+    # bubbles stay off to avoid a permanent message for every tool invocation.
     tool-progress: ${BOT_DISPLAY_TOOL_PROGRESS:hidden}
     preview-length: ${BOT_DISPLAY_PREVIEW_LENGTH:200}
 

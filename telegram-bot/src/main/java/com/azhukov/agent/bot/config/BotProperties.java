@@ -82,7 +82,11 @@ public class BotProperties {
     //             when unsupported.
     //   "edit"  — progressive editMessageText (legacy/default behavior).
     //   "off"   — no streaming (buffer all content, send on finalize).
-    private String streamingTransport = "auto";
+    /**
+     * Match Hermes Telegram defaults: edit streaming keeps partial output visible,
+     * while native drafts are opt-in for deployments that deliberately want them.
+     */
+    private String streamingTransport = "edit";
 
     private final Polling polling = new Polling();
     private final Webhook webhook = new Webhook();

@@ -44,6 +44,11 @@ class BotPropertiesTest {
     }
 
     @Test
+    void defaultsToEditStreaming() {
+        assertThat(properties.getStreamingTransport()).isEqualTo("edit");
+    }
+
+    @Test
     void bindsAgentName() {
         assertThat(properties.getAgentName()).isEqualTo("Джава агент");
     }
