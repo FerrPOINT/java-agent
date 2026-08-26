@@ -407,9 +407,9 @@ class CompressionPolicyTest {
         }
 
         @Test
-        @DisplayName("COMPRESSION_THRESHOLD_FRACTION is 0.75")
+        @DisplayName("COMPRESSION_THRESHOLD_FRACTION is 0.50 (Hermes context_compressor.py:3104)")
         void compressionThresholdFraction() {
-            assertThat(CompressionPolicy.COMPRESSION_THRESHOLD_FRACTION).isEqualTo(0.75);
+            assertThat(CompressionPolicy.COMPRESSION_THRESHOLD_FRACTION).isEqualTo(0.50);
         }
 
         @Test

@@ -1471,17 +1471,33 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }, parallelToolExecutor));
         }
 
-        // Wait for all futures to complete
+        // P5 (Hermes tool_executor.py:1589): poll at bounded intervals instead of a
+        // blind join() so a user interrupt is honored while tools are still running;
+        // unstarted work is cancelled and running tools see the interrupt signal.
         CompletableFuture<Void> allOf = CompletableFuture.allOf(
             futures.toArray(new CompletableFuture[0]));
         try {
-            allOf.join();
+            while (!allOf.isDone()) {
+                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                    log.info("Interrupt during parallel tool batch for session {} — cancelling {} futures",
+                        session.id(), futures.size());
+                    for (CompletableFuture<ToolResult> f : futures) {
+                        f.cancel(true);
+                    }
+                    break;
+                }
+                try {
+                    allOf.get(200, java.util.concurrent.TimeUnit.MILLISECONDS);
+                } catch (java.util.concurrent.TimeoutException te) {
+                    // keep polling
+                } catch (java.util.concurrent.ExecutionException ee) {
+                    break; // a tool future failed — handled by result collection below
+                }
+            }
         } catch (CompletionException e) {
             log.warn("Parallel tool execution had unexpected error", e);
-        }
-
-        // If interrupted, cancel remaining futures
-        if (Thread.currentThread().isInterrupted()) {
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
             for (CompletableFuture<ToolResult> f : futures) {
                 f.cancel(true);
             }

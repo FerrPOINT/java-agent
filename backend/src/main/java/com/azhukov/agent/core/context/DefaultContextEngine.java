@@ -29,11 +29,8 @@ public class DefaultContextEngine implements ContextEngine {
 
  private static final int RECALL_LIMIT = 5;
  private static final long COMPRESSION_COOLDOWN_SECONDS = 600;
- // Hermes parity: preflight threshold must match the compressor's threshold.
- // Previously 0.8 (80%) while thresholdTokens was 0.75 (75%) — two
- // desynchronized triggers (context_compressor.py uses one consistent
- // threshold). The compressor fires at 75% so preflight must too.
- private static final double PREFLIGHT_THRESHOLD = 0.75;
+ // P7 parity: preflight uses the configured agent.context.threshold-percent
+ // (default 0.50, context_compressor.py:3104) — no separate hard-coded fraction.
 
  private final MemoryProvider memoryProvider;
  private final SkillManager skillManager;
@@ -286,7 +283,9 @@ public class DefaultContextEngine implements ContextEngine {
  if (messages == null || messages.isEmpty()) return false;
  int estimatedTokens = estimateTokens(messages);
  int maxTokens = contextLength > 0 ? contextLength : contextProps.getMaxTokens();
- return estimatedTokens > maxTokens * PREFLIGHT_THRESHOLD;
+ // P7 parity: one consistent configured threshold (agent.context.threshold-percent,
+ // default 0.50 — context_compressor.py:3104) for preflight and the compressor.
+ return estimatedTokens > maxTokens * contextProps.getThresholdPercent();
  }
 
  /**
@@ -336,7 +335,10 @@ public class DefaultContextEngine implements ContextEngine {
  public void updateModel(String model) {
      if (modelMetadataService != null && model != null && !model.isBlank()) {
          this.contextLength = modelMetadataService.detectContextLength(model);
-         this.thresholdTokens = (int) (contextLength * 0.75);
+         // P7 parity (context_compressor.py __init__): the configured threshold
+         // percent (default 0.50) drives both preflight and the compressor —
+         // no hard-coded 75%.
+         this.thresholdTokens = (int) (contextLength * contextProps.getThresholdPercent());
          log.debug("Updated model: {}, contextLength={}, threshold={}", model, contextLength, thresholdTokens);
          // Wire recalculateThreshold in the compressor so it stays calibrated
          // after a model switch (e.g., 200K → 32K). Mirrors Hermes update_model():
@@ -344,7 +346,12 @@ public class DefaultContextEngine implements ContextEngine {
          //   self.tail_token_budget = int(self.threshold_tokens * self.summary_target_ratio)
          //   self.max_summary_tokens = min(int(context_length * 0.05), _SUMMARY_TOKENS_CEILING)
          if (contextCompressor != null) {
-             contextCompressor.recalculateThreshold(contextLength);
+             if (contextCompressor instanceof DefaultContextCompressor dcc) {
+                 dcc.recalculateThreshold(contextLength, model,
+                     contextProps.getModelThresholds());
+             } else {
+                 contextCompressor.recalculateThreshold(contextLength);
+             }
          }
      }
  }

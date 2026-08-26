@@ -39,10 +39,10 @@ class DefaultContextCompressorThresholdTest {
         @Test
         @DisplayName("Threshold is recalculated as 75% of context window × 4 chars/token")
         void thresholdRecalculatedCorrectly() {
-            // 128K context window → 0.75 × 131072 = 98304 tokens → × 4 = 393216 chars
+            // 128K < 512K → small-context floor raises 0.50 default to 0.75 (context_compressor.py:3056)
             DefaultContextCompressor compressor = createCompressor();
             compressor.recalculateThreshold(131_072);
-            int expected = (int) (131_072 * 0.75) * 4;
+            int expected = (int) (131_072 * CompressionPolicy.SMALL_CTX_THRESHOLD_PERCENT) * 4;
             assertThat(compressor.getCompressionThresholdChars()).isEqualTo(expected);
         }
 
@@ -58,10 +58,10 @@ class DefaultContextCompressorThresholdTest {
         @Test
         @DisplayName("Threshold for a large context window (200K)")
         void largeContextWindow() {
-            // 200K → 0.75 × 200000 = 150000 tokens → × 4 = 600000 chars
+            // 200K < 512K → small-context floor: 0.75 × 200000 → × 4 chars
             DefaultContextCompressor compressor = createCompressor();
             compressor.recalculateThreshold(200_000);
-            int expected = (int) (200_000 * 0.75) * 4;
+            int expected = (int) (200_000 * CompressionPolicy.SMALL_CTX_THRESHOLD_PERCENT) * 4;
             assertThat(compressor.getCompressionThresholdChars()).isEqualTo(expected);
         }
 
@@ -75,10 +75,10 @@ class DefaultContextCompressorThresholdTest {
             int firstThreshold = compressor.getCompressionThresholdChars();
             assertThat(firstThreshold).isEqualTo((int) (32_768 * CompressionPolicy.MIN_CTX_TRIGGER_RATIO) * 4);
 
-            // Switch to a model with 128K context → 0.75 × 131072 = 98304 (above floor)
+            // Switch to 128K < 512K → floor keeps 75%
             compressor.recalculateThreshold(131_072);
             int secondThreshold = compressor.getCompressionThresholdChars();
-            assertThat(secondThreshold).isEqualTo(Math.max((int) (131_072 * 0.75), DefaultContextCompressor.MINIMUM_CONTEXT_LENGTH) * 4);
+            assertThat(secondThreshold).isEqualTo((int) (131_072 * CompressionPolicy.SMALL_CTX_THRESHOLD_PERCENT) * 4);
             assertThat(secondThreshold).isGreaterThan(firstThreshold);
 
             // Switch to a model with 8K context — use 85% reachable trigger.
@@ -113,11 +113,11 @@ class DefaultContextCompressorThresholdTest {
             compressor.recalculateThreshold(contextWindow);
 
             // thresholdTokens = 75000, thresholdChars = 300000
-            // Verify the ratio: thresholdChars / (contextWindow * CHARS_PER_TOKEN) == 0.75
+            // Verify the ratio: <512K window → 75% (small-context floor over the 0.50 default)
             int thresholdChars = compressor.getCompressionThresholdChars();
             int contextChars = contextWindow * 4;
             double ratio = (double) thresholdChars / contextChars;
-            assertThat(ratio).isEqualTo(0.75, org.assertj.core.data.Offset.offset(0.001));
+            assertThat(ratio).isEqualTo(CompressionPolicy.SMALL_CTX_THRESHOLD_PERCENT, org.assertj.core.data.Offset.offset(0.001));
         }
     }
 

@@ -23,8 +23,12 @@ class CompressionPolicy {
 
     // ── Constants (mirrors of Hermes context_compressor.py) ──
 
-    /** P2-51: Compression threshold fraction of the context window (mirrors ModelMetadataService default). */
-    static final double COMPRESSION_THRESHOLD_FRACTION = 0.75;
+    /**
+     * P7 parity (context_compressor.py:3104): default threshold fraction 0.50 —
+     * same as {@code agent.context.threshold-percent} default. Per-model overrides
+     * and the small-context 75% floor apply on top of this.
+     */
+    static final double COMPRESSION_THRESHOLD_FRACTION = 0.50;
 
     /**
      * Minimum context length required to run the agent (mirrors Hermes MINIMUM_CONTEXT_LENGTH = 64_000).
