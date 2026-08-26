@@ -932,11 +932,25 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
             // P1-5: Persist the assistant message (with tool calls) immediately.
             // Mirrors Hermes _persist_session after appending assistant_msg.
+            boolean assistantPersisted = true;
             if (midTurnPersistenceCallback != null) {
                 // M6: Only advance cursor if persistence succeeded
                 if (midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
                     persistedUpTo = turnMessages.size();
+                } else {
+                    assistantPersisted = false;
                 }
+            }
+
+            // P6 parity (conversation_loop.py:7437-7449): when the canonical append
+            // fails, do NOT run side-effecting tools from state that exists only
+            // in this process. Abort the turn with the persistence-failed exit
+            // reason; retrying would burn the iteration budget on unpersisted state.
+            if (!assistantPersisted) {
+                log.error("Assistant tool-call persistence failed before execution (session={}) — " +
+                    "aborting turn without executing tools", session.id());
+                return new TurnResult(turnMessages, false,
+                    "Session persistence failed — tool execution skipped to avoid side effects on unpersisted state.");
             }
 
             int currentTurnIndex = turnIndex;
@@ -1169,11 +1183,23 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // Mirrors Hermes _persist_session after _execute_tool_calls.
             // If the JVM crashes after tool execution but before the next model call,
             // all tool results are preserved in the database.
+            boolean toolResultsPersisted = true;
             if (midTurnPersistenceCallback != null) {
                 // M6: Only advance cursor if persistence succeeded
                 if (midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
                     persistedUpTo = turnMessages.size();
+                } else {
+                    toolResultsPersisted = false;
                 }
+            }
+
+            // P6 parity (conversation_loop.py:7474-7478): a tool result that cannot be
+            // made canonical must not be sent back to the model — abort the turn
+            // instead of continuing from in-memory-only state.
+            if (!toolResultsPersisted) {
+                log.error("Tool-result persistence failed (session={}) — aborting turn", session.id());
+                return new TurnResult(turnMessages, false,
+                    "Session persistence failed after tool execution — turn aborted.");
             }
 
             turnIndex++;

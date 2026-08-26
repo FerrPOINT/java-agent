@@ -35,6 +35,7 @@
 - **Impact:** A crash or retry after persistence failure can rerun destructive tools whose initiating tool-call record was never durably saved.
 
 ### P6: Seam 1 [HIGH]
+- **Status:** ✅ FIXED 2026-08-26 — DefaultAgentRuntime now aborts before tool execution when assistant tool-call persistence returns false, and aborts before the next model call when tool-result persistence fails. Regression coverage: PersistenceFailureAbortsToolExecutionTest (both failure points).
 - **Hermes:** `agent/conversation_loop.py:7888; agent/empty_response_guard.py:172` - Records the actual response usage, classifies deterministic empties only when prompt usage is present and generated output plus reasoning tokens are zero, and reduces the retry budget to one for costly empty requests.
 - **Java:** `core/agent/DefaultAgentRuntime.java:788; core/agent/EmptyResponseGuard.java:45` - Always records `null` for output usage (`/* usage not on ChatResponse yet */`), so `deterministicEmpty()` can never become true; it also has no cost-aware retry-budget path.
 - **Impact:** Java repeats paid full-context empty calls that Hermes intentionally stops after a verified zero-output streak, increasing cost and delaying fallback.
