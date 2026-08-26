@@ -69,6 +69,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 @Slf4j
 @Component
@@ -115,16 +116,20 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
     /** c1: extracted retry+fallback loop owner (lazy — plain fields, no ctor churn). */
     private volatile FallbackModelCaller fallbackModelCaller;
+    private final ReentrantLock turnLock = new ReentrantLock();
 
     private FallbackModelCaller fallbackModelCaller() {
         FallbackModelCaller fmc = fallbackModelCaller;
         if (fmc == null) {
-            synchronized (this) {
+            turnLock.lock();
+            try {
                 if (fallbackModelCaller == null) {
                     fallbackModelCaller = new FallbackModelCaller(
                         errorClassifier, properties, contextCompressor, contextEngine);
                 }
                 fmc = fallbackModelCaller;
+            } finally {
+                turnLock.unlock();
             }
         }
         return fmc;
@@ -799,7 +804,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                             properties.getCore().getEmptyBackoffBaseMs(),
                             properties.getCore().getEmptyBackoffCapMs());
                         try {
-                            com.azhukov.agent.core.agent.TurnExecutor.interruptibleSleep(backoffMs);
+                            com.azhukov.agent.core.agent.TurnExecutorUtils.interruptibleSleep(backoffMs);
                         } catch (InterruptedException ie) {
                             Thread.currentThread().interrupt();
                             log.info("Empty-response backoff interrupted — aborting turn");

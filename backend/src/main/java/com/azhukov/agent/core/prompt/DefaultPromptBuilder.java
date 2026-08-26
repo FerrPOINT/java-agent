@@ -40,32 +40,6 @@ import java.util.regex.Pattern;
 @Component
 public class DefaultPromptBuilder implements PromptBuilder {
 
-    /**
-     * Models that use the OpenAI 'developer' role instead of 'system' for the
-     * system prompt message (e.g. GPT-5, Codex). When the configured model name
-     * starts with any of these prefixes, {@link #buildSystemMessage} will emit
-     * a {@link Role#DEVELOPER} message instead of {@link Role#SYSTEM}.
-     */
-    static final Set<String> DEVELOPER_ROLE_MODELS = Set.of("gpt-5", "codex");
-
-    // ── Model family detection prefixes (Fix 9: per-model operational guidance) ──
-
-    /** Model name prefixes indicating OpenAI family (GPT, o1/o3 reasoning, Codex). */
-    static final Set<String> OPENAI_FAMILY_PREFIXES = Set.of("gpt", "o1", "o3", "codex", "grok");
-
-    /** Hermes parity (prompt_builder.py EXECUTION_GUIDANCE_MODELS): models that
-     *  need execution-discipline guidance (finish the job, don't fabricate). */
-    static final Set<String> EXECUTION_GUIDANCE_PREFIXES = Set.of(
-        "gpt", "codex", "grok", "deepseek", "kimi", "qwen", "glm", "minimax", "mimo", "mistral"
-    );
-
-    /** Model name prefixes indicating Google family (Gemini, Gemma). */
-    static final Set<String> GOOGLE_FAMILY_PREFIXES = Set.of("gemini", "gemma");
-
-    /** Model families that need explicit tool-use enforcement (mirrors Hermes TOOL_USE_ENFORCEMENT_MODELS). */
-    static final Set<String> TOOL_ENFORCEMENT_PREFIXES = Set.of(
-        "gpt", "codex", "gemini", "gemma", "grok", "glm", "qwen", "deepseek");
-
     /** Placeholder used when prompt injection is detected in context file content. */
     static final String INJECTION_PLACEHOLDER = "[content removed: potential prompt injection]";
 
@@ -488,12 +462,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
      * instead of 'system' (e.g. GPT-5, Codex).
      */
     private boolean usesDeveloperRole() {
-        String modelName = properties.getModel().getModelName();
-        if (modelName == null || modelName.isBlank()) {
-            return false;
-        }
-        String lower = modelName.toLowerCase();
-        return DEVELOPER_ROLE_MODELS.stream().anyMatch(lower::startsWith);
+        return ModelPromptPolicy.usesDeveloperRole(properties.getModel().getModelName());
     }
 
     /**
@@ -503,18 +472,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
      *         or null for unrecognized families.
      */
     String detectModelFamily() {
-        String modelName = properties.getModel().getModelName();
-        if (modelName == null || modelName.isBlank()) {
-            return null;
-        }
-        String lower = modelName.toLowerCase();
-        if (OPENAI_FAMILY_PREFIXES.stream().anyMatch(lower::startsWith)) {
-            return "openai";
-        }
-        if (GOOGLE_FAMILY_PREFIXES.stream().anyMatch(lower::startsWith)) {
-            return "google";
-        }
-        return null;
+        return ModelPromptPolicy.detectFamily(properties.getModel().getModelName());
     }
 
     /**
@@ -522,24 +480,9 @@ public class DefaultPromptBuilder implements PromptBuilder {
      * or empty string if the family is unrecognized.
      */
     String getModelGuidance() {
-        String family = detectModelFamily();
-        String modelName = properties.getModel().getModelName();
-        String lowerModel = modelName != null ? modelName.toLowerCase() : "";
-
-        // Google family gets its own operational directives
-        if ("google".equals(family)) {
-            return GOOGLE_MODEL_GUIDANCE;
-        }
-        // OpenAI family gets OpenAI-specific guidance
-        if ("openai".equals(family)) {
-            return OPENAI_MODEL_GUIDANCE;
-        }
-        // Hermes parity: execution-discipline models (deepseek, kimi, qwen, glm, etc.)
-        // get the OpenAI-style execution guidance — same "finish the job" message
-        if (EXECUTION_GUIDANCE_PREFIXES.stream().anyMatch(lowerModel::startsWith)) {
-            return OPENAI_MODEL_GUIDANCE;
-        }
-        return "";
+        return ModelPromptPolicy.guidanceFor(
+            properties.getModel().getModelName(), OPENAI_MODEL_GUIDANCE, GOOGLE_MODEL_GUIDANCE
+        );
     }
 
     /**
@@ -1281,11 +1224,8 @@ public class DefaultPromptBuilder implements PromptBuilder {
 
         // Tool-use enforcement — only for model families that need it (GLM, GPT, etc.)
         String modelName = properties.getModel().getModelName();
-        if (modelName != null && !modelName.isBlank()) {
-            String lower = modelName.toLowerCase();
-            if (TOOL_ENFORCEMENT_PREFIXES.stream().anyMatch(lower::startsWith)) {
-                stable.append("\n\n").append(TOOL_USE_ENFORCEMENT_GUIDANCE);
-            }
+        if (ModelPromptPolicy.needsToolUseEnforcement(modelName)) {
+            stable.append("\n\n").append(TOOL_USE_ENFORCEMENT_GUIDANCE);
         }
 
         // ── Fix 3: Environment hints (in stable tier — deterministic for process lifetime) ──

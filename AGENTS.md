@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-project: `backend` (REST API, LLM, tools) + `telegram-bot` (61 команда, streaming, polling) + `cli` (92 slash commands, REPL). Production: 0.1.66.
+Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-project: `backend` (REST API, LLM, tools) + `telegram-bot` (61 команда, streaming, polling) + `cli` (92 slash commands, REPL). Production: 0.1.140.
 
 ## Build & Test
 

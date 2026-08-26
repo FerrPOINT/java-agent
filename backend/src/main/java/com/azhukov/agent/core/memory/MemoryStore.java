@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * In-memory two-store model: "memory" (agent notes) and "user" (user profile).
@@ -30,6 +31,7 @@ public class MemoryStore {
     private final int memoryCharLimit;
     private final int userCharLimit;
     private final Map<UUID, Map<String, String>> snapshotCache = new ConcurrentHashMap<>();
+    private final ReentrantLock lock = new ReentrantLock();
 
     /**
      * Creates an empty store without threat scanning and with default char limits.
@@ -74,171 +76,196 @@ public class MemoryStore {
      * Add content to the specified target store.
      * @return null on success, error message on failure (threat detected, exceeds limit)
      */
-    public synchronized String add(String target, String content) {
-        if (content == null || content.isBlank()) {
-            return "Content is empty";
-        }
-        final String trimmed = content.trim();
-        if (threatScanner != null) {
-            var threat = threatScanner.scan(trimmed);
-            if (threat.isPresent()) {
-                return "Blocked: " + threat.get();
+    public String add(String target, String content) {
+        lock.lock();
+        try {
+            if (content == null || content.isBlank()) {
+                return "Content is empty";
             }
+            final String trimmed = content.trim();
+            if (threatScanner != null) {
+                var threat = threatScanner.scan(trimmed);
+                if (threat.isPresent()) {
+                    return "Blocked: " + threat.get();
+                }
+            }
+            List<String> store = getStore(target);
+            if (store == null) {
+                return "Unknown target: " + target;
+            }
+            // Dedup: preserve order, keep first occurrence
+            if (store.stream().anyMatch(e -> e.equals(trimmed))) {
+                return null; // Already exists, no-op (dedup)
+            }
+            int limit = getCharLimit(target);
+            int currentChars = charCount(store);
+            int newTotal = currentChars + trimmed.length() + (store.isEmpty() ? 0 : DELIMITER.length());
+            if (newTotal > limit) {
+                // Parity with Hermes add() lines 328-341: error with current usage
+                return "Memory at " + currentChars + "/" + limit + " chars. "
+                    + "Adding this entry (" + trimmed.length() + " chars) would exceed the limit. "
+                    + "Consolidate now: use 'replace' to merge overlapping entries into shorter ones "
+                    + "or 'remove' stale or less important entries, then retry this add — all in this turn.";
+            }
+            store.add(trimmed);
+            // M2: Do NOT invalidate snapshot — snapshot is frozen per session.
+            // Only new sessions get a fresh snapshot.
+            return null;
+        } finally {
+            lock.unlock();
         }
-        List<String> store = getStore(target);
-        if (store == null) {
-            return "Unknown target: " + target;
-        }
-        // Dedup: preserve order, keep first occurrence
-        if (store.stream().anyMatch(e -> e.equals(trimmed))) {
-            return null; // Already exists, no-op (dedup)
-        }
-        int limit = getCharLimit(target);
-        int currentChars = charCount(store);
-        int newTotal = currentChars + trimmed.length() + (store.isEmpty() ? 0 : DELIMITER.length());
-        if (newTotal > limit) {
-            // Parity with Hermes add() lines 328-341: error with current usage
-            return "Memory at " + currentChars + "/" + limit + " chars. "
-                + "Adding this entry (" + trimmed.length() + " chars) would exceed the limit. "
-                + "Consolidate now: use 'replace' to merge overlapping entries into shorter ones "
-                + "or 'remove' stale or less important entries, then retry this add — all in this turn.";
-        }
-        store.add(trimmed);
-        // M2: Do NOT invalidate snapshot — snapshot is frozen per session.
-        // Only new sessions get a fresh snapshot.
-        return null;
     }
 
     /**
      * Replace an entry containing oldText with newText in the specified target store.
      * @return null on success, error message on failure
      */
-    public synchronized String replace(String target, String oldText, String newText) {
-        if (oldText == null || oldText.isBlank()) {
-            return "old_text is required";
-        }
-        if (newText == null || newText.isBlank()) {
-            return "content is required";
-        }
-        if (threatScanner != null) {
-            var threat = threatScanner.scan(newText);
-            if (threat.isPresent()) {
-                return "Blocked: " + threat.get();
+    public String replace(String target, String oldText, String newText) {
+        lock.lock();
+        try {
+            if (oldText == null || oldText.isBlank()) {
+                return "old_text is required";
             }
-        }
-        List<String> store = getStore(target);
-        if (store == null) {
-            return "Unknown target: " + target;
-        }
-        // Find ALL entries containing oldText (parity with Hermes replace() lines 369-383)
-        List<int[]> matchIndices = new ArrayList<>();
-        List<String> matchTexts = new ArrayList<>();
-        for (int i = 0; i < store.size(); i++) {
-            if (store.get(i).contains(oldText)) {
-                matchIndices.add(new int[]{i});
-                matchTexts.add(store.get(i));
+            if (newText == null || newText.isBlank()) {
+                return "content is required";
             }
-        }
-        if (matchIndices.isEmpty()) {
-            return "No entry found containing: " + oldText;
-        }
-        // If >1 unique entries match, return error with previews (parity with Hermes)
-        if (matchTexts.size() > 1) {
-            long uniqueCount = matchTexts.stream().distinct().count();
-            if (uniqueCount > 1) {
-                StringBuilder sb = new StringBuilder();
-                sb.append("Multiple entries match '").append(oldText).append("'. Be more specific:");
-                int i = 1;
-                for (String e : matchTexts) {
-                    String preview = e.length() > 80 ? e.substring(0, 80) + "..." : e;
-                    sb.append("\n").append(i++).append(". ").append(preview);
+            if (threatScanner != null) {
+                var threat = threatScanner.scan(newText);
+                if (threat.isPresent()) {
+                    return "Blocked: " + threat.get();
                 }
-                return sb.toString();
             }
-            // All identical — safe to replace first
+            List<String> store = getStore(target);
+            if (store == null) {
+                return "Unknown target: " + target;
+            }
+            // Find ALL entries containing oldText (parity with Hermes replace() lines 369-383)
+            List<int[]> matchIndices = new ArrayList<>();
+            List<String> matchTexts = new ArrayList<>();
+            for (int i = 0; i < store.size(); i++) {
+                if (store.get(i).contains(oldText)) {
+                    matchIndices.add(new int[]{i});
+                    matchTexts.add(store.get(i));
+                }
+            }
+            if (matchIndices.isEmpty()) {
+                return "No entry found containing: " + oldText;
+            }
+            // If >1 unique entries match, return error with previews (parity with Hermes)
+            if (matchTexts.size() > 1) {
+                long uniqueCount = matchTexts.stream().distinct().count();
+                if (uniqueCount > 1) {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("Multiple entries match '").append(oldText).append("'. Be more specific:");
+                    int i = 1;
+                    for (String e : matchTexts) {
+                        String preview = e.length() > 80 ? e.substring(0, 80) + "..." : e;
+                        sb.append("\n").append(i++).append(". ").append(preview);
+                    }
+                    return sb.toString();
+                }
+                // All identical — safe to replace first
+            }
+            int idx = matchIndices.get(0)[0];
+            // Overflow check: after replacement, total store chars must not exceed limit
+            // Parity with Hermes replace() lines 389-406
+            int limit = getCharLimit(target);
+            List<String> testEntries = new ArrayList<>(store);
+            testEntries.set(idx, newText.trim());
+            int newTotal = String.join(DELIMITER, testEntries).length();
+            if (newTotal > limit) {
+                int current = charCount(store);
+                return "Replacement would put memory at " + newTotal + "/" + limit + " chars. "
+                    + "Shorten the new content, or 'remove' other stale or less important entries "
+                    + "to make room, then retry — all in this turn.";
+            }
+            store.set(idx, newText.trim());
+            // M2: Do NOT invalidate snapshot — snapshot is frozen per session.
+            return null;
+        } finally {
+            lock.unlock();
         }
-        int idx = matchIndices.get(0)[0];
-        // Overflow check: after replacement, total store chars must not exceed limit
-        // Parity with Hermes replace() lines 389-406
-        int limit = getCharLimit(target);
-        List<String> testEntries = new ArrayList<>(store);
-        testEntries.set(idx, newText.trim());
-        int newTotal = String.join(DELIMITER, testEntries).length();
-        if (newTotal > limit) {
-            int current = charCount(store);
-            return "Replacement would put memory at " + newTotal + "/" + limit + " chars. "
-                + "Shorten the new content, or 'remove' other stale or less important entries "
-                + "to make room, then retry — all in this turn.";
-        }
-        store.set(idx, newText.trim());
-        // M2: Do NOT invalidate snapshot — snapshot is frozen per session.
-        return null;
     }
 
     /**
      * Remove an entry containing oldText from the specified target store.
      * @return null on success, error message on failure
      */
-    public synchronized String remove(String target, String oldText) {
-        if (oldText == null || oldText.isBlank()) {
-            return "old_text is required";
-        }
-        List<String> store = getStore(target);
-        if (store == null) {
-            return "Unknown target: " + target;
-        }
-        // Find ALL entries containing oldText (parity with Hermes remove() lines 426-440)
-        List<Integer> matchIndices = new ArrayList<>();
-        List<String> matchTexts = new ArrayList<>();
-        for (int i = 0; i < store.size(); i++) {
-            if (store.get(i).contains(oldText)) {
-                matchIndices.add(i);
-                matchTexts.add(store.get(i));
+    public String remove(String target, String oldText) {
+        lock.lock();
+        try {
+            if (oldText == null || oldText.isBlank()) {
+                return "old_text is required";
             }
-        }
-        if (matchIndices.isEmpty()) {
-            return "No entry found containing: " + oldText;
-        }
-        // If >1 unique entries match, return error with previews (parity with Hermes)
-        if (matchTexts.size() > 1) {
-            long uniqueCount = matchTexts.stream().distinct().count();
-            if (uniqueCount > 1) {
-                StringBuilder sb = new StringBuilder();
-                sb.append("Multiple entries match '").append(oldText).append("'. Be more specific:");
-                int i = 1;
-                for (String e : matchTexts) {
-                    String preview = e.length() > 80 ? e.substring(0, 80) + "..." : e;
-                    sb.append("\n").append(i++).append(". ").append(preview);
+            List<String> store = getStore(target);
+            if (store == null) {
+                return "Unknown target: " + target;
+            }
+            // Find ALL entries containing oldText (parity with Hermes remove() lines 426-440)
+            List<Integer> matchIndices = new ArrayList<>();
+            List<String> matchTexts = new ArrayList<>();
+            for (int i = 0; i < store.size(); i++) {
+                if (store.get(i).contains(oldText)) {
+                    matchIndices.add(i);
+                    matchTexts.add(store.get(i));
                 }
-                return sb.toString();
             }
-            // All identical — safe to remove first
+            if (matchIndices.isEmpty()) {
+                return "No entry found containing: " + oldText;
+            }
+            // If >1 unique entries match, return error with previews (parity with Hermes)
+            if (matchTexts.size() > 1) {
+                long uniqueCount = matchTexts.stream().distinct().count();
+                if (uniqueCount > 1) {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("Multiple entries match '").append(oldText).append("'. Be more specific:");
+                    int i = 1;
+                    for (String e : matchTexts) {
+                        String preview = e.length() > 80 ? e.substring(0, 80) + "..." : e;
+                        sb.append("\n").append(i++).append(". ").append(preview);
+                    }
+                    return sb.toString();
+                }
+                // All identical — safe to remove first
+            }
+            store.remove(matchIndices.get(0).intValue());
+            // M2: Do NOT invalidate snapshot — snapshot is frozen per session.
+            return null;
+        } finally {
+            lock.unlock();
         }
-        store.remove(matchIndices.get(0).intValue());
-        // M2: Do NOT invalidate snapshot — snapshot is frozen per session.
-        return null;
     }
 
     /**
      * Read all entries from the specified target store, joined by delimiter.
      */
-    public synchronized String read(String target) {
-        List<String> store = getStore(target);
-        if (store == null || store.isEmpty()) {
-            return "";
+    public String read(String target) {
+        lock.lock();
+        try {
+            List<String> store = getStore(target);
+            if (store == null || store.isEmpty()) {
+                return "";
+            }
+            return String.join(DELIMITER, store);
+        } finally {
+            lock.unlock();
         }
-        return String.join(DELIMITER, store);
     }
 
     /**
      * Get a frozen snapshot of both stores, formatted as blocks.
      * Returns Map with "memory" and "user" keys containing formatted blocks.
      */
-    public synchronized Map<String, String> getSnapshot() {
-        Map<String, String> snapshot = new java.util.LinkedHashMap<>();
-        snapshot.put(TARGET_MEMORY, formatBlock(TARGET_MEMORY, memoryEntries));
-        snapshot.put(TARGET_USER, formatBlock(TARGET_USER, userEntries));
-        return snapshot;
+    public Map<String, String> getSnapshot() {
+        lock.lock();
+        try {
+            Map<String, String> snapshot = new java.util.LinkedHashMap<>();
+            snapshot.put(TARGET_MEMORY, formatBlock(TARGET_MEMORY, memoryEntries));
+            snapshot.put(TARGET_USER, formatBlock(TARGET_USER, userEntries));
+            return snapshot;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -251,8 +278,13 @@ public class MemoryStore {
     /**
      * Invalidate cached snapshots (called when memory changes).
      */
-    public synchronized void invalidateSnapshot() {
-        snapshotCache.clear();
+    public void invalidateSnapshot() {
+        lock.lock();
+        try {
+            snapshotCache.clear();
+        } finally {
+            lock.unlock();
+        }
     }
 
     private String formatBlock(String target, List<String> entries) {

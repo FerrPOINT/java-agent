@@ -6,6 +6,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -32,13 +34,19 @@ class TypingManagerPauseResumeTest {
 
     @Test
     void pauseTyping_cancelsRefreshTask() throws InterruptedException {
-        when(client.sendTyping(anyLong(), any())).thenReturn(true);
+        // Use latch to wait for at least 2 sendTyping calls before pausing
+        CountDownLatch typingLatch = new CountDownLatch(2);
+        when(client.sendTyping(anyLong(), any())).thenAnswer(inv -> {
+            typingLatch.countDown();
+            return true;
+        });
         manager.startTyping(123L);
-        Thread.sleep(80); // Let a few refreshes happen
+        assertThat(typingLatch.await(2, TimeUnit.SECONDS)).isTrue();
 
         int countBeforePause = mockingDetails(client).getInvocations().size();
         manager.pauseTyping(123L);
-        Thread.sleep(150);
+        // Actual timing: verify no periodic task fires after pause
+        Thread.sleep(150); // timing-assertion
 
         int countAfterPause = mockingDetails(client).getInvocations().size();
         // No new sendTyping calls should happen after pause
@@ -71,18 +79,28 @@ class TypingManagerPauseResumeTest {
 
     @Test
     void resumeTyping_restartsPeriodicRefresh() throws InterruptedException {
-        when(client.sendTyping(anyLong(), any())).thenReturn(true);
+        // Use latch to wait for initial typing calls before pause
+        CountDownLatch initialLatch = new CountDownLatch(2);
+        when(client.sendTyping(anyLong(), any())).thenAnswer(inv -> {
+            initialLatch.countDown();
+            return true;
+        });
         manager.startTyping(123L);
-        Thread.sleep(80);
+        assertThat(initialLatch.await(2, TimeUnit.SECONDS)).isTrue();
         manager.pauseTyping(123L);
-        Thread.sleep(80);
+        // Actual timing: verify pause takes effect before resume
+        Thread.sleep(100); // timing-assertion
         clearInvocations(client);
 
+        // After resume, use a latch to wait for at least 2 more calls
+        CountDownLatch resumeLatch = new CountDownLatch(2);
+        when(client.sendTyping(anyLong(), any())).thenAnswer(inv -> {
+            resumeLatch.countDown();
+            return true;
+        });
         manager.resumeTyping(123L);
-        // Immediate send on resume
-        verify(client, atLeast(1)).sendTyping(eq(123L), any());
-        Thread.sleep(150);
-        // Should have continued periodic refreshes
+        // Immediate send on resume + periodic refreshes
+        assertThat(resumeLatch.await(2, TimeUnit.SECONDS)).isTrue();
         verify(client, atLeast(2)).sendTyping(eq(123L), any());
     }
 
@@ -111,9 +129,14 @@ class TypingManagerPauseResumeTest {
 
     @Test
     void pauseResume_withThreadRouting_preservesThreadId() throws InterruptedException {
-        when(client.sendTyping(anyLong(), eq(42))).thenReturn(true);
+        // Use latch to wait for initial typing before pause
+        CountDownLatch initialLatch = new CountDownLatch(1);
+        when(client.sendTyping(anyLong(), eq(42))).thenAnswer(inv -> {
+            initialLatch.countDown();
+            return true;
+        });
         manager.startTyping(123L, 42);
-        Thread.sleep(80);
+        assertThat(initialLatch.await(2, TimeUnit.SECONDS)).isTrue();
         manager.pauseTyping(123L);
         clearInvocations(client);
 

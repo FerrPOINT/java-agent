@@ -35,8 +35,8 @@ class ProcessToolTest {
         assertThat(managed.command).isEqualTo("echo start; sleep 1; echo done");
         assertThat(managed.id).isEqualTo("proc_test");
 
-        // Wait briefly for the reader thread to read the mocked output
-        Thread.sleep(1000);
+        // Wait for the reader thread to drain the mocked input stream (deterministic sync)
+        waitForReaderThread(managed);
 
         assertThat(managed.getOutput()).isEqualTo(expectedOutput);
 
@@ -66,5 +66,13 @@ class ProcessToolTest {
         processesField.setAccessible(true);
         Map<String, ProcessTool.ManagedProcess> processes = (Map<String, ProcessTool.ManagedProcess>) processesField.get(tool);
         processes.put(managed.id, managed);
+    }
+
+    /** Join the ManagedProcess reader thread so the output buffer is fully populated. */
+    private static void waitForReaderThread(ProcessTool.ManagedProcess managed) throws Exception {
+        Field readerField = ProcessTool.ManagedProcess.class.getDeclaredField("readerThread");
+        readerField.setAccessible(true);
+        Thread readerThread = (Thread) readerField.get(managed);
+        readerThread.join(5000);
     }
 }

@@ -51,7 +51,7 @@ public class SkillMutationLedger {
         }
         try {
             String effectiveActor = actor != null ? actor : deriveActor();
-            SkillAuditLogEntity entry = new SkillAuditLogEntity(
+            SkillAuditLogEntity entry = SkillAuditLogEntity.create(
                 skill, action, effectiveActor, oldValue, newValue);
             repo.save(entry);
             log.debug("Skill ledger: skill='{}' action='{}' actor='{}'", skill, action, effectiveActor);

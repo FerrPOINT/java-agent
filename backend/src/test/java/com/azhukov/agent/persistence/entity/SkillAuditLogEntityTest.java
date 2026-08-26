@@ -11,7 +11,7 @@ class SkillAuditLogEntityTest {
 
     @Test
     void constructor_setsAllFields() {
-        var entity = new SkillAuditLogEntity("my-skill", "update", "user-123",
+        var entity = SkillAuditLogEntity.create("my-skill", "update", "user-123",
             "{\"version\":1}", "{\"version\":2}");
 
         assertThat(entity.getSkillName()).isEqualTo("my-skill");
@@ -23,7 +23,7 @@ class SkillAuditLogEntityTest {
 
     @Test
     void constructor_createAction() {
-        var entity = new SkillAuditLogEntity("new-skill", "create", "user-1",
+        var entity = SkillAuditLogEntity.create("new-skill", "create", "user-1",
             null, "{\"content\":\"new skill\"}");
 
         assertThat(entity.getAction()).isEqualTo("create");
@@ -33,7 +33,7 @@ class SkillAuditLogEntityTest {
 
     @Test
     void constructor_deleteAction() {
-        var entity = new SkillAuditLogEntity("old-skill", "delete", "user-2",
+        var entity = SkillAuditLogEntity.create("old-skill", "delete", "user-2",
             "{\"content\":\"old skill\"}", null);
 
         assertThat(entity.getAction()).isEqualTo("delete");
@@ -43,7 +43,7 @@ class SkillAuditLogEntityTest {
 
     @Test
     void constructor_archiveAction() {
-        var entity = new SkillAuditLogEntity("stale-skill", "archive", "system",
+        var entity = SkillAuditLogEntity.create("stale-skill", "archive", "system",
             "{\"status\":\"active\"}", "{\"status\":\"archived\"}");
 
         assertThat(entity.getAction()).isEqualTo("archive");

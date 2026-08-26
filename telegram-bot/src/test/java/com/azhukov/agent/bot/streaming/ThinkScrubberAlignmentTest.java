@@ -26,7 +26,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void caseSensitive_lowercaseThinkIsMatched() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         String input = THINK_OPEN + "hidden" + THINK_CLOSE + "visible";
         String result = scrubber.scrub(input);
         assertThat(result).isEqualTo("visible");
@@ -34,7 +34,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void caseSensitive_uppercaseThinkIsNotMatched() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // <THINK> is NOT in the tag list (only <THINKING> is uppercase-matched)
         String input = LT + "THINK" + GT + "hidden" + LT + "/THINK" + GT + "visible";
         String result = scrubber.scrub(input);
@@ -45,7 +45,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void caseSensitive_uppercaseThinkingIsMatched() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // <THINKING> IS in the tag list (Hermes has this exact tag)
         String input = LT + "THINKING" + GT + "hidden" + LT + "/THINKING" + GT + "visible";
         String result = scrubber.scrub(input);
@@ -55,7 +55,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void caseSensitive_mixedCaseThinkIsNotMatched() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // <Think> (mixed case) is NOT in the tag list
         String input = LT + "Think" + GT + "hidden" + LT + "/Think" + GT + "visible";
         String result = scrubber.scrub(input);
@@ -67,7 +67,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void exactTag_thinkWithAttributesIsNotMatched() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // <think foo="bar"> has attributes — exact tag matching should NOT match this
         // (the old prefix matching would have matched "<think" prefix)
         String input = LT + "think foo=\"bar\"" + GT + "hidden" + THINK_CLOSE + "visible";
@@ -79,7 +79,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void exactTag_thinkingIsMatchedExactly() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         String input = THINKING_OPEN + "hidden" + THINKING_CLOSE + "visible";
         String result = scrubber.scrub(input);
         assertThat(result).isEqualTo("visible");
@@ -89,7 +89,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void boundary_thinkAtStartOfTextIsStripped() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         String input = THINK_OPEN + "hidden" + THINK_CLOSE + "visible";
         String result = scrubber.scrub(input);
         assertThat(result).isEqualTo("visible");
@@ -97,7 +97,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void boundary_thinkAfterNewlineIsStripped() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         String input = "preamble\n" + THINK_OPEN + "hidden" + THINK_CLOSE + "\nvisible";
         String result = scrubber.scrub(input);
         assertThat(result).contains("preamble");
@@ -107,7 +107,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void boundary_thinkAfterNewlineWithWhitespaceIsStripped() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         String input = "preamble\n  " + THINK_OPEN + "hidden" + THINK_CLOSE + " visible";
         String result = scrubber.scrub(input);
         assertThat(result).contains("preamble");
@@ -117,7 +117,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void boundary_inlineThinkInProseIsNotStripped() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // When the think tag appears inline in prose (not at a block boundary),
         // it should NOT be stripped — this prevents false positives when models
         // *mention* tags in prose (e.g. "the <think> tag is used for...")
@@ -130,7 +130,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void boundary_thinkAfterNonWhitespaceTextOnSameLineIsNotStripped() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // Text before the tag on the same line is not whitespace → NOT a boundary
         String input = "Some text " + THINK_OPEN + "hidden" + THINK_CLOSE + " more text";
         String result = scrubber.scrub(input);
@@ -142,7 +142,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void boundary_thinkAtStartOfSecondChunkAfterNewlineEnd() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // First chunk ends with newline → second chunk starts with think tag at boundary
         String r1 = scrubber.scrub("preamble\n");
         assertThat(r1).isEqualTo("preamble\n");
@@ -153,7 +153,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void boundary_thinkAtStartOfSecondChunkAfterNonNewlineIsNotStripped() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // First chunk ends without newline → second chunk starts with think tag
         // but accumulated text doesn't end with \n → NOT a boundary
         String r1 = scrubber.scrub("preamble");
@@ -169,7 +169,7 @@ class ThinkScrubberAlignmentTest {
 
     @Test
     void antmlThinkingTagIsMatched() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         String open = LT + "antml:thinking" + GT;
         String close = LT + "/antml:thinking" + GT;
         String input = open + "hidden reasoning" + close + "visible answer";
@@ -186,7 +186,7 @@ class ThinkScrubberAlignmentTest {
         // This means it respects boundary checks too
         // Test via StreamEditor instance with mocked TelegramClient
         // (the static stripThinkTagsRegex still exists but is not called by scrubThinkFinal)
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         String input = THINK_OPEN + "hidden" + THINK_CLOSE + "visible";
         String result = scrubber.scrub(input);
         scrubber.flush();

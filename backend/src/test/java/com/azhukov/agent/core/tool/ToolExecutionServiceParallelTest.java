@@ -14,6 +14,8 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -89,7 +91,9 @@ class ToolExecutionServiceParallelTest {
                 .thenAnswer(inv -> {
                     int current = concurrentExecutions.incrementAndGet();
                     maxConcurrent.accumulateAndGet(current, Math::max);
-                    Thread.sleep(100); // Simulate work
+                    // Block briefly to create a window where parallel execution
+                    // would be detected if it occurred
+                    new CountDownLatch(1).await(100, TimeUnit.MILLISECONDS);
                     concurrentExecutions.decrementAndGet();
                     String toolName = inv.getArgument(0);
                     return ToolResult.ok("result-" + toolName);
@@ -130,6 +134,8 @@ class ToolExecutionServiceParallelTest {
                 .thenAnswer(inv -> {
                     int i = idx.getAndIncrement();
                     timestamps[i] = System.currentTimeMillis();
+                    // timing-assertion: sleep is intentional — this test verifies
+                    // that sequential execution takes sum(tool durations) not max
                     Thread.sleep(100);
                     return ToolResult.ok("ok");
                 });
@@ -251,7 +257,8 @@ class ToolExecutionServiceParallelTest {
             ToolRegistry registry = mock(ToolRegistry.class);
             when(registry.execute(eq("slow"), any(), any(), any(), any()))
                 .thenAnswer(inv -> {
-                    Thread.sleep(5000);
+                    // Block indefinitely — the service's timeout will interrupt
+                    new CountDownLatch(1).await();
                     return ToolResult.ok("done");
                 });
 

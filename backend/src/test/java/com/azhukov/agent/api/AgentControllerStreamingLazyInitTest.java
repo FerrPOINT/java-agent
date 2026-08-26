@@ -4,6 +4,7 @@ import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -34,6 +35,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * LazyInitializationException.
  */
 @SpringBootTest
+@Tag("slow")
 @AutoConfigureMockMvc
 @TestPropertySource(properties = {
     "spring.datasource.url=jdbc:h2:mem:testdb-lazyinit;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=false",

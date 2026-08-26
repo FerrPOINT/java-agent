@@ -96,12 +96,6 @@ public class DefaultContextCompressor implements ContextCompressor {
  private static final int FALLBACK_PREVIOUS_SUMMARY_MAX_CHARS = 3_000;
  /** Per-turn cap in fallback summary to keep each message's contribution bounded. */
  private static final int FALLBACK_TURN_MAX_CHARS = 700;
- /** Minimum summary token budget. */
- private static final int MIN_SUMMARY_TOKENS = 2_000;
- /** Proportion of compressed content to allocate for summary. */
- private static final double SUMMARY_RATIO = 0.20;
- /** Absolute ceiling for summary tokens. Hermes parity: _SUMMARY_TOKENS_CEILING = 10_000. */
- private static final int SUMMARY_TOKENS_CEILING = 10_000;
  /** Chars per token rough estimate. */
  private static final int CHARS_PER_TOKEN = 4;
 
@@ -200,42 +194,15 @@ public class DefaultContextCompressor implements ContextCompressor {
 
      Write only the summary body. Do not include any preamble or prefix.""";
 
- /** P2-51: Compression threshold fraction of the context window (mirrors ModelMetadataService default). */
- private static final double COMPRESSION_THRESHOLD_FRACTION = 0.75;
-
- /**
-  * Minimum context length required to run the agent (mirrors Hermes MINIMUM_CONTEXT_LENGTH = 64_000).
-  * <p>
-  * This floor prevents premature compression on large-context models: a 200K-context model
-  * at 50% threshold would compress at 100K tokens, which is correct — but the 64K floor
-  * prevents even larger models (1M) from compressing at a too-low absolute token count.
-  */
- static final int MINIMUM_CONTEXT_LENGTH = 64_000;
-
- /**
-  * Proactive compression threshold fraction — 50% of the context window (mirrors Hermes threshold_percent default).
-  * Used by {@link #shouldCompressProactive} to check whether to compress after tool batches.
-  */
- static final double PROACTIVE_THRESHOLD_FRACTION = 0.50;
-
- /**
-  * Anti-thrashing: minimum savings percentage for a compression to be considered "effective".
-  * If compression saves less than this percentage, it's counted as a low-savings compression.
-  * Mirrors Hermes: {@code savings_pct < 10} → increment _ineffective_compression_count.
-  */
- static final double LOW_SAVINGS_THRESHOLD_PCT = 10.0;
-
- /**
-  * Anti-thrashing: maximum consecutive low-savings compressions before shouldCompress returns false.
-  * Mirrors Hermes: {@code if self._ineffective_compression_count >= 2: return False}.
-  */
- static final int MAX_CONSECUTIVE_LOW_SAVINGS = 2;
-
- /**
-  * Maximum compression attempts on context overflow before giving up.
-  * Mirrors Hermes: {@code max_compression_attempts = 3}.
-  */
- static final int MAX_COMPRESSION_ATTEMPTS = 3;
+ // ── Policy constants re-exported from CompressionPolicy for backward compatibility ──
+ // External callers (tests, DefaultContextEngine, etc.) reference these via
+ // DefaultContextCompressor.NAME; the authoritative values now live in CompressionPolicy.
+ static final double COMPRESSION_THRESHOLD_FRACTION = CompressionPolicy.COMPRESSION_THRESHOLD_FRACTION;
+ static final int MINIMUM_CONTEXT_LENGTH = CompressionPolicy.MINIMUM_CONTEXT_LENGTH;
+ static final double PROACTIVE_THRESHOLD_FRACTION = CompressionPolicy.PROACTIVE_THRESHOLD_FRACTION;
+ static final double LOW_SAVINGS_THRESHOLD_PCT = CompressionPolicy.LOW_SAVINGS_THRESHOLD_PCT;
+ static final int MAX_CONSECUTIVE_LOW_SAVINGS = CompressionPolicy.MAX_CONSECUTIVE_LOW_SAVINGS;
+ static final int MAX_COMPRESSION_ATTEMPTS = CompressionPolicy.MAX_COMPRESSION_ATTEMPTS;
 
  /** Strips MEDIA:/path directives from summarizer input so file-path artifacts don't pollute the summary. */
  private static final Pattern MEDIA_DIRECTIVE_RE = Pattern.compile("MEDIA:[^\\s]+");
@@ -259,40 +226,11 @@ public class DefaultContextCompressor implements ContextCompressor {
     /** Per-session compression count — mirrors Hermes compression_count for protectFirstN decay. */
     private final ConcurrentHashMap<String, Integer> sessionCompressionCounts = new ConcurrentHashMap<>();
 
-    /** Global compression count — used when session-specific count is unavailable. */
-    private final java.util.concurrent.atomic.AtomicInteger globalCompressionCount = new java.util.concurrent.atomic.AtomicInteger(0);
-
- /**
-  * P2-51: Dynamic compression threshold in chars, recalculated when the model switches.
-  * 0 means "not set" — fall back to config-based targetTokens at call sites.
-  */
- private volatile int compressionThresholdChars = 0;
-
- /**
-  * Anti-thrashing: consecutive low-savings compression counter.
-  * <p>
-  * Mirrors Hermes {@code _ineffective_compression_count}. After each compression, if savings
-  * are less than {@link #LOW_SAVINGS_THRESHOLD_PCT} (10%), this counter increments. If it
-  * reaches {@link #MAX_CONSECUTIVE_LOW_SAVINGS} (2), {@link #shouldCompress} returns false
-  * to skip compression and avoid thrashing.
-  * <p>
-  * Reset to 0 when a compression saves more than 10%.
-  */
- private volatile int consecutiveLowSavings = 0;
-
- /**
-  * Anti-thrashing: last compression savings percentage (0-100).
-  * Mirrors Hermes {@code _last_compression_savings_pct}.
-  */
- private volatile double lastCompressionSavingsPct = 100.0;
+    /** Compression policy — owns threshold/anti-thrashing/cooldown logic (extracted from this class). */
+    private final CompressionPolicy policy = new CompressionPolicy();
 
  /** Result of a session rotation — carries the new session ID for downstream consumers. */
  public record SessionRotationResult(UUID newSessionId, String newTitle) {}
-
- // h60: Compression failure cooldown — tracks the model/provider for which the cooldown was set.
- // When the model switches, the cooldown is reset so the new model gets a fresh start.
- private volatile String compressionCooldownModelKey;
- private volatile long compressionFailureCooldownUntil;
 
  /** Sets the SessionRepository — called by the @Bean factory after construction. */
  public void setSessionRepository(SessionRepository sessionRepository) {
@@ -300,211 +238,108 @@ public class DefaultContextCompressor implements ContextCompressor {
  }
 
  /**
-  * P2-51: Recalculate the compression threshold when the model switches.
-  * <p>
-  * Different models have different context window sizes. When the user switches
-  * models mid-session, the compression threshold must be updated to reflect
-  * the new model's context window. The threshold is computed as:
-  * <pre>
-  *   thresholdTokens = max((int)(newContextWindowSize * 0.75), MINIMUM_CONTEXT_LENGTH)
-  *   thresholdChars  = thresholdTokens * CHARS_PER_TOKEN
-  * </pre>
-  * The {@link #MINIMUM_CONTEXT_LENGTH} floor prevents premature compression on
-  * large-context models (e.g., a 200K model at 75% compresses at 150K, which is
-  * correct, but a 1M model shouldn't compress at 750K — the 64K floor ensures
-  * reasonable behavior).
-  * <p>
-  * This mirrors Hermes {@code update_model()}:
-  * <pre>
-  *   self.threshold_tokens = max(
-  *       int(context_length * self.threshold_percent),
-  *       MINIMUM_CONTEXT_LENGTH,
-  *   )
-  *   target_tokens = int(self.threshold_tokens * self.summary_target_ratio)
-  *   self.tail_token_budget = target_tokens
-  *   self.max_summary_tokens = min(int(context_length * 0.05), _SUMMARY_TOKENS_CEILING)
-  * </pre>
-  *
-  * @param newContextWindowSize the new model's context window size in tokens
-  */
- @Override
- public void recalculateThreshold(int newContextWindowSize) {
-     if (newContextWindowSize <= 0) {
-         log.debug("recalculateThreshold: ignoring non-positive context window size {}", newContextWindowSize);
-         return;
-     }
-     // h60: Reset compression failure cooldown when the model/context switches.
-     // The model key is derived from the context window size — if it changed,
-     // the cooldown should reset.
-     resetCompressionFailureCooldown("ctx-" + newContextWindowSize);
-     // Apply 64K floor (mirrors Hermes: max(int(ctx * threshold_percent), MINIMUM_CONTEXT_LENGTH))
-     int thresholdTokens = Math.max(
-         (int) (newContextWindowSize * COMPRESSION_THRESHOLD_FRACTION),
-         MINIMUM_CONTEXT_LENGTH
-     );
-     this.compressionThresholdChars = thresholdTokens * CHARS_PER_TOKEN;
-     // Recalculate tail budget: threshold_tokens * summary_target_ratio (mirrors Hermes)
-     // summary_target_ratio = SUMMARY_RATIO (0.20) → tail_token_budget = thresholdTokens * 0.20
-     // This is informational for now; the compress() method uses config-based targetTokens.
-     // Recalculate max summary tokens: min(context_length * 0.05, SUMMARY_TOKENS_CEILING)
-     // (mirrors Hermes: self.max_summary_tokens = min(int(context_length * 0.05), _SUMMARY_TOKENS_CEILING))
-     // The compress() method already uses computeSummaryBudget which applies these caps.
-     log.info("Compression threshold recalculated for new context window {}: thresholdTokens={}, thresholdChars={}",
-         newContextWindowSize, thresholdTokens, this.compressionThresholdChars);
- }
+   * P2-51: Recalculate the compression threshold when the model switches.
+   * <p>
+   * Delegates to {@link CompressionPolicy#recalculateThreshold(int)}.
+   *
+   * @param newContextWindowSize the new model's context window size in tokens
+   */
+  @Override
+  public void recalculateThreshold(int newContextWindowSize) {
+      policy.recalculateThreshold(newContextWindowSize);
+  }
+
+  /**
+   * Hermes parity: recalculate threshold with per-model overrides and small-context floor.
+   * @param newContextWindowSize the new model's context window size in tokens
+   * @param model the model name (for per-model overrides), or null
+   * @param modelThresholds per-model threshold overrides (substring→fraction), or null
+   */
+  public void recalculateThreshold(int newContextWindowSize, String model, java.util.Map<String, Double> modelThresholds) {
+      policy.recalculateThreshold(newContextWindowSize, model, modelThresholds);
+  }
 
  /**
   * P2-51: Returns the dynamic compression threshold in chars, or 0 if not yet set.
-  * Callers should fall back to config-based {@code targetTokens * CHARS_PER_TOKEN} when this returns 0.
+  * Delegates to {@link CompressionPolicy#getCompressionThresholdChars()}.
   *
   * @return the dynamic compression threshold in chars, or 0 if not set
   */
  public int getCompressionThresholdChars() {
-     return compressionThresholdChars;
+     return policy.getCompressionThresholdChars();
  }
 
  /**
-  * Proactive compression check — called after each tool batch in the turn loop,
-  * BEFORE the next model call. Returns true if the estimated token count
-  * exceeds the proactive compression threshold.
-  * <p>
-  * The threshold is computed as:
-  * <pre>
-  *   thresholdTokens = max((int)(contextWindowSize * 0.50), MINIMUM_CONTEXT_LENGTH)
-  * </pre>
-  * Hermes uses {@code threshold_percent = 0.50} with the 64K floor. The 50% threshold
-  * leaves ample headroom for tool results that arrive after the API call.
-  * <p>
-  * Mirrors Hermes {@code should_compress(prompt_tokens)}:
-  * <ul>
-  *   <li>threshold_tokens = max(int(context_length * threshold_percent), MINIMUM_CONTEXT_LENGTH)</li>
-  *   <li>if tokens &lt; threshold_tokens → return False</li>
-  *   <li>Anti-thrashing: if _ineffective_compression_count &gt;= 2 → return False</li>
-  * </ul>
+  * Proactive compression check — delegates to {@link CompressionPolicy#shouldCompressProactive}.
   *
   * @param estimatedTokens the estimated token count for the current context
   * @param contextWindowSize the model's context window size in tokens
   * @return true if proactive compression should be triggered
   */
  public boolean shouldCompressProactive(int estimatedTokens, int contextWindowSize) {
-     if (contextWindowSize <= 0) {
-         return false;
-     }
-     // Apply 64K floor (mirrors Hermes: max(int(ctx * threshold_percent), MINIMUM_CONTEXT_LENGTH))
-     int thresholdTokens = Math.max(
-         (int) (contextWindowSize * PROACTIVE_THRESHOLD_FRACTION),
-         MINIMUM_CONTEXT_LENGTH
-     );
-     if (estimatedTokens < thresholdTokens) {
-         return false;
-     }
-     // Anti-thrashing: skip if last 2 compressions saved < 10% each
-     if (consecutiveLowSavings >= MAX_CONSECUTIVE_LOW_SAVINGS) {
-         log.warn("Proactive compression skipped — last {} compressions saved <{}% each. "
-             + "Consider /new to start a fresh session, or /compress for focused compression.",
-             consecutiveLowSavings, (int) LOW_SAVINGS_THRESHOLD_PCT);
-         return false;
-     }
-     return true;
+     return policy.shouldCompressProactive(estimatedTokens, contextWindowSize);
  }
 
  /**
-  * Reactive compression check — called on CONTEXT_OVERFLOW or PAYLOAD_TOO_LARGE errors.
-  * Returns true if compression should be attempted (respecting anti-thrashing).
-  * <p>
-  * Mirrors Hermes {@code should_compress(prompt_tokens)}.
+  * Reactive compression check — delegates to {@link CompressionPolicy#shouldCompress}.
   *
   * @param estimatedTokens the estimated token count for the current context
   * @return true if compression should be attempted
   */
  public boolean shouldCompress(int estimatedTokens) {
-     // Anti-thrashing: skip if last 2 compressions saved < 10% each
-     if (consecutiveLowSavings >= MAX_CONSECUTIVE_LOW_SAVINGS) {
-         log.warn("Compression skipped — last {} compressions saved <{}% each. "
-             + "Consider /new to start a fresh session, or /compress for focused compression.",
-             consecutiveLowSavings, (int) LOW_SAVINGS_THRESHOLD_PCT);
-         return false;
-     }
-     return true;
+     return policy.shouldCompress(estimatedTokens);
  }
 
  /**
-  * Anti-thrashing: record the savings from a compression and update the counter.
-  * <p>
-  * Mirrors Hermes:
-  * <pre>
-  *   savings_pct = (saved_estimate / display_tokens * 100) if display_tokens > 0 else 0
-  *   self._last_compression_savings_pct = savings_pct
-  *   if savings_pct < 10:
-  *       self._ineffective_compression_count += 1
-  *   else:
-  *       self._ineffective_compression_count = 0
-  * </pre>
+  * Anti-thrashing: record the savings from a compression.
+  * Delegates to {@link CompressionPolicy#recordCompressionSavings}.
   *
   * @param originalTokens the token estimate before compression
   * @param compressedTokens the token estimate after compression
   */
  void recordCompressionSavings(int originalTokens, int compressedTokens) {
-     double savingsPct = originalTokens > 0
-         ? ((double) (originalTokens - compressedTokens) / originalTokens * 100.0)
-         : 0.0;
-     this.lastCompressionSavingsPct = savingsPct;
-     // Hermes parity: increment compression_count after each compression.
-     // Used for protectFirstN decay (context_compressor.py:5954).
-     if (savingsPct >= LOW_SAVINGS_THRESHOLD_PCT) {
-         globalCompressionCount.incrementAndGet();
-     }
-     if (savingsPct < LOW_SAVINGS_THRESHOLD_PCT) {
-         this.consecutiveLowSavings++;
-         log.warn("Low-savings compression: {}% saved (consecutive count now {}/{})",
-             String.format("%.1f", savingsPct), consecutiveLowSavings, MAX_CONSECUTIVE_LOW_SAVINGS);
-     } else {
-         this.consecutiveLowSavings = 0;
-     }
+     policy.recordCompressionSavings(originalTokens, compressedTokens);
  }
 
  /**
-  * Reset the anti-thrashing counter. Called when a new session starts or when
-  * the user manually triggers compression via /compress.
+  * Reset the anti-thrashing counter. Delegates to {@link CompressionPolicy#resetAntiThrashing}.
   */
  public void resetAntiThrashing() {
-     this.consecutiveLowSavings = 0;
-     this.lastCompressionSavingsPct = 100.0;
+     policy.resetAntiThrashing();
  }
 
  // h60: Reset compression failure cooldown when the runtime/model switches.
- // If user changes model, don't carry over the old model's compression failure cooldown.
+ // Delegates to {@link CompressionPolicy#resetCompressionFailureCooldown}.
  public void resetCompressionFailureCooldown(String modelKey) {
-     if (modelKey == null || !modelKey.equals(this.compressionCooldownModelKey)) {
-         this.compressionCooldownModelKey = modelKey;
-         this.compressionFailureCooldownUntil = 0;
-         log.debug("Compression failure cooldown reset for model key: {}", modelKey);
-     }
+     policy.resetCompressionFailureCooldown(modelKey);
  }
 
  // h60: Check if compression is in a failure cooldown.
+ // Delegates to {@link CompressionPolicy#isCompressionFailureCooldownActive}.
  public boolean isCompressionFailureCooldownActive() {
-     return compressionFailureCooldownUntil > 0
-         && System.currentTimeMillis() < compressionFailureCooldownUntil;
+     return policy.isCompressionFailureCooldownActive();
  }
 
  // h60: Set the compression failure cooldown for the current model.
+ // Delegates to {@link CompressionPolicy#setCompressionFailureCooldown}.
  public void setCompressionFailureCooldown(long durationMs) {
-     this.compressionFailureCooldownUntil = System.currentTimeMillis() + durationMs;
+     policy.setCompressionFailureCooldown(durationMs);
  }
 
  /**
   * Returns the consecutive low-savings compression count for monitoring.
+  * Delegates to {@link CompressionPolicy#getConsecutiveLowSavings}.
   */
  public int getConsecutiveLowSavings() {
-     return consecutiveLowSavings;
+     return policy.getConsecutiveLowSavings();
  }
 
  /**
   * Returns the last compression savings percentage (0-100).
+  * Delegates to {@link CompressionPolicy#getLastCompressionSavingsPct}.
   */
  public double getLastCompressionSavingsPct() {
-     return lastCompressionSavingsPct;
+     return policy.getLastCompressionSavingsPct();
  }
 
  @Override
@@ -533,7 +368,7 @@ public class DefaultContextCompressor implements ContextCompressor {
      // cycle (#11996). Early user turns are captured in the handoff summary
      // after first compaction, so re-protecting them fossilizes old messages
      // and grows the head unboundedly across long sessions.
-     int compressionCount = globalCompressionCount.get();
+     int compressionCount = policy.getGlobalCompressionCount();
      if (compressionCount >= 1) {
          protectFirstN = 0;
      }
@@ -708,7 +543,7 @@ public class DefaultContextCompressor implements ContextCompressor {
      log.info("Compressed: {} -> {} messages (~{} tokens saved, {}%)",
          messages.size(), compressed.size(),
          originalTokens - compressedTokens,
-         String.format("%.0f", lastCompressionSavingsPct));
+         String.format("%.0f", policy.getLastCompressionSavingsPct()));
 
      return compressed;
  }
@@ -782,13 +617,11 @@ public class DefaultContextCompressor implements ContextCompressor {
  }
 
  /**
- * Computes a scaled summary token budget proportional to the compressed content.
- * Mirrors the original project's _SUMMARY_RATIO and _SUMMARY_TOKENS_CEILING.
- */
+  * Computes a scaled summary token budget proportional to the compressed content.
+  * Delegates to {@link CompressionPolicy#computeSummaryBudget}.
+  */
  private int computeSummaryBudget(int compressedChars) {
- int compressedTokens = compressedChars / CHARS_PER_TOKEN;
- int scaled = (int) (compressedTokens * SUMMARY_RATIO);
- return Math.min(Math.max(scaled, MIN_SUMMARY_TOKENS), SUMMARY_TOKENS_CEILING);
+     return policy.computeSummaryBudget(compressedChars);
  }
 
  /**
@@ -1186,14 +1019,18 @@ public class DefaultContextCompressor implements ContextCompressor {
         try {
             CompletableFuture<String> future = CompletableFuture.supplyAsync(
                 () -> summarize(text, summaryBudgetTokens));
-            return future.get(timeoutSeconds, TimeUnit.SECONDS);
-        } catch (TimeoutException e) {
-            log.warn("Compression summary timed out after {}s — falling back to truncation", timeoutSeconds);
-            return fallbackSummarize(text);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.warn("Compression summary interrupted — falling back to truncation");
-            return fallbackSummarize(text);
+            try {
+                return future.get(timeoutSeconds, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                future.cancel(true);
+                log.warn("Compression summary timed out after {}s — falling back to truncation", timeoutSeconds);
+                return fallbackSummarize(text);
+            } catch (InterruptedException e) {
+                future.cancel(true);
+                Thread.currentThread().interrupt();
+                log.warn("Compression summary interrupted — falling back to truncation");
+                return fallbackSummarize(text);
+            }
         } catch (ExecutionException e) {
             log.warn("Compression summary failed with execution exception — falling back: {}", e.getMessage());
             return fallbackSummarize(text);
@@ -1268,38 +1105,155 @@ public class DefaultContextCompressor implements ContextCompressor {
  }
 
  /**
- * Fallback summarization when the LLM is unavailable.
- * Uses per-turn truncation to keep the summary bounded.
- * The primary limit is properties.getContext().getMaxTokens() (in chars),
- * with a hard ceiling of FALLBACK_SUMMARY_MAX_CHARS as a safety net to
- * prevent unbounded transcript copies on very large maxTokens configs.
- * Mirrors the original project's _FALLBACK_SUMMARY_MAX_CHARS and _FALLBACK_TURN_MAX_CHARS.
+ * Hermes parity: structured deterministic fallback summarization.
+ * Mirrors Hermes context_compressor.py _deterministic_fallback_summary (~line 4260).
+ * Extracts user asks, assistant/tool actions, relevant files, blockers,
+ * and last dropped turns from the compacted messages, then formats them
+ * into the same summary template the LLM path uses.
  */
  private String fallbackSummarize(String text) {
- // Primary limit from config, but no larger than the hard ceiling
- int configLimit = properties.getContext().getMaxTokens();
- int limit = Math.min(configLimit, FALLBACK_SUMMARY_MAX_CHARS);
- // Account for the end marker that will be appended to the summary
- int effectiveLimit = Math.max(limit - SUMMARY_END_MARKER.length(), 100);
- // Per-turn cap: use the smaller of FALLBACK_TURN_MAX_CHARS and the effective limit
- int turnMax = Math.min(FALLBACK_TURN_MAX_CHARS, effectiveLimit);
- // Split into turns (separated by double newlines from our format)
- String[] parts = text.split("\n\n");
- StringBuilder result = new StringBuilder();
- for (String part : parts) {
- if (result.length() >= effectiveLimit) {
- result.append("\n[... further turns omitted ...]");
- break;
+     return fallbackSummarize(text, null);
  }
- String truncated = part.length() > turnMax
- ? part.substring(0, turnMax) + "..."
- : part;
- result.append(truncated).append("\n\n");
+
+ /**
+ * Hermes parity: structured deterministic fallback summarization with reason.
+ * @param reason the compression failure reason (quota, timeout, etc.), or null
+ */
+ private String fallbackSummarize(String text, String reason) {
+     List<String> userAsks = new java.util.ArrayList<>();
+     List<String> assistantActions = new java.util.ArrayList<>();
+     List<String> toolActions = new java.util.ArrayList<>();
+     List<String> relevantFiles = new java.util.ArrayList<>();
+     List<String> blockers = new java.util.ArrayList<>();
+     List<String> lastDroppedTurns = new java.util.ArrayList<>();
+
+     // Split into turns (separated by double newlines from our format)
+     String[] parts = text.split("\n\n");
+     for (String part : parts) {
+         String truncated = truncateFallbackTurn(part);
+
+         // Extract path mentions
+         collectPathMentions(truncated, relevantFiles, 12);
+
+         // Detect role prefix
+         String lower = truncated.toLowerCase();
+         if (lower.startsWith("user:") || lower.startsWith("user ")) {
+             String ask = truncated.replaceFirst("^user:\\s*|^user\\s+", "").strip();
+             if (!ask.isEmpty()) {
+                 userAsks.add(ask);
+             }
+         } else if (lower.startsWith("assistant:") || lower.startsWith("assistant ")) {
+             String action = truncated.replaceFirst("^assistant:\\s*|^assistant\\s+", "").strip();
+             if (!action.isEmpty()) {
+                 assistantActions.add(action);
+             }
+         } else if (lower.startsWith("tool:") || lower.startsWith("tool ")) {
+             String action = truncated.replaceFirst("^tool:\\s*|^tool\\s+", "").strip();
+             if (!action.isEmpty()) {
+                 toolActions.add(action);
+                 // Extract error-like content as blockers
+                 if (action.toLowerCase().contains("error") || action.toLowerCase().contains("failed")) {
+                     blockers.add(action.length() > 200 ? action.substring(0, 200) + "..." : action);
+                 }
+             }
+         }
+
+         // Remember dropped turns
+         if (!truncated.isEmpty()) {
+             lastDroppedTurns.add(truncated);
+             if (lastDroppedTurns.size() > 8) {
+                 lastDroppedTurns.remove(0);
+             }
+         }
+     }
+
+     // Build completed actions list
+     List<String> completed = new java.util.ArrayList<>();
+     List<String> allActions = new java.util.ArrayList<>();
+     allActions.addAll(assistantActions);
+     allActions.addAll(toolActions);
+     for (int idx = 0; idx < Math.min(allActions.size(), 12); idx++) {
+         completed.add((idx + 1) + ". " + allActions.get(idx));
+     }
+
+     String activeTask = !userAsks.isEmpty()
+         ? "User asked: " + userAsks.get(userAsks.size() - 1)
+         : "None. This session contains no user-authored turns.";
+
+     String reasonText = reason != null && !reason.isBlank()
+         ? " Summary failure reason: " + reason + "."
+         : "";
+
+     StringBuilder body = new StringBuilder();
+     body.append("## Historical Task Snapshot\n");
+     body.append(activeTask).append("\n\n");
+     body.append("## Goal\n");
+     body.append("Recovered from a deterministic fallback because the LLM context summarizer was unavailable. ")
+        .append("Continue from the protected recent messages after this summary and use current file/system state for exact details.\n\n");
+     body.append("## Constraints & Preferences\n");
+     body.append("- This fallback was generated locally without an LLM summary call.\n");
+     body.append("- Secrets and credentials were redacted before preservation.\n");
+     body.append("- The summary may be incomplete; prefer verifying current files, git state, processes, and test results instead of assuming omitted details.\n\n");
+     body.append("## Completed Actions\n");
+     body.append(completed.isEmpty() ? "None recoverable from compacted turns.\n\n" : String.join("\n", completed) + "\n\n");
+     body.append("## Active State\n");
+     body.append("Unknown from deterministic fallback. Inspect current repository/session state if needed.\n\n");
+     body.append("## Blocked\n");
+     body.append(bullets(blockers, 5)).append("\n\n");
+     body.append("## Key Decisions\n");
+     body.append("None recoverable from deterministic fallback.\n\n");
+     body.append("## Resolved Questions\n");
+     body.append("None recoverable from deterministic fallback.\n\n");
+     body.append("## Relevant Files\n");
+     body.append(bullets(relevantFiles, 12)).append("\n\n");
+     body.append("## Last Dropped Turns\n");
+     body.append(bullets(lastDroppedTurns, 8)).append("\n\n");
+     body.append("## Critical Context\n");
+     body.append("Summary generation was unavailable, so this is a best-effort deterministic fallback.")
+        .append(reasonText);
+
+     String summary = ANTI_INJECTION_PREFIX + body.toString().strip();
+
+     // Apply hard ceiling
+     if (summary.length() > FALLBACK_SUMMARY_MAX_CHARS) {
+         summary = summary.substring(0, FALLBACK_SUMMARY_MAX_CHARS - 42).strip() + "\n...[fallback summary truncated]";
+     }
+     return summary + SUMMARY_END_MARKER;
  }
- // Apply hard ceiling
- if (result.length() > effectiveLimit) {
- return result.substring(0, effectiveLimit) + "\n\n[truncated]";
+
+ /** Hermes parity: _FALLBACK_TURN_MAX_CHARS — per-turn truncation in fallback. */
+ private static String truncateFallbackTurn(String text) {
+     if (text == null) return "";
+     text = text.strip();
+     if (text.length() <= FALLBACK_TURN_MAX_CHARS) return text;
+     return text.substring(0, FALLBACK_TURN_MAX_CHARS - 15).strip() + " ...[truncated]";
  }
- return result.toString().strip();
+
+ /** Hermes parity: _collect_path_mentions — extract file paths from text. */
+ private static final Pattern PATH_MENTION_RE =
+     Pattern.compile("(?:/|~/?|[A-Za-z]:\\\\)[^\\s`'\\\")\\]}<>]+");
+ private static void collectPathMentions(String text, List<String> relevantFiles, int limit) {
+     if (text == null || relevantFiles.size() >= limit) return;
+     for (var match : PATH_MENTION_RE.matcher(text).results().toList()) {
+         String path = match.group().replaceAll("[.,:;]+$", "");
+         if (!path.isBlank() && !relevantFiles.contains(path) && relevantFiles.size() < limit) {
+             relevantFiles.add(path);
+         }
+     }
+ }
+
+ /** Hermes parity: _bullets — format list as bullet points. */
+ private static String bullets(List<String> items, int limit) {
+     List<String> unique = new java.util.ArrayList<>();
+     java.util.Set<String> seen = new java.util.HashSet<>();
+     for (String item : items) {
+         String trimmed = item.strip();
+         if (trimmed.isEmpty() || seen.contains(trimmed)) continue;
+         seen.add(trimmed);
+         unique.add(trimmed);
+         if (unique.size() >= limit) break;
+     }
+     if (unique.isEmpty()) return "None.";
+     return unique.stream().map(i -> "- " + i).collect(java.util.stream.Collectors.joining("\n"));
  }
 }

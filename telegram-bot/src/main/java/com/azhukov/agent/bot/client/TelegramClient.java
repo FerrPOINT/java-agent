@@ -2,13 +2,10 @@ package com.azhukov.agent.bot.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +38,7 @@ public class TelegramClient {
     private final Semaphore rateLimiter;
     private final int rateLimitPerSecond;
     private final ScheduledExecutorService rateLimitScheduler;
+    private final TelegramMediaClient mediaClient;
     private boolean linkPreviewEnabled = true; // B3.7: default to enabling link previews
 
     // B3: Track whether the last API call returned HTTP 409 (conflict)
@@ -69,6 +67,7 @@ public class TelegramClient {
             t.setDaemon(true);
             return t;
         });
+        this.mediaClient = new TelegramMediaClient(this, restClient, objectMapper, this.botToken);
     }
 
     /**
@@ -465,54 +464,21 @@ public class TelegramClient {
     }
 
     // ─── Media ────────────────────────────────────────────────────
+    // Media upload/download operations are delegated to the package-private
+    // {@link TelegramMediaClient} collaborator to keep this class focused
+    // on text/chat operations. Public signatures are preserved as delegates.
 
     public Optional<Long> sendPhoto(long chatId, byte[] photo, String caption, String parseMode) {
-        MultipartBodyBuilder builder = new MultipartBodyBuilder();
-        builder.part("chat_id", String.valueOf(chatId));
-        builder.part("photo", new ByteArrayResource(photo) {
-            @Override public String getFilename() { return "photo.jpg"; }
-        }, MediaType.IMAGE_JPEG);
-        if (caption != null && !caption.isBlank()) builder.part("caption", caption);
-        if (parseMode != null && !parseMode.isBlank()) builder.part("parse_mode", parseMode);
-        try {
-            return callMultipartApi("sendPhoto", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
-        } catch (TelegramApiException e) {
-            log.warn("sendPhoto failed: {}", e.getMessage());
-            return Optional.empty();
-        }
+        return mediaClient.sendPhoto(chatId, photo, caption, parseMode);
     }
 
     public Optional<Long> sendDocument(long chatId, byte[] document, String fileName,
                                         String caption, String parseMode) {
-        String name = (fileName == null || fileName.isBlank()) ? "document" : fileName;
-        MultipartBodyBuilder builder = new MultipartBodyBuilder();
-        builder.part("chat_id", String.valueOf(chatId));
-        builder.part("document", new ByteArrayResource(document) {
-            @Override public String getFilename() { return name; }
-        }, MediaType.APPLICATION_OCTET_STREAM);
-        if (caption != null && !caption.isBlank()) builder.part("caption", caption);
-        if (parseMode != null && !parseMode.isBlank()) builder.part("parse_mode", parseMode);
-        try {
-            return callMultipartApi("sendDocument", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
-        } catch (TelegramApiException e) {
-            log.warn("sendDocument failed: {}", e.getMessage());
-            return Optional.empty();
-        }
+        return mediaClient.sendDocument(chatId, document, fileName, caption, parseMode);
     }
 
     public Optional<Long> sendVoice(long chatId, byte[] voice, String caption) {
-        MultipartBodyBuilder builder = new MultipartBodyBuilder();
-        builder.part("chat_id", String.valueOf(chatId));
-        builder.part("voice", new ByteArrayResource(voice) {
-            @Override public String getFilename() { return "voice.ogg"; }
-        }, MediaType.parseMediaType("audio/ogg"));
-        if (caption != null && !caption.isBlank()) builder.part("caption", caption);
-        try {
-            return callMultipartApi("sendVoice", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
-        } catch (TelegramApiException e) {
-            log.warn("sendVoice failed: {}", e.getMessage());
-            return Optional.empty();
-        }
+        return mediaClient.sendVoice(chatId, voice, caption);
     }
 
     /**
@@ -527,20 +493,7 @@ public class TelegramClient {
      */
     public Optional<Long> sendVideo(long chatId, byte[] video, String fileName,
                                      String caption, String parseMode) {
-        String name = (fileName == null || fileName.isBlank()) ? "video.mp4" : fileName;
-        MultipartBodyBuilder builder = new MultipartBodyBuilder();
-        builder.part("chat_id", String.valueOf(chatId));
-        builder.part("video", new ByteArrayResource(video) {
-            @Override public String getFilename() { return name; }
-        }, MediaType.APPLICATION_OCTET_STREAM);
-        if (caption != null && !caption.isBlank()) builder.part("caption", caption);
-        if (parseMode != null && !parseMode.isBlank()) builder.part("parse_mode", parseMode);
-        try {
-            return callMultipartApi("sendVideo", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
-        } catch (TelegramApiException e) {
-            log.warn("sendVideo failed: {}", e.getMessage());
-            return Optional.empty();
-        }
+        return mediaClient.sendVideo(chatId, video, fileName, caption, parseMode);
     }
 
     /**
@@ -554,19 +507,7 @@ public class TelegramClient {
      * @return the sent message id, or empty on failure
      */
     public Optional<Long> sendAudioAsVoice(long chatId, byte[] audio, String fileName, String caption) {
-        String name = (fileName == null || fileName.isBlank()) ? "voice.ogg" : fileName;
-        MultipartBodyBuilder builder = new MultipartBodyBuilder();
-        builder.part("chat_id", String.valueOf(chatId));
-        builder.part("voice", new ByteArrayResource(audio) {
-            @Override public String getFilename() { return name; }
-        }, MediaType.parseMediaType("audio/ogg"));
-        if (caption != null && !caption.isBlank()) builder.part("caption", caption);
-        try {
-            return callMultipartApi("sendVoice", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
-        } catch (TelegramApiException e) {
-            log.warn("sendAudioAsVoice failed: {}", e.getMessage());
-            return Optional.empty();
-        }
+        return mediaClient.sendAudioAsVoice(chatId, audio, fileName, caption);
     }
 
     /**
@@ -582,75 +523,7 @@ public class TelegramClient {
      * @return list of sent message ids (may be shorter than photos on partial failure)
      */
     public List<Long> sendMediaGroup(long chatId, List<PhotoInput> photos) {
-        if (photos == null || photos.isEmpty()) {
-            return List.of();
-        }
-        MultipartBodyBuilder builder = new MultipartBodyBuilder();
-        builder.part("chat_id", String.valueOf(chatId));
-
-        // Build the media JSON array with attach:// references
-        List<Map<String, Object>> mediaArray = new ArrayList<>();
-        for (int i = 0; i < photos.size(); i++) {
-            PhotoInput photo = photos.get(i);
-            String attachName = "photo" + i;
-            String mediaType = "photo";
-            // GIFs are sent as animations, not photos — but for simplicity in
-            // media groups, we send them as photos (Telegram will reject .gif
-            // in media groups; the caller should peel off GIFs before calling).
-            MediaType mimeType = guessImageMediaType(photo.fileName());
-            builder.part(attachName, new ByteArrayResource(photo.data()) {
-                @Override public String getFilename() { return photo.fileName(); }
-            }, mimeType);
-
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("type", mediaType);
-            item.put("media", "attach://" + attachName);
-            if (photo.caption() != null && !photo.caption().isBlank()) {
-                item.put("caption", photo.caption());
-                item.put("parse_mode", "MarkdownV2");
-            }
-            mediaArray.add(item);
-        }
-
-        try {
-            builder.part("media", objectMapper.writeValueAsString(mediaArray));
-        } catch (Exception e) {
-            log.warn("sendMediaGroup: failed to serialize media JSON: {}", e.getMessage());
-            return List.of();
-        }
-
-        try {
-            Optional<TelegramResponse> response = callMultipartApi("sendMediaGroup", builder.build());
-            if (response.isPresent()) {
-                // sendMediaGroup returns an array of Message objects
-                Object result = response.get().result();
-                if (result instanceof List<?> list) {
-                    List<Long> messageIds = new ArrayList<>();
-                    for (Object item : list) {
-                        if (item instanceof Map<?, ?> msg) {
-                            Object id = msg.get("message_id");
-                            if (id instanceof Number num) {
-                                messageIds.add(num.longValue());
-                            }
-                        }
-                    }
-                    return messageIds;
-                }
-            }
-            return List.of();
-        } catch (TelegramApiException e) {
-            log.warn("sendMediaGroup failed: {}", e.getMessage());
-            return List.of();
-        }
-    }
-
-    private static MediaType guessImageMediaType(String fileName) {
-        if (fileName == null) return MediaType.IMAGE_JPEG;
-        String lower = fileName.toLowerCase();
-        if (lower.endsWith(".png")) return MediaType.IMAGE_PNG;
-        if (lower.endsWith(".gif")) return MediaType.IMAGE_GIF;
-        if (lower.endsWith(".webp")) return MediaType.parseMediaType("image/webp");
-        return MediaType.IMAGE_JPEG;
+        return mediaClient.sendMediaGroup(chatId, photos);
     }
 
     /** Input for sendMediaGroup: photo bytes, filename, and optional caption. */
@@ -659,26 +532,11 @@ public class TelegramClient {
     // ─── File download ────────────────────────────────────────────
 
     public Optional<Map<String, Object>> getFile(String fileId) {
-        Map<String, Object> params = Map.of("file_id", fileId);
-        try {
-            return callApi("getFile", params).map(TelegramResponse::resultAsMap);
-        } catch (TelegramApiException e) {
-            log.warn("getFile failed: {}", e.getMessage());
-            return Optional.empty();
-        }
+        return mediaClient.getFile(fileId);
     }
 
     public Optional<byte[]> downloadFile(String filePath) {
-        try {
-            byte[] data = restClient.get()
-                .uri("https://api.telegram.org/file/bot{token}/{path}", botToken, filePath)
-                .retrieve()
-                .body(byte[].class);
-            return Optional.ofNullable(data);
-        } catch (Exception e) {
-            log.warn("downloadFile failed: {}", e.getMessage());
-            return Optional.empty();
-        }
+        return mediaClient.downloadFile(filePath);
     }
 
     // ─── Bot info ─────────────────────────────────────────────────

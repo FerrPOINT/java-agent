@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -350,7 +351,7 @@ public class SkillUtils {
  * S6: Detect whether the named runtime environment is currently active.
  * Cached per process for the lifetime.
  */
- private static final Map<String, Boolean> ENV_DETECT_CACHE = new HashMap<>();
+ private static final Map<String, Boolean> ENV_DETECT_CACHE = new ConcurrentHashMap<>();
 
  private static boolean detectEnvironment(String env) {
  if (ENV_DETECT_CACHE.containsKey(env)) {

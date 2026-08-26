@@ -1,6 +1,7 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.persistence.entity.CronExecutionLogEntity;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.persistence.repository.CronJobRepository;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
@@ -11,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,6 +27,7 @@ class CronJobServiceTest {
 
     @Mock private CronJobRepository cronJobRepository;
     @Mock private CronExecutionLogRepository cronExecutionLogRepository;
+    @Mock private com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     @Mock private org.springframework.beans.factory.ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider;
     @Mock private AgentRuntimeService agentRuntimeService;
     @Mock private com.azhukov.agent.core.skill.SkillManager skillManager;
@@ -37,7 +40,7 @@ class CronJobServiceTest {
         properties = new AgentProperties();
         properties.getCron().setEnabled(false); // Disable scheduling for tests
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, new org.springframework.transaction.support.TransactionTemplate());
+        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(), new CronScheduleParser());
     }
 
     @Test
@@ -56,7 +59,7 @@ class CronJobServiceTest {
     }
 
     @Test
-    void listCronJobs() {
+    void listCronJobs() throws Exception {
         CronJobEntity job = new CronJobEntity();
         job.setId(UUID.randomUUID());
         job.setName("job1");
@@ -64,6 +67,50 @@ class CronJobServiceTest {
         List<CronJobEntity> jobs = service.list();
         assertThat(jobs).hasSize(1);
         assertThat(jobs.get(0).getName()).isEqualTo("job1");
+    }
+
+    @Test
+    void contextFrom_injectsLatestUpstreamOutput() throws Exception {
+        UUID upstreamId = UUID.randomUUID();
+        CronJobEntity upstream = new CronJobEntity();
+        upstream.setId(upstreamId);
+        upstream.setName("collector");
+        CronExecutionLogEntity execution = CronExecutionLogEntity.create(
+            upstreamId, Instant.now(), Instant.now(), "success", null);
+        execution.setOutputText("fresh research output");
+        when(cronJobRepository.findById(upstreamId)).thenReturn(Optional.of(upstream));
+        when(cronExecutionLogRepository.findFirstByJobIdOrderByStartedAtDesc(upstreamId))
+            .thenReturn(Optional.of(execution));
+
+        CronJobEntity target = new CronJobEntity();
+        target.setContextFrom(upstreamId.toString());
+        Method method = CronJobService.class.getDeclaredMethod("loadContextFromOutput", CronJobEntity.class);
+        method.setAccessible(true);
+        String context = (String) method.invoke(service, target);
+
+        assertThat(context).contains("Output from job 'collector'");
+        assertThat(context).contains("fresh research output");
+    }
+
+    @Test
+    void contextFrom_self_usesOwnLatestOutput() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(jobId);
+        job.setName("continuity");
+        job.setContextFrom("self");
+        CronExecutionLogEntity execution = CronExecutionLogEntity.create(
+            jobId, Instant.now(), Instant.now(), "success", null);
+        execution.setOutputText("previous run result");
+        when(cronJobRepository.findById(jobId)).thenReturn(Optional.of(job));
+        when(cronExecutionLogRepository.findFirstByJobIdOrderByStartedAtDesc(jobId))
+            .thenReturn(Optional.of(execution));
+
+        Method method = CronJobService.class.getDeclaredMethod("loadContextFromOutput", CronJobEntity.class);
+        method.setAccessible(true);
+        String context = (String) method.invoke(service, job);
+
+        assertThat(context).contains("previous run result");
     }
 
     @Test

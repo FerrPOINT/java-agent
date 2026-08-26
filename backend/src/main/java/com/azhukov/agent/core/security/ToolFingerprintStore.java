@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.security;
 
+import com.azhukov.agent.core.util.TextTruncator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -58,10 +59,10 @@ public class ToolFingerprintStore {
                 "Old fingerprint: {}, New fingerprint: {}. " +
                 "Description diff: '{}' -> '{}'",
                 toolName,
-                truncate(oldFingerprint, 16),
-                truncate(newFingerprint, 16),
-                truncate(oldDescription, 100),
-                truncate(desc, 100));
+                TextTruncator.truncate(oldFingerprint, 16),
+                TextTruncator.truncate(newFingerprint, 16),
+                TextTruncator.truncate(oldDescription == null ? "" : oldDescription, 100),
+                TextTruncator.truncate(desc, 100));
             return false;
         }
         return true;
@@ -144,9 +145,4 @@ public class ToolFingerprintStore {
         return value;
     }
 
-    private static String truncate(String s, int max) {
-        if (s == null) return "";
-        if (s.length() <= max) return s;
-        return s.substring(0, max) + "...";
-    }
 }

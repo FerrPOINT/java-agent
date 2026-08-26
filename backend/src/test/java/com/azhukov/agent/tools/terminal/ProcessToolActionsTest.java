@@ -42,8 +42,9 @@ class ProcessToolActionsTest {
 
     @Test
     void pollReturnsStatus() throws Exception {
-        inject("p1", fakeProcess("p1"));
-        Thread.sleep(100);
+        ProcessTool.ManagedProcess mp = fakeProcess("p1");
+        inject("p1", mp);
+        waitForReaderThread(mp);
         ToolResult r = tool.execute("{\"action\":\"poll\",\"session_id\":\"p1\"}", null, null);
         assertThat(r.success()).isTrue();
         assertThat(r.content()).contains("exited");
@@ -51,8 +52,9 @@ class ProcessToolActionsTest {
 
     @Test
     void logReturnsOutput() throws Exception {
-        inject("p1", fakeProcess("p1"));
-        Thread.sleep(100);
+        ProcessTool.ManagedProcess mp = fakeProcess("p1");
+        inject("p1", mp);
+        waitForReaderThread(mp);
         ToolResult r = tool.execute("{\"action\":\"log\",\"session_id\":\"p1\"}", null, null);
         assertThat(r.success()).isTrue();
         assertThat(r.content()).contains("out");
@@ -99,5 +101,13 @@ class ProcessToolActionsTest {
     void unknownActionFails() {
         ToolResult r = tool.execute("{\"action\":\"dance\"}", null, null);
         assertThat(r.success()).isFalse();
+    }
+
+    /** Join the ManagedProcess reader thread so the output buffer is fully populated. */
+    private static void waitForReaderThread(ProcessTool.ManagedProcess managed) throws Exception {
+        Field readerField = ProcessTool.ManagedProcess.class.getDeclaredField("readerThread");
+        readerField.setAccessible(true);
+        Thread readerThread = (Thread) readerField.get(managed);
+        readerThread.join(5000);
     }
 }

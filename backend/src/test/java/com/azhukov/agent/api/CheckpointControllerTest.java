@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.CheckpointDto;
+import com.azhukov.agent.api.mapper.CheckpointDtoMapper;
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
 import com.azhukov.agent.service.CheckpointManager;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -9,6 +10,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
@@ -42,10 +44,11 @@ class CheckpointControllerTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Mock private CheckpointManager checkpointManager;
+    private final CheckpointDtoMapper checkpointDtoMapper = Mappers.getMapper(CheckpointDtoMapper.class);
 
     @BeforeEach
     void setUp() {
-        CheckpointController controller = new CheckpointController(checkpointManager);
+        CheckpointController controller = new CheckpointController(checkpointManager, checkpointDtoMapper);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

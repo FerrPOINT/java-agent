@@ -165,8 +165,7 @@ class LongPollingServiceTest {
         service.start();
         service.stop();
 
-        // Give some time for shutdown
-        Thread.sleep(100);
+        // stop() sets running=false synchronously and awaits pool termination — no sleep needed
         // Verify service is not running
         assertThat(service.isRunning()).isFalse();
     }

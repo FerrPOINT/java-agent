@@ -74,7 +74,7 @@ public class PairingService {
      * @param code the 8-char pairing code
      * @return the entity if valid, empty otherwise
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public Optional<PairingCodeEntity> validateCode(String code) {
         if (code == null || code.isBlank()) {
             return Optional.empty();

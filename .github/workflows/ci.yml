@@ -33,15 +33,18 @@ jobs:
             ${{ runner.os }}-gradle-
 
       - name: Grant execute permission for gradlew
-        run: chmod +x backend/gradlew
+        run: chmod +x gradlew backend/gradlew
 
-      - name: Run tests
+      - name: Run backend tests
         working-directory: backend
         run: ./gradlew test --no-daemon
 
-      - name: Run slow integration tests
+      - name: Run backend slow integration tests
         working-directory: backend
         run: ./gradlew slowTest --no-daemon
+
+      - name: Run telegram-bot and cli tests
+        run: ./gradlew :telegram-bot:test :cli:test --no-daemon
 
       - name: Upload slow test reports
         uses: actions/upload-artifact@v4
@@ -55,7 +58,10 @@ jobs:
         if: always()
         with:
           name: test-reports-jdk${{ matrix.java }}
-          path: backend/build/reports/tests/test/
+          path: |
+            backend/build/reports/tests/test/
+            telegram-bot/build/reports/tests/test/
+            cli/build/reports/tests/test/
 
   build-image:
     name: Build Docker image
@@ -117,4 +123,4 @@ jobs:
         with:
           config: .markdownlint.json
           files: 'docs/**/*.md, *.md'
-        continue-on-error: true
+        continue-on-error: false

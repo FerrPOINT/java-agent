@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.security;
 
+import com.azhukov.agent.core.util.TextTruncator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -96,7 +97,7 @@ public class McpResponseScanner {
         var selfClosingMatcher = INSTRUCTION_TAG_SELF_CLOSING.matcher(text);
         if (selfClosingMatcher.find()) {
             findings.add("CRITICAL: Self-closing instruction injection tag detected: " +
-                truncate(selfClosingMatcher.group(), 60));
+                TextTruncator.truncate(selfClosingMatcher.group(), 60));
         }
 
         // 2. Check for bracket instruction markers
@@ -109,14 +110,14 @@ public class McpResponseScanner {
         var mdMatcher = MARKDOWN_INSTRUCTION_PATTERN.matcher(text);
         if (mdMatcher.find()) {
             findings.add("HIGH: Markdown instruction header detected: " +
-                truncate(mdMatcher.group(), 60));
+                TextTruncator.truncate(mdMatcher.group(), 60));
         }
 
         // 4. Check for imperative injection patterns
         var imperativeMatcher = IMPERATIVE_INJECTION_PATTERN.matcher(text);
         while (imperativeMatcher.find()) {
             findings.add("CRITICAL: Imperative injection pattern: '" +
-                truncate(imperativeMatcher.group(), 60) + "'");
+                TextTruncator.truncate(imperativeMatcher.group(), 60) + "'");
         }
 
         // 5. Check for exfiltration URLs
@@ -128,7 +129,7 @@ public class McpResponseScanner {
         // 6. Check for credential leaks
         var credMatcher = CREDENTIAL_PATTERN.matcher(text);
         while (credMatcher.find()) {
-            findings.add("HIGH: Credential leak detected: " + truncate(credMatcher.group(), 40));
+            findings.add("HIGH: Credential leak detected: " + TextTruncator.truncate(credMatcher.group(), 40));
         }
 
         // Produce sanitized text: strip instruction tags and bracket markers
@@ -193,8 +194,4 @@ public class McpResponseScanner {
         return Severity.MEDIUM;
     }
 
-    private static String truncate(String s, int max) {
-        if (s.length() <= max) return s;
-        return s.substring(0, max) + "...";
-    }
 }

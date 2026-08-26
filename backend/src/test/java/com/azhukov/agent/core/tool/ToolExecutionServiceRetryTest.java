@@ -8,6 +8,7 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.DefaultToolCallGuardrail;
 import com.azhukov.agent.core.security.SecretRedactor;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -25,6 +26,7 @@ import static org.mockito.Mockito.when;
  * Unit tests for ToolExecutionService retry behavior.
  * Converted from @SpringBootTest to pure unit test with mocks.
  */
+@Tag("slow")
 class ToolExecutionServiceRetryTest {
 
     private ToolRegistry toolRegistry;

@@ -3,6 +3,7 @@ package com.azhukov.agent.core.agent;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,6 +30,7 @@ class RetryHardeningTest {
         long start = System.currentTimeMillis();
         DefaultAgentRuntime.interruptibleSleep(300);
         long elapsed = System.currentTimeMillis() - start;
+        // timing-assertion: verifies actual sleep duration of interruptibleSleep
         // Should have slept at least ~250ms (allowing for scheduling jitter)
         assertThat(elapsed).isGreaterThanOrEqualTo(200);
     }
@@ -56,17 +58,20 @@ class RetryHardeningTest {
     @Test
     @DisplayName("interruptibleSleep: large delay sleeps in 200ms chunks and responds to interrupt")
     void interruptibleSleepChunked() throws InterruptedException {
-        // Sleep 500ms in a separate thread, then interrupt it after 100ms
+        // Sleep 500ms in a separate thread, then interrupt it after it starts
         AtomicBoolean wasInterrupted = new AtomicBoolean(false);
+        CountDownLatch sleeperStarted = new CountDownLatch(1);
         Thread sleeper = new Thread(() -> {
             try {
+                sleeperStarted.countDown();
                 DefaultAgentRuntime.interruptibleSleep(10_000);
             } catch (InterruptedException e) {
                 wasInterrupted.set(true);
             }
         });
         sleeper.start();
-        Thread.sleep(100); // let it start sleeping
+        // Wait until the sleeper has entered interruptibleSleep
+        sleeperStarted.await();
         sleeper.interrupt();
         sleeper.join(2000);
         assertThat(wasInterrupted.get()).isTrue();

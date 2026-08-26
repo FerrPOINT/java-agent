@@ -18,7 +18,7 @@ Both implementations had their own copy of the tool execution loop, memory sync,
 
 ## Decision
 
-Extract the shared loop logic into `AgentLoopExecutor`, used by both `AgentRuntimeService` and `AgentStreamingService`. The executor handles:
+Extract the shared loop logic into `TurnExecutor`, used by both `AgentRuntimeService` and `AgentStreamingService`. The executor handles:
 
 - Tool execution (parallel via virtual threads).
 - Memory sync (async, after turn).
@@ -36,6 +36,6 @@ The two services differ only in how they deliver results: sync returns a `ChatRe
 - New features (e.g., metrics) added once, apply to both paths.
 
 **Negative:**
-- The `AgentLoopExecutor` is a critical shared component — changes affect both paths.
+- The `TurnExecutor` is a critical shared component — changes affect both paths.
 - Slightly more indirection (service → executor → tools).
 - Streaming-specific concerns (cursor, heartbeat) must be handled outside the executor, in the streaming service.

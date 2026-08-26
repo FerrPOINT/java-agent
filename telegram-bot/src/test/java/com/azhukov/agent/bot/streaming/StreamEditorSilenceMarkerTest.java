@@ -6,7 +6,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.lang.reflect.Method;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -30,15 +29,11 @@ class StreamEditorSilenceMarkerTest {
     }
 
     private boolean isSilenceMarker(String text) throws Exception {
-        Method m = StreamEditor.class.getDeclaredMethod("isSilenceMarker", String.class);
-        m.setAccessible(true);
-        return (Boolean) m.invoke(editor, text);
+        return SilenceMarkerUtils.isSilenceMarker(text);
     }
 
     private boolean endsWithPartial(String text) throws Exception {
-        Method m = StreamEditor.class.getDeclaredMethod("endsWithPartialSilenceMarker", String.class);
-        m.setAccessible(true);
-        return (Boolean) m.invoke(editor, text);
+        return SilenceMarkerUtils.endsWithPartialSilenceMarker(text);
     }
 
     @Test

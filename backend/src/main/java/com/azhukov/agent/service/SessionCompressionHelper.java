@@ -22,6 +22,12 @@ import java.util.UUID;
  * <p>
  * {@link AgentRuntimeService#compressSession} delegates to this component so
  * that the proxy-based annotations are properly engaged.
+ * <p>
+ * C8 fix: LLM compression call is executed OUTSIDE the transaction to avoid
+ * holding a JDBC connection for 10-60+ seconds (pool starvation). The flow is:
+ * 1. Read messages in a short read-only transaction
+ * 2. Compress outside any transaction (LLM call)
+ * 3. Persist results in a short write transaction
  */
 @Component
 @RequiredArgsConstructor
@@ -32,21 +38,20 @@ public class SessionCompressionHelper {
     private final MessageMapper messageMapper;
     private final ConversationCompressor conversationCompressor;
 
+    /**
+     * Main entry point — no @Transactional here so the LLM call runs without
+     * holding a DB connection. Delegates to transactional inner methods.
+     */
     @Retryable(retryFor = {org.springframework.dao.OptimisticLockingFailureException.class,
                            org.springframework.dao.PessimisticLockingFailureException.class},
                maxAttempts = 3,
                backoff = @Backoff(delay = 1000, multiplier = 2))
-    @Transactional
     public void compressSessionInternal(UUID sessionId, String focusTopic, Integer keepLastN) {
-        List<MessageEntity> messageEntities = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        if (messageEntities.size() <= 4) return;
+        // 1. Read messages in a short read-only transaction
+        List<Message> messages = readMessages(sessionId);
+        if (messages.size() <= 4) return;
 
-        // Convert to core Message objects
-        List<Message> messages = messageEntities.stream()
-            .map(messageMapper::toDomain)
-            .toList();
-
-        // Use ConversationCompressor for LLM-based compression
+        // 2. Compress OUTSIDE any transaction (LLM call may take 10-60+ seconds)
         List<Message> compressed;
         if (keepLastN != null && keepLastN > 0) {
             compressed = conversationCompressor.compressPartial(messages, keepLastN);
@@ -54,8 +59,28 @@ public class SessionCompressionHelper {
             compressed = conversationCompressor.compress(messages, focusTopic);
         }
 
-        // Delete all old messages and persist compressed versions
-        messageRepository.deleteAll(messageEntities);
+        // 3. Persist results in a short write transaction
+        persistCompressed(sessionId, compressed);
+    }
+
+    /**
+     * Read and map messages in a short read-only transaction.
+     */
+    @Transactional(readOnly = true)
+    List<Message> readMessages(UUID sessionId) {
+        List<MessageEntity> messageEntities = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        return messageEntities.stream()
+            .map(messageMapper::toDomain)
+            .toList();
+    }
+
+    /**
+     * Delete old messages and persist compressed versions in a short transaction.
+     */
+    @Transactional
+    void persistCompressed(UUID sessionId, List<Message> compressed) {
+        List<MessageEntity> existing = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        messageRepository.deleteAll(existing);
         Instant now = Instant.now();
         for (Message m : compressed) {
             MessageEntity e = messageMapper.toEntity(m);

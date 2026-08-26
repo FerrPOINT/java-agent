@@ -271,18 +271,16 @@ public class HeartbeatService {
     // ── Watchdog ──
 
     private void ensureWatchdog() {
-        if (watchdogRunning) return;
-        synchronized (this) {
-            if (watchdogRunning) return;
-            watchdogRunning = true;
+        if (watchdogRunning.get()) return;
+        if (watchdogRunning.compareAndSet(false, true)) {
+            Thread t = new Thread(this::watchdogLoop, "heartbeat-watchdog");
+            t.setDaemon(true);
+            t.start();
+            log.info("Heartbeat watchdog started (poll every {}s)", POLL_SECONDS);
         }
-        Thread t = new Thread(this::watchdogLoop, "heartbeat-watchdog");
-        t.setDaemon(true);
-        t.start();
-        log.info("Heartbeat watchdog started (poll every {}s)", POLL_SECONDS);
     }
 
-    private volatile boolean watchdogRunning;
+    private final java.util.concurrent.atomic.AtomicBoolean watchdogRunning = new java.util.concurrent.atomic.AtomicBoolean(false);
 
     private void watchdogLoop() {
         while (true) {

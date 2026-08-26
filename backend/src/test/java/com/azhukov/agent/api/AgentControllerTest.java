@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
@@ -59,7 +60,7 @@ class AgentControllerTest {
     @Mock private AgentProperties.ModelProperties modelProperties;
     @Mock private AgentProperties.CoreProperties coreProperties;
     @Mock private AgentProperties.BudgetProperties budgetProperties;
-    @Mock private DomainDtoMapper domainDtoMapper;
+    private final DomainDtoMapper domainDtoMapper = Mappers.getMapper(DomainDtoMapper.class);
     @Mock private com.azhukov.agent.core.skill.CuratorService curatorService;
     @Mock private com.azhukov.agent.service.CliRuntimeSettingsService cliRuntimeSettingsService;
     @Mock private com.azhukov.agent.persistence.repository.TodoRepository todoRepository;
@@ -266,7 +267,8 @@ class AgentControllerTest {
         when(agentRuntimeService.createSession(any(), any(), any())).thenReturn(
             new com.azhukov.agent.core.model.Session(SESSION_ID, "user-1", "New chat", "openai-compatible", "kimi-k2.6", null, java.util.Map.of())
         );
-        when(domainDtoMapper.toSessionSummaryDto(any(com.azhukov.agent.core.model.Session.class))).thenReturn(dto);
+
+        // domainDtoMapper is now a real MapStruct mapper — no stub needed
 
         AgentProperties.ModelProperties modelProps = new AgentProperties.ModelProperties();
         modelProps.setModelName("kimi-k2.6");

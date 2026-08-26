@@ -12,6 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 @ActiveProfiles("test")
 @Tag("live")
+@Tag("slow")
 class LangChain4jModelClientLiveTest {
 
     @Autowired(required = false)

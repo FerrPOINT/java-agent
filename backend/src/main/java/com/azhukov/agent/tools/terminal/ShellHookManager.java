@@ -5,12 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -246,7 +248,7 @@ public class ShellHookManager {
  }
 
  registered.add(key);
- hooks.computeIfAbsent(spec.event(), k -> new ArrayList<>()).add(spec);
+ hooks.computeIfAbsent(spec.event(), k -> Collections.synchronizedList(new ArrayList<>())).add(spec);
  registeredSpecs.add(spec);
  log.info("Shell hook registered: {} -> {} (matcher={}, timeout={}s)",
  spec.event(), spec.command(), spec.matcher(), spec.timeout());
@@ -477,16 +479,35 @@ public class ShellHookManager {
  stdinWriter.setDaemon(true);
  stdinWriter.start();
 
+ // H10: Read stdout and stderr concurrently via gobbler threads to avoid
+ // pipe-buffer deadlock when the child fills one pipe while we block on the other.
+ ByteArrayOutputStream stdoutBuf = new ByteArrayOutputStream();
+ ByteArrayOutputStream stderrBuf = new ByteArrayOutputStream();
+ Thread stdoutGobbler = new Thread(() -> {
+     try { process.getInputStream().transferTo(stdoutBuf); } catch (IOException ignored) { }
+ }, "hook-stdout-gobbler");
+ Thread stderrGobbler = new Thread(() -> {
+     try { process.getErrorStream().transferTo(stderrBuf); } catch (IOException ignored) { }
+ }, "hook-stderr-gobbler");
+ stdoutGobbler.setDaemon(true);
+ stderrGobbler.setDaemon(true);
+ stdoutGobbler.start();
+ stderrGobbler.start();
+
  // Wait with timeout
  boolean finished = process.waitFor(spec.timeout(), java.util.concurrent.TimeUnit.SECONDS);
  if (!finished) {
  process.destroyForcibly();
  stdinWriter.interrupt();
+ stdoutGobbler.interrupt();
+ stderrGobbler.interrupt();
  return new SpawnResult(null, "", "", true, null);
  }
 
- String stdout = new String(process.getInputStream().readAllBytes());
- String stderr = new String(process.getErrorStream().readAllBytes());
+ stdoutGobbler.join(5000);
+ stderrGobbler.join(5000);
+ String stdout = stdoutBuf.toString();
+ String stderr = stderrBuf.toString();
  return new SpawnResult(process.exitValue(), stdout, stderr, false, null);
  } catch (Exception e) {
  process.destroyForcibly();

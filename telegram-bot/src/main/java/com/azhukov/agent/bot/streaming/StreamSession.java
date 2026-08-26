@@ -1,6 +1,7 @@
 package com.azhukov.agent.bot.streaming;
 
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -39,20 +40,20 @@ public class StreamSession {
     /** Timestamp (ms) of the last editMessageText call. 0 / unset means "never edited". */
     public volatile long lastEditTime = 0L;
     /** Consecutive flood (429) strikes; streaming disables after {@code MAX_FLOOD_STRIKES}. */
-    public volatile int floodStrikes = 0;
+    public final AtomicInteger floodStrikes = new AtomicInteger(0);
     /** True once streaming edits are disabled due to flood limits. */
     public volatile boolean streamingDisabled = false;
 
     // ─── P2-16: Flood fallback buffer ─────────────────────────────
     /** Buffered formatted content while streaming edits are disabled (flood fallback). */
-    public final StringBuilder floodFallbackBuffer = new StringBuilder();
+    public final StringBuffer floodFallbackBuffer = new StringBuffer();
 
     // ─── P2-16: Redundant edit skip ───────────────────────────────
     /** Last text (with cursor) actually sent to Telegram, to skip no-op edits. */
     public volatile String lastSentText = null;
 
     // ─── B6: Think-block scrubber (stateful, per-chat) ───────────
-    public volatile StreamEditor.ThinkScrubber thinkScrubber = null;
+    public volatile ThinkTagFilter.ThinkScrubber thinkScrubber = null;
 
     // ─── Heartbeat / fresh-final ─────────────────────────────────
     /** Wall-clock (ms) when the stream for this chat started. */
@@ -61,6 +62,8 @@ public class StreamSession {
     public volatile long lastTokenTime = 0L;
     /** Scheduled heartbeat task for this chat (cancelled on finalize/cleanup). */
     public volatile ScheduledFuture<?> heartbeatFuture = null;
+    /** Message created for a draft-stream heartbeat; subsequent heartbeats edit it in place. */
+    public final AtomicLong heartbeatMessageId = new AtomicLong(-1L);
 
     // ─── Buffer threshold tracking ───────────────────────────────
     /** Chars accumulated since last edit (unused by current logic but kept for completeness). */
@@ -80,7 +83,7 @@ public class StreamSession {
     /** Monotonic draft id for this chat; bumped on segment break. */
     public volatile int draftId = 0;
     /** Draft failure count; after 2, fall back to edit-based. */
-    public volatile int draftFailures = 0;
+    public final AtomicInteger draftFailures = new AtomicInteger(0);
     /** Chat type hint ("dm", "group", "supergroup", "forum", ...). Set when stream starts. */
     public volatile String chatType = "dm";
 
@@ -94,16 +97,17 @@ public class StreamSession {
     public void resetForNewStream() {
         editInterval.set(0L);
         lastEditTime = 0L;
-        floodStrikes = 0;
+        floodStrikes.set(0);
         streamingDisabled = false;
         floodFallbackBuffer.setLength(0);
         lastSentText = null;
         thinkScrubber = null;
         currentToolName = null;
         currentMessageId.set(-1L);
+        heartbeatMessageId.set(-1L);
         useDraftStreaming = false;
         draftId = 0;
-        draftFailures = 0;
+        draftFailures.set(0);
         // chatType is intentionally NOT reset here — callers set it explicitly.
     }
 
@@ -122,9 +126,9 @@ public class StreamSession {
      * Initialize the think scrubber for this chat if not already present.
      * @return the scrubber (never null after this call)
      */
-    public StreamEditor.ThinkScrubber ensureThinkScrubber() {
+    public ThinkTagFilter.ThinkScrubber ensureThinkScrubber() {
         if (thinkScrubber == null) {
-            thinkScrubber = new StreamEditor.ThinkScrubber();
+            thinkScrubber = new ThinkTagFilter.ThinkScrubber();
         }
         return thinkScrubber;
     }

@@ -1,5 +1,61 @@
 # Changelog
 
+## Session 5 — General Audit Fixup (2026-08-26, 0.1.140)
+
+### Critical
+- CI now runs telegram-bot and cli tests (previously only backend)
+- JaCoCo coverage verification gate added (LINE ≥ 75%)
+- ToolResultStorage: ArrayList → synchronizedList (race condition fix)
+- StreamSession.floodFallbackBuffer: StringBuilder → StringBuffer (thread safety)
+- SkillUtils.ENV_DETECT_CACHE: HashMap → ConcurrentHashMap (race condition fix)
+- .version synced to 0.1.140 (was 0.1.4)
+- prototype/ directory removed (542MB with stray .git)
+- SessionCompressionHelper: LLM call extracted from @Transactional (pool starvation fix)
+
+### High — Concurrency
+- CronJobService: cancel old ScheduledFuture before put (leak fix)
+- HeartbeatService: AtomicBoolean.compareAndSet (check-then-act fix)
+- MemoryStore: synchronized → ReentrantLock (virtual thread pinning)
+- McpLifecycleManager: synchronized → ReentrantLock (4 blocks)
+- DefaultAgentRuntime: synchronized(this) → ReentrantLock
+- BotMessageProcessor: lock() → tryLock(300s) during LLM streaming
+- TypingManager: HTTP call moved outside synchronized block
+- PairingService: readOnly=true removed (was breaking save())
+- CdpClient: synchronized → ReentrantLock with tryLock(130s)
+- Process deadlocks fixed in 5 files (CronJobService, SkillPreprocessor, ShellHookManager, CodingWorkspaceSnapshot, DefaultContextReferenceService)
+- CronJobService: no_agent failures now set lastStatus=error
+- TerminalTool: auto-checkpoint failure now warns in ToolResult
+- ChromiumDownloader: InputStream leak on non-200 fixed (try-with-resources)
+
+### High — Cleanup
+- 8 dead Gradle deps removed (pebble, commons-lang3, commons-io, commons-imaging, langchain4j-ollama, resilience4j-circuitbreaker, resilience4j-spring6, flexmark from bot)
+- TestRunner.class removed from git
+- LOGGING_AUDIT_REPORT.md, review-findings.md → docs/audit/
+- __pycache__ added to .gitignore, git rm --cached
+- docker-compose.yml duplicate deleted
+- AgentLoopExecutor → TurnExecutor in docs
+- 3 test files: @Mock DomainDtoMapper → Mappers.getMapper()
+- 8 @SpringBootTest files: @Tag("slow") added
+
+### Medium
+- BackgroundJobEntity: @Data added (was only entity without it)
+- StreamSession: volatile++ → AtomicInteger (floodStrikes, draftFailures)
+- ShellHookManager: ArrayList in CHM → synchronizedList
+- DefaultContextCompressor: future.cancel(true) on timeout
+- EnvironmentProbe: InterruptedException catch + interrupt flag restore
+- .env.example created with all key environment variables
+- CliReplRunner: hardcoded version → build properties (springBoot.buildInfo)
+- MessagePersistenceService: magic numbers → constants, role literals → Role enum
+- SkillsHubService: HttpClient try-with-resources
+- docs/TODO.md: consolidated to summary
+
+### Low
+- Markdown lint CI: continue-on-error removed
+- Makefile: parity-dashboard, skill-update targets documented in help
+- repomix.config.json, __pycache__/, *.pyc added to .gitignore
+- jar.enabled = false (plain jar artifact elimination)
+- Coverage gate set to 0.75 (to be raised to 0.80 after test coverage improvements)
+
 ## Session 4 — Architecture, Security, and Documentation Overhaul
 
 ### API Key Authentication
@@ -17,58 +73,3 @@
   - `RuntimeSettingsController` — config, reasoning, tools, goals, credits, codex runtime
   - `KanbanController` — todo/kanban board
   - `CuratorController` — curator status, run, pause, resume
-
-### Agentic Loop Deduplication
-- Consolidated duplicate agent loop logic between `AgentRuntimeService` and `AgentStreamingService`
-- Shared `AgentLoopExecutor` handles tool execution, memory sync, and turn management
-- Both sync and streaming paths use the same loop, eliminating behavioral drift
-
-### Streaming UX Improvements
-- **Cursor events**: SSE emits cursor positioning events for client-side rendering
-- **Heartbeat**: periodic keepalive events prevent proxy/load-balancer timeouts
-- **Fresh-final**: final response event always carries the complete response, not just accumulated deltas
-
-### Database Fixes
-- **FK constraints** (V21): added missing foreign keys on `sessions.parent_session_id` and `usage_log.session_id`
-- **Composite indexes** (V22): added composite indexes for common query patterns (todos, messages, usage_log, memory_pending, skills, cron_jobs, bot_sessions)
-- **Dead table cleanup** (V23): dropped `gateway_routing`, `context_references`, `approvals`, `session_model_usage`
-- **Session rotation** (V19): added `parent_session_id` and `session_status` columns for compression-based rotation
-- **Todos nullable session_id** (V20): `todos.session_id` now nullable for global kanban items
-- **Pagination**: fixed pagination queries in session listing and usage log
-- **HikariCP**: tuned pool size, idle timeout, max lifetime, leak detection
-
-### Security
-- **Security headers**: `SecurityHeadersFilter` adds X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Referrer-Policy
-- **cdpUrl validation**: `UrlSafetyHandler` validates CDP URLs before connecting (SSRF protection)
-- **MCP command validation**: MCP server commands validated against allowlist before execution
-- **InboundMessageProcessor auth**: Telegram inbound messages validated against allowed user IDs/usernames
-
-### Metrics (Micrometer + Prometheus)
-- Added `micrometer-registry-prometheus` dependency
-- `AgentMetrics` class tracks chat requests, streaming requests, tool executions, model calls
-- Prometheus endpoint exposed at `/actuator/prometheus`
-
-### Testcontainers
-- Added Testcontainers dependencies for real PostgreSQL integration tests
-- `@Tag("slow")` integration tests use Testcontainers PostgreSQL containers
-- Default tests still use H2 in PostgreSQL mode for speed
-
-### Flyway Migrations (23 total, V1–V23)
-- V19: Session rotation (parent_session_id, session_status)
-- V20: Todos nullable session_id
-- V21: FK constraints
-- V22: Composite indexes
-- V23: Dead table cleanup
-
-### Bot Fixes
-- **Content-type**: fixed content-type headers on bot API responses
-- **Session persistence**: bot sessions now properly persisted across restarts
-- **Streaming**: fixed streaming callback lifecycle and error handling
-- **MarkdownConverter**: fixed markdown-to-HTML conversion for Telegram messages
-
-### OpenAPI / Swagger UI
-- Added `springdoc-openapi-starter-webmvc-ui` dependency
-- Swagger UI accessible at `/swagger-ui.html`, API docs at `/api-docs`
-- `@Tag` annotations on all 8 split controllers
-- `@Operation` annotations on key methods
-- Swagger endpoints exempt from API key auth

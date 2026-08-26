@@ -6,6 +6,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -26,21 +28,33 @@ class TypingManagerTest {
 
     @Test
     void startTyping_sendsImmediatelyAndSchedules() throws InterruptedException {
-        when(client.sendTyping(anyLong(), any())).thenReturn(true);
+        // Use latch to wait for at least 2 sendTyping calls (immediate + one periodic)
+        CountDownLatch typingLatch = new CountDownLatch(2);
+        when(client.sendTyping(anyLong(), any())).thenAnswer(inv -> {
+            typingLatch.countDown();
+            return true;
+        });
         manager.startTyping(123L);
-        Thread.sleep(150);
+        assertThat(typingLatch.await(2, TimeUnit.SECONDS)).isTrue();
         verify(client, atLeast(2)).sendTyping(eq(123L), any());
         manager.stopTyping(123L);
     }
 
     @Test
     void stopTyping_cancelsRefresh() throws InterruptedException {
-        when(client.sendTyping(anyLong(), any())).thenReturn(true);
+        // Use latch: count calls before and after stop
+        CountDownLatch firstCalls = new CountDownLatch(2);
+        when(client.sendTyping(anyLong(), any())).thenAnswer(inv -> {
+            firstCalls.countDown();
+            return true;
+        });
         manager.startTyping(123L);
-        Thread.sleep(80);
+        // Wait for at least 2 calls (immediate + one periodic)
+        assertThat(firstCalls.await(2, TimeUnit.SECONDS)).isTrue();
         manager.stopTyping(123L);
         int countAfterStop = org.mockito.Mockito.mockingDetails(client).getInvocations().size();
-        Thread.sleep(80);
+        // Actual timing: verify no periodic task fires after cancellation
+        Thread.sleep(100); // timing-assertion
         int countAfterWait = org.mockito.Mockito.mockingDetails(client).getInvocations().size();
         assertThat(countAfterWait).isEqualTo(countAfterStop);
     }

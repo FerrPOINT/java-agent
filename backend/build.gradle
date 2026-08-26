@@ -51,7 +51,6 @@ dependencies {
     // LLM (latest stable, not in Spring Boot BOM)
     implementation 'dev.langchain4j:langchain4j:1.18.0'
     implementation 'dev.langchain4j:langchain4j-open-ai:1.18.0'
-    implementation 'dev.langchain4j:langchain4j-ollama:1.18.0'
 
     // MCP (GA 2.0, not in Spring Boot BOM)
     implementation 'io.modelcontextprotocol.sdk:mcp:2.0.0'
@@ -61,13 +60,10 @@ dependencies {
     runtimeOnly 'org.postgresql:postgresql'
     implementation 'org.flywaydb:flyway-database-postgresql'
 
-    // Templating (Pebble 4.x supports Spring Boot 3+, Java 17+)
-    implementation 'io.pebbletemplates:pebble:4.1.2'
+    // (Pebble templating removed — was unused)
 
     implementation 'io.github.resilience4j:resilience4j-retry:2.4.0'
-    implementation 'io.github.resilience4j:resilience4j-circuitbreaker:2.4.0'
     implementation 'io.github.resilience4j:resilience4j-timelimiter:2.4.0'
-    implementation 'io.github.resilience4j:resilience4j-spring6:2.4.0'
 
     // Spring Retry for @Retryable annotations
     implementation 'org.springframework.retry:spring-retry:2.0.11'
@@ -96,13 +92,10 @@ dependencies {
     implementation 'com.vladsch.flexmark:flexmark-html2md-converter:0.64.8'
 
     // Commons utilities
-    implementation 'org.apache.commons:commons-lang3:3.17.0'
-    implementation 'commons-io:commons-io:2.18.0'
     implementation 'com.cronutils:cron-utils:9.2.1'
     implementation 'com.bucket4j:bucket4j-core:8.10.1'
 
-    // Image metadata (vision safety / thumbnailing)
-    implementation 'org.apache.commons:commons-imaging:1.0.0-alpha5'
+    // (commons-imaging removed — was unused)
 
     // Logging
     implementation 'org.slf4j:slf4j-api:2.0.17'
@@ -182,6 +175,25 @@ tasks.named('jacocoTestReport') {
         html.required = true
     }
 }
+
+// L6: Disable plain jar — only bootJar is needed for deployment
+tasks.named('jar') {
+    enabled = false
+}
+
+tasks.named('jacocoTestCoverageVerification', JacocoCoverageVerification) {
+    dependsOn jacocoTestReport
+    violationRules {
+        rule {
+            limit {
+                counter = 'LINE'
+                minimum = 0.75
+            }
+        }
+    }
+}
+
+check.dependsOn jacocoTestCoverageVerification
 
 tasks.withType(JavaCompile).configureEach {
     options.release = 25

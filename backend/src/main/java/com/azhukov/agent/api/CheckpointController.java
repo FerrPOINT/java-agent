@@ -2,7 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.CheckpointDiffDto;
 import com.azhukov.agent.api.dto.CheckpointDto;
-import com.azhukov.agent.persistence.entity.CheckpointEntity;
+import com.azhukov.agent.api.mapper.CheckpointDtoMapper;
 import com.azhukov.agent.service.CheckpointManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
@@ -30,20 +30,19 @@ import java.util.UUID;
 public class CheckpointController {
 
     private final CheckpointManager checkpointManager;
+    private final CheckpointDtoMapper checkpointDtoMapper;
 
     @Operation(summary = "Create a checkpoint snapshot")
     @PostMapping("/agent/checkpoint")
     public CheckpointDto createCheckpoint(@RequestBody(required = false) CheckpointRequest request) {
         String description = request != null ? request.description() : "Manual checkpoint";
-        return toDto(checkpointManager.snapshot(description));
+        return checkpointDtoMapper.toDto(checkpointManager.snapshot(description));
     }
 
     @Operation(summary = "List all checkpoints")
     @GetMapping("/agent/checkpoint")
     public List<CheckpointDto> listCheckpoints() {
-        return checkpointManager.list().stream()
-            .map(CheckpointController::toDto)
-            .toList();
+        return checkpointDtoMapper.toDtoList(checkpointManager.list());
     }
 
     @Operation(summary = "Diff two checkpoints")
@@ -76,14 +75,4 @@ public class CheckpointController {
     }
 
     public record CheckpointRequest(String description) {}
-
-    private static CheckpointDto toDto(CheckpointEntity entity) {
-        return new CheckpointDto(
-            entity.getId(),
-            entity.getDescription(),
-            entity.getFileCount(),
-            entity.getTotalSizeBytes(),
-            entity.getCreatedAt()
-        );
-    }
 }

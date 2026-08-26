@@ -80,6 +80,7 @@ class SlidingWindowRateLimiterTest {
         assertThat(limiter.tryAcquire("key1", 2, 1)).isFalse();
 
         // Wait for window to expire (1 second + buffer)
+        // timing-assertion: verifies window expiry after timeout duration
         Thread.sleep(1100);
 
         assertThat(limiter.tryAcquire("key1", 2, 1)).isTrue();
@@ -159,6 +160,7 @@ class SlidingWindowRateLimiterTest {
         assertThat(limiter.tryAcquire("key", 3, 2)).isFalse();
 
         // Wait for window to pass
+        // timing-assertion: verifies window expiry after 2-second duration
         Thread.sleep(2100);
 
         // Should be allowed again

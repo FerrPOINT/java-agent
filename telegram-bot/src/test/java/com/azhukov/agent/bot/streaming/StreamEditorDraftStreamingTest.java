@@ -155,8 +155,8 @@ class StreamEditorDraftStreamingTest {
     void editStream_withDraftStreaming_sendsDraftFrames() throws InterruptedException {
         editor.startStream(123L, "Hello", "dm");
 
-        // Wait past throttle interval
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
 
         boolean result = editor.editStream(123L, -1, "Hello world");
         assertThat(result).isTrue();
@@ -197,7 +197,8 @@ class StreamEditorDraftStreamingTest {
 
         // S5 tolerance: a single draft failure falls back to edit-based
         // (>= 2 was too forgiving — users waited through repeated 400s).
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
         editor.editStream(123L, -1, "Hello world updated");
 
         // After 1 failure, draft streaming should be disabled

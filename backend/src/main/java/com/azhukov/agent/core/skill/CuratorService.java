@@ -67,7 +67,7 @@ public class CuratorService {
  private final CuratorBackupService backupService;
  private final ToolExecutionService toolExecutionService;
  private final ToolRegistry toolRegistry;
- private final ObjectMapper objectMapper;
+ private final ObjectMapper objectMapper = new ObjectMapper();
 
  // HERMES-SYNC Bug 3: Curator audit ledger — records each skill mutation.
  // Non-final with setter to avoid breaking existing constructors (same pattern as
@@ -147,7 +147,6 @@ public class CuratorService {
      this.backupService = null;
      this.toolExecutionService = null;
      this.toolRegistry = null;
-     this.objectMapper = new ObjectMapper();
  }
 
  /** Full constructor with LLM and backup support. */
@@ -162,7 +161,6 @@ public class CuratorService {
      this.backupService = backupService;
      this.toolExecutionService = toolExecutionServiceProvider != null ? toolExecutionServiceProvider.getIfAvailable() : null;
      this.toolRegistry = toolRegistryProvider != null ? toolRegistryProvider.getIfAvailable() : null;
-     this.objectMapper = new ObjectMapper();
  }
 
  /** Test constructor with tool execution support. */
@@ -175,7 +173,6 @@ public class CuratorService {
      this.backupService = backupService;
      this.toolExecutionService = toolExecutionService;
      this.toolRegistry = toolRegistry;
-     this.objectMapper = new ObjectMapper();
  }
 
  // ── S5: State persistence ───────────────────────────────────────────
@@ -210,7 +207,7 @@ public class CuratorService {
          return;
      }
      try {
-         SkillAuditLogEntity entry = new SkillAuditLogEntity(skillName, action, "curator", oldValue, newValue);
+         SkillAuditLogEntity entry = SkillAuditLogEntity.create(skillName, action, "curator", oldValue, newValue);
          auditLogRepository.save(entry);
          log.debug("Curator audit: skill='{}' action='{}'", skillName, action);
      } catch (Exception e) {

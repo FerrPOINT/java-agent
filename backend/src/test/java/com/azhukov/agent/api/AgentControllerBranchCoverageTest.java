@@ -30,6 +30,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
@@ -82,7 +83,7 @@ class AgentControllerBranchCoverageTest {
     @Mock private AgentProperties.ModelProperties modelProperties;
     @Mock private AgentProperties.CoreProperties coreProperties;
     @Mock private AgentProperties.BudgetProperties budgetProperties;
-    @Mock private DomainDtoMapper domainDtoMapper;
+    private final DomainDtoMapper domainDtoMapper = Mappers.getMapper(DomainDtoMapper.class);
     @Mock private CuratorService curatorService;
     @Mock private CliRuntimeSettingsService cliRuntimeSettingsService;
     @Mock private TodoService todoService;
@@ -136,14 +137,14 @@ class AgentControllerBranchCoverageTest {
     }
 
     private MockMvc skillMockMvc() {
-        SkillController controller = new SkillController(skillManager, agentRuntimeService, skillAuditLogRepository, mock(com.azhukov.agent.core.skill.SkillsHubService.class));
+        SkillController controller = new SkillController(skillManager, agentRuntimeService, skillAuditLogRepository, mock(com.azhukov.agent.core.skill.SkillsHubService.class), domainDtoMapper);
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
     }
 
     private MockMvc checkpointMockMvc() {
-        CheckpointController controller = new CheckpointController(checkpointManager);
+        CheckpointController controller = new CheckpointController(checkpointManager, Mappers.getMapper(com.azhukov.agent.api.mapper.CheckpointDtoMapper.class));
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
@@ -1198,7 +1199,7 @@ class AgentControllerBranchCoverageTest {
         Session session = new Session(SESSION_ID, "user-1", "New chat", "openai-compatible", "test-model", null, Map.of());
         when(agentRuntimeService.createSession(eq("user-1"), any(), any())).thenReturn(session);
         SessionSummaryDto dto = new SessionSummaryDto(SESSION_ID, "user-1", "New chat", "openai-compatible", "test-model", FIXED_TIME, FIXED_TIME);
-        when(domainDtoMapper.toSessionSummaryDto(any(Session.class))).thenReturn(dto);
+        // domainDtoMapper is now a real MapStruct mapper — no stub needed
 
         mockMvc.perform(post("/api/v1/agent/session"))
             .andExpect(status().isCreated())
@@ -1213,7 +1214,7 @@ class AgentControllerBranchCoverageTest {
         Session session = new Session(SESSION_ID, "custom-user", "New chat", "openai-compatible", "test-model", null, Map.of());
         when(agentRuntimeService.createSession(eq("custom-user"), any(), any())).thenReturn(session);
         SessionSummaryDto dto = new SessionSummaryDto(SESSION_ID, "custom-user", "New chat", "openai-compatible", "test-model", FIXED_TIME, FIXED_TIME);
-        when(domainDtoMapper.toSessionSummaryDto(any(Session.class))).thenReturn(dto);
+        // domainDtoMapper is now a real MapStruct mapper — no stub needed
 
         mockMvc.perform(post("/api/v1/agent/session")
                 .contentType(MediaType.APPLICATION_JSON)

@@ -8,6 +8,7 @@ import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.media.MediaDeliveryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.util.Map;
@@ -50,6 +51,24 @@ class StreamEditorTest {
         when(client.callApi("getMe", Map.of())).thenReturn(Optional.of(meResponse));
         // Default: last API error code = 0 (success)
         when(client.getLastApiErrorCode()).thenReturn(0);
+    }
+
+    // --- Streaming cursor tests ---
+
+    @Test
+    void draftHeartbeat_sendsOneMessageThenEditsIt() {
+        StreamSession session = editor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        session.streamStartTime = System.currentTimeMillis() - 20_000L;
+        session.lastTokenTime = System.currentTimeMillis() - 2_000L;
+        when(client.sendMessage(eq(123L), startsWith("⏳ Working"), isNull(), isNull(), isNull(), anyBoolean()))
+            .thenReturn(Optional.of(77L));
+
+        ReflectionTestUtils.invokeMethod(editor, "checkHeartbeat", 123L, session);
+        ReflectionTestUtils.invokeMethod(editor, "checkHeartbeat", 123L, session);
+
+        verify(client, times(1)).sendMessage(eq(123L), startsWith("⏳ Working"), isNull(), isNull(), isNull(), anyBoolean());
+        verify(client).editMessageText(eq(123L), eq(77L), startsWith("⏳ Working"), isNull(), anyBoolean());
     }
 
     // --- Streaming cursor tests ---
@@ -163,7 +182,8 @@ class StreamEditorTest {
             .thenReturn(true);
 
         editor.startStream(123L, "Hello");
-        Thread.sleep(120); // wait past 100ms interval
+        // Actual timing: wait past 100ms throttle interval so editStream is not throttled
+        Thread.sleep(120); // timing-assertion
         boolean result = editor.editStream(123L, 42L, "Updated");
 
         assertThat(result).isTrue();
@@ -249,11 +269,13 @@ class StreamEditorTest {
         Optional<Long> msgId = editor.startStream(123L, "Part 1");
         assertThat(msgId).contains(99L);
 
-        Thread.sleep(120);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(120); // timing-assertion
         boolean edited = editor.editStream(123L, 99L, "Part 1 Part 2");
         assertThat(edited).isTrue();
 
-        Thread.sleep(120);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(120); // timing-assertion
         boolean edited2 = editor.editStream(123L, 99L, "Part 1 Part 2 Part 3");
         assertThat(edited2).isTrue();
 
@@ -269,7 +291,7 @@ class StreamEditorTest {
 
     @Test
     void scrubThink_stripsCompleteThinkBlock() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         String input = THINK_OPEN + "reasoning here" + THINK_CLOSE + "Here is my answer.";
         String result = scrubber.scrub(input);
         assertThat(result).contains("Here is my answer.");
@@ -278,7 +300,7 @@ class StreamEditorTest {
 
     @Test
     void scrubThink_stripsThinkBlockAtBoundary() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // Think block at start of text (boundary)
         String input = THINK_OPEN + "reasoning" + THINK_CLOSE + " Answer.";
         String result = scrubber.scrub(input);
@@ -288,7 +310,7 @@ class StreamEditorTest {
 
     @Test
     void scrubThink_doesNotStripInlineThinkTag() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // Inline think tag in prose (NOT at block boundary) should NOT be stripped
         String input = "Let me think. " + THINK_OPEN + "reasoning" + THINK_CLOSE + " Here is my answer.";
         String result = scrubber.scrub(input);
@@ -298,7 +320,7 @@ class StreamEditorTest {
 
     @Test
     void scrubThink_stripsAtNewlineBoundary() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // Think block after a newline (at block boundary)
         String input = "First line\n" + THINK_OPEN + "reasoning" + THINK_CLOSE + "\nAnswer.";
         String result = scrubber.scrub(input);
@@ -309,7 +331,7 @@ class StreamEditorTest {
 
     @Test
     void scrubThink_handlesSplitChunks() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // Think block at start of text (boundary)
         String r1 = scrubber.scrub(THINK_OPEN + "this is reasoning");
         assertThat(r1).isEmpty(); // nothing before the think tag at boundary
@@ -325,7 +347,7 @@ class StreamEditorTest {
 
     @Test
     void scrubThink_handlesThinkingTag() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         String input = THINKING_OPEN + "internal thoughts" + THINKING_CLOSE + "Visible response";
         String result = scrubber.scrub(input);
         assertThat(result).contains("Visible response");
@@ -334,7 +356,7 @@ class StreamEditorTest {
 
     @Test
     void scrubThink_caseSensitiveDoesNotMatchUppercase() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // Case-sensitive: <THINK> should NOT match <think> tags (Hermes behavior)
         String open = LT + "THINK" + GT;
         String close = LT + "/THINK" + GT;
@@ -347,7 +369,7 @@ class StreamEditorTest {
 
     @Test
     void scrubThink_caseSensitiveMatchesThinkTag() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // Lowercase <think> should be matched and stripped (exact, case-sensitive)
         String input = THINK_OPEN + "lowercase thinking" + THINK_CLOSE + " Answer.";
         String result = scrubber.scrub(input);
@@ -359,27 +381,27 @@ class StreamEditorTest {
     void stripThinkTagsRegex_removesAllVariants() {
         // Regex safety net still exists as a static utility, but is no longer
         // used by scrubThinkFinal (which now relies solely on the stateful scrubber).
-        assertThat(StreamEditor.stripThinkTagsRegex(THINK_OPEN + "abc" + THINK_CLOSE + "rest")).isEqualTo("rest");
-        assertThat(StreamEditor.stripThinkTagsRegex(THINKING_OPEN + "abc" + THINKING_CLOSE + "rest")).isEqualTo("rest");
-        assertThat(StreamEditor.stripThinkTagsRegex(REASONING_OPEN + "abc" + REASONING_CLOSE + "rest")).isEqualTo("rest");
-        assertThat(StreamEditor.stripThinkTagsRegex("before" + THINK_OPEN + "abc" + THINK_CLOSE + "after")).isEqualTo("beforeafter");
-        assertThat(StreamEditor.stripThinkTagsRegex(THINK_OPEN + "only thinking")).isEqualTo("");
-        assertThat(StreamEditor.stripThinkTagsRegex(THINK_CLOSE + "stray")).isEqualTo("stray");
-        assertThat(StreamEditor.stripThinkTagsRegex("no tags here")).isEqualTo("no tags here");
+        assertThat(ThinkTagFilter.stripThinkTagsRegex(THINK_OPEN + "abc" + THINK_CLOSE + "rest")).isEqualTo("rest");
+        assertThat(ThinkTagFilter.stripThinkTagsRegex(THINKING_OPEN + "abc" + THINKING_CLOSE + "rest")).isEqualTo("rest");
+        assertThat(ThinkTagFilter.stripThinkTagsRegex(REASONING_OPEN + "abc" + REASONING_CLOSE + "rest")).isEqualTo("rest");
+        assertThat(ThinkTagFilter.stripThinkTagsRegex("before" + THINK_OPEN + "abc" + THINK_CLOSE + "after")).isEqualTo("beforeafter");
+        assertThat(ThinkTagFilter.stripThinkTagsRegex(THINK_OPEN + "only thinking")).isEqualTo("");
+        assertThat(ThinkTagFilter.stripThinkTagsRegex(THINK_CLOSE + "stray")).isEqualTo("stray");
+        assertThat(ThinkTagFilter.stripThinkTagsRegex("no tags here")).isEqualTo("no tags here");
     }
 
     @Test
     void stripThinkTagsRegex_removesReasoningScratchpad() {
-        assertThat(StreamEditor.stripThinkTagsRegex(
+        assertThat(ThinkTagFilter.stripThinkTagsRegex(
             REASONING_SCRATCHPAD_OPEN + "secret" + REASONING_SCRATCHPAD_CLOSE + "visible")).isEqualTo("visible");
-        assertThat(StreamEditor.stripThinkTagsRegex(
+        assertThat(ThinkTagFilter.stripThinkTagsRegex(
             "before" + REASONING_SCRATCHPAD_OPEN + "hidden" + REASONING_SCRATCHPAD_CLOSE + "after"))
             .isEqualTo("beforeafter");
     }
 
     @Test
     void scrubThink_handlesReasoningScratchpadTag() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
         // Reasoning scratchpad at start of text (block boundary)
         String input = REASONING_SCRATCHPAD_OPEN + "secret thinking" + REASONING_SCRATCHPAD_CLOSE + "Answer";
         String result = scrubber.scrub(input);
@@ -446,11 +468,13 @@ class StreamEditorTest {
         when(client.editMessageText(anyLong(), anyLong(), anyString(), nullable(String.class), anyBoolean()))
             .thenReturn(true);
 
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
         boolean result = editor.editStream(123L, 42L, "text");
         assertThat(result).isTrue();
 
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
         boolean result2 = editor.editStream(123L, 42L, "text2");
         assertThat(result2).isTrue();
     }
@@ -470,7 +494,8 @@ class StreamEditorTest {
             .thenReturn(false, true);
 
         editor.startStream(123L, "Hello world");
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
         boolean result = editor.editStream(123L, 42L, "Hello world");
         assertThat(result).isTrue(); // Should succeed via retry
 
@@ -518,7 +543,8 @@ class StreamEditorTest {
             .thenReturn(true);
 
         silentEditor.startStream(123L, "Hello");
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
         boolean result = silentEditor.editStream(123L, 42L, "text");
         assertThat(result).isTrue();
         verify(client).editMessageText(anyLong(), anyLong(), anyString(), any(), eq(true));
@@ -576,7 +602,8 @@ class StreamEditorTest {
             .thenReturn(Optional.of(43L));
 
         splitEditor.startStream(123L, "Initial text");
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
         boolean result = splitEditor.editStream(123L, 42L, text);
         assertThat(result).isTrue();
 
@@ -592,7 +619,7 @@ class StreamEditorTest {
 
     @Test
     void scrubThink_handlesPartialClosingTagAcrossChunks() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
 
         // Think block at start of text (boundary)
         String r1 = scrubber.scrub(THINK_OPEN + " some reasoning");
@@ -611,7 +638,7 @@ class StreamEditorTest {
 
     @Test
     void scrubThink_handlesReasoningScratchpadSplitChunks() {
-        StreamEditor.ThinkScrubber scrubber = new StreamEditor.ThinkScrubber();
+        ThinkTagFilter.ThinkScrubber scrubber = new ThinkTagFilter.ThinkScrubber();
 
         // Reasoning scratchpad at start of text (boundary)
         String r1 = scrubber.scrub(REASONING_SCRATCHPAD_OPEN + "secret thoughts");
@@ -640,7 +667,8 @@ class StreamEditorTest {
             .thenReturn(true);
 
         editor.startStream(123L, "Hello");
-        Thread.sleep(120); // wait past 100ms interval
+        // Actual timing: wait past 100ms throttle interval so editStream is not throttled
+        Thread.sleep(120); // timing-assertion
         boolean result = editor.editStream(123L, 42L, specialText);
 
         assertThat(result).isTrue();

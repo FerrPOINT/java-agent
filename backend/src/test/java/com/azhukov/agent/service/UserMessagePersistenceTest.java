@@ -33,8 +33,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -209,21 +209,18 @@ class UserMessagePersistenceTest {
 
     // CollectingEmitter — same pattern as AgentStreamingServiceDoublePersistenceTest
     static class CollectingEmitter extends SseEmitter {
-        final AtomicBoolean completed = new AtomicBoolean(false);
+        final CountDownLatch doneLatch = new CountDownLatch(1);
         final AtomicReference<Throwable> error = new AtomicReference<>(null);
 
         CollectingEmitter(long timeout) { super(timeout); }
 
         @Override public void send(SseEventBuilder event) { }
         @Override public void send(Object object) { }
-        @Override public void complete() { completed.set(true); }
-        @Override public void completeWithError(Throwable ex) { error.set(ex); completed.set(true); }
+        @Override public void complete() { doneLatch.countDown(); }
+        @Override public void completeWithError(Throwable ex) { error.set(ex); doneLatch.countDown(); }
 
         void awaitDone() throws InterruptedException {
-            long deadline = System.currentTimeMillis() + 10_000;
-            while (!completed.get() && System.currentTimeMillis() < deadline) {
-                Thread.sleep(50);
-            }
+            doneLatch.await(10, java.util.concurrent.TimeUnit.SECONDS);
         }
     }
 }

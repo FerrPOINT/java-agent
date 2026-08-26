@@ -32,6 +32,7 @@ class CronJobServiceConcurrencyTest {
 
     @Mock private CronJobRepository cronJobRepository;
     @Mock private CronExecutionLogRepository cronExecutionLogRepository;
+    @Mock private com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     @Mock private ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider;
     @Mock private AgentRuntimeService agentRuntimeService;
     @Mock private SkillManager skillManager;
@@ -44,7 +45,7 @@ class CronJobServiceConcurrencyTest {
         properties = new AgentProperties();
         properties.getCron().setEnabled(false);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, new org.springframework.transaction.support.TransactionTemplate());
+        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(), new CronScheduleParser());
     }
 
     @Test
@@ -78,7 +79,11 @@ class CronJobServiceConcurrencyTest {
                 int current = concurrentExecutions.incrementAndGet();
                 maxConcurrent.updateAndGet(m -> Math.max(m, current));
                 startLatch.countDown();
-                Thread.sleep(100); // Hold the lock briefly
+                // Keep sleep: this intentionally holds the lock to create a window
+                // where a concurrent execution attempt could overlap — testing actual
+                // concurrency timing behavior of the per-job lock.
+                // timing-assertion: holds lock to test concurrent overlap detection
+                Thread.sleep(100);
                 concurrentExecutions.decrementAndGet();
                 finishLatch.countDown();
                 return null;

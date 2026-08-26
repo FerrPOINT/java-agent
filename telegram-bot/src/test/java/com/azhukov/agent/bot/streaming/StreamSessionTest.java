@@ -23,7 +23,7 @@ class StreamSessionTest {
         StreamSession s = new StreamSession();
         assertThat(s.editInterval.get()).isZero();
         assertThat(s.lastEditTime).isZero();
-        assertThat(s.floodStrikes).isZero();
+        assertThat(s.floodStrikes.get()).isZero();
         assertThat(s.streamingDisabled).isFalse();
         assertThat(s.floodFallbackBuffer.length()).isZero();
         assertThat(s.lastSentText).isNull();
@@ -34,9 +34,10 @@ class StreamSessionTest {
         assertThat(s.charsSinceLastEdit).isZero();
         assertThat(s.currentToolName).isNull();
         assertThat(s.currentMessageId.get()).isEqualTo(-1L);
+        assertThat(s.heartbeatMessageId.get()).isEqualTo(-1L);
         assertThat(s.useDraftStreaming).isFalse();
         assertThat(s.draftId).isZero();
-        assertThat(s.draftFailures).isZero();
+        assertThat(s.draftFailures.get()).isZero();
         assertThat(s.chatType).isEqualTo("dm");
     }
 
@@ -46,35 +47,37 @@ class StreamSessionTest {
         // Populate all fields with "dirty" values
         s.editInterval.set(5000L);
         s.lastEditTime = 1234L;
-        s.floodStrikes = 3;
+        s.floodStrikes.set(3);
         s.streamingDisabled = true;
         s.floodFallbackBuffer.append("buffered");
         s.lastSentText = "sent";
-        s.thinkScrubber = new StreamEditor.ThinkScrubber();
+        s.thinkScrubber = new ThinkTagFilter.ThinkScrubber();
         s.streamStartTime = 999L;
         s.lastTokenTime = 888L;
         s.charsSinceLastEdit = 50;
         s.currentToolName = "WebSearch";
         s.currentMessageId.set(42L);
+        s.heartbeatMessageId.set(99L);
         s.useDraftStreaming = true;
         s.draftId = 7;
-        s.draftFailures = 2;
+        s.draftFailures.set(2);
         s.chatType = "group";
 
         s.resetForNewStream();
 
         assertThat(s.editInterval.get()).isZero();
         assertThat(s.lastEditTime).isZero();
-        assertThat(s.floodStrikes).isZero();
+        assertThat(s.floodStrikes.get()).isZero();
         assertThat(s.streamingDisabled).isFalse();
         assertThat(s.floodFallbackBuffer.length()).isZero();
         assertThat(s.lastSentText).isNull();
         assertThat(s.thinkScrubber).isNull();
         assertThat(s.currentToolName).isNull();
         assertThat(s.currentMessageId.get()).isEqualTo(-1L);
+        assertThat(s.heartbeatMessageId.get()).isEqualTo(-1L);
         assertThat(s.useDraftStreaming).isFalse();
         assertThat(s.draftId).isZero();
-        assertThat(s.draftFailures).isZero();
+        assertThat(s.draftFailures.get()).isZero();
         // chatType is intentionally NOT reset by resetForNewStream
         assertThat(s.chatType).isEqualTo("group");
     }
@@ -114,12 +117,12 @@ class StreamSessionTest {
         StreamSession s = new StreamSession();
         assertThat(s.thinkScrubber).isNull();
 
-        StreamEditor.ThinkScrubber first = s.ensureThinkScrubber();
+        ThinkTagFilter.ThinkScrubber first = s.ensureThinkScrubber();
         assertThat(first).isNotNull();
         assertThat(s.thinkScrubber).isSameAs(first);
 
         // Second call returns the same instance (no replacement)
-        StreamEditor.ThinkScrubber second = s.ensureThinkScrubber();
+        ThinkTagFilter.ThinkScrubber second = s.ensureThinkScrubber();
         assertThat(second).isSameAs(first);
     }
 
@@ -151,12 +154,12 @@ class StreamSessionTest {
     @Test
     void resetForNewStream_canBeCalledMultipleTimes_safely() {
         StreamSession s = new StreamSession();
-        s.floodStrikes = 5;
+        s.floodStrikes.set(5);
         s.resetForNewStream();
-        assertThat(s.floodStrikes).isZero();
-        s.floodStrikes = 2;
+        assertThat(s.floodStrikes.get()).isZero();
+        s.floodStrikes.set(2);
         s.resetForNewStream();
-        assertThat(s.floodStrikes).isZero();
+        assertThat(s.floodStrikes.get()).isZero();
     }
 
     /** Minimal no-op ScheduledFuture for sentinel testing. */

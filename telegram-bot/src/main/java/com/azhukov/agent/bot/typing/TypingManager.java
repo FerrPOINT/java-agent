@@ -11,6 +11,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import jakarta.annotation.PostConstruct;
@@ -96,6 +97,7 @@ public class TypingManager {
 
     // P1-9: Approval gate pause/resume
     private final Map<Long, Boolean> pausedChats = new ConcurrentHashMap<>();
+    private final ReentrantLock pauseLock = new ReentrantLock();
 
     /**
      * Pause typing indicator for a chat (e.g. when an approval gate is active).
@@ -104,13 +106,18 @@ public class TypingManager {
      *
      * @param chatId target chat id
      */
-    public synchronized void pauseTyping(long chatId) {
-        ScheduledFuture<?> future = activeTyping.get(chatId);
-        if (future != null) {
-            future.cancel(false);
-            // Re-register a no-op future so putIfAbsent in resumeTyping works correctly
-            pausedChats.put(chatId, true);
-            log.debug("Paused typing for chat {}", chatId);
+    public void pauseTyping(long chatId) {
+        pauseLock.lock();
+        try {
+            ScheduledFuture<?> future = activeTyping.get(chatId);
+            if (future != null) {
+                future.cancel(false);
+                // Re-register a no-op future so putIfAbsent in resumeTyping works correctly
+                pausedChats.put(chatId, true);
+                log.debug("Paused typing for chat {}", chatId);
+            }
+        } finally {
+            pauseLock.unlock();
         }
     }
 
@@ -121,18 +128,32 @@ public class TypingManager {
      *
      * @param chatId target chat id
      */
-    public synchronized void resumeTyping(long chatId) {
-        if (pausedChats.remove(chatId) == null) {
-            // Was not paused — nothing to do
+    public void resumeTyping(long chatId) {
+        // H7: Prepare data inside the lock, make HTTP call outside to avoid
+        // virtual thread pinning during the Telegram API network call.
+        boolean wasPaused;
+        ScheduledFuture<?> oldFuture;
+        Integer threadId;
+        pauseLock.lock();
+        try {
+            if (pausedChats.remove(chatId) == null) {
+                // Was not paused — nothing to do
+                return;
+            }
+            // Cancel the old (cancelled) future
+            oldFuture = activeTyping.remove(chatId);
+            threadId = chatThreadIds.get(chatId);
+            wasPaused = true;
+        } finally {
+            pauseLock.unlock();
+        }
+        if (!wasPaused) {
             return;
         }
-        // Cancel the old (cancelled) future and start a new periodic task
-        ScheduledFuture<?> oldFuture = activeTyping.remove(chatId);
         if (oldFuture != null) {
             oldFuture.cancel(false);
         }
-        // Start a fresh periodic typing task
-        Integer threadId = chatThreadIds.get(chatId);
+        // Start a fresh periodic typing task — HTTP call outside the lock
         telegramClient.sendTyping(chatId, threadId);
         ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(() -> {
             try {

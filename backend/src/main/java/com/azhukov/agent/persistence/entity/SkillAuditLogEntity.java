@@ -48,11 +48,13 @@ public class SkillAuditLogEntity {
 
     public SkillAuditLogEntity() {}
 
-    public SkillAuditLogEntity(String skillName, String action, String userId, String oldValue, String newValue) {
-        this.skillName = skillName;
-        this.action = action;
-        this.userId = userId;
-        this.oldValue = oldValue;
-        this.newValue = newValue;
+    public static SkillAuditLogEntity create(String skillName, String action, String userId, String oldValue, String newValue) {
+        SkillAuditLogEntity entity = new SkillAuditLogEntity();
+        entity.skillName = skillName;
+        entity.action = action;
+        entity.userId = userId;
+        entity.oldValue = oldValue;
+        entity.newValue = newValue;
+        return entity;
     }
 }

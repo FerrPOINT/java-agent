@@ -125,6 +125,9 @@ public class EnvironmentProbe {
                 // Extract version number from lines like "Python 3.11.5" or "Gradle 8.5"
                 return line.trim();
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "";
         } catch (Exception e) {
             return "";
         }
@@ -141,6 +144,9 @@ public class EnvironmentProbe {
                 return false;
             }
             return process.exitValue() == 0;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         } catch (Exception e) {
             return false;
         }

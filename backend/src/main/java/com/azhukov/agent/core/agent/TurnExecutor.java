@@ -849,162 +849,116 @@ public class TurnExecutor {
     //  Shared static helpers
     // ──────────────────────────────────────────────────────────────────
 
+    // ──────────────────────────────────────────────────────────────────
+    //  Static utility helpers — delegated to TurnExecutorUtils
+    //  (kept here as thin delegates for backward API compatibility)
+    // ──────────────────────────────────────────────────────────────────
+
     /**
      * Sleep for the given delay in 200ms increments, checking for thread
      * interrupts between each chunk. Mirrors Hermes backoff sleep.
-     * <p>
-     * This allows the agent to respond to interrupts (user cancellation,
-     * session teardown) promptly instead of blocking for the full backoff
-     * duration.
      *
      * @param delayMs total sleep time in milliseconds
      * @throws InterruptedException if the thread was interrupted during sleep
+     * @see TurnExecutorUtils#interruptibleSleep(long)
      */
     public static void interruptibleSleep(long delayMs) throws InterruptedException {
-        long remaining = delayMs;
-        while (remaining > 0) {
-            long chunk = Math.min(200, remaining);
-            Thread.sleep(chunk);
-            remaining -= chunk;
-            if (Thread.interrupted()) {
-                throw new InterruptedException();
-            }
-        }
+        TurnExecutorUtils.interruptibleSleep(delayMs);
     }
 
     /**
      * Detect refusal patterns in the error message that indicate a content
      * policy violation. Returns a user-friendly message if a refusal pattern
      * is found, null otherwise.
+     *
+     * @see TurnExecutorUtils#detectRefusalPattern(String)
      */
     public static String detectRefusalPattern(String message) {
-        if (message == null) {
-            return null;
-        }
-        String lower = message.toLowerCase(Locale.ROOT);
-        if (lower.contains("i cannot") || lower.contains("i can't")
-            || lower.contains("i'm unable to") || lower.contains("i am unable to")
-            || lower.contains("i'm not able to") || lower.contains("i am not able to")
-            || lower.contains("i won't be able to") || lower.contains("i will not be able to")) {
-            return "The model declined to generate a response for this request due to a content policy restriction. " +
-                   "Please rephrase your request or try a different approach.";
-        }
-        return null;
+        return TurnExecutorUtils.detectRefusalPattern(message);
     }
 
     /**
      * Estimate output tokens from a {@link ChatResponse}.
+     *
+     * @see TurnExecutorUtils#estimateResponseTokens(ChatResponse)
      */
     public static int estimateResponseTokens(ChatResponse response) {
-        int chars = response.content() != null ? response.content().length() : 0;
-        if (response.toolCalls() != null) {
-            for (ToolCall tc : response.toolCalls()) {
-                chars += tc.arguments() != null ? tc.arguments().length() : 0;
-                chars += tc.name() != null ? tc.name().length() : 0;
-            }
-        }
-        return chars / 4 + 1;
+        return TurnExecutorUtils.estimateResponseTokens(response);
     }
 
     /**
      * Estimate output tokens from raw content + tool calls (streaming path).
+     *
+     * @see TurnExecutorUtils#estimateResponseTokens(String, List)
      */
     public static int estimateResponseTokens(String content, List<ToolCall> toolCalls) {
-        int chars = content != null ? content.length() : 0;
-        if (toolCalls != null) {
-            for (ToolCall tc : toolCalls) {
-                chars += tc.arguments() != null ? tc.arguments().length() : 0;
-                chars += tc.name() != null ? tc.name().length() : 0;
-            }
-        }
-        return chars / 4 + 1;
+        return TurnExecutorUtils.estimateResponseTokens(content, toolCalls);
     }
 
     /**
      * Strip {@code pattern} and {@code format} JSON Schema keywords from tool schemas.
-     * <p>
-     * Hermes parity (tools/schema_sanitizer.py:550): reactive sanitizer invoked
-     * only when llama.cpp's json-schema-to-grammar converter rejects a tool
-     * schema with HTTP 400. llama.cpp's regex engine supports only a small
-     * subset of ECMAScript regex — it rejects escape classes like \d, \w, \s
-     * and most format values. Cloud providers accept these fine, so we keep
-     * them by default and only strip on demand.
-     * <p>
-     * Only strips as a sibling of {@code type}/{@code anyOf}/{@code oneOf}/
-     * {@code allOf} — avoids stripping literal property keys named "pattern".
+     *
+     * @see TurnExecutorUtils#stripGrammarPatternsFromTools(List)
      */
     public static List<ToolDefinition> stripGrammarPatternsFromTools(List<ToolDefinition> tools) {
-        if (tools == null || tools.isEmpty()) return tools;
-        var stripped = new java.util.ArrayList<ToolDefinition>(tools.size());
-        int count = 0;
-        for (ToolDefinition tool : tools) {
-            var newParams = new java.util.HashMap<String, Object>(tool.parameters());
-            count += stripPatternAndFormat(newParams);
-            stripped.add(new ToolDefinition(tool.name(), tool.description(), Map.copyOf(newParams)));
-        }
-        log.info("stripGrammarPatternsFromTools: stripped {} pattern/format keywords from {} tools", count, tools.size());
-        return stripped;
+        return TurnExecutorUtils.stripGrammarPatternsFromTools(tools);
     }
 
-    @SuppressWarnings("unchecked")
-    private static int stripPatternAndFormat(Map<String, Object> schema) {
-        int stripped = 0;
-        boolean isSchemaNode = schema.containsKey("type") || schema.containsKey("anyOf")
-            || schema.containsKey("oneOf") || schema.containsKey("allOf");
-        for (String key : new java.util.ArrayList<>(schema.keySet())) {
-            if (isSchemaNode && ("pattern".equals(key) || "format".equals(key))) {
-                schema.remove(key);
-                stripped++;
-                continue;
-            }
-            Object value = schema.get(key);
-            if (value instanceof Map<?, ?> map) {
-                stripped += stripPatternAndFormat((Map<String, Object>) map);
-            } else if (value instanceof List<?> list) {
-                for (Object item : list) {
-                    if (item instanceof Map<?, ?> m) {
-                        stripped += stripPatternAndFormat((Map<String, Object>) m);
-                    }
-                }
-            }
-        }
-        return stripped;
+    /**
+     * Strip {@code pattern} and {@code format} JSON Schema keywords from a
+     * schema map, recursively. Returns the number of keywords stripped.
+     *
+     * @see TurnExecutorUtils#stripPatternAndFormat(Map)
+     */
+    public static int stripPatternAndFormat(Map<String, Object> schema) {
+        return TurnExecutorUtils.stripPatternAndFormat(schema);
     }
 
     /**
      * Check if any message in the context contains thinking/reasoning blocks.
+     *
+     * @see TurnExecutorUtils#containsThinkingBlocks(List)
      */
     public static boolean containsThinkingBlocks(List<Message> context) {
-        return context.stream().anyMatch(m -> m.content() != null
-            && ThinkBlockProcessor.containsAnyThinkTag(m.content()));
+        return TurnExecutorUtils.containsThinkingBlocks(context);
     }
 
+    /**
+     * Check if any message in the context contains image content (imageCount > 0).
+     *
+     * @see TurnExecutorUtils#containsImageContent(List)
+     */
     public static boolean containsImageContent(List<Message> context) {
-        return context.stream().anyMatch(m -> m.imageCount() != null && m.imageCount() > 0);
+        return TurnExecutorUtils.containsImageContent(context);
     }
 
+    /**
+     * Strip image content from all messages (sets imageCount to 0).
+     *
+     * @see TurnExecutorUtils#stripImageContent(List)
+     */
     public static List<Message> stripImageContent(List<Message> context) {
-        return context.stream().map(m -> {
-            if (m.imageCount() == null || m.imageCount() == 0) return m;
-            return new Message(m.role(), m.content(), m.toolCall(), m.toolCalls(),
-                m.toolCallId(), m.turnIndex(), 0);
-        }).toList();
+        return TurnExecutorUtils.stripImageContent(context);
     }
 
+    /**
+     * Check if any message in the context contains multimodal tool content
+     * (data: URIs with image/ or base64 content).
+     *
+     * @see TurnExecutorUtils#containsMultimodalToolContent(List)
+     */
     public static boolean containsMultimodalToolContent(List<Message> context) {
-        return context.stream().anyMatch(m -> m.content() != null
-            && m.content().startsWith("data:")
-            && (m.content().contains("image/") || m.content().contains(";base64,")));
+        return TurnExecutorUtils.containsMultimodalToolContent(context);
     }
 
+    /**
+     * Strip multimodal tool content from all messages (replaces data: URIs
+     * with a placeholder).
+     *
+     * @see TurnExecutorUtils#stripMultimodalToolContent(List)
+     */
     public static List<Message> stripMultimodalToolContent(List<Message> context) {
-        return context.stream().map(m -> {
-            if (m.content() != null && m.content().startsWith("data:")) {
-                return new Message(m.role(), "[multimodal content stripped]", m.toolCall(),
-                    m.toolCalls(), m.toolCallId(), m.turnIndex(), m.imageCount());
-            }
-            return m;
-        }).toList();
+        return TurnExecutorUtils.stripMultimodalToolContent(context);
     }
 
     /**
@@ -1012,49 +966,19 @@ public class TurnExecutor {
      *
      * @param e the exception from the model call
      * @return retry-after value in milliseconds, or -1 if not found
+     * @see TurnExecutorUtils#extractRetryAfterMs(Exception)
      */
     public static long extractRetryAfterMs(Exception e) {
-        if (e == null || e.getMessage() == null) {
-            return -1;
-        }
-        String msg = e.getMessage();
-        String lower = msg.toLowerCase(Locale.ROOT);
-        int idx = lower.indexOf("retry-after:");
-        if (idx >= 0) {
-            String after = msg.substring(idx + 12).trim();
-            String[] parts = after.split("[\\s,;]");
-            for (String part : parts) {
-                try {
-                    double seconds = Double.parseDouble(part.trim());
-                    return (long) (seconds * 1000);
-                } catch (NumberFormatException ignored) {
-                }
-            }
-        }
-        idx = lower.indexOf("retry-after");
-        if (idx >= 0) {
-            String after = msg.substring(idx + 11).trim();
-            if (after.startsWith(":")) {
-                after = after.substring(1).trim();
-            }
-            String[] parts = after.split("[\\s,;]");
-            for (String part : parts) {
-                try {
-                    double seconds = Double.parseDouble(part.trim());
-                    return (long) (seconds * 1000);
-                } catch (NumberFormatException ignored) {
-                }
-            }
-        }
-        return -1;
+        return TurnExecutorUtils.extractRetryAfterMs(e);
     }
 
     /**
      * Check if an exception's message contains a substring (case-insensitive).
+     *
+     * @see TurnExecutorUtils#lowerMessageContains(Exception, String)
      */
     public static boolean lowerMessageContains(Exception e, String substring) {
-        return e != null && e.getMessage() != null
-            && e.getMessage().toLowerCase(Locale.ROOT).contains(substring.toLowerCase(Locale.ROOT));
+        return TurnExecutorUtils.lowerMessageContains(e, substring);
     }
 
     /**
@@ -1130,19 +1054,14 @@ public class TurnExecutor {
             cooldownMs = TRANSIENT_COOLDOWN_LADDER_MS[idx];
         } else if (msg.contains("json") || msg.contains("stream") && msg.contains("closed")) {
             cooldownMs = 30_000L;
-        } else if (isTransient(msg)) {
+        } else if (TurnExecutorUtils.isTransient(msg)) {
             cooldownMs = 60_000L;
         } else {
             cooldownMs = COMPRESSION_FAILURE_COOLDOWN_MS;
         }
         dcc.setCompressionFailureCooldown(cooldownMs);
         log.info("Compression failure cooldown set: {}s (attempt {}, {})",
-            cooldownMs / 1000, attempt, classifyForLog(msg));
-    }
-
-    private static boolean isTransient(String msg) {
-        return msg.contains("connection") || msg.contains("reset") || msg.contains("refused")
-            || msg.contains("broken pipe") || msg.contains("eof") || msg.contains("closed");
+            cooldownMs / 1000, attempt, TurnExecutorUtils.classifyForLog(msg));
     }
 
     /** F16: create an approval request via the guardrail-owned queue path. */
@@ -1157,13 +1076,6 @@ public class TurnExecutor {
                 call.name(), sessionId, e.getMessage());
             return null;
         }
-    }
-
-    private static String classifyForLog(String msg) {
-        if (msg.contains("timeout") || msg.contains("timed out")) return "timeout ladder";
-        if (msg.contains("json") || msg.contains("stream") && msg.contains("closed")) return "json/stream transient";
-        if (isTransient(msg)) return "network transient";
-        return "hard failure";
     }
 
     // ──────────────────────────────────────────────────────────────────

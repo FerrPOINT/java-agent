@@ -7,11 +7,7 @@ import com.azhukov.agent.persistence.entity.CronExecutionLogEntity;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.azhukov.agent.persistence.repository.CronJobRepository;
-import com.cronutils.model.Cron;
-import com.cronutils.model.CronType;
-import com.cronutils.model.definition.CronDefinitionBuilder;
-import com.cronutils.model.time.ExecutionTime;
-import com.cronutils.parser.CronParser;
+import com.azhukov.agent.persistence.repository.MessageRepository;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -25,13 +21,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -44,8 +34,6 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Service
 @Slf4j
@@ -58,10 +46,13 @@ public class CronJobService {
     private final SkillManager skillManager;
     // h72: Cron execution ledger repository.
     private final CronExecutionLogRepository cronExecutionLogRepository;
+    private final MessageRepository messageRepository;
     // Audit C4: programmatic transactions for scheduler-thread multi-write sequences
     // (@Transactional would be bypassed here because executeAndReschedule is a
     // self-invocation from the scheduler lambda).
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    // M-Cron: pure schedule parsing extracted to CronScheduleParser
+    private final CronScheduleParser scheduleParser;
 
     // Daemon thread factory so cron threads don't prevent JVM shutdown
     private static final ThreadFactory DAEMON_THREAD_FACTORY = r -> {
@@ -74,27 +65,9 @@ public class CronJobService {
     private final Map<UUID, ScheduledFuture<?>> scheduledTasks = new ConcurrentHashMap<>();
     // Per-job lock to prevent concurrent execution of the same job
     private final Map<UUID, ReentrantLock> jobLocks = new ConcurrentHashMap<>();
-    private final CronParser cronParser = new CronParser(CronDefinitionBuilder.instanceDefinitionFor(CronType.UNIX));
 
-    // Schedule kind constants — mirror Hermes parse_schedule() kinds
-    private static final String KIND_ONCE = "once";
-    private static final String KIND_INTERVAL = "interval";
-    private static final String KIND_CRON = "cron";
-
-    // ISO timestamp pattern: 2026-02-03T14:00:00 or 2026-02-03T14:00
-    private static final Pattern ISO_TIMESTAMP_PATTERN = Pattern.compile(
-        "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(\\.\\d+)?(Z|[+-]\\d{2}:?\\d{2})?$");
-
-    // Bare duration: 30m, 2h, 1d, 30s
-    private static final Pattern DURATION_PATTERN = Pattern.compile(
-        "^(\\d+)\\s*([smhd])$", Pattern.CASE_INSENSITIVE);
-
-    // "every X" prefix
-    private static final Pattern EVERY_PREFIX = Pattern.compile(
-        "^every\\s+(.+)$", Pattern.CASE_INSENSITIVE);
-
-    // Cron expression: 5+ space-separated fields of digits/specials
-    private static final Pattern CRON_FIELD_PATTERN = Pattern.compile("^[\\d*/,-]+$");
+    // Schedule kind constants — delegate to CronScheduleParser
+    private static final String KIND_ONCE = CronScheduleParser.KIND_ONCE;
 
     // h74: Maximum consecutive failures before backing off significantly.
     private static final int MAX_CONSECUTIVE_FAILURES = 5;
@@ -105,6 +78,8 @@ public class CronJobService {
     private static final String AUTOMATION_NEEDS_ATTENTION_MSG =
         "⚠️ Automation needs attention: cron job '{}' has failed {} consecutive times. " +
         "Last error: {}";
+
+    // ── Schedule parsing delegated to CronScheduleParser ──
 
     @PostConstruct
     public void init() {
@@ -173,7 +148,7 @@ public class CronJobService {
         String enabledToolsets, String workdir,
         String modelProvider, String modelName, String baseUrl
     ) {
-        validateSchedule(schedule);
+        scheduleParser.validate(schedule);
 
         // no_agent jobs require a script
         if (noAgent && (script == null || script.isBlank())) {
@@ -181,7 +156,7 @@ public class CronJobService {
         }
 
         // Parse schedule to detect one-shot
-        ScheduleInfo scheduleInfo = parseSchedule(schedule);
+        CronScheduleParser.ScheduleInfo scheduleInfo = scheduleParser.parse(schedule);
 
         CronJobEntity entity = new CronJobEntity();
         entity.setName(name);
@@ -206,7 +181,7 @@ public class CronJobService {
         if (effectiveRepeat != null && effectiveRepeat <= 0) {
             effectiveRepeat = null;
         }
-        if (KIND_ONCE.equals(scheduleInfo.kind) && effectiveRepeat == null) {
+        if (KIND_ONCE.equals(scheduleInfo.kind()) && effectiveRepeat == null) {
             effectiveRepeat = 1;
         }
         entity.setRepeatCount(effectiveRepeat);
@@ -251,11 +226,11 @@ public class CronJobService {
 
         if (name != null) entity.setName(name);
         if (schedule != null) {
-            validateSchedule(schedule);
+            scheduleParser.validate(schedule);
             entity.setSchedule(schedule);
             // Re-detect one-shot for repeatCount auto-set
-            ScheduleInfo scheduleInfo = parseSchedule(schedule);
-            if (KIND_ONCE.equals(scheduleInfo.kind) && entity.getRepeatCount() == null) {
+            CronScheduleParser.ScheduleInfo scheduleInfo = scheduleParser.parse(schedule);
+            if (KIND_ONCE.equals(scheduleInfo.kind()) && entity.getRepeatCount() == null) {
                 entity.setRepeatCount(1);
             }
         }
@@ -360,12 +335,13 @@ public class CronJobService {
 
     private void scheduleJob(CronJobEntity job) {
         try {
-            long delaySeconds = calculateDelaySeconds(job.getSchedule());
+            long delaySeconds = scheduleParser.calculateDelaySeconds(job.getSchedule());
             ScheduledFuture<?> future = scheduler.schedule(
                 () -> executeAndReschedule(job.getId()),
                 delaySeconds, TimeUnit.SECONDS
             );
-            scheduledTasks.put(job.getId(), future);
+            ScheduledFuture<?> old = scheduledTasks.put(job.getId(), future);
+            if (old != null) old.cancel(false);
             job.setNextRunAt(Instant.now().plusSeconds(delaySeconds));
             cronJobRepository.save(job);
             log.debug("Scheduled cron job '{}' to run in {} seconds", job.getName(), delaySeconds);
@@ -398,10 +374,11 @@ public class CronJobService {
                         job.getConsecutiveFailures() - MAX_CONSECUTIVE_FAILURES, 5));
                     log.warn("Cron job {} backing off {}s due to {} consecutive failures (backend unavailability)",
                         job.getName(), backoff, job.getConsecutiveFailures());
-                    long delaySeconds = Math.max(backoff, calculateDelaySeconds(job.getSchedule()));
+                    long delaySeconds = Math.max(backoff, scheduleParser.calculateDelaySeconds(job.getSchedule()));
                     ScheduledFuture<?> future = scheduler.schedule(
                         () -> executeAndReschedule(jobId), delaySeconds, TimeUnit.SECONDS);
-                    scheduledTasks.put(jobId, future);
+                    ScheduledFuture<?> old = scheduledTasks.put(jobId, future);
+                    if (old != null) old.cancel(false);
                     job.setNextRunAt(Instant.now().plusSeconds(delaySeconds));
                     cronJobRepository.save(job);
                     return;
@@ -503,7 +480,7 @@ public class CronJobService {
             }
 
             // P1-45: Inject output from upstream cron jobs (context_from chaining)
-            String contextFromOutput = loadContextFromOutput(job.getContextFrom());
+            String contextFromOutput = loadContextFromOutput(job);
             if (contextFromOutput != null && !contextFromOutput.isBlank()) {
                 enhancedPrompt = contextFromOutput + "\n\n" + enhancedPrompt;
                 log.debug("Injected context_from output into cron job '{}'", job.getName());
@@ -568,8 +545,10 @@ public class CronJobService {
                 }
             }
             cronJobRepository.save(job);
-            // h72: Record successful execution in the ledger.
-            recordExecution(job.getId(), startedAt, Instant.now(), "success", null);
+            // h72: Record successful execution in the ledger. Persist the final
+            // assistant output so downstream context_from jobs receive actual data.
+            String outputText = loadLastRunOutput(job.getLastRunSessionId());
+            recordExecution(job.getId(), startedAt, Instant.now(), "success", null, outputText);
         } catch (Exception e) {
             log.error("Failed to execute cron job {}: {} — job will be rescheduled", job.getName(), e.getMessage());
             // h71/h74: Record the error status and increment consecutive failures.
@@ -604,7 +583,7 @@ public class CronJobService {
 
             // h72: Record failed execution in the ledger.
             String status = errorMsg.toLowerCase().contains("timeout") ? "timeout" : "failure";
-            recordExecution(job.getId(), startedAt, Instant.now(), status, errorMsg);
+            recordExecution(job.getId(), startedAt, Instant.now(), status, errorMsg, null);
             // h71: Re-arm: clear the error status so the job can run on the next tick.
             // The error is recorded for audit but doesn't permanently block execution.
             // The scheduleJob call in executeAndReschedule will still fire.
@@ -643,15 +622,35 @@ public class CronJobService {
      * @param finishedAt when the execution finished
      * @param status "success", "failure", or "timeout"
      * @param errorMessage error message if failed, null if succeeded
+     * @param outputText assistant output for successful context_from chaining
      */
-    private void recordExecution(UUID jobId, Instant startedAt, Instant finishedAt, String status, String errorMessage) {
+    private void recordExecution(UUID jobId, Instant startedAt, Instant finishedAt, String status,
+                                 String errorMessage, String outputText) {
         try {
             if (cronExecutionLogRepository != null) {
-                CronExecutionLogEntity logEntry = new CronExecutionLogEntity(jobId, startedAt, finishedAt, status, errorMessage);
+                CronExecutionLogEntity logEntry = CronExecutionLogEntity.create(jobId, startedAt, finishedAt, status, errorMessage);
+                logEntry.setOutputText(outputText);
                 cronExecutionLogRepository.save(logEntry);
             }
         } catch (Exception e) {
             log.warn("Failed to record cron execution log for job {}: {}", jobId, e.getMessage());
+        }
+    }
+
+    private String loadLastRunOutput(UUID sessionId) {
+        if (sessionId == null || messageRepository == null) {
+            return null;
+        }
+        try {
+            return messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+                .filter(message -> "assistant".equals(message.getRole()))
+                .map(message -> message.getContent() == null ? "" : message.getContent())
+                .filter(content -> !content.isBlank())
+                .reduce((ignored, latest) -> latest)
+                .orElse(null);
+        } catch (Exception e) {
+            log.warn("Failed to load cron output for session {}: {}", sessionId, e.getMessage());
+            return null;
         }
     }
 
@@ -714,32 +713,44 @@ public class CronJobService {
             pb.redirectErrorStream(false);
             Process process = pb.start();
 
-            // Read stdout
+            // H10: Read stdout and stderr concurrently via gobbler threads to avoid
+            // pipe-buffer deadlock when the child fills one pipe while we block on the other.
             StringBuilder stdout = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    stdout.append(line).append("\n");
-                }
-            }
-
-            // Read stderr
             StringBuilder stderr = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    stderr.append(line).append("\n");
-                }
-            }
+            Thread stdoutGobbler = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        stdout.append(line).append("\n");
+                    }
+                } catch (Exception ignored) { }
+            }, "cron-stdout-gobbler");
+            Thread stderrGobbler = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        stderr.append(line).append("\n");
+                    }
+                } catch (Exception ignored) { }
+            }, "cron-stderr-gobbler");
+            stdoutGobbler.setDaemon(true);
+            stderrGobbler.setDaemon(true);
+            stdoutGobbler.start();
+            stderrGobbler.start();
 
             boolean finished = process.waitFor(120, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
+                stdoutGobbler.interrupt();
+                stderrGobbler.interrupt();
                 log.error("Cron job '{}': script timed out after 120s", job.getName());
                 return;
             }
+
+            stdoutGobbler.join(5000);
+            stderrGobbler.join(5000);
 
             int exitCode = process.exitValue();
             String stdoutStr = stdout.toString().trim();
@@ -762,7 +773,13 @@ public class CronJobService {
                 }
             }
         } catch (Exception e) {
+            // H11: Don't silently swallow no_agent execution failures — mark the job as error.
             log.error("Cron job '{}' (no_agent): script execution failed: {}", job.getName(), e.getMessage());
+            job.setLastStatus("error");
+            job.setLastError(e.getMessage());
+            job.setLastErrorAt(Instant.now());
+            cronJobRepository.save(job);
+            throw new RuntimeException(e);
         }
     }
 
@@ -800,25 +817,48 @@ public class CronJobService {
     /**
      * P1-45: Load output from upstream cron jobs (context_from chaining).
      */
-    private String loadContextFromOutput(String contextFromCsv) {
-        if (contextFromCsv == null || contextFromCsv.isBlank()) {
+    private String loadContextFromOutput(CronJobEntity job) {
+        String contextFromCsv = job.getContextFrom();
+        if (contextFromCsv == null || contextFromCsv.isBlank() || cronExecutionLogRepository == null) {
             return null;
         }
         StringBuilder sb = new StringBuilder();
         for (String jobIdStr : contextFromCsv.split(",")) {
-            String trimmed = jobIdStr.trim();
-            if (trimmed.isEmpty()) continue;
+            String reference = jobIdStr.trim();
+            if (reference.isEmpty()) continue;
+            UUID sourceJobId;
+            boolean isSelf = "self".equalsIgnoreCase(reference);
             try {
-                UUID sourceJobId = UUID.fromString(trimmed);
+                sourceJobId = isSelf ? job.getId() : UUID.fromString(reference);
+            } catch (IllegalArgumentException e) {
+                log.warn("context_from: invalid job ID '{}', skipping", reference);
+                continue;
+            }
+            if (sourceJobId == null) {
+                log.warn("context_from: current job has no id, skipping self reference");
+                continue;
+            }
+            try {
                 var sourceJob = cronJobRepository.findById(sourceJobId).orElse(null);
-                if (sourceJob == null) {
-                    log.warn("context_from: job '{}' not found, skipping", trimmed);
+                var latest = cronExecutionLogRepository.findFirstByJobIdOrderByStartedAtDesc(sourceJobId).orElse(null);
+                if (sourceJob == null || latest == null || latest.getOutputText() == null
+                    || latest.getOutputText().isBlank()) {
                     continue;
                 }
-                sb.append("## Output from job '").append(sourceJob.getName()).append("'\n");
-                sb.append("(job ran at: ").append(sourceJob.getLastRunAt()).append(")\n\n");
-            } catch (IllegalArgumentException e) {
-                log.warn("context_from: invalid job ID '{}', skipping", trimmed);
+                if (isSelf) {
+                    sb.append("## Your previous run's output\n");
+                    sb.append("The following is this job's most recent output from its previous run. ")
+                        .append("Use it for continuity: avoid repeating what was already reported, and continue ")
+                        .append("where the last run left off.\n\n```\n")
+                        .append(latest.getOutputText().trim()).append("\n```\n\n");
+                } else {
+                    sb.append("## Output from job '").append(sourceJob.getName()).append("'\n");
+                    sb.append("The following is the most recent output from a preceding cron job. ")
+                        .append("Use it as context for your analysis.\n\n```\n")
+                        .append(latest.getOutputText().trim()).append("\n```\n\n");
+                }
+            } catch (Exception e) {
+                log.warn("context_from: failed to load output for job '{}': {}", reference, e.getMessage());
             }
         }
         String result = sb.toString().trim();
@@ -869,158 +909,4 @@ public class CronJobService {
     /**
      * Schedule info holder — mirrors Hermes parse_schedule() return shape.
      */
-    private record ScheduleInfo(String kind, long delaySeconds) {}
-
-    /**
-     * Fix 3: Parse schedule string and detect one-shot vs recurring.
-     * <p>
-     * Hermes parse_schedule() recognizes:
-     * - ISO timestamp (2026-02-03T14:00:00) → one-shot at specific time
-     * - Bare duration (30m, 2h, 1d) without "every" → one-shot from now
-     * - "every X" → recurring interval
-     * - Cron expression → recurring cron
-     *
-     * @return ScheduleInfo with kind and delay in seconds from now
-     */
-    private ScheduleInfo parseSchedule(String schedule) {
-        String trimmed = schedule.trim();
-        String lower = trimmed.toLowerCase();
-
-        // "every X" → recurring interval
-        Matcher everyMatcher = EVERY_PREFIX.matcher(trimmed);
-        if (everyMatcher.matches()) {
-            long seconds = parseDurationSeconds(everyMatcher.group(1));
-            return new ScheduleInfo(KIND_INTERVAL, seconds);
-        }
-
-        // ISO timestamp → one-shot at specific time
-        if (ISO_TIMESTAMP_PATTERN.matcher(trimmed).matches() || (trimmed.contains("T") && trimmed.matches("\\d{4}-\\d{2}-\\d{2}.*"))) {
-            try {
-                LocalDateTime dt = parseIsoTimestamp(trimmed);
-                long delay = Duration.between(LocalDateTime.now(), dt).getSeconds();
-                return new ScheduleInfo(KIND_ONCE, Math.max(1, delay));
-            } catch (DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid timestamp '" + trimmed + "': " + e.getMessage());
-            }
-        }
-
-        // Check for date-only pattern: 2026-02-03
-        if (trimmed.matches("\\d{4}-\\d{2}-\\d{2}$")) {
-            try {
-                LocalDateTime dt = LocalDateTime.parse(trimmed + "T00:00:00");
-                long delay = Duration.between(LocalDateTime.now(), dt).getSeconds();
-                return new ScheduleInfo(KIND_ONCE, Math.max(1, delay));
-            } catch (DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid date '" + trimmed + "': " + e.getMessage());
-            }
-        }
-
-        // Bare duration (30m, 2h, 1d, 30s) without "every" → one-shot from now
-        Matcher durationMatcher = DURATION_PATTERN.matcher(trimmed);
-        if (durationMatcher.matches()) {
-            long seconds = parseDurationSeconds(trimmed);
-            return new ScheduleInfo(KIND_ONCE, seconds);
-        }
-
-        // Cron expression (5+ space-separated fields)
-        String[] parts = trimmed.split("\\s+");
-        if (parts.length >= 5 && isCronExpression(parts)) {
-            return new ScheduleInfo(KIND_CRON, calculateCronDelaySeconds(trimmed));
-        }
-
-        throw new IllegalArgumentException(
-            "Invalid schedule '" + trimmed + "'. Use:\n" +
-            "  - Duration: '30m', '2h', '1d' (one-shot)\n" +
-            "  - Interval: 'every 30m', 'every 2h' (recurring)\n" +
-            "  - Cron: '0 9 * * *' (cron expression)\n" +
-            "  - Timestamp: '2026-02-03T14:00:00' (one-shot at time)");
-    }
-
-    private boolean isCronExpression(String[] parts) {
-        for (int i = 0; i < Math.min(5, parts.length); i++) {
-            if (!CRON_FIELD_PATTERN.matcher(parts[i]).matches()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private LocalDateTime parseIsoTimestamp(String s) {
-        // Handle Z suffix
-        String normalized = s.replace("Z", "");
-        // Try with seconds
-        try {
-            return LocalDateTime.parse(normalized, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-        } catch (DateTimeParseException e) {
-            // Try without seconds: 2026-02-03T14:00
-            try {
-                return LocalDateTime.parse(normalized + ":00", DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-            } catch (DateTimeParseException e2) {
-                throw e;
-            }
-        }
-    }
-
-    private long parseDurationSeconds(String s) {
-        Matcher m = DURATION_PATTERN.matcher(s.trim());
-        if (!m.matches()) {
-            throw new IllegalArgumentException("Unrecognized duration: " + s);
-        }
-        long value = Long.parseLong(m.group(1));
-        return switch (m.group(2).toLowerCase()) {
-            case "s" -> value;
-            case "m" -> value * 60;
-            case "h" -> value * 3600;
-            case "d" -> value * 86400;
-            default -> throw new IllegalArgumentException("Unknown time unit: " + m.group(2));
-        };
-    }
-
-    private long calculateDelaySeconds(String schedule) {
-        // Try human-readable interval or one-shot first
-        try {
-            ScheduleInfo info = parseSchedule(schedule);
-            return Math.max(1, info.delaySeconds());
-        } catch (Exception e) {
-            log.debug("Schedule '{}' is not a human-readable interval, trying cron: {}", schedule, e.getMessage());
-        }
-        // Fall back to standard cron expression
-        return calculateCronDelaySeconds(schedule);
-    }
-
-    private long calculateCronDelaySeconds(String cronExpression) {
-        try {
-            Cron cron = cronParser.parse(cronExpression);
-            ExecutionTime executionTime = ExecutionTime.forCron(cron);
-            ZonedDateTime now = ZonedDateTime.now(ZoneId.systemDefault());
-            Optional<ZonedDateTime> nextExecution = executionTime.nextExecution(now);
-            if (nextExecution.isPresent()) {
-                long delaySeconds = Duration.between(now, nextExecution.get()).getSeconds();
-                return Math.max(1, delaySeconds);
-            }
-            return 60; // fallback
-        } catch (Exception e) {
-            log.warn("Failed to parse cron expression '{}', using default 60s delay: {}", cronExpression, e.getMessage());
-            return 60;
-        }
-    }
-
-    private void validateSchedule(String schedule) {
-        if (schedule == null || schedule.isBlank()) {
-            throw new IllegalArgumentException("Schedule cannot be null or blank");
-        }
-        // Try human-readable interval, one-shot, or ISO timestamp first
-        try {
-            parseSchedule(schedule);
-            return;
-        } catch (IllegalArgumentException e) {
-            // Not a human-readable format, try cron
-        }
-        // Fall back to standard cron expression
-        try {
-            cronParser.parse(schedule);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid cron expression: " + schedule + " — " + e.getMessage());
-        }
-    }
 }

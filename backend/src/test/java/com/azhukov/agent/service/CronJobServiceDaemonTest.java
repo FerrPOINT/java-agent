@@ -30,6 +30,7 @@ class CronJobServiceDaemonTest {
 
     @Mock private CronJobRepository cronJobRepository;
     @Mock private CronExecutionLogRepository cronExecutionLogRepository;
+    @Mock private com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     @Mock private ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider;
     @Mock private AgentRuntimeService agentRuntimeService;
     @Mock private SkillManager skillManager;
@@ -42,7 +43,7 @@ class CronJobServiceDaemonTest {
         properties = new AgentProperties();
         properties.getCron().setEnabled(false);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, new org.springframework.transaction.support.TransactionTemplate());
+        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(), new CronScheduleParser());
     }
 
     @Test

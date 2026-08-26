@@ -49,6 +49,7 @@ class ToolExecutionServiceFullTest {
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.execute(eq("slow"), any(), any(), any(), any())).thenAnswer(inv -> {
             calls.incrementAndGet();
+            // timing-assertion: simulates slow tool execution for timeout testing
             Thread.sleep(delayMs);
             return ToolResult.ok("done");
         });

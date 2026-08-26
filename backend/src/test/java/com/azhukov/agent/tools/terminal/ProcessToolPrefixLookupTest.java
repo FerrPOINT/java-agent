@@ -64,10 +64,8 @@ class ProcessToolPrefixLookupTest {
         ProcessTool tool = new ProcessTool();
         injectProcess(tool, managed);
 
-        // Prefix lookup for log action
-        // The ManagedProcess reader thread reads the mocked stream asynchronously —
-        // wait for it to drain before asserting (same pattern as ProcessToolTest).
-        Thread.sleep(500);
+        // Wait for the reader thread to drain the mocked input stream (deterministic sync)
+        waitForReaderThread(managed);
         ToolResult r = tool.execute("{\"action\":\"log\",\"sessionId\":\"proc_xyz\"}", null, null);
         assertThat(r.success()).isTrue();
         assertThat(r.content()).contains("line1");
@@ -190,5 +188,13 @@ class ProcessToolPrefixLookupTest {
         processesField.setAccessible(true);
         Map<String, ProcessTool.ManagedProcess> processes = (Map<String, ProcessTool.ManagedProcess>) processesField.get(tool);
         processes.put(managed.id, managed);
+    }
+
+    /** Join the ManagedProcess reader thread so the output buffer is fully populated. */
+    private static void waitForReaderThread(ProcessTool.ManagedProcess managed) throws Exception {
+        Field readerField = ProcessTool.ManagedProcess.class.getDeclaredField("readerThread");
+        readerField.setAccessible(true);
+        Thread readerThread = (Thread) readerField.get(managed);
+        readerThread.join(5000);
     }
 }

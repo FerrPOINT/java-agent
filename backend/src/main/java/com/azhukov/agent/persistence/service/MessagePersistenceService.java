@@ -26,6 +26,9 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class MessagePersistenceService {
 
+    private static final int PREVIEW_MAX_CHARS = 200;
+    private static final int PREVIEW_TRUNCATE_AT = 197;
+
     private final MessageRepository messageRepository;
     private final SessionRepository sessionRepository;
 
@@ -37,13 +40,13 @@ public class MessagePersistenceService {
      */
     @Transactional
     public void persistUserMessage(Session session, String userInput) {
-        saveMessage(session.id(), "user", userInput, null, null, null, 0);
+        saveMessage(session.id(), Role.USER.name().toLowerCase(), userInput, null, null, null, 0);
     }
 
     @Transactional
     public void persistTurn(Session session, String userInput, TurnResult turnResult) {
         // Save user message
-        saveMessage(session.id(), "user", userInput, null, null, null, 0);
+        saveMessage(session.id(), Role.USER.name().toLowerCase(), userInput, null, null, null, 0);
 
         // Save assistant messages from the turn (only final text + tool interactions)
         if (turnResult != null && turnResult.messages() != null) {
@@ -51,19 +54,19 @@ public class MessagePersistenceService {
                 if (msg.role() == Role.ASSISTANT) {
                     // Save assistant text (skip null-content tool-call-only messages)
                     if (msg.content() != null && !msg.content().isBlank()) {
-                        saveMessage(session.id(), "assistant", msg.content(),
+                        saveMessage(session.id(), Role.ASSISTANT.name().toLowerCase(), msg.content(),
                             null, null, null, msg.turnIndex() != null ? msg.turnIndex() : 0);
                     }
                     // Save tool calls if present
                     if (msg.toolCalls() != null) {
                         for (var tc : msg.toolCalls()) {
-                            saveMessage(session.id(), "assistant", msg.content() != null ? msg.content() : "",
+                            saveMessage(session.id(), Role.ASSISTANT.name().toLowerCase(), msg.content() != null ? msg.content() : "",
                                 tc.id(), tc.name(), tc.arguments(),
                                 msg.turnIndex() != null ? msg.turnIndex() : 0);
                         }
                     }
                 } else if (msg.role() == Role.TOOL) {
-                    saveMessage(session.id(), "tool", msg.content(),
+                    saveMessage(session.id(), Role.TOOL.name().toLowerCase(), msg.content(),
                         msg.toolCallId(), null, null,
                         msg.turnIndex() != null ? msg.turnIndex() : 0);
                 }
@@ -105,8 +108,8 @@ public class MessagePersistenceService {
             String preview = "";
             if (content != null && !content.isBlank()) {
                 // Use first 200 chars of user messages as preview
-                if ("user".equals(role)) {
-                    preview = content.length() > 200 ? content.substring(0, 197) + "..." : content;
+                if (Role.USER.name().toLowerCase().equals(role)) {
+                    preview = content.length() > PREVIEW_MAX_CHARS ? content.substring(0, PREVIEW_TRUNCATE_AT) + "..." : content;
                 }
             }
             sessionRepository.updateLastActiveAndMessageCount(sessionId, Instant.now(), (int) count);

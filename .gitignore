@@ -43,6 +43,14 @@ application-local.yaml
 hs_err_pid*
 replay_pid*
 
+# Repomix
+repomix-output.*
+repomix.config.json
+
+# Python cache
+__pycache__/
+*.pyc
+
 # Backend build artifacts
 /backend/build/
 /backend/.gradle/

@@ -19,7 +19,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.regex.Pattern;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 
@@ -236,7 +235,7 @@ public class StreamEditor {
             long now = System.currentTimeMillis();
             session.streamStartTime = now;
             session.lastTokenTime = now;
-            session.thinkScrubber = new ThinkScrubber();
+            session.thinkScrubber = new ThinkTagFilter.ThinkScrubber();
             log.debug("Streaming transport is 'off' for chat {}, no initial message", chatId);
             return Optional.empty();
         }
@@ -245,7 +244,7 @@ public class StreamEditor {
         session.chatType = chatType != null ? chatType.toLowerCase() : "dm";
         boolean useDraft = resolveDraftStreaming(session);
         session.useDraftStreaming = useDraft;
-        session.draftFailures = 0;
+        session.draftFailures.set(0);
 
         if (useDraft) {
             // Assign a fresh draft id for this run
@@ -263,7 +262,7 @@ public class StreamEditor {
             // If we have initial text, send the first draft frame
             if (initialText != null && !initialText.isBlank()) {
                 String scrubbed = scrubThink(session, initialText);
-                String formatted = formatForTelegram(scrubbed);
+                String formatted = formatForTelegramDelegate(scrubbed);
                 if (!formatted.isEmpty() && formatted.length() >= 4) {
                     boolean draftOk = sendDraftFrame(chatId, formatted, session);
                     if (!draftOk) {
@@ -273,17 +272,17 @@ public class StreamEditor {
                         // Continue with regular startStream path below
                     } else {
                         // Draft streaming active — no message id (drafts have no message_id)
-                        session.thinkScrubber = new ThinkScrubber();
+                        session.thinkScrubber = new ThinkTagFilter.ThinkScrubber();
                         return Optional.empty();
                     }
                 } else {
                     // Not enough text yet — draft streaming will start on first editStream
-                    session.thinkScrubber = new ThinkScrubber();
+                    session.thinkScrubber = new ThinkTagFilter.ThinkScrubber();
                     return Optional.empty();
                 }
             } else {
                 // No initial text — draft streaming will start on first editStream
-                session.thinkScrubber = new ThinkScrubber();
+                session.thinkScrubber = new ThinkTagFilter.ThinkScrubber();
                 return Optional.empty();
             }
         }
@@ -291,7 +290,7 @@ public class StreamEditor {
         // B5: Reset flood state for the new stream
         session.resetForNewStream();
         // M27: fresh scrubber for the new stream
-        session.thinkScrubber = new ThinkScrubber();
+        session.thinkScrubber = new ThinkTagFilter.ThinkScrubber();
 
         String scrubbed = scrubThink(session, initialText);
         // Edit-based streaming sends with parseMode=null (plain text) — do NOT apply
@@ -365,7 +364,7 @@ public class StreamEditor {
         // S5: "off" transport — buffer content, no streaming edits
         if ("off".equals(streamingTransport)) {
             String scrubbed = scrubThink(session, text);
-            String formatted = formatForTelegram(scrubbed);
+            String formatted = formatForTelegramDelegate(scrubbed);
             session.floodFallbackBuffer.setLength(0);
             session.floodFallbackBuffer.append(formatted);
             return false;
@@ -374,8 +373,8 @@ public class StreamEditor {
         // S5: Native draft streaming — route mid-stream frames through sendDraft.
         if (session.useDraftStreaming && !session.streamingDisabled) {
             // Check failure threshold — after 2 failures, fall back to edit-based
-            if (session.draftFailures >= 1) {
-                log.info("Draft streaming disabled for chat {} after {} failures, falling back to edit-based", chatId, session.draftFailures);
+            if (session.draftFailures.get() >= 1) {
+                log.info("Draft streaming disabled for chat {} after {} failures, falling back to edit-based", chatId, session.draftFailures.get());
                 session.useDraftStreaming = false;
                 // Fall through to edit-based path below
             } else {
@@ -387,7 +386,7 @@ public class StreamEditor {
         if (session.streamingDisabled) {
             // P2-16: Buffer content in fallback mode — will be sent as a new message on finalize
             String scrubbedFallback = scrubThink(session, text);
-            String formattedFallback = formatForTelegram(scrubbedFallback);
+            String formattedFallback = formatForTelegramDelegate(scrubbedFallback);
             session.floodFallbackBuffer.setLength(0);
             session.floodFallbackBuffer.append(formattedFallback);
             log.debug("Streaming edits disabled for chat {} due to flood limits, buffering ({} chars)", chatId, formattedFallback.length());
@@ -407,7 +406,7 @@ public class StreamEditor {
                 if (newMsgId.isPresent()) {
                     session.currentMessageId.set(newMsgId.get());
                     session.lastEditTime = System.currentTimeMillis();
-                    session.floodStrikes = 0;
+                    session.floodStrikes.set(0);
                     log.debug("Sent first streaming message for chat {} (delayed start), messageId={}", chatId, newMsgId.get());
                     return true;
                 }
@@ -453,7 +452,7 @@ public class StreamEditor {
 
         // Partial silence marker holdback: don't render a chunk that ends with an incomplete
         // marker like "NO" / "NO_R" / "[SILE" / "**". Wait for the next chunk.
-        if (endsWithPartialSilenceMarker(formatted)) {
+        if (SilenceMarkerUtils.endsWithPartialSilenceMarker(formatted)) {
             log.debug("Holding back partial silence marker for chat {}: '{}'", chatId, formatted);
             return false;
         }
@@ -494,7 +493,7 @@ public class StreamEditor {
             // P2-16: Track last sent text for redundant edit skip
             session.lastSentText = withCursor;
             // Hermes: on success, only reset flood strikes — interval stays at backoff level
-            session.floodStrikes = 0;
+            session.floodStrikes.set(0);
         } else {
             // B5: Edit failed. BUG FIX: use the error code from the typed exception —
             // TelegramClient.getLastApiErrorCode() is a shared mutable side-channel
@@ -532,7 +531,7 @@ public class StreamEditor {
 
         // Count ``` (triple backtick) occurrences in firstPart
         // If odd, we're inside an unclosed code block at the split point
-        int fenceCount = countCodeFences(firstPart);
+        int fenceCount = TelegramTextFormatter.countCodeFences(firstPart);
         if (fenceCount % 2 != 0) {
             // Inside a code block — close in firstPart, reopen in remainder
             firstPart = firstPart + "\n```";
@@ -555,7 +554,7 @@ public class StreamEditor {
 
         if (success) {
             session.lastEditTime = System.currentTimeMillis();
-            session.floodStrikes = 0;
+            session.floodStrikes.set(0);
         } else {
             handleEditFailure(chatId, messageId, firstPart, session, 400);
             return false;
@@ -623,7 +622,7 @@ public class StreamEditor {
         // Silence marker suppression (Hermes parity: _is_intentional_silence_response).
         // If the final text is a silence marker, retract the streaming message instead
         // of showing NO_REPLY/[SILENT]/*** to the user.
-        if (isSilenceMarker(finalText)) {
+        if (SilenceMarkerUtils.isSilenceMarker(finalText)) {
             log.debug("Silence marker detected for chat {}, retracting streaming message", chatId);
             try {
                 telegramClient.deleteMessage(chatId, messageId);
@@ -669,7 +668,7 @@ public class StreamEditor {
 
         // P2-16: If we were in flood fallback mode, send the buffered content
         // as a new message (or continuation messages) instead of editing.
-        StringBuilder buffer = session.floodFallbackBuffer;
+        StringBuffer buffer = session.floodFallbackBuffer;
         if (buffer.length() > 0) {
             log.info("Flood fallback mode: sending buffered content ({} chars) as new message for chat {}", buffer.length(), chatId);
             String bufferedContent = buffer.toString();
@@ -750,7 +749,7 @@ public class StreamEditor {
         }
 
         // Hermes: on finalize, apply MarkdownConverter formatting (raw during streaming, formatted final)
-        String formatted = formatForTelegram(scrubbed);
+        String formatted = formatForTelegramDelegate(scrubbed);
         // B7: Final message — NOT silent (push notification enabled)
         boolean success;
         try {
@@ -841,11 +840,11 @@ public class StreamEditor {
         }
         boolean ok = telegramClient.sendDraft(chatId, text, draftId);
         if (!ok) {
-            session.draftFailures = session.draftFailures + 1;
-            log.debug("Draft frame failed for chat {} (failures={})", chatId, session.draftFailures);
-            if (session.draftFailures >= 1) {
+            session.draftFailures.incrementAndGet();
+            log.debug("Draft frame failed for chat {} (failures={})", chatId, session.draftFailures.get());
+            if (session.draftFailures.get() >= 1) {
                 log.info("Disabling draft streaming for chat {} after {} failures, falling back to edit-based",
-                    chatId, session.draftFailures);
+                    chatId, session.draftFailures.get());
                 session.useDraftStreaming = false;
             }
         }
@@ -869,7 +868,10 @@ public class StreamEditor {
         int charsAccumulated = text.length();
         boolean intervalElapsed = last == 0 || (now - last) >= currentInterval;
         boolean thresholdReached = bufferThreshold > 0 && charsAccumulated >= bufferThreshold;
-        if (!intervalElapsed && !thresholdReached) {
+        // Draft frames are rate-limited more strictly than edit-based: always
+        // enforce the interval (the threshold bypass causes 429 floods because
+        // each SSE token adds enough chars to exceed bufferThreshold=24).
+        if (!intervalElapsed) {
             log.trace("Throttled draft frame for chat {} ({}ms since last, interval={})",
                 chatId, last != 0 ? now - last : 0, currentInterval);
             return false;
@@ -880,12 +882,12 @@ public class StreamEditor {
 
         // Hermes parity: hold back partial silence markers in draft too.
         // Without this, [SILENT] or NO_REPLY can flash to the user mid-stream.
-        if (endsWithPartialSilenceMarker(scrubbed)) {
+        if (SilenceMarkerUtils.endsWithPartialSilenceMarker(scrubbed)) {
             log.debug("Holding back partial silence marker in draft for chat {}", chatId);
             return false;
         }
 
-        String formatted = formatForTelegram(scrubbed);
+        String formatted = formatForTelegramDelegate(scrubbed);
 
         // Skip if content is unchanged
         String lastSent = session.lastSentText;
@@ -899,7 +901,7 @@ public class StreamEditor {
         if (ok) {
             session.lastEditTime = now;
             session.lastSentText = formatted;
-            session.floodStrikes = 0;
+            session.floodStrikes.set(0);
         }
         return ok;
     }
@@ -961,7 +963,7 @@ public class StreamEditor {
         if (session.useDraftStreaming) {
             // Send the accumulated text as a real message (committing the draft)
             String scrubbed = scrubThink(session, accumulatedText);
-            String formatted = formatForTelegram(scrubbed);
+            String formatted = formatForTelegramDelegate(scrubbed);
             sendFormattedMessage(chatId, formatted);
             // Bump draftId for the next segment
             int newDraftId = draftIdCounter.incrementAndGet();
@@ -986,7 +988,7 @@ public class StreamEditor {
         // Finalize the current message with MarkdownV2 formatting (Hermes parity).
         // Hermes sends segment breaks with finalize=True (MarkdownV2 formatted).
         String scrubbed = scrubThink(session, accumulatedText);
-        String formatted = formatForTelegram(scrubbed);
+        String formatted = formatForTelegramDelegate(scrubbed);
         try {
             telegramClient.editMessageText(chatId, effectiveMessageId, formatted, "MarkdownV2", false);
         } catch (TelegramApiException e) {
@@ -1069,11 +1071,16 @@ public class StreamEditor {
                 // Hermes: raw text (no parse_mode) during streaming
                 telegramClient.editMessageText(chatId, msgId, heartbeatText, null, disableNotification);
             } else {
-                // Draft streaming: no message_id to edit — send heartbeat as a
-                // separate silent message (Hermes parity: _notify_long_running sends
-                // a new message when edit-in-place isn't available, and tracks
-                // _heartbeat_msg_id for future edits).
-                telegramClient.sendMessage(chatId, heartbeatText, null, null, null, disableNotification);
+                // Drafts have no message id. Create one quiet heartbeat message once,
+                // then edit that same message rather than sending a new chat message
+                // every heartbeat interval.
+                long heartbeatMessageId = session.heartbeatMessageId.get();
+                if (heartbeatMessageId >= 0) {
+                    telegramClient.editMessageText(chatId, heartbeatMessageId, heartbeatText, null, disableNotification);
+                } else {
+                    telegramClient.sendMessage(chatId, heartbeatText, null, null, null, disableNotification)
+                        .ifPresent(id -> session.heartbeatMessageId.compareAndSet(-1L, id));
+                }
             }
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
@@ -1149,13 +1156,13 @@ public class StreamEditor {
             }
             if (retried) {
                 session.lastEditTime = System.currentTimeMillis();
-                session.floodStrikes = 0;
+                session.floodStrikes.set(0);
             }
             return retried;
         }
 
         // 429 or other failure — increment flood strikes
-        int strikes = session.floodStrikes = session.floodStrikes + 1;
+        int strikes = session.floodStrikes.incrementAndGet();
         log.debug("Edit failure (errorCode={}) for chat {}, flood strikes: {}", errorCode, chatId, strikes);
 
         // Increase interval on flood
@@ -1173,279 +1180,13 @@ public class StreamEditor {
             // P2-16: Initialize the flood fallback buffer with the current content.
             // The buffer is sent via sendFormattedMessage (parseMode=MarkdownV2) on finalize,
             // so apply formatForTelegram here to escape special chars correctly.
-            session.floodFallbackBuffer.append(formatForTelegram(formatted));
+            session.floodFallbackBuffer.append(formatForTelegramDelegate(formatted));
         }
         return false;
     }
 
-    // ─── B6: Think-block filtering ───────────────────────────────
+    // ─── B6: Think-block filtering (delegated to ThinkTagFilter) ───
 
-    /**
-     * Stateful scrubber for {@code Ӥ blocks.
-     * Handles split chunks where the opening or closing tag spans
-     * multiple stream deltas.
-     *
-     * <p>Also supports {@code <reasoning_scratchpad>} tags.
-     *
-     * <p>Partial closing tags are stored in a field and prepended to the
-     * next chunk to handle split closing tags across stream deltas.
-     */
-    static class ThinkScrubber {
-        private boolean insideThinkBlock = false;
-        private StringBuilder pendingTag = new StringBuilder();
-        private String pendingClosingTag = null; // Partial closing tag stored across chunks
-        private String accumulatedBefore = ""; // Text accumulated outside think blocks (for boundary check)
-
-        // Exact tag lists — case-sensitive, matching Hermes behavior.
-        // Using \u003C and \u003E for angle brackets to avoid encoding issues.
-        // Hermes uses: <REASONING_SCRATCHPAD>, Ӥ, <reasoning>, <THINKING>, <thinking>, <thought>
-        // Also includes <antml:thinking> which some models emit.
-        // Lowercase <reasoning_scratchpad> included for compatibility with models that emit it.
-        private static final String[] OPENING_TAGS = {
-            "\u003Cthink\u003E", "\u003Cthinking\u003E", "\u003Creasoning\u003E", "\u003Cthought\u003E",
-            "\u003CTHINKING\u003E", "\u003CREASONING_SCRATCHPAD\u003E", "\u003Creasoning_scratchpad\u003E", "\u003Cantml:thinking\u003E"
-        };
-        private static final String[] CLOSING_TAGS = {
-            "\u003C/think\u003E", "\u003C/thinking\u003E", "\u003C/reasoning\u003E", "\u003C/thought\u003E",
-            "\u003C/THINKING\u003E", "\u003C/REASONING_SCRATCHPAD\u003E", "\u003C/reasoning_scratchpad\u003E", "\u003C/antml:thinking\u003E"
-        };
-        // Prefixes for partial tag detection (case-sensitive)
-        private static final String[] CLOSING_TAG_PREFIXES = {
-            "\u003C/think", "\u003C/thinking", "\u003C/reasoning", "\u003C/thought",
-            "\u003C/THINKING", "\u003C/REASONING_SCRATCHPAD", "\u003C/reasoning_scratchpad", "\u003C/antml:thinking"
-        };
-        private static final String[] OPENING_TAG_PREFIXES = {
-            "\u003Cthink", "\u003Cthinking", "\u003Creasoning", "\u003Cthought",
-            "\u003CTHINKING", "\u003CREASONING_SCRATCHPAD", "\u003Creasoning_scratchpad", "\u003Cantml:thinking"
-        };
-
-        /**
-         * Process a text chunk, removing any think-block content.
-         * Stateful: if a {@code Ӥ tag opens but no closing tag is seen,
-         * all subsequent content is suppressed until the closing tag arrives.
-         *
-         * <p>Matches Hermes behavior:
-         * <ul>
-         *   <li>Case-sensitive matching (not case-insensitive)</li>
-         *   <li>Exact tag match (not prefix matching)</li>
-         *   <li>Boundary check: opening tag must be at block boundary
-         *       (start of text or preceded by newline + optional whitespace)</li>
-         * </ul>
-         *
-         * @param input the raw text chunk
-         * @return the text with think-block content removed
-         */
-        String scrub(String input) {
-            if (input == null || input.isEmpty()) {
-                return "";
-            }
-
-            // If we have a pending partial opening tag from the previous chunk,
-            // prepend it to this chunk so the tag is reassembled correctly (Hermes parity).
-            // Hermes stores partial tags in _think_buffer and prepends to the next chunk.
-            if (pendingTag.length() > 0) {
-                input = pendingTag.toString() + input;
-                pendingTag.setLength(0);
-            }
-
-            // If we have a pending partial closing tag from the previous chunk,
-            // prepend it to this chunk
-            if (pendingClosingTag != null) {
-                input = pendingClosingTag + input;
-                pendingClosingTag = null;
-            }
-
-            // If we're inside a think block, look for the closing tag
-            if (insideThinkBlock) {
-                int closeIdx = findClosingTag(input);
-                if (closeIdx >= 0) {
-                    // Found closing tag — resume output after it
-                    insideThinkBlock = false;
-                    pendingTag.setLength(0);
-                    int afterTag = findEndOfClosingTag(input, closeIdx);
-                    return scrub(input.substring(afterTag));
-                } else {
-                    // Still inside think block — suppress all content
-                    // But check if we have a partial closing tag at the end
-                    checkPartialClosingTag(input);
-                    return "";
-                }
-            }
-
-            // Not inside a think block — look for opening tags at block boundaries
-            StringBuilder result = new StringBuilder();
-            int i = 0;
-            while (i < input.length()) {
-                int openIdx = findOpeningTagAtBoundary(input, i);
-                if (openIdx < 0) {
-                    // No opening tag found — append rest, but check for partial tag at end
-                    String rest = input.substring(i);
-                    String[] split = splitPartialOpeningTag(rest);
-                    result.append(split[0]);
-                    if (split[1] != null) {
-                        pendingTag.setLength(0);
-                        pendingTag.append(split[1]);
-                    }
-                    break;
-                }
-
-                // Append content before the tag
-                result.append(input, i, openIdx);
-
-                // Find the end of the opening tag (the '>')
-                int tagEnd = input.indexOf('>', openIdx);
-                if (tagEnd < 0) {
-                    // Opening tag is incomplete — enter think mode, suppress rest
-                    insideThinkBlock = true;
-                    break;
-                }
-
-                // Check if the closing tag is on the same chunk
-                int closeIdx = findClosingTag(input, tagEnd + 1);
-                if (closeIdx >= 0) {
-                    // Full think block within this chunk — skip it
-                    int afterClose = findEndOfClosingTag(input, closeIdx);
-                    i = afterClose;
-                } else {
-                    // Enter think block mode
-                    insideThinkBlock = true;
-                    // Check for partial closing tag at end
-                    String rest = input.substring(tagEnd + 1);
-                    checkPartialClosingTag(rest);
-                    break;
-                }
-            }
-
-            String output = result.toString();
-            accumulatedBefore += output;
-            return output;
-        }
-
-        /**
-         * Flush any remaining state — called on finalize.
-         * If we were inside a think block, return empty (the think content
-         * was suppressed and never displayed).
-         */
-        /**
-         * Flush any remaining state. Hermes parity (stream_consumer.py:830):
-         * if there's a pending partial opening tag that didn't turn out to be
-         * a think tag, release it as visible text instead of silently dropping it.
-         */
-        String flush() {
-            String released = "";
-            if (pendingTag.length() > 0 && !insideThinkBlock) {
-                // Partial tag that was never confirmed as a think tag — release it
-                released = pendingTag.toString();
-            }
-            insideThinkBlock = false;
-            pendingTag.setLength(0);
-            pendingClosingTag = null;
-            accumulatedBefore = "";
-            return released;
-        }
-
-        /**
-         * Find the earliest opening tag at a block boundary.
-         * Boundary check (mirrors Hermes stream_consumer.py logic):
-         * - Tag at index 0: boundary if accumulated text is empty or ends with newline
-         * - Tag at index > 0: boundary if text between last newline and tag is whitespace-only
-         *   (or if no newline before tag, all text before tag is whitespace AND
-         *   accumulated text is empty or ends with newline)
-         */
-        private int findOpeningTagAtBoundary(String text, int from) {
-            int earliest = -1;
-            for (String tag : OPENING_TAGS) {
-                int searchStart = from;
-                while (true) {
-                    int idx = text.indexOf(tag, searchStart);
-                    if (idx < 0) break;
-
-                    // Boundary check
-                    boolean isBoundary;
-                    if (idx == from) {
-                        // At the start of the current chunk
-                        isBoundary = accumulatedBefore.isEmpty()
-                            || accumulatedBefore.endsWith("\n");
-                    } else {
-                        // Check text before the tag within this chunk
-                        String preceding = text.substring(from, idx);
-                        int lastNl = preceding.lastIndexOf('\n');
-                        if (lastNl == -1) {
-                            // No newline before tag in this chunk
-                            isBoundary = (accumulatedBefore.isEmpty()
-                                || accumulatedBefore.endsWith("\n"))
-                                && preceding.strip().isEmpty();
-                        } else {
-                            isBoundary = preceding.substring(lastNl + 1).strip().isEmpty();
-                        }
-                    }
-
-                    if (isBoundary) {
-                        if (earliest < 0 || idx < earliest) {
-                            earliest = idx;
-                        }
-                        break; // first boundary hit for this tag is enough
-                    }
-                    searchStart = idx + 1;
-                }
-            }
-            return earliest;
-        }
-
-        private int findClosingTag(String text) {
-            return findClosingTag(text, 0);
-        }
-
-        private int findClosingTag(String text, int from) {
-            int earliest = -1;
-            for (String tag : CLOSING_TAGS) {
-                int idx = text.indexOf(tag, from);
-                if (idx >= 0 && (earliest < 0 || idx < earliest)) {
-                    earliest = idx;
-                }
-            }
-            return earliest;
-        }
-
-        private int findEndOfClosingTag(String text, int closeIdx) {
-            // Find the '>' after the closing tag start
-            int gt = text.indexOf('>', closeIdx);
-            return gt >= 0 ? gt + 1 : text.length();
-        }
-
-        /**
-         * Check if the end of text contains a partial closing tag like "</thin".
-         * If found, store it in pendingClosingTag so it can be prepended to the
-         * next chunk.
-         */
-        private void checkPartialClosingTag(String text) {
-            for (String tag : CLOSING_TAG_PREFIXES) {
-                for (int len = Math.min(tag.length() - 1, text.length()); len >= 2; len--) {
-                    if (text.endsWith(tag.substring(0, len))) {
-                        // Partial closing tag at end — store it for the next chunk
-                        pendingClosingTag = tag.substring(0, len);
-                        return;
-                    }
-                }
-            }
-        }
-
-        /**
-         * Split text that may end with a partial opening tag.
-         * Returns [safe_text, pending_tag_or_null].
-         */
-        private String[] splitPartialOpeningTag(String text) {
-            for (String tag : OPENING_TAG_PREFIXES) {
-                for (int len = Math.min(tag.length() - 1, text.length()); len >= 1; len--) {
-                    String suffix = tag.substring(0, len);
-                    if (text.endsWith(suffix)) {
-                        return new String[]{text.substring(0, text.length() - len), suffix};
-                    }
-                }
-            }
-            return new String[]{text, null};
-        }
-    }
 
     /**
      * B6: Scrub think blocks from a streaming chunk.
@@ -1479,7 +1220,7 @@ public class StreamEditor {
         }
         // Stateless regex scrub — handles closed tags, orphaned open tags,
         // and stray tags without cross-call state.
-        String result = stripThinkTagsRegex(text);
+        String result = ThinkTagFilter.stripThinkTagsRegex(text);
         // S-2: Strip MEDIA: tags from streaming display
         result = mediaDeliveryService.stripMediaTagsForDisplay(result);
         return result;
@@ -1508,9 +1249,9 @@ public class StreamEditor {
         // with boundary-precise logic, then flushes any pending state.
         // Hermes parity: flush() releases pending partial tags as visible text
         // if they weren't confirmed as think tags (stream_consumer.py:830).
-        ThinkScrubber scrubber = session.thinkScrubber;
+        ThinkTagFilter.ThinkScrubber scrubber = session.thinkScrubber;
         if (scrubber == null) {
-            scrubber = new ThinkScrubber();
+            scrubber = new ThinkTagFilter.ThinkScrubber();
         }
         String result = scrubber.scrub(text);
         String flushed = scrubber.flush();
@@ -1523,30 +1264,11 @@ public class StreamEditor {
     }
 
     /**
-     * B6: Regex-based think-tag stripping for the final message.
-     * Catches any remaining tags that the stateful scrubber might have missed.
+     * B6: Regex-based think-tag stripping — delegate to {@link ThinkTagFilter}.
+     * Kept as public static for backward compatibility (BotMessageProcessor calls this).
      */
-    private static final Pattern THINK_BLOCK_PATTERN =
-        Pattern.compile("<(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)\\b[^>]*>.*?</(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>",
-            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
-    private static final Pattern THINK_ORPHAN_OPEN_PATTERN =
-        Pattern.compile("(?:^|\\n)[ \\t]*<(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)\\b[^>]*>.*$",
-            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
-    private static final Pattern THINK_STRAY_TAG_PATTERN =
-        Pattern.compile("</?(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>\\s*",
-            Pattern.CASE_INSENSITIVE);
-
     public static String stripThinkTagsRegex(String content) {
-        if (content == null || content.isEmpty()) {
-            return "";
-        }
-        // 1. Remove closed tag pairs
-        String result = THINK_BLOCK_PATTERN.matcher(content).replaceAll("");
-        // 2. Remove unterminated open tags (tag to end of string)
-        result = THINK_ORPHAN_OPEN_PATTERN.matcher(result).replaceAll("");
-        // 3. Remove stray orphan tags
-        result = THINK_STRAY_TAG_PATTERN.matcher(result).replaceAll("");
-        return result;
+        return ThinkTagFilter.stripThinkTagsRegex(content);
     }
 
     // ─── B7: Silent notification helper ───────────────────────────
@@ -1592,7 +1314,7 @@ public class StreamEditor {
      * format_message is always applied before delivery).
      */
     public Optional<Long> sendFormattedFinalMessage(long chatId, String text) {
-        String formatted = formatForTelegram(text);
+        String formatted = formatForTelegramDelegate(text);
         if (formatted.length() > MessageSplitter.TELEGRAM_MAX_LENGTH) {
             List<String> chunks = MessageSplitter.splitAndFormat(text, parseMode);
             Optional<Long> last = Optional.empty();
@@ -1644,141 +1366,26 @@ public class StreamEditor {
             return text;
         }
         // Step 1: balance triple-backtick fences
-        if (countOccurrences(text, "```") % 2 == 1) {
-            text = stripTrailingNewlines(text) + "\n```";
+        if (TelegramTextFormatter.countOccurrences(text, "```") % 2 == 1) {
+            text = TelegramTextFormatter.stripTrailingNewlines(text) + "\n```";
         }
         // Step 2: balance single-backtick inline spans outside complete fences
         String withoutFences = text.replaceAll("(?s)```.*?```", "");
         withoutFences = withoutFences.replaceAll("```[^`]*$", "");
-        if (countOccurrences(withoutFences, "`") % 2 == 1) {
+        if (TelegramTextFormatter.countOccurrences(withoutFences, "`") % 2 == 1) {
             text = text + "`";
         }
         return text;
     }
 
-    private static String stripTrailingNewlines(String s) {
-        int end = s.length();
-        while (end > 0 && s.charAt(end - 1) == '\n') {
-            end--;
-        }
-        return s.substring(0, end);
-    }
-
-    private static int countOccurrences(String haystack, String needle) {
-        int count = 0;
-        int idx = 0;
-        while ((idx = haystack.indexOf(needle, idx)) != -1) {
-            count++;
-            idx += needle.length();
-        }
-        return count;
-    }
-
-    private int countCodeFences(String text) {
-        int count = 0;
-        int idx = 0;
-        while ((idx = text.indexOf("```", idx)) >= 0) {
-            count++;
-            idx += 3;
-        }
-        return count;
-    }
+    // ─── Formatting (delegated to TelegramTextFormatter & SilenceMarkerUtils) ──
 
     /**
-     * Check if text ends with a partial silence marker prefix. If we render these,
-     * the user sees "NO" / "NO_R" / "NO_RE" flash before the complete marker is scrubbed.
-     * Hermes holdback: wait for the next chunk if text ends with a silence-marker prefix.
+     * Instance delegate for {@link TelegramTextFormatter#formatForTelegram(String, String)}
+     * using this editor's configured parse mode.
      */
-    private boolean endsWithPartialSilenceMarker(String text) {
-        if (text == null || text.isBlank()) return false;
-        String t = text.trim();
-        // NO_REPLY prefixes
-        if (t.endsWith("NO") || t.endsWith("NO_") || t.endsWith("NO_R") || t.endsWith("NO_RE")
-            || t.endsWith("NO_REPL") || t.endsWith("NO_REPLY")) return true;
-        // "NO REPLY" (space form) prefixes
-        if (t.endsWith("NO REP") || t.endsWith("NO REPL") || t.endsWith("NO REPLY")) return true;
-        // [SILENT] and bare SILENT prefixes
-        if (t.endsWith("[") || t.endsWith("[S") || t.endsWith("[SI") || t.endsWith("[SIL")
-            || t.endsWith("[SILE") || t.endsWith("[SILEN") || t.endsWith("[SILENT")) return true;
-        if (t.endsWith("SIL") || t.endsWith("SILE") || t.endsWith("SILEN") || t.endsWith("SILENT")) return true;
-        return t.endsWith("***") || t.endsWith("**");
-    }
-
-    /**
-     * Check if text is an intentional silence marker (Hermes parity: response_filters.py
-     * is_intentional_silence_response). Canonicalises (upper-case, collapse whitespace),
-     * strips edge punctuation while keeping brackets structural, caps length at 64 chars —
-     * substantive prose that merely MENTIONS a marker is never suppressed.
-     */
-    private boolean isSilenceMarker(String text) {
-        if (text == null || text.isBlank()) return false;
-        String stripped = text.strip();
-        if (stripped.isEmpty()) return false;
-        if (stripped.length() > 64) return false;
-        // Candidate 1: canonical form as-is; Candidate 2: edge punctuation stripped
-        // (".NO_REPLY" / "*NO_REPLY*"), keeping square brackets structural.
-        for (String candidate : silenceCandidates(stripped)) {
-            switch (candidate) {
-                case "[SILENT]", "SILENT", "NO_REPLY", "NO REPLY" -> {
-                    return true;
-                }
-                default -> { }
-            }
-        }
-        return false;
-    }
-
-    /** Canonicalise: upper-case + collapse internal whitespace (Hermes _canonical_silence_candidate). */
-    private String canonicalSilence(String text) {
-        return String.join(" ", text.toUpperCase().strip().split("\\s+"));
-    }
-
-    /** Hermes _canonical_silence_candidates: raw canonical + edge-punctuation-stripped variant. */
-    private java.util.List<String> silenceCandidates(String stripped) {
-        String strippedPunct = stripEdgeSilencePunctuation(stripped);
-        if (strippedPunct.equals(stripped)) {
-            return java.util.List.of(canonicalSilence(stripped));
-        }
-        return java.util.List.of(canonicalSilence(stripped), canonicalSilence(strippedPunct));
-    }
-
-    /** Strip stray edge punctuation without erasing marker structure (brackets stay). */
-    private String stripEdgeSilencePunctuation(String text) {
-        int start = 0, end = text.length();
-        while (start < end && text.charAt(start) != '[' && text.charAt(start) != ']'
-            && isPunctuation(text.charAt(start))) {
-            start++;
-        }
-        while (end > start && text.charAt(end - 1) != '[' && text.charAt(end - 1) != ']'
-            && isPunctuation(text.charAt(end - 1))) {
-            end--;
-        }
-        return text.substring(start, end).strip();
-    }
-
-    private boolean isPunctuation(char c) {
-        int t = Character.getType(c);
-        return t == Character.CONNECTOR_PUNCTUATION || t == Character.DASH_PUNCTUATION
-            || t == Character.START_PUNCTUATION || t == Character.END_PUNCTUATION
-            || t == Character.INITIAL_QUOTE_PUNCTUATION || t == Character.FINAL_QUOTE_PUNCTUATION
-            || t == Character.OTHER_PUNCTUATION;
-    }
-
-    /**
-     * Formats text for Telegram based on the configured parse mode.
-     * For MarkdownV2, escapes special characters using {@link MarkdownConverter}.
-     *
-     * @param text raw text from the LLM
-     * @return formatted text safe for the configured parse mode
-     */
-    private String formatForTelegram(String text) {
-        if (text == null || text.isEmpty()) {
-            return "";
-        }
-        if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-            return MarkdownConverter.convert(text);
-        }
-        return text;
+    private String formatForTelegramDelegate(String text) {
+        return TelegramTextFormatter.formatForTelegram(text, parseMode);
     }
 
     // ─── P1: Rich message support accessors ───────────────────────

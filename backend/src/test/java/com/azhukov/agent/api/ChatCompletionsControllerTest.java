@@ -302,7 +302,8 @@ class ChatCompletionsControllerTest {
             objectSchema()
         );
         when(toolRegistry.getDefinitions()).thenReturn(List.of(registryTool));
-        when(agentRuntime.run(anyList(), anyList())).thenReturn(ChatResponse.text("fallback ok"));
+        ArgumentCaptor<List<ToolDefinition>> toolsCaptor = ArgumentCaptor.forClass(List.class);
+        when(agentRuntime.run(anyList(), toolsCaptor.capture())).thenReturn(ChatResponse.text("fallback ok"));
 
         String requestBody = """
             {
@@ -317,7 +318,12 @@ class ChatCompletionsControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.choices[0].message.content").value("fallback ok"));
 
+        // Verify the controller actually used the registry definitions (not just that
+        // getDefinitions was called during setup), and that they were passed to run().
         verify(toolRegistry).getDefinitions();
+        List<ToolDefinition> tools = toolsCaptor.getValue();
+        assertThat(tools).hasSize(1);
+        assertThat(tools.get(0).name()).isEqualTo("read_file");
     }
 
     @Test

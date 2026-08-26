@@ -1,7 +1,8 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.api.dto.SkillAuditLogDto;
+import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.core.skill.SkillManager;
-import com.azhukov.agent.persistence.entity.SkillAuditLogEntity;
 import com.azhukov.agent.persistence.repository.SkillAuditLogRepository;
 import com.azhukov.agent.service.AgentRuntimeService;
 import jakarta.validation.Valid;
@@ -31,6 +32,7 @@ public class SkillController {
     private final AgentRuntimeService agentRuntimeService;
     private final SkillAuditLogRepository skillAuditLogRepository;
     private final com.azhukov.agent.core.skill.SkillsHubService skillsHubService;
+    private final DomainDtoMapper domainDtoMapper;
 
     @Operation(summary = "List all skill names")
     @GetMapping("/agent/skills")
@@ -82,8 +84,10 @@ public class SkillController {
 
     // h77: Curator audit ledger — list audit history for a skill.
     @GetMapping("/agent/skills/{name}/audit")
-    public List<SkillAuditLogEntity> getSkillAudit(@PathVariable String name) {
-        return skillAuditLogRepository.findBySkillNameOrderByTimestampDesc(name);
+    public List<SkillAuditLogDto> getSkillAudit(@PathVariable String name) {
+        return skillAuditLogRepository.findBySkillNameOrderByTimestampDesc(name).stream()
+            .map(domainDtoMapper::toSkillAuditLogDto)
+            .toList();
     }
 
     // ── Reload skills ──

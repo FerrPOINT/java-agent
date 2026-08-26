@@ -457,7 +457,12 @@ class DefaultContextCompressorBranchCoverageTest {
         List<Message> result = comp.compress(messages, 100);
         // Hermes tail floor: tail = max(3, min(1, 8)) = 3 → head(1)+summary(1)+tail(3) = 5
         assertThat(result).hasSize(5);
-        // Summary should be truncated
-        assertThat(result.get(1).content()).isNotBlank();
+        // Summary uses the Hermes structured deterministic fallback format.
+        String summary = result.get(1).content();
+        assertThat(summary).contains("[CONTEXT COMPACTION — REFERENCE ONLY]");
+        assertThat(summary).contains("## Historical Task Snapshot");
+        assertThat(summary).contains("## Completed Actions");
+        assertThat(summary).contains("## Last Dropped Turns");
+        assertThat(summary).contains("--- END OF CONTEXT SUMMARY");
     }
 }

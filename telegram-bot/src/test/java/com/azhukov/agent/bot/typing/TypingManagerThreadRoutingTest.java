@@ -6,6 +6,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -83,10 +87,14 @@ class TypingManagerThreadRoutingTest {
 
     @Test
     void periodicRefreshUsesThreadId() throws InterruptedException {
-        when(client.sendTyping(anyLong(), any())).thenReturn(true);
+        // Use latch to wait for at least 2 sendTyping calls (immediate + one periodic)
+        CountDownLatch typingLatch = new CountDownLatch(2);
+        when(client.sendTyping(anyLong(), any())).thenAnswer(inv -> {
+            typingLatch.countDown();
+            return true;
+        });
         manager.startTyping(123L, 55);
-        // Wait for at least 2 calls (immediate + one periodic)
-        Thread.sleep(150);
+        assertThat(typingLatch.await(2, TimeUnit.SECONDS)).isTrue();
         // All calls should use the thread id
         verify(client, atLeast(2)).sendTyping(eq(123L), eq(55));
         manager.stopTyping(123L);

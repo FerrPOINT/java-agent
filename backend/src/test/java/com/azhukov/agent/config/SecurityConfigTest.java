@@ -1,5 +1,6 @@
 package com.azhukov.agent.config;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 
@@ -13,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * the SecurityConfig class compiles and can be instantiated with mocked
  * dependencies. Full integration testing is done via @SpringBootTest.
  */
+@Tag("slow")
 class SecurityConfigTest {
 
     @Test

@@ -77,6 +77,8 @@ public final class SkillSecurityScanner {
 
  // ─── Built-in threat patterns (ported from skills_guard.py) ───
 
+ private static final int MAX_FINDING_LENGTH = 120;
+ private static final int MAX_FINDING_TRUNCATE = 117;
  private static final List<ThreatPattern> THREAT_PATTERNS = List.of(
  // ── Exfiltration: shell commands leaking secrets ──
  tp("curl\\s+[^\\n]*\\$\\{?\\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)",
@@ -296,7 +298,7 @@ public final class SkillSecurityScanner {
  if (tp.regex().matcher(lines[i]).find()) {
  seen.add(key);
  String match = lines[i].strip();
- if (match.length() > 120) match = match.substring(0, 117) + "...";
+ if (match.length() > MAX_FINDING_LENGTH) match = match.substring(0, MAX_FINDING_TRUNCATE) + "...";
  findings.add(new Finding(
  tp.patternId(), tp.severity(), tp.category(),
  label, i + 1, match, tp.description()

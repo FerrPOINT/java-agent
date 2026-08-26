@@ -12,6 +12,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -40,7 +41,10 @@ class CheckpointManagerTest {
         properties = new AgentProperties();
         properties.getCore().setWorkingDirectory(tempDir.toString());
         properties.getCheckpoints().setEnabled(true);
-        manager = new CheckpointManager(checkpointRepository, checkpointFileRepository, properties, new ObjectMapper());
+        manager = new CheckpointManager(checkpointRepository, checkpointFileRepository, properties, new ObjectMapper(),
+            new ObjectProvider<>() {
+                @Override public CheckpointManager getObject() { return manager; }
+            });
     }
 
     @Test

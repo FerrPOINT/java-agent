@@ -17,7 +17,7 @@ class CronExecutionLogEntityTest {
         UUID jobId = UUID.randomUUID();
         Instant started = Instant.now();
         Instant finished = started.plusSeconds(5);
-        var entity = new CronExecutionLogEntity(jobId, started, finished, "success", null);
+        var entity = CronExecutionLogEntity.create(jobId, started, finished, "success", null);
 
         assertThat(entity.getJobId()).isEqualTo(jobId);
         assertThat(entity.getStartedAt()).isEqualTo(started);
@@ -31,7 +31,7 @@ class CronExecutionLogEntityTest {
         UUID jobId = UUID.randomUUID();
         Instant started = Instant.now();
         Instant finished = started.plusSeconds(10);
-        var entity = new CronExecutionLogEntity(jobId, started, finished, "failure", "Connection refused");
+        var entity = CronExecutionLogEntity.create(jobId, started, finished, "failure", "Connection refused");
 
         assertThat(entity.getJobId()).isEqualTo(jobId);
         assertThat(entity.getStatus()).isEqualTo("failure");
@@ -43,7 +43,7 @@ class CronExecutionLogEntityTest {
         UUID jobId = UUID.randomUUID();
         Instant started = Instant.now();
         Instant finished = started.plusSeconds(120);
-        var entity = new CronExecutionLogEntity(jobId, started, finished, "timeout", "Execution timed out after 120s");
+        var entity = CronExecutionLogEntity.create(jobId, started, finished, "timeout", "Execution timed out after 120s");
 
         assertThat(entity.getStatus()).isEqualTo("timeout");
         assertThat(entity.getErrorMessage()).contains("timed out");

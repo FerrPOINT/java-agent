@@ -45,10 +45,12 @@ public class ChromiumDownloader {
                 .GET()
                 .build();
             HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            if (response.statusCode() != 200) {
-                throw new IOException("Failed to download Chromium: HTTP " + response.statusCode() + " from " + url);
-            }
+            // H13: Wrap response body in try-with-resources BEFORE checking status code
+            // to avoid InputStream leak on non-200 responses.
             try (InputStream in = response.body()) {
+                if (response.statusCode() != 200) {
+                    throw new IOException("Failed to download Chromium: HTTP " + response.statusCode() + " from " + url);
+                }
                 Files.copy(in, archive, StandardCopyOption.REPLACE_EXISTING);
             }
             log.info("Downloaded {} bytes to {}", Files.size(archive), archive);

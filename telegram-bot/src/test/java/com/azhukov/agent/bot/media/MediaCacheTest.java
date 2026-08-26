@@ -95,7 +95,7 @@ class MediaCacheTest {
     }
 
     @Test
-    void get_returnsEmptyAfterTtlExpiry() {
+    void get_returnsEmptyAfterTtlExpiry() throws InterruptedException {
         // Use a very short TTL
         MediaCache shortCache = new MediaCache(Duration.ofMillis(50));
         shortCache.put("file-1", "data".getBytes());
@@ -103,27 +103,20 @@ class MediaCacheTest {
         // Immediately available
         assertThat(shortCache.get("file-1")).isPresent();
 
-        // Wait for expiry
-        try {
-            Thread.sleep(80);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        // Wait for expiry — testing actual TTL timing behavior
+        Thread.sleep(80); // timing-assertion
 
         assertThat(shortCache.get("file-1")).isEmpty();
     }
 
     @Test
-    void purgeExpired_removesExpiredEntries() {
+    void purgeExpired_removesExpiredEntries() throws InterruptedException {
         MediaCache shortCache = new MediaCache(Duration.ofMillis(50));
         shortCache.put("file-1", "data1".getBytes());
         shortCache.put("file-2", "data2".getBytes());
 
-        try {
-            Thread.sleep(80);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        // Wait for expiry — testing actual TTL timing behavior
+        Thread.sleep(80); // timing-assertion
 
         int removed = shortCache.purgeExpired();
 

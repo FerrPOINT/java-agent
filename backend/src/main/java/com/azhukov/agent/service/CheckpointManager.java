@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +39,8 @@ public class CheckpointManager {
     private final CheckpointFileRepository checkpointFileRepository;
     private final AgentProperties properties;
     private final ObjectMapper objectMapper;
+    /** Self-proxy reference so persistCheckpoint/prune get their own @Transactional via Spring AOP. */
+    private final ObjectProvider<CheckpointManager> self;
 
     private static final int MAX_FILES = 10000;
 
@@ -127,19 +130,41 @@ public class CheckpointManager {
         } catch (Exception ignore) { /* unreadable dir → skip */ }
     }
 
-    @Transactional
+    /**
+     * DTO carrying collected file data from the filesystem phase to the
+     * persistence phase, so no filesystem I/O happens inside the transaction.
+     */
+    private record CollectedFile(String relativePath, String hash, long size, String contentBase64) {}
+
+    /**
+     * Takes a checkpoint snapshot: collects file hashes and content from the
+     * filesystem (outside any transaction), then persists the result in a
+     * short transactional method.
+     */
     public CheckpointEntity snapshot(String description) {
+        // Phase 1: filesystem collection — NO transaction
+        List<CollectedFile> collectedFiles = collectFilesForSnapshot(description);
+
+        // Phase 2: persistence — short @Transactional via Spring proxy
+        CheckpointEntity saved = self.getObject().persistCheckpoint(description, collectedFiles);
+
+        // Auto-prune (already @Transactional via proxy)
+        self.getObject().prune(properties.getCheckpoints().getMaxSnapshots());
+
+        return saved;
+    }
+
+    /**
+     * Filesystem collection phase: recursive directory scan, file hashing,
+     * and content reading — all performed OUTSIDE any transaction.
+     *
+     * @param description the checkpoint description (used for logging only)
+     * @return list of collected file metadata (hash, size, optional content)
+     */
+    private List<CollectedFile> collectFilesForSnapshot(String description) {
         String workingDir = properties.getCore().getWorkingDirectory();
         Path root = Paths.get(workingDir);
         log.info("Taking checkpoint snapshot of {} — {}", workingDir, description);
-
-        ArrayNode filesArray = objectMapper.createArrayNode();
-        int fileCount = 0;
-        long totalSize = 0;
-
-        CheckpointEntity entity = new CheckpointEntity();
-        entity.setDescription(description);
-        entity.setCreatedAt(Instant.now());
 
         // Root-relative .gitignore rules + dir pruning: Files.walk with a
         // per-file filter still DESCENDS into excluded dirs (and nested git
@@ -148,13 +173,15 @@ public class CheckpointManager {
         List<Path> fileList = new java.util.ArrayList<>();
         collectFiles(root, root, ignoreRules, fileList);
 
+        List<CollectedFile> collected = new java.util.ArrayList<>();
+
         try (Stream<Path> paths = fileList.stream()) {
-            fileList = paths
+            List<Path> filtered = paths
                 .filter(p -> !isHidden(p))
                 .limit(MAX_FILES)
                 .toList();
 
-            for (Path p : fileList) {
+            for (Path p : filtered) {
                 try {
                     long size = Files.size(p);
                     if (size > MAX_FILE_SIZE) {
@@ -164,30 +191,15 @@ public class CheckpointManager {
                     String hash = hashFile(p);
                     String relativePath = root.relativize(p).toString();
 
-                    ObjectNode fileNode = objectMapper.createObjectNode();
-                    fileNode.put("path", relativePath);
-                    fileNode.put("hash", hash);
-                    fileNode.put("size", size);
-                    filesArray.add(fileNode);
-
-                    // Store file content for restoration
-                    CheckpointFileEntity fileEntity = new CheckpointFileEntity();
-                    fileEntity.setCheckpoint(entity);
-                    fileEntity.setFilePath(relativePath);
-                    fileEntity.setFileHash(hash);
-                    fileEntity.setFileSize(size);
-
+                    String contentBase64 = null;
                     if (size <= MAX_STORED_CONTENT_SIZE) {
                         byte[] content = Files.readAllBytes(p);
-                        fileEntity.setContentBase64(Base64.getEncoder().encodeToString(content));
+                        contentBase64 = Base64.getEncoder().encodeToString(content);
                     } else {
                         log.debug("File {} ({} bytes) exceeds content storage limit, storing hash only", relativePath, size);
                     }
 
-                    entity.getFiles().add(fileEntity);
-
-                    fileCount++;
-                    totalSize += size;
+                    collected.add(new CollectedFile(relativePath, hash, size, contentBase64));
                 } catch (Exception e) {
                     log.debug("Failed to hash file {}: {}", p, e.getMessage());
                 }
@@ -196,7 +208,45 @@ public class CheckpointManager {
             log.error("Snapshot walk failed for {}: {}", workingDir, e.getMessage());
         }
 
-        entity.setFileCount(fileCount);
+        return collected;
+    }
+
+    /**
+     * Persistence phase: builds the CheckpointEntity and saves it to the
+     * database inside a short transaction. No filesystem I/O here.
+     *
+     * @param description     checkpoint description
+     * @param collectedFiles  file metadata collected outside the transaction
+     * @return the saved CheckpointEntity
+     */
+    @Transactional
+    public CheckpointEntity persistCheckpoint(String description, List<CollectedFile> collectedFiles) {
+        CheckpointEntity entity = new CheckpointEntity();
+        entity.setDescription(description);
+        entity.setCreatedAt(Instant.now());
+
+        ArrayNode filesArray = objectMapper.createArrayNode();
+        long totalSize = 0;
+
+        for (CollectedFile cf : collectedFiles) {
+            ObjectNode fileNode = objectMapper.createObjectNode();
+            fileNode.put("path", cf.relativePath());
+            fileNode.put("hash", cf.hash());
+            fileNode.put("size", cf.size());
+            filesArray.add(fileNode);
+
+            CheckpointFileEntity fileEntity = new CheckpointFileEntity();
+            fileEntity.setCheckpoint(entity);
+            fileEntity.setFilePath(cf.relativePath());
+            fileEntity.setFileHash(cf.hash());
+            fileEntity.setFileSize(cf.size());
+            fileEntity.setContentBase64(cf.contentBase64());
+
+            entity.getFiles().add(fileEntity);
+            totalSize += cf.size();
+        }
+
+        entity.setFileCount(collectedFiles.size());
         entity.setTotalSizeBytes(totalSize);
         try {
             entity.setFilesJson(objectMapper.writeValueAsString(filesArray));
@@ -206,10 +256,7 @@ public class CheckpointManager {
         }
 
         entity = checkpointRepository.save(entity);
-        log.info("Checkpoint created: {} files, {} bytes total — {}", fileCount, totalSize, entity.getId());
-
-        // Auto-prune
-        prune(properties.getCheckpoints().getMaxSnapshots());
+        log.info("Checkpoint created: {} files, {} bytes total — {}", collectedFiles.size(), totalSize, entity.getId());
 
         return entity;
     }

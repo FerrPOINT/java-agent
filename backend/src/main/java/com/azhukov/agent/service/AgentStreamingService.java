@@ -2,7 +2,7 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.StreamEvent;
-import com.azhukov.agent.api.dto.UsageDto;
+
 import com.azhukov.agent.core.agent.TurnExitReason;
 import com.azhukov.agent.core.agent.TurnFinalizer;
 import com.azhukov.agent.core.agent.ThinkingTimeoutGuidance;
@@ -52,7 +52,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
+
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -146,6 +146,18 @@ public class AgentStreamingService {
         return turnExecutor;
     }
 
+    // ── SSE event helper (M4 phase B: extracted send/metadata/preview/safeComplete) ──
+    private StreamingEventHelper eventHelper;
+
+    private StreamingEventHelper eventHelper() {
+        if (eventHelper == null) {
+            eventHelper = new StreamingEventHelper(
+                objectMapper, toolResultFormatter, modelMetadataService,
+                properties, usageTracker, runtimeConfigService);
+        }
+        return eventHelper;
+    }
+
     private static final int MAX_STREAM_RETRIES = 5;
     // c2: recovery budgets/nudges live in the SHARED ResponseRecoveryPolicy
     // (single owner for both runtimes — DefaultAgentRuntime + this loop).
@@ -218,7 +230,7 @@ public class AgentStreamingService {
             if (callbackSessionId != null) {
                 interruptToken.cancel(callbackSessionId);
             }
-            safeCompleteWithError(emitter, new TimeoutException("Stream timed out"));
+            eventHelper().safeCompleteWithError(emitter, new TimeoutException("Stream timed out"));
         });
         emitter.onError(ex -> {
             streamCtx.markDisconnected();
@@ -239,8 +251,8 @@ public class AgentStreamingService {
                 runAgenticLoop(applyCliState(request), emitter, streamCtx);
             } catch (Exception e) {
                 log.error("Streaming failed", e);
-                send(emitter, new StreamEvent("error", null, null, e.getMessage()), streamCtx);
-                safeCompleteWithError(emitter, e);
+                eventHelper().send(emitter, new StreamEvent("error", null, null, e.getMessage()), streamCtx);
+                eventHelper().safeCompleteWithError(emitter, e);
             } finally {
                 // Safety net: clear ThreadLocal if runAgenticLoop didn't
                 InterruptToken.clearCurrentSessionId();
@@ -364,7 +376,7 @@ public class AgentStreamingService {
         if (requestModel != null) {
             session = session.withMetadata("modelOverride", requestModel);
         }
-        sendMetadataEvent(emitter, session, streamCtx);
+        eventHelper().sendMetadataEvent(emitter, session, streamCtx);
         com.azhukov.agent.core.client.ModelRequestOptions streamOptions =
             new com.azhukov.agent.core.client.ModelRequestOptions(
                 requestModel,
@@ -379,8 +391,8 @@ public class AgentStreamingService {
             // Check for interrupt at the top of each agentic-loop iteration
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                 log.info("Streaming turn cancelled by interrupt for session {}", session.id());
-                send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
-                send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
@@ -390,8 +402,8 @@ public class AgentStreamingService {
                     session.id(), budget.modelCalls());
                 String budgetMsg = "⚠️ Iteration budget exhausted (" + budget.modelCalls()
                     + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
-                send(emitter, new StreamEvent("token", budgetMsg, null, null), streamCtx);
-                send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("token", budgetMsg, null, null), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
@@ -513,7 +525,7 @@ public class AgentStreamingService {
                             }
                             String scrubbed = scrubber.scrub(token);
                             if (!scrubbed.isEmpty()) {
-                                send(emitter, new StreamEvent("token", scrubbed, null, null), streamCtx);
+                                eventHelper().send(emitter, new StreamEvent("token", scrubbed, null, null), streamCtx);
                                 contentBuilder.append(scrubbed);
                             }
                         }
@@ -521,14 +533,14 @@ public class AgentStreamingService {
                         @Override
                         public void onToolCalls(List<ToolCall> toolCalls) {
                             collectedToolCalls.addAll(toolCalls);
-                            send(emitter, new StreamEvent("tool_calls", null, toolCalls, null), streamCtx);
+                            eventHelper().send(emitter, new StreamEvent("tool_calls", null, toolCalls, null), streamCtx);
                         }
 
                         @Override
                         public void onComplete() {
                             String remaining = scrubber.flush();
                             if (remaining != null && !remaining.isEmpty()) {
-                                send(emitter, new StreamEvent("token", remaining, null, null), streamCtx);
+                                eventHelper().send(emitter, new StreamEvent("token", remaining, null, null), streamCtx);
                                 contentBuilder.append(remaining);
                             }
                         }
@@ -607,7 +619,7 @@ public class AgentStreamingService {
                                 + ") in " + (delayMs / 1000) + "s...";
                             log.warn("Streaming attempt {}/{} failed ({}), retrying in {} ms: {}",
                                 streamRetries + 1, MAX_STREAM_RETRIES, errorType, delayMs, error.getMessage());
-                            send(emitter, new StreamEvent("retry", null, null, retryMsg), streamCtx);
+                            eventHelper().send(emitter, new StreamEvent("retry", null, null, retryMsg), streamCtx);
                             try {
                                 // Interruptible sleep — check cancel flag in small increments
                                 // so user cancellation is detected during backoff (Hermes parity).
@@ -618,9 +630,9 @@ public class AgentStreamingService {
                                     remaining -= chunk;
                                     if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                                         log.info("Retry backoff cancelled by interrupt for session {}", session.id());
-                                        send(emitter, new StreamEvent("interrupted", null, null,
+                                        eventHelper().send(emitter, new StreamEvent("interrupted", null, null,
                                             "Turn cancelled by user."), streamCtx);
-                                        send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                                        eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                                         emitter.complete();
                                         if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                                         return;
@@ -629,9 +641,9 @@ public class AgentStreamingService {
                             } catch (InterruptedException ie) {
                                 Thread.currentThread().interrupt();
                                 log.warn("Retry backoff interrupted for session {}", session.id());
-                                send(emitter, new StreamEvent("error", null, null,
+                                eventHelper().send(emitter, new StreamEvent("error", null, null,
                                     "Retry interrupted: " + ie.getMessage()), streamCtx);
-                                safeCompleteWithError(emitter, ie);
+                                eventHelper().safeCompleteWithError(emitter, ie);
                                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                                 return;
                             }
@@ -645,7 +657,7 @@ public class AgentStreamingService {
                             compressionAttempts++;
                             log.warn("Context overflow detected during streaming, triggering compression attempt {}/{}: {}",
                                 compressionAttempts, MAX_COMPRESSION_ATTEMPTS, error.getMessage());
-                            send(emitter, new StreamEvent("retry", null, null,
+                            eventHelper().send(emitter, new StreamEvent("retry", null, null,
                                 "Compressing context..."), streamCtx);
                             try {
                                 List<Message> compressed = conversationCompressor.compress(context, null);
@@ -704,8 +716,8 @@ public class AgentStreamingService {
                         && !errorMsg.contains(ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT)) {
                         errorMsg += "\n\n" + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
                     }
-                    send(emitter, new StreamEvent("error", null, null, errorMsg), streamCtx);
-                    safeCompleteWithError(emitter, error instanceof Exception
+                    eventHelper().send(emitter, new StreamEvent("error", null, null, errorMsg), streamCtx);
+                    eventHelper().safeCompleteWithError(emitter, error instanceof Exception
                         ? (Exception) error : new RuntimeException(error));
                     if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                     return;
@@ -725,7 +737,7 @@ public class AgentStreamingService {
                     log.warn("Content filter triggered for session {} — model declined response", session.id());
                     String filterMsg = (contentBuilder.length() > 0 ? contentBuilder.toString().strip() + "\n\n" : "")
                         + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
-                    send(emitter, new StreamEvent("token", filterMsg, null, null), streamCtx);
+                    eventHelper().send(emitter, new StreamEvent("token", filterMsg, null, null), streamCtx);
                     response = ChatResponse.text(filterMsg);
                     break;
                 }
@@ -742,7 +754,7 @@ public class AgentStreamingService {
                         properties.getModel().getMaxTokens(), truncatedToolCallRetries);
                     log.warn("Truncated tool call detected (LENGTH + {} tool call(s), session {}) — retrying with boosted max_tokens={} (attempt {}/{})",
                         collectedToolCalls.size(), session.id(), boostedMax, truncatedToolCallRetries, MAX_TRUNCATED_TOOL_CALL_RETRIES);
-                    send(emitter, new StreamEvent("retry", null, null,
+                    eventHelper().send(emitter, new StreamEvent("retry", null, null,
                         "Truncated tool call — retrying with larger output budget ("
                             + truncatedToolCallRetries + "/" + MAX_TRUNCATED_TOOL_CALL_RETRIES + ")"), streamCtx);
                     // Don't append the broken response; re-run from current context
@@ -798,9 +810,9 @@ public class AgentStreamingService {
                         Throwable retryError = capturedError.get();
                         log.error("Re-stream with boosted max_tokens failed for session {}: {}",
                             session.id(), retryError.getMessage());
-                        send(emitter, new StreamEvent("error", null, null,
+                        eventHelper().send(emitter, new StreamEvent("error", null, null,
                             "Model call failed during truncated tool call retry: " + retryError.getMessage()), streamCtx);
-                        safeCompleteWithError(emitter, retryError instanceof Exception
+                        eventHelper().safeCompleteWithError(emitter, retryError instanceof Exception
                             ? (Exception) retryError : new RuntimeException(retryError));
                         if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew,
                             midTurnPersistenceCallback != null ? persistedUpTo : 0);
@@ -820,7 +832,7 @@ public class AgentStreamingService {
                         && truncatedToolCallRetries >= MAX_TRUNCATED_TOOL_CALL_RETRIES) {
                     log.warn("Truncated tool call after {} retries — refusing to execute incomplete tool arguments (session {})",
                         truncatedToolCallRetries, session.id());
-                    send(emitter, new StreamEvent("token", "\n\n⚠️ Tool call remained truncated after "
+                    eventHelper().send(emitter, new StreamEvent("token", "\n\n⚠️ Tool call remained truncated after "
                         + truncatedToolCallRetries + " retries — the action was not executed.", null, null), streamCtx);
                     // Close the interrupted tool sequence with a recovery stub
                     for (ToolCall tc : collectedToolCalls) {
@@ -853,7 +865,7 @@ public class AgentStreamingService {
                         && lengthContinueRetries < MAX_LENGTH_CONTINUATION_ATTEMPTS) {
                     log.info("LENGTH truncation detected for session {} — partial content ({} chars), sending continuation (attempt {}/{})",
                         session.id(), contentBuilder.length(), lengthContinueRetries + 1, MAX_LENGTH_CONTINUATION_ATTEMPTS);
-                    send(emitter, new StreamEvent("continuation", null, null,
+                    eventHelper().send(emitter, new StreamEvent("continuation", null, null,
                         "Continuation prompt sent to model (LENGTH)"), streamCtx);
                     lengthContinueRetries++;
                     turnIndex++;
@@ -877,7 +889,7 @@ public class AgentStreamingService {
                     String stitched = truncatedParts.toString() + contentBuilder;
                     log.warn("Response still truncated after {} continuation attempts for session {} — keeping partial ({} chars)",
                         lengthContinueRetries, session.id(), stitched.length());
-                    send(emitter, new StreamEvent("token", "\n\n⚠️ Ответ остался обрезанным после "
+                    eventHelper().send(emitter, new StreamEvent("token", "\n\n⚠️ Ответ остался обрезанным после "
                         + lengthContinueRetries + " попыток продолжения — сохранена полученная часть.", null, null), streamCtx);
                     response = ChatResponse.text(stitched);
                     break;
@@ -894,7 +906,7 @@ public class AgentStreamingService {
                     droppedToolcallRetries++;
                     log.warn("finish_reason=tool_calls with empty tool_calls array (narration only) — re-prompting to emit the call (retry {}/{}, session {})",
                         droppedToolcallRetries, MAX_DROPPED_TOOLCALL_RETRIES, session.id());
-                    send(emitter, new StreamEvent("retry", null, null,
+                    eventHelper().send(emitter, new StreamEvent("retry", null, null,
                         "Model signaled a tool call but sent none — re-prompting ("
                             + droppedToolcallRetries + "/" + MAX_DROPPED_TOOLCALL_RETRIES + ")"), streamCtx);
                     turnIndex++;
@@ -924,7 +936,7 @@ public class AgentStreamingService {
                 boolean streamDeterministicEmpty = streamEmptyGuard.deterministicEmpty();
                 if (streamDeterministicEmpty) {
                     log.warn("Deterministic empty response in stream (consecutive zero-output) — skipping remaining retries");
-                    send(emitter, new StreamEvent("continuation", null, null,
+                    eventHelper().send(emitter, new StreamEvent("continuation", null, null,
                         "⚠️ Модель детерминированно возвращает пустой ответ — ретраи остановлены"), streamCtx);
                 }
                 if (isEmpty && !streamDeterministicEmpty && emptyContentRetries >= MAX_EMPTY_RESPONSE_ATTEMPTS
@@ -939,7 +951,7 @@ public class AgentStreamingService {
                         activeStreamClient = fmc.activeClient;
                         emptyContentRetries = 0;
                         streamEmptyGuard.reset();
-                        send(emitter, new StreamEvent("continuation", null, null,
+                        eventHelper().send(emitter, new StreamEvent("continuation", null, null,
                             "↻ Переключение на fallback-провайдера после пустых ответов"), streamCtx);
                         log.warn("Empty responses exhausted in stream — switched to fallback model");
                         continue;
@@ -949,7 +961,7 @@ public class AgentStreamingService {
                     emptyContentRetries++;
                     log.warn("Empty response (no content or reasoning) — retry {}/{} with backoff (model returned empty)",
                         emptyContentRetries, MAX_EMPTY_RESPONSE_ATTEMPTS);
-                    send(emitter, new StreamEvent("continuation", null, null,
+                    eventHelper().send(emitter, new StreamEvent("continuation", null, null,
                         "Empty response from model — retrying (" + emptyContentRetries + "/" + MAX_EMPTY_RESPONSE_ATTEMPTS + ")"), streamCtx);
                     // Hermes parity (conversation_loop.py:7657): jittered backoff base 5s,
                     // cap 60s, interruptible in small increments. Base/cap configurable.
@@ -1025,8 +1037,8 @@ public class AgentStreamingService {
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                 log.info("Streaming turn cancelled by interrupt after model response for session {}", session.id());
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
-                send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
-                send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
@@ -1087,11 +1099,11 @@ public class AgentStreamingService {
                         emptyContentRetries, session.id());
                     String errorMsg = "⚠️ Модель вернула пустой ответ после " + emptyContentRetries
                         + " попыток продолжения. Попробуйте переформулировать запрос.";
-                    send(emitter, new StreamEvent("token", errorMsg, null, null), streamCtx);
+                    eventHelper().send(emitter, new StreamEvent("token", errorMsg, null, null), streamCtx);
                 }
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
-                sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens());
-                send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens());
+                eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
@@ -1118,7 +1130,7 @@ public class AgentStreamingService {
             // so we emit a "commentary" event with alreadyStreamed=true to signal the
             // gateway to issue a segment break (visual separator), not a duplicate message.
             if (properties.isCommentaryEnabled() && response.hasContent() && response.hasToolCalls()) {
-                send(emitter, new StreamEvent("commentary", response.content(), null, null), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("commentary", response.content(), null, null), streamCtx);
                 log.debug("Emitted commentary for session {} (alreadyStreamed=true): {} chars",
                     session.id(), response.content().length());
             }
@@ -1136,8 +1148,8 @@ public class AgentStreamingService {
             // Check interrupt before executing tools
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                 log.info("Streaming turn cancelled by interrupt before tool execution for session {}", session.id());
-                send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
-                send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
@@ -1160,13 +1172,13 @@ public class AgentStreamingService {
                 if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                     log.info("Streaming turn cancelled by interrupt before tool {} for session {}",
                         call.name(), session.id());
-                    send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
-                    send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                    eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
+                    eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                     emitter.complete();
                     if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                     return;
                 }
-                send(emitter, new StreamEvent("tool_start", null,
+                eventHelper().send(emitter, new StreamEvent("tool_start", null,
                     java.util.List.of(new com.azhukov.agent.core.model.ToolCall(call.id(), call.name(), call.arguments())),
                     null, null, null, null, call.name(), null), streamCtx);
 
@@ -1186,8 +1198,8 @@ public class AgentStreamingService {
                     budget = iterationBudget.refundToolExecution(budget);
                 }
 
-                String resultPreview = formatResultPreview(result);
-                send(emitter, new StreamEvent("tool_result", null, null, null,
+                String resultPreview = eventHelper().formatResultPreview(result);
+                eventHelper().send(emitter, new StreamEvent("tool_result", null, null, null,
                     null, null, null, call.name(), resultPreview), streamCtx);
 
                 String toolResultContent = toolResultFormatter.formatResult(result);
@@ -1278,42 +1290,14 @@ public class AgentStreamingService {
         }
 
         // Max turns reached
-        send(emitter, new StreamEvent("token", "Reached maximum turns without completion.", null, null), streamCtx);
-        send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+        eventHelper().send(emitter, new StreamEvent("token", "Reached maximum turns without completion.", null, null), streamCtx);
+        eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
         emitter.complete();
         if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
         } finally {
             // Clean up interrupt token map entry and ThreadLocal after stream completion
             interruptToken.remove(session.id());
             InterruptToken.clearCurrentSessionId();
-        }
-    }
-
-    private String formatResultPreview(ToolResult result) {
-        String content = toolResultFormatter.formatResult(result);
-        int maxLen = 500;
-        if (content.length() <= maxLen) return content;
-        return content.substring(0, maxLen) + "...";
-    }
-
-    private void sendMetadataEvent(SseEmitter emitter, Session session, StreamContext streamCtx) {
-        sendMetadataEvent(emitter, session, streamCtx, 0);
-    }
-
-    private void sendMetadataEvent(SseEmitter emitter, Session session, StreamContext streamCtx, int lastInputTokens) {
-        try {
-            String modelUsed = resolveModelUsed(session);
-            int contextLength = modelMetadataService.detectContextLength(modelUsed);
-            if (contextLength <= 0) {
-                contextLength = properties.getContext().getMaxTokens();
-            }
-            int contextTokens = lastInputTokens > 0
-                ? lastInputTokens
-                : estimateContextTokens(session.id());
-            send(emitter, new StreamEvent("metadata", null, null, null,
-                modelUsed, contextTokens, contextLength, null, null, session.id()), streamCtx);
-        } catch (Exception e) {
-            log.warn("Failed to send stream metadata event: {}", e.getMessage());
         }
     }
 
@@ -1346,36 +1330,9 @@ public class AgentStreamingService {
         return properties.getSkills().getDefaultToolsets().contains("memory");
     }
 
-    private String resolveModelUsed(Session session) {
-        // Per-request override (from /model command or API model field) wins
-        String requestOverride = session.getMetadata("modelOverride");
-        if (requestOverride != null && !requestOverride.isBlank()) {
-            return requestOverride;
-        }
-        if (session.modelName() != null && !session.modelName().isBlank()) {
-            return session.modelName();
-        }
-        String override = runtimeConfigService.getModelOverride();
-        if (override != null && !override.isBlank()) {
-            return override;
-        }
-        if (properties.getModel() != null
-            && properties.getModel().getModelName() != null
-            && !properties.getModel().getModelName().isBlank()) {
-            return properties.getModel().getModelName();
-        }
-        return "unknown";
-    }
-
-    private int estimateContextTokens(UUID sessionId) {
-        if (sessionId == null) return 0;
-        UsageDto usage = usageTracker.getSessionUsage(sessionId);
-        return usage != null ? usage.tokenEstimate() : 0;
-    }
-
     private int estimateResponseTokens(String content, List<ToolCall> toolCalls) {
         // c2: delegate to TurnExecutor's shared static helper
-        return com.azhukov.agent.core.agent.TurnExecutor.estimateResponseTokens(content, toolCalls);
+        return com.azhukov.agent.core.agent.TurnExecutorUtils.estimateResponseTokens(content, toolCalls);
     }
 
     private void persistTurn(Session session, List<Message> turnMessages, boolean isNew) {
@@ -1449,18 +1406,6 @@ public class AgentStreamingService {
         return session;
     }
 
-    private void safeCompleteWithError(SseEmitter emitter, Throwable error) {
-        try {
-            // Complete normally — the error has already been sent as an SSE event.
-            // Using completeWithError would propagate the exception to Spring's
-            // GlobalExceptionHandler, which would try to write a JSON error response
-            // on a text/event-stream content type, causing HttpMessageNotWritableException.
-            emitter.complete();
-        } catch (IllegalStateException e) {
-            log.debug("SSE emitter already completed when trying to complete with error: {}", e.getMessage());
-        }
-    }
-
     /**
      * Hermes parity: jittered_backoff (base 5s, cap 60s) with ±25% jitter
      * (conversation_loop.py:7659, agent/jitter util semantics).
@@ -1499,18 +1444,4 @@ public class AgentStreamingService {
         return true;
     }
 
-    private void send(SseEmitter emitter, StreamEvent event, StreamContext streamCtx) {
-        if (streamCtx.isClientDisconnected()) return;
-        try {
-            emitter.send(SseEmitter.event()
-                .id(UUID.randomUUID().toString())
-                .name(event.type())
-                .data(objectMapper.writeValueAsString(event)));
-        } catch (IllegalStateException e) {
-            log.debug("SSE event not sent (emitter completed): {}", e.getMessage());
-        } catch (IOException e) {
-            log.warn("Failed to send SSE event: {}", e.getMessage());
-            streamCtx.markDisconnected();
-        }
-    }
 }

@@ -46,6 +46,7 @@ public class SkillsHubService {
 
  private static final Pattern PATH_TRAVERSAL = Pattern.compile("\\.\\.[/\\\\]");
  private static final int MAX_FILE_SIZE = 100_000;
+ private static final int MAX_DESCRIPTION_LENGTH = 120;
 
  /** SIMPLIFIED: single source of truth (Hermes routes 9 sources). */
  public static final String DEFAULT_HUB_REPO = "https://github.com/FerrPOINT/skills";
@@ -101,7 +102,7 @@ public class SkillsHubService {
   }
   for (String line : content.split("\n", 15)) {
    String t = line.strip();
-   if (!t.isEmpty() && !t.startsWith("#") && !t.startsWith("---")) return t.length() > 120 ? t.substring(0, 120) + "…" : t;
+   if (!t.isEmpty() && !t.startsWith("#") && !t.startsWith("---")) return t.length() > MAX_DESCRIPTION_LENGTH ? t.substring(0, MAX_DESCRIPTION_LENGTH) + "…" : t;
   }
   return "";
  }
@@ -260,7 +261,7 @@ public class SkillsHubService {
  * Fetch a URL and return the body as string.
  */
  private String fetchUrl(String url) throws IOException, InterruptedException {
- HttpClient client = HttpClient.newHttpClient();
+ try (HttpClient client = HttpClient.newHttpClient()) {
  HttpRequest.Builder rb = HttpRequest.newBuilder()
  .uri(URI.create(url))
  .header("Accept", "application/vnd.github.v3+json")
@@ -277,6 +278,7 @@ public class SkillsHubService {
  }
  log.debug("Fetch {} returned status {}", url, response.statusCode());
  return null;
+ }
  }
 
  /**

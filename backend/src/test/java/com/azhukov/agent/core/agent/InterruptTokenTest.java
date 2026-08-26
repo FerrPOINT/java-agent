@@ -135,7 +135,8 @@ class InterruptTokenTest {
         assertThat(token.isCancelled(sessionId)).isTrue();
 
         // Clean up with TTL of 0ms — should remove all entries
-        Thread.sleep(2); // ensure timestamp is in the past
+        // timing-assertion: ensures timestamp is in the past for TTL=0 cleanup
+        Thread.sleep(2);
         token.cleanup(0);
 
         assertThat(token.isCancelled(sessionId)).isFalse();

@@ -19,17 +19,17 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 
-import static com.azhukov.agent.core.agent.TurnExecutor.containsThinkingBlocks;
-import static com.azhukov.agent.core.agent.TurnExecutor.containsImageContent;
-import static com.azhukov.agent.core.agent.TurnExecutor.containsMultimodalToolContent;
-import static com.azhukov.agent.core.agent.TurnExecutor.detectRefusalPattern;
-import static com.azhukov.agent.core.agent.TurnExecutor.extractRetryAfterMs;
-import static com.azhukov.agent.core.agent.TurnExecutor.interruptibleSleep;
+import static com.azhukov.agent.core.agent.TurnExecutorUtils.containsThinkingBlocks;
+import static com.azhukov.agent.core.agent.TurnExecutorUtils.containsImageContent;
+import static com.azhukov.agent.core.agent.TurnExecutorUtils.containsMultimodalToolContent;
+import static com.azhukov.agent.core.agent.TurnExecutorUtils.detectRefusalPattern;
+import static com.azhukov.agent.core.agent.TurnExecutorUtils.extractRetryAfterMs;
+import static com.azhukov.agent.core.agent.TurnExecutorUtils.interruptibleSleep;
 import com.azhukov.agent.core.agent.TurnExecutor.ContentPolicyException;
-import static com.azhukov.agent.core.agent.TurnExecutor.lowerMessageContains;
-import static com.azhukov.agent.core.agent.TurnExecutor.stripGrammarPatternsFromTools;
-import static com.azhukov.agent.core.agent.TurnExecutor.stripImageContent;
-import static com.azhukov.agent.core.agent.TurnExecutor.stripMultimodalToolContent;
+import static com.azhukov.agent.core.agent.TurnExecutorUtils.lowerMessageContains;
+import static com.azhukov.agent.core.agent.TurnExecutorUtils.stripGrammarPatternsFromTools;
+import static com.azhukov.agent.core.agent.TurnExecutorUtils.stripImageContent;
+import static com.azhukov.agent.core.agent.TurnExecutorUtils.stripMultimodalToolContent;
 import static com.azhukov.agent.core.agent.ThinkBlockProcessor.stripThinkingBlocks;
 
 /**

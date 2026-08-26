@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.security;
 
+import com.azhukov.agent.core.util.TextTruncator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -101,25 +102,25 @@ public class ToolArgumentInjectionScanner {
         var overrideMatcher = OVERRIDE_PATTERN.matcher(str);
         while (overrideMatcher.find()) {
             findings.add("CRITICAL: Direct override pattern at '" + path + "': '" +
-                truncate(overrideMatcher.group(), 60) + "'");
+                TextTruncator.truncate(overrideMatcher.group(), 60) + "'");
         }
 
         var roleplayMatcher = ROLEPLAY_PATTERN.matcher(str);
         while (roleplayMatcher.find()) {
             findings.add("CRITICAL: Roleplay jailbreak pattern at '" + path + "': '" +
-                truncate(roleplayMatcher.group(), 60) + "'");
+                TextTruncator.truncate(roleplayMatcher.group(), 60) + "'");
         }
 
         var exfilMatcher = EXFILTRATION_PATTERN.matcher(str);
         while (exfilMatcher.find()) {
             findings.add("HIGH: System prompt exfiltration attempt at '" + path + "': '" +
-                truncate(exfilMatcher.group(), 60) + "'");
+                TextTruncator.truncate(exfilMatcher.group(), 60) + "'");
         }
 
         var delimMatcher = DELIMITER_PATTERN.matcher(str);
         while (delimMatcher.find()) {
             findings.add("MEDIUM: Delimiter attack pattern at '" + path + "': '" +
-                truncate(delimMatcher.group(), 40) + "'");
+                TextTruncator.truncate(delimMatcher.group(), 40) + "'");
         }
     }
 
@@ -138,8 +139,4 @@ public class ToolArgumentInjectionScanner {
         return Severity.LOW;
     }
 
-    private static String truncate(String s, int max) {
-        if (s.length() <= max) return s;
-        return s.substring(0, max) + "...";
-    }
 }

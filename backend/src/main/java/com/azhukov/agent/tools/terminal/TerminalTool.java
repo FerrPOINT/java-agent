@@ -77,12 +77,16 @@ public class TerminalTool implements ToolHandler {
         String command = args.command();
 
         // Auto-checkpoint before dangerous commands
+        String checkpointWarning = null;
         if (properties.getCheckpoints().isEnabled() && checkpointManager.isDangerousCommand(command)) {
             try {
                 checkpointManager.snapshot("Auto-checkpoint before: " + command);
                 log.info("Auto-checkpoint created before dangerous command: {}", command);
             } catch (Exception e) {
                 log.warn("Auto-checkpoint failed: {}", e.getMessage());
+                // H12: Inform the caller that the checkpoint failed — don't block execution,
+                // but make the failure visible in the tool result.
+                checkpointWarning = "[WARNING: auto-checkpoint failed before dangerous command: " + e.getMessage() + "]";
             }
         }
 
@@ -162,7 +166,13 @@ public class TerminalTool implements ToolHandler {
         }
 
         UUID sessionId = session != null ? session.id() : null;
-        return runCommand(command, timeout, sessionId, args.pty(), workdir, guard);
+        ToolResult result = runCommand(command, timeout, sessionId, args.pty(), workdir, guard);
+        // H12: Prepend checkpoint warning to the result content if checkpoint failed.
+        if (checkpointWarning != null) {
+            String prefix = checkpointWarning + "\n";
+            result = new ToolResult(result.success(), prefix + result.content(), result.error());
+        }
+        return result;
     }
 
     private ToolResult runCommand(String command, int timeoutSeconds, UUID sessionId, boolean usePty, String workdir,

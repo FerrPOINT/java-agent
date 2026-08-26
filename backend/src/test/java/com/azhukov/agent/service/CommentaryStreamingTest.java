@@ -43,7 +43,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -180,7 +180,7 @@ class CommentaryStreamingTest {
         emitter.awaitDone();
 
         assertThat(emitter.error.get()).isNull();
-        assertThat(emitter.completed.get()).isTrue();
+        assertThat(emitter.doneLatch.getCount()).isZero();
 
         boolean hasCommentary = emitter.events.stream()
             .anyMatch(e -> "commentary".equals(e.name));
@@ -229,7 +229,7 @@ class CommentaryStreamingTest {
         emitter.awaitDone();
 
         assertThat(emitter.error.get()).isNull();
-        assertThat(emitter.completed.get()).isTrue();
+        assertThat(emitter.doneLatch.getCount()).isZero();
 
         boolean hasCommentary = emitter.events.stream()
             .anyMatch(e -> "commentary".equals(e.name));
@@ -246,7 +246,7 @@ class CommentaryStreamingTest {
 
     private static class CollectingEmitter extends SseEmitter {
         final List<SseEvent> events = new CopyOnWriteArrayList<>();
-        final AtomicBoolean completed = new AtomicBoolean(false);
+        final CountDownLatch doneLatch = new CountDownLatch(1);
         final AtomicReference<Throwable> error = new AtomicReference<>();
 
         CollectingEmitter(long timeout) {
@@ -260,22 +260,20 @@ class CommentaryStreamingTest {
 
         @Override
         public void complete() {
-            this.completed.set(true);
+            this.doneLatch.countDown();
             super.complete();
         }
 
         @Override
         public void completeWithError(Throwable ex) {
             this.error.set(ex);
+            this.doneLatch.countDown();
             super.completeWithError(ex);
         }
 
         void awaitDone() {
             try {
-                long deadline = System.currentTimeMillis() + 15_000;
-                while (!completed.get() && error.get() == null && System.currentTimeMillis() < deadline) {
-                    Thread.sleep(50);
-                }
+                doneLatch.await(15, java.util.concurrent.TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }

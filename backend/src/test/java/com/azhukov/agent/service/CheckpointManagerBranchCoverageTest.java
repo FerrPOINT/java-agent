@@ -46,7 +46,10 @@ class CheckpointManagerBranchCoverageTest {
         properties = new AgentProperties();
         properties.getCore().setWorkingDirectory(tempDir.toString());
         properties.getCheckpoints().setEnabled(true);
-        manager = new CheckpointManager(checkpointRepository, checkpointFileRepository, properties, new ObjectMapper());
+        manager = new CheckpointManager(checkpointRepository, checkpointFileRepository, properties, new ObjectMapper(),
+            new org.springframework.beans.factory.ObjectProvider<>() {
+                @Override public CheckpointManager getObject() { return manager; }
+            });
     }
 
     // ── Hidden file filtering ──

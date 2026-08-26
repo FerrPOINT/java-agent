@@ -47,6 +47,8 @@ help:
 	@echo "  make cli         — run CLI REPL"
 	@echo "  make bot         — run telegram bot"
 	@echo "  make coverage    — generate coverage report"
+	@echo "  make parity-dashboard  — show parity status snapshot"
+	@echo "  make skill-update       — refresh dashboard + show block for skill"
 
 version:
 	@echo "$(GREEN)java-agent version: $(VERSION)$(NC)"

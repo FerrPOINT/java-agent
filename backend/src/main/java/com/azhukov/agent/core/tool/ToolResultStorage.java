@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,7 +52,7 @@ public class ToolResultStorage {
         if (toolCallId == null || result == null) {
             return;
         }
-        resultsByCallId.computeIfAbsent(toolCallId, k -> new ArrayList<>()).add(result);
+        resultsByCallId.computeIfAbsent(toolCallId, k -> Collections.synchronizedList(new ArrayList<>())).add(result);
     }
 
     /**

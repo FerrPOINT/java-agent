@@ -321,13 +321,31 @@ public class DefaultContextReferenceService implements ContextReferenceService {
  pb.directory(workingDir != null ? new java.io.File(workingDir) : new java.io.File("."));
  pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));
  Process process = pb.start();
- String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
- String error = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+ // H10: Read stdout and stderr concurrently via gobbler threads to avoid
+ // pipe-buffer deadlock when the child fills one pipe while we block on the other.
+ java.io.ByteArrayOutputStream stdoutBuf = new java.io.ByteArrayOutputStream();
+ java.io.ByteArrayOutputStream stderrBuf = new java.io.ByteArrayOutputStream();
+ Thread stdoutGobbler = new Thread(() -> {
+     try { process.getInputStream().transferTo(stdoutBuf); } catch (java.io.IOException ignored) { }
+ }, "ctxref-stdout-gobbler");
+ Thread stderrGobbler = new Thread(() -> {
+     try { process.getErrorStream().transferTo(stderrBuf); } catch (java.io.IOException ignored) { }
+ }, "ctxref-stderr-gobbler");
+ stdoutGobbler.setDaemon(true);
+ stderrGobbler.setDaemon(true);
+ stdoutGobbler.start();
+ stderrGobbler.start();
  boolean done = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
  if (!done) {
  process.destroyForcibly();
+ stdoutGobbler.interrupt();
+ stderrGobbler.interrupt();
  return Optional.of("[" + label + ": timed out (30s)]");
  }
+ stdoutGobbler.join(5000);
+ stderrGobbler.join(5000);
+ String output = stdoutBuf.toString(StandardCharsets.UTF_8);
+ String error = stderrBuf.toString(StandardCharsets.UTF_8);
  if (process.exitValue() != 0) {
  String err = error.strip();
  if (err.isEmpty()) err = "git command failed";

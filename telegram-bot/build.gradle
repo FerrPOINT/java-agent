@@ -39,15 +39,11 @@ dependencies {
 
     // Resilience
     implementation 'io.github.resilience4j:resilience4j-retry:2.4.0'
-    implementation 'io.github.resilience4j:resilience4j-circuitbreaker:2.4.0'
 
     // HTML / markdown parsing
     implementation 'org.jsoup:jsoup:1.18.3'
-    implementation 'com.vladsch.flexmark:flexmark:0.64.8'
 
-    // Commons
-    implementation 'org.apache.commons:commons-lang3:3.17.0'
-    implementation 'commons-io:commons-io:2.18.0'
+    // Commons (lang3/io removed — were unused)
 
     // Logging
     implementation 'net.logstash.logback:logstash-logback-encoder:8.0'

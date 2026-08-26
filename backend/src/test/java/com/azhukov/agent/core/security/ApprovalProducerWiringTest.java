@@ -64,9 +64,9 @@ class ApprovalProducerWiringTest {
             || (g.requiresApproval(call) && queue.getPending(session) == null && g.requestApproval(session, call) != null);
         assertTrue(approvalRequired, "gate must engage for a destructive tool");
 
-        // Approve from the user side while the runtime waits
+        // Approve from the user side — awaitDecision will either block until
+        // this signals the latch, or see isPending=false and return immediately.
         Thread approver = new Thread(() -> {
-            try { Thread.sleep(50); } catch (InterruptedException ignored) {}
             queue.approve(session, "approve", null);
         });
         approver.start();

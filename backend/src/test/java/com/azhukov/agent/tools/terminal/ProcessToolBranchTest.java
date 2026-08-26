@@ -5,6 +5,8 @@ import com.azhukov.agent.core.model.ToolResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -77,8 +79,8 @@ class ProcessToolBranchTest {
     void poll_existingProcess_returnsStatus() throws Exception {
         processTool = new ProcessTool();
         ProcessTool.ManagedProcess mp = processTool.spawn("echo hello", 5);
-        // Wait a bit for output
-        Thread.sleep(500);
+        // Wait for the reader thread to drain process output (deterministic sync)
+        waitForReaderThread(mp);
         ToolResult result = processTool.execute(
             "{\"action\":\"poll\",\"session_id\":\"" + mp.id + "\"}", null, Session.create("u", "noop", ""));
         assertThat(result.success()).isTrue();
@@ -100,7 +102,7 @@ class ProcessToolBranchTest {
     void log_existingProcess_withOffsetAndLimit() throws Exception {
         processTool = new ProcessTool();
         ProcessTool.ManagedProcess mp = processTool.spawn("echo line1\necho line2\necho line3", 5);
-        Thread.sleep(500);
+        waitForReaderThread(mp);
         ToolResult result = processTool.execute(
             "{\"action\":\"log\",\"session_id\":\"" + mp.id + "\",\"offset\":0,\"limit\":2}",
             null, Session.create("u", "noop", ""));
@@ -111,7 +113,7 @@ class ProcessToolBranchTest {
     void log_existingProcess_defaultLimit() throws Exception {
         processTool = new ProcessTool();
         ProcessTool.ManagedProcess mp = processTool.spawn("echo test", 5);
-        Thread.sleep(500);
+        waitForReaderThread(mp);
         ToolResult result = processTool.execute(
             "{\"action\":\"log\",\"session_id\":\"" + mp.id + "\"}",
             null, Session.create("u", "noop", ""));
@@ -133,7 +135,7 @@ class ProcessToolBranchTest {
     void wait_completedProcess_returnsOk() throws Exception {
         processTool = new ProcessTool();
         ProcessTool.ManagedProcess mp = processTool.spawn("echo hello", 5);
-        Thread.sleep(500);
+        waitForReaderThread(mp);
         ToolResult result = processTool.execute(
             "{\"action\":\"wait\",\"session_id\":\"" + mp.id + "\",\"timeout\":2}",
             null, Session.create("u", "noop", ""));
@@ -155,7 +157,7 @@ class ProcessToolBranchTest {
     void wait_defaultTimeout_used() throws Exception {
         processTool = new ProcessTool();
         ProcessTool.ManagedProcess mp = processTool.spawn("echo quick", 5);
-        Thread.sleep(500);
+        waitForReaderThread(mp);
         ToolResult result = processTool.execute(
             "{\"action\":\"wait\",\"session_id\":\"" + mp.id + "\"}",
             null, Session.create("u", "noop", ""));
@@ -253,7 +255,7 @@ class ProcessToolBranchTest {
     void managedProcess_getOutput_returnsAllOutput() throws Exception {
         processTool = new ProcessTool();
         ProcessTool.ManagedProcess mp = processTool.spawn("echo hello", 5);
-        Thread.sleep(500);
+        waitForReaderThread(mp);
         assertThat(mp.getOutput()).contains("hello");
     }
 
@@ -261,7 +263,7 @@ class ProcessToolBranchTest {
     void managedProcess_getRecentOutput_returnsLastNLines() throws Exception {
         processTool = new ProcessTool();
         ProcessTool.ManagedProcess mp = processTool.spawn("echo a\necho b\necho c", 5);
-        Thread.sleep(500);
+        waitForReaderThread(mp);
         String recent = mp.getRecentOutput(2);
         assertThat(recent).isNotNull();
     }
@@ -270,7 +272,7 @@ class ProcessToolBranchTest {
     void managedProcess_getOutputLines_returnsCopy() throws Exception {
         processTool = new ProcessTool();
         ProcessTool.ManagedProcess mp = processTool.spawn("echo test", 5);
-        Thread.sleep(500);
+        waitForReaderThread(mp);
         var lines = mp.getOutputLines();
         assertThat(lines).isNotNull();
     }
@@ -294,5 +296,13 @@ class ProcessToolBranchTest {
         ToolResult result = processTool.execute(
             "{\"action\":\"list\"}", null, Session.create("u", "noop", ""));
         assertThat(result.success()).isTrue();
+    }
+
+    /** Join the ManagedProcess reader thread so the output buffer is fully populated. */
+    private static void waitForReaderThread(ProcessTool.ManagedProcess managed) throws Exception {
+        Field readerField = ProcessTool.ManagedProcess.class.getDeclaredField("readerThread");
+        readerField.setAccessible(true);
+        Thread readerThread = (Thread) readerField.get(managed);
+        readerThread.join(5000);
     }
 }

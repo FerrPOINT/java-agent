@@ -175,7 +175,9 @@ public class SkillPreprocessor {
      try {
  ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
  pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
- pb.redirectErrorStream(false);
+ // H10: Merge stderr into stdout to avoid pipe-buffer deadlock when the child
+ // fills its stderr pipe while we only read stdout after waitFor().
+ pb.redirectErrorStream(true);
  // S2 FIX: Set working directory to skill dir so relative paths work
  if (skillDir != null && !skillDir.isBlank()) {
  pb.directory(new File(skillDir));
@@ -186,11 +188,8 @@ public class SkillPreprocessor {
  process.destroyForcibly();
  return "[inline-shell timeout after " + timeout + "s: " + command + "]";
  }
+ // stderr is already merged into stdout via redirectErrorStream(true)
  String output = new String(process.getInputStream().readAllBytes()).trim();
- if (output.isEmpty()) {
- String stderr = new String(process.getErrorStream().readAllBytes()).trim();
- if (!stderr.isEmpty()) output = stderr;
- }
  if (output.length() > INLINE_SHELL_MAX_OUTPUT) {
  output = output.substring(0, INLINE_SHELL_MAX_OUTPUT) + "...[truncated]";
  }

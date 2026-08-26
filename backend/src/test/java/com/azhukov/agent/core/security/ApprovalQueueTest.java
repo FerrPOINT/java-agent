@@ -110,6 +110,7 @@ class ApprovalQueueTest {
         // Request with a 1-nanosecond timeout so it's already expired
         q.request(session, new ToolCall("t", "tool", "{}"), "r", Duration.ofNanos(1));
         // Give it time to expire
+        // timing-assertion: verifies expiry after nanosecond timeout
         try { Thread.sleep(10); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         q.timeout(Duration.ofMinutes(5));
         assertThat(q.isDenied(session)).isTrue();
@@ -121,6 +122,7 @@ class ApprovalQueueTest {
         ApprovalQueue q = new ApprovalQueue();
         UUID session = UUID.randomUUID();
         q.request(session, new ToolCall("t", "tool", "{}"), "r", Duration.ofNanos(1));
+        // timing-assertion: verifies expiry after nanosecond timeout
         try { Thread.sleep(10); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         ApprovalQueue.PendingApproval p = q.getPending(session);
         assertThat(p.denied()).isTrue();

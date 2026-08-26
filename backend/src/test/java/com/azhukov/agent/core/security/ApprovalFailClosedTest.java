@@ -31,6 +31,7 @@ class ApprovalFailClosedTest {
         queue.request(session, call(), "destructive", Duration.ofMillis(50));
 
         // Wait past the expiry, then simulate the executor's gate sequence.
+        // timing-assertion: verifies fail-closed after expiry duration
         Thread.sleep(120);
         // getPending() auto-denies on expiry (fail-closed at read time)
         ApprovalQueue.PendingApproval p = queue.getPending(session);
@@ -81,12 +82,15 @@ class ApprovalFailClosedTest {
         // A waiter already blocked on request #1's latch — supersede releases IT.
         AtomicReference<Boolean> released = new AtomicReference<>(null);
         CountDownLatch waiterDone = new CountDownLatch(1);
+        CountDownLatch waiterStarted = new CountDownLatch(1);
         Thread waiter = new Thread(() -> {
+            waiterStarted.countDown();
             released.set(queue.awaitDecision(session, 5000));
             waiterDone.countDown();
         });
         waiter.start();
-        Thread.sleep(50); // let the waiter grab latch #1
+        // Wait until the waiter has entered awaitDecision
+        waiterStarted.await();
 
         // A newer request supersedes the old one
         queue.request(session, new ToolCall("call_2", "terminal", "{}"), "newer destructive");

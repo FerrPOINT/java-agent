@@ -42,6 +42,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -59,6 +60,7 @@ public class McpLifecycleManager {
     private final ToolFingerprintStore fingerprintStore;
     private final SlidingWindowRateLimiter rateLimiter;
     private final Map<String, McpServerState> clients = new ConcurrentHashMap<>();
+    private final ReentrantLock clientsLock = new ReentrantLock();
 
     // ── Reconnection with exponential backoff ────────────────────────────
     private static final int MAX_RECONNECT_RETRIES = 5;
@@ -133,10 +135,13 @@ public class McpLifecycleManager {
         // client.initialize() and listToolsWithPagination() involve network I/O
         // that must NOT be held under the lock — it would block all other connect/
         // reconnect operations for the entire duration of the handshake.
-        synchronized (clients) {
+        clientsLock.lock();
+        try {
             if (clients.containsKey(server.getName())) {
                 return;
             }
+        } finally {
+            clientsLock.unlock();
         }
         McpSyncClient client = null;
         try {
@@ -146,13 +151,16 @@ public class McpLifecycleManager {
             var tools = listToolsWithPagination(client);
             // H18: Re-check under lock to prevent duplicate connections from
             // concurrent callers that both passed the initial check.
-            synchronized (clients) {
+            clientsLock.lock();
+            try {
                 if (clients.containsKey(server.getName())) {
                     // Another thread already connected — close this duplicate client.
                     safeCloseClient(client);
                     return;
                 }
                 clients.put(server.getName(), new McpServerState(server, client, tools));
+            } finally {
+                clientsLock.unlock();
             }
             registerTools(server.getName(), tools);
             scheduleToolRefresh(server.getName());
@@ -408,8 +416,11 @@ public class McpLifecycleManager {
                 client.initialize();
                 var tools = client.listTools().tools();
                 // WARNING 4: Synchronize the read-compare-write to prevent duplicate registrations
-                synchronized (clients) {
+                clientsLock.lock();
+                try {
                     clients.put(server.getName(), new McpServerState(server, client, tools));
+                } finally {
+                    clientsLock.unlock();
                 }
                 registerTools(server.getName(), tools);
                 scheduleToolRefresh(server.getName());
@@ -520,8 +531,11 @@ public class McpLifecycleManager {
             }
             // Update state atomically (Finding 8.3: synchronize replacement to prevent
             // in-flight tool calls from referencing stale tool definitions)
-            synchronized (clients) {
+            clientsLock.lock();
+            try {
                 clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools));
+            } finally {
+                clientsLock.unlock();
             }
             Set<String> added = newNames.stream().filter(n -> !oldNames.contains(n)).collect(Collectors.toSet());
             Set<String> removed = oldNames.stream().filter(n -> !newNames.contains(n)).collect(Collectors.toSet());

@@ -46,17 +46,23 @@ public class CronExecutionLogEntity {
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
+    /** Hermes parity: stores the job's output text for context_from chaining. */
+    @Column(name = "output_text", columnDefinition = "TEXT")
+    private String outputText;
+
     @CreationTimestamp
     @Column(name = "created_at")
     private Instant createdAt;
 
     public CronExecutionLogEntity() {}
 
-    public CronExecutionLogEntity(UUID jobId, Instant startedAt, Instant finishedAt, String status, String errorMessage) {
-        this.jobId = jobId;
-        this.startedAt = startedAt;
-        this.finishedAt = finishedAt;
-        this.status = status;
-        this.errorMessage = errorMessage;
+    public static CronExecutionLogEntity create(UUID jobId, Instant startedAt, Instant finishedAt, String status, String errorMessage) {
+        CronExecutionLogEntity entity = new CronExecutionLogEntity();
+        entity.jobId = jobId;
+        entity.startedAt = startedAt;
+        entity.finishedAt = finishedAt;
+        entity.status = status;
+        entity.errorMessage = errorMessage;
+        return entity;
     }
 }

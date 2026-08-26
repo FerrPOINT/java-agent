@@ -90,7 +90,7 @@ public class CliReplRunner implements CommandLineRunner {
         boolean streaming = true;
 
         System.out.println("═══════════════════════════════════════════════════");
-        System.out.println("  Java Agent CLI v0.0.1-SNAPSHOT");
+        System.out.println("  Java Agent CLI v" + getClass().getPackage().getImplementationVersion());
         System.out.println("  Backend: " + properties.getBackendUrl());
         System.out.println("  Session: " + sessionId);
         // C4: Show if resumed

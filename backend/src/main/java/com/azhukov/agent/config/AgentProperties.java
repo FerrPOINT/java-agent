@@ -287,6 +287,10 @@ public class AgentProperties {
         private int protectLastN = 20;
         /** Target ratio for compression (0.0–1.0, default 0.20). */
         private double targetRatio = 0.20;
+        /** Hermes parity: base compression threshold fraction (0.50 = compress at 50% of context window). */
+        private double thresholdPercent = 0.50;
+        /** Hermes parity: per-model compression threshold overrides (substring→fraction, longest match wins). */
+        private java.util.Map<String, Double> modelThresholds = new java.util.HashMap<>();
     }
 
     @Getter @Setter

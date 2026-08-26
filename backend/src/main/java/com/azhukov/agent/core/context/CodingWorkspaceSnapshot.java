@@ -314,7 +314,8 @@ public class CodingWorkspaceSnapshot {
             cmd.add("git");
             for (String a : args) cmd.add(a);
             ProcessBuilder pb = new ProcessBuilder(cmd).directory(root.toFile())
-                .redirectInput(ProcessBuilder.Redirect.INHERIT);
+                .redirectInput(ProcessBuilder.Redirect.INHERIT)
+                .redirectErrorStream(true); // H10: merge stderr into stdout to avoid pipe-buffer deadlock
             Process p = pb.start();
             if (!p.waitFor(GIT_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
                 p.destroyForcibly();

@@ -53,10 +53,10 @@ class PhotoBatchDebouncerTest {
             latch.countDown();
         });
 
+        // Offer all photos immediately — they arrive before the 500ms debounce timer fires,
+        // so they all end up in the same group. No Thread.sleep needed for synchronization.
         debouncer.offer(makePhotoEvent(1L, 100L, "file1", "group1", "caption1"));
-        Thread.sleep(50);
         debouncer.offer(makePhotoEvent(2L, 100L, "file2", "group1", "caption2"));
-        Thread.sleep(50);
         debouncer.offer(makePhotoEvent(3L, 100L, "file3", "group1", null));
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();

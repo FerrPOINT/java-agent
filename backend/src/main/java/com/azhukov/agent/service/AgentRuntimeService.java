@@ -7,6 +7,7 @@ import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.agent.CliStateApplier;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.client.ModelRequestOptions;
+import com.azhukov.agent.core.context.DefaultContextCompressor;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.WriteApprovalGate;
 import com.azhukov.agent.core.model.Message;
@@ -376,7 +377,14 @@ public class AgentRuntimeService {
         // compression kicks in must be updated when the model switches.
         if (modelMetadataService != null && contextCompressor != null && model != null && !model.isBlank()) {
             int newContextWindowSize = modelMetadataService.detectContextLength(model);
-            contextCompressor.recalculateThreshold(newContextWindowSize);
+            // Hermes parity: pass model name + per-model threshold overrides so the
+            // compression policy can apply per-model and small-context floor adjustments.
+            if (contextCompressor instanceof DefaultContextCompressor dcc) {
+                dcc.recalculateThreshold(newContextWindowSize, model,
+                    properties.getContext().getModelThresholds());
+            } else {
+                contextCompressor.recalculateThreshold(newContextWindowSize);
+            }
             log.info("Model switched for session {}: model={}, contextWindow={}, compression threshold recalculated",
                 sessionId, model, newContextWindowSize);
         }

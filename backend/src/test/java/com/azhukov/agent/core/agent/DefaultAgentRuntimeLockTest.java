@@ -130,12 +130,15 @@ class DefaultAgentRuntimeLockTest {
         // Two threads call runTurn on the same session; verify they are serialized
         AtomicInteger concurrentCount = new AtomicInteger(0);
         AtomicInteger maxConcurrent = new AtomicInteger(0);
+        CountDownLatch firstThreadInLock = new CountDownLatch(1);
 
         when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenAnswer(inv -> {
                 int cur = concurrentCount.incrementAndGet();
                 maxConcurrent.accumulateAndGet(cur, Math::max);
-                Thread.sleep(200); // hold the lock for a bit
+                firstThreadInLock.countDown();
+                // Hold the lock for a brief window
+                new CountDownLatch(1).await(200, TimeUnit.MILLISECONDS);
                 concurrentCount.decrementAndGet();
                 return ChatResponse.text("done");
             });
@@ -156,8 +159,8 @@ class DefaultAgentRuntimeLockTest {
         }
 
         threads[0].start();
-        // Give first thread time to acquire the lock
-        Thread.sleep(50);
+        // Wait until the first thread has acquired the lock and entered the mock
+        firstThreadInLock.await(5, TimeUnit.SECONDS);
         threads[1].start();
         latch.await(15, TimeUnit.SECONDS);
 
@@ -182,7 +185,8 @@ class DefaultAgentRuntimeLockTest {
                 int cur = concurrentCount.incrementAndGet();
                 maxConcurrent.accumulateAndGet(cur, Math::max);
                 bothStarted.countDown();
-                Thread.sleep(300); // hold to allow overlap
+                // Hold to allow overlap with the other thread
+                new CountDownLatch(1).await(300, TimeUnit.MILLISECONDS);
                 concurrentCount.decrementAndGet();
                 return ChatResponse.text("done");
             });

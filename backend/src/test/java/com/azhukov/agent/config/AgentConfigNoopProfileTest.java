@@ -1,6 +1,7 @@
 package com.azhukov.agent.config;
 
 import com.azhukov.agent.core.client.ModelClient;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -9,6 +10,7 @@ import org.springframework.test.context.TestPropertySource;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
+@Tag("slow")
 @TestPropertySource(properties = {
     "spring.profiles.active=noop",
     "agent.model.provider=noop",

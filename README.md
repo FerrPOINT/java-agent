@@ -247,9 +247,11 @@ docker compose up --build      # production, порт 8080
 docker compose -f docker-compose.local.yml up --build  # local dev, порты 18090/18091
 ```
 
-- `docker-compose.yml` — production (порт 8080, PostgreSQL 5432)
+- `docker-compose.prod.yml` — production (порт 8080, PostgreSQL 5432)
 - `docker-compose.local.yml` — local dev (порт 18090, PostgreSQL 18091)
-- Dockerfile: `eclipse-temurin:25-jre-noble` + Chromium runtime deps
+- `docker-compose.e2e.yml` — E2E testing
+- Dockerfile: `eclipse-temurin:25-jre-noble` + Chromium runtime deps (full image)
+- Dockerfile.slim: minimal image without bundled Chromium (installed at runtime)
 - `server.shutdown: immediate` — workaround для graceful shutdown бага Spring Boot 4.1.0
 - Health readiness включает только `db`
 

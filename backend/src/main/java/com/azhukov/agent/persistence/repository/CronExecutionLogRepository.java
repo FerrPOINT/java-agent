@@ -10,5 +10,7 @@ import java.util.UUID;
 @Repository
 public interface CronExecutionLogRepository extends JpaRepository<CronExecutionLogEntity, Long> {
 
+    java.util.Optional<CronExecutionLogEntity> findFirstByJobIdOrderByStartedAtDesc(UUID jobId);
+
     List<CronExecutionLogEntity> findByJobIdOrderByStartedAtDesc(UUID jobId);
 }

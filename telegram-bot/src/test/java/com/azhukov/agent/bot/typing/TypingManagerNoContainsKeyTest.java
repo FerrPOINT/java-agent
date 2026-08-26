@@ -74,11 +74,15 @@ class TypingManagerNoContainsKeyTest {
 
     @Test
     void startTypingSendsImmediateThenPeriodic() throws InterruptedException {
-        when(client.sendTyping(anyLong(), any())).thenReturn(true);
+        // Use latch to wait for at least 2 sendTyping calls (immediate + one periodic)
+        CountDownLatch typingLatch = new CountDownLatch(2);
+        when(client.sendTyping(anyLong(), any())).thenAnswer(inv -> {
+            typingLatch.countDown();
+            return true;
+        });
         manager.startTyping(99L);
 
-        // Wait for at least 2 calls (immediate + one periodic)
-        Thread.sleep(600);
+        assertThat(typingLatch.await(2, TimeUnit.SECONDS)).isTrue();
         verify(client, atLeast(2)).sendTyping(eq(99L), any());
 
         manager.stopTyping(99L);

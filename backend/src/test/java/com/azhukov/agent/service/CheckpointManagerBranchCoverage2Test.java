@@ -59,7 +59,10 @@ class CheckpointManagerBranchCoverage2Test {
         properties = new AgentProperties();
         properties.getCore().setWorkingDirectory(tempDir.toString());
         properties.getCheckpoints().setEnabled(true);
-        manager = new CheckpointManager(checkpointRepository, checkpointFileRepository, properties, new ObjectMapper());
+        manager = new CheckpointManager(checkpointRepository, checkpointFileRepository, properties, new ObjectMapper(),
+            new org.springframework.beans.factory.ObjectProvider<>() {
+                @Override public CheckpointManager getObject() { return manager; }
+            });
     }
 
     // ── snapshot: file larger than MAX_STORED_CONTENT_SIZE (512KB) — hash only ──
@@ -257,7 +260,10 @@ class CheckpointManagerBranchCoverage2Test {
         when(brokenMapper.createArrayNode()).thenReturn(new ObjectMapper().createArrayNode());
         when(brokenMapper.createObjectNode()).thenReturn(new ObjectMapper().createObjectNode());
 
-        manager = new CheckpointManager(checkpointRepository, checkpointFileRepository, properties, brokenMapper);
+        manager = new CheckpointManager(checkpointRepository, checkpointFileRepository, properties, brokenMapper,
+            new org.springframework.beans.factory.ObjectProvider<>() {
+                @Override public CheckpointManager getObject() { return manager; }
+            });
 
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         when(checkpointRepository.findAll()).thenReturn(List.of());

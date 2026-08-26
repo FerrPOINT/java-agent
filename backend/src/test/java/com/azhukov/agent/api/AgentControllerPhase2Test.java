@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
@@ -55,7 +56,7 @@ class AgentControllerPhase2Test {
     @Mock private TtsService ttsService;
     @Mock private TranscriptionService transcriptionService;
     @Mock private AgentProperties agentProperties;
-    @Mock private DomainDtoMapper domainDtoMapper;
+    private final DomainDtoMapper domainDtoMapper = Mappers.getMapper(DomainDtoMapper.class);
     @Mock private RuntimeConfigService runtimeConfigService;
     @Mock private com.azhukov.agent.service.CliRuntimeSettingsService cliRuntimeSettingsService;
     @Mock private com.azhukov.agent.core.security.UrlSafetyHandler urlSafetyHandler;
@@ -78,7 +79,7 @@ class AgentControllerPhase2Test {
     }
 
     private MockMvc skillMockMvc() {
-        SkillController controller = new SkillController(skillManager, agentRuntimeService, skillAuditLogRepository, mock(com.azhukov.agent.core.skill.SkillsHubService.class));
+        SkillController controller = new SkillController(skillManager, agentRuntimeService, skillAuditLogRepository, mock(com.azhukov.agent.core.skill.SkillsHubService.class), domainDtoMapper);
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

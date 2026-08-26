@@ -26,9 +26,8 @@ import static org.mockito.Mockito.*;
  * <p>
  * L7: Note — these tests use Thread.sleep to wait for the edit interval to elapse.
  * This is inherently flaky under heavy CI load. The sleep values are set to 110ms
- * (10ms above the 100ms edit interval) to provide a small margin. If tests become
- * flaky, increase the sleep values or consider using Awaitility (not currently
- * available as a dependency) or CountDownLatch-based synchronization.
+ * (10ms above the 100ms edit interval) to provide a small margin. These sleeps test
+ * actual throttle timing behavior and cannot be replaced with latches.
  */
 class StreamEditorFloodFallbackTest {
 
@@ -61,7 +60,8 @@ class StreamEditorFloodFallbackTest {
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         editor.startStream(123L, "Hello world");
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
 
         // All edits fail with 429
         when(client.getLastApiErrorCode()).thenReturn(429);
@@ -70,16 +70,20 @@ class StreamEditorFloodFallbackTest {
 
         // First flood failure
         editor.editStream(123L, 42L, "Hello world update 1");
-        Thread.sleep(110);
+        // Actual timing: wait for adaptive interval (doubles to 200ms after first 429)
+        Thread.sleep(110); // timing-assertion
         // Second flood failure — interval has now doubled to 200ms, wait long enough
         editor.editStream(123L, 42L, "Hello world update 2");
-        Thread.sleep(500);
+        // Actual timing: wait for adaptive interval (doubles to 400ms after second 429)
+        Thread.sleep(500); // timing-assertion
         // Third flood failure — interval has now doubled to 400ms, wait long enough
         editor.editStream(123L, 42L, "Hello world update 3");
-        Thread.sleep(1000);
+        // Actual timing: wait for adaptive interval (doubles to 800ms after third 429)
+        Thread.sleep(1000); // timing-assertion
 
         // Now streaming should be disabled — further edits should not call editMessageText
-        Thread.sleep(110);
+        // Actual timing: wait past current throttle interval
+        Thread.sleep(110); // timing-assertion
         // L5: Verify that editMessageText is NOT called in fallback mode.
         // Count editMessageText invocations before and after — they should be the same.
         long editTextCountBefore = mockingDetails(client).getInvocations().stream()
@@ -96,7 +100,8 @@ class StreamEditorFloodFallbackTest {
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         editor.startStream(123L, "Hello world");
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
 
         // All edits fail with 429
         when(client.getLastApiErrorCode()).thenReturn(429);
@@ -105,14 +110,18 @@ class StreamEditorFloodFallbackTest {
 
         // Trigger 3 flood failures to enter fallback mode
         editor.editStream(123L, 42L, "Hello world update 1");
-        Thread.sleep(110);
+        // Actual timing: wait for adaptive interval
+        Thread.sleep(110); // timing-assertion
         editor.editStream(123L, 42L, "Hello world update 2");
-        Thread.sleep(500);
+        // Actual timing: wait for adaptive interval
+        Thread.sleep(500); // timing-assertion
         editor.editStream(123L, 42L, "Hello world update 3");
-        Thread.sleep(1000);
+        // Actual timing: wait for adaptive interval
+        Thread.sleep(1000); // timing-assertion
 
         // Buffer more content while in fallback mode
-        Thread.sleep(110);
+        // Actual timing: wait past current throttle interval
+        Thread.sleep(110); // timing-assertion
         editor.editStream(123L, 42L, "Hello world final buffered content");
 
         // Finalize — should send buffered content as new message
@@ -138,21 +147,24 @@ class StreamEditorFloodFallbackTest {
         when(client.getLastApiErrorCode()).thenReturn(429);
 
         editor.startStream(123L, "Hello world");
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
 
         // Two flood failures (not enough to trigger fallback)
         editor.editStream(123L, 42L, "Update 1");
-        Thread.sleep(110);
+        // Actual timing: wait for adaptive interval
+        Thread.sleep(110); // timing-assertion
         editor.editStream(123L, 42L, "Update 2");
-        Thread.sleep(110);
+        // Actual timing: wait for adaptive interval
+        Thread.sleep(110); // timing-assertion
 
         // Now a successful edit — should reset flood strikes
         when(client.getLastApiErrorCode()).thenReturn(0);
         when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
             .thenReturn(true);
 
-        // Wait long enough for the increased interval
-        Thread.sleep(500);
+        // Actual timing: wait long enough for the increased interval
+        Thread.sleep(500); // timing-assertion
         boolean success = editor.editStream(123L, 42L, "Update 3 success");
         assertThat(success).isTrue();
 
@@ -161,16 +173,19 @@ class StreamEditorFloodFallbackTest {
         when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
             .thenReturn(false);
 
-        Thread.sleep(500);
+        // Actual timing: wait for adaptive interval
+        Thread.sleep(500); // timing-assertion
         editor.editStream(123L, 42L, "Update 4");
-        Thread.sleep(500);
+        // Actual timing: wait for adaptive interval
+        Thread.sleep(500); // timing-assertion
         editor.editStream(123L, 42L, "Update 5");
 
         // Next edit should still try to edit (not in fallback mode yet — only 2 strikes)
         when(client.getLastApiErrorCode()).thenReturn(0);
         when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
             .thenReturn(true);
-        Thread.sleep(2000);
+        // Actual timing: wait for increased interval after 2 failures
+        Thread.sleep(2000); // timing-assertion
         boolean stillEditing = editor.editStream(123L, 42L, "Update 6");
         assertThat(stillEditing).isTrue();
     }
@@ -185,11 +200,13 @@ class StreamEditorFloodFallbackTest {
             .thenReturn(true);
 
         editor.startStream(123L, "Hello world");
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
 
         // First edit — should go through
         editor.editStream(123L, 42L, "Hello world updated");
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
 
         // Second edit with same content — should be skipped
         int editCountBefore = mockingDetails(client).getInvocations().size();
@@ -211,11 +228,13 @@ class StreamEditorFloodFallbackTest {
             .thenReturn(true);
 
         editor.startStream(123L, "Hello world");
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
 
         // First edit
         editor.editStream(123L, 42L, "Hello world updated");
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
 
         // Second edit with different content — should go through
         editor.editStream(123L, 42L, "Hello world updated again");
@@ -234,11 +253,13 @@ class StreamEditorFloodFallbackTest {
             .thenReturn(true);
 
         editor.startStream(123L, "Hello world");
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
 
         // Edit with same content
         editor.editStream(123L, 42L, "Hello world updated");
-        Thread.sleep(110);
+        // Actual timing: wait past 100ms throttle interval
+        Thread.sleep(110); // timing-assertion
 
         // Same content again — skip
         editor.editStream(123L, 42L, "Hello world updated");

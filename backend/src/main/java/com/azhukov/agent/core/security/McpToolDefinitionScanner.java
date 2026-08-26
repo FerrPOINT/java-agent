@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.security;
 
+import com.azhukov.agent.core.util.TextTruncator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -156,7 +157,7 @@ public class McpToolDefinitionScanner {
                 String decodedStr = new String(decoded, StandardCharsets.UTF_8);
                 if (DECODED_INSTRUCTION.matcher(decodedStr).find()) {
                     findings.add("CRITICAL: Base64-encoded instruction payload in description: '" +
-                        truncate(candidate, 60) + "' decodes to instruction-like content");
+                        TextTruncator.truncate(candidate, 60) + "' decodes to instruction-like content");
                 }
             } catch (IllegalArgumentException e) {
                 // Not valid base64, skip
@@ -200,7 +201,7 @@ public class McpToolDefinitionScanner {
                         String defaultStr = String.valueOf(defaultValue);
                         if (INSTRUCTION_IN_DEFAULT.matcher(defaultStr).find()) {
                             findings.add("CRITICAL: Instruction-bearing default value in schema property '" +
-                                propName + "': " + truncate(defaultStr, 80));
+                                propName + "': " + TextTruncator.truncate(defaultStr, 80));
                         }
                     }
                     // Check description in schema property
@@ -240,8 +241,4 @@ public class McpToolDefinitionScanner {
             " security finding(s): " + String.join("; ", findings);
     }
 
-    private static String truncate(String s, int max) {
-        if (s.length() <= max) return s;
-        return s.substring(0, max) + "...";
-    }
 }

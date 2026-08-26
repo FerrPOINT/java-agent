@@ -108,7 +108,7 @@ class CronJobDtoMapperTest {
         Instant started = Instant.now();
         Instant finished = started.plusSeconds(10);
         Instant created = started;
-        CronExecutionLogEntity entity = new CronExecutionLogEntity(jobId, started, finished, "success", null);
+        CronExecutionLogEntity entity = CronExecutionLogEntity.create(jobId, started, finished, "success", null);
         entity.setId(1L);
         entity.setCreatedAt(created);
 
@@ -132,9 +132,9 @@ class CronJobDtoMapperTest {
     @Test
     void toExecutionLogDtoListMapsAll() {
         UUID jobId = UUID.randomUUID();
-        CronExecutionLogEntity e1 = new CronExecutionLogEntity(jobId, Instant.now(), Instant.now(), "success", null);
+        CronExecutionLogEntity e1 = CronExecutionLogEntity.create(jobId, Instant.now(), Instant.now(), "success", null);
         e1.setId(1L);
-        CronExecutionLogEntity e2 = new CronExecutionLogEntity(jobId, Instant.now(), Instant.now(), "failure", "boom");
+        CronExecutionLogEntity e2 = CronExecutionLogEntity.create(jobId, Instant.now(), Instant.now(), "failure", "boom");
         e2.setId(2L);
 
         List<CronExecutionLogDto> dtos = mapper.toExecutionLogDtoList(List.of(e1, e2));

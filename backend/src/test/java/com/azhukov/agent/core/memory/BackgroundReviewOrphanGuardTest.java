@@ -12,6 +12,8 @@ import org.mockito.Mockito;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,11 +55,8 @@ class BackgroundReviewOrphanGuardTest {
         WriteContext.clear();
     }
 
-    private static void awaitModelCall(AtomicReference<List<Message>> sent) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 5_000;
-        while (sent.get().isEmpty() && System.currentTimeMillis() < deadline) {
-            Thread.sleep(50);
-        }
+    private static void awaitModelCall(AtomicReference<List<Message>> sent, CountDownLatch latch) throws InterruptedException {
+        latch.await(5, TimeUnit.SECONDS);
         assertThat(sent.get()).isNotEmpty();
     }
 
@@ -65,10 +64,12 @@ class BackgroundReviewOrphanGuardTest {
     void snapshotNeverStartsWithToolMessage() throws InterruptedException {
         // capture the messages handed to the model
         AtomicReference<List<Message>> sent = new AtomicReference<>(List.of());
+        CountDownLatch modelCallLatch = new CountDownLatch(1);
         when(modelClient.complete(anyList(), any()))
             .thenAnswer(inv -> {
                 List<Message> msgs = (List<Message>) inv.getArgument(0);
                 if (sent.get().isEmpty()) sent.set(new ArrayList<>(msgs));
+                modelCallLatch.countDown();
                 return ChatResponse.text("");
             });
 
@@ -89,7 +90,7 @@ class BackgroundReviewOrphanGuardTest {
         history.add(10, Message.toolResult("call_y", "orphan candidate 2", 0));
 
         svc.reviewTurn(UUID.randomUUID(), history);
-        awaitModelCall(sent);
+        awaitModelCall(sent, modelCallLatch);
         List<Message> snapshot = sent.get();
         assertThat(snapshot).isNotEmpty();
         // system prompt first, then the snapshot — NO leading tool role

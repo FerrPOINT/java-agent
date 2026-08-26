@@ -1943,12 +1943,17 @@ class BotMessageProcessorTest {
         java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(numThreads);
         java.util.concurrent.atomic.AtomicInteger concurrent = new java.util.concurrent.atomic.AtomicInteger(0);
         java.util.concurrent.atomic.AtomicInteger maxConcurrent = new java.util.concurrent.atomic.AtomicInteger(0);
+        // Latch to control when the simulated work completes — replaces Thread.sleep
+        java.util.concurrent.CountDownLatch workStarted = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch workDoneLatch = new java.util.concurrent.CountDownLatch(1);
 
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 int cur = concurrent.incrementAndGet();
                 maxConcurrent.set(Math.max(maxConcurrent.get(), cur));
-                Thread.sleep(50); // simulate work
+                // Signal that work has started, then wait for the main thread to release us
+                workStarted.countDown();
+                workDoneLatch.await(5, java.util.concurrent.TimeUnit.SECONDS);
                 concurrent.decrementAndGet();
                 return new AgentBackendClient.ChatResult("response", "test-model", 100, 1000, true, false);
             });
@@ -1962,6 +1967,9 @@ class BotMessageProcessorTest {
                 done.countDown();
             });
         }
+        // Wait for at least one chatStream call to start, then release it
+        workStarted.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        workDoneLatch.countDown();
         done.await(5, java.util.concurrent.TimeUnit.SECONDS);
         exec.shutdown();
 

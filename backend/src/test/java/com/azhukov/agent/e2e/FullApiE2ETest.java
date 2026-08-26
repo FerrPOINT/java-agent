@@ -125,6 +125,7 @@ class FullApiE2ETest {
                 resp = delete(path);
             }
             if (resp.statusCode() != 429) return resp;
+            // timing-assertion: exponential backoff for rate-limit retry
             Thread.sleep(3000L * (attempt + 1));
         }
         // Last attempt without retry
@@ -160,7 +161,7 @@ class FullApiE2ETest {
 
     @org.junit.jupiter.api.BeforeEach
     void smallDelay() throws InterruptedException {
-        // Small delay between tests to avoid hitting rate limit (200 req/min)
+        // timing-assertion: rate-limit spacing between E2E tests
         Thread.sleep(200);
     }
 
