@@ -930,11 +930,28 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     session.id(), response.content().length());
             }
 
-            // Preserve commentary text in the assistant message alongside tool calls
-            if (response.hasContent() && response.hasToolCalls()) {
-                turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex));
+            // ── Tool call validation pipeline (parity with Hermes conversation_loop.py) ──
+            // 0. Uniquify duplicate tool-call ids BEFORE any downstream consumer
+            //    (Hermes conversation_loop.py:7071 — BEFORE _build_assistant_message
+            //    at :7141 and the persist at :7424). The persisted assistant row and
+            //    the tool results must share ids; uniquifying only a local copy left
+            //    duplicate ids in the DB row, so replay sanitizers kept only the
+            //    first call/result pair and strict providers 400'd on the orphans.
+            List<ToolCall> toolCalls;
+            if (response.toolCalls() != null && !response.toolCalls().isEmpty()) {
+                List<ToolCall> uniquified = new ArrayList<>(response.toolCalls());
+                ToolCallValidator.uniquifyToolCallIds(uniquified);
+                toolCalls = uniquified;
             } else {
-                turnMessages.add(Message.assistantToolCalls(response.toolCalls(), turnIndex));
+                toolCalls = response.toolCalls();
+            }
+
+            // Preserve commentary text in the assistant message alongside tool calls
+            // (built from the UNIQUIFIED calls so persistence matches execution)
+            if (response.hasContent() && response.hasToolCalls()) {
+                turnMessages.add(Message.assistantWithToolCalls(response.content(), toolCalls, turnIndex));
+            } else if (response.hasToolCalls()) {
+                turnMessages.add(Message.assistantToolCalls(toolCalls, turnIndex));
             }
 
             // P1-5: Persist the assistant message (with tool calls) immediately.
@@ -961,18 +978,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }
 
             int currentTurnIndex = turnIndex;
-            List<ToolCall> toolCalls = response.toolCalls();
-
-            // ── Tool call validation pipeline (parity with Hermes conversation_loop.py) ──
-            // 0. Uniquify duplicate tool-call ids BEFORE any downstream consumer
-            //    (Hermes conversation_loop.py:6827 — models reusing one id in a batch
-            //    lose the later call's result; strict providers reject duplicates).
-            if (toolCalls != null) {
-                toolCalls = new ArrayList<>(toolCalls);
-                ToolCallValidator.uniquifyToolCallIds(toolCalls);
-            }
 
             // 1. Validate tool names — repair fuzzy mismatches, collect errors
+            //    (toolCalls was uniquified above, before the assistant row was built)
             Set<String> registeredToolNames = new HashSet<>();
             for (ToolDefinition td : tools) {
                 registeredToolNames.add(td.name());

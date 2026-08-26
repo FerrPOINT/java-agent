@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -55,11 +56,20 @@ public class ToolExecutionService {
     // Non-blocking — the write already happened; the model self-corrects.
     private com.azhukov.agent.core.security.SecurityGuidanceScanner securityGuidanceScanner;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    /** P10 parity (tool_executor.py:708,726): mutating tools are dispatched once —
+     *  no automatic retry. A RuntimeException after the side effect (file written,
+     *  command executed) must surface as a tool error, not silently re-run. */
+    private static final Set<String> NO_RETRY_TOOLS = Set.of(
+        "write_file", "patch", "terminal", "text_to_speech",
+        "delegate_task", "cronjob", "memory");
     private final Retry retry = Retry.of("tool", RetryConfig.custom()
             .maxAttempts(3)
             .waitDuration(Duration.ofMillis(500))
             .retryExceptions(RuntimeException.class)
             .ignoreExceptions(IllegalArgumentException.class)
+            .build());
+    private final Retry noRetry = Retry.of("tool-noretry", RetryConfig.custom()
+            .maxAttempts(1)
             .build());
 
     public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session, TurnState turnState) {
@@ -89,12 +99,19 @@ public class ToolExecutionService {
 
         long start = System.currentTimeMillis();
         Callable<ToolResult> callable = () -> toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session);
-        Supplier<ToolResult> decorated = Retry.decorateSupplier(retry, () -> {
+        Supplier<ToolResult> decorated = Retry.decorateSupplier(
+            NO_RETRY_TOOLS.contains(toolName) ? noRetry : retry, () -> {
+            java.util.concurrent.Future<ToolResult> future = executor.submit(callable);
             try {
-                return executor.submit(callable).get(
+                return future.get(
                     properties.getToolOutput().getTimeoutSecondsOrDefault(120), TimeUnit.SECONDS);
             } catch (TimeoutException e) {
-                log.warn("Tool {} timed out after {}s", toolName, properties.getToolOutput().getTimeoutSecondsOrDefault(120));
+                // P11 parity (tool_executor.py:957,966): cancel AND interrupt the
+                // worker so a timed-out tool cannot perform late side effects after
+                // the model has received the timeout result and moved on.
+                future.cancel(true);
+                log.warn("Tool {} timed out after {}s — worker interrupted", toolName,
+                    properties.getToolOutput().getTimeoutSecondsOrDefault(120));
                 return ToolResult.fail("Tool timed out: " + toolName);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

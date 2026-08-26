@@ -24,12 +24,14 @@
 - **Status:** FALSE POSITIVE (parent verification 2026-08-26). Delivery is implemented in the telegram-bot module: `CronDeliveryPoller` (bot/cron/CronDeliveryPoller.java) polls every 30s, delivers run output to the resolved chat, sends the one-time failure nudge, honors `[SILENT]` via AutonomousSilenceFilter, and advances lastDeliveredRunAt. `bot.cron-delivery-enabled` defaults true. The subagent audited only backend sources.
 
 ### P4: Seam 1 [HIGH]
+- **Status:** ✅ FIXED 2026-08-26 — ChatResponse carries TokenUsage; LangChain4jModelClient extracts provider usage; EmptyResponseGuard receives completionTokens — deterministic-empty is reachable. Tool-call IDs uniquified BEFORE persist (conversation_loop.py:7071→:7141→:7424 parity).
 - **Status:** ✅ FIXED 2026-08-26 — ChatResponse carries TokenUsage (withUsage); LangChain4jModelClient extracts provider usage on all 3 sync return sites; DefaultAgentRuntime passes completionTokens to EmptyResponseGuard.recordEmptyAttempt — deterministic-empty detection is now reachable.
 - **Hermes:** `agent/conversation_loop.py:7029` - Uniquifies and repairs tool calls before `_build_assistant_message` and before the assistant tool-call message is persisted, so persisted call IDs/names match tool results.
 - **Java:** `core/agent/DefaultAgentRuntime.java:919` - Adds and persists `response.toolCalls()` first, then copies and mutates only the local `toolCalls` list for ID uniquification and name repair.
 - **Impact:** Tool results can use repaired names or IDs that do not exist in the persisted assistant tool-call message; replay sanitizers can drop those results and strict providers can reject the next request as an orphaned tool result.
 
 ### P5: Seam 1 [HIGH]
+- **Status:** ✅ FIXED — persistence failure aborts tool execution; see P6 commit.
 - **Hermes:** `agent/conversation_loop.py:7417` - Flushes the assistant tool-call record before side effects and terminates the turn without executing tools if canonical persistence fails.
 - **Java:** `core/agent/DefaultAgentRuntime.java:926` - Attempts incremental persistence but, when the callback returns false, merely leaves `persistedUpTo` unchanged and still validates and executes side-effecting tools.
 - **Impact:** A crash or retry after persistence failure can rerun destructive tools whose initiating tool-call record was never durably saved.
@@ -58,11 +60,13 @@
 - **Impact:** Any tool configured in alwaysRequireApprovalTools that is also admitted as parallel-safe can run without the required user approval.
 
 ### P10: Seam 10 - Tool execution [HIGH]
+- **Status:** ✅ FIXED 2026-08-26 — NO_RETRY_TOOLS (write_file, patch, terminal, text_to_speech, delegate_task, cronjob, memory) dispatched once via maxAttempts=1 noRetry policy.
 - **Hermes:** `agent/tool_executor.py:708; agent/tool_executor.py:726` - Hermes dispatches each tool once through its execution middleware; it returns a tool error to the model rather than generically retrying the whole invocation.
 - **Java:** `backend/src/main/java/com/azhukov/agent/core/tool/ToolExecutionService.java:58; backend/src/main/java/com/azhukov/agent/core/tool/ToolExecutionService.java:91` - ToolExecutionService wraps every registry invocation in a Resilience4j retry that retries RuntimeException up to three times, regardless of whether the tool mutates files, processes, or external systems.
 - **Impact:** A mutating tool that completes its side effect and then throws can be executed again automatically, causing duplicate writes, commands, requests, or external actions.
 
 ### P11: Seam 10 - Tool execution [HIGH]
+- **Status:** ✅ FIXED 2026-08-26 — future.cancel(true) on TimeoutException interrupts the worker thread, preventing late side effects.
 - **Hermes:** `agent/tool_executor.py:957; agent/tool_executor.py:966` - On a sequential deadline Hermes cancels the future and signals the worker interrupt; its concurrent path similarly abandons and interrupts timed-out workers.
 - **Java:** `backend/src/main/java/com/azhukov/agent/core/tool/ToolExecutionService.java:91; backend/src/main/java/com/azhukov/agent/core/tool/ToolExecutionService.java:94` - Java submits a Callable and immediately waits on the returned Future, but discards that Future. On TimeoutException it returns a failure result without canceling or interrupting the submitted task.
 - **Impact:** A timed-out Java tool continues running and can perform late side effects after the model has received a timeout result and moved to a different strategy.
