@@ -56,6 +56,7 @@ server:
     max-http-form-post-size: 50MB
 
 agent:
+  # Deployment identity. Default stays generic; set AGENT_NAME=Wartz Java Agent for Wartz.
   name: ${AGENT_NAME:Джава агент}
   
   # ─── Model ───

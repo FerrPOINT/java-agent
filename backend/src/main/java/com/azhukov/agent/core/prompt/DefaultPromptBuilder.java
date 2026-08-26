@@ -70,9 +70,10 @@ public class DefaultPromptBuilder implements PromptBuilder {
     /** Maximum character limit for SOUL.md content (mirrors Hermes 20K limit). */
     static final int SOUL_MD_MAX_CHARS = 20_000;
 
-    /** Default path for SOUL.md: ~/.hermes/soul.md */
+    /** Default path for SOUL.md: ~/.java-agent/soul.md (the agent's own home,
+     *  NOT ~/.hermes — this agent must never inherit another agent's persona). */
     static final String DEFAULT_SOUL_MD_PATH = Path.of(
-        System.getProperty("user.home"), ".hermes", "soul.md"
+        System.getProperty("user.home"), ".java-agent", "soul.md"
     ).toString();
 
     // ── Fix 2: Tool-specific guidance blocks (mirrors Hermes prompt_builder.py) ──
@@ -153,15 +154,15 @@ public class DefaultPromptBuilder implements PromptBuilder {
         4. **DEDUP** — After reloading a pruned skill, **ignore any remaining `[SKILL_PRUNED]` markers for that same skill** — they are historical artifacts from previous compactions and do not need further action.""";
 
     /** Variant when skill tools are NOT available — removes dangling skill_view reference.
-     *  Hermes parity: HERMES_AGENT_HELP_GUIDANCE_NO_SKILLS. */
-    static final String HERMES_AGENT_HELP_GUIDANCE_NO_SKILLS =
-        "You run on Hermes Agent (by Nous Research). When the user needs help with "
-        + "Hermes itself — configuring, setting up, using, extending, or troubleshooting "
-        + "it — or when you need to understand your own features, tools, or capabilities, "
-        + "the documentation at https://hermes-agent.nousresearch.com/docs is your "
-        + "authoritative reference and always holds the latest, most up-to-date "
-        + "information. Point the user there (or read it yourself if you have a way to "
-        + "fetch web content).";
+     *  Identity is configurable via agent.name (default "Джава агент"; a deployment
+     *  overrides it, e.g. AGENT_NAME=Wartz Java Agent). Never hardcode a product name. */
+    static String agentHelpGuidanceNoSkills(String agentName) {
+        return "You run on " + agentName + ". When the user needs help with "
+            + "this agent — configuring, setting up, using, extending, or troubleshooting "
+            + "it — or when you need to understand your own features, tools, or capabilities, "
+            + "answer from this agent's own configuration and bundled skills. "
+            + "Do not claim to be any other agent.";
+    }
 
     // ── Out-of-band steer markers (mirrors Hermes prompt_builder.py) ──
 
@@ -705,29 +706,29 @@ public class DefaultPromptBuilder implements PromptBuilder {
             hints.append("Java toolchain: java ").append(javaVersion).append("\n");
         }
 
-        // Active Hermes profile (if applicable)
-        String activeProfile = System.getenv("HERMES_PROFILE");
+        // Active agent profile (agent.profile.name; default "default")
+        String activeProfile = properties.getProfile().getName();
         if (activeProfile == null || activeProfile.isBlank()) {
             activeProfile = "default";
         }
         if ("default".equals(activeProfile)) {
-            hints.append("Active Hermes profile: default. Other profiles (if any) live ")
-                .append("under ~/.hermes/profiles/<name>/. Each profile has its own ")
+            hints.append("Active agent profile: default. Other profiles (if any) live ")
+                .append("under ~/.java-agent/profiles/<name>/. Each profile has its own ")
                 .append("skills/, plugins/, cron/, and memories/ that affect a different ")
                 .append("session than this one. Do not modify another profile's ")
                 .append("skills/plugins/cron/memories unless the user explicitly directs you to.\n");
         } else {
-            hints.append("Active Hermes profile: ").append(activeProfile)
-                .append(". This session reads and writes ~/.hermes/profiles/").append(activeProfile)
-                .append("/. The default profile's data lives at ~/.hermes/skills/, ")
-                .append("~/.hermes/plugins/, ~/.hermes/cron/, ~/.hermes/memories/ — those belong ")
+            hints.append("Active agent profile: ").append(activeProfile)
+                .append(". This session reads and writes ~/.java-agent/profiles/").append(activeProfile)
+                .append("/. The default profile's data lives at ~/.java-agent/skills/, ")
+                .append("~/.java-agent/plugins/, ~/.java-agent/cron/, ~/.java-agent/memories/ — those belong ")
                 .append("to a different session run from a different shell. Do NOT modify ")
                 .append("another profile's skills/plugins/cron/memories unless the user ")
                 .append("explicitly directs you to.\n");
         }
 
         // Connected Platforms (if available)
-        String platforms = System.getenv("HERMES_CONNECTED_PLATFORMS");
+        String platforms = System.getenv("AGENT_CONNECTED_PLATFORMS");
         if (platforms != null && !platforms.isBlank()) {
             hints.append("Connected Platforms: ").append(platforms).append("\n");
         }
@@ -924,11 +925,10 @@ public class DefaultPromptBuilder implements PromptBuilder {
             .append("Skills also encode the user's preferred approach, conventions, and quality standards ")
             .append("for tasks like code review, planning, and testing — load them even for tasks you ")
             .append("already know how to do, because the skill defines how it should be done here.\n");
-        sb.append("Whenever the user asks you to configure, set up, install, enable, disable, modify, ")
-            .append("or troubleshoot Hermes Agent itself — its CLI, config, models, providers, tools, ")
-            .append("skills, voice, gateway, plugins, or any feature — load the `hermes-agent` skill ")
-            .append("first. It has the actual commands (e.g. `hermes config set …`, `hermes tools`, ")
-            .append("`hermes setup`) so you don't have to guess or invent workarounds.\n");
+        sb.append("Whenever the user asks you to configure, set up, install, enable, disable, modify, \n")
+            .append("or troubleshoot this agent itself — its configuration, models, providers, tools, \n")
+            .append("skills, or any feature — check the relevant bundled skill and the agent's own \n")
+            .append("configuration first instead of guessing or inventing workarounds.\n");
         sb.append("If a skill has issues, fix it with skill_manage(action='patch').\n");
         sb.append("After difficult/iterative tasks, offer to save as a skill. ");
         sb.append("If a skill you loaded was missing steps, had wrong commands, or needed ")
@@ -1158,23 +1158,24 @@ public class DefaultPromptBuilder implements PromptBuilder {
                 .append("Be targeted and efficient in your exploration and investigations.\n\n");
         }
 
-        // HERMES_AGENT_HELP_GUIDANCE — tells the model where to find docs and self-help
-        // Hermes parity: use NO_SKILLS variant when skill_view is not available
+        // Agent help guidance — identity comes from agent.name (configurable).
+        // Never hardcode a product name; a Wartz deployment sets
+        // AGENT_NAME=Wartz Java Agent and the prompt follows.
         Set<String> availableTools = getAvailableToolNames();
         boolean hasSkillTools = availableTools.contains("skill_view")
             || availableTools.contains("skills_list")
             || availableTools.contains("skill_manage");
+        String agentName = properties.getName() == null || properties.getName().isBlank()
+            ? "Java Agent" : properties.getName();
         if (hasSkillTools) {
-            stable.append("You run on Hermes Agent (by Nous Research). When the user needs help with ")
-                .append("Hermes itself — configuring, setting up, using, extending, or troubleshooting ")
+            stable.append("You run on ").append(agentName).append(". When the user needs help with ")
+                .append("this agent — configuring, setting up, using, extending, or troubleshooting ")
                 .append("it — or when you need to understand your own features, tools, or capabilities, ")
-                .append("the documentation at https://hermes-agent.nousresearch.com/docs is your ")
-                .append("authoritative reference and always holds the latest, most up-to-date ")
-                .append("information. Load the `hermes-agent` skill with skill_view(name='hermes-agent') ")
-                .append("for additional guidance and proven workflows, but treat the docs as the source ")
-                .append("of truth when the two differ.\n\n");
+                .append("answer from this agent's own configuration and bundled skills. Load a relevant ")
+                .append("bundled skill with skill_view if one matches. Do not claim to be any other ")
+                .append("agent.\n\n");
         } else {
-            stable.append(HERMES_AGENT_HELP_GUIDANCE_NO_SKILLS).append("\n\n");
+            stable.append(agentHelpGuidanceNoSkills(agentName)).append("\n\n");
         }
 
         stable.append("## Rules\n");

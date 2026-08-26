@@ -909,8 +909,11 @@ class DefaultPromptBuilderTest {
         };
 
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+        // SOUL.md replaces the hardcoded identity sentence ("You are ...").
         assertThat(msg.content()).contains("OverrideBot");
-        assertThat(msg.content()).doesNotContain("DefaultName");
+        assertThat(msg.content()).doesNotContain("You are DefaultName");
+        // The help-guidance block still names the configured agent ("You run on ...").
+        assertThat(msg.content()).contains("You run on DefaultName");
     }
 
     @Test
@@ -1150,7 +1153,7 @@ class DefaultPromptBuilderTest {
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry);
 
         String hints = builder.buildEnvironmentHints();
-        assertThat(hints).contains("Active Hermes profile:");
+        assertThat(hints).contains("Active agent profile:");
     }
 
     @Test
@@ -1677,7 +1680,7 @@ class DefaultPromptBuilderTest {
             new DefaultAgentConstants(), null, null, null, null, null);
 
         // With blank path, loadSoulMd() should use DEFAULT_SOUL_MD_PATH
-        // which is ~/.hermes/soul.md — likely doesn't exist in test env, so returns null
+        // which is ~/.java-agent/soul.md — likely doesn't exist in test env, so returns null
         // and falls back to the hardcoded identity
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
         // Should use the default hardcoded identity
@@ -1733,5 +1736,48 @@ class DefaultPromptBuilderTest {
 
         String contextFiles = builder.buildContextFilesPrompt();
         assertThat(contextFiles).isEmpty();
+    }
+
+    // ── Agent identity (configurable, never hardcoded product name) ────
+
+    @Test
+    void systemPromptUsesConfiguredAgentName() {
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Wartz Java Agent");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry);
+
+        Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+        assertThat(msg.content()).contains("You are Wartz Java Agent");
+        assertThat(msg.content()).contains("You run on Wartz Java Agent");
+        assertThat(msg.content()).doesNotContain("Hermes Agent");
+        assertThat(msg.content()).doesNotContain("Nous Research");
+    }
+
+    @Test
+    void systemPromptNeverClaimsHermesIdentityByDefault() {
+        AgentProperties properties = new AgentProperties(); // default name "Джава агент"
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry);
+
+        Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+        assertThat(msg.content()).doesNotContain("Hermes Agent");
+        assertThat(msg.content()).doesNotContain("hermes-agent.nousresearch.com");
+        assertThat(msg.content()).doesNotContain("Nous Research");
+    }
+
+    @Test
+    void environmentHintsUseAgentHomeNotHermes() {
+        AgentProperties properties = new AgentProperties();
+        ToolRegistry registry = mock(ToolRegistry.class);
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry);
+
+        String hints = builder.buildEnvironmentHints();
+        assertThat(hints).doesNotContain("~/.hermes/");
+        assertThat(hints).contains("~/.java-agent/profiles/");
     }
 }
