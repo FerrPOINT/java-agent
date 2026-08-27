@@ -392,7 +392,11 @@ public class AgentStreamingService {
                 request.subgoal(),
                 null);
 
+        // P-08 (Hermes #92450): bound escaped outer-loop exceptions per turn.
+        com.azhukov.agent.core.agent.OuterErrorBudget outerErrors =
+            new com.azhukov.agent.core.agent.OuterErrorBudget(maxTurns);
         for (int i = 0; i < maxTurns; i++) {
+          try {
             // Check for interrupt at the top of each agentic-loop iteration
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                 log.info("Streaming turn cancelled by interrupt for session {}", session.id());
@@ -1321,6 +1325,22 @@ public class AgentStreamingService {
             }
 
             turnIndex++;
+          } catch (Exception outerEx) {
+            // P-08 (Hermes #92450): bound escaped exceptions per turn; at the
+            // cap terminate with an error event instead of spinning forever.
+            if (outerErrors.recordAndCheckExhausted()) {
+                log.error("Streaming outer error budget exhausted ({}/{}): {}",
+                    outerErrors.count(), outerErrors.cap(), outerEx.getMessage(), outerEx);
+                eventHelper().send(emitter, new StreamEvent("error", null, null,
+                    outerErrors.exhaustedMessage(outerEx.getMessage())), streamCtx);
+                eventHelper().safeCompleteWithError(emitter,
+                    new RuntimeException(outerErrors.exhaustedMessage(outerEx.getMessage())));
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                return;
+            }
+            log.warn("Streaming outer loop error {}/{} — continuing turn: {}",
+                outerErrors.count(), outerErrors.cap(), outerEx.getMessage());
+          }
         }
 
         // Max turns reached

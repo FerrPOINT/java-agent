@@ -459,6 +459,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
         // R4 (Hermes empty_response_guard): deterministic-empty detection —
         // ≥2 consecutive zero-output attempts with identical signature skip retries.
         EmptyResponseGuard emptyGuard = new EmptyResponseGuard();
+        // P-08 (Hermes #92450): bound escaped post-model exceptions per turn.
+        OuterErrorBudget outerErrors = new OuterErrorBudget(maxTurns);
 
         // P1-5: Mid-turn persistence cursor — tracks how many messages have been
         // flushed to the database. After each tool batch, new messages (assistant
@@ -468,6 +470,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         int persistedUpTo = turnMessages.size();
 
         for (int i = 0; i < maxTurns; i++) {
+          try {
             // M10: Increment skill iteration counter at the TOP of the loop
             // (before model call) so it counts every iteration, not just
             // tool-calling iterations. Mirrors Hermes _iters_since_skill which
@@ -1257,6 +1260,20 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     }
                 }
             }
+          } catch (Exception outerEx) {
+            // P-08 (Hermes #92450): every escaped exception counts against the
+            // per-turn budget; at the cap the turn terminates instead of spinning.
+            if (outerErrors.recordAndCheckExhausted()) {
+                log.error("Outer error budget exhausted ({}/{}) — terminating turn: {}",
+                    outerErrors.count(), outerErrors.cap(), outerEx.getMessage(), outerEx);
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.MAX_TURNS_REACHED);
+                }
+                return TurnResult.error(outerErrors.exhaustedMessage(outerEx.getMessage()));
+            }
+            log.warn("Outer loop error {}/{} — continuing turn: {}",
+                outerErrors.count(), outerErrors.cap(), outerEx.getMessage());
+          }
         }
 
         // H7: Fire background review on max-turns-reached path too.
