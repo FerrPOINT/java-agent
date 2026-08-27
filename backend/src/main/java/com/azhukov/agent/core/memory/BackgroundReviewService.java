@@ -79,6 +79,41 @@ public class BackgroundReviewService {
  // S7: Track which sessions have been reviewed to prevent stale-action re-processing
  private final ConcurrentHashMap<UUID, StaleActionFilter.PriorToolResults> priorResultsCache = new ConcurrentHashMap<>();
 
+ // P-05 (Hermes background_review.py cancellation handshake): per-session
+ // cancellation flag consulted between review model calls and before every
+ // review tool execution. A new foreground turn (or reset) sets it so a stale
+ // review cannot keep burning tokens or write outdated memory/skills after
+ // the conversation moved on.
+ private final ConcurrentHashMap<UUID, AtomicBoolean> cancelFlags = new ConcurrentHashMap<>();
+
+ /**
+  * P-05: cancel any scheduled/in-flight review for a session. Called at the
+  * start of a new foreground turn and on session reset — mirrors Hermes
+  * cancel_background_review_for_live_turn (#84423).
+  */
+ public void cancelForNewForegroundTurn(UUID sessionId) {
+     if (sessionId == null) {
+         return;
+     }
+     AtomicBoolean flag = cancelFlags.get(sessionId);
+     if (flag != null) {
+         flag.set(true);
+     }
+ }
+
+ private boolean isCancelled(UUID sessionId) {
+     AtomicBoolean flag = cancelFlags.get(sessionId);
+     return flag != null && flag.get();
+ }
+
+ private void beginReview(UUID sessionId) {
+     cancelFlags.put(sessionId, new AtomicBoolean(false));
+ }
+
+ private void endReview(UUID sessionId) {
+     cancelFlags.remove(sessionId);
+ }
+
  /**
   * Review a turn's conversation and save facts to memory if appropriate.
   * Runs asynchronously with a configurable delay.
@@ -146,11 +181,22 @@ public class BackgroundReviewService {
      }
 
      int delayMs = properties.getMemory().getBackgroundReview().getDelayMs();
+     // Register before scheduling so a foreground turn arriving during the
+     // delay can cancel this exact pending review.
+     cancelFlags.put(sessionId, new AtomicBoolean(false));
      executor.schedule(() -> {
          try {
+             // P-05: a foreground turn that arrived during the schedule delay
+             // cancels the review before it starts.
+             if (isCancelled(sessionId)) {
+                 log.debug("Background review cancelled before start for session {}", sessionId);
+                 return;
+             }
              doReview(sessionId, messages, parentUserId, reviewMemory, reviewSkills, f);
          } catch (Exception e) {
              log.error("Background review failed for session {}: {}", sessionId, e.getMessage());
+         } finally {
+             endReview(sessionId);
          }
      }, delayMs, TimeUnit.MILLISECONDS);
  }
@@ -277,6 +323,12 @@ public class BackgroundReviewService {
  try {
  // S1: Mini conversation loop (up to maxReviewTurns turns)
  for (int turn = 0; turn < maxReviewTurns; turn++) {
+ // P-05: stop the review when a new foreground turn arrived
+ if (isCancelled(sessionId)) {
+     log.info("Background review cancelled by a new foreground turn (session {}, turn {}/{})",
+         sessionId, turn, maxReviewTurns);
+     break;
+ }
  ChatResponse response = modelClient.complete(reviewMessages, tools);
 
  if (!response.hasToolCalls()) {
@@ -290,6 +342,11 @@ public class BackgroundReviewService {
  // S1: Process tool calls with whitelist enforcement
  boolean anyToolExecuted = false;
  for (ToolCall call : response.toolCalls()) {
+ // P-05: never execute a review write after cancellation
+ if (isCancelled(sessionId)) {
+     log.info("Background review dropped pending tool write after cancellation (session {})", sessionId);
+     break;
+ }
  if (!REVIEW_TOOL_WHITELIST.contains(call.name())) {
  log.warn("Background review denied non-whitelisted tool: {}", call.name());
  // Add denied result to conversation

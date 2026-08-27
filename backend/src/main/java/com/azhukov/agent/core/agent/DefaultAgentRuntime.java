@@ -235,6 +235,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
                                        ModelRequestOptions options) {
         UUID sessionIdUuid = session.id();
         String sessionId = sessionIdUuid.toString();
+        // P-05: foreground work supersedes any delayed/in-flight review for
+        // this session before it can call the model or write memory.
+        if (backgroundReviewService != null) {
+            backgroundReviewService.cancelForNewForegroundTurn(sessionIdUuid);
+        }
         guardrail.reset(sessionIdUuid);
         // Clear stale cancellation from an earlier child turn before this new turn starts.
         if (interruptToken != null) {
