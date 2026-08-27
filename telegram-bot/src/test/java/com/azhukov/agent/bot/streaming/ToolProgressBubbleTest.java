@@ -108,14 +108,14 @@ class ToolProgressBubbleTest {
         long[] now = {System.currentTimeMillis()};
         ToolProgressBubble bubble = new ToolProgressBubble(client, true, () -> now[0]);
 
-        for (int i = 1; i <= 35; i++) {
+        for (int i = 1; i <= 5; i++) {
             now[0] += 2000;
-            bubble.appendLine(CHAT, "🔧 tool-" + i);
+            bubble.appendLine(CHAT, "🔧 " + "x".repeat(900) + "-" + i);
         }
 
-        // 35 lines > MAX_LINES(30) → at least one roll → second sendMessage
+        // 5 × ~900 chars > MAX_CHARS(4032) → split groups → roll: second sendMessage
         verify(client, times(2)).sendMessage(eq(CHAT), anyString(), any(), any(), any(), eq(true));
-        // The rolled bubble carries only the last 3 lines
-        assertThat(edited.get(edited.size() - 1)).contains("tool-35");
+        // The rolled bubble carries the tail group; NO lines are dropped
+        assertThat(edited.get(edited.size() - 1)).contains("-4");
     }
 }
