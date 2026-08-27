@@ -207,6 +207,17 @@ public class ToolExecutionService {
                     : ToolResult.fail(ToolLoopGuardrail.appendWarning(safeResult.content(), loopWarning));
             }
         }
+        // P-07 (Hermes 761990b780): byte-identical successful results ≥512
+        // chars enter context as a reference stub from the 2nd consecutive
+        // repeat — the tool still ran, only the context copy is deduplicated.
+        if (toolLoopGuardrail != null) {
+            String stub = toolLoopGuardrail.resultReferenceStub(toolName, arguments,
+                safeResult.content(), !safeResult.success());
+            if (stub != null) {
+                log.debug("Identical-result stub applied for {} (streak dedupe)", toolName);
+                safeResult = safeResult.success() ? ToolResult.ok(stub) : ToolResult.fail(stub);
+            }
+        }
         // Preserve oversized successful output before the in-context limiter
         // truncates it. The replacement contains a preview + absolute temp
         // path so the model can call read_file for the complete result.

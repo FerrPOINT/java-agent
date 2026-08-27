@@ -62,6 +62,16 @@ public class ToolLoopGuardrail {
     private final Map<String, Integer> idempotentRepeatCounts = new ConcurrentHashMap<>();
     private final Map<String, Integer> turnToolCounts = new ConcurrentHashMap<>();
 
+    // ── P-07 (Hermes 761990b780): identical-result reference stubbing ──
+    /** Results below this size are never stubbed (stub overhead > savings). */
+    static final int IDENTICAL_RESULT_STUB_MIN_CHARS = 512;
+    /** How much of the canonical args the stub carries (dangling-ref mitigation). */
+    private static final int RESULT_STUB_ARGS_PREVIEW_CHARS = 120;
+    // signature -> last successful result hash (stub streak tracking)
+    private final Map<String, String> stubStreakResultHashes = new ConcurrentHashMap<>();
+    // signature -> streak length of byte-identical consecutive results
+    private final Map<String, Integer> stubStreakCounts = new ConcurrentHashMap<>();
+
     public ToolLoopGuardrail() {
         this(true, 2, 3, 2, DEFAULT_MAX_WEB_SEARCHES, DEFAULT_MAX_SUBAGENTS);
     }
@@ -90,6 +100,8 @@ public class ToolLoopGuardrail {
         idempotentResultHashes.clear();
         idempotentRepeatCounts.clear();
         turnToolCounts.clear();
+        stubStreakResultHashes.clear();
+        stubStreakCounts.clear();
     }
 
     /**
@@ -201,6 +213,47 @@ public class ToolLoopGuardrail {
             }
         }
         return null;
+    }
+
+    /**
+     * P-07 (Hermes 761990b780 identical-result stubbing): from the 2nd
+     * consecutive SUCCESSFUL call whose fresh result is byte-identical to the
+     * previous one and at least {@value #IDENTICAL_RESULT_STUB_MIN_CHARS}
+     * chars, the duplicate payload is replaced in context by a short
+     * reference stub. The tool still executed — only the context
+     * representation is deduplicated. Failed results are never stubbed, and a
+     * changed result resets the streak.
+     *
+     * @return replacement stub content, or null to keep the original result
+     */
+    public String resultReferenceStub(String toolName, String arguments, String result, boolean failed) {
+        if (!enabled || failed || result == null || result.length() < IDENTICAL_RESULT_STUB_MIN_CHARS) {
+            // Reset streak tracking on failure/short result for this signature
+            if (result != null || failed) {
+                String sig = toolName + ":" + hashArgs(arguments);
+                stubStreakResultHashes.remove(sig);
+                stubStreakCounts.remove(sig);
+            }
+            return null;
+        }
+        String signature = toolName + ":" + hashArgs(arguments);
+        String resultHash = hashResult(result);
+        String prevHash = stubStreakResultHashes.put(signature, resultHash);
+        if (prevHash == null || !prevHash.equals(resultHash)) {
+            stubStreakCounts.put(signature, 1);
+            return null; // first occurrence (or changed) — keep full payload
+        }
+        int streak = stubStreakCounts.merge(signature, 1, Integer::sum);
+        if (streak < 2) {
+            return null;
+        }
+        String argsPreview = arguments != null && arguments.length() > RESULT_STUB_ARGS_PREVIEW_CHARS
+            ? arguments.substring(0, RESULT_STUB_ARGS_PREVIEW_CHARS) + "…"
+            : (arguments == null ? "" : arguments);
+        return "[Duplicate result — identical to the previous " + toolName
+            + " result in this turn (call " + streak + " of the streak). "
+            + "Refer to the full payload above instead of repeating the call. "
+            + "Args: " + argsPreview + "]";
     }
 
     /**
