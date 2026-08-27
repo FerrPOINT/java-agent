@@ -361,8 +361,14 @@ agent:
   commentary-enabled: ${AGENT_COMMENTARY_ENABLED:true}
   
   # ─── Error handling ───
+  # CUSTOM OPERATOR SETTING (deliberately NOT Hermes parity — Hermes defaults
+  # to api_max_retries=3). 100 retries out of the box because the models used
+  # here run behind providers that can disappear for a few minutes up to half
+  # an hour (LiteLLM cooldowns, provider outages); the agent keeps retrying
+  # with a sane backoff (1s→120s exp, then fixed 120s + jitter) instead of
+  # giving up after ~3 attempts.
   error:
-    retry-attempts: ${AGENT_ERROR_RETRY_ATTEMPTS:3}
+    retry-attempts: ${AGENT_ERROR_RETRY_ATTEMPTS:100}
     retry-delay-ms: ${AGENT_ERROR_RETRY_DELAY_MS:1000}
     backoff-multiplier: ${AGENT_ERROR_BACKOFF_MULTIPLIER:2}
   

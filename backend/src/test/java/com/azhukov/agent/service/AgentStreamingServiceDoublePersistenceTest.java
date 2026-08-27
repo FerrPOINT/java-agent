@@ -76,6 +76,8 @@ class AgentStreamingServiceDoublePersistenceTest {
         objectMapper = new ObjectMapper();
         usageTracker = mock(UsageTracker.class);
         properties = new AgentProperties();
+        // keep tests fast & deterministic: default is 100 (custom operator setting)
+        properties.getError().setRetryAttempts(2);
         properties.getCore().setEmptyBackoffBaseMs(10L);
         properties.getCore().setEmptyBackoffCapMs(50L);
         properties.getContext().setMaxTokens(8192);

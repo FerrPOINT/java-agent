@@ -546,11 +546,19 @@ public class AgentProperties {
 
     @Getter @Setter
     public static class ErrorProperties {
-        private int retryAttempts = 3;
+        /**
+         * CUSTOM OPERATOR SETTING (deliberately NOT Hermes parity — Hermes
+         * defaults to api_max_retries=3). Set to 100 out of the box because the
+         * models used here run behind providers that can disappear for a few
+         * minutes up to half an hour (LiteLLM cooldowns, provider outages);
+         * the agent keeps retrying with a sane backoff instead of giving up.
+         * Backoff: exponential 1s→120s, then fixed 120s + jitter.
+         */
+        private int retryAttempts = 100;
         private int retryDelayMs = 1000;
         private int backoffMultiplier = 2;
-        /** Cap for exponential backoff delay in milliseconds (default 60s). */
-        private int retryCapMs = 60_000;
+        /** Cap for exponential backoff delay in milliseconds (default 120s). */
+        private int retryCapMs = 120_000;
     }
 
     @Getter @Setter

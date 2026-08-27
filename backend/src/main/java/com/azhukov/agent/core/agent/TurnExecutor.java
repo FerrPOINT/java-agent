@@ -541,8 +541,12 @@ public class TurnExecutor {
         if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
             long retryAfterMs = extractRetryAfterMs(e);
             if (retryAfterMs > 0) {
-                delayMs = Math.min(retryAfterMs, 120_000L);
-                log.info("Rate limit: using Retry-After header value: {}ms (capped at 120s)", delayMs);
+                // CUSTOM OPERATOR SETTING: providers here can vanish for minutes
+                // to half an hour (LiteLLM "Try again in 600 seconds" cooldowns).
+                // Honor the provider's own cooldown up to 30 minutes instead of
+                // capping at 120s and burning guaranteed-useless attempts.
+                delayMs = Math.min(retryAfterMs, 1_800_000L);
+                log.info("Rate limit: using Retry-After value: {}ms (capped at 30min)", delayMs);
             } else {
                 long base = properties.getError().getRetryDelayMs() * (1L << attempt);
                 delayMs = Math.min(base, 60_000L);

@@ -178,7 +178,6 @@ public class AgentStreamingService {
     // config agent.api_max_retries, default 3. The old hardcoded 5 burned
     // ~10min against a provider cooldown where Hermes gives up in ~3min
     // with an honest error.
-    private static final int MAX_STREAM_RETRIES = 5; // replaced at runtime, see maxStreamRetries()
     // c2: recovery budgets/nudges live in the SHARED ResponseRecoveryPolicy
     // (single owner for both runtimes — DefaultAgentRuntime + this loop).
     private static final int MAX_LENGTH_CONTINUATION_ATTEMPTS =
@@ -656,7 +655,7 @@ public class AgentStreamingService {
                         if (errorType == ErrorClassifier.ErrorType.RETRYABLE
                             || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
                             String retryMsg = "⏳ Model overloaded, retrying (attempt "
-                                + (streamRetries + 1) + "/" + MAX_STREAM_RETRIES
+                                + (streamRetries + 1) + "/" + maxStreamRetries()
                                 + ") in " + (delayMs / 1000) + "s...";
                             log.warn("Streaming attempt {}/{} failed ({}), retrying in {} ms: {}",
                                 streamRetries + 1, maxStreamRetries(), errorType, delayMs, error.getMessage());
