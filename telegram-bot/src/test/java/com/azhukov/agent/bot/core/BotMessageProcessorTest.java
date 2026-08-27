@@ -88,7 +88,7 @@ class BotMessageProcessorTest {
         properties = new BotProperties();
         properties.setDefaultModel("test-model");
         properties.setBusyMode("queue");
-        properties.setRedactPii(false);
+
         properties.setParseMode("MarkdownV2");
         busyHandler = new BusySessionHandler(properties);
         typingManager = mock(TypingManager.class);
@@ -1403,11 +1403,13 @@ class BotMessageProcessorTest {
         assertThat(finalizedTexts).isEmpty();
     }
 
-    // ─── PII Redaction ──────────────────────────────────────────
+    // ─── PII Redaction → moved to backend (agent.security.redact-pii); context
+    // block duplication fix 2026-08-27: BotMessageProcessor no longer prepends
+    // anything — see BotMessageProcessorContextDuplicationTest. ──────────────
 
     @Test
-    void piiRedactionEnabledPrependsContextPrompt() {
-        properties.setRedactPii(true);
+    void buildMessageWithContextIsPassthroughWithRedactionFlagGone() {
+
         stubStreamingResult("response", true);
 
         BotSessionEntity session = new BotSessionEntity();
@@ -1419,15 +1421,14 @@ class BotMessageProcessorTest {
         processor.accept(textEvent(1, 100L, "hello"));
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
         verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any());
-        // The message should contain the original text plus some context prefix
-        assertThat(msgCaptor.getValue()).contains("hello");
-        // Should be longer than just "hello" due to context prefix
-        assertThat(msgCaptor.getValue().length()).isGreaterThan("hello".length());
+        // The message must be the raw user text — the context block lives in
+        // the backend system prompt (volatile tier), NOT in the user message.
+        assertThat(msgCaptor.getValue()).isEqualTo("hello");
     }
 
     @Test
-    void piiRedactionDisabledPassesMessageUnchanged() {
-        properties.setRedactPii(false);
+    void buildMessageWithContextPassthroughWhenDisabled() {
+
         stubStreamingResult("response", true);
         processor.accept(textEvent(1, 100L, "hello"));
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);

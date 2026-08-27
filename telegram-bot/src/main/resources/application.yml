@@ -111,10 +111,7 @@ bot:
       max-pending: 3
 
   display:
-    # Hermes Telegram default: commentary and heartbeats show progress; per-tool
-    # bubbles stay off to avoid a permanent message for every tool invocation.
     tool-progress: ${BOT_DISPLAY_TOOL_PROGRESS:hidden}
-    preview-length: ${BOT_DISPLAY_PREVIEW_LENGTH:200}
 
 management:
   endpoints:

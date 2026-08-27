@@ -406,6 +406,29 @@ class TurnExecutorUtilsTest {
             Exception e = new RuntimeException("Retry-After: 0.5");
             assertThat(TurnExecutorUtils.extractRetryAfterMs(e)).isEqualTo(500);
         }
+
+        @Test
+        @DisplayName("parses LiteLLM body cooldown 'Try again in 600 seconds' (live 2026-08-27)")
+        void parsesBodyTryAgainSeconds() {
+            Exception e = new RuntimeException("Model call failed: {\"error\":{\"message\":"
+                + "\"No deployments available for selected model, Try again in 600 seconds. "
+                + "Passed model=app-test. pre-call-checks=False\", \"code\":\"429\"}}");
+            assertThat(TurnExecutorUtils.extractRetryAfterMs(e)).isEqualTo(600_000L);
+        }
+
+        @Test
+        @DisplayName("parses short form 'Try again in 30s'")
+        void parsesBodyTryAgainShort() {
+            Exception e = new RuntimeException("upstream 429 — Try again in 30s");
+            assertThat(TurnExecutorUtils.extractRetryAfterMs(e)).isEqualTo(30_000L);
+        }
+
+        @Test
+        @DisplayName("header value wins over body hint when both present")
+        void headerWinsOverBody() {
+            Exception e = new RuntimeException("Try again in 600 seconds\nRetry-After: 5");
+            assertThat(TurnExecutorUtils.extractRetryAfterMs(e)).isEqualTo(5000);
+        }
     }
 
     // ── lowerMessageContains ─────────────────────────────────────────

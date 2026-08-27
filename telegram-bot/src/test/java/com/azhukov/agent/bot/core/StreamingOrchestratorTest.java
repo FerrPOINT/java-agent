@@ -51,7 +51,6 @@ class StreamingOrchestratorTest {
         properties.setStreamEditInterval(Duration.ofMillis(100));
         properties.setParseMode("MarkdownV2");
         properties.setDefaultModel("default-model");
-        properties.setRedactPii(false);
         busyHandler = new BusySessionHandler(properties);
         runtimeFooter = mock(RuntimeFooter.class);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("");

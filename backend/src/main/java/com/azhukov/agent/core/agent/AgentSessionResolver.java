@@ -167,8 +167,14 @@ public class AgentSessionResolver {
             return sessionId;
         }
         return transactionTemplate.execute(status -> {
-            // If this session already has messages, nothing to redirect
-            if (messageRepository.countBySessionId(sessionId) > 0) {
+            // If this session still has ACTIVE messages, nothing to redirect.
+            // Hermes parity: rotation archives ancestor rows (active=false);
+            // counting ALL rows (incl. archived) makes the resolver treat the
+            // superseded parent as "has messages" and the next bot turn keeps
+            // writing into the dead parent while the compacted child is ignored
+            // (live 2026-08-27: parent stayed active, child 'New chat (compressed)'
+            // accumulated a second transcript copy).
+            if (messageRepository.countBySessionIdAndActiveTrue(sessionId) > 0) {
                 return sessionId;
             }
             // Walk descendants: at each step, pick the most-recently-created child
@@ -186,8 +192,8 @@ public class AgentSessionResolver {
                     return sessionId;
                 }
                 seen.add(childId);
-                // Check if this child has messages
-                if (messageRepository.countBySessionId(childId) > 0) {
+                // Check if this child has active messages
+                if (messageRepository.countBySessionIdAndActiveTrue(childId) > 0) {
                     return childId;
                 }
                 current = childId;

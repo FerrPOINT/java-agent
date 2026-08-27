@@ -47,6 +47,10 @@ import java.util.Map;
 @Slf4j
 public final class TurnExecutorUtils {
 
+    /** Body-embedded cooldown hint, e.g. LiteLLM "Try again in 600 seconds". */
+    private static final java.util.regex.Pattern TRY_AGAIN_SECONDS =
+        java.util.regex.Pattern.compile("try again in\\s+([0-9]+(?:\\.[0-9]+)?)\\s*(?:s\\b|sec\\b|second|seconds)", java.util.regex.Pattern.CASE_INSENSITIVE);
+
     private TurnExecutorUtils() {
         // Utility class — no instances
     }
@@ -284,6 +288,18 @@ public final class TurnExecutorUtils {
                     return (long) (seconds * 1000);
                 } catch (NumberFormatException ignored) {
                 }
+            }
+        }
+        // Hermes parity (run_agent retry ladder): LiteLLM-style proxy errors embed
+        // the cooldown in the BODY ("No deployments available ... Try again in 600
+        // seconds"), with no Retry-After header. Blind exponential backoff retried
+        // at 1s/2s/4s against a 10-minute cooldown — 5 guaranteed failures and a
+        // ~90s user wait for nothing. Parse the body hint and honor it.
+        java.util.regex.Matcher m = TRY_AGAIN_SECONDS.matcher(msg);
+        if (m.find()) {
+            try {
+                return (long) (Double.parseDouble(m.group(1)) * 1000);
+            } catch (NumberFormatException ignored) {
             }
         }
         idx = lower.indexOf("retry-after");

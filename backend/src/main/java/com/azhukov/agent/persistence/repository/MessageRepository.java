@@ -22,6 +22,13 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
 
     long countBySessionId(UUID sessionId);
 
+    /**
+     * Counts only active (non-archived) messages. Rotation deactivates ancestor
+     * rows (active=false); a resume resolver that counts ALL rows keeps writing
+     * into the superseded parent instead of following the chain to the live child.
+     */
+    long countBySessionIdAndActiveTrue(UUID sessionId);
+
     List<MessageEntity> findByContentContainingIgnoreCase(String content);
 
     /**

@@ -80,7 +80,6 @@ class BotMessageProcessorBusyAckTest {
         sessionStore = mock(BotSessionStore.class);
         properties = new BotProperties();
         properties.setDefaultModel("test-model");
-        properties.setRedactPii(false);
         properties.setParseMode("MarkdownV2");
         // busyAckEnabled defaults to true
         busyHandler = new BusySessionHandler(properties);

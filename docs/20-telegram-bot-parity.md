@@ -334,8 +334,7 @@ Phase 3:         B3.1  B3.2  B3.3  B3.4  B3.5  B3.6  B3.7  B3.8
 | `bot.auth.admin-user-ids` | `[]` | Slash command admins | 2.4 |
 | `bot.auth.user-allowed-commands` | `[]` | Non-admin allowed commands | 2.4 |
 | `bot.auth.pairing.enabled` | `false` | Pairing code auth | 2.5 |
-| `bot.display.tool-progress` | `compact` | Tool progress display | 2.9 |
-| `bot.display.preview-length` | `200` | Tool preview length | 2.9 |
+| `bot.display.tool-progress` | `hidden` | Tool progress display | 2.9 |
 | `bot.link-preview` | `true` | Link preview in messages | 3.7 |
 
 ---

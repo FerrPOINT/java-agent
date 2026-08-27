@@ -177,10 +177,19 @@ public class DefaultContextEngine implements ContextEngine {
  || messages.get(0).role() == Role.DEVELOPER)) ? 1 : 0;
  if (from < messages.size()) {
  Message firstIncoming = messages.get(from);
- if (firstIncoming.role() == Role.USER && !context.isEmpty()) {
- Message lastHistory = context.get(context.size() - 1);
- if (lastHistory.role() == Role.USER
- && java.util.Objects.equals(lastHistory.content(), firstIncoming.content())) {
+ if (firstIncoming.role() == Role.USER) {
+ // Hermes parity (_persist_session cursor semantics): drop ALL trailing
+ // history USER rows equal to the incoming message. Mid-turn persistence
+ // writes the user message before the first model call, and a mid-turn
+ // rotation copies the whole in-flight turn into the child session —
+ // the same content can therefore sit in history 2+ times. A
+ // single-trailing-row dedup left the extra copies in whenever the
+ // persisted suffix differed (live 2026-08-27: sanitizer merged the
+ // duplicate user turns, then dropped an in-flight tool result as
+ // 'orphan' — 13 -> 12 messages — corrupting the replayed context).
+ while (!context.isEmpty()
+     && context.get(context.size() - 1).role() == Role.USER
+     && java.util.Objects.equals(context.get(context.size() - 1).content(), firstIncoming.content())) {
  context.remove(context.size() - 1);
  }
  }
@@ -253,6 +262,13 @@ public class DefaultContextEngine implements ContextEngine {
          Instant now = Instant.now();
          int order = 0;
          for (Message m : compacted) {
+             // Hermes parity: SYSTEM/DEVELOPER messages are per-turn volatile
+             // prompt artifacts — never persisted into the rotated child
+             // transcript. Persisting them put a full second system prompt row
+             // at the head of every compressed session (seen live 2026-08-27).
+             if (m.role() == Role.SYSTEM || m.role() == Role.DEVELOPER) {
+                 continue;
+             }
              MessageEntity e = new MessageEntity();
              e.setSessionId(childSessionId);
              e.setRole(m.role() != null ? m.role().name().toLowerCase() : "user");
@@ -497,18 +513,32 @@ public class DefaultContextEngine implements ContextEngine {
          if (sessionLineageService != null) {
              List<Message> lineageMessages = sessionLineageService.loadMessagesWithAncestors(session.id());
              if (lineageMessages != null && !lineageMessages.isEmpty()) {
+                 // Hermes parity: persisted SYSTEM/DEVELOPER rows are regenerated
+                 // fresh each turn by the prompt builder — they must never re-enter
+                 // history. Legacy rotated transcripts (and sync-path turns) stored
+                 // them as rows; replaying them put a second system prompt (or a
+                 // USER-mapped copy on the fallback path) mid-conversation.
+                 List<Message> active = new ArrayList<>(lineageMessages.size());
+                 for (Message m : lineageMessages) {
+                     if (m.role() != Role.SYSTEM && m.role() != Role.DEVELOPER) {
+                         active.add(m);
+                     }
+                 }
+                 if (active.isEmpty()) {
+                     return;
+                 }
                  // Apply the same maxMessages limit as the paginated path.
                  int maxMessages = contextProps.getMaxContextMessages();
                  if (maxMessages <= 0 || maxMessages < 500) {
                      maxMessages = 10000; // H-SYNC: effectively unlimited — let compression handle it
                  }
                  List<Message> recent;
-                 if (lineageMessages.size() > maxMessages) {
+                 if (active.size() > maxMessages) {
                      // Keep the most recent N messages
-                     recent = new ArrayList<>(lineageMessages.subList(
-                         lineageMessages.size() - maxMessages, lineageMessages.size()));
+                     recent = new ArrayList<>(active.subList(
+                         active.size() - maxMessages, active.size()));
                  } else {
-                     recent = new ArrayList<>(lineageMessages);
+                     recent = new ArrayList<>(active);
                  }
                  context.addAll(recent);
                  return;
@@ -531,6 +561,13 @@ public class DefaultContextEngine implements ContextEngine {
              String role = e.getRole();
              String content = e.getContent() != null ? e.getContent() : "";
              int turnIdx = e.getTurnIndex() != null ? e.getTurnIndex() : 0;
+             // Hermes parity: SYSTEM/DEVELOPER rows are regenerated each turn by
+             // the prompt builder and must never load back as history (the old
+             // default branch mapped them to Message.user(...) — a system prompt
+             // masquerading as a user turn in every replay).
+             if ("system".equalsIgnoreCase(role) || "developer".equalsIgnoreCase(role)) {
+                 continue;
+             }
              context.add(switch (role) {
                  // Hermes parity: history loaded from the DB must carry the
                  // assistant's tool_call (id/name/args) in toolCalls — the

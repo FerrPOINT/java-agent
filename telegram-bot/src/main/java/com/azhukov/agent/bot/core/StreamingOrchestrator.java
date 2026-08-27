@@ -132,9 +132,8 @@ public class StreamingOrchestrator {
                         streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
                         accumulated.setLength(0);
                     }
-                    // Hermes parity (gateway/display_config.py): Telegram defaults
-                    // to tool_progress="off" — don't spam the chat with per-tool
-                    // progress bubbles. Only send when explicitly enabled.
+                    // Per-tool Telegram bubbles are opt-in via bot.display.tool-progress
+                    // (default hidden). Hermes Telegram default shows no per-tool bubbles.
                     String toolProgress = properties.getDisplay().getToolProgress();
                     if (!"hidden".equalsIgnoreCase(toolProgress) && !"off".equalsIgnoreCase(toolProgress)) {
                         String toolDisplay = ToolEmojiMap.formatToolCall(toolName, toolArgs);

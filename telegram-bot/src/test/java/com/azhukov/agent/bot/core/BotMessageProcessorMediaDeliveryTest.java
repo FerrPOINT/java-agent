@@ -93,7 +93,6 @@ class BotMessageProcessorMediaDeliveryTest {
         sessionStore = mock(BotSessionStore.class);
         properties = new BotProperties();
         properties.setDefaultModel("test-model");
-        properties.setRedactPii(false);
         properties.setParseMode("MarkdownV2");
         properties.setMediaDeliveryEnabled(true);
         // Set working directory to tempDir so isMediaPathAllowed() accepts our temp files

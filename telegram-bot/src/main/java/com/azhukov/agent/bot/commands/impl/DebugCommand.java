@@ -73,7 +73,6 @@ public class DebugCommand implements CommandHandler {
         // Display config
         sb.append("\n== Display ==\n");
         sb.append("  tool-progress: ").append(properties.getDisplay().getToolProgress()).append("\n");
-        sb.append("  preview-length: ").append(properties.getDisplay().getPreviewLength()).append("\n");
 
         // Footer config
         sb.append("\n== Footer ==\n");

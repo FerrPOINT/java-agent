@@ -591,6 +591,13 @@ public class AgentRuntimeService {
         transactionTemplate.execute(status -> {
             Instant now = Instant.now();
             for (Message m : messages) {
+                // Hermes parity: SYSTEM/DEVELOPER messages are regenerated each
+                // turn — never persisted (persisting them leaked a full system
+                // prompt row into history that later replayed as a user turn).
+                if (m.role() == com.azhukov.agent.core.model.Role.SYSTEM
+                        || m.role() == com.azhukov.agent.core.model.Role.DEVELOPER) {
+                    continue;
+                }
                 MessageEntity e = messageMapper.toEntity(m);
                 e.setSessionId(sessionId);
                 e.setCreatedAt(now);

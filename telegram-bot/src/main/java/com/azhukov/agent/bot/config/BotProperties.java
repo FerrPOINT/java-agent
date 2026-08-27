@@ -52,9 +52,6 @@ public class BotProperties {
     // P0: When true, new bot instance can take over from an existing instance (--replace)
     private boolean replaceOnStart = false;
 
-    // P0: PII Redaction — hash user IDs and chat IDs before injecting into system prompt
-    private boolean redactPii = true;
-
     // S-2: Media delivery — extract MEDIA: tags and deliver files as native Telegram attachments
     private boolean mediaDeliveryEnabled = true;
 
@@ -226,7 +223,6 @@ public class BotProperties {
     @Getter
     @Setter
     public static class Display {
-        private String toolProgress = "hidden"; // compact | verbose | hidden
-        private int previewLength = 200;
+        private String toolProgress = "hidden"; // compact | hidden
     }
 }

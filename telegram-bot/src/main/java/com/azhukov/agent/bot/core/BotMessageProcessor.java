@@ -24,7 +24,6 @@ import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
 import com.azhukov.agent.bot.session.BusySessionHandler;
 import com.azhukov.agent.bot.session.EditCaptureService;
-import com.azhukov.agent.bot.session.PiiRedactor;
 import com.azhukov.agent.bot.streaming.StreamEditor;
 import com.azhukov.agent.bot.typing.TypingManager;
 import lombok.extern.slf4j.Slf4j;
@@ -636,17 +635,15 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     @Override
     public String buildMessageWithContext(String messageText, BotSessionEntity session, long chatId) {
-        if (!properties.isRedactPii()) {
-            return messageText;
-        }
-        String userId = session.getUserId();
-        String chatIdStr = String.valueOf(chatId);
-        String username = session.getUsername();
-        // Determine chat type — default to "dm" for private chats
-        String chatType = "dm";
-        String contextPrompt = PiiRedactor.buildRedactedContextPrompt(
-            "telegram", userId, chatIdStr, username, chatType, null);
-        return contextPrompt + "\n\n" + messageText;
+        // Hermes parity (gateway/session.py): the platform/user/chat context is
+        // injected by the BACKEND into the system prompt volatile tier (backend
+        // already receives userId/username/firstName/languageCode/chatType in
+        // the chat body and renders "## Current Session Context" there).
+        // Prepending it to the user TEXT here duplicated the block into the
+        // persisted user message — every history row and session_search hit
+        // carried the context header, the model saw it as user input, and
+        // mid-turn rotation copied it into the compressed child transcripts.
+        return messageText;
     }
 
     // ─── Helpers ───────────────────────────────────────────────────
