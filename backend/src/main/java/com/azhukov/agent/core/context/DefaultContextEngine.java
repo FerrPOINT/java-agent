@@ -42,6 +42,9 @@ public class DefaultContextEngine implements ContextEngine {
      return contextCompressor;
  }
  private final AgentProperties.ContextProperties contextProps;
+ // P-09: master switch — when agent.compression.enabled=false the engine must
+ // never invoke the compressor (preflight/proactive callers are gated on this too).
+ private final boolean compressionEnabled;
  private final PromptCacheTracker cacheTracker;
  private final ModelMetadataService modelMetadataService;
 
@@ -121,6 +124,7 @@ public class DefaultContextEngine implements ContextEngine {
  this.messageRepository = messageRepository;
  this.contextCompressor = contextCompressor;
  this.contextProps = properties.getContext();
+ this.compressionEnabled = properties.getCompression().isEnabled();
  this.cacheTracker = cacheTracker;
  this.modelMetadataService = modelMetadataService;
  // Initialize context length from model metadata if available
@@ -245,6 +249,19 @@ public class DefaultContextEngine implements ContextEngine {
          log.debug("Skipping compression for session {} — within cooldown (last compressed {})", session.id(), lastCompressed);
      }
  }
+ // P-09 (Hermes 4d1fc6ca0a, #89297): uncompressed-session guardrail. When
+ // compression is disabled and mid-turn tool results push the context past
+ // the model limit, warn in-loop instead of silently heading into a
+ // provider 400. Defense in depth — the request still goes out unchanged.
+ if (!compressionEnabled && trimmed.size() > 1) {
+     int pressureTokens = estimateTokens(trimmed);
+     int ctxLen = contextLength > 0 ? contextLength : contextProps.getMaxTokens();
+     if (ctxLen > 0 && pressureTokens > ctxLen) {
+         log.warn("Uncompressed context overflow risk for session {}: ~{} tokens vs context length {} "
+             + "(agent.compression.enabled=false — enable compression or trim history)",
+             session.id(), pressureTokens, ctxLen);
+     }
+ }
  return trimmed;
  }
 
@@ -296,6 +313,10 @@ public class DefaultContextEngine implements ContextEngine {
 
  @Override
  public boolean shouldCompressPreflight(List<Message> messages) {
+ // P-09: disabled compression disables preflight triggering entirely —
+ // callers then surface context pressure via the uncompressed-overflow
+ // warning instead of silently calling a compressor the operator turned off.
+ if (!compressionEnabled) return false;
  if (messages == null || messages.isEmpty()) return false;
  int estimatedTokens = estimateTokens(messages);
  int maxTokens = contextLength > 0 ? contextLength : contextProps.getMaxTokens();

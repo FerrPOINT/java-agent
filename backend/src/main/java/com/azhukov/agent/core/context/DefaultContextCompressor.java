@@ -294,6 +294,9 @@ public class DefaultContextCompressor implements ContextCompressor {
   * @return true if proactive compression should be triggered
   */
  public boolean shouldCompressProactive(int estimatedTokens, int contextWindowSize) {
+     // P-09: honor the master switch — a disabled compressor must not be
+     // invoked by any caller (proactive post-tool-batch path included).
+     if (!properties.getCompression().isEnabled()) return false;
      return policy.shouldCompressProactive(estimatedTokens, contextWindowSize);
  }
 
@@ -304,6 +307,7 @@ public class DefaultContextCompressor implements ContextCompressor {
   * @return true if compression should be attempted
   */
  public boolean shouldCompress(int estimatedTokens) {
+     if (!properties.getCompression().isEnabled()) return false;
      return policy.shouldCompress(estimatedTokens);
  }
 
