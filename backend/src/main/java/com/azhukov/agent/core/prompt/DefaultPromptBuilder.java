@@ -345,6 +345,9 @@ public class DefaultPromptBuilder implements PromptBuilder {
     private final SkillManager skillManager;
     private final com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot;
     private final EnvironmentProbe environmentProbe;
+
+    // Request-scoped effective tool surface while composing/caching a prompt.
+    private final ThreadLocal<Set<String>> requestToolNames = new ThreadLocal<>();
     // Hermes coding_context.py posture resolver. Setter injection keeps existing
     // prompt-builder constructor seams source-compatible for unit tests.
     private com.azhukov.agent.core.context.CodingPostureResolver codingPostureResolver;
@@ -413,6 +416,28 @@ public class DefaultPromptBuilder implements PromptBuilder {
     }
 
     /**
+     * Build a prompt against the exact tool surface exposed for this request.
+     * The effective names are stored only on this immutable session copy; they
+     * participate in prompt-cache identity through the session metadata, so a
+     * disabled-tools SSE request can never reuse a prompt that advertises tools
+     * absent from its API tool definitions (P-04).
+     */
+    public Message buildSystemMessageForTools(Session session, Set<String> effectiveToolNames) {
+        if (effectiveToolNames == null) {
+            return buildSystemMessage(session, null);
+        }
+        Set<String> scopedNames = Set.copyOf(effectiveToolNames);
+        Session scopedSession = session == null ? null
+            : session.withMetadata("effectiveToolNames", String.join(",", new java.util.TreeSet<>(scopedNames)));
+        requestToolNames.set(scopedNames);
+        try {
+            return buildSystemMessage(scopedSession, null);
+        } finally {
+            requestToolNames.remove();
+        }
+    }
+
+    /**
      * Build the system message with three-tier composition and session-level caching.
      * <p>
      * Memory is injected as a prefix to the system prompt (not the user message) so that
@@ -423,6 +448,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
      */
     public Message buildSystemMessage(Session session, String systemMessageOverride) {
         String sessionId = session != null && session.id() != null ? String.valueOf(session.id()) : "default";
+        // P-04: disabledTools changes the API tool surface; cache separately so
+        // its prompt can never advertise a tool from a prior wider request.
+        String effectiveToolNames = session != null ? session.getMetadata("effectiveToolNames") : null;
+        if (effectiveToolNames != null && !effectiveToolNames.isBlank()) {
+            sessionId += ":tools:" + Integer.toHexString(effectiveToolNames.hashCode());
+        }
 
         PromptCacheTracker.CachedSystemPrompt cached = null;
         if (cacheTracker != null) {
@@ -639,17 +670,23 @@ public class DefaultPromptBuilder implements PromptBuilder {
      * @return a set of tool name strings, or empty set if no tools
      */
     Set<String> getAvailableToolNames() {
+        // A request-scoped tool list is authoritative even when a test/minimal
+        // registry has no global definitions (P-04).
+        Set<String> scoped = requestToolNames.get();
+        if (scoped != null) {
+            return scoped;
+        }
         var definitions = toolRegistry.getDefinitions();
         if (definitions == null || definitions.isEmpty()) {
             return Set.of();
         }
-        Set<String> names = new java.util.LinkedHashSet<>();
+        Set<String> registryNames = new java.util.LinkedHashSet<>();
         for (var def : definitions) {
             if (def.name() != null && !def.name().isBlank()) {
-                names.add(def.name());
+                registryNames.add(def.name());
             }
         }
-        return names;
+        return registryNames;
     }
 
     // ── Fix 3: Environment hints ──

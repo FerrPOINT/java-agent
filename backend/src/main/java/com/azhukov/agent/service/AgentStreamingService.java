@@ -308,17 +308,21 @@ public class AgentStreamingService {
         // Reset per-turn loop counters before any model/tool execution.
         toolExecutionService.resetLoopGuardrailForTurn();
 
+        // Tools: select before building the prompt so system guidance matches
+        // the exact tool definitions this request exposes (P-04).
+        List<ToolDefinition> tools = selectTools(request);
+
         // Build messages with full session context (system + user)
         // History is loaded by contextEngine.prepareContext() via appendRecentHistory().
         // Do NOT load history here — that would duplicate it in the context.
         List<Message> turnMessages = new ArrayList<>();
-        turnMessages.add(promptBuilder.buildSystemMessage(session));
+        turnMessages.add(promptBuilder instanceof com.azhukov.agent.core.prompt.DefaultPromptBuilder defaultPromptBuilder
+            ? defaultPromptBuilder.buildSystemMessageForTools(session, tools.stream()
+                .map(ToolDefinition::name).collect(java.util.stream.Collectors.toSet()))
+            : promptBuilder.buildSystemMessage(session));
 
         // Add user message
         turnMessages.add(Message.user(request.message()));
-
-        // Tools
-        List<ToolDefinition> tools = selectTools(request);
 
         // ── Memory nudge counter (Hermes parity: turn_context.py:704-710) ──
         // Increment at the START of each user turn, hydrated from persisted
