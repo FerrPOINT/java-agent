@@ -554,6 +554,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
             try {
                 long callStart = System.currentTimeMillis();
                 response = callModelWithRetry(context, tools, session, options);
+                // P-06: the retry flag applies to exactly one model call
+                com.azhukov.agent.client.langchain4j.EmptyRetryCacheBypass.clear();
                 int duration = (int) (System.currentTimeMillis() - callStart);
                 int estimatedInput = tokenEstimator.estimateTokens(context);
                 int estimatedOutput = estimateResponseTokens(response);
@@ -829,6 +831,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                             log.info("Empty-response backoff interrupted — aborting turn");
                             break;
                         }
+                        // P-06: bypass OpenRouter response caching for this retry
+                        com.azhukov.agent.client.langchain4j.EmptyRetryCacheBypass.markEmptyRetry();
                         List<Message> retryContext = new ArrayList<>(turnMessages);
                         if (lastResponseHadToolCalls) {
                             // Hermes 7568-7577: tool → user alternation needs the synthetic

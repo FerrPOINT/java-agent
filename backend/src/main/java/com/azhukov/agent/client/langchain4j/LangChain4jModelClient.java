@@ -83,6 +83,7 @@ public class LangChain4jModelClient implements ModelClient {
                 log.debug("Using credential from pool: {} for provider {}", cred.id(), cred.provider());
             }
         }
+        final String effectiveBaseUrl = baseUrl;
 
         this.chatModel = dev.langchain4j.model.openai.OpenAiChatModel.builder()
             .baseUrl(baseUrl)
@@ -94,6 +95,13 @@ public class LangChain4jModelClient implements ModelClient {
             .returnThinking(properties.getModel().isReturnThinking())
             .sendThinking(properties.getModel().isReturnThinking(),
                           properties.getModel().getThinkingFieldName())
+            // P-06 (Hermes 21b92d2687): OpenRouter response caching must be
+            // disabled on empty-response retries, or the retry replays the
+            // cached empty answer and burns the whole retry budget. The
+            // Supplier form is evaluated per request, so the header rides
+            // only on retries flagged by the runtime.
+            .customHeaders(() -> EmptyRetryCacheBypass.headersFor(effectiveBaseUrl,
+                properties.getModel().getHeaders()))
             .build();
         this.streamingChatModel = dev.langchain4j.model.openai.OpenAiStreamingChatModel.builder()
             .baseUrl(baseUrl)
@@ -104,6 +112,8 @@ public class LangChain4jModelClient implements ModelClient {
             .returnThinking(properties.getModel().isReturnThinking())
             .sendThinking(properties.getModel().isReturnThinking(),
                           properties.getModel().getThinkingFieldName())
+            .customHeaders(() -> EmptyRetryCacheBypass.headersFor(effectiveBaseUrl,
+                properties.getModel().getHeaders()))
             .build();
     }
 

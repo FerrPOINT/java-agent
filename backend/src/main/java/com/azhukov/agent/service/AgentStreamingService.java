@@ -520,6 +520,10 @@ public class AgentStreamingService {
                             }
                         }
                     }
+                    // P-06: OpenRouter empty-response retries bypass the response
+                    // cache; the flag is set after each empty attempt and cleared
+                    // once the handler completes.
+                    com.azhukov.agent.client.langchain4j.EmptyRetryCacheBypass.clear();
                     activeStreamClient.stream(context, tools, streamOptions, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
@@ -966,6 +970,8 @@ public class AgentStreamingService {
                     emptyContentRetries++;
                     log.warn("Empty response (no content or reasoning) — retry {}/{} with backoff (model returned empty)",
                         emptyContentRetries, MAX_EMPTY_RESPONSE_ATTEMPTS);
+                    // P-06: the NEXT stream call must bypass OpenRouter response cache
+                    com.azhukov.agent.client.langchain4j.EmptyRetryCacheBypass.markEmptyRetry();
                     eventHelper().send(emitter, new StreamEvent("continuation", null, null,
                         "Empty response from model — retrying (" + emptyContentRetries + "/" + MAX_EMPTY_RESPONSE_ATTEMPTS + ")"), streamCtx);
                     // Hermes parity (conversation_loop.py:7657): jittered backoff base 5s,
