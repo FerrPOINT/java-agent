@@ -279,6 +279,12 @@ class CompressionPolicy {
                 consecutiveLowSavings, (int) LOW_SAVINGS_THRESHOLD_PCT);
             return false;
         }
+        // P-11: transient structural no-op backoff — defer the scan without
+        // striking the ineffective-strike breaker (Hermes #93022).
+        if (isStructuralNoOpBackoffActive()) {
+            log.debug("Compression deferred — structural no-op backoff active");
+            return false;
+        }
         return true;
     }
 
@@ -316,6 +322,60 @@ class CompressionPolicy {
         } else {
             this.consecutiveLowSavings = 0;
         }
+    }
+
+    // ── P-11 (Hermes f778c0d941 #93022): compression outcome states + structural no-op backoff ──
+
+    /** Hermes _STRUCTURAL_NO_OP_BACKOFF_SECONDS = 300.0. */
+    static final double STRUCTURAL_NO_OP_BACKOFF_SECONDS = 300.0;
+
+    /**
+     * Explicit outcome of one compression attempt (Hermes verdict vocabulary):
+     * CHANGED (structure rewritten), REDUCED (bytes shrank), REFUSED (would
+     * grow / rejected), NOOP (nothing eligible — structural no-op).
+     */
+    enum Outcome { CHANGED, REDUCED, REFUSED, NOOP }
+
+    private volatile long structuralNoOpBackoffUntil = 0;
+
+    /**
+     * P-11: a structural no-op (too few messages / no compressible window)
+     * means compression was never really attempted — record a transient
+     * backoff but do NOT strike the ineffective-strike breaker. Counting
+     * no-ops as strikes permanently disarms auto-compaction on short
+     * sessions even after they later grow real compressible material.
+     */
+    void recordStructuralNoOp(String reason) {
+        this.structuralNoOpBackoffUntil = System.nanoTime()
+            + (long) (STRUCTURAL_NO_OP_BACKOFF_SECONDS * 1_000_000_000L);
+        log.warn("Compression skipped ({}): structural no-op backoff {:.0f}s",
+            reason, STRUCTURAL_NO_OP_BACKOFF_SECONDS);
+    }
+
+    /** True while a structural no-op backoff window is active. */
+    boolean isStructuralNoOpBackoffActive() {
+        return System.nanoTime() < structuralNoOpBackoffUntil;
+    }
+
+    /**
+     * A completed compaction boundary is proof the transcript WAS
+     * compressible — lift any pending structural no-op backoff (Hermes
+     * record_completed_compaction clears it alongside the bookkeeping).
+     */
+    void clearStructuralNoOpBackoff() {
+        this.structuralNoOpBackoffUntil = 0;
+    }
+
+    /**
+     * Classify an attempt outcome from before/after sizes. Only genuine
+     * attempted-but-underperformed results strike the breaker (REDUCED with
+     * low savings); NOOP/REFUSED never do.
+     */
+    Outcome classifyOutcome(int originalTokens, int compressedTokens, boolean structureChanged) {
+        if (structureChanged && compressedTokens < originalTokens) return Outcome.REDUCED;
+        if (structureChanged) return Outcome.CHANGED;
+        if (compressedTokens > originalTokens) return Outcome.REFUSED;
+        return Outcome.NOOP;
     }
 
     /**

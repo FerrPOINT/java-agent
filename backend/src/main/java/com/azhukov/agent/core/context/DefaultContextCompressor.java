@@ -425,6 +425,9 @@ public class DefaultContextCompressor implements ContextCompressor {
 
      if (middleMessages.isEmpty()) {
          log.debug("No middle messages to compress after protecting head and tail");
+         // P-11 (Hermes #93022): protection window left nothing eligible —
+         // structural no-op. Transient backoff, NOT an ineffective-strike.
+         policy.recordStructuralNoOp("empty compressible window");
          return messages;
      }
 
@@ -572,6 +575,9 @@ public class DefaultContextCompressor implements ContextCompressor {
      int originalTokens = originalChars / CHARS_PER_TOKEN;
      int compressedTokens = compressedChars / CHARS_PER_TOKEN;
      recordCompressionSavings(originalTokens, compressedTokens);
+     // P-11: a committed compaction boundary proves the transcript was
+     // compressible — lift any pending structural no-op backoff.
+     policy.clearStructuralNoOpBackoff();
      log.info("Compressed: {} -> {} messages (~{} tokens saved, {}%)",
          messages.size(), compressed.size(),
          originalTokens - compressedTokens,
