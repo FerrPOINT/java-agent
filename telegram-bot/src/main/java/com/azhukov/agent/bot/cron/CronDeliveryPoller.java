@@ -116,10 +116,22 @@ public class CronDeliveryPoller {
         }
 
         String header = "🕐 Cron: " + name + "\n\n";
-        boolean sent = telegramClient.sendMessage(chatId, truncate(header + output, 4000)).isPresent();
+        // P-03 (Hermes delivery.py): chunking delivery — Telegram adapters that
+        // split long messages natively receive the FULL output; truncation to
+        // 4000 is only for non-chunking platforms. Reuse MessageSplitter
+        // (UTF-16-safe, surrogate-pair aware, (N/M) indicators).
+        String fullText = header + output;
+        boolean sent = false;
+        for (String chunk : com.azhukov.agent.bot.formatting.MessageSplitter.split(fullText)) {
+            sent = telegramClient.sendMessage(chatId, chunk).isPresent() || sent;
+            if (!sent) {
+                break; // first chunk failed — keep the mark so delivery retries
+            }
+        }
         if (sent) {
             cronApiClient.markDelivered(jobId);
-            log.info("Delivered cron output for job '{}' to chat {}", name, chatId);
+            log.info("Delivered cron output for job '{}' to chat {} ({} chars)",
+                name, chatId, output.length());
         }
     }
 
@@ -156,10 +168,17 @@ public class CronDeliveryPoller {
     }
 
     private Long resolveChatId(String deliverTo) {
-        // Formats: "telegram:<chatId>", "telegram", or bare numeric chat id.
+        // Formats: "telegram:<chatId>", "telegram", "bot-chat", or bare numeric chat id.
+        // P-03: "bot-chat" (Hermes bot-chat[:profile]) targets the OWNER bot chat —
+        // java-agent is a single-profile deployment, so the profile qualifier is
+        // accepted and routed to the owner chat.
         String v = deliverTo.trim();
         if (v.startsWith("telegram:")) {
             v = v.substring("telegram:".length());
+        }
+        if (v.startsWith("bot-chat")) {
+            // bot-chat, bot-chat:<profile> — single-profile deployment → owner chat
+            return ownerChat();
         }
         if (v.equals("telegram") || v.equals("origin")) {
             return ownerChat();
