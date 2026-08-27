@@ -151,20 +151,23 @@ public class StreamingOrchestrator {
                         toolArgs = toolCall.substring(sep + 1);
                     }
                     streamEditor.setCurrentToolName(chatId, toolName);
+                    // Hermes parity (__reset__ marker): if content streamed before this
+                    // tool, the segment break closes the progress bubble — the next
+                    // tool opens a fresh bubble BELOW the content. Must be checked
+                    // BEFORE accumulated.setLength(0) wipes the buffer.
+                    boolean contentStreamedBeforeTool = accumulated.length() > 0;
                     // Finalize current streaming message with accumulated text (if any)
-                    if (accumulated.length() > 0 && messageId[0] >= 0) {
+                    if (contentStreamedBeforeTool && messageId[0] >= 0) {
                         streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
                         accumulated.setLength(0);
                     }
                     // Hermes parity (display.tool_progress=all, grouping=accumulate):
                     // tool lines accumulate in ONE bubble — first tool sends it,
-                    // the rest edit it (1.5s throttle, ×N dedup). A text segment
-                    // break closes the bubble (next tool opens a fresh one below
-                    // the content — Hermes __reset__ marker).
+                    // the rest edit it (1.5s throttle, ×N dedup).
                     String toolProgress = properties.getDisplay().getToolProgress();
                     if (!"hidden".equalsIgnoreCase(toolProgress) && !"off".equalsIgnoreCase(toolProgress)) {
                         ToolProgressBubble bubble = bubbleFor(chatId);
-                        if (accumulated.length() > 0) {
+                        if (contentStreamedBeforeTool) {
                             bubble.closeBubble();
                         }
                         String toolDisplay = ToolEmojiMap.formatToolCall(toolName, toolArgs);

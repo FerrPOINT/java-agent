@@ -93,13 +93,25 @@ public class ToolProgressBubble {
                 // First line of a bubble: send a new silent message
                 Optional<Long> id = telegramClient.sendMessage(chatId, truncate(text), null,
                     null, null, silent);
-                id.ifPresent(this::setBubbleId);
+                if (id.isPresent()) {
+                    setBubbleId(id.get());
+                    log.info("Tool progress bubble OPENED for chat {} (msgId={}, text='{}')",
+                        chatId, id.get(), firstLine(text));
+                } else {
+                    // sendMessage succeeded at HTTP level but returned no message id —
+                    // do NOT leave the bubble unassigned or every tool re-sends a new
+                    // message (observed in production 2026-08-27: two sendMessages 124ms
+                    // apart, no edit in between).
+                    log.warn("Tool progress bubble sendMessage returned no message id for chat {} — retrying on next tool", chatId);
+                }
                 lastEditAt = now;
                 return;
             }
             // Throttle edits to one per interval (Hermes _PROGRESS_EDIT_INTERVAL)
             if (now - lastEditAt < PROGRESS_EDIT_INTERVAL_MS && !overflow) return;
             boolean ok = telegramClient.editMessageText(chatId, bubbleMessageId, truncate(text), null, silent);
+            log.info("Tool progress bubble EDIT for chat {} (msgId={}, ok={}, lines={}, text='{}')",
+                chatId, bubbleMessageId, ok, lines.size(), firstLine(text));
             lastEditAt = now;
             if (!ok) {
                 // message deleted or not editable — start a fresh bubble
@@ -123,6 +135,13 @@ public class ToolProgressBubble {
 
     private void setBubbleId(Long id) {
         this.bubbleMessageId = id;
+    }
+
+    private static String firstLine(String text) {
+        if (text == null || text.isEmpty()) return "";
+        int nl = text.indexOf('\n');
+        String first = nl > 0 ? text.substring(0, nl) : text;
+        return first.length() > 80 ? first.substring(0, 80) : first;
     }
 
     private static String truncate(String text) {
