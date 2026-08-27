@@ -116,7 +116,11 @@ class AgentStreamingServiceGapTest {
         when(promptBuilder.buildSystemMessage(any(Session.class)))
             .thenReturn(Message.system(SYSTEM_PROMPT));
         when(toolRegistry.getDefinitions(any(Set.class)))
-            .thenReturn(List.<ToolDefinition>of());
+            .thenReturn(List.of(
+                new ToolDefinition("weather", "Get weather", Map.of()),
+                new ToolDefinition("search", "Search", Map.of()),
+                new ToolDefinition("failing-tool", "Fails", Map.of()),
+                new ToolDefinition("readfile", "Read", Map.of())));
 
         SessionEntity sessionEntity = new SessionEntity();
         sessionEntity.setId(SESSION_ID);
@@ -166,7 +170,7 @@ class AgentStreamingServiceGapTest {
         });
 
         streamingService = new AgentStreamingService(
-            modelClient, toolRegistry, toolExecutionService, promptBuilder,
+            modelClient, toolRegistry, toolExecutionService, new com.azhukov.agent.core.agent.ToolBatchPipeline(), promptBuilder,
             contextEngine, objectMapper, usageTracker, properties,
             sessionRepository, messageRepository, transactionTemplate,
             iterationBudget, turnStateManager, sessionMapper, messageMapper,

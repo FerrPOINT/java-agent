@@ -135,7 +135,7 @@ class CommentaryStreamingTest {
             .thenReturn(java.util.Collections.emptyList());
 
         streamingService = new AgentStreamingService(
-            modelClient, toolRegistry, toolExecutionService, promptBuilder,
+            modelClient, toolRegistry, toolExecutionService, new com.azhukov.agent.core.agent.ToolBatchPipeline(), promptBuilder,
             contextEngine, objectMapper, usageTracker, properties,
             sessionRepository, messageRepository, transactionTemplate,
             iterationBudget, turnStateManager, sessionMapper, messageMapper,

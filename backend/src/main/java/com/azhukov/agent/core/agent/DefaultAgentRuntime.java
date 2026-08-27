@@ -931,12 +931,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }
 
             // ── Tool call validation pipeline (parity with Hermes conversation_loop.py) ──
-            // 0. Uniquify duplicate tool-call ids BEFORE any downstream consumer
-            //    (Hermes conversation_loop.py:7071 — BEFORE _build_assistant_message
-            //    at :7141 and the persist at :7424). The persisted assistant row and
-            //    the tool results must share ids; uniquifying only a local copy left
-            //    duplicate ids in the DB row, so replay sanitizers kept only the
-            //    first call/result pair and strict providers 400'd on the orphans.
+            // P-02: single shared owner of the validation order (uniquify →
+            // name repair → JSON validation → delegate cap/dedupe) used by BOTH
+            // the sync runtime and the SSE streaming path.
             List<ToolCall> toolCalls;
             if (response.toolCalls() != null && !response.toolCalls().isEmpty()) {
                 List<ToolCall> uniquified = new ArrayList<>(response.toolCalls());

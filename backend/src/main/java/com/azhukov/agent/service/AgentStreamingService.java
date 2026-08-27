@@ -77,6 +77,7 @@ public class AgentStreamingService {
     private final ModelClient modelClient;
     private final ToolRegistry toolRegistry;
     private final ToolExecutionService toolExecutionService;
+    private final com.azhukov.agent.core.agent.ToolBatchPipeline toolBatchPipeline;
     // Verify-on-stop guard (Hermes parity: verification_stop.py)
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.azhukov.agent.core.agent.VerifyOnStopGuard verifyOnStopGuard;
@@ -1155,9 +1156,32 @@ public class AgentStreamingService {
                 return;
             }
 
+            // P-02: run the SAME validation pipeline the sync path runs before
+            // dispatching anything — the SSE loop previously executed tool
+            // calls straight from the model response without name/JSON
+            // validation, delegate cap/dedupe or truncation abort.
+            java.util.Set<String> registeredToolNames = new java.util.HashSet<>();
+            for (ToolDefinition td : tools) {
+                registeredToolNames.add(td.name());
+            }
+            com.azhukov.agent.core.agent.ToolBatchPipeline.PipelineResult pipeline =
+                toolBatchPipeline.prepare(response.toolCalls(), registeredToolNames, turnIndex);
+            if (pipeline.truncatedArgs()) {
+                log.warn("Truncated tool call arguments in stream — aborting turn (session {})", session.id());
+                eventHelper().send(emitter, new StreamEvent("error", null, null,
+                    "Response truncated due to output length limit"), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                emitter.complete();
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                return;
+            }
+            if (!pipeline.syntheticResults().isEmpty()) {
+                turnMessages.addAll(pipeline.syntheticResults());
+            }
+
             TurnState turnState = turnStateManager.getOrStart(session.id(), 1);
             int toolBatchStart = turnMessages.size();
-            for (ToolCall call : response.toolCalls()) {
+            for (ToolCall call : pipeline.executableCalls()) {
                 // Skill-creation nudge (Hermes parity: conversation_loop.py:1977-1980):
                 // each tool-calling iteration counts toward the skill review threshold;
                 // skill_manage itself resets it (handled in resetNudgeCounters).

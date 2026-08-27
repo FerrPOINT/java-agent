@@ -124,7 +124,9 @@ class AgentStreamingServiceBranchTest {
         when(promptBuilder.buildSystemMessage(any(Session.class)))
             .thenReturn(Message.system(SYSTEM_PROMPT));
         when(toolRegistry.getDefinitions(any(Set.class)))
-            .thenReturn(List.of(new ToolDefinition("weather", "Get weather", Map.of())));
+            .thenReturn(List.of(
+                new ToolDefinition("weather", "Get weather", Map.of()),
+                new ToolDefinition("failing-tool", "Fails", Map.of())));
 
         SessionEntity sessionEntity = newSessionEntity(SESSION_ID, "test-model");
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionEntity));
@@ -168,7 +170,7 @@ class AgentStreamingServiceBranchTest {
         });
 
         streamingService = new AgentStreamingService(
-            modelClient, toolRegistry, toolExecutionService, promptBuilder,
+            modelClient, toolRegistry, toolExecutionService, new com.azhukov.agent.core.agent.ToolBatchPipeline(), promptBuilder,
             contextEngine, objectMapper, usageTracker, properties,
             sessionRepository, messageRepository, transactionTemplate,
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
@@ -203,8 +205,10 @@ class AgentStreamingServiceBranchTest {
         emitter.awaitDone();
 
         assertThat(emitter.error.get()).isNull();
-        // weather was the only tool and it's disabled → empty tools list
-        assertThat(capturedTools.get()).isNotNull().isEmpty();
+        // weather is disabled → filtered out; failing-tool remains registered
+        assertThat(capturedTools.get()).isNotNull()
+            .extracting(ToolDefinition::name)
+            .doesNotContain("weather");
     }
 
     // ── resolveModelUsed: blank model → runtime override ──
