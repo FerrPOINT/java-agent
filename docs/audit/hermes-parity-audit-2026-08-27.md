@@ -1,5 +1,11 @@
 # Hermes -> Java Agent parity audit (2026-08-27)
 
+> **STATUS 2026-08-27 (post-remediation): ALL 11 findings CLOSED.**
+> P-01..P-11 fixed in commits `05f1f25..` (this branch); backend 1091/1091,
+> telegram-bot 1681/1681 green. Details per finding in the commit messages
+> (`fix(...)` subjects referencing P-NN). Remaining open item: AGENTS.md
+> `verbose` mentions (protected file — awaiting operator approval).
+
 ## Scope and method
 
 - Reference: `/opt/dev/hermes-workspace/hermes-agent`, HEAD `6ce7ab8bfb` (2026-08-24).
