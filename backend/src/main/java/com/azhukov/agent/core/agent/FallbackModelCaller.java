@@ -79,6 +79,7 @@ public class FallbackModelCaller {
     public ChatResponse call(ModelCallContext ctx, List<Message> context, List<ToolDefinition> tools,
                              Session session, ModelRequestOptions options) {
         int retryAttempts = properties.getError().getRetryAttempts();
+        int tierRetryAttempts = retryAttempts;
         Exception lastException = null;
         int totalAttempts = 0;
         List<Message> currentContext = context;
@@ -90,7 +91,7 @@ public class FallbackModelCaller {
         // Immediate-fallback errors (AUTH_PERMANENT, CONTENT_POLICY, MODEL_NOT_FOUND)
         // skip retries entirely and go straight to fallback.
         for (;;) {
-            for (int attempt = 0; attempt <= retryAttempts; attempt++) {
+            for (int attempt = 0; attempt <= tierRetryAttempts; attempt++) {
                 totalAttempts++;
                 try {
                     ModelClient client = ctx.activeClient != null ? ctx.activeClient : ctx.defaultClient;
@@ -102,6 +103,13 @@ public class FallbackModelCaller {
                     }
                     ErrorClassifier.ClassificationResult classification = errorClassifier.classifyWithHints(e);
                     ErrorClassifier.ErrorType errorType = classification.type();
+                    // Two-tier budget (operator 2026-08-28): availability errors
+                    // (RATE_LIMIT/OVERLOADED) expand the budget for this loop.
+                    if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT
+                        || errorType == ErrorClassifier.ErrorType.OVERLOADED) {
+                        tierRetryAttempts = Math.max(tierRetryAttempts,
+                            Math.max(1, properties.getError().getAvailabilityRetryAttempts()));
+                    }
 
                     // ── Part F: Content policy handling — immediate-fallback trigger ──
                     if (errorType == ErrorClassifier.ErrorType.CONTENT_POLICY) {

@@ -547,14 +547,22 @@ public class AgentProperties {
     @Getter @Setter
     public static class ErrorProperties {
         /**
-         * CUSTOM OPERATOR SETTING (deliberately NOT Hermes parity — Hermes
-         * defaults to api_max_retries=3). Set to 100 out of the box because the
-         * models used here run behind providers that can disappear for a few
-         * minutes up to half an hour (LiteLLM cooldowns, provider outages);
-         * the agent keeps retrying with a sane backoff instead of giving up.
-         * Backoff: exponential 1s→120s, then fixed 120s + jitter.
+         * Two-tier retry policy (operator decision 2026-08-28).
+         *
+         * Tier 1 — plain model errors (RETRYABLE / server / network): few
+         * retries, fail fast. Default 3 (Hermes parity: api_max_retries=3).
+         *
+         * Tier 2 — availability errors (RATE_LIMIT / OVERLOADED / cooldowns /
+         * provider unavailable): providers used here can disappear for a few
+         * minutes up to half an hour (LiteLLM cooldowns, outages), so these
+         * get a dedicated, larger budget. Default 20 attempts.
+         *
+         * Backoff: exponential 1s→120s, then fixed 120s + jitter; provider
+         * hints (Retry-After, "Try again in N seconds") honored up to 30 min.
          */
-        private int retryAttempts = 100;
+        private int retryAttempts = 3;
+        /** Tier-2 budget for RATE_LIMIT / OVERLOADED / availability errors. */
+        private int availabilityRetryAttempts = 20;
         private int retryDelayMs = 1000;
         private int backoffMultiplier = 2;
         /** Cap for exponential backoff delay in milliseconds (default 120s). */

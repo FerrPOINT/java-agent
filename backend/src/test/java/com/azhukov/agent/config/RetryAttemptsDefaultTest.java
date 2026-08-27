@@ -6,16 +6,20 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * CUSTOM OPERATOR SETTING: default retryAttempts=100 (NOT Hermes parity —
- * Hermes defaults to 3). Providers used here can disappear for minutes up
- * to half an hour; the agent keeps retrying with a sane backoff.
+ * Two-tier retry policy (operator decision 2026-08-28):
+ * plain model errors → 3 attempts (Hermes parity api_max_retries=3);
+ * availability errors (RATE_LIMIT/OVERLOADED/cooldowns) → 20 attempts
+ * because providers used here can disappear for minutes up to half an hour.
  */
 class RetryAttemptsDefaultTest {
 
     @Test
-    void defaultRetryAttemptsIsCustom100() {
+    void twoTierRetryDefaults() {
         AgentProperties.ErrorProperties error = new AgentProperties().getError();
-        assertThat(error.getRetryAttempts()).isEqualTo(100);
+        // Tier 1: plain errors fail fast
+        assertThat(error.getRetryAttempts()).isEqualTo(3);
+        // Tier 2: availability errors get a dedicated budget
+        assertThat(error.getAvailabilityRetryAttempts()).isEqualTo(20);
         // Sane backoff: exponential base 1s, cap 120s (fixed+jitter after)
         assertThat(error.getRetryDelayMs()).isEqualTo(1000);
         assertThat(error.getBackoffMultiplier()).isEqualTo(2);

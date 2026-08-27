@@ -182,7 +182,8 @@ public class TurnExecutor {
         TurnRetryState retryState = new TurnRetryState();
 
         for (;;) {
-            for (int attempt = 0; attempt <= retryAttempts; attempt++) {
+            int tierRetryAttempts = retryAttempts;
+            for (int attempt = 0; attempt <= tierRetryAttempts; attempt++) {
                 totalAttempts++;
                 try {
                     ModelClient client = fallbackCtx != null && fallbackCtx.getActiveModelClient() != null
@@ -196,6 +197,9 @@ public class TurnExecutor {
                     }
                     ErrorClassifier.ClassificationResult classification = errorClassifier.classifyWithHints(e);
                     ErrorClassifier.ErrorType errorType = classification.type();
+                    // Two-tier budget (operator 2026-08-28): availability errors
+                    // (RATE_LIMIT/OVERLOADED) expand the budget for this loop.
+                    tierRetryAttempts = Math.max(tierRetryAttempts, retryBudgetFor(errorType));
 
                     // ── Part F: Content policy handling ──
                     if (errorType == ErrorClassifier.ErrorType.CONTENT_POLICY) {
@@ -524,6 +528,19 @@ public class TurnExecutor {
         ErrorClassifier.ErrorType errorType = errorClassifier.classify(error);
         long delayMs = computeBackoffMs(errorType, attempt, error);
         return new RetryClassification(errorType, delayMs);
+    }
+
+    /**
+     * Tier-aware retry budget for the given classified error type
+     * (operator decision 2026-08-28): plain errors → error.retry-attempts (3),
+     * availability errors (RATE_LIMIT/OVERLOADED) → error.availability-retry-attempts (20).
+     */
+    public int retryBudgetFor(ErrorClassifier.ErrorType errorType) {
+        if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT
+            || errorType == ErrorClassifier.ErrorType.OVERLOADED) {
+            return Math.max(1, properties.getError().getAvailabilityRetryAttempts());
+        }
+        return Math.max(1, properties.getError().getRetryAttempts());
     }
 
     /**

@@ -99,9 +99,21 @@ public class AgentStreamingService {
     private final RuntimeConfigService runtimeConfigService;
     private final InterruptToken interruptToken;
 
-    /** Operator-configured stream retry cap (Hermes api_max_retries parity). */
+    /**
+     * Operator-configured stream retry cap (Hermes api_max_retries parity).
+     * Two-tier (operator decision 2026-08-28): plain errors → 3 attempts,
+     * availability errors (RATE_LIMIT/OVERLOADED) → 20 attempts.
+     */
     private int maxStreamRetries() {
         return Math.max(1, properties.getError().getRetryAttempts());
+    }
+
+    private int maxStreamRetriesFor(ErrorClassifier.ErrorType errorType) {
+        if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT
+            || errorType == ErrorClassifier.ErrorType.OVERLOADED) {
+            return Math.max(1, properties.getError().getAvailabilityRetryAttempts());
+        }
+        return maxStreamRetries();
     }
 
     /**
@@ -629,7 +641,13 @@ public class AgentStreamingService {
                 // Handle errors with retry
                 if (capturedError.get() != null) {
                     Throwable error = capturedError.get();
-                    if (streamRetries < maxStreamRetries()) {
+                    ErrorClassifier.ErrorType preType = ErrorClassifier.ErrorType.RETRYABLE;
+                    try {
+                        preType = errorClassifier.classify(
+                            error instanceof Exception ex2 ? ex2 : new RuntimeException(error));
+                    } catch (Exception clsEx) { /* fall back to RETRYABLE */ }
+                    int tierCap = maxStreamRetriesFor(preType);
+                    if (streamRetries < tierCap) {
                         // ── c2: delegate error classification + backoff to TurnExecutor ──
                         // The streaming path can't reuse callModelWithRetry directly (it
                         // streams tokens via a handler), but the error classification and
@@ -655,10 +673,10 @@ public class AgentStreamingService {
                         if (errorType == ErrorClassifier.ErrorType.RETRYABLE
                             || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
                             String retryMsg = "⏳ Model overloaded, retrying (attempt "
-                                + (streamRetries + 1) + "/" + maxStreamRetries()
+                                + (streamRetries + 1) + "/" + tierCap
                                 + ") in " + (delayMs / 1000) + "s...";
                             log.warn("Streaming attempt {}/{} failed ({}), retrying in {} ms: {}",
-                                streamRetries + 1, maxStreamRetries(), errorType, delayMs, error.getMessage());
+                                streamRetries + 1, tierCap, errorType, delayMs, error.getMessage());
                             // Hermes parity: chat surfaces only see the first attempt or
                             // long (>=300s) waits; the rest stays in logs.
                             if (shouldEmitRetryStatus(streamRetries, delayMs)) {
@@ -743,8 +761,8 @@ public class AgentStreamingService {
                     }
                     // Permanent error or retries exhausted
                     log.error("Model call failed during streaming after {} retries", streamRetries, error);
-                    String errorMsg = streamRetries >= maxStreamRetries()
-                        ? "Model call failed after " + maxStreamRetries() + " retries: " + error.getMessage()
+                    String errorMsg = streamRetries >= tierCap
+                        ? "Model call failed after " + tierCap + " retries: " + error.getMessage()
                         : "Model call failed: " + error.getMessage();
                     // Hermes parity (thinking_timeout_guidance.py): detect reasoning
                     // model thinking-phase transport kill and append specific guidance.

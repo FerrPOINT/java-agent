@@ -499,6 +499,18 @@ public class ErrorClassifier {
             return new ClassificationResult(ErrorType.SSL_CERT_VERIFICATION, RecoveryHints.noRetry());
         }
 
+        // ── 20b. Generic 400 Bad Request — deterministic request-shape rejection ──
+        // Hermes _classify_400 tail: a 400 that matched no specific pattern is a
+        // non-retryable format_error (fail fast + fall back). Retrying a rejected
+        // request shape is guaranteed to fail identically (observed live: ZAI
+        // "The messages parameter is illegal" burned attempts in a retry loop).
+        if (lowerMessage.contains("badrequest")
+            || lowerMessage.contains("400")
+            || lowerMessage.contains("messages parameter is illegal")
+            || lowerMessage.contains("bad request")) {
+            return new ClassificationResult(ErrorType.FORMAT_ERROR, RecoveryHints.noRetry());
+        }
+
         // ── 21. Connection issues ──
         // h80: Match on message content for connect/DNS failures on generic exception types,
         // not just specific exception classes.
