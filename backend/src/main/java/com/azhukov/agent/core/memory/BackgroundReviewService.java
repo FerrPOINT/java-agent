@@ -295,7 +295,7 @@ public class BackgroundReviewService {
  // Add denied result to conversation
  reviewMessages.add(Message.assistantToolCalls(
  List.of(new ToolCall(call.id(), call.name(), call.arguments())), turn));
- reviewMessages.add(Message.toolResult(call.id(),
+ reviewMessages.add(Message.toolResult(call.pairingId(),
  "{\"error\":\"Tool not allowed in background review\"}", turn));
  continue;
  }
@@ -305,7 +305,7 @@ public class BackgroundReviewService {
  anyToolExecuted = true;
 
  // S7: Build a tool-result message for stale-action filtering
- Message toolResultMsg = Message.toolResult(call.id(), result.content(), turn);
+ Message toolResultMsg = Message.toolResult(call.pairingId(), result.content(), turn);
 
  // S7: Skip stale actions — tool results already in prior conversation
  if (StaleActionFilter.isStale(toolResultMsg, priorResults)) {
@@ -325,7 +325,7 @@ public class BackgroundReviewService {
  // Add assistant tool call and tool result to conversation
  reviewMessages.add(Message.assistantToolCalls(
  List.of(new ToolCall(call.id(), call.name(), call.arguments())), turn));
- reviewMessages.add(Message.toolResult(call.id(), result.content(), turn));
+ reviewMessages.add(Message.toolResult(call.pairingId(), result.content(), turn));
  }
 
  if (!anyToolExecuted) {

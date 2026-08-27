@@ -838,7 +838,7 @@ public class AgentStreamingService {
                     for (ToolCall tc : collectedToolCalls) {
                         turnMessages.add(Message.assistantWithToolCalls(contentBuilder.toString(),
                             List.of(tc), turnIndex));
-                        turnMessages.add(Message.toolResult(tc.id(),
+                        turnMessages.add(Message.toolResult(tc.pairingId(),
                             "[Truncated tool call — arguments were incomplete after "
                             + truncatedToolCallRetries + " retries. The tool was not executed.]",
                             turnIndex));
@@ -1203,7 +1203,7 @@ public class AgentStreamingService {
                     null, null, null, call.name(), resultPreview), streamCtx);
 
                 String toolResultContent = toolResultFormatter.formatResult(result);
-                turnMessages.add(Message.toolResult(call.id(), toolResultContent, turnIndex));
+                turnMessages.add(Message.toolResult(call.pairingId(), toolResultContent, turnIndex));
             }
 
             // Aggregate budget comes AFTER the batch, as in Hermes

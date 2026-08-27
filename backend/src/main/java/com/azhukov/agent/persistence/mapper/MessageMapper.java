@@ -61,14 +61,16 @@ public interface MessageMapper {
         entity.setContent(message.content());
         entity.setTurnIndex(message.turnIndex() != null ? message.turnIndex() : 0);
         if (message.toolCall() != null) {
-            entity.setToolCallId(message.toolCall().id());
+            entity.setToolCallId(message.toolCall().pairingId());
             entity.setToolCallName(message.toolCall().name());
             entity.setToolCallArguments(message.toolCall().arguments());
+            entity.setToolResponseItemId(message.toolCall().responseItemId());
         } else if (message.toolCalls() != null && !message.toolCalls().isEmpty()) {
             ToolCall first = message.toolCalls().get(0);
-            entity.setToolCallId(first.id());
+            entity.setToolCallId(first.pairingId());
             entity.setToolCallName(first.name());
             entity.setToolCallArguments(first.arguments());
+            entity.setToolResponseItemId(first.responseItemId());
         } else {
             entity.setToolCallId(message.toolCallId());
         }
@@ -92,6 +94,8 @@ public interface MessageMapper {
         }
         return new ToolCall(
             entity.getToolCallId(),
+            entity.getToolCallId(),
+            entity.getToolResponseItemId(),
             entity.getToolCallName(),
             entity.getToolCallArguments()
         );

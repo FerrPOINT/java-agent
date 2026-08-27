@@ -634,14 +634,14 @@ public class TurnExecutor {
                     if (Thread.currentThread().isInterrupted()) {
                         log.info("Session {} interrupted while waiting for approval", session.id());
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
-                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                        toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
                         approvalQueue.clear(session.id());
                         return new ToolBatchResult(toolResults, true);
                     }
                     if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                         log.info("Session {} interrupted while waiting for approval", session.id());
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
-                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                        toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
                         approvalQueue.clear(session.id());
                         return new ToolBatchResult(toolResults, true);
                     }
@@ -660,13 +660,13 @@ public class TurnExecutor {
                     log.info("Tool {} {} for session {}, skipping", call.name(),
                         denied ? "denied" : "unapproved after timeout", session.id());
                     ToolResult deniedResult = ToolResult.fail(why);
-                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                    toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
                     approvalQueue.clear(session.id());
                 } else {
                     // Reset skill/memory counters before execution
                     resetNudgeCounters(call, session.id());
                     ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState);
-                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(result), currentTurnIndex));
+                    toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(result), currentTurnIndex));
                 }
             }
             injectSteer(toolResults, session.id(), currentTurnIndex);
@@ -770,7 +770,7 @@ public class TurnExecutor {
             log.debug("Parallel tool {} result: success={}, content length={}, error={}",
                 call.name(), result.success(),
                 result.content() != null ? result.content().length() : 0, result.error());
-            toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(result), currentTurnIndex));
+            toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(result), currentTurnIndex));
         }
         return toolResults;
     }

@@ -118,31 +118,49 @@ public final class HistorySanitizer {
         // ── Pass 1: drop stray TOOL messages ──────────────────────────────
         // Rolling set of known tool-call ids refreshed on each ASSISTANT
         // message; a user turn closes the tool-result run.
+        // P-01: matching is alias-aware — a result may reference the call by
+        // id, call_id, response_item_id or a composite "call|item" spelling.
+        // Alias-group consumption: the whole group is consumed on the first
+        // matching result so an alias-duplicate result is dropped as stray.
         Set<String> knownToolIds = new HashSet<>();
+        java.util.Map<String, Set<String>> aliasGroups = new java.util.HashMap<>();
         List<Message> filtered = new ArrayList<>(collapsed.size());
         for (Message msg : collapsed) {
             if (msg.role() == Role.ASSISTANT) {
                 knownToolIds = new HashSet<>();
+                aliasGroups = new java.util.HashMap<>();
                 if (msg.toolCalls() != null) {
                     for (ToolCall tc : msg.toolCalls()) {
-                        if (tc.id() != null) {
-                            knownToolIds.add(tc.id());
+                        Set<String> aliases = tc.idVariants();
+                        knownToolIds.addAll(aliases);
+                        for (String alias : aliases) {
+                            aliasGroups.put(alias, aliases);
                         }
                     }
                 }
                 filtered.add(msg);
             } else if (msg.role() == Role.TOOL) {
-                String tcId = msg.toolCallId();
-                if (tcId != null && knownToolIds.contains(tcId)) {
+                Set<String> resultVariants = ToolCall.resultIdVariants(msg.toolCallId());
+                Set<String> matchedGroup = null;
+                for (String variant : resultVariants) {
+                    if (knownToolIds.contains(variant)) {
+                        matchedGroup = aliasGroups.get(variant);
+                        break;
+                    }
+                }
+                if (msg.toolCallId() != null && matchedGroup != null) {
                     filtered.add(msg);
-                    // Consume the id so a duplicate tool result for the same
-                    // tool_call_id is dropped (strict providers reject
-                    // duplicates with HTTP 400).
-                    knownToolIds.remove(tcId);
+                    // Consume the ENTIRE alias group so a duplicate tool result
+                    // referencing the same call through another spelling is
+                    // dropped (strict providers reject duplicates with 400).
+                    knownToolIds.removeAll(matchedGroup);
+                    for (String alias : matchedGroup) {
+                        aliasGroups.remove(alias);
+                    }
                 } else {
                     repairs++;
                     log.debug("HistorySanitizer: dropped orphan tool result (toolCallId={}, contentLen={})",
-                        tcId, msg.content() == null ? 0 : msg.content().length());
+                        msg.toolCallId(), msg.content() == null ? 0 : msg.content().length());
                 }
             } else {
                 if (msg.role() == Role.USER) {

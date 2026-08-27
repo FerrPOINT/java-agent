@@ -936,59 +936,79 @@ public class DefaultContextCompressor implements ContextCompressor {
      */
     private List<Message> sanitizeToolPairs(List<Message> messages) {
         // Collect all surviving tool_call IDs from assistant messages
+        // (alias-aware: id/call_id/response_item_id/composite spellings all
+        // reference the same call — Hermes tool_call_id_variants, #63000)
         Set<String> survivingCallIds = new HashSet<>();
         for (Message msg : messages) {
             if (msg.toolCalls() != null) {
                 for (ToolCall tc : msg.toolCalls()) {
-                    if (tc.id() != null) {
-                        survivingCallIds.add(tc.id());
-                    }
+                    survivingCallIds.addAll(tc.idVariants());
                 }
             }
         }
 
-        // Collect all tool result call_ids
+        // Collect all tool result call_ids (alias-expanded on the result side too)
         Set<String> resultCallIds = new HashSet<>();
         for (Message msg : messages) {
             if (msg.role() == Role.TOOL && msg.toolCallId() != null) {
-                resultCallIds.add(msg.toolCallId());
+                resultCallIds.addAll(ToolCall.resultIdVariants(msg.toolCallId()));
             }
         }
 
-        // 1. Remove orphaned tool results (no matching assistant tool_call)
-        Set<String> orphanedResults = new HashSet<>(resultCallIds);
-        orphanedResults.removeAll(survivingCallIds);
-        if (!orphanedResults.isEmpty()) {
-            List<Message> filtered = new ArrayList<>();
-            for (Message msg : messages) {
-                if (msg.role() == Role.TOOL && orphanedResults.contains(msg.toolCallId())) {
+        // 1. Remove orphaned tool results (no matching assistant tool_call
+        //    under ANY alias spelling)
+        List<Message> filtered = new ArrayList<>();
+        int removedOrphans = 0;
+        for (Message msg : messages) {
+            if (msg.role() == Role.TOOL && msg.toolCallId() != null) {
+                Set<String> variants = ToolCall.resultIdVariants(msg.toolCallId());
+                boolean hasMatch = false;
+                for (String v : variants) {
+                    if (survivingCallIds.contains(v)) {
+                        hasMatch = true;
+                        break;
+                    }
+                }
+                if (!hasMatch) {
+                    removedOrphans++;
                     continue; // skip orphaned result
                 }
-                filtered.add(msg);
             }
+            filtered.add(msg);
+        }
+        if (removedOrphans > 0) {
             messages = filtered;
-            log.debug("Compression sanitizer: removed {} orphaned tool result(s)", orphanedResults.size());
+            log.debug("Compression sanitizer: removed {} orphaned tool result(s)", removedOrphans);
         }
 
-        // 2. Add stub results for orphaned tool_calls (no matching tool result)
-        Set<String> missingResults = new HashSet<>(survivingCallIds);
-        missingResults.removeAll(resultCallIds);
-        if (!missingResults.isEmpty()) {
-            List<Message> patched = new ArrayList<>();
-            for (Message msg : messages) {
-                patched.add(msg);
-                if (msg.toolCalls() != null) {
-                    for (ToolCall tc : msg.toolCalls()) {
-                        if (tc.id() != null && missingResults.contains(tc.id())) {
-                            patched.add(Message.toolResult(tc.id(),
-                                "[Result from earlier conversation — see context summary above]",
-                                msg.turnIndex()));
+        // 2. Add stub results for orphaned tool_calls (no matching tool result
+        //    under any alias). The stub uses the call's canonical pairing id.
+        List<Message> patched = new ArrayList<>();
+        int addedStubs = 0;
+        for (Message msg : messages) {
+            patched.add(msg);
+            if (msg.toolCalls() != null) {
+                for (ToolCall tc : msg.toolCalls()) {
+                    Set<String> variants = tc.idVariants();
+                    boolean hasResult = false;
+                    for (String v : variants) {
+                        if (resultCallIds.contains(v)) {
+                            hasResult = true;
+                            break;
                         }
+                    }
+                    if (!hasResult && !tc.pairingId().isEmpty()) {
+                        patched.add(Message.toolResult(tc.pairingId(),
+                            "[Result from earlier conversation — see context summary above]",
+                            msg.turnIndex()));
+                        addedStubs++;
                     }
                 }
             }
+        }
+        if (addedStubs > 0) {
             messages = patched;
-            log.debug("Compression sanitizer: added {} stub tool result(s)", missingResults.size());
+            log.debug("Compression sanitizer: added {} stub tool result(s)", addedStubs);
         }
 
         return messages;

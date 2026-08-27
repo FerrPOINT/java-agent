@@ -71,14 +71,9 @@ public final class ToolCallValidator {
         int rewritten = 0;
         for (int i = 0; i < toolCalls.size(); i++) {
             ToolCall tc = toolCalls.get(i);
-            String raw = tc.id() != null ? tc.id().strip() : "";
-            if (raw.isEmpty()) {
-                continue; // deterministic fallback path owns blank ids
-            }
-            // Composite Responses ids ("call_x|fc_y") collide on the call half.
-            String cid = raw.contains("|") ? raw.split("\\|", 2)[0] : raw;
+            String cid = tc.pairingId();
             if (cid.isEmpty()) {
-                continue;
+                continue; // deterministic fallback path owns blank ids
             }
             if (seen.add(cid)) {
                 continue; // first occurrence — keep
@@ -91,13 +86,10 @@ public final class ToolCallValidator {
             }
             seen.add(newId);
             // Preserve a composite id's response-item half (fc_/item id survives).
-            String finalId = raw.contains("|")
-                ? newId + "|" + raw.split("\\|", 2)[1]
-                : newId;
-            toolCalls.set(i, new ToolCall(finalId, tc.name(), tc.arguments()));
+            toolCalls.set(i, tc.withPairingId(newId));
             rewritten++;
             log.warn("Duplicate tool_call id '{}' in batch — renamed to '{}' (call #{})",
-                raw, finalId, i + 1);
+                cid, newId, i + 1);
         }
         return rewritten;
     }

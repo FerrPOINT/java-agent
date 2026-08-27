@@ -35,6 +35,14 @@ public class MessageEntity {
     @Column(columnDefinition = "TEXT")
     private String toolCallArguments;
 
+    /**
+     * Responses-format response item id for this tool call (alias of
+     * {@link #toolCallId}). Nullable: Chat Completions histories carry one
+     * pairing id only.
+     */
+    @Column(name = "tool_response_item_id")
+    private String toolResponseItemId;
+
     private Integer turnIndex;
 
     /** Whether the message is in live context (false after compaction archive). */

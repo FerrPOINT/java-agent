@@ -648,7 +648,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // Close the interrupted tool sequence with recovery stubs
                 for (ToolCall tc : response.toolCalls()) {
                     turnMessages.add(Message.assistantWithToolCalls(response.content(), List.of(tc), turnIndex));
-                    turnMessages.add(Message.toolResult(tc.id(),
+                    turnMessages.add(Message.toolResult(tc.pairingId(),
                         "[Truncated tool call — arguments were incomplete after "
                         + truncatedToolCallRetries + " retries. The tool was not executed.]",
                         turnIndex));
@@ -998,7 +998,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         validCalls.add(tc);
                     } else {
                         // Invalid tool name — return error for this specific call
-                        errorResults.add(Message.toolResult(tc.id(),
+                        errorResults.add(Message.toolResult(tc.pairingId(),
                             "Tool '" + tc.name() + "' does not exist. Available tools: "
                             + String.join(", ", new java.util.TreeSet<>(registeredToolNames)),
                             currentTurnIndex));
@@ -1038,7 +1038,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     String content = hasError
                         ? "Error: Invalid JSON arguments. Please retry with valid JSON. For tools with no required parameters, use an empty object: {}."
                         : "Skipped: other tool call in this response had invalid JSON.";
-                    errorResults.add(Message.toolResult(tc.id(), content, currentTurnIndex));
+                    errorResults.add(Message.toolResult(tc.pairingId(), content, currentTurnIndex));
                 }
                 turnMessages.addAll(errorResults);
                 turnIndex++;
@@ -1091,7 +1091,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     if (Thread.currentThread().isInterrupted()) {
                         log.info("Session {} interrupted while waiting for approval", session.id());
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
-                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                        toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
                         approvalQueue.clear(session.id());
                         turnMessages.addAll(toolResults);
                         turnIndex++;
@@ -1100,7 +1100,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                         log.info("Session {} interrupted while waiting for approval", session.id());
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
-                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                        toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
                         approvalQueue.clear(session.id());
                         turnMessages.addAll(toolResults);
                         turnIndex++;
@@ -1118,7 +1118,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     log.info("Tool {} {} for session {}, skipping", call.name(),
                         denied ? "denied" : "unapproved after timeout", session.id());
                     ToolResult deniedResult = ToolResult.fail(why);
-                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                    toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
                     approvalQueue.clear(session.id());
                 } else {
                     long toolStart = System.currentTimeMillis();
@@ -1138,7 +1138,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     log.debug("Tool {} executed in {} ms: success={}, content length={}, error={}",
                         call.name(), duration, result.success(),
                         result.content() != null ? result.content().length() : 0, result.error());
-                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(result), currentTurnIndex));
+                    toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(result), currentTurnIndex));
                 }
                 }
             } else {
@@ -1558,7 +1558,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             log.debug("Parallel tool {} result: success={}, content length={}, error={}",
                 call.name(), result.success(),
                 result.content() != null ? result.content().length() : 0, result.error());
-            toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(result), currentTurnIndex));
+            toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(result), currentTurnIndex));
         }
         return toolResults;
     }

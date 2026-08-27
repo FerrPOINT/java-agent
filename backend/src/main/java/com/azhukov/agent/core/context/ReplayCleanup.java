@@ -137,9 +137,12 @@ public final class ReplayCleanup {
 
     private static String findToolName(List<ToolCall> toolCalls, String toolCallId) {
         if (toolCalls == null || toolCallId == null) return "";
+        Set<String> resultVariants = ToolCall.resultIdVariants(toolCallId);
         for (ToolCall tc : toolCalls) {
-            if (toolCallId.equals(tc.id())) {
-                return tc.name();
+            for (String variant : resultVariants) {
+                if (tc.idVariants().contains(variant)) {
+                    return tc.name();
+                }
             }
         }
         return "";
@@ -184,7 +187,7 @@ public final class ReplayCleanup {
                     ? "[Orphan recovery: this tool may have executed before the agent stopped; "
                       + "its effect is UNKNOWN. Inspect current state before retrying.]"
                     : "[Orphan recovery: this read-only tool did not complete and had no effect.]";
-                recovered.add(Message.toolResult(tc.id(), stub,
+                recovered.add(Message.toolResult(tc.pairingId(), stub,
                     last.turnIndex() != null ? last.turnIndex() : 0));
             }
             log.warn("Recovered dangling side-effecting tool call(s) as UNKNOWN instead of erasing them");
