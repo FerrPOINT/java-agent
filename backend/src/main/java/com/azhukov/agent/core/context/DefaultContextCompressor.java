@@ -557,6 +557,11 @@ public class DefaultContextCompressor implements ContextCompressor {
      // _PRESSURE_KEEP_RECENT_MESSAGES (3) messages stay verbatim.
      compressed.addAll(applyTailPressure(messages, tailStart, tailMessages, targetChars));
 
+     // P-10 (Hermes dff84f1890 / b7544dba01): retire stale image payloads on
+     // the WHOLE compressed list — demote and retire passes share the single
+     // ImageRetirementPolicy so the strip behavior can never diverge again.
+     ImageRetirementPolicy.retireStaleToolResultImages(compressed);
+
      // Final sanitization pass on the complete compressed list — ensures tool pairs
      // are well-formed after the summary system message is inserted.
      compressed = sanitizeToolPairs(compressed);
@@ -667,6 +672,14 @@ public class DefaultContextCompressor implements ContextCompressor {
      */
     private List<Message> applyTailPressure(List<Message> allMessages, int tailStart,
                                             List<Message> tailMessages, int targetChars) {
+        // P-10 (Hermes 7ff2fe8bc9): retire stale vision-image payloads in the
+        // PROTECTED TAIL too — tail protection is by message count, and image
+        // bytes are so large that even the newest tail can carry the whole
+        // overflow. Keep the newest N image-bearing tool results, retire the
+        // rest via the single shared policy.
+        java.util.List<Message> tail = new ArrayList<>(tailMessages);
+        ImageRetirementPolicy.retireStaleToolResultImages(tail);
+        tailMessages = tail;
         int tailChars = tailMessages.stream().mapToInt(this::contentLengthForBudget).sum();
         int softCeiling = (int) (targetChars * 1.5);
         if (tailChars <= softCeiling) {
