@@ -1117,6 +1117,21 @@ public class AgentStreamingService {
                     eventHelper().send(emitter, new StreamEvent("token", errorMsg, null, null), streamCtx);
                 }
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
+                // Self-improvement (Hermes parity): surface a PENDING review
+                // summary from an earlier turn's background review as an SSE
+                // "review" event before "done" — the bot renders it as
+                // "💾 Self-improvement review: …". This turn's review runs
+                // async and surfaces on the NEXT turn (Hermes pending-release
+                // semantics via background_review_callback).
+                try {
+                    String pendingReview = memoryNudgeManager != null
+                        ? memoryNudgeManager.getReviewSummaryForSurface(session.id()) : null;
+                    if (pendingReview != null && !pendingReview.isBlank()) {
+                        eventHelper().send(emitter, new StreamEvent("review", null, null, pendingReview), streamCtx);
+                    }
+                } catch (Exception reviewEx) {
+                    log.debug("Review summary surface failed for {}: {}", session.id(), reviewEx.getMessage());
+                }
                 eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens());
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 emitter.complete();

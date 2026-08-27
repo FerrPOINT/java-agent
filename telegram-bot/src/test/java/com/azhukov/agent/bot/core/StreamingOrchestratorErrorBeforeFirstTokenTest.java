@@ -47,7 +47,8 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
         runtimeFooter = mock(RuntimeFooter.class);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("");
         orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
-            runtimeFooter, properties, new MediaDeliveryService());
+            runtimeFooter, properties, new MediaDeliveryService(),
+            mock(com.azhukov.agent.bot.client.TelegramClient.class));
 
         hooks = mock(StreamingOrchestrator.ProcessorHooks.class);
         when(hooks.buildMessageWithContext(anyString(), any(), anyLong()))
@@ -70,9 +71,9 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
     @SuppressWarnings("unchecked")
     private void stubErrorBeforeTokens(String errorMessage) {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(),
-            any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<Throwable> onError = inv.getArgument(8);
+                Consumer<Throwable> onError = inv.getArgument(9);
                 onError.accept(new RuntimeException(errorMessage));
                 return new AgentBackendClient.ChatResult("");
             });
@@ -121,11 +122,11 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
     @Test
     void streamInterrupted_beforeAnyToken_cleansUpDraftSession() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(),
-            any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(3);
                 tokenConsumer.accept("he"); // first token arrives…
-                Consumer<Throwable> onError = inv.getArgument(8);
+                Consumer<Throwable> onError = inv.getArgument(9);
                 onError.accept(new StreamingOrchestrator.StreamInterruptedException());
                 return new AgentBackendClient.ChatResult("");
             });

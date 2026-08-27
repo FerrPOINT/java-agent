@@ -129,7 +129,8 @@ class BotMessageProcessorBusyAckTest {
         UpdateDispatcher updateDispatcher = new UpdateDispatcher(
             properties, editCaptureService, textBatchDebouncer, photoBatchDebouncer);
         StreamingOrchestrator streamingOrchestrator = new StreamingOrchestrator(
-            backendClient, streamEditor, busyHandler, runtimeFooter, properties, mediaDeliveryService);
+            backendClient, streamEditor, busyHandler, runtimeFooter, properties, mediaDeliveryService,
+            mock(com.azhukov.agent.bot.client.TelegramClient.class));
 
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
@@ -142,12 +143,12 @@ class BotMessageProcessorBusyAckTest {
 
     @SuppressWarnings("unchecked")
     private void stubStreamingResult(String content, boolean streamFinalized) {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(3);
                 tokenConsumer.accept(content);
                 if (streamFinalized) {
-                    Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(7);
+                    Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(8);
                     onComplete.accept(new AgentBackendClient.ChatResult(content, "test-model", 100, 1000, true));
                 }
                 return new AgentBackendClient.ChatResult(content, "test-model", 100, 1000, streamFinalized, false);

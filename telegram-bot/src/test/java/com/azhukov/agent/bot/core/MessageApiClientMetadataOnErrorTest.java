@@ -84,6 +84,7 @@ class MessageApiClientMetadataOnErrorTest {
             toolCall -> { },           // toolCallConsumer
             (name, preview) -> { },    // toolResultConsumer
             retry -> { },              // retryConsumer
+            review -> { },             // reviewConsumer
             complete -> { },           // onComplete
             errorRef::set              // onError
         );
@@ -111,7 +112,7 @@ class MessageApiClientMetadataOnErrorTest {
         AgentBackendClient.ChatResult result = client.chatStream(
             "hi", null, null,
             token -> { }, toolCall -> { }, (name, preview) -> { }, retry -> { },
-            complete -> { }, errorRef::set
+            review -> { }, complete -> { }, errorRef::set
         );
 
         assertThat(errorRef.get()).isNotNull();

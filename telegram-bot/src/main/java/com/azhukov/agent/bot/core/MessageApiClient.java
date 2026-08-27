@@ -119,6 +119,7 @@ public class MessageApiClient extends BaseBackendClient {
                                                     Consumer<String> toolCallConsumer,
                                                     java.util.function.BiConsumer<String, String> toolResultConsumer,
                                                     Consumer<String> retryConsumer,
+                                                    Consumer<String> reviewConsumer,
                                                     Consumer<AgentBackendClient.ChatResult> onComplete,
                                                     Consumer<Throwable> onError) {
         Map<String, Object> body = buildChatBody(message, sessionId, runtime);
@@ -278,6 +279,17 @@ public class MessageApiClient extends BaseBackendClient {
                                     if ("commentary".equalsIgnoreCase(type)) {
                                         continue;
                                     }
+                                    // review event (Hermes parity: background_review_callback)
+                                    // — "💾 Self-improvement review: …" summary from an
+                                    // earlier turn's background review. Delivered to the
+                                    // chat AFTER the main response (pending-release).
+                                    if ("review".equalsIgnoreCase(type)) {
+                                        String reviewMsg = event.path("error").asText(null);
+                                        if (reviewMsg != null && !reviewMsg.isBlank() && reviewConsumer != null) {
+                                            reviewConsumer.accept(reviewMsg);
+                                        }
+                                        continue;
+                                    }
                                     JsonNode tokenNode = event.get("token");
                                     if (tokenNode != null && !tokenNode.isNull() && tokenNode.isTextual()) {
                                         String token = tokenNode.asText();
@@ -333,7 +345,7 @@ public class MessageApiClient extends BaseBackendClient {
                                                      Consumer<AgentBackendClient.ChatResult> onComplete,
                                                      Consumer<Throwable> onError) {
         return chatStream(message, sessionId, null, tokenConsumer, toolCallConsumer,
-            toolResultConsumer, msg -> {}, onComplete, onError);
+            toolResultConsumer, msg -> {}, null, onComplete, onError);
     }
 
     // ------------------------------------------------------------------

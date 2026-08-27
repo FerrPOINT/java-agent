@@ -108,7 +108,21 @@ public class AgentBackendClient {
                                  Consumer<ChatResult> onComplete,
                                  Consumer<Throwable> onError) {
         return messages.chatStream(message, sessionId, runtime, tokenConsumer, toolCallConsumer,
-            toolResultConsumer, retryConsumer, onComplete, onError);
+            toolResultConsumer, retryConsumer, null, onComplete, onError);
+    }
+
+    public ChatResult chatStream(String message,
+                                 String sessionId,
+                                 BotSessionEntity runtime,
+                                 Consumer<String> tokenConsumer,
+                                 Consumer<String> toolCallConsumer,
+                                 java.util.function.BiConsumer<String, String> toolResultConsumer,
+                                 Consumer<String> retryConsumer,
+                                 Consumer<String> reviewConsumer,
+                                 Consumer<ChatResult> onComplete,
+                                 Consumer<Throwable> onError) {
+        return messages.chatStream(message, sessionId, runtime, tokenConsumer, toolCallConsumer,
+            toolResultConsumer, retryConsumer, reviewConsumer, onComplete, onError);
     }
 
     public ChatResult chatStream(String message,
@@ -120,6 +134,19 @@ public class AgentBackendClient {
                                  Consumer<Throwable> onError) {
         return messages.chatStream(message, sessionId, tokenConsumer, toolCallConsumer,
             toolResultConsumer, onComplete, onError);
+    }
+
+    public ChatResult chatStreamReview(String message,
+                                       String sessionId,
+                                       Consumer<String> tokenConsumer,
+                                       Consumer<String> toolCallConsumer,
+                                       java.util.function.BiConsumer<String, String> toolResultConsumer,
+                                       Consumer<String> retryConsumer,
+                                       Consumer<String> reviewConsumer,
+                                       Consumer<ChatResult> onComplete,
+                                       Consumer<Throwable> onError) {
+        return messages.chatStream(message, sessionId, null, tokenConsumer, toolCallConsumer,
+            toolResultConsumer, retryConsumer, reviewConsumer, onComplete, onError);
     }
 
     public byte[] tts(String text, String voice) {

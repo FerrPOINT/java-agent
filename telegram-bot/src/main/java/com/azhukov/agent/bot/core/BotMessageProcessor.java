@@ -633,7 +633,16 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         }
     }
 
+    /**
+     * Hermes parity (gateway/run.py _bg_review_send → _deliver_bg_review_message):
+     * the self-improvement review summary is delivered to the chat as a regular
+     * formatted message AFTER the final answer (pending-release semantics).
+     */
     @Override
+    public void sendReviewMessage(long chatId, String reviewMessage, long userMessageId, long messageThreadId) {
+        sendFormatted(chatId, reviewMessage, userMessageId, messageThreadId);
+    }
+
     public String buildMessageWithContext(String messageText, BotSessionEntity session, long chatId) {
         // Hermes parity (gateway/session.py): the platform/user/chat context is
         // injected by the BACKEND into the system prompt volatile tier (backend

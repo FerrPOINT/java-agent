@@ -111,7 +111,9 @@ bot:
       max-pending: 3
 
   display:
-    tool-progress: ${BOT_DISPLAY_TOOL_PROGRESS:hidden}
+    # Hermes parity: display.tool_progress: all (operator's effective config),
+    # rendered in ACCUMULATE mode — one bubble per turn, tools edit it.
+    tool-progress: ${BOT_DISPLAY_TOOL_PROGRESS:all}
 
 management:
   endpoints:

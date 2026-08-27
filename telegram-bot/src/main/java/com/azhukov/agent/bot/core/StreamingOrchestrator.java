@@ -7,6 +7,7 @@ import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BusySessionHandler;
 import com.azhukov.agent.bot.streaming.StreamEditor;
 import com.azhukov.agent.bot.streaming.ToolEmojiMap;
+import com.azhukov.agent.bot.streaming.ToolProgressBubble;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -46,6 +47,22 @@ public class StreamingOrchestrator {
     private final RuntimeFooter runtimeFooter;
     private final BotProperties properties;
     private final MediaDeliveryService mediaDeliveryService;
+    private final com.azhukov.agent.bot.client.TelegramClient telegramClient;
+
+    /**
+     * Hermes parity (display.tool_progress_grouping="accumulate"): tool
+     * progress renders as ONE accumulating bubble per turn — first tool sends
+     * a silent message, subsequent tools EDIT it (throttled 1.5s, dedup ×N,
+     * overflow roll). Kills the per-tool message spam that caused real
+     * Telegram 429 flood limits.
+     */
+    private final java.util.concurrent.ConcurrentHashMap<Long, ToolProgressBubble> progressBubbles =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    private ToolProgressBubble bubbleFor(long chatId) {
+        return progressBubbles.computeIfAbsent(chatId,
+            k -> new ToolProgressBubble(telegramClient, true));
+    }
 
     /** Internal exception to break out of streaming on interrupt. */
     static class StreamInterruptedException extends RuntimeException {
@@ -63,6 +80,13 @@ public class StreamingOrchestrator {
         void deliverMedia(long chatId, List<MediaDeliveryService.MediaDescriptor> media, Integer threadId);
         /** Build the message with an optional PII-redacted session-context prefix. */
         String buildMessageWithContext(String messageText, BotSessionEntity session, long chatId);
+        /**
+         * Hermes parity (background_review_callback): deliver a self-improvement
+         * review summary message to the chat AFTER the final answer.
+         * Default no-op so existing test doubles keep compiling.
+         */
+        default void sendReviewMessage(long chatId, String reviewMessage, long userMessageId, long messageThreadId) {
+        }
     }
 
     /**
@@ -132,12 +156,19 @@ public class StreamingOrchestrator {
                         streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
                         accumulated.setLength(0);
                     }
-                    // Per-tool Telegram bubbles are opt-in via bot.display.tool-progress
-                    // (default hidden). Hermes Telegram default shows no per-tool bubbles.
+                    // Hermes parity (display.tool_progress=all, grouping=accumulate):
+                    // tool lines accumulate in ONE bubble — first tool sends it,
+                    // the rest edit it (1.5s throttle, ×N dedup). A text segment
+                    // break closes the bubble (next tool opens a fresh one below
+                    // the content — Hermes __reset__ marker).
                     String toolProgress = properties.getDisplay().getToolProgress();
                     if (!"hidden".equalsIgnoreCase(toolProgress) && !"off".equalsIgnoreCase(toolProgress)) {
+                        ToolProgressBubble bubble = bubbleFor(chatId);
+                        if (accumulated.length() > 0) {
+                            bubble.closeBubble();
+                        }
                         String toolDisplay = ToolEmojiMap.formatToolCall(toolName, toolArgs);
-                        streamEditor.sendProgressMessage(chatId, toolDisplay);
+                        bubble.appendLine(chatId, toolDisplay);
                     }
                 },
                 // toolResultConsumer — called when backend emits tool_result event.
@@ -161,6 +192,17 @@ public class StreamingOrchestrator {
                             ? accumulated + "\n\n" + retryMsg
                             : retryMsg;
                         streamEditor.editStream(chatId, messageId[0], display);
+                    }
+                },
+                // reviewConsumer (Hermes parity: background_review_callback) —
+                // "💾 Self-improvement review: …" surfaces AFTER the final answer.
+                reviewMsg -> {
+                    if (reviewMsg != null && !reviewMsg.isBlank()) {
+                        try {
+                            hooks.sendReviewMessage(chatId, reviewMsg, userMessageId, messageThreadId);
+                        } catch (Exception e) {
+                            log.warn("Review message delivery failed for chat {}: {}", chatId, e.getMessage());
+                        }
                     }
                 },
                 // onComplete
@@ -279,6 +321,7 @@ public class StreamingOrchestrator {
 
             // If streaming produced content, return it (with metadata from the stream)
             if (accumulated.length() > 0 || finalized[0]) {
+                progressBubbles.remove(chatId);
                 return new AgentBackendClient.ChatResult(
                     accumulated.toString(),
                     streamResult.modelUsed(),
@@ -299,8 +342,10 @@ public class StreamingOrchestrator {
                 streamResult.memoryUpdated(), streamResult.backendSessionId());
         } catch (StreamInterruptedException e) {
             // Already handled in onError callback
+            progressBubbles.remove(chatId);
             return new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, finalized[0], false);
         } catch (Exception e) {
+            progressBubbles.remove(chatId);
             log.warn("Streaming failed for chat {}: {}", chatId, e.getMessage());
             // A native draft owns a StreamSession despite having no message id. Always
             // remove it on an exceptional stream exit or its heartbeat keeps posting.
@@ -344,10 +389,26 @@ public class StreamingOrchestrator {
         String msg = error.getMessage() != null ? error.getMessage().toLowerCase() : "";
         String className = error.getClass().getSimpleName().toLowerCase();
 
-        // Rate limit / flood control
-        if (msg.contains("rate limit") || msg.contains("flood") || msg.contains("429")
-            || msg.contains("too many requests") || msg.contains("retry after")) {
-            return "Rate limited by Telegram. Retrying...";
+        // ── Provider-side errors FIRST (Hermes error_classifier priority) ──
+        // LiteLLM/gateway errors arrive as JSON with "code":"429" but are NOT
+        // Telegram rate limits. They must never render as "Rate limited by
+        // Telegram" — that misattributes a model-provider outage to Telegram.
+        if (msg.contains("no deployments available")
+            || msg.contains("model group")
+            || msg.contains("passed model=")
+            || msg.contains("cooldown_list")
+            || msg.contains("litellm.")
+            || msg.contains("openaiexception")
+            || msg.contains("chatgptexception")
+            || msg.contains("no fallback model group")) {
+            if (msg.contains("usage limit") || msg.contains("add extra usage")
+                || msg.contains("weekly usage")) {
+                return "Model provider usage limit reached (billing). Add usage at the provider settings page or switch the model.";
+            }
+            if (msg.contains("try again in")) {
+                return "Model provider is overloaded (all deployments on cooldown). Try again later or switch the model.";
+            }
+            return "Model provider error. Try again later or switch the model.";
         }
         // Billing / usage-limit errors (Hermes parity: BILLING errors are
         // non-retryable — the user must see a clear explanation, not "Temporary issue").
@@ -361,6 +422,12 @@ public class StreamingOrchestrator {
                 return "Rate limited. Please try again later.";
             }
             return "Provider usage limit reached (billing). Add usage at the provider settings page or switch the model.";
+        }
+        // Telegram rate limit / flood control — only AFTER provider errors are
+        // excluded, and only for genuine Telegram API errors.
+        if (msg.contains("rate limit") || msg.contains("flood") || msg.contains("429")
+            || msg.contains("too many requests") || msg.contains("retry after")) {
+            return "Rate limited by Telegram. Retrying...";
         }
         // Network / timeout errors
         if (error instanceof java.util.concurrent.TimeoutException
