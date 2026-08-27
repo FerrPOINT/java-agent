@@ -98,6 +98,21 @@ public class AgentStreamingService {
     private final MessageMapper messageMapper;
     private final RuntimeConfigService runtimeConfigService;
     private final InterruptToken interruptToken;
+
+    /** Operator-configured stream retry cap (Hermes api_max_retries parity). */
+    private int maxStreamRetries() {
+        return Math.max(1, properties.getError().getRetryAttempts());
+    }
+
+    /**
+     * Hermes parity (gateway _TELEGRAM_NOISY_STATUS_RE): retry chatter is
+     * suppressed from chat surfaces except the first attempt or waits >= 300s
+     * ("rate limited. waiting \d" / "retrying in \d" are filtered). Backend
+     * log always records every attempt.
+     */
+    static boolean shouldEmitRetryStatus(int attemptIndex, long delayMs) {
+        return attemptIndex == 0 || delayMs >= 300_000L;
+    }
     private final SteerBuffer steerBuffer;
     private final TokenEstimator tokenEstimator;
     private final ToolResultFormatter toolResultFormatter;
@@ -159,7 +174,11 @@ public class AgentStreamingService {
         return eventHelper;
     }
 
-    private static final int MAX_STREAM_RETRIES = 5;
+    // Hermes parity (agent_init.py:2062, #11616): retry count is operator
+    // config agent.api_max_retries, default 3. The old hardcoded 5 burned
+    // ~10min against a provider cooldown where Hermes gives up in ~3min
+    // with an honest error.
+    private static final int MAX_STREAM_RETRIES = 5; // replaced at runtime, see maxStreamRetries()
     // c2: recovery budgets/nudges live in the SHARED ResponseRecoveryPolicy
     // (single owner for both runtimes — DefaultAgentRuntime + this loop).
     private static final int MAX_LENGTH_CONTINUATION_ATTEMPTS =
@@ -194,7 +213,11 @@ public class AgentStreamingService {
 
 
     public SseEmitter streamTurn(ChatRequest request) {
-        return streamTurn(request, new SseEmitter(request.timeoutMs() != null ? request.timeoutMs() : 600_000L));
+        // Hermes parity: the in-process turn has no transport deadline. A fixed
+        // 600s SseEmitter cap killed legitimate provider-cooldown retries mid-wait
+        // (2026-08-27 21:27:54). 0L disables the container timeout; the client-side
+        // idle watchdog (refreshed by keepalive events) governs liveness instead.
+        return streamTurn(request, new SseEmitter(request.timeoutMs() != null ? request.timeoutMs() : 0L));
     }
 
     /**
@@ -607,7 +630,7 @@ public class AgentStreamingService {
                 // Handle errors with retry
                 if (capturedError.get() != null) {
                     Throwable error = capturedError.get();
-                    if (streamRetries < MAX_STREAM_RETRIES) {
+                    if (streamRetries < maxStreamRetries()) {
                         // ── c2: delegate error classification + backoff to TurnExecutor ──
                         // The streaming path can't reuse callModelWithRetry directly (it
                         // streams tokens via a handler), but the error classification and
@@ -636,16 +659,30 @@ public class AgentStreamingService {
                                 + (streamRetries + 1) + "/" + MAX_STREAM_RETRIES
                                 + ") in " + (delayMs / 1000) + "s...";
                             log.warn("Streaming attempt {}/{} failed ({}), retrying in {} ms: {}",
-                                streamRetries + 1, MAX_STREAM_RETRIES, errorType, delayMs, error.getMessage());
-                            eventHelper().send(emitter, new StreamEvent("retry", null, null, retryMsg), streamCtx);
+                                streamRetries + 1, maxStreamRetries(), errorType, delayMs, error.getMessage());
+                            // Hermes parity: chat surfaces only see the first attempt or
+                            // long (>=300s) waits; the rest stays in logs.
+                            if (shouldEmitRetryStatus(streamRetries, delayMs)) {
+                                eventHelper().send(emitter, new StreamEvent("retry", null, null, retryMsg), streamCtx);
+                            }
                             try {
                                 // Interruptible sleep — check cancel flag in small increments
                                 // so user cancellation is detected during backoff (Hermes parity).
+                                // Hermes _touch_activity fires every 30s during backoff so the
+                                // transport never looks dead; a keepalive event does the same
+                                // here (any SSE data line refreshes the client idle watchdog).
                                 long remaining = delayMs;
+                                long sinceKeepalive = 0;
                                 while (remaining > 0) {
                                     long chunk = Math.min(remaining, 500);
                                     Thread.sleep(chunk);
                                     remaining -= chunk;
+                                    sinceKeepalive += chunk;
+                                    if (sinceKeepalive >= 30_000 && remaining > 0) {
+                                        eventHelper().send(emitter, new StreamEvent("keepalive", null, null,
+                                            "retrying in " + (remaining / 1000) + "s"), streamCtx);
+                                        sinceKeepalive = 0;
+                                    }
                                     if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                                         log.info("Retry backoff cancelled by interrupt for session {}", session.id());
                                         eventHelper().send(emitter, new StreamEvent("interrupted", null, null,
@@ -707,8 +744,8 @@ public class AgentStreamingService {
                     }
                     // Permanent error or retries exhausted
                     log.error("Model call failed during streaming after {} retries", streamRetries, error);
-                    String errorMsg = streamRetries >= MAX_STREAM_RETRIES
-                        ? "Model call failed after " + MAX_STREAM_RETRIES + " retries: " + error.getMessage()
+                    String errorMsg = streamRetries >= maxStreamRetries()
+                        ? "Model call failed after " + maxStreamRetries() + " retries: " + error.getMessage()
                         : "Model call failed: " + error.getMessage();
                     // Hermes parity (thinking_timeout_guidance.py): detect reasoning
                     // model thinking-phase transport kill and append specific guidance.

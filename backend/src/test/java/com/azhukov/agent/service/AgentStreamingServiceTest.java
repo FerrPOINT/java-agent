@@ -430,7 +430,10 @@ class AgentStreamingServiceTest {
         await().pollInterval(50, TimeUnit.MILLISECONDS)
             .atMost(2, TimeUnit.SECONDS)
             .until(() -> capturedTimeout.get() != null);
-        assertThat(capturedTimeout.get()).isEqualTo(600_000L);
+        // Hermes parity: NO fixed container timeout. A 600s SseEmitter cap killed
+        // legitimate provider-cooldown retries mid-wait (2026-08-27); 0L disables
+        // the container cap — the turn's own retry/error budgets govern lifetime.
+        assertThat(capturedTimeout.get()).isEqualTo(0L);
     }
 
     @Test
