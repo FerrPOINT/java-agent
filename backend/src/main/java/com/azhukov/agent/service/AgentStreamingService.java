@@ -227,10 +227,15 @@ public class AgentStreamingService {
         // Register SseEmitter lifecycle callbacks for cleanup and interrupt
         UUID callbackSessionId = request.sessionId();
         emitter.onTimeout(() -> {
+            // SSE transport timeout != turn cancellation. A provider cooldown
+            // can legally exceed the emitter cap; the turn itself is bounded
+            // by its own retry/error budgets. Marking it INTERRUPTED here
+            // poisoned history with a fake "interrupted by user" marker
+            // (observed 2026-08-27 21:27:54, 600s sharp) and made the next
+            // turn re-run the whole plan from scratch.
+            log.warn("SSE emitter timed out for session {} — detaching client, turn continues server-side",
+                callbackSessionId);
             streamCtx.markDisconnected();
-            if (callbackSessionId != null) {
-                interruptToken.cancel(callbackSessionId);
-            }
             eventHelper().safeCompleteWithError(emitter, new TimeoutException("Stream timed out"));
         });
         emitter.onError(ex -> {
