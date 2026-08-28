@@ -489,8 +489,23 @@ public class DefaultContextEngine implements ContextEngine {
  if (maxMessages <= 0 || maxMessages < 500) {
      maxMessages = 10000; // H-SYNC: effectively unlimited — compression handles trimming
  }
- int maxChars = contextProps.getMaxTokens() * charsPerToken();
- int targetChars = contextProps.getTargetTokens() * charsPerToken();
+ // Perf/correctness fix (2026-08-28 ZaiException investigation): the trim
+ // bounds must track the REAL model window (contextLength from metadata),
+ // not the static config max-tokens (16K default). With the config value the
+ // trim loop gutted any history over ~64K chars — dropping assistant tool_call
+ // messages mid-run, leaving [system, orphan-tool] pairs the sanitizer then
+ // reduced to a single [system] message — and providers reject a request with
+ // no user turn ("The messages parameter is illegal"). The real window for
+ // zai-glm-5.2 is 202K tokens; Hermes trims against the model window and lets
+ // compression (75% threshold) handle the rest.
+ int windowTokens = contextLength > 0 ? contextLength : contextProps.getMaxTokens();
+ int maxChars = windowTokens * charsPerToken();
+ // Trim target mirrors the compression threshold fraction of the window
+ // (target-tokens stays the summary-size floor for tiny windows).
+ int targetChars = Math.max(
+     contextProps.getTargetTokens(),
+     (int) (windowTokens * contextProps.getThresholdPercent()))
+     * charsPerToken();
 
  if (context.size() <= maxMessages && estimateChars(context) <= maxChars) {
  return context;
@@ -514,6 +529,18 @@ public class DefaultContextEngine implements ContextEngine {
  if (!removed) break;
  }
  if (estimateChars(trimmed) > maxChars) {
+     // Safety invariant: hard trimming must retain a user turn. Otherwise the
+     // fallback can leave [system, assistant, tool]; sanitizer drops the
+     // orphan tool and ZAI receives a system-only request (400).
+     boolean hasUser = trimmed.stream().anyMatch(m -> m.role() == Role.USER);
+     if (!hasUser) {
+         for (int i = context.size() - 1; i >= 0; i--) {
+             if (context.get(i).role() == Role.USER) {
+                 trimmed.add(context.get(i));
+                 break;
+             }
+         }
+     }
      // Hermes parity: never drop the system prompt during hard overflow.
      // Hermes has deterministic pruning/salvage passes; the Java fallback
      // was truncating to last 2 messages, silently removing the system

@@ -719,6 +719,25 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             delayMs = Math.min(baseMs * (1L << streamRetries), capMs);
                             delayMs += ThreadLocalRandom.current().nextLong(0, 500);
                         }
+                        // An upstream Retry-After >= 60s is not a retryable interactive
+                        // failure. LiteLLM emits this for exhausted weekly quota / every
+                        // deployment on cooldown. Fail immediately with an actionable user
+                        // error instead of occupying the streaming connection for 10 minutes.
+                        final long MAX_INTERACTIVE_RETRY_DELAY_MS = 60_000;
+                        if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT
+                            && delayMs >= MAX_INTERACTIVE_RETRY_DELAY_MS) {
+                            log.warn("Provider retry-after {} ms is too long for interactive turn; failing fast", delayMs);
+                            String quotaHint = error.getMessage() != null
+                                && (error.getMessage().toLowerCase().contains("weekly usage")
+                                    || error.getMessage().toLowerCase().contains("add extra usage"))
+                                ? "Model provider usage limit reached. Add usage or select a model with available capacity."
+                                : "All deployments for this model are cooling down. Try another model or wait until capacity returns.";
+                            eventHelper().send(emitter, new StreamEvent("error", null, null, quotaHint), streamCtx);
+                            eventHelper().safeCompleteWithError(emitter, error instanceof Exception e ? e : new RuntimeException(error));
+                            if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew,
+                                midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                            return;
+                        }
                         if (errorType == ErrorClassifier.ErrorType.RETRYABLE
                             || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
                             String retryMsg = "⏳ Model overloaded, retrying (attempt "
