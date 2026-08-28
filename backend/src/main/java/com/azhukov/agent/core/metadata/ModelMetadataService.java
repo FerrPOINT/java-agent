@@ -67,6 +67,11 @@ public class ModelMetadataService {
  Map.entry("claude-opus-4.6", 1_000_000),
  Map.entry("claude-sonnet-4.6", 1_000_000),
  Map.entry("claude", 200_000),
+ // LiteLLM aliases configured by the local octo-ai provider. Keep these
+ // explicit: opaque aliases cannot be inferred from their names, and falling
+ // back to 256K diverges from the provider's advertised model window.
+ Map.entry("main-dev", 512_000),
+ Map.entry("app-test", 200_000),
  // OpenAI GPT
  Map.entry("gpt-5.5", 1_050_000),
  Map.entry("gpt-5.4-nano", 400_000),

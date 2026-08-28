@@ -30,6 +30,8 @@ class ModelMetadataServiceTest {
     @Test
     void detectContextLength_knownModel() {
         assertThat(service.detectContextLength("gpt-4o")).isEqualTo(128_000);
+        assertThat(service.detectContextLength("main-dev")).isEqualTo(512_000);
+        assertThat(service.detectContextLength("app-test")).isEqualTo(200_000);
         assertThat(service.detectContextLength("claude-opus-4-8")).isEqualTo(1_000_000);
         assertThat(service.detectContextLength("gemini-1.5-pro")).isEqualTo(1_048_576);
     }
