@@ -45,6 +45,21 @@ class OpenAiMapperTest {
     }
 
     @Test
+    void toMessagePreservesAssistantToolCallsForReplay() {
+        OpenAiChatRequest.OpenAiMessage msg = new OpenAiChatRequest.OpenAiMessage(
+            "assistant", null,
+            List.of(new OpenAiChatRequest.OpenAiToolCall("call-1", "function",
+                new OpenAiChatRequest.OpenAiFunctionCall("search", "{\"q\":\"test\"}"))),
+            null
+        );
+
+        Message result = mapper.toMessage(msg);
+
+        assertThat(result.role()).isEqualTo(Role.ASSISTANT);
+        assertThat(result.toolCalls()).containsExactly(new ToolCall("call-1", "search", "{\"q\":\"test\"}"));
+    }
+
+    @Test
     void toMessageMapsToolRole() {
         OpenAiChatRequest.OpenAiMessage msg = new OpenAiChatRequest.OpenAiMessage("tool", "42", null, "call-1");
 

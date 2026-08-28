@@ -81,6 +81,22 @@ class MessageSplitterTest {
         assertThat(chunks.size()).isGreaterThanOrEqualTo(1);
     }
 
+    @Test
+    void longCodeFenceIsBalancedAcrossIndependentlyDeliveredChunks() {
+        String text = "intro\n```python\n" + "x = 1\n".repeat(1200) + "```\nfinal";
+
+        List<String> chunks = MessageSplitter.split(text);
+
+        assertThat(chunks).hasSizeGreaterThan(1);
+        for (String chunk : chunks) {
+            assertThat(countOccurrences(chunk, "```") % 2)
+                .as("every chunk must render its code block independently")
+                .isZero();
+            assertThat(chunk.length()).isLessThanOrEqualTo(MessageSplitter.TELEGRAM_MAX_LENGTH);
+        }
+        assertThat(chunks.get(1)).contains("```python\n");
+    }
+
     private int countOccurrences(String text, String sub) {
         int count = 0;
         int idx = 0;

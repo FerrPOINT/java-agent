@@ -282,6 +282,17 @@ class DefaultContextEngineBranchCoverageTest {
     }
 
     @Test
+    void shouldCompressPreflightUsesCurrentContextNotStalePriorUsage() {
+        DefaultContextEngine engine = new DefaultContextEngine(
+            memoryProvider, skillManager, messageRepository, contextCompressor, properties);
+        // Simulate a large preceding request. The new one is tiny and must not
+        // rotate merely because it follows a large prompt.
+        engine.updateFromResponse(new TokenUsage(10_000, 1, 10_001, 0, 0, 0));
+
+        assertThat(engine.shouldCompressPreflight(List.of(Message.user("short follow-up")))).isFalse();
+    }
+
+    @Test
     void shouldCompressPreflightOverThresholdReturnsTrue() {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
@@ -420,7 +431,8 @@ class DefaultContextEngineBranchCoverageTest {
         engine.updateModel("new-model");
         Map<String, Object> status = engine.getStatus();
         assertThat(status.get("contextLength")).isEqualTo(16384);
-        assertThat(status.get("thresholdTokens")).isEqualTo((int)(16384 * 0.75));
+        assertThat(status.get("thresholdTokens"))
+            .isEqualTo((int) (16384 * contextProps.getThresholdPercent()));
     }
 
     @Test

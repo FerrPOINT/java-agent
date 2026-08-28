@@ -448,15 +448,12 @@ public class DefaultContextEngine implements ContextEngine {
  }
 
  private int estimateTokens(List<Message> messages) {
- // Use real token usage if available (from last API response)
- if (lastPromptTokens > 0) {
- // Rough estimate: scale last real usage by current message count ratio
- int estimated = lastPromptTokens;
- // This is a preflight estimate — real usage will update after the API call
- return estimated;
- }
- // Fallback to chars/4 estimate
- return estimateChars(messages) / charsPerToken();
+        // Preflight estimates must be based on the context being sent NOW.
+        // Reusing the preceding request's full prompt-token count makes even a
+        // tiny post-compression transcript look permanently oversized, causing
+        // a fresh rotation on every model call (live 2026-08-28 session-search
+        // turn: eight child sessions in two minutes).
+        return estimateChars(messages) / charsPerToken();
  }
 
  private List<Message> trimToFit(List<Message> context) {

@@ -6,6 +6,7 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -202,14 +203,17 @@ public class SessionSearchTool implements ToolHandler {
         String detail,
         @ToolParam(description = "Scroll shape. Session to read inside. Use the session_id returned from a prior discovery call. Must be paired with around_message_id. Can also be an @session:<profile>/<id> link.", required = false)
         @JsonProperty("session_id")
+        @JsonAlias("sessionId")
         String sessionId,
         @ToolParam(description = "Scroll shape. Message id to center the window on. From a discovery result use match_message_id, or any id seen in a prior window. To scroll forward pass the last window message's id; to scroll backward pass the first.", required = false)
         @JsonProperty("around_message_id")
+        @JsonAlias("aroundMessageId")
         String aroundMessageId,
         @ToolParam(description = "Scroll shape only. Messages to return on each side of the anchor (anchor itself always included). Clamped to [1, 20]. Default 5.", required = false)
         Integer window,
         @ToolParam(description = "Optional. Comma-separated roles to include. Discovery defaults to 'user,assistant' (tool output is usually noise). Pass 'user,assistant,tool' to include tool output (debugging tool behaviour) or 'tool' to search tool output only.", required = false)
         @JsonProperty("role_filter")
+        @JsonAlias("roleFilter")
         String roleFilter,
         @ToolParam(description = "Optional. Read sessions from another profile's database (read-only). Use when resolving an @session:<profile>/<id> link: pass the profile segment here with session_id as the id segment. Omit to use the current profile.", required = false)
         String profile

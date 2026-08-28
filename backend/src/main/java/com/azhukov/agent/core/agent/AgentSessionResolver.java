@@ -51,8 +51,17 @@ public class AgentSessionResolver {
      * @return resolved session and whether it was newly created
      */
     public ResolvedSession resolveOrCreate(UUID sessionId, String userId, String modelName) {
+        return resolveOrCreate(sessionId, userId, modelName, "cli");
+    }
+
+    /**
+     * Resolve an existing session or create one with the inbound transport as
+     * its source. The source reaches the volatile prompt tier and must not
+     * silently default Telegram/API turns to CLI.
+     */
+    public ResolvedSession resolveOrCreate(UUID sessionId, String userId, String modelName, String source) {
         if (sessionId == null) {
-            return new ResolvedSession(createSession(userId, "openai-compatible", modelName), true);
+            return new ResolvedSession(createSession(userId, "openai-compatible", modelName, source), true);
         }
         try {
             // P0-24: Follow compression child chain to find the descendant with messages
@@ -66,7 +75,7 @@ public class AgentSessionResolver {
             // backend session may legitimately not exist yet) — not a fault,
             // keep it out of the WARN noise that journal forensics scans.
             log.info("Session {} not found in backend, creating new session", sessionId);
-            return new ResolvedSession(createSession(userId, "openai-compatible", modelName), true);
+            return new ResolvedSession(createSession(userId, "openai-compatible", modelName, source), true);
         }
     }
 

@@ -136,51 +136,44 @@ class MarkdownConverterTest {
         assertThat(result).isEqualTo("Some \\# text");
     }
 
-    // ─── List support ──────────────────────────────────────────────
+    // ─── Hermes list parity ─────────────────────────────────────────
 
     @Test
-    void list_dashItem_convertsToBullet() {
-        String result = MarkdownConverter.convert("- item one");
-        assertThat(result).isEqualTo("• item one");
+    void list_dashItem_staysEscapedPlainText() {
+        assertThat(MarkdownConverter.convert("- item one")).isEqualTo("\\- item one");
     }
 
     @Test
-    void list_starItem_convertsToBullet() {
-        String result = MarkdownConverter.convert("* item one");
-        assertThat(result).isEqualTo("• item one");
+    void list_starItem_staysEscapedPlainText() {
+        assertThat(MarkdownConverter.convert("* item one")).isEqualTo("\\* item one");
     }
 
     @Test
-    void list_plusItem_convertsToBullet() {
-        String result = MarkdownConverter.convert("+ item one");
-        assertThat(result).isEqualTo("• item one");
+    void list_plusItem_staysEscapedPlainText() {
+        assertThat(MarkdownConverter.convert("+ item one")).isEqualTo("\\+ item one");
     }
 
     @Test
-    void list_multipleItems() {
-        String input = "- first\n- second\n- third";
-        String result = MarkdownConverter.convert(input);
-        assertThat(result).isEqualTo("• first\n• second\n• third");
+    void list_multipleItems_stayEscaped() {
+        assertThat(MarkdownConverter.convert("- first\n- second\n- third"))
+            .isEqualTo("\\- first\n\\- second\n\\- third");
     }
 
     @Test
-    void list_mixedMarkers() {
-        String input = "- dash\n* star\n+ plus";
-        String result = MarkdownConverter.convert(input);
-        assertThat(result).isEqualTo("• dash\n• star\n• plus");
+    void list_mixedMarkers_stayEscaped() {
+        assertThat(MarkdownConverter.convert("- dash\n* star\n+ plus"))
+            .isEqualTo("\\- dash\n\\* star\n\\+ plus");
     }
 
     @Test
     void list_itemWithSpecialChars_escaped() {
-        String result = MarkdownConverter.convert("- item.with.dots");
-        assertThat(result).isEqualTo("• item\\.with\\.dots");
+        assertThat(MarkdownConverter.convert("- item.with.dots"))
+            .isEqualTo("\\- item\\.with\\.dots");
     }
 
     @Test
     void list_starItem_notConfusedWithItalic() {
-        // The * in * item is a list marker, not italic, so it should become a bullet
-        String result = MarkdownConverter.convert("* italic item");
-        assertThat(result).isEqualTo("• italic item");
+        assertThat(MarkdownConverter.convert("* italic item")).isEqualTo("\\* italic item");
     }
 
     // ─── Italic edge cases (math expressions) ──────────────────────

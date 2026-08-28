@@ -307,10 +307,12 @@ public class AgentStreamingService {
         // Resolve or create session — if sessionId is provided but not found in backend DB,
         // create a new session (the bot may have a sessionId from its own bot_sessions table
         // which is separate from backend's sessions table).
+        String sessionSource = request.chatType() != null && !request.chatType().isBlank()
+            ? "telegram" : "api_server";
         var resolved = sessionResolver.resolveOrCreate(
             request.sessionId(),
             request.userId() != null && !request.userId().isBlank() ? request.userId() : AgentProperties.DEFAULT_USER_ID,
-            properties.getModel().getModelName());
+            properties.getModel().getModelName(), sessionSource);
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
 
@@ -350,6 +352,13 @@ public class AgentStreamingService {
         // Tools: select before building the prompt so system guidance matches
         // the exact tool definitions this request exposes (P-04).
         List<ToolDefinition> tools = selectTools(request);
+
+        // Per-request model override must be resolved before context preparation:
+        // the context window controls preflight compression. Applying it later
+        // made a /model request build context with the previous model's limits.
+        String requestModel = request.model() != null && !request.model().isBlank() ? request.model() : null;
+        String effectiveModel = requestModel != null ? requestModel : properties.getModel().getModelName();
+        contextEngine.updateModel(effectiveModel);
 
         // Build messages with full session context (system + user)
         // History is loaded by contextEngine.prepareContext() via appendRecentHistory().
@@ -413,10 +422,8 @@ public class AgentStreamingService {
         // The final metadata event after a successful turn overwrites the token estimate.
 
         // Per-request model override (/model command or API "model" field):
-        // thread it through options so the model client uses it for every call
-        // in this turn, and record it in session metadata so resolveModelUsed
-        // reports the ACTUAL model in the footer/metadata events.
-        String requestModel = request.model() != null && !request.model().isBlank() ? request.model() : null;
+        // the model was already resolved before context preparation above; record
+        // it in session metadata for the footer and metadata event.
         if (requestModel != null) {
             session = session.withMetadata("modelOverride", requestModel);
         }
@@ -647,6 +654,31 @@ public class AgentStreamingService {
                             error instanceof Exception ex2 ? ex2 : new RuntimeException(error));
                     } catch (Exception clsEx) { /* fall back to RETRYABLE */ }
                     int tierCap = maxStreamRetriesFor(preType);
+                    var errorClassification = errorClassifier.classifyWithHints(
+                        error instanceof Exception ex2 ? ex2 : new RuntimeException(error));
+                    // The SSE loop owns its stream client, so it must activate fallbacks
+                    // itself. Previously only empty responses could switch models; a hard
+                    // billing/auth/model failure went straight to the user even with a
+                    // configured fallback chain.
+                    if (errorClassification.hints().shouldFallback()
+                        && streamFallbackManager.hasPendingFallback()) {
+                        com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext fallbackContext =
+                            new com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext(
+                                modelClient, streamFallbackManager);
+                        fallbackContext.activeClient = activeStreamClient == modelClient ? null : activeStreamClient;
+                        if (streamFallbackCaller.tryActivateFallback(
+                                fallbackContext, errorClassification.type(),
+                                error instanceof Exception ex3 ? ex3 : new RuntimeException(error))) {
+                            activeStreamClient = fallbackContext.activeClient;
+                            streamRetries = 0;
+                            compressionAttempts = 0;
+                            eventHelper().send(emitter, new StreamEvent("retry", null, null,
+                                "Switching to a fallback model after provider failure."), streamCtx);
+                            log.warn("Streaming provider failure ({}) switched to fallback model for session {}",
+                                errorClassification.type(), session.id());
+                            continue;
+                        }
+                    }
                     if (streamRetries < tierCap) {
                         // ── c2: delegate error classification + backoff to TurnExecutor ──
                         // The streaming path can't reuse callModelWithRetry directly (it

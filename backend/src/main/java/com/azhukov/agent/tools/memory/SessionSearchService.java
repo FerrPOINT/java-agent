@@ -136,6 +136,12 @@ public class SessionSearchService {
     private SearchResult discover(String query, List<String> roleFilter, int limit, String sort,
                                    String detail, UUID currentSessionId, String linkProfile) {
         UUID currentLineageRoot = currentSessionId != null ? resolveLineageRoot(currentSessionId) : null;
+        // Hermes discovery excludes tool output unless the caller explicitly asks
+        // for it. Searching all rows first is fine for PostgreSQL FTS, but the
+        // result set must still honor the requested roles before lineage dedup.
+        List<String> effectiveRoleFilter = roleFilter == null || roleFilter.isEmpty()
+            ? List.of("user", "assistant")
+            : roleFilter;
 
         // FTS content search (excluding hidden sources)
         List<MessageEntity> ftsMessages;
@@ -180,6 +186,7 @@ public class SessionSearchService {
         // instead of per-comparison findById inside the sort comparator (2 calls per
         // comparison — O(n log n) queries).
         List<MessageEntity> sortedMessages = new ArrayList<>(ftsMessages);
+        sortedMessages.removeIf(message -> !effectiveRoleFilter.contains(message.getRole()));
         java.util.Set<UUID> sessionIdsToLoad = new java.util.LinkedHashSet<>();
         for (MessageEntity m : sortedMessages) {
             if (m.getSessionId() != null) sessionIdsToLoad.add(m.getSessionId());
@@ -250,10 +257,14 @@ public class SessionSearchService {
             }
 
             String snippet = "";
+            String matchedRole = null;
             if (msgId != null) {
                 MessageEntity msgEntity = messageRepository.findById(msgId).orElse(null);
                 if (msgEntity != null && msgEntity.getContent() != null) {
                     snippet = truncate(msgEntity.getContent(), 200);
+                }
+                if (msgEntity != null) {
+                    matchedRole = msgEntity.getRole();
                 }
             }
 
@@ -263,7 +274,7 @@ public class SessionSearchService {
                 sessionMeta != null && sessionMeta.getSource() != null ? sessionMeta.getSource() : "unknown",
                 sessionMeta != null && sessionMeta.getModelName() != null ? sessionMeta.getModelName() : "unknown",
                 sessionMeta != null ? sessionMeta.getTitle() : null,
-                null,
+                matchedRole,
                 msgId,
                 snippet,
                 "full".equals(resultDetail) && view != null ? filterCompaction(view.bookendStart()) : List.of(),
@@ -396,7 +407,7 @@ public class SessionSearchService {
         int end = Math.min(allMessages.size(), anchorIdx + windowSize + 1);
 
         List<ShapedMessage> windowMsgs = allMessages.subList(start, end).stream()
-            .map(m -> shapeMessage(m, anchorId, 2000))
+            .map(m -> shapeMessage(m, anchorId, 4000))
             .collect(Collectors.toList());
 
         int messagesBefore = anchorIdx - start;

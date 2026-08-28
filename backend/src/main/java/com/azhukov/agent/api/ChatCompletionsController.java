@@ -87,17 +87,23 @@ public class ChatCompletionsController {
                     @Override
                     public void onComplete() {
                         sendSse(emitter, createFinishEvent(id, model));
+                        sendDone(emitter);
                         emitter.complete();
                     }
 
                     @Override
                     public void onError(Throwable error) {
+                        // OpenAI-compatible streaming errors are delivered as a
+                        // normal error envelope, followed by the terminal marker
+                        // so SDK consumers never wait for another chunk.
                         sendSse(emitter, createErrorEvent(error.getMessage()));
+                        sendDone(emitter);
                         emitter.complete();
                     }
                 });
             } catch (Exception e) {
                 sendSse(emitter, createErrorEvent(e.getMessage()));
+                sendDone(emitter);
                 emitter.complete();
             }
         });
@@ -120,12 +126,27 @@ public class ChatCompletionsController {
             : toolRegistry.getDefinitions();
     }
 
+    /**
+     * This endpoint is OpenAI-compatible. The OpenAI streaming convention is
+     * an unnamed data-only SSE sequence, terminated by {@code data: [DONE]}.
+     * Giving every frame an {@code event: message} name and serialising a custom
+     * error DTO made standard SDKs wait forever or fail to decode the stream.
+     */
     private void sendSse(SseEmitter emitter, Object data) {
         try {
             emitter.send(SseEmitter.event()
                 .id(UUID.randomUUID().toString())
-                .name("message")
                 .data(objectMapper.writeValueAsString(data)));
+        } catch (IOException e) {
+            emitter.completeWithError(e);
+        }
+    }
+
+    private void sendDone(SseEmitter emitter) {
+        try {
+            // This produces the literal SSE payload data:[DONE] (not a JSON
+            // string), which is the OpenAI terminal sentinel.
+            emitter.send(SseEmitter.event().data("[DONE]"));
         } catch (IOException e) {
             emitter.completeWithError(e);
         }

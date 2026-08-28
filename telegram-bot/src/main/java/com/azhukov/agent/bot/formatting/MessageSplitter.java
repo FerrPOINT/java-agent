@@ -42,7 +42,12 @@ public final class MessageSplitter {
             return List.of(text);
         }
 
-        List<String> chunks = doSplit(text, maxLength);
+        // Reserve boundary headroom when fences are present. Balancing can add
+        // a closing "\n```" and a language-tagged reopening to neighbouring
+        // chunks; without this reserve a hard split at 4096 overflows Telegram
+        // after the otherwise-correct fence repair.
+        int splitLimit = text.contains("```") ? Math.max(1, maxLength - 16) : maxLength;
+        List<String> chunks = balanceFencesAcrossChunks(doSplit(text, splitLimit), maxLength);
 
         // Add "(1/N)" continuation indicator when splitting into multiple chunks.
         // The indicator is NOT escaped here — callers using MarkdownV2 should use
@@ -147,6 +152,50 @@ public final class MessageSplitter {
         }
 
         return result;
+    }
+
+    /**
+     * Hermes gateway.platforms.helpers.balance_fences_across_chunks: each
+     * independently-delivered chunk must close an open triple-backtick fence;
+     * the following chunk reopens it with the original language tag.
+     */
+    private static List<String> balanceFencesAcrossChunks(List<String> chunks, int maxLength) {
+        if (chunks.size() <= 1) {
+            return chunks;
+        }
+        List<String> balanced = new ArrayList<>(chunks.size());
+        String carryLang = null;
+        for (String chunk : chunks) {
+            String prefix = carryLang != null ? "```" + carryLang + "\n" : "";
+            boolean inCode = carryLang != null;
+            String language = carryLang != null ? carryLang : "";
+            for (String line : chunk.split("\n", -1)) {
+                String stripped = line.strip();
+                if (!stripped.startsWith("```")) {
+                    continue;
+                }
+                if (inCode) {
+                    inCode = false;
+                    language = "";
+                } else {
+                    inCode = true;
+                    String tag = stripped.substring(3).strip();
+                    language = tag.isEmpty() ? "" : tag.split("\\s+", 2)[0];
+                }
+            }
+            String body = prefix + chunk;
+            if (inCode) {
+                body += "\n```";
+                carryLang = language;
+            } else {
+                carryLang = null;
+            }
+            // The pre-split headroom is intentionally conservative. If a
+            // pathological language tag exceeds it, keep valid fences over a
+            // malformed split; a later delivery path can still split normally.
+            balanced.add(body);
+        }
+        return balanced;
     }
 
     private static List<String> doSplit(String text, int maxLength) {

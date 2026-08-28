@@ -95,10 +95,27 @@ public interface OpenAiMapper {
         return switch (role) {
             case "system" -> Message.system(m.content());
             case "developer" -> Message.developer(m.content());
-            case "assistant" -> Message.assistant(m.content(), 0);
+            case "assistant" -> {
+                List<ToolCall> calls = toDomainToolCalls(m.toolCalls());
+                yield calls.isEmpty()
+                    ? Message.assistant(m.content(), 0)
+                    : Message.assistantWithToolCalls(m.content(), calls, 0);
+            }
             case "tool" -> Message.toolResult(m.toolCallId(), m.content(), 0);
             default -> Message.user(m.content());
         };
+    }
+
+    /** Preserve OpenAI assistant tool calls on API ingress; dropping them makes
+     * every following tool result orphaned on the next model request. */
+    private static List<ToolCall> toDomainToolCalls(List<OpenAiChatRequest.OpenAiToolCall> toolCalls) {
+        if (toolCalls == null || toolCalls.isEmpty()) {
+            return List.of();
+        }
+        return toolCalls.stream()
+            .filter(tc -> tc != null && tc.function() != null)
+            .map(tc -> new ToolCall(tc.id(), tc.function().name(), tc.function().arguments()))
+            .toList();
     }
 
     default ToolDefinition toToolDefinition(OpenAiChatRequest.OpenAiTool tool) {

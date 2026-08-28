@@ -114,10 +114,11 @@ class ChatCompletionsControllerStreamingTest {
             .andExpect(content().contentTypeCompatibleWith("text/event-stream"));
 
         String response = result.getResponse().getContentAsString();
-        assertThat(response).contains("event:message");
+        assertThat(response).doesNotContain("event:message");
+        assertThat(response.lines().filter(line -> line.contains("[DONE]")).count()).isEqualTo(1);
 
         List<String> dataLines = response.lines()
-            .filter(line -> line.startsWith("data:"))
+            .filter(line -> line.startsWith("data:") && !line.contains("[DONE]"))
             .toList();
 
         // 3 token chunks + 1 finish chunk = 4 data lines
@@ -140,7 +141,7 @@ class ChatCompletionsControllerStreamingTest {
     }
 
     @Test
-    @DisplayName("SSE emitter sends [DONE] at end via finish event with stop reason")
+    @DisplayName("OpenAI-compatible SSE terminates with data [DONE] after stop chunk")
     void sseEmitterSendsDoneAtEnd() throws Exception {
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(2);
@@ -168,10 +169,11 @@ class ChatCompletionsControllerStreamingTest {
             .andExpect(status().isOk());
 
         String response = result.getResponse().getContentAsString();
+        assertThat(response.lines().filter(line -> line.contains("[DONE]")).count()).isEqualTo(1);
 
-        // The last chunk should have finishReason = "stop"
+        // The last JSON chunk before the OpenAI terminal marker must stop normally.
         List<String> dataLines = response.lines()
-            .filter(line -> line.startsWith("data:"))
+            .filter(line -> line.startsWith("data:") && !line.contains("[DONE]"))
             .toList();
 
         assertThat(dataLines).isNotEmpty();
@@ -212,17 +214,15 @@ class ChatCompletionsControllerStreamingTest {
 
         String response = result.getResponse().getContentAsString();
 
-        // Verify there's at least the partial token chunk
+        // Verify there's at least the partial token chunk and one terminal marker.
+        assertThat(response.lines().filter(line -> line.contains("[DONE]")).count()).isEqualTo(1);
         List<String> dataLines = response.lines()
-            .filter(line -> line.startsWith("data:"))
+            .filter(line -> line.startsWith("data:") && !line.contains("[DONE]"))
             .toList();
 
         assertThat(dataLines).isNotEmpty();
 
-        // The error event should be present — it's an OpenAiStreamError with type "streaming_error"
-        JsonNode errorChunk = parseJson(dataLines.get(dataLines.size() - 1).substring(5).trim());
-        // The last data line could be the error event or the error + the partial token
-        // The error event has "type" field = "streaming_error"
+        // The error event should be present — it's an OpenAiStreamError with type "streaming_error".
         boolean hasErrorEvent = dataLines.stream()
             .map(line -> parseJson(line.substring(5).trim()))
             .anyMatch(node -> node.has("type") && "streaming_error".equals(node.get("type").asText()));
@@ -262,8 +262,9 @@ class ChatCompletionsControllerStreamingTest {
 
         String response = result.getResponse().getContentAsString();
 
+        assertThat(response.lines().filter(line -> line.contains("[DONE]")).count()).isEqualTo(1);
         List<String> dataLines = response.lines()
-            .filter(line -> line.startsWith("data:"))
+            .filter(line -> line.startsWith("data:") && !line.contains("[DONE]"))
             .toList();
 
         // Find the chunk with tool_calls
@@ -305,8 +306,9 @@ class ChatCompletionsControllerStreamingTest {
 
         String response = result.getResponse().getContentAsString();
 
+        assertThat(response.lines().filter(line -> line.contains("[DONE]")).count()).isEqualTo(1);
         List<String> dataLines = response.lines()
-            .filter(line -> line.startsWith("data:"))
+            .filter(line -> line.startsWith("data:") && !line.contains("[DONE]"))
             .toList();
 
         // Should have an error event

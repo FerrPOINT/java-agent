@@ -140,6 +140,13 @@ public final class MarkdownConverter {
      * Render a GFM table block as Telegram-friendly text.
      * Header row → bold text, data rows → bullet points.
      */
+    /**
+     * Hermes parity (gateway/platforms/helpers.py _render_table_block):
+     * each data row becomes its own group — bold heading line followed by
+     * "• header: value" bullets. Row-label tables (one more cell than
+     * headers) use the first cell as the group heading; otherwise the first
+     * non-empty cell is the heading and the bullet duplicating it is skipped.
+     */
     private static String renderTableBlock(List<String> tableBlock) {
         if (tableBlock.size() < 3) {
             return String.join("\n", tableBlock);
@@ -150,18 +157,44 @@ public final class MarkdownConverter {
             return String.join("\n", tableBlock);
         }
 
-        StringBuilder sb = new StringBuilder();
+        List<String> firstDataRow = splitTableRow(tableBlock.get(2));
+        boolean hasRowLabelCol = firstDataRow.size() == headers.size() + 1;
 
-        // Header row → bold: **Header1 | Header2 | ...**
-        sb.append("**").append(String.join(" | ", headers)).append("**");
-
-        // Data rows → bullet points: • val1 | val2 | ...
-        for (int k = 2; k < tableBlock.size(); k++) {
+        List<String> groups = new ArrayList<>();
+        int rowIndex = 1;
+        for (int k = 2; k < tableBlock.size(); k++, rowIndex++) {
             List<String> cells = splitTableRow(tableBlock.get(k));
-            sb.append("\n• ").append(String.join(" | ", cells));
+            String heading;
+            List<String> dataCells;
+            if (hasRowLabelCol) {
+                heading = !cells.isEmpty() && !cells.get(0).isEmpty() ? cells.get(0) : ("Row " + rowIndex);
+                dataCells = new ArrayList<>(cells.subList(Math.min(1, cells.size()), cells.size()));
+            } else {
+                heading = cells.stream().filter(c -> !c.isEmpty()).findFirst().orElse("Row " + rowIndex);
+                dataCells = new ArrayList<>(cells);
+            }
+
+            // Pad / trim to header count
+            while (dataCells.size() < headers.size()) {
+                dataCells.add("");
+            }
+            if (dataCells.size() > headers.size()) {
+                dataCells = new ArrayList<>(dataCells.subList(0, headers.size()));
+            }
+
+            List<String> lines = new ArrayList<>();
+            lines.add("**" + heading + "**");
+            for (int h = 0; h < headers.size(); h++) {
+                String value = dataCells.get(h);
+                if (!hasRowLabelCol && value.equals(heading)) {
+                    continue;
+                }
+                lines.add("• " + headers.get(h) + ": " + value);
+            }
+            groups.add(String.join("\n", lines));
         }
 
-        return sb.toString();
+        return String.join("\n\n", groups);
     }
 
     private MarkdownConverter() {
@@ -175,10 +208,6 @@ public final class MarkdownConverter {
     // Headings: # Heading → **Heading** (processed before escaping, then converted to bold)
     private static final Pattern HEADING_PATTERN =
         Pattern.compile("(?m)^#{1,6}\\s+(.+)$");
-
-    // Lists: - item, * item, + item → • item (processed before escaping)
-    private static final Pattern LIST_PATTERN =
-        Pattern.compile("(?m)^[-*+]\\s+(.+)$");
 
     // Fenced code block: ```lang\n...```
     // L9: Handles standard fenced code blocks. Nested triple backticks (code blocks
@@ -198,9 +227,15 @@ public final class MarkdownConverter {
     private static final Pattern INLINE_CODE_PATTERN =
         Pattern.compile("`([^`]+)`");
 
-    // Links: [text](url)
+    // Links: [text](url) — Hermes link regex allows nested parens in the URL:
+    // \[([^\]]+)\]\(([^()]*(?:\([^()]*\)[^()]*)*)\)
     private static final Pattern LINK_PATTERN =
-        Pattern.compile("\\[([^\\]]*)\\]\\(([^\\)]*)\\)");
+        Pattern.compile("\\[([^\\]]+)\\]\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)");
+
+    /** Characters escaped inside a link URL per MarkdownV2 spec: ')' and '\'. */
+    private static String escapeLinkUrl(String url) {
+        return url.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)");
+    }
 
     // Bold: **text**
     private static final Pattern BOLD_PATTERN =
@@ -260,8 +295,8 @@ public final class MarkdownConverter {
         // 3. Convert headings # Heading → **Heading** (then handled by bold conversion)
         text = convertHeadings(text);
 
-        // 4. Convert lists -/*/+ item → • item (before escaping, before italic)
-        text = convertLists(text);
+        // 4. NO list conversion — Hermes keeps -/*/+ bullets as escaped plain
+        //    text; only tables render bullets (via convert_table_to_bullets).
 
         // 5. Extract and protect links [text](url)
         text = protectLinks(text, protectedSegments);
@@ -342,14 +377,9 @@ public final class MarkdownConverter {
     }
 
     private static String convertLists(String text) {
-        Matcher matcher = LIST_PATTERN.matcher(text);
-        StringBuffer sb = new StringBuffer();
-        while (matcher.find()) {
-            String item = matcher.group(1);
-            matcher.appendReplacement(sb, "• " + Matcher.quoteReplacement(item));
-        }
-        matcher.appendTail(sb);
-        return sb.toString();
+        // Disabled for Hermes parity: bullets stay as escaped plain text.
+        // Kept as a no-op seam so callers/tests referencing it still compile.
+        return text;
     }
 
     private static String protectLinks(String text, List<String> protectedSegments) {
@@ -358,8 +388,9 @@ public final class MarkdownConverter {
         while (matcher.find()) {
             String linkText = matcher.group(1);
             String url = matcher.group(2);
-            // Escape special chars in link text but NOT in URL
-            String replacement = "[" + escapePlain(linkText) + "](" + url + ")";
+            // Hermes parity: escape display text fully; inside the URL only
+            // ')' and '\' are escaped per the MarkdownV2 spec.
+            String replacement = "[" + escapePlain(linkText) + "](" + escapeLinkUrl(url) + ")";
             String placeholder = makePlaceholder(protectedSegments.size());
             protectedSegments.add(replacement);
             matcher.appendReplacement(sb, Matcher.quoteReplacement(placeholder));

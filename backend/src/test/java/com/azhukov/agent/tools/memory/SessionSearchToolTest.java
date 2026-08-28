@@ -148,6 +148,22 @@ class SessionSearchToolTest {
     }
 
     @Test
+    void readSession_acceptsCamelCaseSessionIdFromModelsAndLegacyClients() {
+        UUID sId = UUID.randomUUID();
+        Instant t = Instant.parse("2025-01-10T10:00:00Z");
+        when(sessionRepository.findById(sId))
+            .thenReturn(Optional.of(sessionEntity(sId, "Camel Case Session", t)));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(sId))
+            .thenReturn(List.of(msgEntity(UUID.randomUUID(), sId, "stored message", "user", t)));
+
+        ToolResult result = tool.execute("{\"sessionId\":\"" + sId + "\"}", assistant(), session());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"mode\":\"read\"");
+        assertThat(result.content()).contains("stored message");
+    }
+
+    @Test
     void readSessionNotFound_returnsFail() {
         UUID sId = UUID.randomUUID();
         when(sessionRepository.findById(sId)).thenReturn(Optional.empty());

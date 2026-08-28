@@ -1,46 +1,31 @@
 package com.azhukov.agent.bot.formatting;
 
+import com.azhukov.agent.bot.streaming.SilenceMarkerUtils;
 import org.springframework.stereotype.Component;
 
 /**
- * B2.8: Filters silent/empty responses before sending to Telegram.
- * <p>
- * - Filters content equal to "***" (intentional silence marker)
- * - Filters empty or whitespace-only responses
+ * Filters blank responses and the exact interactive silence protocol markers.
+ *
+ * <p>Hermes gateway/response_filters.py accepts only {@code [SILENT]},
+ * {@code SILENT}, {@code NO_REPLY}, and {@code NO REPLY} (with its canonical
+ * punctuation handling) as intentional silence. The legacy Java-only
+ * {@code ***} sentinel suppressed legitimate Markdown separator responses and
+ * had drifted from both the streaming and autonomous-delivery paths.
  */
 @Component
 public class ResponseFilter {
 
-    /** The silence marker — responses with exactly this content are filtered. */
-    private static final String SILENCE_MARKER = "***";
-
     /**
-     * Check if a response should be filtered (not sent to the user).
-     *
-     * @param content the response content to check
-     * @return true if the response should be filtered out, false if it should be sent
+     * Check whether content should be withheld from interactive Telegram delivery.
+     * Empty output cannot form a Telegram message; non-empty text is suppressed
+     * only when it matches Hermes' exact silence protocol.
      */
     public boolean shouldFilter(String content) {
-        if (content == null) {
-            return true;
-        }
-        String trimmed = content.trim();
-        if (trimmed.isEmpty()) {
-            return true;
-        }
-        if (trimmed.equals(SILENCE_MARKER)) {
-            return true;
-        }
-        return false;
+        return content == null || content.isBlank()
+            || SilenceMarkerUtils.isSilenceMarker(content);
     }
 
-    /**
-     * Filter a response. Returns the content if it should be sent,
-     * or null if it should be filtered out.
-     *
-     * @param content the response content
-     * @return the content if not filtered, null if filtered
-     */
+    /** Return content unless it is blank or an exact silence marker. */
     public String filter(String content) {
         return shouldFilter(content) ? null : content;
     }

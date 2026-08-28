@@ -112,4 +112,27 @@ class AgentSessionResolverRotationTest {
 
         assertThat(resolved.isNew()).isTrue();
     }
+
+    @Test
+    void createsNewSessionWithInboundTransportSource() {
+        UUID missing = UUID.randomUUID();
+        when(messageRepository.countBySessionIdAndActiveTrue(missing)).thenReturn(0L);
+        when(sessionRepository.findByParentSessionIdOrderByCreatedAtDesc(missing)).thenReturn(List.of());
+        SessionEntity fresh = new SessionEntity();
+        fresh.setId(UUID.randomUUID());
+        fresh.setUserId("telegram-user");
+        fresh.setModelProvider("openai-compatible");
+        fresh.setModelName("app-test");
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(invocation -> {
+            SessionEntity saved = invocation.getArgument(0);
+            fresh.setSource(saved.getSource());
+            return fresh;
+        });
+
+        AgentSessionResolver.ResolvedSession resolved = resolver.resolveOrCreate(
+            missing, "telegram-user", "app-test", "telegram");
+
+        assertThat(resolved.isNew()).isTrue();
+        assertThat(fresh.getSource()).isEqualTo("telegram");
+    }
 }

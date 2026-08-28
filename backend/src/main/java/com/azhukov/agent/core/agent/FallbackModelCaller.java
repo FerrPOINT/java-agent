@@ -440,7 +440,7 @@ public class FallbackModelCaller {
         return tryActivateFallback(ctx, null, null);
     }
 
-    private boolean tryActivateFallback(ModelCallContext ctx, ErrorClassifier.ErrorType errorType, Exception error) {
+    public boolean tryActivateFallback(ModelCallContext ctx, ErrorClassifier.ErrorType errorType, Exception error) {
         if (ctx.fallbackManager == null || !ctx.fallbackManager.hasPendingFallback()) {
             return false;
         }

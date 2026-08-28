@@ -444,6 +444,72 @@ class SessionSearchServiceTest {
         assertThat(result.discoverResults.get(0).snippet()).contains("fallback");
     }
 
+    @Test
+    void discovery_defaultsToUserAndAssistantRoles() {
+        UUID sessionId = UUID.randomUUID();
+        MessageEntity toolMessage = newMessageEntity(sessionId, "tool", "searchterm from tool", 0);
+        when(messageRepository.searchByContentFtsExcludingSources(eq("searchterm"), any()))
+            .thenReturn(List.of(toolMessage));
+        when(sessionRepository.searchByTitleFtsExcludingSources(eq("searchterm"), any()))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleIgnoreCase("searchterm")).thenReturn(null);
+
+        SessionSearchService.SearchResult result = service.search(
+            "searchterm", null, null, null, null, null, null, null, null, null
+        );
+
+        assertThat(result.success).isTrue();
+        assertThat(result.discoverResults).isEmpty();
+    }
+
+    @Test
+    void discovery_explicitToolRoleIncludesToolMatchesAndRole() {
+        UUID sessionId = UUID.randomUUID();
+        SessionEntity session = newSessionEntity(sessionId, "Tool Session", "cli");
+        MessageEntity toolMessage = newMessageEntity(sessionId, "tool", "searchterm from tool", 0);
+        when(messageRepository.searchByContentFtsExcludingSources(eq("searchterm"), any()))
+            .thenReturn(List.of(toolMessage));
+        when(sessionRepository.searchByTitleFtsExcludingSources(eq("searchterm"), any()))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleIgnoreCase("searchterm")).thenReturn(null);
+        when(sessionRepository.findAllById(any())).thenReturn(List.of(session));
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of(toolMessage));
+        when(messageRepository.findById(toolMessage.getId())).thenReturn(Optional.of(toolMessage));
+
+        SessionSearchService.SearchResult result = service.search(
+            "searchterm", "tool", null, null, null, null, null, null, null, null
+        );
+
+        assertThat(result.success).isTrue();
+        assertThat(result.discoverResults).hasSize(1);
+        assertThat(result.discoverResults.get(0).matchedRole()).isEqualTo("tool");
+    }
+
+    @Test
+    void discovery_anchorContentUsesHermesFourThousandCharacterLimit() {
+        UUID sessionId = UUID.randomUUID();
+        SessionEntity session = newSessionEntity(sessionId, "Long Tool Session", "cli");
+        String content = "x".repeat(3000);
+        MessageEntity toolMessage = newMessageEntity(sessionId, "tool", content, 0);
+        when(messageRepository.searchByContentFtsExcludingSources(eq("searchterm"), any()))
+            .thenReturn(List.of(toolMessage));
+        when(sessionRepository.searchByTitleFtsExcludingSources(eq("searchterm"), any()))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleIgnoreCase("searchterm")).thenReturn(null);
+        when(sessionRepository.findAllById(any())).thenReturn(List.of(session));
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of(toolMessage));
+        when(messageRepository.findById(toolMessage.getId())).thenReturn(Optional.of(toolMessage));
+
+        SessionSearchService.SearchResult result = service.search(
+            "searchterm", "tool", null, null, null, null, null, null, null, null
+        );
+
+        assertThat(result.discoverResults.get(0).messages().get(0).content()).hasSize(3000);
+        assertThat(result.discoverResults.get(0).messages().get(0).contentTruncated()).isFalse();
+    }
+
     // ── Error handling: invalid session_id ──
 
     @Test

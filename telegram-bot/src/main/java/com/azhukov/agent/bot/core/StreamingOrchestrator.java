@@ -150,17 +150,15 @@ public class StreamingOrchestrator {
                         toolName = toolCall.substring(0, sep);
                         toolArgs = toolCall.substring(sep + 1);
                     }
-                    streamEditor.setCurrentToolName(chatId, toolName);
-                    // Hermes parity (__reset__ marker): if content streamed before this
-                    // tool, the segment break closes the progress bubble — the next
-                    // tool opens a fresh bubble BELOW the content. Must be checked
-                    // BEFORE accumulated.setLength(0) wipes the buffer.
+                    // The editor can create its first message after startStream returns
+                    // (delayed-start/draft transport). It owns the authoritative message id,
+                    // so always commit the text segment before rendering tool progress.
                     boolean contentStreamedBeforeTool = accumulated.length() > 0;
-                    // Finalize current streaming message with accumulated text (if any)
-                    if (contentStreamedBeforeTool && messageId[0] >= 0) {
+                    if (contentStreamedBeforeTool) {
                         streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
                         accumulated.setLength(0);
                     }
+                    streamEditor.setCurrentToolName(chatId, toolName);
                     // Hermes parity (display.tool_progress=all, grouping=accumulate):
                     // tool lines accumulate in ONE bubble — first tool sends it,
                     // the rest edit it (1.5s throttle, ×N dedup).

@@ -10,6 +10,7 @@ import com.azhukov.agent.bot.session.BusySessionHandler;
 import com.azhukov.agent.bot.streaming.StreamEditor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
 import java.time.Duration;
 import java.util.Map;
@@ -276,6 +277,23 @@ class StreamingOrchestratorTest {
             .isInstanceOf(RuntimeException.class);
 
         verify(streamEditor).clearStream(100L);
+    }
+
+    @Test
+    void streamChat_delayedStartCommitsTextBeforeToolProgress() {
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong()))
+            .thenReturn(Optional.empty());
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("preface");
+            ctx.toolCallConsumer.accept("session_search\u0001{\"query\":\"recent\"}");
+            ctx.returnResult = new AgentBackendClient.ChatResult("", null, null, null, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+        InOrder order = inOrder(streamEditor);
+        order.verify(streamEditor).onSegmentBreak(100L, -1L, "preface");
+        order.verify(streamEditor).setCurrentToolName(100L, "session_search");
     }
 
     @Test

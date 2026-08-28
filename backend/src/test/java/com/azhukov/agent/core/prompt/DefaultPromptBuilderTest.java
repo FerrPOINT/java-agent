@@ -271,6 +271,29 @@ class DefaultPromptBuilderTest {
     }
 
     @Test
+    void developerRoleMatchesBySubstringNotPrefix() {
+        // Hermes prompt_builder.py:903 uses substring matching:
+        // "chatgpt-5.6-luna".contains("gpt-5") -> developer role.
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getModel().setModelName("chatgpt-5.6-luna");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        DefaultAgentConstants constants = new DefaultAgentConstants();
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, constants);
+        Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+
+        assertThat(msg.role()).isEqualTo(Role.DEVELOPER);
+
+        // Negative: no gpt-5/codex substring anywhere -> system role
+        properties.getModel().setModelName("app-test");
+        Message msg2 = builder.buildSystemMessage(Session.create("u", "p", "m"));
+        assertThat(msg2.role()).isEqualTo(Role.SYSTEM);
+    }
+
+    @Test
     void usesSystemRoleForNonDeveloperModel() {
         AgentProperties properties = new AgentProperties();
         properties.setName("Agent");

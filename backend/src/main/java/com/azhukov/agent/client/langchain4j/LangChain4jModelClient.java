@@ -50,6 +50,9 @@ public class LangChain4jModelClient implements ModelClient {
     private final CredentialPool credentialPool;
     private final ImageShrinkerService imageShrinker;
 
+    /** Per-request model name (set in complete()/stream()); feeds the developer-role HTTP rewrite. */
+    private volatile String currentModelName;
+
     public LangChain4jModelClient(AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
                                    ErrorClassifier errorClassifier, RateLimitTracker rateLimitTracker) {
         this(properties, usageConsumer, errorClassifier, rateLimitTracker, null, null);
@@ -95,6 +98,7 @@ public class LangChain4jModelClient implements ModelClient {
             .returnThinking(properties.getModel().isReturnThinking())
             .sendThinking(properties.getModel().isReturnThinking(),
                           properties.getModel().getThinkingFieldName())
+            .httpClientBuilder(developerRoleHttpClientBuilder())
             // P-06 (Hermes 21b92d2687): OpenRouter response caching must be
             // disabled on empty-response retries, or the retry replays the
             // cached empty answer and burns the whole retry budget. The
@@ -112,9 +116,58 @@ public class LangChain4jModelClient implements ModelClient {
             .returnThinking(properties.getModel().isReturnThinking())
             .sendThinking(properties.getModel().isReturnThinking(),
                           properties.getModel().getThinkingFieldName())
+            .httpClientBuilder(developerRoleHttpClientBuilder())
             .customHeaders(() -> EmptyRetryCacheBypass.headersFor(effectiveBaseUrl,
                 properties.getModel().getHeaders()))
             .build();
+    }
+
+    /**
+     * Hermes parity: developer-role models (name contains gpt-5/codex) must
+     * get {@code role:"developer"} on the wire. LangChain4j 1.18 cannot emit
+     * that role from its message model, so every outgoing body is rewritten
+     * at the HTTP boundary. The model name is read per request through the
+     * supplier so per-request model overrides (/model command) are honored.
+     */
+    private dev.langchain4j.http.client.HttpClientBuilder developerRoleHttpClientBuilder() {
+        String configuredModel = properties.getModel().getModelName();
+        return new dev.langchain4j.http.client.HttpClientBuilder() {
+            private final java.time.Duration connectTimeout = java.time.Duration.ofSeconds(20);
+            private java.time.Duration readTimeout = java.time.Duration
+                .ofSeconds(properties.getModel().getTimeoutSeconds());
+
+            @Override
+            public java.time.Duration connectTimeout() {
+                return connectTimeout;
+            }
+
+            @Override
+            public dev.langchain4j.http.client.HttpClientBuilder connectTimeout(java.time.Duration d) {
+                return this;
+            }
+
+            @Override
+            public java.time.Duration readTimeout() {
+                return readTimeout;
+            }
+
+            @Override
+            public dev.langchain4j.http.client.HttpClientBuilder readTimeout(java.time.Duration d) {
+                this.readTimeout = d;
+                return this;
+            }
+
+            @Override
+            public dev.langchain4j.http.client.HttpClient build() {
+                dev.langchain4j.http.client.HttpClient inner =
+                    new dev.langchain4j.http.client.jdk.JdkHttpClientBuilder()
+                        .connectTimeout(connectTimeout)
+                        .readTimeout(readTimeout)
+                        .build();
+                return new DeveloperRoleHttpClient(inner,
+                    () -> currentModelName != null ? currentModelName : configuredModel);
+            }
+        };
     }
 
     public LangChain4jModelClient(ChatModel chatModel, StreamingChatModel streamingChatModel,
@@ -168,6 +221,11 @@ public class LangChain4jModelClient implements ModelClient {
             .parameters(buildParameters(specs, reasoningEffort, fastMode, maxTokens,
                 options != null ? options.modelName() : null))
             .build();
+        // Track the per-request model so the HTTP-layer developer-role rewrite
+        // (Hermes parity) evaluates the policy against the ACTUAL model.
+        currentModelName = options != null && options.modelName() != null && !options.modelName().isBlank()
+            ? options.modelName()
+            : properties.getModel().getModelName();
 
         log.debug("Sending {} messages to model {}", chatMessages.size(), request);
 
@@ -247,6 +305,11 @@ public class LangChain4jModelClient implements ModelClient {
             .parameters(buildParameters(specs, reasoningEffort, fastMode, maxTokens,
                 options != null ? options.modelName() : null))
             .build();
+        // Track the per-request model so the HTTP-layer developer-role rewrite
+        // (Hermes parity) evaluates the policy against the ACTUAL model.
+        currentModelName = options != null && options.modelName() != null && !options.modelName().isBlank()
+            ? options.modelName()
+            : properties.getModel().getModelName();
 
         // OpenAiStreamingChatModel.doChat() is async — block until streaming completes
         java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
