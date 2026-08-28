@@ -116,17 +116,8 @@ public class ToolLoopGuardrail {
         String capWarning = checkRunawayCap(toolName);
         if (capWarning != null) return capWarning;
 
-        // ── Exact repeat check ─────────────────────────────────────────
-        String signature = toolName + ":" + hashArgs(arguments);
-        int count = exactRepeatCounts.getOrDefault(signature, 0);
-        if (count >= maxExactRepeats) {
-            return String.format(
-                "Tool loop warning: %s has been called %d times with identical arguments. " +
-                "This looks like a loop; inspect the error and change strategy " +
-                "instead of retrying it unchanged.",
-                toolName, count
-            );
-        }
+        // Exact-call tracking is failure-only. Successful idempotent calls are
+        // advisory through afterCall(), matching Hermes' default hard-stop-off.
         return null;
     }
 

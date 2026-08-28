@@ -24,7 +24,10 @@ public interface MessageMapper {
         }
         Role role = stringToRole(entity.getRole());
         boolean isTool = role == Role.TOOL;
-        ToolCall toolCall = isTool ? null : extractToolCall(entity);
+        List<ToolCall> persistedToolCalls = isTool ? List.of()
+            : ToolCallPersistenceCodec.deserialize(entity.getToolCallsJson());
+        ToolCall toolCall = isTool ? null : (persistedToolCalls.isEmpty()
+            ? extractToolCall(entity) : persistedToolCalls.get(0));
         String toolCallId = isTool ? entity.getToolCallId() : null;
         // Hermes parity (agent_runtime_helpers.py #58168): an assistant
         // tool_call must surface in toolCalls (the list) — HistorySanitizer
@@ -34,10 +37,9 @@ public interface MessageMapper {
         // as an "orphan", strict providers then 400 on the dangling call,
         // and the error is misclassified as CONTEXT_OVERFLOW (fake
         // compression, lost context, incoherent replies).
-        List<ToolCall> toolCalls = null;
-        if (toolCall != null) {
-            toolCalls = List.of(toolCall);
-        }
+        List<ToolCall> toolCalls = persistedToolCalls.isEmpty()
+            ? (toolCall == null ? null : List.of(toolCall))
+            : persistedToolCalls;
         return new Message(role, entity.getContent(), toolCall, toolCalls, toolCallId,
             entity.getTurnIndex(), 0, entity.getCreatedAt());
     }
@@ -71,6 +73,7 @@ public interface MessageMapper {
             entity.setToolCallName(first.name());
             entity.setToolCallArguments(first.arguments());
             entity.setToolResponseItemId(first.responseItemId());
+            entity.setToolCallsJson(ToolCallPersistenceCodec.serialize(message.toolCalls()));
         } else {
             entity.setToolCallId(message.toolCallId());
         }

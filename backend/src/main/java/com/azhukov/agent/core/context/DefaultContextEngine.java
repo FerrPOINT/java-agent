@@ -10,6 +10,7 @@ import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.MessageEntity;
+import com.azhukov.agent.persistence.mapper.ToolCallPersistenceCodec;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -320,6 +321,7 @@ public class DefaultContextEngine implements ContextEngine {
                  e.setToolCallId(first.id());
                  e.setToolCallName(first.name());
                  e.setToolCallArguments(first.arguments());
+                 e.setToolCallsJson(ToolCallPersistenceCodec.serialize(m.toolCalls()));
              }
              if (m.role() == Role.TOOL && m.toolCallId() != null) {
                  e.setToolCallId(m.toolCallId());

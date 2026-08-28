@@ -32,7 +32,11 @@ class MessageMapperTest {
 
         assertThat(message.role()).isEqualTo(Role.ASSISTANT);
         assertThat(message.content()).isEqualTo("hello");
-        assertThat(message.toolCall()).isEqualTo(new ToolCall("call-1", "weather", "{\"city\":\"Paris\"}"));
+        assertThat(message.toolCall().id()).isEqualTo("call-1");
+        assertThat(message.toolCall().pairingId()).isEqualTo("call-1");
+        assertThat(message.toolCall().name()).isEqualTo("weather");
+        assertThat(message.toolCall().arguments()).isEqualTo("{\"city\":\"Paris\"}");
+        assertThat(message.toolCalls()).containsExactly(message.toolCall());
         assertThat(message.toolCallId()).isNull();
         assertThat(message.turnIndex()).isEqualTo(3);
     }
@@ -64,6 +68,21 @@ class MessageMapperTest {
         assertThat(entity.getToolCallName()).isEqualTo("weather");
         assertThat(entity.getToolCallArguments()).isEqualTo("{\"city\":\"Paris\"}");
         assertThat(entity.getTurnIndex()).isEqualTo(1);
+    }
+
+    @Test
+    void toEntityAndBack_preservesEveryToolCallInBatch() {
+        List<ToolCall> calls = List.of(
+            new ToolCall("call-one", "skills_list", "{}"),
+            new ToolCall("call-two", "memory", "{\"target\":\"memory\"}")
+        );
+
+        MessageEntity entity = mapper.toEntity(Message.assistantWithToolCalls("", calls, 2));
+        Message reloaded = mapper.toDomain(entity);
+
+        assertThat(entity.getToolCallsJson()).contains("call-one", "call-two");
+        assertThat(reloaded.toolCalls()).containsExactlyElementsOf(calls);
+        assertThat(reloaded.toolCall()).isEqualTo(calls.get(0));
     }
 
     @Test

@@ -78,6 +78,22 @@ class MidTurnPersistenceServiceTest {
     }
 
     @Test
+    void persistNewMessages_savesWholeAssistantToolCallBatch() {
+        stubTransaction();
+        UUID sessionId = UUID.randomUUID();
+        List<Message> messages = List.of(Message.assistantWithToolCalls("", List.of(
+            new com.azhukov.agent.core.model.ToolCall("call-one", "skills_list", "{}"),
+            new com.azhukov.agent.core.model.ToolCall("call-two", "memory", "{\"target\":\"memory\"}")
+        ), 1));
+
+        service.persistNewMessages(sessionId, messages, 0);
+
+        ArgumentCaptor<MessageEntity> captor = ArgumentCaptor.forClass(MessageEntity.class);
+        verify(messageRepository).save(captor.capture());
+        assertThat(captor.getValue().getToolCallsJson()).contains("call-one", "call-two");
+    }
+
+    @Test
     void persistNewMessages_skipsSystemAndDeveloperMessages() {
         stubTransaction();
         UUID sessionId = UUID.randomUUID();

@@ -36,6 +36,13 @@ public class MessageEntity {
     private String toolCallArguments;
 
     /**
+     * Complete assistant tool-call batch. The scalar fields above retain the
+     * first call for compatibility, but cannot preserve parallel call IDs.
+     */
+    @Column(columnDefinition = "TEXT")
+    private String toolCallsJson;
+
+    /**
      * Responses-format response item id for this tool call (alias of
      * {@link #toolCallId}). Nullable: Chat Completions histories carry one
      * pairing id only.
