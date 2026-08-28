@@ -1,12 +1,12 @@
 package com.azhukov.agent.tools.file;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.DefaultFileSafety;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -20,7 +20,6 @@ import java.util.List;
     toolset = "file"
 )
 @Component
-@RequiredArgsConstructor
 public class DeleteFileTool implements ToolHandler {
 
     private static final List<String> BLOCKED_PATHS = List.of(
@@ -29,6 +28,12 @@ public class DeleteFileTool implements ToolHandler {
     );
 
     private final AgentProperties properties;
+    private final DefaultFileSafety fileSafety;
+
+    public DeleteFileTool(AgentProperties properties, DefaultFileSafety fileSafety) {
+        this.properties = properties;
+        this.fileSafety = fileSafety;
+    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -38,7 +43,9 @@ public class DeleteFileTool implements ToolHandler {
         }
 
         Path path = Path.of(args.path()).toAbsolutePath().normalize();
-        if (isBlocked(path)) {
+        // Hermes parity: the sensitive-path denylist lives in DefaultFileSafety;
+        // the local BLOCKED_PATHS also guarded system dirs (kept below).
+        if (isBlocked(path) || !fileSafety.isWriteAllowed(path)) {
             return ToolResult.fail("Deleting this path is not allowed: " + args.path());
         }
         if (!isPathAllowed(path)) {

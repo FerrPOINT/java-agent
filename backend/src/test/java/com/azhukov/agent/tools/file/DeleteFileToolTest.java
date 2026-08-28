@@ -25,7 +25,7 @@ class DeleteFileToolTest {
     @BeforeEach
     void setUp() {
         properties = new AgentProperties();
-        tool = new DeleteFileTool(properties);
+        tool = new DeleteFileTool(properties, fileSafety());
     }
 
     private Session dummySession() {
@@ -163,5 +163,11 @@ class DeleteFileToolTest {
         assertTrue(result.error().contains("Access denied"));
         // Cleanup
         Files.deleteIfExists(outside);
+    }
+
+    private static com.azhukov.agent.core.security.DefaultFileSafety fileSafety() {
+        com.azhukov.agent.config.AgentProperties props = new com.azhukov.agent.config.AgentProperties();
+        props.getSecurity().setFileSafetyEnabled(true);
+        return new com.azhukov.agent.core.security.DefaultFileSafety(props);
     }
 }

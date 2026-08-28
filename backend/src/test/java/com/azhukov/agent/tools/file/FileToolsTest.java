@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class FileToolsTest {
 
     private final AgentProperties properties = new AgentProperties();
-    private final WriteFileTool writeTool = new WriteFileTool(properties);
+    private final WriteFileTool writeTool = new WriteFileTool(properties, fileSafety());
     private final ReadFileTool readTool = new ReadFileTool(properties);
 
     @Test
@@ -58,6 +58,12 @@ class FileToolsTest {
     void writeBlocksSensitivePath() {
         var result = writeTool.execute("{\"path\":\"/etc/passwd\",\"content\":\"x\"}", null, null);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("not allowed");
+        assertThat(result.error()).contains("denied");
+    }
+
+    private static com.azhukov.agent.core.security.DefaultFileSafety fileSafety() {
+        com.azhukov.agent.config.AgentProperties props = new com.azhukov.agent.config.AgentProperties();
+        props.getSecurity().setFileSafetyEnabled(true);
+        return new com.azhukov.agent.core.security.DefaultFileSafety(props);
     }
 }

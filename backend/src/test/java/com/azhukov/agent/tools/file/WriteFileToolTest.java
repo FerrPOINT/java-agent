@@ -17,7 +17,7 @@ class WriteFileToolTest {
     void writesFile(@TempDir Path dir) throws Exception {
         AgentProperties p = new AgentProperties();
         p.getSecurity().setFileSafetyEnabled(false);
-        WriteFileTool t = new WriteFileTool(p);
+        WriteFileTool t = new WriteFileTool(p, fileSafety());
         Path file = dir.resolve("sub/a.txt");
         ToolResult r = t.execute("{\"path\":\"" + file + "\",\"content\":\"hello\"}", null, Session.create("u","p","m"));
         assertThat(r.success()).isTrue();
@@ -26,7 +26,7 @@ class WriteFileToolTest {
 
     @Test
     void requiresPath() {
-        WriteFileTool t = new WriteFileTool(new AgentProperties());
+        WriteFileTool t = new WriteFileTool(new AgentProperties(), fileSafety());
         ToolResult r = t.execute("{\"content\":\"hello\"}", null, Session.create("u","p","m"));
         assertThat(r.success()).isFalse();
     }
@@ -35,7 +35,7 @@ class WriteFileToolTest {
     void blocksForbiddenPath() {
         AgentProperties p = new AgentProperties();
         p.getSecurity().setFileSafetyEnabled(false);
-        WriteFileTool t = new WriteFileTool(p);
+        WriteFileTool t = new WriteFileTool(p, fileSafety());
         ToolResult r = t.execute("{\"path\":\"/root/.ssh/key\",\"content\":\"x\"}", null, Session.create("u","p","m"));
         assertThat(r.success()).isFalse();
     }
@@ -45,7 +45,7 @@ class WriteFileToolTest {
         AgentProperties p = new AgentProperties();
         p.getSecurity().setFileSafetyEnabled(true);
         p.getSecurity().setAllowedPaths(java.util.List.of(dir.toString()));
-        WriteFileTool t = new WriteFileTool(p);
+        WriteFileTool t = new WriteFileTool(p, fileSafety());
         Path file = dir.resolve("a.txt");
         ToolResult r = t.execute("{\"path\":\"" + file + "\",\"content\":\"ok\"}", null, Session.create("u","p","m"));
         assertThat(r.success()).isTrue();
@@ -56,8 +56,14 @@ class WriteFileToolTest {
         AgentProperties p = new AgentProperties();
         p.getSecurity().setFileSafetyEnabled(true);
         p.getSecurity().setAllowedPaths(java.util.List.of(dir.toString()));
-        WriteFileTool t = new WriteFileTool(p);
+        WriteFileTool t = new WriteFileTool(p, fileSafety());
         ToolResult r = t.execute("{\"path\":\"/tmp/outside.txt\",\"content\":\"x\"}", null, Session.create("u","p","m"));
         assertThat(r.success()).isFalse();
+    }
+
+    private static com.azhukov.agent.core.security.DefaultFileSafety fileSafety() {
+        com.azhukov.agent.config.AgentProperties props = new com.azhukov.agent.config.AgentProperties();
+        props.getSecurity().setFileSafetyEnabled(true);
+        return new com.azhukov.agent.core.security.DefaultFileSafety(props);
     }
 }

@@ -86,6 +86,15 @@ class CompressionPolicy {
     static final double MIN_CTX_TRIGGER_RATIO = 0.85;
 
     /**
+     * Hermes parity (context_compressor.py:7586, _FEASIBILITY_SKIP_MIDDLE_FRACTION = 0.10):
+     * once ONE ineffective compression happened, a pre-LLM feasibility check
+     * skips further summary calls when the middle window holds under 10% of
+     * the threshold — there is nothing compressible, calling the summarizer
+     * would only burn tokens. Skipped for force (manual /compress).
+     */
+    static final double FEASIBILITY_SKIP_MIDDLE_FRACTION = 0.10;
+
+    /**
      * Hermes parity: resolve_model_threshold — resolve the effective compression threshold
      * for a given model, supporting per-model substring overrides (longest match wins).
      * Mirrors context_compressor.py resolve_model_threshold().

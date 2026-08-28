@@ -27,6 +27,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @Component
 public class PatchTool implements ToolHandler {
 
+    /** Hermes parity (file_tools.py _record_patch_failure): consecutive replace-mode
+     *  failures per path — drives the escalating not-found hint. */
+    private final java.util.concurrent.ConcurrentHashMap<String, Integer> patchFailureCounts =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
     private static final Pattern V4A_HEADER = Pattern.compile("^\\*\\*\\*\\s*(Update|Add|Delete|Move)\\s+File:\\s*(.+)\\s*$", Pattern.MULTILINE);
     private static final List<String> BLOCKED_PATHS = List.of("/.env", "/etc/shadow", "/etc/passwd", "/root/.ssh");
 
@@ -106,6 +111,8 @@ public class PatchTool implements ToolHandler {
                 ? content.replace(oldString, newString)
                 : content.replaceFirst(Pattern.quote(oldString), Matcher.quoteReplacement(newString));
             Files.writeString(path, updated, StandardCharsets.UTF_8);
+            // Hermes parity: successful patch resets the per-path failure counter
+            patchFailureCounts.remove(path);
             return ToolResult.ok("Patched " + path + " (replace " + (replaceAll ? "all" : "first") + ")");
         }
         // Fuzzy matching strategies
@@ -209,7 +216,21 @@ public class PatchTool implements ToolHandler {
                 return ToolResult.ok("Patched " + path + " (fuzzy: empty lines removed)");
             }
         }
-        return ToolResult.fail("Could not find old_string in file. Tried fuzzy strategies: " + String.join(", ", strategies) + ". Use read_file to verify current content.");
+        // Hermes parity (file_tools.py:2520): escalating hint after multiple
+        // consecutive replace failures on the same path — the model is usually
+        // retrying stale old_string against changed content. 3+ failures tell
+        // it to re-read or fall back to write_file instead of looping.
+        int failures = patchFailureCounts.merge(path.toString(), 1, Integer::sum);
+        String base = "Could not find old_string in file. Tried fuzzy strategies: "
+            + String.join(", ", strategies) + ". Use read_file to verify current content.";
+        if (failures >= 3) {
+            base += "\nThis is failure #" + failures + " patching '" + path
+                + "'. Stop retrying with variations of the same old_string. Either: "
+                + "(1) re-read the file fresh to verify current content, "
+                + "(2) use a longer / more unique old_string with surrounding context lines, or "
+                + "(3) use write_file to replace the entire file if the targeted region is hard to anchor.";
+        }
+        return ToolResult.fail(base);
     }
 
     private String findOriginalMatch(String content, String oldString, String collapsedOld) {

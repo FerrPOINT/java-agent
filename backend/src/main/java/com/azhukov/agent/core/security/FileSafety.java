@@ -7,6 +7,17 @@ public interface FileSafety {
 
  boolean isPathAllowed(Path path);
 
+ /**
+ * Checks if a WRITE to the given path is allowed. False when the path hits
+ * the sensitive denylist (~/.pgpass, ~/.git-credentials, /etc/sudoers,
+ * ~/.aws/*, ~/.gnupg/*, ~/.kube/*, /etc/systemd/*, ...) — Hermes parity
+ * (agent/file_safety.py is_write_denied). When file safety is disabled
+ * everything is allowed.
+ */
+ default boolean isWriteAllowed(Path path) {
+ return true;
+ }
+
  boolean isCommandAllowed(String command);
 
  /**

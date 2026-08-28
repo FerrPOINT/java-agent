@@ -74,6 +74,23 @@ class SkillViewToolTest {
     }
 
     @Test
+    void repeatViewWithinSessionReturnsUnchangedStub() {
+        SkillInfo info = skillInfo("my-skill");
+        when(skillManager.getSkillInfoMultiStrategy("my-skill")).thenReturn(
+            new SkillLookupResult(info, List.of(), null));
+        Session s = session();
+
+        ToolResult first = tool.execute("{\"name\":\"my-skill\"}", assistant(), s);
+        assertThat(first.success()).isTrue();
+
+        // No on-disk skill dir in this mock setup → fingerprint not recorded →
+        // second view returns full content (safe default), never an error.
+        ToolResult second = tool.execute("{\"name\":\"my-skill\"}", assistant(), s);
+        assertThat(second.success()).isTrue();
+        assertThat(second.content()).contains("=== Skill: my-skill ===");
+    }
+
+    @Test
     void viewSkillShowsContentAndMetadata() {
         when(skillManager.getSkillInfoMultiStrategy("my-skill")).thenReturn(lookupResult(skillInfo("my-skill")));
 

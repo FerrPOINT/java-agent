@@ -229,11 +229,17 @@ public class DatabaseMemoryProvider implements MemoryProvider {
         int currentChars = existingFacts.isEmpty() ? 0 : String.join(DELIMITER, existingFacts).length();
         int newTotal = currentChars + trimmedFact.length() + (existingFacts.isEmpty() ? 0 : DELIMITER.length());
         if (newTotal > limit) {
+            // Hermes parity (memory_tool.py:454 _consolidation_failure): the
+            // error carries current_entries so the model can consolidate
+            // without an extra read — the structured clients that hit this
+            // path otherwise dead-end on a bare usage string.
             throw new IllegalStateException(
-                "Memory at " + currentChars + "/" + limit + " chars. "
+                "Memory at " + String.format("%,d", currentChars) + "/" + String.format("%,d", limit) + " chars. "
                 + "Adding this entry (" + trimmedFact.length() + " chars) would exceed the limit. "
                 + "Consolidate now: use 'replace' to merge overlapping entries into shorter ones "
-                + "or 'remove' stale or less important entries, then retry this add — all in this turn."
+                + "or 'remove' stale or less important entries, then retry this add — all in this turn. "
+                + "(see current_entries below)\ncurrent_entries:\n"
+                + String.join("\n", existingFacts)
             );
         }
 

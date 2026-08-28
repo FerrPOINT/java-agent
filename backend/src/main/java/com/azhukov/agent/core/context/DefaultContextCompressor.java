@@ -44,6 +44,9 @@ public class DefaultContextCompressor implements ContextCompressor {
     /** Hermes _PRESSURE_KEEP_RECENT_MESSAGES (context_compressor.py:1078). */
     static final int PRESSURE_KEEP_RECENT_MESSAGES = 3;
 
+    /** Hermes _FEASIBILITY_SKIP_MIDDLE_FRACTION (context_compressor.py:1219). */
+    static final double FEASIBILITY_FRACTION = 0.10;
+
  private static final String ANTI_INJECTION_PREFIX =
  "[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted "
  + "into the summary below. This is a handoff from a previous context "
@@ -214,6 +217,12 @@ public class DefaultContextCompressor implements ContextCompressor {
  private final ModelClient modelClient;
  private final CompressionLockRepository lockRepository;
  private final AgentProperties properties;
+
+ // Hermes parity (conversation_compression.py:3989): publish a compression
+ // event so conversation-scoped caches (skill_view dedup, file-view dedup)
+ // reset — after compression the original content is summarized away.
+ @org.springframework.beans.factory.annotation.Autowired(required = false)
+ private org.springframework.context.ApplicationEventPublisher compressionEventPublisher;
  /** SessionRepository for session rotation — non-final to avoid breaking existing constructor signature. */
  // Finding 5.1: Kept as non-final with setter because adding to the @RequiredArgsConstructor
  // would break ~49 test call sites that use the 3-arg constructor. The setter is called
@@ -431,6 +440,23 @@ public class DefaultContextCompressor implements ContextCompressor {
          return messages;
      }
 
+     // Hermes parity (context_compressor.py:7586, _FEASIBILITY_SKIP_MIDDLE_FRACTION):
+     // after one ineffective compression, skip the LLM summarizer entirely when
+     // the middle window holds under 10% of the threshold — there is nothing
+     // compressible and a summarizer call would only burn tokens. This is a
+     // feasibility skip, not a structural no-op and not an ineffective strike.
+     if (policy.getConsecutiveLowSavings() >= 1) {
+         int middleChars = middleMessages.stream().mapToInt(this::contentLengthForBudget).sum();
+         int thresholdChars = policy.getCompressionThresholdChars() > 0
+             ? policy.getCompressionThresholdChars() : targetChars;
+         if (middleChars < (int) (thresholdChars * FEASIBILITY_FRACTION)) {
+             log.info("Compression feasibility skip — middle window {} chars < 10% of threshold {}; "
+                + "skipping summarizer call", middleChars, thresholdChars);
+             policy.recordStructuralNoOp("feasibility skip: middle window under 10% of threshold");
+             return messages;
+         }
+     }
+
      // 1.1: Tool result dedup — replace older duplicate tool outputs with back-reference.
      // Only deduplicates content > 200 chars (small results aren't worth the back-ref overhead).
      List<Message> dedupedMiddle = dedupToolResults(middleMessages);
@@ -582,8 +608,23 @@ public class DefaultContextCompressor implements ContextCompressor {
          messages.size(), compressed.size(),
          originalTokens - compressedTokens,
          String.format("%.0f", policy.getLastCompressionSavingsPct()));
+     // Session scope is unknown at this seam (Hermes resets per task_id);
+     // a global reset is safe and conservative: worst case a re-view
+     // re-sends full content once after compression.
+     publishCompressedGlobal();
 
      return compressed;
+ }
+
+ private void publishCompressedGlobal() {
+     if (compressionEventPublisher != null) {
+         try {
+             compressionEventPublisher.publishEvent(
+                 new com.azhukov.agent.core.skill.ContextCompressedEvent(null));
+         } catch (Exception e) {
+             log.debug("Failed to publish compression event: {}", e.getMessage());
+         }
+     }
  }
 
  @Override

@@ -196,7 +196,11 @@ public class MemoryTool implements ToolHandler {
 
     private ToolResult doReplace(Session session, String target, MemoryArgs args, Map<String, String> provenance) {
         if (args.old_text() == null || args.old_text().isBlank()) {
-            return ToolResult.fail("old_text is required for replace action");
+            // Hermes parity (memory_tool.py:1054 _missing_old_text_error): a
+            // bare "old_text is required" is a dead end for structured-output
+            // clients that omit optional fields — return the current inventory
+            // plus a retry instruction instead.
+            return missingOldTextError(session, target, "replace");
         }
         if (args.content() == null || args.content().isBlank()) {
             return ToolResult.fail("content is required for replace action");
@@ -222,7 +226,7 @@ public class MemoryTool implements ToolHandler {
 
     private ToolResult doRemove(Session session, String target, MemoryArgs args, Map<String, String> provenance) {
         if (args.old_text() == null || args.old_text().isBlank()) {
-            return ToolResult.fail("old_text is required for remove action");
+            return missingOldTextError(session, target, "remove");
         }
         // S3: Use WriteContext to determine origin for approval gate
         String origin = WriteContext.effectiveExecutionContext();
@@ -241,6 +245,26 @@ public class MemoryTool implements ToolHandler {
             return buildErrorResponse(session, target, error);
         }
         return buildSuccessResponse(session, target, "Entry removed.");
+    }
+
+    /**
+     * Hermes parity (memory_tool.py:1054): recoverable error for replace/remove
+     * without old_text — current inventory + retry instruction, not a dead end.
+     */
+    private ToolResult missingOldTextError(Session session, String target, String action) {
+        int limit = "user".equalsIgnoreCase(target) ? 1375 : 2200;
+        int current = memoryProvider.getCharCount(session.userId(), target);
+        String entries;
+        try {
+            entries = memoryProvider.read(session.userId(), target);
+        } catch (Exception e) {
+            entries = "";
+        }
+        String err = "'" + action + "' needs old_text — a short unique substring of the entry "
+            + "to " + action + ". None was provided. Reissue the " + action + " with old_text "
+            + "set to part of one of the current_entries below.\n\ncurrent_entries:\n" + entries
+            + "\nusage: " + String.format("%,d", current) + "/" + String.format("%,d", limit);
+        return ToolResult.fail(err);
     }
 
     /**

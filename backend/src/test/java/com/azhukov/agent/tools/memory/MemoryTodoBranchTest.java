@@ -80,7 +80,8 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"replace\",\"old_text\":null,\"content\":\"new\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("old_text is required");
+        // Hermes parity (memory_tool.py:1054): recoverable inventory error, not a dead end
+        assertThat(result.error()).contains("needs old_text");
     }
 
     @Test
@@ -89,7 +90,8 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"replace\",\"old_text\":\"\",\"content\":\"new\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("old_text is required");
+        // Hermes parity (memory_tool.py:1054): recoverable inventory error, not a dead end
+        assertThat(result.error()).contains("needs old_text");
     }
 
     @Test
@@ -126,7 +128,8 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"remove\",\"old_text\":null}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("old_text is required");
+        // Hermes parity (memory_tool.py:1054): recoverable inventory error, not a dead end
+        assertThat(result.error()).contains("needs old_text");
     }
 
     @Test
@@ -135,7 +138,8 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"remove\",\"old_text\":\"\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("old_text is required");
+        // Hermes parity (memory_tool.py:1054): recoverable inventory error, not a dead end
+        assertThat(result.error()).contains("needs old_text");
     }
 
     @Test

@@ -48,7 +48,7 @@ class ReadWriteFileToolsTest {
     @Test
     void writeFileCreatesContent(@TempDir Path dir) throws Exception {
         Path f = dir.resolve("sub/y.txt");
-        WriteFileTool t = new WriteFileTool(props());
+        WriteFileTool t = new WriteFileTool(props(), fileSafety());
         ToolResult r = t.execute("{\"path\":\"" + f + "\",\"content\":\"hello\"}", null, session);
         assertThat(r.success()).isTrue();
         assertThat(Files.readString(f)).isEqualTo("hello");
@@ -56,8 +56,14 @@ class ReadWriteFileToolsTest {
 
     @Test
     void writeFileBlocksSensitivePath() {
-        WriteFileTool t = new WriteFileTool(props());
+        WriteFileTool t = new WriteFileTool(props(), fileSafety());
         ToolResult r = t.execute("{\"path\":\"/.env\",\"content\":\"x\"}", null, session);
         assertThat(r.success()).isFalse();
+    }
+
+    private static com.azhukov.agent.core.security.DefaultFileSafety fileSafety() {
+        com.azhukov.agent.config.AgentProperties props = new com.azhukov.agent.config.AgentProperties();
+        props.getSecurity().setFileSafetyEnabled(true);
+        return new com.azhukov.agent.core.security.DefaultFileSafety(props);
     }
 }

@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.file;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.DefaultFileSafety;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -8,7 +9,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -24,12 +24,15 @@ import java.util.List;
     toolset = "file"
 )
 @Component
-@RequiredArgsConstructor
 public class WriteFileTool implements ToolHandler {
 
-    private static final List<String> BLOCKED_PATHS = List.of("/.env", "/etc/shadow", "/etc/passwd", "/root/.ssh");
-
     private final AgentProperties properties;
+    private final DefaultFileSafety fileSafety;
+
+    public WriteFileTool(AgentProperties properties, DefaultFileSafety fileSafety) {
+        this.properties = properties;
+        this.fileSafety = fileSafety;
+    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -42,8 +45,13 @@ public class WriteFileTool implements ToolHandler {
         }
 
         Path path = Path.of(args.path()).toAbsolutePath().normalize();
-        if (isBlocked(path)) {
-            return ToolResult.fail("Writing to this path is not allowed: " + args.path());
+        // Hermes parity (agent/file_safety.py build_write_denied_paths):
+        // the full sensitive-path denylist (~20 exact paths + 10 directory
+        // prefixes) lives in DefaultFileSafety — the tool-local 4-path mini
+        // list let writes to ~/.pgpass, /etc/sudoers, ~/.aws/* through.
+        if (!fileSafety.isWriteAllowed(path)) {
+            return ToolResult.fail("Write denied: '" + args.path()
+                + "' is a protected system/credential file.");
         }
         if (!isPathAllowed(path)) {
             return ToolResult.fail("Access denied: path is outside allowed directories: " + args.path());
@@ -76,11 +84,6 @@ public class WriteFileTool implements ToolHandler {
         String firstLine = lines[0];
         String lastLine = lines[lines.length - 1];
         return "[verified: first line: \"" + firstLine + "\", last line: \"" + lastLine + "\"]";
-    }
-
-    private boolean isBlocked(Path path) {
-        String s = path.toString();
-        return BLOCKED_PATHS.stream().anyMatch(s::startsWith);
     }
 
     private boolean isPathAllowed(Path path) {

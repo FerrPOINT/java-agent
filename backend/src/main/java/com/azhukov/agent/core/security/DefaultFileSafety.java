@@ -56,14 +56,34 @@ public class DefaultFileSafety implements FileSafety {
  ".kube/config",
  ".docker/config.json",
  ".config/gh/hosts.yml",
- ".config/gcloud/credentials.db"
+ ".config/gcloud/credentials.db",
+ // Hermes parity (file_safety.py build_write_denied_prefixes): /etc/systemd
+ // and /etc/sudoers.d are prefix-denied — suffix matching on the normalized
+ // absolute path covers them without a blanket "systemd" segment ban.
+ "etc/systemd",
+ "etc/sudoers.d"
  );
 
  /** Absolute paths that are always denied. */
  private static final Set<String> DENYLIST_ABSOLUTE = Set.of(
  "/etc/sudoers",
  "/etc/shadow",
- "/etc/passwd"
+ "/etc/passwd",
+ // Hermes _SENSITIVE_EXACT_PATHS (file_tools.py:661)
+ "/var/run/docker.sock",
+ "/run/docker.sock"
+ );
+
+ /**
+ * Hermes parity (file_tools.py:651 _SENSITIVE_PATH_PREFIXES): sensitive
+ * system-directory prefixes refused for writes — the whole /etc/ and /boot/
+ * trees, plus /usr/lib/systemd/. The tool message tells the model to use the
+ * terminal tool with sudo when a system file genuinely must change.
+ */
+ private static final List<String> DENYLIST_PREFIXES = List.of(
+ "/etc/",
+ "/boot/",
+ "/usr/lib/systemd/"
  );
 
  // ─── Read-block list: sensitive files that should never be read ───
@@ -138,6 +158,13 @@ public class DefaultFileSafety implements FileSafety {
  }
  }
 
+ // Check system-directory prefixes (Hermes _SENSITIVE_PATH_PREFIXES)
+ for (String prefix : DENYLIST_PREFIXES) {
+ if (pathStr.startsWith(prefix)) {
+ return true;
+ }
+ }
+
  // Check filenames
  if (DENYLIST_FILENAMES.contains(fileName)) {
  return true;
@@ -146,6 +173,11 @@ public class DefaultFileSafety implements FileSafety {
  // Check exact suffix sub-paths
  for (String suffix : DENYLIST_EXACT_SUFFIXES) {
  if (pathStr.endsWith("/" + suffix) || pathStr.endsWith(suffix)) {
+ return true;
+ }
+ // Directory-prefix form: "/etc/systemd/system/x.service" must match the
+ // "etc/systemd" prefix (Hermes build_write_denied_prefixes semantics).
+ if (pathStr.contains("/" + suffix + "/")) {
  return true;
  }
  }
@@ -159,6 +191,22 @@ public class DefaultFileSafety implements FileSafety {
  }
 
  return false;
+ }
+
+ @Override
+ public boolean isWriteAllowed(Path path) {
+ if (path == null) {
+ return false;
+ }
+ if (!properties.getSecurity().isFileSafetyEnabled()) {
+ return true;
+ }
+ // Denylist check first — even inside allowed paths
+ if (matchesDenylist(path.toAbsolutePath().normalize())) {
+ return false;
+ }
+ // Then the general allowed-paths policy
+ return isPathAllowed(path);
  }
 
  @Override

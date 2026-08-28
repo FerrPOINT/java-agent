@@ -59,16 +59,20 @@ public class SkillViewTool implements ToolHandler {
     private final SkillManager skillManager;
     private SkillPreprocessor skillPreprocessor;
     private final AgentProperties agentProperties;
+    private final com.azhukov.agent.core.skill.SkillViewDedupTracker dedupTracker;
 
     public SkillViewTool(SkillManager skillManager) {
         this.skillManager = skillManager;
         this.agentProperties = null;
+        this.dedupTracker = null;
     }
 
     @org.springframework.beans.factory.annotation.Autowired
     public SkillViewTool(SkillManager skillManager, AgentProperties agentProperties,
-                         SkillPreprocessor skillPreprocessor) {
+                         SkillPreprocessor skillPreprocessor,
+                         com.azhukov.agent.core.skill.SkillViewDedupTracker dedupTracker) {
         this.skillManager = skillManager;
+        this.dedupTracker = dedupTracker;
         this.agentProperties = agentProperties;
         // Hermes parity (skills_tool.py:1013/1686): skill_view ALWAYS
         // preprocesses content (template vars + inline shell). The setter-only
@@ -126,6 +130,17 @@ public class SkillViewTool implements ToolHandler {
         // Fix 3: Disabled skill check — refuse to view disabled skills
         if (info.disabled()) {
             return ToolResult.fail("Skill '" + info.name() + "' is disabled. Enable it in config to use.");
+        }
+
+        // Hermes parity (skills_tool.py:2078): repeat-view dedup — when this
+        // exact skill file was already served to this session and is unchanged
+        // on disk, return the short stub instead of re-sending full content.
+        String sessionIdStr = session != null && session.id() != null ? session.id().toString() : null;
+        if (dedupTracker != null && sessionIdStr != null) {
+            var hit = dedupTracker.check(sessionIdStr, args.name(), args.file_path());
+            if (hit != null) {
+                return ToolResult.ok(hit.message());
+            }
         }
 
         // S7: Increment view count for telemetry
@@ -256,7 +271,37 @@ public class SkillViewTool implements ToolHandler {
             }
         }
 
+        recordServedFingerprint(sessionIdStr, args.name(), args.file_path(), content);
+
         return ToolResult.ok(sb.toString());
+    }
+
+    /**
+     * Hermes parity (skills_tool.py:2060): never dedup setup-needed views —
+     * readiness depends on env state that can change without the skill file
+     * changing; the model must see refreshed setup status on a re-view.
+     */
+    private void recordServedFingerprint(String sessionIdStr, String name, String filePath, String content) {
+        if (dedupTracker == null || sessionIdStr == null) {
+            return;
+        }
+        if (content != null && content.contains("Setup needed: true")) {
+            return;
+        }
+        String sourcePath = resolveSkillDir(name);
+        if (sourcePath == null) {
+            return; // DB-only skill — no stable on-disk fingerprint
+        }
+        try {
+            java.nio.file.Path md = java.nio.file.Path.of(sourcePath,
+                filePath == null || filePath.isBlank() ? "SKILL.md" : filePath);
+            var attrs = java.nio.file.Files.readAttributes(md,
+                java.nio.file.attribute.BasicFileAttributes.class);
+            dedupTracker.record(sessionIdStr, name, filePath, md.toString(),
+                attrs.lastModifiedTime().toMillis(), attrs.size());
+        } catch (Exception e) {
+            log.debug("skill_view fingerprint not recorded for '{}': {}", name, e.getMessage());
+        }
     }
 
     public record SkillArgs(
