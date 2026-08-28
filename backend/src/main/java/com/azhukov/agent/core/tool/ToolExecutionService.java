@@ -139,6 +139,9 @@ public class ToolExecutionService {
 
         if (agentMetrics != null) {
             agentMetrics.incrementToolCalls(toolName);
+            // Perf instrumentation (2026-08-28): per-tool latency histogram —
+            // identifies which tools dominate turn duration.
+            agentMetrics.recordToolDuration(toolName, duration);
             if (failed) {
                 agentMetrics.incrementToolErrors(toolName);
             }

@@ -56,6 +56,10 @@ public class DefaultContextEngine implements ContextEngine {
  private SessionLineagePort sessionLineageService;
  private SessionRepository sessionRepository;
 
+ // Perf instrumentation (optional — no-op when not wired)
+ @org.springframework.beans.factory.annotation.Autowired(required = false)
+ private com.azhukov.agent.metrics.AgentMetrics agentMetrics;
+
  private final Map<UUID, Map<String, String>> snapshotCache = new ConcurrentHashMap<>();
  private final Map<UUID, UUID> rotatedSessionIds = new ConcurrentHashMap<>();
  private final Map<UUID, String> lastMemoryHash = new ConcurrentHashMap<>();
@@ -152,6 +156,15 @@ public class DefaultContextEngine implements ContextEngine {
 
  @Override
  public List<Message> prepareContext(Session session, List<Message> messages) {
+ long __pcStart = System.nanoTime();
+ List<Message> __result = prepareContextInner(session, messages);
+ if (agentMetrics != null) {
+     agentMetrics.recordPrepareContext((System.nanoTime() - __pcStart) / 1_000_000);
+ }
+ return __result;
+ }
+
+ private List<Message> prepareContextInner(Session session, List<Message> messages) {
  List<Message> context = new ArrayList<>();
 
  // Hermes parity: NO skills are injected here. The skills INDEX (name +
@@ -218,6 +231,7 @@ public class DefaultContextEngine implements ContextEngine {
      // Check cooldown — skip if compressed recently
      Instant lastCompressed = lastCompressedAt.get(session.id());
      if (lastCompressed == null || Duration.between(lastCompressed, Instant.now()).getSeconds() >= COMPRESSION_COOLDOWN_SECONDS) {
+         if (agentMetrics != null) agentMetrics.incrementCompressionCalls();
          trimmed = contextCompressor.compress(trimmed, contextProps.getTargetTokens() * charsPerToken());
          lastCompressedAt.put(session.id(), Instant.now());
          compressionCount.incrementAndGet();
@@ -227,6 +241,17 @@ public class DefaultContextEngine implements ContextEngine {
              if (rotationResult.isPresent()) {
                  UUID newId = rotationResult.get().newSessionId();
                  rotatedSessionIds.put(session.id(), newId);
+                if (agentMetrics != null) agentMetrics.incrementSessionRotations();
+                // Perf fix (2026-08-28): the compression cooldown is keyed by
+                // session id, but rotation just MINTED a new id — without
+                // carrying lastCompressedAt over, the 10-minute cooldown never
+                // applies to the child and a long tool-heavy turn re-rotates
+                // every few seconds (live: 6 children in one turn). The child
+                // inherits the parent's cooldown baseline.
+                Instant __parentCooldown = lastCompressedAt.get(session.id());
+                if (__parentCooldown != null) {
+                    lastCompressedAt.put(newId, __parentCooldown);
+                }
                  log.info("Session rotated: old={}, new={}, title='{}'",
                          session.id(), newId, rotationResult.get().newTitle());
                  // P2 (Hermes conversation_loop.py:2740): the compacted transcript
@@ -372,6 +397,9 @@ public class DefaultContextEngine implements ContextEngine {
  public void updateModel(String model) {
      if (modelMetadataService != null && model != null && !model.isBlank()) {
          this.contextLength = modelMetadataService.detectContextLength(model);
+         if (agentMetrics != null) {
+             agentMetrics.setContextWindow(this.contextLength);
+         }
          // P7 parity (context_compressor.py __init__): the configured threshold
          // percent (default 0.50) drives both preflight and the compressor —
          // no hard-coded 75%.

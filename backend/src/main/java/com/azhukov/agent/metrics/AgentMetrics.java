@@ -20,6 +20,14 @@ public class AgentMetrics {
     private final Counter chatStreaming;
     private final Timer llmLatency;
     private final AtomicInteger activeSessions = new AtomicInteger(0);
+    // ── Performance instrumentation (2026-08-28 latency investigation) ──
+    private final Timer turnLatency;        // full user->done turn
+    private final Timer prepareContextLatency;
+    private final Timer toolExecLatency;
+    private final Timer compressionLatency; // summary model call inside compress()
+    private final Counter sessionRotations;
+    private final Counter compressionCalls;
+    private final AtomicInteger contextLengthGauge = new AtomicInteger(0);
 
     public AgentMetrics(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
@@ -32,11 +40,50 @@ public class AgentMetrics {
         this.llmLatency = Timer.builder("agent.llm.latency")
             .description("LLM call latency")
             .register(meterRegistry);
+        this.turnLatency = Timer.builder("agent.turn.latency")
+            .description("Full agent turn latency (user message -> done event)")
+            .publishPercentiles(0.5, 0.95, 0.99)
+            .register(meterRegistry);
+        this.prepareContextLatency = Timer.builder("agent.context.prepare.latency")
+            .description("prepareContext() latency (history load + sanitize + preflight)")
+            .publishPercentiles(0.5, 0.95)
+            .register(meterRegistry);
+        this.toolExecLatency = Timer.builder("agent.tool.latency")
+            .description("Tool execution latency")
+            .publishPercentiles(0.5, 0.95, 0.99)
+            .register(meterRegistry);
+        this.compressionLatency = Timer.builder("agent.compression.latency")
+            .description("Compression summary model call latency")
+            .publishPercentiles(0.5, 0.95)
+            .register(meterRegistry);
+        this.sessionRotations = Counter.builder("agent.compression.rotations")
+            .description("Session rotations performed (each = full history rewrite + summarizer call)")
+            .register(meterRegistry);
+        this.compressionCalls = Counter.builder("agent.compression.calls")
+            .description("Compression attempts (preflight-triggered)")
+            .register(meterRegistry);
 
         Gauge.builder("agent.sessions.active", activeSessions, AtomicInteger::get)
             .description("Number of active agent sessions")
             .register(meterRegistry);
+        Gauge.builder("agent.context.window", contextLengthGauge, AtomicInteger::get)
+            .description("Effective context window (tokens) used for preflight threshold; 0 = config fallback")
+            .register(meterRegistry);
     }
+
+    // ── Performance instrumentation accessors ──
+
+    public void recordTurnDuration(long ms) { turnLatency.record(java.time.Duration.ofMillis(ms)); }
+    public void recordPrepareContext(long ms) { prepareContextLatency.record(java.time.Duration.ofMillis(ms)); }
+    public void recordToolDuration(String tool, long ms) {
+        Timer.builder("agent.tool.latency").tag("tool", tool)
+            .publishPercentiles(0.5, 0.95, 0.99)
+            .register(meterRegistry).record(java.time.Duration.ofMillis(ms));
+    }
+    public void recordCompression(long ms) { compressionLatency.record(java.time.Duration.ofMillis(ms)); }
+    public void incrementSessionRotations() { sessionRotations.increment(); }
+    public void incrementCompressionCalls() { compressionCalls.increment(); }
+    public void setContextWindow(int tokens) { contextLengthGauge.set(Math.max(0, tokens)); }
 
     public void incrementChatRequests() {
         chatRequests.increment();

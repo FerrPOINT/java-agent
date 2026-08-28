@@ -288,7 +288,22 @@ public class AgentStreamingService {
 
         CompletableFuture.runAsync(() -> {
             try {
-                runAgenticLoop(applyCliState(request), emitter, streamCtx);
+                long __turnStart = System.currentTimeMillis();
+                try {
+                    runAgenticLoop(applyCliState(request), emitter, streamCtx);
+                } finally {
+                    long __turnMs = System.currentTimeMillis() - __turnStart;
+                    if (agentMetrics != null) {
+                        agentMetrics.recordTurnDuration(__turnMs);
+                    }
+                    // Perf breakdown: one INFO line per turn with the phases that
+                    // dominate latency. Correlate with agent.turn.latency /
+                    // agent.compression.rotations / agent.tool.latency in /metrics.
+                    if (__turnMs > 5_000) {
+                        log.info("Turn performance: {} ms total (session {})", __turnMs,
+                            request.sessionId());
+                    }
+                }
             } catch (Exception e) {
                 log.error("Streaming failed", e);
                 eventHelper().send(emitter, new StreamEvent("error", null, null, e.getMessage()), streamCtx);
@@ -621,6 +636,8 @@ public class AgentStreamingService {
                         }
                     });
                     if (agentMetrics != null) {
+log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmStart, sessionId);
+
                         agentMetrics.llmLatencyTimer().record(System.currentTimeMillis() - llmStart,
                             java.util.concurrent.TimeUnit.MILLISECONDS);
                     }
