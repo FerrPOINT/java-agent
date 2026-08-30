@@ -4,6 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.core.context.HistorySanitizer;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
@@ -46,7 +47,7 @@ public class AuxiliaryClient {
  }
 
  try {
- return selected.complete(messages, tools);
+ return selected.complete(HistorySanitizer.sanitizeForModelRequest(messages), tools);
  } catch (Exception e) {
  log.warn("Auxiliary backend {} failed for task {}: {}", selected.name(), task, e.getMessage());
  // Try next backend in fallback chain
@@ -54,7 +55,7 @@ public class AuxiliaryClient {
  if (fallback == selected) continue;
  if (!supportsTask(fallback, task)) continue;
  try {
- return fallback.complete(messages, tools);
+ return fallback.complete(HistorySanitizer.sanitizeForModelRequest(messages), tools);
  } catch (Exception fe) {
  log.debug("Fallback {} also failed: {}", fallback.name(), fe.getMessage());
  }

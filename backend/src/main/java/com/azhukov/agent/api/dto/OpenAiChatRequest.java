@@ -1,5 +1,6 @@
 package com.azhukov.agent.api.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import java.util.List;
@@ -10,7 +11,7 @@ public record OpenAiChatRequest(
     @NotEmpty List<OpenAiMessage> messages,
     List<OpenAiTool> tools,
     Double temperature,
-    Integer maxTokens,
+    @JsonProperty("max_tokens") Integer maxTokens,
     Boolean stream
 ) {
     public record OpenAiMessage(String role, String content, List<OpenAiToolCall> toolCalls, String toolCallId) {}

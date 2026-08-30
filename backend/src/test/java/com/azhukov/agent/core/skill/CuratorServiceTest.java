@@ -881,6 +881,14 @@ class CuratorServiceTest {
         // Verify the collected tool calls can be used for absorbed_into extraction
         Map<String, String> absorbed = service.extractAbsorbedIntoDeclarations(loopResult.toolCalls());
         assertThat(absorbed.get("old-skill")).isEqualTo("umbrella-skill");
+
+        org.mockito.ArgumentCaptor<List<Message>> history = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(modelClient, times(2)).complete(history.capture(), any());
+        Message toolResult = history.getAllValues().get(1).stream()
+            .filter(message -> message.role() == com.azhukov.agent.core.model.Role.TOOL)
+            .findFirst()
+            .orElseThrow();
+        assertThat(toolResult.toolCallId()).isEqualTo("call-1");
     }
 
     @Test

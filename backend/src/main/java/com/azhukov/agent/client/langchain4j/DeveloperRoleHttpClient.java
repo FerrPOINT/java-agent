@@ -61,18 +61,21 @@ public final class DeveloperRoleHttpClient implements HttpClient {
     }
 
     private HttpRequest rewrite(HttpRequest request) {
-        String model = modelName.get();
-        String lower = model == null ? "" : model.toLowerCase();
-        boolean developerRole = lower.contains("gpt-5") || lower.contains("codex");
-        if (!developerRole) {
-            return request;
-        }
         String body = request.body();
         if (body == null || body.isEmpty()) {
             return request;
         }
         try {
             JsonNode root = mapper.readTree(body);
+            // The HTTP client is shared across concurrent sessions. The request body
+            // holds the authoritative model; the supplier is only a legacy fallback.
+            String requestedModel = root.path("model").asText(null);
+            String model = requestedModel == null || requestedModel.isBlank() ? modelName.get() : requestedModel;
+            String lower = model == null ? "" : model.toLowerCase();
+            boolean developerRole = lower.contains("gpt-5") || lower.contains("codex");
+            if (!developerRole) {
+                return request;
+            }
             JsonNode messages = root.get("messages");
             if (messages == null || !messages.isArray() || messages.isEmpty()) {
                 return request;

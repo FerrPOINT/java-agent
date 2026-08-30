@@ -4,6 +4,7 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.core.context.HistorySanitizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -137,7 +138,8 @@ public class ConversationCompressor {
                 Message.system("You are a conversation summarizer. Provide a concise, factual summary of the conversation."),
                 Message.user(prompt)
             );
-            ChatResponse response = modelClient.complete(summaryRequest, List.of());
+            ChatResponse response = modelClient.complete(
+                HistorySanitizer.sanitizeForModelRequest(summaryRequest), List.of());
             if (response != null && response.content() != null && !response.content().isBlank()) {
                 return response.content();
             }

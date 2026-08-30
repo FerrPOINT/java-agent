@@ -184,6 +184,33 @@ class AgentStreamingServiceTest {
     }
 
     @Test
+    void streamTurnRemovesUnpairedHistoricalToolCallsBeforeCallingModel() throws Exception {
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        List<Message> malformedContext = List.of(
+            Message.system(SYSTEM_PROMPT),
+            Message.assistantToolCalls(List.of(new ToolCall("orphan", "read_file", "{}")), 0),
+            Message.user(USER_MESSAGE));
+        when(contextEngine.prepareContext(any(Session.class), any(List.class))).thenReturn(malformedContext);
+
+        AtomicReference<List<Message>> sentContext = new AtomicReference<>();
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        doAnswer(invocation -> {
+            sentContext.set(List.copyOf(invocation.getArgument(0)));
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            handler.onToken("ok");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        assertThat(emitter.error.get()).isNull();
+        assertThat(sentContext.get()).noneMatch(message ->
+            message.toolCalls() != null && !message.toolCalls().isEmpty());
+    }
+
+    @Test
     void streamTurnEmitsTokenEvents() throws Exception {
         ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 

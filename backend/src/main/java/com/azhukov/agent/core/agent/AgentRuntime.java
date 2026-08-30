@@ -24,6 +24,10 @@ public interface AgentRuntime {
 
     ChatResponse run(List<Message> messages, List<ToolDefinition> tools);
 
+    default ChatResponse run(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
+        return run(messages, tools);
+    }
+
     /**
      * Hermes parity (heartbeat.py: "heartbeats only fire into an idle session;
      * a real user message always wins — the tick coalesces"): true while a

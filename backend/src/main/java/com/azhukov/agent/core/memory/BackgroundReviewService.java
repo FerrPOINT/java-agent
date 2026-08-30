@@ -10,6 +10,7 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.memory.ReviewToolProvider;
+import com.azhukov.agent.core.context.HistorySanitizer;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -329,7 +330,8 @@ public class BackgroundReviewService {
          sessionId, turn, maxReviewTurns);
      break;
  }
- ChatResponse response = modelClient.complete(reviewMessages, tools);
+ ChatResponse response = modelClient.complete(
+     HistorySanitizer.sanitizeForModelRequest(reviewMessages), tools);
 
  if (!response.hasToolCalls()) {
  // Model finished — check for text response
@@ -350,8 +352,7 @@ public class BackgroundReviewService {
  if (!REVIEW_TOOL_WHITELIST.contains(call.name())) {
  log.warn("Background review denied non-whitelisted tool: {}", call.name());
  // Add denied result to conversation
- reviewMessages.add(Message.assistantToolCalls(
- List.of(new ToolCall(call.id(), call.name(), call.arguments())), turn));
+ reviewMessages.add(Message.assistantToolCalls(List.of(call), turn));
  reviewMessages.add(Message.toolResult(call.pairingId(),
  "{\"error\":\"Tool not allowed in background review\"}", turn));
  continue;
@@ -380,8 +381,7 @@ public class BackgroundReviewService {
  }
 
  // Add assistant tool call and tool result to conversation
- reviewMessages.add(Message.assistantToolCalls(
- List.of(new ToolCall(call.id(), call.name(), call.arguments())), turn));
+ reviewMessages.add(Message.assistantToolCalls(List.of(call), turn));
  reviewMessages.add(Message.toolResult(call.pairingId(), result.content(), turn));
  }
 

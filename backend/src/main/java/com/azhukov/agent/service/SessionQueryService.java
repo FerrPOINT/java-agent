@@ -15,7 +15,10 @@ import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -58,13 +61,14 @@ public class SessionQueryService {
         int cappedOffset = Math.max(offset, 0);
         String effectiveUserId = userId != null ? userId : AgentProperties.DEFAULT_USER_ID;
 
-        List<SessionSummaryDto> sessions = sessionRepository
-            .findAllByUserId(effectiveUserId, PageRequest.of(cappedOffset / cappedLimit, cappedLimit))
+        Page<SessionEntity> page = sessionRepository.findAllByUserId(effectiveUserId,
+            new OffsetPageRequest(cappedLimit, cappedOffset, Sort.by(Sort.Direction.DESC, "updatedAt")));
+        List<SessionSummaryDto> sessions = page
             .stream()
             .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
 
-        long totalCount = sessionRepository.countByUserId(effectiveUserId);
+        long totalCount = page.getTotalElements();
         boolean hasMore = (cappedOffset + sessions.size()) < totalCount;
 
         return Map.of(
@@ -74,6 +78,53 @@ public class SessionQueryService {
             "offset", cappedOffset,
             "has_more", hasMore
         );
+    }
+
+    private record OffsetPageRequest(int pageSize, long offset, Sort sort) implements Pageable {
+        @Override
+        public Sort getSort() {
+            return sort;
+        }
+
+        @Override
+        public int getPageSize() {
+            return pageSize;
+        }
+
+        @Override
+        public long getOffset() {
+            return offset;
+        }
+
+        @Override
+        public int getPageNumber() {
+            return (int) (offset / pageSize);
+        }
+
+        @Override
+        public Pageable next() {
+            return new OffsetPageRequest(pageSize, offset + pageSize, sort);
+        }
+
+        @Override
+        public Pageable previousOrFirst() {
+            return hasPrevious() ? new OffsetPageRequest(pageSize, Math.max(0, offset - pageSize), sort) : first();
+        }
+
+        @Override
+        public Pageable first() {
+            return new OffsetPageRequest(pageSize, 0, sort);
+        }
+
+        @Override
+        public Pageable withPage(int pageNumber) {
+            return new OffsetPageRequest(pageSize, Math.multiplyExact((long) pageNumber, pageSize), sort);
+        }
+
+        @Override
+        public boolean hasPrevious() {
+            return offset > 0;
+        }
     }
 
     // ── Session creation ──

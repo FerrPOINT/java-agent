@@ -498,6 +498,7 @@ public class AgentStreamingService {
 
             // Prepare context (trimming/summarization as needed)
             List<Message> context = contextEngine.prepareContext(session, turnMessages);
+            context = HistorySanitizer.sanitizeForModelRequest(context);
             session = resolveRotatedSession(session);
 
             // Call model — streaming tokens to SSE, with error recovery
@@ -926,6 +927,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                         streamOptions.personality(), streamOptions.subgoal(),
                         boostedMax);
                     context = contextEngine.prepareContext(session, turnMessages);
+                    context = HistorySanitizer.sanitizeForModelRequest(context);
                     session = resolveRotatedSession(session);
                     // Re-issue the stream call with boosted max_tokens
                     activeStreamClient.stream(context, tools, boostedOptions, new StreamingResponseHandler() {
@@ -1006,6 +1008,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     // Continue the loop — the model sees the stub and can retry properly
                     turnIndex++;
                     context = contextEngine.prepareContext(session, turnMessages);
+                    context = HistorySanitizer.sanitizeForModelRequest(context);
                     session = resolveRotatedSession(session);
                     continue;
                 }
@@ -1036,6 +1039,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     lengthContext.add(Message.assistant(partialContent, turnIndex));
                     lengthContext.add(Message.user(com.azhukov.agent.core.agent.ResponseRecoveryPolicy.LENGTH_NUDGE));
                     context = contextEngine.prepareContext(session, lengthContext);
+                    context = HistorySanitizer.sanitizeForModelRequest(context);
                     session = resolveRotatedSession(session);
                     continue;
                 }

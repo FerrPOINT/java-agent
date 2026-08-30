@@ -94,6 +94,24 @@ class DeveloperRoleHttpClientTest {
     }
 
     @Test
+    void requestModelWinsOverSharedSupplier() {
+        AtomicReference<HttpRequest> captured = new AtomicReference<>();
+        HttpClient delegate = mock(HttpClient.class);
+        when(delegate.execute(any())).thenAnswer(inv -> {
+            captured.set(inv.getArgument(0));
+            return mock(SuccessfulHttpResponse.class);
+        });
+
+        DeveloperRoleHttpClient client = new DeveloperRoleHttpClient(delegate, () -> "gpt-5.6");
+        client.execute(request(
+            "{\"model\":\"app-test\",\"messages\":[{\"role\":\"system\",\"content\":\"sys\"}]}"
+        ).build());
+
+        assertThat(captured.get().body()).contains("\"role\":\"system\"");
+        assertThat(captured.get().body()).doesNotContain("\"role\":\"developer\"");
+    }
+
+    @Test
     void invalidJsonFallsBackToOriginalBody() {
         AtomicReference<HttpRequest> captured = new AtomicReference<>();
         HttpClient delegate = mock(HttpClient.class);

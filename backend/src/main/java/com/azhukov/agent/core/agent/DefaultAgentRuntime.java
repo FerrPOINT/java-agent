@@ -15,6 +15,7 @@ import com.azhukov.agent.core.context.ContextReferenceService;
 import com.azhukov.agent.core.context.DefaultContextCompressor;
 import com.azhukov.agent.core.context.DefaultContextEngine;
 import com.azhukov.agent.core.context.DefaultContextReferenceService;
+import com.azhukov.agent.core.context.HistorySanitizer;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.MemoryManager;
 import com.azhukov.agent.core.memory.BackgroundReviewService;
@@ -195,11 +196,17 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {
+        return run(messages, tools, ModelRequestOptions.empty());
+    }
+
+    @Override
+    public ChatResponse run(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
         List<Message> sanitized = messageSanitizer.sanitize(messages);
         List<Message> context = contextEngine.prepareContext(
             Session.create("openai-user", "openai-compatible", ""), sanitized);
         ModelClient client = activeModelClient != null ? activeModelClient : modelClient;
-        return client.complete(context, tools);
+        return client.complete(HistorySanitizer.sanitizeForModelRequest(context), tools,
+            options != null ? options : ModelRequestOptions.empty());
     }
 
     @Override
@@ -1387,7 +1394,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
         try {
             // Call model with NO tools — the model must produce a text summary, not tool calls
             ModelClient client = activeModelClient != null ? activeModelClient : modelClient;
-            ChatResponse response = client.complete(summaryMessages, List.of(), options);
+            ChatResponse response = client.complete(
+                HistorySanitizer.sanitizeForModelRequest(summaryMessages), List.of(), options);
             if (response != null && response.content() != null && !response.content().isBlank()) {
                 log.info("Budget exhaustion summary generated for session {}", session.id());
                 return response.content().trim();

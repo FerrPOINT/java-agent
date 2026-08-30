@@ -111,6 +111,41 @@ class SessionPersistenceE2ETest extends PostgresTestContainer {
         assertThat(sessionRepository.count()).isGreaterThanOrEqualTo(2);
     }
 
+    @Test
+    void v2SessionListHonorsNonPageAlignedOffset() throws Exception {
+        String userId = "pagination-" + UUID.randomUUID();
+        String first = createSession(userId, "first");
+        String second = createSession(userId, "second");
+        String third = createSession(userId, "third");
+
+        String response = mockMvc.perform(get("/api/v2/sessions")
+                .param("userId", userId)
+                .param("limit", "2")
+                .param("offset", "1"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.offset").value(1))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+        var data = objectMapper.readTree(response).get("data");
+        assertThat(data).hasSize(2);
+        assertThat(data.get(0).get("id").asText()).isEqualTo(second);
+        assertThat(data.get(1).get("id").asText()).isEqualTo(first);
+        assertThat(data.toString()).doesNotContain(third);
+    }
+
+    private String createSession(String userId, String title) throws Exception {
+        String response = mockMvc.perform(post("/api/v2/sessions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"userId\":\"" + userId + "\",\"title\":\"" + title + "\"}"))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+        return objectMapper.readTree(response).get("id").asText();
+    }
+
     private UUID chatAndReturnSessionId(String message) throws Exception {
         ChatRequest request = ChatRequest.simple(null, message, null, null);
         String response = mockMvc.perform(post("/api/v1/agent/chat")

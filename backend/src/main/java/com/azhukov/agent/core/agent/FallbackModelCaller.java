@@ -9,6 +9,7 @@ import com.azhukov.agent.core.context.DefaultContextEngine;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.context.DefaultContextCompressor;
 import com.azhukov.agent.core.context.ContextCompressor;
+import com.azhukov.agent.core.context.HistorySanitizer;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
@@ -95,6 +96,9 @@ public class FallbackModelCaller {
                 totalAttempts++;
                 try {
                     ModelClient client = ctx.activeClient != null ? ctx.activeClient : ctx.defaultClient;
+                    // Compression and retry recovery can reshape the transcript after
+                    // context preparation, so repair it at the wire boundary.
+                    currentContext = HistorySanitizer.sanitizeForModelRequest(currentContext);
                     return client.complete(currentContext, tools, options);
                 } catch (Exception e) {
                     lastException = e;

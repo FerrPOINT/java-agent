@@ -3,6 +3,7 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.api.dto.OpenAiChatRequest;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
@@ -105,7 +106,7 @@ class ChatCompletionsControllerTest {
 
     @Test
     void nonStreamingRequestReturnsOpenAiCompatibleResponse() throws Exception {
-        when(agentRuntime.run(anyList(), anyList()))
+        when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
             .thenReturn(ChatResponse.text("Hello from the test agent"));
 
         String requestBody = """
@@ -136,6 +137,11 @@ class ChatCompletionsControllerTest {
             .andExpect(jsonPath("$.usage.totalTokens").exists())
             .andExpect(jsonPath("$.id").exists())
             .andExpect(jsonPath("$.created").isNumber());
+
+        ArgumentCaptor<ModelRequestOptions> options = ArgumentCaptor.forClass(ModelRequestOptions.class);
+        verify(agentRuntime).run(anyList(), anyList(), options.capture());
+        assertThat(options.getValue().modelName()).isEqualTo(MODEL);
+        assertThat(options.getValue().maxCompletionTokens()).isEqualTo(128);
     }
 
     @Test
@@ -143,7 +149,7 @@ class ChatCompletionsControllerTest {
         doAnswer(invocation -> {
             List<Message> messages = invocation.getArgument(0);
             List<ToolDefinition> tools = invocation.getArgument(1);
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
 
             assertThat(messages).hasSizeGreaterThanOrEqualTo(2);
             assertThat(tools).isNotNull();
@@ -153,7 +159,7 @@ class ChatCompletionsControllerTest {
             handler.onToken("world");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(anyList(), anyList(), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(anyList(), anyList(), any(ModelRequestOptions.class), any(StreamingResponseHandler.class));
 
         String requestBody = """
             {
@@ -204,7 +210,7 @@ class ChatCompletionsControllerTest {
     @Test
     void requestWithToolsIncludesToolDefinitions() throws Exception {
         ArgumentCaptor<List<ToolDefinition>> toolsCaptor = ArgumentCaptor.forClass(List.class);
-        when(agentRuntime.run(anyList(), toolsCaptor.capture()))
+        when(agentRuntime.run(anyList(), toolsCaptor.capture(), any(ModelRequestOptions.class)))
             .thenReturn(ChatResponse.text("ok"));
 
         String requestBody = """
@@ -251,7 +257,7 @@ class ChatCompletionsControllerTest {
     @Test
     void toolResponseReturnsToolCallsInOpenAiFormat() throws Exception {
         ToolCall toolCall = new ToolCall("call-abc", "web_search", "{\"query\":\"Java 25\"}");
-        when(agentRuntime.run(anyList(), anyList()))
+        when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
             .thenReturn(ChatResponse.toolCalls(List.of(toolCall)));
 
         String requestBody = """
@@ -276,7 +282,7 @@ class ChatCompletionsControllerTest {
 
     @Test
     void errorDuringCompletionReturns500() throws Exception {
-        when(agentRuntime.run(anyList(), anyList()))
+        when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
             .thenThrow(new RuntimeException("model service unavailable"));
 
         String requestBody = """
@@ -303,7 +309,7 @@ class ChatCompletionsControllerTest {
         );
         when(toolRegistry.getDefinitions()).thenReturn(List.of(registryTool));
         ArgumentCaptor<List<ToolDefinition>> toolsCaptor = ArgumentCaptor.forClass(List.class);
-        when(agentRuntime.run(anyList(), toolsCaptor.capture())).thenReturn(ChatResponse.text("fallback ok"));
+        when(agentRuntime.run(anyList(), toolsCaptor.capture(), any(ModelRequestOptions.class))).thenReturn(ChatResponse.text("fallback ok"));
 
         String requestBody = """
             {
@@ -328,7 +334,7 @@ class ChatCompletionsControllerTest {
 
     @Test
     void requestWithToolRoleMessageIsAccepted() throws Exception {
-        when(agentRuntime.run(anyList(), anyList())).thenReturn(ChatResponse.text("ack"));
+        when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class))).thenReturn(ChatResponse.text("ack"));
 
         String requestBody = """
             {

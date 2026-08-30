@@ -165,6 +165,7 @@ tasks.register('e2eTest', Test) {
     jvmArgs '-XX:+EnableDynamicAgentLoading'
     maxHeapSize = '2g'
     systemProperty 'e2e.baseUrl', System.getProperty('e2e.baseUrl', 'http://localhost:18090')
+    systemProperty 'e2e.agentName', System.getProperty('e2e.agentName', 'Джава агент')
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
 }

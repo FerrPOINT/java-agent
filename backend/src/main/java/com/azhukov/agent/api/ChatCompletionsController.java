@@ -13,6 +13,8 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
+import com.azhukov.agent.core.client.ModelRequestOptions;
+import com.azhukov.agent.core.context.HistorySanitizer;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.api.mapper.OpenAiMapper;
@@ -58,7 +60,7 @@ public class ChatCompletionsController {
         Session session = Session.create("openai-user", "openai-compatible", request.model());
         List<Message> messages = buildMessages(session, request);
         List<ToolDefinition> tools = buildTools(request);
-        ChatResponse response = agentRuntime.run(messages, tools);
+        ChatResponse response = agentRuntime.run(messages, tools, requestOptions(request));
         return openAiMapper.toOpenAiResponse(request.model(), response);
     }
 
@@ -73,7 +75,8 @@ public class ChatCompletionsController {
                 List<Message> messages = buildMessages(session, request);
                 List<ToolDefinition> tools = buildTools(request);
 
-                modelClient.stream(messages, tools, new StreamingResponseHandler() {
+                modelClient.stream(HistorySanitizer.sanitizeForModelRequest(messages), tools,
+                    requestOptions(request), new StreamingResponseHandler() {
                     @Override
                     public void onToken(String token) {
                         sendSse(emitter, createDeltaEvent(id, model, token, null));
@@ -109,6 +112,10 @@ public class ChatCompletionsController {
         });
 
         return emitter;
+    }
+
+    private ModelRequestOptions requestOptions(OpenAiChatRequest request) {
+        return new ModelRequestOptions(request.model(), null, null, null, null, null, request.maxTokens());
     }
 
     private List<Message> buildMessages(Session session, OpenAiChatRequest request) {

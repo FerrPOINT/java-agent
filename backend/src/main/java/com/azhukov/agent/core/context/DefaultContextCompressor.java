@@ -1290,7 +1290,8 @@ public class DefaultContextCompressor implements ContextCompressor {
             + "\n\n" + text
             + "\n\n" + SUMMARY_TEMPLATE;
          ChatResponse response = modelClient.complete(
-             List.of(Message.system("You are a summarizer."), Message.user(prompt)),
+             HistorySanitizer.sanitizeForModelRequest(
+                 List.of(Message.system("You are a summarizer."), Message.user(prompt))),
              List.of()
          );
          String result = response.content();

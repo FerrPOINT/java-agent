@@ -24,6 +24,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class AgentApiE2ETest {
 
     private static final String BASE_URL = System.getProperty("e2e.baseUrl", "http://localhost:18090");
+    // The deployed identity is configurable through AGENT_NAME, so an external E2E
+    // target must declare the name it is expected to expose.
+    private static final String EXPECTED_AGENT_NAME = System.getProperty("e2e.agentName", "Джава агент");
     private static final HttpClient client = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .build();
@@ -67,13 +70,13 @@ class AgentApiE2ETest {
     }
 
     @Test
-    @DisplayName("GET /api/v1/health — agent name is 'Джава агент'")
-    void apiHealthReturnsAgentName() throws Exception {
+    @DisplayName("GET /api/v1/health — exposes the configured agent name")
+    void apiHealthReturnsConfiguredAgentName() throws Exception {
         HttpResponse<String> resp = get("/api/v1/health");
         assertEquals(200, resp.statusCode());
         JsonNode body = mapper.readTree(resp.body());
-        assertEquals("up", body.get("status").asText());
-        assertEquals("Джава агент", body.get("name").asText());
+        assertEquals("UP", body.get("status").asText());
+        assertEquals(EXPECTED_AGENT_NAME, body.get("name").asText());
     }
 
     @Test
@@ -140,17 +143,12 @@ class AgentApiE2ETest {
         String sessionId = body1.get("sessionId").asText();
         assertNotNull(sessionId);
 
-        // Verify session appears in list
-        HttpResponse<String> sessionsResp = get("/api/v1/sessions");
-        JsonNode sessions = mapper.readTree(sessionsResp.body());
-        boolean found = false;
-        for (JsonNode s : sessions) {
-            if (sessionId.equals(s.get("id").asText())) {
-                found = true;
-                break;
-            }
-        }
-        assertTrue(found, "Session from chat should appear in /api/v1/sessions");
+        // Verify the exact session rather than relying on the legacy list's
+        // fixed first-page limit, which may exclude a newly-created session.
+        HttpResponse<String> sessionResp = get("/api/v2/sessions/" + sessionId);
+        assertEquals(200, sessionResp.statusCode());
+        JsonNode session = mapper.readTree(sessionResp.body());
+        assertEquals(sessionId, session.get("id").asText());
     }
 
     @Test

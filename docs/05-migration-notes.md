@@ -107,7 +107,7 @@ All timeouts increased by an order of magnitude to avoid stalls under real LLM/C
 Gradle `bootRun` consumes too much memory for real LLM calls and is killed with SIGKILL 137. Use `java -jar` for dev server:
 
 ```bash
-java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
+java -jar build/libs/backend-0.0.1-SNAPSHOT.jar \
   --spring.profiles.active=dev \
   --spring.datasource.password=project_workflow \
   --server.port=8090

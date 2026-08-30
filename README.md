@@ -195,7 +195,7 @@ java-agent/
 ```bash
 cd backend
 export OLLAMA_API_KEY=***
-java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
+java -jar build/libs/backend-0.0.1-SNAPSHOT.jar \
   --spring.profiles.active=dev \
   --spring.datasource.password=project_workflow \
   --server.port=8090
@@ -205,7 +205,7 @@ java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
 
 ```bash
 cd backend
-java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
+java -jar build/libs/backend-0.0.1-SNAPSHOT.jar \
   --spring.profiles.active=noop \
   --server.port=8090
 ```
@@ -231,11 +231,11 @@ curl -s -X POST http://localhost:8090/v1/chat/completions \
 ```bash
 # Start backend first
 cd backend && ./gradlew bootJar
-java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev &
+java -jar build/libs/backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev &
 
 # Start CLI
 cd ../cli && ./gradlew bootJar
-java -jar build/libs/java-agent-cli-0.0.1-SNAPSHOT.jar --backend.url=http://localhost:8090
+java -jar build/libs/cli-0.0.1-SNAPSHOT.jar --backend.url=http://localhost:8090
 ```
 
 92 slash commands, SSE streaming, JLine autocomplete. `/help` — список всех команд.

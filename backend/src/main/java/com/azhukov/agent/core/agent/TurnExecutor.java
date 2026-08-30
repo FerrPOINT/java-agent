@@ -7,6 +7,7 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.context.ContextCompressor;
 import com.azhukov.agent.core.context.ContextEngine;
+import com.azhukov.agent.core.context.HistorySanitizer;
 import com.azhukov.agent.core.context.DefaultContextCompressor;
 import com.azhukov.agent.core.context.DefaultContextEngine;
 import com.azhukov.agent.core.model.ChatResponse;
@@ -189,6 +190,7 @@ public class TurnExecutor {
                     ModelClient client = fallbackCtx != null && fallbackCtx.getActiveModelClient() != null
                         ? fallbackCtx.getActiveModelClient()
                         : (fallbackCtx != null ? fallbackCtx.getPrimaryModelClient() : null);
+                    currentContext = HistorySanitizer.sanitizeForModelRequest(currentContext);
                     return client.complete(currentContext, currentTools, options);
                 } catch (Exception e) {
                     lastException = e;

@@ -11,7 +11,9 @@ import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import org.mockito.ArgumentCaptor;
 
 class AuxiliaryClientTest {
 
@@ -25,8 +27,15 @@ class AuxiliaryClientTest {
         AuxiliaryClient client = new AuxiliaryClient(List.of(backend), props);
 
         ChatResponse result = client.complete(AuxiliaryClient.TaskType.COMPRESSION,
-            List.of(Message.user("test")), List.of());
+            List.of(
+                Message.assistantToolCalls(List.of(new com.azhukov.agent.core.model.ToolCall("orphan", "read_file", "{}")), 0),
+                Message.user("test")), List.of());
         assertThat(result.content()).isEqualTo("result");
+
+        ArgumentCaptor<List<Message>> messages = ArgumentCaptor.forClass(List.class);
+        verify(backend).complete(messages.capture(), any());
+        assertThat(messages.getValue()).noneMatch(message ->
+            message.toolCalls() != null && !message.toolCalls().isEmpty());
     }
 
     @Test

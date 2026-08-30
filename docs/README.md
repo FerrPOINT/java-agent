@@ -85,17 +85,17 @@ cd backend
 ./gradlew bootJar
 
 # Dev with real LLM
-java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
+java -jar build/libs/backend-0.0.1-SNAPSHOT.jar \
   --spring.profiles.active=dev
 
 # NoOp / offline
-java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
+java -jar build/libs/backend-0.0.1-SNAPSHOT.jar \
   --spring.profiles.active=noop
 
-# CLI REPL (no web server)
-java -jar build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
-  --spring.profiles.active=cli,noop \
-  --enable-native-access=ALL-UNNAMED
+# CLI REPL (connects to the backend)
+java --enable-native-access=ALL-UNNAMED \
+  -jar ../cli/build/libs/cli-0.0.1-SNAPSHOT.jar \
+  --backend.url=http://localhost:8090
 ```
 
 Health endpoints:

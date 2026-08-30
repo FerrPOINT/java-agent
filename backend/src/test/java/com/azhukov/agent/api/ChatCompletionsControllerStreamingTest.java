@@ -4,6 +4,7 @@ import com.azhukov.agent.api.dto.OpenAiChatRequest;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
+import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
@@ -86,13 +87,13 @@ class ChatCompletionsControllerStreamingTest {
     @DisplayName("SSE emitter sends data chunks for each token")
     void sseEmitterSendsDataChunks() throws Exception {
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("chunk1");
             handler.onToken("chunk2");
             handler.onToken("chunk3");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(anyList(), anyList(), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(anyList(), anyList(), any(ModelRequestOptions.class), any(StreamingResponseHandler.class));
 
         String requestBody = """
             {
@@ -141,14 +142,48 @@ class ChatCompletionsControllerStreamingTest {
     }
 
     @Test
+    @DisplayName("OpenAI-compatible stream forwards request model and max tokens")
+    void streamForwardsRequestOptions() throws Exception {
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(anyList(), anyList(), any(ModelRequestOptions.class),
+            any(StreamingResponseHandler.class));
+
+        String requestBody = """
+            {
+              "model": "codex-mini-latest",
+              "max_tokens": 321,
+              "messages": [{"role": "user", "content": "Hi"}],
+              "stream": true
+            }
+            """;
+        MvcResult result = mockMvc.perform(post("/v1/chat/completions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+            .andExpect(status().isOk())
+            .andExpect(request().asyncStarted())
+            .andReturn();
+        mockMvc.perform(asyncDispatch(result)).andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<ModelRequestOptions> options =
+            org.mockito.ArgumentCaptor.forClass(ModelRequestOptions.class);
+        org.mockito.Mockito.verify(modelClient).stream(anyList(), anyList(), options.capture(),
+            any(StreamingResponseHandler.class));
+        assertThat(options.getValue().modelName()).isEqualTo("codex-mini-latest");
+        assertThat(options.getValue().maxCompletionTokens()).isEqualTo(321);
+    }
+
+    @Test
     @DisplayName("OpenAI-compatible SSE terminates with data [DONE] after stop chunk")
     void sseEmitterSendsDoneAtEnd() throws Exception {
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("hello");
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(anyList(), anyList(), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(anyList(), anyList(), any(ModelRequestOptions.class), any(StreamingResponseHandler.class));
 
         String requestBody = """
             {
@@ -188,11 +223,11 @@ class ChatCompletionsControllerStreamingTest {
     @DisplayName("SSE emitter handles errors by sending error event")
     void sseEmitterHandlesErrors() throws Exception {
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("partial");
             handler.onError(new RuntimeException("streaming failed"));
             return null;
-        }).when(modelClient).stream(anyList(), anyList(), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(anyList(), anyList(), any(ModelRequestOptions.class), any(StreamingResponseHandler.class));
 
         String requestBody = """
             {
@@ -235,12 +270,12 @@ class ChatCompletionsControllerStreamingTest {
         ToolCall toolCall = new ToolCall("call-1", "search", "{\"query\":\"test\"}");
 
         doAnswer(invocation -> {
-            StreamingResponseHandler handler = invocation.getArgument(2);
+            StreamingResponseHandler handler = invocation.getArgument(3);
             handler.onToken("thinking...");
             handler.onToolCalls(List.of(toolCall));
             handler.onComplete();
             return null;
-        }).when(modelClient).stream(anyList(), anyList(), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(anyList(), anyList(), any(ModelRequestOptions.class), any(StreamingResponseHandler.class));
 
         String requestBody = """
             {
@@ -284,7 +319,7 @@ class ChatCompletionsControllerStreamingTest {
     void sseEmitterHandlesSetupException() throws Exception {
         doAnswer(invocation -> {
             throw new RuntimeException("setup failed");
-        }).when(modelClient).stream(anyList(), anyList(), any(StreamingResponseHandler.class));
+        }).when(modelClient).stream(anyList(), anyList(), any(ModelRequestOptions.class), any(StreamingResponseHandler.class));
 
         String requestBody = """
             {

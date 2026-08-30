@@ -115,7 +115,39 @@ public final class HistorySanitizer {
             }
         }
 
-        // ── Pass 1: drop stray TOOL messages ──────────────────────────────
+        // ── Pass 1: repair tool-call / tool-result pairing ────────────────
+        // A provider requires both sides of every historical tool exchange.
+        // Keep a trailing assistant tool-call as an in-flight executor request;
+        // strip only older calls whose result cannot arrive anymore.
+        Set<String> resultIds = new HashSet<>();
+        for (Message msg : collapsed) {
+            if (msg.role() == Role.TOOL) {
+                resultIds.addAll(ToolCall.resultIdVariants(msg.toolCallId()));
+            }
+        }
+        int trailingNonTool = collapsed.size() - 1;
+        while (trailingNonTool >= 0 && collapsed.get(trailingNonTool).role() == Role.TOOL) {
+            trailingNonTool--;
+        }
+
+        List<Message> paired = new ArrayList<>(collapsed.size());
+        for (int index = 0; index < collapsed.size(); index++) {
+            Message msg = collapsed.get(index);
+            if (msg.role() == Role.ASSISTANT && msg.toolCalls() != null && !msg.toolCalls().isEmpty()
+                && index != trailingNonTool) {
+                List<ToolCall> retained = msg.toolCalls().stream()
+                    .filter(call -> call.idVariants().stream().anyMatch(resultIds::contains))
+                    .toList();
+                if (retained.size() != msg.toolCalls().size()) {
+                    repairs += msg.toolCalls().size() - retained.size();
+                    msg = new Message(Role.ASSISTANT, msg.content(), msg.toolCall(),
+                        retained.isEmpty() ? null : retained, null, msg.turnIndex(), msg.imageCount());
+                }
+            }
+            paired.add(msg);
+        }
+
+        // ── Pass 2: drop stray TOOL messages ──────────────────────────────
         // Rolling set of known tool-call ids refreshed on each ASSISTANT
         // message; a user turn closes the tool-result run.
         // P-01: matching is alias-aware — a result may reference the call by
@@ -124,8 +156,8 @@ public final class HistorySanitizer {
         // matching result so an alias-duplicate result is dropped as stray.
         Set<String> knownToolIds = new HashSet<>();
         java.util.Map<String, Set<String>> aliasGroups = new java.util.HashMap<>();
-        List<Message> filtered = new ArrayList<>(collapsed.size());
-        for (Message msg : collapsed) {
+        List<Message> filtered = new ArrayList<>(paired.size());
+        for (Message msg : paired) {
             if (msg.role() == Role.ASSISTANT) {
                 knownToolIds = new HashSet<>();
                 aliasGroups = new java.util.HashMap<>();

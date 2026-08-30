@@ -4,6 +4,7 @@ import com.azhukov.agent.client.langchain4j.ErrorClassifier;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.context.ContextReferenceService;
 import com.azhukov.agent.core.memory.MemoryProvider;
@@ -380,14 +381,15 @@ class AgentRuntimeFullScenariosTest {
         when(contextEngine.prepareContext(any(), eq(sanitizedMessages))).thenReturn(sanitizedMessages);
 
         ModelClient client = mock(ModelClient.class);
-        when(client.complete(sanitizedMessages, tools)).thenReturn(ChatResponse.text("response"));
+        when(client.complete(sanitizedMessages, tools, ModelRequestOptions.empty()))
+            .thenReturn(ChatResponse.text("response"));
         useModelClient(client);
 
         ChatResponse response = runtime.run(rawMessages, tools);
 
         assertThat(response.content()).isEqualTo("response");
         verify(messageSanitizer).sanitize(rawMessages);
-        verify(client).complete(sanitizedMessages, tools);
+        verify(client).complete(sanitizedMessages, tools, ModelRequestOptions.empty());
         verify(contextEngine).prepareContext(any(), eq(sanitizedMessages));
     }
 }

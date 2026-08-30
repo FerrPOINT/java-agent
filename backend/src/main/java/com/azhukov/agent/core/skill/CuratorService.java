@@ -10,6 +10,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.context.HistorySanitizer;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.persistence.entity.SkillAuditLogEntity;
@@ -638,7 +639,8 @@ public class CuratorService {
          Message.system(CURATOR_REVIEW_PROMPT),
          Message.user(prompt)
      );
-     ChatResponse response = modelClient.complete(messages, List.of());
+     ChatResponse response = modelClient.complete(
+         HistorySanitizer.sanitizeForModelRequest(messages), List.of());
      return parseConsolidationResponse(response.content(), skills);
  }
 
@@ -683,7 +685,8 @@ public class CuratorService {
          iterations++;
          ChatResponse response;
          try {
-             response = modelClient.complete(messages, tools);
+             response = modelClient.complete(
+                 HistorySanitizer.sanitizeForModelRequest(messages), tools);
          } catch (Exception e) {
              log.warn("Curator agent loop: model call failed at iteration {}: {}", iteration, e.getMessage());
              if (iteration == 0) {
@@ -730,7 +733,7 @@ public class CuratorService {
              }
 
              // Add tool result to conversation
-             messages.add(Message.toolResult(call.id(), result.content(), iteration));
+             messages.add(Message.toolResult(call.pairingId(), result.content(), iteration));
 
              log.debug("Curator agent loop iteration {}: executed tool {} → success={}",
                      iteration, call.name(), result.success());

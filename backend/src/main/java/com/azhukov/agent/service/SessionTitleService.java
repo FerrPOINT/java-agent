@@ -3,6 +3,7 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.context.HistorySanitizer;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
@@ -88,14 +89,14 @@ Reply with JSON only: {"title": "..."}""";
         }
         try {
             var response = modelClient.complete(
-                List.of(
+                HistorySanitizer.sanitizeForModelRequest(List.of(
                     // Hermes parity (title_generator.py:74-96 _TITLE_PROMPT_TEMPLATE):
                     // full rules — 3-7 words, name the task not the question,
                     // keep technical terms exact, drop filler, no preamble,
                     // match-user language, JSON reply with good/bad examples.
                     Message.system(TITLE_PROMPT_TEMPLATE),
                     Message.user(userMessage)
-                ),
+                )),
                 List.of()
             );
             if (response.content() != null && !response.content().isBlank()) {

@@ -130,6 +130,48 @@ class HistorySanitizerTest {
     }
 
     @Test
+    void stripsHistoricalToolCallWhoseResultWasDropped() {
+        List<Message> history = List.of(
+            Message.user("run old tool"),
+            Message.assistantToolCalls(List.of(tc("call_old")), 1),
+            Message.user("continue"),
+            Message.assistant("done", 2)
+        );
+
+        List<Message> out = HistorySanitizer.sanitize(history);
+
+        assertThat(out).hasSize(4);
+        assertThat(out.get(1).toolCalls()).isNull();
+    }
+
+    @Test
+    void preservesTrailingInFlightToolCallWithoutResult() {
+        List<Message> history = List.of(
+            Message.user("run tool"),
+            Message.assistantToolCalls(List.of(tc("call_live")), 1)
+        );
+
+        List<Message> out = HistorySanitizer.sanitize(history);
+
+        assertThat(out).isSameAs(history);
+    }
+
+    @Test
+    void preservesAnsweredCallAndStripsOnlyMissingCallFromHistoricalBatch() {
+        List<Message> history = List.of(
+            Message.user("run tools"),
+            Message.assistantToolCalls(List.of(tc("call_done"), tc("call_missing")), 1),
+            Message.toolResult("call_done", "done", 1),
+            Message.assistant("continue", 2)
+        );
+
+        List<Message> out = HistorySanitizer.sanitize(history);
+
+        assertThat(out.get(1).toolCalls()).extracting(ToolCall::id).containsExactly("call_done");
+        assertThat(out.get(2).toolCallId()).isEqualTo("call_done");
+    }
+
+    @Test
     void mergesConsecutiveAssistantMessages() {
         // Production 2026-08-21 16:50: Gemini 400 "Please ensure that function
         // call turn comes immediately after a user turn or after a function
@@ -145,12 +187,13 @@ class HistorySanitizerTest {
 
         List<Message> out = HistorySanitizer.sanitize(history);
 
-        // call_a and call_b merge into one assistant turn; its result stays
+        // call_a is historical and missing a result, so it is stripped;
+        // call_b stays paired with its surviving result.
         assertThat(out).hasSize(4);
         Message mergedTurn = out.get(1);
         assertThat(mergedTurn.role()).isEqualTo(Role.ASSISTANT);
         assertThat(mergedTurn.toolCalls()).extracting(ToolCall::id)
-            .containsExactly("call_a", "call_b");
+            .containsExactly("call_b");
         assertThat(out.get(2).toolCallId()).isEqualTo("call_b");
     }
 
