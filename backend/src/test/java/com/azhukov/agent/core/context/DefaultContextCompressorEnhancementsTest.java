@@ -252,8 +252,9 @@ class DefaultContextCompressorEnhancementsTest {
             int prefixEnd = summaryContent.indexOf("Earlier conversation (summarized):");
             assertThat(prefixEnd).isGreaterThan(0);
             String body = summaryContent.substring(prefixEnd);
-            // Body (including end marker) should be bounded by maxTokens + end marker
-            assertThat(body.length()).isLessThanOrEqualTo(400);
+            // maxTokens is a token budget; the summary body uses the matching
+            // character budget (4 chars/token), plus fixed handoff markers.
+            assertThat(body.length()).isLessThanOrEqualTo(1_300);
         }
 
         @Test

@@ -25,7 +25,7 @@ class DeleteFileToolBranchTest {
     @BeforeEach
     void setUp() {
         properties = new AgentProperties();
-        tool = new DeleteFileTool(properties);
+        tool = new DeleteFileTool(properties, new com.azhukov.agent.core.security.DefaultFileSafety(properties));
     }
 
     private Session session() {

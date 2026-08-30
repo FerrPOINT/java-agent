@@ -23,7 +23,7 @@ public class FileSafetyValidator {
     public String checkRead(Path path) {
         if (path == null) return "Path is null";
         String normalized = path.toAbsolutePath().normalize().toString();
-        if (isSensitiveName(path.getFileName().toString())) {
+        if (isSensitivePath(path)) {
             return "Read blocked for sensitive file: " + path.getFileName();
         }
         String allowedError = checkAllowedPath(normalized);
@@ -34,11 +34,11 @@ public class FileSafetyValidator {
     public String checkWrite(Path path) {
         if (path == null) return "Path is null";
         String normalized = path.toAbsolutePath().normalize().toString();
+        if (isSensitivePath(path)) {
+            return "Write blocked for sensitive file: " + path.getFileName();
+        }
         if (isBlockedExtension(path)) {
             return "Write blocked for extension: " + getExtension(path);
-        }
-        if (isSensitiveName(path.getFileName().toString())) {
-            return "Write blocked for sensitive file: " + path.getFileName();
         }
         String allowedError = checkAllowedPath(normalized);
         if (allowedError != null) return allowedError;
@@ -47,8 +47,24 @@ public class FileSafetyValidator {
 
     private boolean isSensitiveName(String name) {
         String lower = name.toLowerCase();
-        for (String s : SENSITIVE_NAMES) {
-            if (lower.contains(s)) return true;
+        for (String sensitive : SENSITIVE_NAMES) {
+            if (sensitive.startsWith(".")) {
+                if (lower.equals(sensitive)) return true;
+            } else if (lower.contains(sensitive)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isSensitivePath(Path path) {
+        if (isSensitiveName(path.getFileName().toString())) {
+            return true;
+        }
+        for (Path segment : path.toAbsolutePath().normalize()) {
+            if (".ssh".equalsIgnoreCase(segment.toString())) {
+                return true;
+            }
         }
         return false;
     }

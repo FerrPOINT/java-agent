@@ -7,6 +7,7 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.CompressionLockRepository;
+import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +22,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -44,6 +46,8 @@ class SessionRotationTest {
     private SessionRepository sessionRepository;
     @Mock
     private CompressionLockRepository lockRepository;
+    @Mock
+    private MessageRepository messageRepository;
 
     private AgentProperties properties;
     private UUID sessionId;
@@ -69,6 +73,7 @@ class SessionRotationTest {
         DefaultContextCompressor compressor = new DefaultContextCompressor(
                 new NoOpModelClient(), lockRepository, properties);
         compressor.setSessionRepository(sessionRepository);
+        compressor.setMessageRepository(messageRepository);
         return compressor;
     }
 
@@ -77,11 +82,15 @@ class SessionRotationTest {
     @Test
     void rotateSessionCreatesChildSessionWithParentSessionId() {
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(oldSession));
-        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
+            SessionEntity entity = inv.getArgument(0);
+            if (entity.getId() == null) entity.setId(UUID.randomUUID());
+            return entity;
+        });
 
         DefaultContextCompressor compressor = createCompressor();
         Optional<DefaultContextCompressor.SessionRotationResult> result =
-                compressor.rotateSession(String.valueOf(sessionId));
+                compressor.rotateSession(String.valueOf(sessionId), List.of(Message.user("handoff")));
 
         assertThat(result).isPresent();
 
@@ -90,12 +99,12 @@ class SessionRotationTest {
         verify(sessionRepository, times(2)).save(captor.capture());
         List<SessionEntity> saved = captor.getAllValues();
 
-        SessionEntity savedOld = saved.get(0);
+        SessionEntity savedOld = saved.get(1);
         assertThat(savedOld.getId()).isEqualTo(sessionId);
         assertThat(savedOld.getSessionStatus()).isEqualTo("compressed");
 
         // Verify child session created with parent_session_id
-        SessionEntity savedChild = saved.get(1);
+        SessionEntity savedChild = saved.get(0);
         assertThat(savedChild.getParentSessionId()).isEqualTo(sessionId);
         assertThat(savedChild.getUserId()).isEqualTo("user-42");
         assertThat(savedChild.getModelProvider()).isEqualTo("openai-compatible");
@@ -108,33 +117,41 @@ class SessionRotationTest {
     @Test
     void rotateSessionPropagatesTitleWithCompressedSuffix() {
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(oldSession));
-        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
+            SessionEntity entity = inv.getArgument(0);
+            if (entity.getId() == null) entity.setId(UUID.randomUUID());
+            return entity;
+        });
 
         DefaultContextCompressor compressor = createCompressor();
         Optional<DefaultContextCompressor.SessionRotationResult> result =
-                compressor.rotateSession(String.valueOf(sessionId));
+                compressor.rotateSession(String.valueOf(sessionId), List.of(Message.user("handoff")));
 
         assertThat(result).isPresent();
-        assertThat(result.get().newTitle()).isEqualTo("Original Session (compressed)");
+        assertThat(result.get().newTitle()).isEqualTo("Original Session");
 
         ArgumentCaptor<SessionEntity> captor = ArgumentCaptor.forClass(SessionEntity.class);
         verify(sessionRepository, times(2)).save(captor.capture());
         SessionEntity child = captor.getAllValues().get(1);
-        assertThat(child.getTitle()).isEqualTo("Original Session (compressed)");
+        assertThat(child.getTitle()).isEqualTo("Original Session");
     }
 
     @Test
     void rotateSessionHandlesNullTitleWithDefaultPrefix() {
         oldSession.setTitle(null);
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(oldSession));
-        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
+            SessionEntity entity = inv.getArgument(0);
+            if (entity.getId() == null) entity.setId(UUID.randomUUID());
+            return entity;
+        });
 
         DefaultContextCompressor compressor = createCompressor();
         Optional<DefaultContextCompressor.SessionRotationResult> result =
-                compressor.rotateSession(String.valueOf(sessionId));
+                compressor.rotateSession(String.valueOf(sessionId), List.of(Message.user("handoff")));
 
         assertThat(result).isPresent();
-        assertThat(result.get().newTitle()).isEqualTo("Untitled (compressed)");
+        assertThat(result.get().newTitle()).isEqualTo("Untitled");
     }
 
     // ── 3. Old session marked as 'compressed' ──
@@ -142,19 +159,79 @@ class SessionRotationTest {
     @Test
     void rotateSessionMarksOldSessionAsCompressed() {
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(oldSession));
-        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
+            SessionEntity entity = inv.getArgument(0);
+            if (entity.getId() == null) entity.setId(UUID.randomUUID());
+            return entity;
+        });
 
         DefaultContextCompressor compressor = createCompressor();
-        compressor.rotateSession(String.valueOf(sessionId));
+        compressor.rotateSession(String.valueOf(sessionId), List.of(Message.user("handoff")));
 
         ArgumentCaptor<SessionEntity> captor = ArgumentCaptor.forClass(SessionEntity.class);
         verify(sessionRepository, atLeastOnce()).save(captor.capture());
 
         SessionEntity savedOld = captor.getAllValues().stream()
-                .filter(e -> e.getId().equals(sessionId))
+                .filter(e -> sessionId.equals(e.getId()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("Old session not saved"));
         assertThat(savedOld.getSessionStatus()).isEqualTo("compressed");
+    }
+
+    @Test
+    void rotateSessionPersistsChildHandoffBeforeArchivingParentRows() {
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(oldSession));
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
+            SessionEntity entity = inv.getArgument(0);
+            if (entity.getId() == null) entity.setId(UUID.randomUUID());
+            return entity;
+        });
+        var parentMessage = new com.azhukov.agent.persistence.entity.MessageEntity();
+        parentMessage.setId(UUID.randomUUID());
+        parentMessage.setSessionId(sessionId);
+        parentMessage.setActive(true);
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of(parentMessage));
+
+        DefaultContextCompressor compressor = createCompressor();
+        var result = compressor.rotateSession(String.valueOf(sessionId), List.of(
+            Message.system("volatile"), Message.user("handoff")
+        ));
+
+        assertThat(result).isPresent();
+        ArgumentCaptor<com.azhukov.agent.persistence.entity.MessageEntity> messages =
+            ArgumentCaptor.forClass(com.azhukov.agent.persistence.entity.MessageEntity.class);
+        verify(messageRepository, times(2)).save(messages.capture());
+        var persistedHandoff = messages.getAllValues().get(0);
+        assertThat(persistedHandoff.getSessionId()).isEqualTo(result.get().newSessionId());
+        assertThat(persistedHandoff.getRole()).isEqualTo("user");
+        assertThat(parentMessage.getActive()).isFalse();
+        assertThat(parentMessage.getCompacted()).isTrue();
+    }
+
+    @Test
+    void rotateSessionPersistsCompactionCarrierButDropsOrdinarySystemMessages() {
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(oldSession));
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
+            SessionEntity entity = inv.getArgument(0);
+            if (entity.getId() == null) entity.setId(UUID.randomUUID());
+            return entity;
+        });
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of());
+
+        String summary = "[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. "
+            + "This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. "
+            + "Earlier conversation (summarized):\nkept summary";
+        DefaultContextCompressor compressor = createCompressor();
+        var result = compressor.rotateSession(String.valueOf(sessionId), List.of(
+            Message.system("volatile prompt"), Message.system(summary), Message.user("recent user message")
+        ));
+
+        assertThat(result).isPresent();
+        ArgumentCaptor<com.azhukov.agent.persistence.entity.MessageEntity> messages =
+            ArgumentCaptor.forClass(com.azhukov.agent.persistence.entity.MessageEntity.class);
+        verify(messageRepository, times(2)).save(messages.capture());
+        assertThat(messages.getAllValues()).extracting(com.azhukov.agent.persistence.entity.MessageEntity::getContent)
+            .containsExactly(summary, "recent user message");
     }
 
     // ── 4. Fallback when rotation disabled ──
@@ -165,7 +242,7 @@ class SessionRotationTest {
 
         DefaultContextCompressor compressor = createCompressor();
         Optional<DefaultContextCompressor.SessionRotationResult> result =
-                compressor.rotateSession(String.valueOf(sessionId));
+                compressor.rotateSession(String.valueOf(sessionId), List.of(Message.user("handoff")));
 
         assertThat(result).isEmpty();
         verify(sessionRepository, never()).findById(any());
@@ -190,11 +267,10 @@ class SessionRotationTest {
         when(sessionRepository.findById(sessionId)).thenThrow(new RuntimeException("DB connection failed"));
 
         DefaultContextCompressor compressor = createCompressor();
-        Optional<DefaultContextCompressor.SessionRotationResult> result =
-                compressor.rotateSession(String.valueOf(sessionId));
-
-        assertThat(result).isEmpty();
-        // Should not throw — compression continues with old session
+        assertThatThrownBy(() -> compressor.rotateSession(
+            String.valueOf(sessionId), List.of(Message.user("handoff"))))
+            .isInstanceOf(RuntimeException.class)
+            .hasMessage("DB connection failed");
     }
 
     @Test
@@ -203,10 +279,10 @@ class SessionRotationTest {
         when(sessionRepository.save(any(SessionEntity.class))).thenThrow(new RuntimeException("Save failed"));
 
         DefaultContextCompressor compressor = createCompressor();
-        Optional<DefaultContextCompressor.SessionRotationResult> result =
-                compressor.rotateSession(String.valueOf(sessionId));
-
-        assertThat(result).isEmpty();
+        assertThatThrownBy(() -> compressor.rotateSession(
+            String.valueOf(sessionId), List.of(Message.user("handoff"))))
+            .isInstanceOf(RuntimeException.class)
+            .hasMessage("Save failed");
     }
 
     // ── 6. Fallback when session not found ──
@@ -217,7 +293,7 @@ class SessionRotationTest {
 
         DefaultContextCompressor compressor = createCompressor();
         Optional<DefaultContextCompressor.SessionRotationResult> result =
-                compressor.rotateSession(String.valueOf(sessionId));
+                compressor.rotateSession(String.valueOf(sessionId), List.of(Message.user("handoff")));
 
         assertThat(result).isEmpty();
         verify(sessionRepository, never()).save(any());
@@ -228,14 +304,14 @@ class SessionRotationTest {
     @Test
     void rotateSessionReturnsEmptyForNullSessionId() {
         DefaultContextCompressor compressor = createCompressor();
-        Optional<DefaultContextCompressor.SessionRotationResult> result = compressor.rotateSession(null);
+        Optional<DefaultContextCompressor.SessionRotationResult> result = compressor.rotateSession(null, List.of(Message.user("handoff")));
         assertThat(result).isEmpty();
     }
 
     @Test
     void rotateSessionReturnsEmptyForNonUuidSessionId() {
         DefaultContextCompressor compressor = createCompressor();
-        Optional<DefaultContextCompressor.SessionRotationResult> result = compressor.rotateSession("not-a-uuid");
+        Optional<DefaultContextCompressor.SessionRotationResult> result = compressor.rotateSession("not-a-uuid", List.of(Message.user("handoff")));
         assertThat(result).isEmpty();
     }
 
@@ -247,7 +323,7 @@ class SessionRotationTest {
                 new NoOpModelClient(), lockRepository, properties);
         // Don't call setSessionRepository — simulates unit test without DB
         Optional<DefaultContextCompressor.SessionRotationResult> result =
-                compressor.rotateSession(String.valueOf(sessionId));
+                compressor.rotateSession(String.valueOf(sessionId), List.of(Message.user("handoff")));
         assertThat(result).isEmpty();
     }
 
@@ -289,7 +365,7 @@ class SessionRotationTest {
 
         // Now rotate the session
         Optional<DefaultContextCompressor.SessionRotationResult> result =
-                compressor.rotateSession(String.valueOf(sessionId));
+                compressor.rotateSession(String.valueOf(sessionId), List.of(Message.user("handoff")));
         assertThat(result).isPresent();
         assertThat(result.get().newSessionId()).isNotEqualTo(sessionId);
     }
@@ -309,7 +385,7 @@ class SessionRotationTest {
 
         DefaultContextCompressor compressor = createCompressor();
         Optional<DefaultContextCompressor.SessionRotationResult> result =
-                compressor.rotateSession(String.valueOf(sessionId));
+                compressor.rotateSession(String.valueOf(sessionId), List.of(Message.user("handoff")));
 
         assertThat(result).isPresent();
         assertThat(result.get().newSessionId()).isNotEqualTo(sessionId);

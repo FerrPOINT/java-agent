@@ -8,13 +8,16 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.persistence.entity.CompressionLockEntity;
+import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
+import com.azhukov.agent.persistence.mapper.ToolCallPersistenceCodec;
 import com.azhukov.agent.persistence.repository.CompressionLockRepository;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -555,14 +558,27 @@ public class DefaultContextCompressor implements ContextCompressor {
          summaryInput.insert(0, "Previous summary (update and refine):\n" + previousSummary + "\n\nNew turns to incorporate:\n");
      }
 
-     // Compute a scaled summary budget proportional to the compressed content
-     int summaryBudget = computeSummaryBudget(summaryInput.length());
+        // The model API expects a token budget, while message truncation below
+        // uses characters. Keep the two units explicit to avoid clipping a
+        // 2,000-token summary to 2,000 characters.
+        int summaryBudgetTokens = properties.getContext().getSummaryChunkTokens();
+        int maxContextTokens = properties.getContext().getMaxTokens();
+        if (maxContextTokens > 0) {
+            summaryBudgetTokens = Math.min(summaryBudgetTokens, maxContextTokens);
+        }
+        if (summaryBudgetTokens <= 0) {
+            summaryBudgetTokens = computeSummaryBudget(summaryInput.length());
+        }
 
-     // HERMES-SYNC Bug 4: Compression timeout budget — prevent hang during compression.
-     // Wrap the summarize() call in a CompletableFuture with a timeout. If the LLM
-     // summary generation takes longer than the configured budget, fall back to
-     // fallbackSummarize() to ensure compression completes without hanging.
-     String summary = summarizeWithTimeout(boundSummaryInput(summaryInput.toString()), summaryBudget);
+        String summary = summarizeWithTimeout(boundSummaryInput(summaryInput.toString()), summaryBudgetTokens);
+
+        int summaryBodyBudgetChars = Math.max(
+            summaryBudgetTokens * CHARS_PER_TOKEN - SUMMARY_END_MARKER.length(), 0);
+        if (summary != null && summary.length() > summaryBodyBudgetChars) {
+            String marker = "\n...[summary truncated]";
+            int prefixChars = Math.max(summaryBodyBudgetChars - marker.length(), 0);
+            summary = summary.substring(0, Math.min(summary.length(), prefixChars)).strip() + marker;
+        }
 
      // Hermes parity: _redact_compaction_text — redact secrets from the
      // summary output so credentials never persist in the compressed context.
@@ -782,31 +798,23 @@ public class DefaultContextCompressor implements ContextCompressor {
  }
 
  /**
-  * Rotates the session after a successful compression: creates a child session linked
-  * to the parent via {@code parent_session_id}, propagates the title with " (compressed)" suffix,
-  * marks the old session as "compressed", and returns the new session ID.
-  * <p>
-  * If session rotation is disabled (via {@code agent.compression.session-rotation.enabled=false}),
-  * this method returns an empty Optional and the caller should fall back to
-  * {@link #logCompressionBoundary(String, java.util.function.Consumer)}.
-  * <p>
-  * If the rotation fails (DB error, session not found, etc.), the method logs a warning
-  * and returns an empty Optional so that compression still succeeds with the old session.
-  *
-  * @param sessionIdStr the current session ID (as string)
-  * @return the new session ID and title, or empty if rotation was skipped or failed
+  * Publish a child session and its compacted handoff in one transaction.
+  * Readers therefore see either the active parent or a complete child transcript.
   */
- java.util.Optional<SessionRotationResult> rotateSession(String sessionIdStr) {
+ @Transactional
+ public java.util.Optional<SessionRotationResult> rotateSession(String sessionIdStr, List<Message> compacted) {
      if (!properties.getCompression().getSessionRotation().isEnabled()) {
          log.debug("Session rotation disabled — falling back to logCompressionBoundary");
          return java.util.Optional.empty();
      }
-
-     if (sessionRepository == null) {
-         log.debug("Session rotation skipped — SessionRepository not injected");
+     if (sessionRepository == null || messageRepository == null) {
+         log.debug("Session rotation skipped — persistence repositories not injected");
          return java.util.Optional.empty();
      }
-
+     if (compacted == null || compacted.isEmpty()) {
+         log.warn("Session rotation skipped — compacted child transcript is empty");
+         return java.util.Optional.empty();
+     }
      if (sessionIdStr == null) {
          log.debug("Session rotation skipped — sessionId is null");
          return java.util.Optional.empty();
@@ -827,43 +835,10 @@ public class DefaultContextCompressor implements ContextCompressor {
              return java.util.Optional.empty();
          }
 
-         // Mark old session as compressed
-         oldSession.setSessionStatus("compressed");
-         oldSession.setUpdatedAt(Instant.now());
-         sessionRepository.save(oldSession);
-
-         // P2 (Hermes conversation_loop.py:2740): the ancestor's raw rows must not
-         // re-enter the model context after rotation. Deactivate them so the
-         // lineage loader (active-only) skips them; the compaction summary in the
-         // child session replaces them. Without this, every later turn rebuilds
-         // the full uncompressed history and the compaction achieves nothing.
-         if (messageRepository != null) {
-             try {
-                 var ancestorRows = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-                 int deactivated = 0;
-                 Instant now = Instant.now();
-                 for (var row : ancestorRows) {
-                     if (!Boolean.FALSE.equals(row.getActive())) {
-                         row.setActive(false);
-                         row.setCompacted(true);
-                         messageRepository.save(row);
-                         deactivated++;
-                     }
-                 }
-                 if (deactivated > 0) {
-                     log.info("Compression rotation: deactivated {} ancestor rows in session {}", deactivated, sessionId);
-                 }
-             } catch (RuntimeException e) {
-                 log.warn("Compression rotation: failed to deactivate ancestor rows for session {} — " +
-                     "lineage loading may duplicate history", sessionId, e);
-             }
-         }
-
-         // Create child session
          SessionEntity childSession = new SessionEntity();
          childSession.setParentSessionId(sessionId);
          childSession.setUserId(oldSession.getUserId());
-         String childTitle = (oldSession.getTitle() != null ? oldSession.getTitle() : "Untitled") + " (compressed)";
+         String childTitle = oldSession.getTitle() != null ? oldSession.getTitle() : "Untitled";
          childSession.setTitle(childTitle);
          childSession.setModelProvider(oldSession.getModelProvider());
          childSession.setModelName(oldSession.getModelName());
@@ -875,13 +850,61 @@ public class DefaultContextCompressor implements ContextCompressor {
          childSession.setMessageCount(0);
          sessionRepository.save(childSession);
 
+         persistCompactedTranscript(childSession.getId(), compacted);
+
+         for (MessageEntity row : messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)) {
+             if (!Boolean.FALSE.equals(row.getActive())) {
+                 row.setActive(false);
+                 row.setCompacted(true);
+                 messageRepository.save(row);
+             }
+         }
+         oldSession.setSessionStatus("compressed");
+         oldSession.setUpdatedAt(Instant.now());
+         sessionRepository.save(oldSession);
+
          log.info("Session rotation complete: parent={}, child={}, title='{}'",
                  sessionId, childSession.getId(), childTitle);
-
          return java.util.Optional.of(new SessionRotationResult(childSession.getId(), childTitle));
      } catch (RuntimeException e) {
          log.warn("Session rotation failed for session {} — compression will continue with old session", sessionIdStr, e);
-         return java.util.Optional.empty();
+         throw e;
+     }
+ }
+
+    static boolean isCompactionCarrier(Message message) {
+        return message != null
+            && message.content() != null
+            && message.content().startsWith("[CONTEXT COMPACTION — REFERENCE ONLY]")
+            && message.content().contains("Earlier conversation (summarized):");
+    }
+
+    private void persistCompactedTranscript(UUID childSessionId, List<Message> compacted) {
+     Instant now = Instant.now();
+     int order = 0;
+     for (Message message : compacted) {
+         if ((message.role() == Role.SYSTEM || message.role() == Role.DEVELOPER)
+             && !isCompactionCarrier(message)) {
+             continue;
+         }
+         MessageEntity row = new MessageEntity();
+         row.setSessionId(childSessionId);
+         row.setRole(message.role().name().toLowerCase());
+         row.setContent(message.content() != null ? message.content() : "");
+         if (message.toolCalls() != null && !message.toolCalls().isEmpty()) {
+             ToolCall first = message.toolCalls().get(0);
+             row.setToolCallId(first.pairingId());
+             row.setToolCallName(first.name());
+             row.setToolCallArguments(first.arguments());
+             row.setToolCallsJson(ToolCallPersistenceCodec.serialize(message.toolCalls()));
+         } else if (message.role() == Role.TOOL) {
+             row.setToolCallId(message.toolCallId());
+         }
+         row.setTurnIndex(message.turnIndex() != null ? message.turnIndex() : order);
+         row.setActive(true);
+         row.setCompacted(false);
+         row.setCreatedAt(now.plusNanos(order++));
+         messageRepository.save(row);
      }
  }
 
@@ -1231,16 +1254,16 @@ public class DefaultContextCompressor implements ContextCompressor {
             } catch (TimeoutException e) {
                 future.cancel(true);
                 log.warn("Compression summary timed out after {}s — falling back to truncation", timeoutSeconds);
-                return fallbackSummarize(text);
+                return fallbackSummarize(text, null, summaryBudgetTokens);
             } catch (InterruptedException e) {
                 future.cancel(true);
                 Thread.currentThread().interrupt();
                 log.warn("Compression summary interrupted — falling back to truncation");
-                return fallbackSummarize(text);
+                return fallbackSummarize(text, null, summaryBudgetTokens);
             }
         } catch (ExecutionException e) {
             log.warn("Compression summary failed with execution exception — falling back: {}", e.getMessage());
-            return fallbackSummarize(text);
+            return fallbackSummarize(text, null, summaryBudgetTokens);
         }
     }
 
@@ -1271,7 +1294,9 @@ public class DefaultContextCompressor implements ContextCompressor {
              List.of()
          );
          String result = response.content();
-         return result != null && !result.isBlank() ? result : fallbackSummarize(text);
+         return result != null && !result.isBlank()
+             ? result
+             : fallbackSummarize(text, null, summaryBudgetTokens);
      } catch (Exception e) {
          lastException = e;
          String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
@@ -1290,7 +1315,7 @@ public class DefaultContextCompressor implements ContextCompressor {
                  Thread.currentThread().interrupt();
                  // h61: Return a clear error message instead of silent fallback on interrupt
                  log.warn("Compression summary retry interrupted — falling back to truncation");
-                 return fallbackSummarize(text);
+                 return fallbackSummarize(text, null, summaryBudgetTokens);
              }
              continue;
          }
@@ -1299,11 +1324,11 @@ public class DefaultContextCompressor implements ContextCompressor {
          if (isQuotaError) {
              log.error("Compression summary model quota exhausted after {} retries — using fallback truncation to preserve original messages: {}",
                  maxRetries, e.getMessage());
-             return fallbackSummarize(text);
+             return fallbackSummarize(text, null, summaryBudgetTokens);
          }
          // h61: For other failures, log a clear error and use fallback
          log.warn("LLM compression failed (non-quota error), using fallback truncation: {}", e.getMessage());
-         return fallbackSummarize(text);
+         return fallbackSummarize(text, null, summaryBudgetTokens);
      }
  }
  // h61: Should not reach here, but if we do, return a clear error
@@ -1319,7 +1344,7 @@ public class DefaultContextCompressor implements ContextCompressor {
  * into the same summary template the LLM path uses.
  */
  private String fallbackSummarize(String text) {
-     return fallbackSummarize(text, null);
+     return fallbackSummarize(text, null, 0);
  }
 
  /**
@@ -1327,6 +1352,10 @@ public class DefaultContextCompressor implements ContextCompressor {
  * @param reason the compression failure reason (quota, timeout, etc.), or null
  */
  private String fallbackSummarize(String text, String reason) {
+     return fallbackSummarize(text, reason, 0);
+ }
+
+ private String fallbackSummarize(String text, String reason, int summaryBudgetTokens) {
      List<String> userAsks = new java.util.ArrayList<>();
      List<String> assistantActions = new java.util.ArrayList<>();
      List<String> toolActions = new java.util.ArrayList<>();
@@ -1419,13 +1448,19 @@ public class DefaultContextCompressor implements ContextCompressor {
      body.append("Summary generation was unavailable, so this is a best-effort deterministic fallback.")
         .append(reasonText);
 
-     String summary = ANTI_INJECTION_PREFIX + body.toString().strip();
+     String summary = body.toString().strip();
 
-     // Apply hard ceiling
-     if (summary.length() > FALLBACK_SUMMARY_MAX_CHARS) {
-         summary = summary.substring(0, FALLBACK_SUMMARY_MAX_CHARS - 42).strip() + "\n...[fallback summary truncated]";
+     // The configured summary budget is a stricter cap than the global fallback
+     // ceiling. The caller owns the compaction envelope and end marker, so this
+     // method returns only the summary body.
+     int maxChars = Math.min(FALLBACK_SUMMARY_MAX_CHARS,
+         summaryBudgetTokens > 0 ? summaryBudgetTokens : FALLBACK_SUMMARY_MAX_CHARS);
+     if (summary.length() > maxChars) {
+         String marker = "\n...[fallback summary truncated]";
+         int prefixChars = Math.max(maxChars - marker.length(), 0);
+         summary = summary.substring(0, Math.min(summary.length(), prefixChars)).strip() + marker;
      }
-     return summary + SUMMARY_END_MARKER;
+     return summary;
  }
 
  /** Hermes parity: _FALLBACK_TURN_MAX_CHARS — per-turn truncation in fallback. */

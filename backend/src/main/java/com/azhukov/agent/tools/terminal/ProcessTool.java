@@ -233,7 +233,8 @@ public class ProcessTool implements ToolHandler {
 
     public record ProcessArgs(
         @ToolParam(description = "list, poll, log, wait, kill, write, submit, close") String action,
-        @ToolParam(description = "process session_id for non-list actions") @JsonProperty("session_id") String sessionId,
+        @ToolParam(description = "process session_id for non-list actions")
+        @JsonProperty("session_id") @JsonAlias("sessionId") String sessionId,
         @ToolParam(description = "timeout in seconds for wait", required = false) int timeout,
         @ToolParam(description = "offset for log pagination", required = false) int offset,
         @ToolParam(description = "max lines for log pagination", required = false) int limit,

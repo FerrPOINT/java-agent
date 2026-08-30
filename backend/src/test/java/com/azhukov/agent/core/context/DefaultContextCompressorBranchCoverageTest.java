@@ -204,6 +204,27 @@ class DefaultContextCompressorBranchCoverageTest {
         assertThat(result).hasSize(5);
     }
 
+    @Test
+    void compressConvertsSummaryTokenBudgetToCharacterLimit() {
+        ModelClient modelClient = mock(ModelClient.class);
+        when(modelClient.complete(any(), any())).thenReturn(ChatResponse.text("s".repeat(2_500)));
+        properties.getContext().setSummaryChunkTokens(1_000);
+        properties.getContext().setProtectFirstN(1);
+        properties.getContext().setProtectLastN(1);
+        DefaultContextCompressor comp = new DefaultContextCompressor(modelClient, lockRepository, properties);
+
+        List<Message> result = comp.compress(List.of(
+            Message.user("a".repeat(2_000)),
+            Message.user("b".repeat(2_000)),
+            Message.assistant("c".repeat(2_000), 1),
+            Message.user("d".repeat(2_000)),
+            Message.user("tail")
+        ), 100);
+
+        assertThat(result.get(1).content()).contains("s".repeat(2_500));
+        assertThat(result.get(1).content()).hasSizeLessThanOrEqualTo(5_300);
+    }
+
     // ── Previous summary extraction ──
 
     @Test
@@ -442,7 +463,7 @@ class DefaultContextCompressorBranchCoverageTest {
 
         properties.getContext().setProtectFirstN(1);
         properties.getContext().setProtectLastN(1);
-        properties.getContext().setMaxTokens(200); // Small to force truncation
+        properties.getContext().setSummaryChunkTokens(200); // Small token budget to force truncation
 
         DefaultContextCompressor comp = new DefaultContextCompressor(modelClient, lockRepository, properties);
 
@@ -461,8 +482,7 @@ class DefaultContextCompressorBranchCoverageTest {
         String summary = result.get(1).content();
         assertThat(summary).contains("[CONTEXT COMPACTION — REFERENCE ONLY]");
         assertThat(summary).contains("## Historical Task Snapshot");
-        assertThat(summary).contains("## Completed Actions");
-        assertThat(summary).contains("## Last Dropped Turns");
+        assertThat(summary).contains("...[fallback summary truncated]");
         assertThat(summary).contains("--- END OF CONTEXT SUMMARY");
     }
 }

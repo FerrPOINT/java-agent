@@ -46,6 +46,13 @@ class SessionLineageServiceTest {
             org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
             return cb.doInTransaction(null);
         });
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtAsc(any(UUID.class)))
+            .thenAnswer(inv -> {
+                List<MessageEntity> rows = messageRepository.findBySessionIdOrderByCreatedAtAsc(inv.getArgument(0));
+                return rows == null ? null : rows.stream()
+                    .filter(row -> !Boolean.FALSE.equals(row.getActive()))
+                    .toList();
+            });
         service = new SessionLineageService(sessionRepository, messageRepository, messageMapper, transactionTemplate);
     }
 
@@ -285,6 +292,30 @@ class SessionLineageServiceTest {
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).content()).isEqualTo("Child only");
+    }
+
+    @Test
+    void loadMessagesWithAncestors_doesNotReplayArchivedParentRows() {
+        UUID parentId = UUID.randomUUID();
+        UUID childId = UUID.randomUUID();
+        SessionEntity parent = newSessionEntity(parentId, null);
+        SessionEntity child = newSessionEntity(childId, parentId);
+        when(sessionRepository.findById(childId)).thenReturn(Optional.of(child));
+        when(sessionRepository.findById(parentId)).thenReturn(Optional.of(parent));
+
+        MessageEntity archived = newMessageEntity(parentId, "user", "pre-compression raw history", 0);
+        archived.setActive(false);
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtAsc(parentId)).thenReturn(List.of());
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(parentId)).thenReturn(List.of(archived));
+
+        MessageEntity handoff = newMessageEntity(childId, "system", "[CONTEXT COMPACTION — REFERENCE ONLY]\nEarlier conversation (summarized):\nkept summary", 0);
+        handoff.setActive(true);
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtAsc(childId)).thenReturn(List.of(handoff));
+
+        List<Message> result = service.loadMessagesWithAncestors(childId);
+
+        assertThat(result).extracting(Message::content)
+            .containsExactly("[CONTEXT COMPACTION — REFERENCE ONLY]\nEarlier conversation (summarized):\nkept summary");
     }
 
     // ── Helpers ──

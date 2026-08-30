@@ -233,16 +233,32 @@ public class DefaultContextEngine implements ContextEngine {
      Instant lastCompressed = lastCompressedAt.get(session.id());
      if (lastCompressed == null || Duration.between(lastCompressed, Instant.now()).getSeconds() >= COMPRESSION_COOLDOWN_SECONDS) {
          if (agentMetrics != null) agentMetrics.incrementCompressionCalls();
+         List<Message> beforeCompression = new ArrayList<>(trimmed);
          trimmed = contextCompressor.compress(trimmed, contextProps.getTargetTokens() * charsPerToken());
          lastCompressedAt.put(session.id(), Instant.now());
          compressionCount.incrementAndGet();
          // Session rotation: create child session or fall back to logCompressionBoundary
          if (contextCompressor instanceof DefaultContextCompressor dcc) {
-             var rotationResult = dcc.rotateSession(String.valueOf(session.id()));
+             Optional<DefaultContextCompressor.SessionRotationResult> rotationResult;
+             boolean rotationFailed = false;
+             try {
+                 rotationResult = dcc.rotateSession(String.valueOf(session.id()), trimmed);
+             } catch (RuntimeException e) {
+                 log.warn("Session rotation failed for {}; retaining the parent transcript", session.id(), e);
+                 rotationResult = Optional.empty();
+                 rotationFailed = true;
+             }
+             if (rotationFailed) {
+                 // Hermes restores the pre-compression in-memory transcript when
+                 // atomic child publication fails; the parent remains the durable tip.
+                 trimmed = beforeCompression;
+                 lastCompressedAt.remove(session.id());
+                 compressionCount.decrementAndGet();
+                 return trimmed;
+             }
              if (rotationResult.isPresent()) {
                  UUID newId = rotationResult.get().newSessionId();
-                 rotatedSessionIds.put(session.id(), newId);
-                if (agentMetrics != null) agentMetrics.incrementSessionRotations();
+                 if (agentMetrics != null) agentMetrics.incrementSessionRotations();
                 // Perf fix (2026-08-28): the compression cooldown is keyed by
                 // session id, but rotation just MINTED a new id — without
                 // carrying lastCompressedAt over, the 10-minute cooldown never
@@ -255,11 +271,9 @@ public class DefaultContextEngine implements ContextEngine {
                 }
                  log.info("Session rotated: old={}, new={}, title='{}'",
                          session.id(), newId, rotationResult.get().newTitle());
-                 // P2 (Hermes conversation_loop.py:2740): the compacted transcript
-                 // (summary + protected tail) becomes the child session's rows, so
-                 // the next turn loads the post-compaction state instead of the
-                 // deactivated ancestor history.
-                 persistRotatedTranscript(newId, trimmed);
+                 // Rotation is published atomically with the child transcript.
+                 // A returned child id is therefore always safe to adopt.
+                 rotatedSessionIds.put(session.id(), newId);
              } else {
                  // Fall back to legacy compression boundary logging
                  dcc.logCompressionBoundary(String.valueOf(session.id()), ts -> {
@@ -291,52 +305,6 @@ public class DefaultContextEngine implements ContextEngine {
  return trimmed;
  }
 
- /**
-  * P2 (Hermes conversation_loop.py:2740): persist the compacted transcript
-  * (compaction summary + protected tail) as the rotated child session's rows.
-  * The next turn then loads the post-compaction state; ancestor rows were
-  * deactivated by the rotation and never re-enter the model context.
-  */
- private void persistRotatedTranscript(UUID childSessionId, List<Message> compacted) {
-     if (messageRepository == null || compacted == null || compacted.isEmpty()) {
-         return;
-     }
-     try {
-         Instant now = Instant.now();
-         int order = 0;
-         for (Message m : compacted) {
-             // Hermes parity: SYSTEM/DEVELOPER messages are per-turn volatile
-             // prompt artifacts — never persisted into the rotated child
-             // transcript. Persisting them put a full second system prompt row
-             // at the head of every compressed session (seen live 2026-08-27).
-             if (m.role() == Role.SYSTEM || m.role() == Role.DEVELOPER) {
-                 continue;
-             }
-             MessageEntity e = new MessageEntity();
-             e.setSessionId(childSessionId);
-             e.setRole(m.role() != null ? m.role().name().toLowerCase() : "user");
-             e.setContent(m.content() != null ? m.content() : "");
-             if (m.toolCalls() != null && !m.toolCalls().isEmpty()) {
-                 var first = m.toolCalls().get(0);
-                 e.setToolCallId(first.id());
-                 e.setToolCallName(first.name());
-                 e.setToolCallArguments(first.arguments());
-                 e.setToolCallsJson(ToolCallPersistenceCodec.serialize(m.toolCalls()));
-             }
-             if (m.role() == Role.TOOL && m.toolCallId() != null) {
-                 e.setToolCallId(m.toolCallId());
-             }
-             e.setTurnIndex(m.turnIndex() > 0 ? m.turnIndex() : order);
-             e.setActive(true);
-             e.setCompacted(false);
-             e.setCreatedAt(now.plusNanos(order++)); // stable ascending order
-             messageRepository.save(e);
-         }
-         log.info("Rotated transcript persisted: {} rows into child session {}", compacted.size(), childSessionId);
-     } catch (RuntimeException e) {
-         log.warn("Failed to persist rotated transcript into child session {}", childSessionId, e);
-     }
- }
 
  @Override
  public boolean shouldCompressPreflight(List<Message> messages) {
@@ -588,14 +556,12 @@ public class DefaultContextEngine implements ContextEngine {
          if (sessionLineageService != null) {
              List<Message> lineageMessages = sessionLineageService.loadMessagesWithAncestors(session.id());
              if (lineageMessages != null && !lineageMessages.isEmpty()) {
-                 // Hermes parity: persisted SYSTEM/DEVELOPER rows are regenerated
-                 // fresh each turn by the prompt builder — they must never re-enter
-                 // history. Legacy rotated transcripts (and sync-path turns) stored
-                 // them as rows; replaying them put a second system prompt (or a
-                 // USER-mapped copy on the fallback path) mid-conversation.
+                 // Only the dedicated compaction carrier survives persistence. All
+                 // ordinary system/developer prompts are rebuilt for every turn.
                  List<Message> active = new ArrayList<>(lineageMessages.size());
                  for (Message m : lineageMessages) {
-                     if (m.role() != Role.SYSTEM && m.role() != Role.DEVELOPER) {
+                     if ((m.role() != Role.SYSTEM && m.role() != Role.DEVELOPER)
+                         || DefaultContextCompressor.isCompactionCarrier(m)) {
                          active.add(m);
                      }
                  }
@@ -651,7 +617,18 @@ public class DefaultContextEngine implements ContextEngine {
                  // following TOOL result "orphaned" → dropped → strict
                  // providers 400 → CONTEXT_OVERFLOW misclassification.
                  case "assistant" -> {
-                     if (e.getToolCallId() != null || e.getToolCallName() != null) {
+                     List<com.azhukov.agent.core.model.ToolCall> calls =
+                         com.azhukov.agent.persistence.mapper.ToolCallPersistenceCodec
+                             .deserialize(e.getToolCallsJson());
+                     if (!calls.isEmpty()) {
+                         yield Message.assistantWithToolCalls(content, calls, turnIdx);
+                     }
+                     // Pre-V35 rows carry only one scalar call. Do not use those
+                     // fields when a malformed batch exists: it would recreate
+                     // the first call and orphan the rest of the saved results.
+                     if (!com.azhukov.agent.persistence.mapper.ToolCallPersistenceCodec
+                         .hasSerializedBatch(e.getToolCallsJson())
+                         && (e.getToolCallId() != null || e.getToolCallName() != null)) {
                          yield Message.assistantWithToolCalls(content,
                              List.of(new com.azhukov.agent.core.model.ToolCall(
                                  e.getToolCallId(), e.getToolCallName(), e.getToolCallArguments())),

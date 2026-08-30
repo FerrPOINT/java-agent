@@ -22,6 +22,8 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.prompt.PromptBuilder;
+import com.azhukov.agent.core.security.ApprovalQueue;
+import com.azhukov.agent.core.security.ToolGuardrails;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
@@ -113,7 +115,8 @@ class AgentStreamingServiceTest {
 
         // ToolRegistry returns definitions for any toolset set
         when(toolRegistry.getDefinitions(any(Set.class)))
-            .thenReturn(List.of(new ToolDefinition("weather", "Get weather", Map.of())));
+            .thenAnswer(inv -> List.of(new ToolDefinition("weather", "Get weather", Map.of()),
+                new ToolDefinition("terminal", "Run a command", Map.of())));
 
         // SessionRepository returns a session entity for existing sessions
         SessionEntity sessionEntity = new SessionEntity();
@@ -254,6 +257,32 @@ class AgentStreamingServiceTest {
         assertThat(hasToolResult).isTrue();
         assertThat(hasDone).isTrue();
         assertThat(emitter.completed.get()).isTrue();
+    }
+
+    @Test
+    void streamTurnWaitsForApprovalBeforeExecutingProtectedTool() throws Exception {
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        ToolCall toolCall = new ToolCall("call-protected", "terminal", "{\"command\":\"pwd\"}");
+        ApprovalQueue approvalQueue = mock(ApprovalQueue.class);
+        ToolGuardrails guardrails = mock(ToolGuardrails.class);
+        when(guardrails.requiresApproval(toolCall)).thenReturn(true);
+        when(guardrails.requestApproval(eq(SESSION_ID), eq(toolCall))).thenReturn(null);
+        streamingService.setToolApproval(approvalQueue, guardrails);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            handler.onToolCalls(List.of(toolCall));
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        verify(toolExecutionService, org.mockito.Mockito.never()).execute(
+            eq("terminal"), eq("call-protected"), any(String.class), any(), any(Session.class), any());
+        assertThat(emitter.events.stream().anyMatch(e -> "tool_result".equals(e.name))).isTrue();
     }
 
     @Test

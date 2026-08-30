@@ -87,6 +87,11 @@ public class WriteFileTool implements ToolHandler {
     }
 
     private boolean isPathAllowed(Path path) {
+        // Denylists are invariant safety boundaries and must apply even when
+        // configurable root restrictions are disabled.
+        if (!fileSafety.isWriteAllowed(path)) {
+            return false;
+        }
         if (!properties.getSecurity().isFileSafetyEnabled()) {
             return true;
         }

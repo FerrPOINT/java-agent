@@ -79,6 +79,28 @@ class MessagePersistenceServiceTest {
     }
 
     @Test
+    void persistTurn_persistsMultiToolAssistantBatchAsOneRow() {
+        List<ToolCall> calls = List.of(
+            new ToolCall("call-1", "skills_list", "{}"),
+            new ToolCall("call-2", "memory", "{\"target\":\"memory\"}")
+        );
+        TurnResult result = new TurnResult(List.of(
+            Message.assistantWithToolCalls("checking", calls, 1),
+            Message.toolResult("call-1", "skills", 1),
+            Message.toolResult("call-2", "memory", 1)
+        ), true, null);
+
+        service.persistTurn(SESSION, "inspect", result);
+
+        ArgumentCaptor<MessageEntity> captor = ArgumentCaptor.forClass(MessageEntity.class);
+        verify(repository, times(4)).save(captor.capture());
+        MessageEntity assistant = captor.getAllValues().get(1);
+        assertThat(assistant.getRole()).isEqualTo("assistant");
+        assertThat(assistant.getToolCallId()).isEqualTo("call-1");
+        assertThat(assistant.getToolCallsJson()).contains("call-1", "call-2");
+    }
+
+    @Test
     void persistTurn_withNullTurnResult_savesOnlyUserMessage() {
         service.persistTurn(SESSION, "test", null);
 

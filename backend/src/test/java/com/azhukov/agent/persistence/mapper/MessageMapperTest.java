@@ -86,6 +86,22 @@ class MessageMapperTest {
     }
 
     @Test
+    void toDomainSkipsScalarFallbackForMalformedSerializedBatch() {
+        MessageEntity entity = new MessageEntity();
+        entity.setRole("assistant");
+        entity.setContent("damaged");
+        entity.setToolCallId("call-1");
+        entity.setToolCallName("read_file");
+        entity.setToolCallArguments("{}");
+        entity.setToolCallsJson("not-json");
+
+        Message message = mapper.toDomain(entity);
+
+        assertThat(message.toolCall()).isNull();
+        assertThat(message.toolCalls()).isNull();
+    }
+
+    @Test
     void toEntityMapsToolResultToolCallId() {
         Message message = Message.toolResult("call-1", "42", 2);
 

@@ -135,6 +135,7 @@ class AgentControllerBotToLlmIntegrationTest extends PostgresTestContainer {
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.request().asyncStarted())
             .andReturn();
 
+        asyncResult.getAsyncResult(5_000);
         mockMvc.perform(asyncDispatch(asyncResult))
             .andExpect(status().isOk());
 

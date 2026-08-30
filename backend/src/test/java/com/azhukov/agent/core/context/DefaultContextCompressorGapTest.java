@@ -402,8 +402,8 @@ class DefaultContextCompressorGapTest {
             int prefixEnd = summaryContent.indexOf("Earlier conversation (summarized):");
             assertThat(prefixEnd).isGreaterThan(0);
             String summaryBody = summaryContent.substring(prefixEnd);
-            // Fallback returns text up to maxTokens (500) chars
-            assertThat(summaryBody.length()).isLessThanOrEqualTo(560); // 500 + markers
+            // Fallback respects the 500-token (2,000-character) cap.
+            assertThat(summaryBody.length()).isLessThanOrEqualTo(2_060);
         }
 
         @Test

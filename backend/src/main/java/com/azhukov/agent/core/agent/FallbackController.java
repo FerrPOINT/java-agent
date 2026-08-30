@@ -138,7 +138,7 @@ public class FallbackController {
      * Check if message (lowercased) contains a substring.
      */
     static boolean lowerMessageContains(Exception e, String substring) {
-        if (e == null || e.getMessage() == null) return false;
+        if (e == null || e.getMessage() == null || substring == null) return false;
         return e.getMessage().toLowerCase(Locale.ROOT).contains(substring.toLowerCase(Locale.ROOT));
     }
 

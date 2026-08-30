@@ -21,7 +21,7 @@ class WriteFileVerificationTest {
     private WriteFileTool newTool() {
         AgentProperties props = new AgentProperties();
         props.getSecurity().setFileSafetyEnabled(false);
-        return new WriteFileTool(props);
+        return new WriteFileTool(props, new com.azhukov.agent.core.security.DefaultFileSafety(props));
     }
 
     private final Session session = Session.create("u", "p", "m");
@@ -87,7 +87,7 @@ class WriteFileVerificationTest {
     void verificationEchoDoesNotAppearOnFailure() {
         AgentProperties props = new AgentProperties();
         props.getSecurity().setFileSafetyEnabled(false);
-        WriteFileTool t = new WriteFileTool(props);
+        WriteFileTool t = new WriteFileTool(props, new com.azhukov.agent.core.security.DefaultFileSafety(props));
         ToolResult r = t.execute(
             "{\"path\":\"/root/.ssh/key\",\"content\":\"x\"}",
             null, session);

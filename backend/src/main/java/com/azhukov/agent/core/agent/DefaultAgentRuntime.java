@@ -655,9 +655,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     && truncatedToolCallRetries >= ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES) {
                 log.warn("Truncated tool call after {} retries — refusing to execute incomplete tool arguments",
                     truncatedToolCallRetries);
-                // Close the interrupted tool sequence with recovery stubs
+                // Close the interrupted sequence as one assistant batch so
+                // every recovery tool result still has its owning call on replay.
+                turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex));
                 for (ToolCall tc : response.toolCalls()) {
-                    turnMessages.add(Message.assistantWithToolCalls(response.content(), List.of(tc), turnIndex));
                     turnMessages.add(Message.toolResult(tc.pairingId(),
                         "[Truncated tool call — arguments were incomplete after "
                         + truncatedToolCallRetries + " retries. The tool was not executed.]",

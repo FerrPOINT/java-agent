@@ -3,6 +3,7 @@ package com.azhukov.agent.core.security;
 import com.azhukov.agent.config.AgentProperties;
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
@@ -146,6 +147,15 @@ public class DefaultFileSafety implements FileSafety {
  return false;
  }
 
+ private Path resolveExistingPath(Path path) {
+   Path normalized = path.toAbsolutePath().normalize();
+   try {
+   return Files.exists(normalized) ? normalized.toRealPath() : normalized;
+   } catch (java.io.IOException e) {
+   return normalized;
+   }
+ }
+
  private boolean matchesDenylist(Path normalized) {
  if (normalized == null) return false;
  String pathStr = normalized.toString();
@@ -198,14 +208,13 @@ public class DefaultFileSafety implements FileSafety {
  if (path == null) {
  return false;
  }
+ Path resolved = resolveExistingPath(path);
+ if (matchesDenylist(resolved)) {
+ return false;
+ }
  if (!properties.getSecurity().isFileSafetyEnabled()) {
  return true;
  }
- // Denylist check first — even inside allowed paths
- if (matchesDenylist(path.toAbsolutePath().normalize())) {
- return false;
- }
- // Then the general allowed-paths policy
  return isPathAllowed(path);
  }
 
@@ -241,7 +250,7 @@ public class DefaultFileSafety implements FileSafety {
  return false;
  }
 
- Path normalized = path.toAbsolutePath().normalize();
+ Path normalized = resolveExistingPath(path);
 
  // Denylist check — even inside allowed paths
  if (matchesDenylist(normalized)) {

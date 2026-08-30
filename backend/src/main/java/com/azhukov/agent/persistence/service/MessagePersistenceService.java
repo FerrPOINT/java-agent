@@ -3,8 +3,10 @@ package com.azhukov.agent.persistence.service;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.persistence.entity.MessageEntity;
+import com.azhukov.agent.persistence.mapper.ToolCallPersistenceCodec;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
@@ -52,18 +54,12 @@ public class MessagePersistenceService {
         if (turnResult != null && turnResult.messages() != null) {
             for (Message msg : turnResult.messages()) {
                 if (msg.role() == Role.ASSISTANT) {
-                    // Save assistant text (skip null-content tool-call-only messages)
-                    if (msg.content() != null && !msg.content().isBlank()) {
-                        saveMessage(session.id(), Role.ASSISTANT.name().toLowerCase(), msg.content(),
-                            null, null, null, msg.turnIndex() != null ? msg.turnIndex() : 0);
-                    }
-                    // Save tool calls if present
-                    if (msg.toolCalls() != null) {
-                        for (var tc : msg.toolCalls()) {
-                            saveMessage(session.id(), Role.ASSISTANT.name().toLowerCase(), msg.content() != null ? msg.content() : "",
-                                tc.id(), tc.name(), tc.arguments(),
-                                msg.turnIndex() != null ? msg.turnIndex() : 0);
-                        }
+                    List<ToolCall> calls = msg.toolCalls() != null && !msg.toolCalls().isEmpty()
+                        ? msg.toolCalls()
+                        : msg.toolCall() == null ? List.of() : List.of(msg.toolCall());
+                    if ((msg.content() != null && !msg.content().isBlank()) || !calls.isEmpty()) {
+                        saveAssistantMessage(session.id(), msg.content(), calls,
+                            msg.turnIndex() != null ? msg.turnIndex() : 0);
                     }
                 } else if (msg.role() == Role.TOOL) {
                     saveMessage(session.id(), Role.TOOL.name().toLowerCase(), msg.content(),
@@ -100,6 +96,32 @@ public class MessagePersistenceService {
         // Update session stats (message_count, last_active, preview) so
         // session_search browse mode shows meaningful data instead of zeros.
         updateSessionStats(sessionId, role, content);
+    }
+
+    /** Persist one assistant row per model response, including the entire tool-call batch. */
+    private void saveAssistantMessage(UUID sessionId, String content, List<ToolCall> calls, int turnIndex) {
+        if (!sessionRepository.existsById(sessionId)) {
+            log.debug("saveAssistantMessage skipped: session {} no longer exists", sessionId);
+            return;
+        }
+        MessageEntity entity = new MessageEntity();
+        entity.setSessionId(sessionId);
+        entity.setRole(Role.ASSISTANT.name().toLowerCase());
+        entity.setContent(content != null ? content : "");
+        entity.setTurnIndex(turnIndex);
+        entity.setCreatedAt(Instant.now());
+        entity.setActive(true);
+        entity.setCompacted(false);
+        if (calls != null && !calls.isEmpty()) {
+            ToolCall first = calls.get(0);
+            entity.setToolCallId(first.pairingId());
+            entity.setToolCallName(first.name());
+            entity.setToolCallArguments(first.arguments());
+            entity.setToolResponseItemId(first.responseItemId());
+            entity.setToolCallsJson(ToolCallPersistenceCodec.serialize(calls));
+        }
+        messageRepository.save(entity);
+        updateSessionStats(sessionId, entity.getRole(), entity.getContent());
     }
 
     private void updateSessionStats(UUID sessionId, String role, String content) {

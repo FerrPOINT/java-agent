@@ -175,10 +175,10 @@ class ChatCompletionsControllerTest {
             .andExpect(content().contentTypeCompatibleWith("text/event-stream"));
 
         String response = result.getResponse().getContentAsString();
-        assertThat(response).contains("event:message");
+        assertThat(response).doesNotContain("event:message");
 
         List<String> dataLines = response.lines()
-            .filter(line -> line.startsWith("data:"))
+            .filter(line -> line.startsWith("data:") && !"data:[DONE]".equals(line))
             .toList();
         assertThat(dataLines).hasSizeGreaterThanOrEqualTo(4);
 

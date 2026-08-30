@@ -35,6 +35,8 @@ import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.tool.ToolCallValidator;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.core.security.ApprovalQueue;
+import com.azhukov.agent.core.security.ToolGuardrails;
 import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.budget.IterationBudget;
@@ -149,6 +151,21 @@ public class AgentStreamingService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setMemoryNudgeManager(MemoryNudgeManager memoryNudgeManager) {
         this.memoryNudgeManager = memoryNudgeManager;
+    }
+
+    private ApprovalQueue approvalQueue;
+    private ToolGuardrails toolGuardrails;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setToolApproval(ApprovalQueue approvalQueue, ToolGuardrails toolGuardrails) {
+        this.approvalQueue = approvalQueue;
+        this.toolGuardrails = toolGuardrails;
+    }
+
+    private boolean requiresApproval(ToolCall call) {
+        return approvalQueue != null
+            && toolGuardrails != null
+            && toolGuardrails.requiresApproval(call);
     }
 
     // ── Shared turn-execution logic (c2: extracted with DefaultAgentRuntime) ──
@@ -974,10 +991,11 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                         truncatedToolCallRetries, session.id());
                     eventHelper().send(emitter, new StreamEvent("token", "\n\n⚠️ Tool call remained truncated after "
                         + truncatedToolCallRetries + " retries — the action was not executed.", null, null), streamCtx);
-                    // Close the interrupted tool sequence with a recovery stub
+                    // Close the interrupted sequence as one assistant batch so every
+                    // recovery tool result retains its owner after persistence/replay.
+                    turnMessages.add(Message.assistantWithToolCalls(contentBuilder.toString(),
+                        List.copyOf(collectedToolCalls), turnIndex));
                     for (ToolCall tc : collectedToolCalls) {
-                        turnMessages.add(Message.assistantWithToolCalls(contentBuilder.toString(),
-                            List.of(tc), turnIndex));
                         turnMessages.add(Message.toolResult(tc.pairingId(),
                             "[Truncated tool call — arguments were incomplete after "
                             + truncatedToolCallRetries + " retries. The tool was not executed.]",
@@ -1361,6 +1379,23 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 eventHelper().send(emitter, new StreamEvent("tool_start", null,
                     java.util.List.of(new com.azhukov.agent.core.model.ToolCall(call.id(), call.name(), call.arguments())),
                     null, null, null, null, call.name(), null), streamCtx);
+
+                if (requiresApproval(call)) {
+                    var pending = toolGuardrails.requestApproval(session.id(), call);
+                    boolean approved = pending != null
+                        && approvalQueue.awaitDecision(session.id(), java.time.Duration.ofMinutes(5).toMillis())
+                        && approvalQueue.isApproved(session.id());
+                    if (!approved) {
+                        ToolResult denied = ToolResult.fail("Tool execution blocked: approval was denied, timed out, or could not be requested.");
+                        String resultPreview = eventHelper().formatResultPreview(denied);
+                        eventHelper().send(emitter, new StreamEvent("tool_result", null, null, null,
+                            null, null, null, call.name(), resultPreview), streamCtx);
+                        turnMessages.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(denied), turnIndex));
+                        approvalQueue.clear(session.id());
+                        continue;
+                    }
+                    approvalQueue.clear(session.id());
+                }
 
                 long toolStart = System.currentTimeMillis();
                 ToolResult result = toolExecutionService.execute(

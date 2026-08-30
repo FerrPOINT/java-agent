@@ -79,6 +79,7 @@ public class DefaultToolGuardrails implements ToolGuardrails {
   final Map<String, Integer> sameToolFailureCounts = new ConcurrentHashMap<>();
   final Map<String, Integer> noProgressCounts = new ConcurrentHashMap<>();
   volatile boolean halted = false;
+  volatile boolean haltedByFailure = false;
   volatile boolean warned = false;
 
   void clear() {
@@ -91,6 +92,7 @@ public class DefaultToolGuardrails implements ToolGuardrails {
    sameToolFailureCounts.clear();
    noProgressCounts.clear();
    halted = false;
+   haltedByFailure = false;
    warned = false;
   }
  }
@@ -340,34 +342,37 @@ public class DefaultToolGuardrails implements ToolGuardrails {
 
  if (failures >= CONSECUTIVE_FAILURE_HALT_THRESHOLD) {
  state.halted = true;
+ state.haltedByFailure = true;
  }
  if (state.sameToolFailureCounts.get(toolName) >= SAME_TOOL_FAILURE_HALT_THRESHOLD) {
  state.halted = true;
+ state.haltedByFailure = true;
  }
  } else {
  state.consecutiveFailures.put(toolName, 0);
  // On success, clear failure tracking (mirrors the original project's after_call)
  state.exactFailureCounts.remove(signature);
  state.sameToolFailureCounts.remove(toolName);
+ if (state.haltedByFailure) {
+ state.halted = false;
+ state.haltedByFailure = false;
+ }
+
+ // A successful call resets failure streaks, but it must not reopen a
+ // session halted for an execution loop. Only reset()/new session does that.
 
  // Track no-progress for idempotent tools (same args succeeded again)
  if (isIdempotent(toolName)) {
- // Each successful identical call increments no-progress counter.
- // If args changed (prevArgs != current), the identicalArgsCount resets
- // above, so we use that as a proxy for "same call repeated".
- int identicalCount = state.identicalArgsCount.getOrDefault(toolName, 1);
- if (identicalCount > 1) {
+ // Hermes tracks repeat count from the first observed result for this exact
+ // signature; without result payload here, each successful replay is treated
+ // as the same result.
  state.noProgressCounts.merge(signature, 1, Integer::sum);
- } else {
- // Different args — reset no-progress
- state.noProgressCounts.remove(signature);
- }
- }
  }
 
  // Warn threshold: any tool called 10+ times total
  if (!state.warned && calls >= TOTAL_CALL_WARN_THRESHOLD) {
  state.warned = true;
+ }
  }
  }
 

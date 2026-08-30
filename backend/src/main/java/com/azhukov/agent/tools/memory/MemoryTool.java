@@ -262,7 +262,9 @@ public class MemoryTool implements ToolHandler {
         }
         String err = "'" + action + "' needs old_text — a short unique substring of the entry "
             + "to " + action + ". None was provided. Reissue the " + action + " with old_text "
-            + "set to part of one of the current_entries below.\n\ncurrent_entries:\n" + entries
+            + "set to part of one of the current_entries below.\n\n"
+            + "old_text is required for " + action + " action.\n"
+            + "current_entries:\n" + entries
             + "\nusage: " + String.format("%,d", current) + "/" + String.format("%,d", limit);
         return ToolResult.fail(err);
     }

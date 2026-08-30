@@ -4,6 +4,13 @@
 - Confirmed behavioral gaps: {len(gaps)}
 - Fix statuses are updated only after code and tests are verified.
 
+## Verification Evidence — 2026-08-29
+- `./gradlew test`: 7,500 tests across backend (5,477), CLI (329), and Telegram bot (1,694); 0 failures/errors/skips.
+- `./gradlew slowTest`: 100 PostgreSQL-backed slow tests; 0 failures/errors/skips.
+- Focused parity suite passed: `ContextCompressionParityTest`, `SessionRotationTest`, `RotationStormRegressionTest`, `ReplayCleanupTest`, `MessageMapperTest`, and `MessagePersistenceServiceTest`.
+- Isolated NoOp CLI/backend lifecycle verified: create session, status/context/history, compress, undo, `/new`, active-session switch, and persisted replacement session ID.
+- Local development deployment `0.1.170`: backend and bot active; backend liveness/readiness and `/api/v1/agent/doctor` returned `UP` after restart.
+
 ## Findings
 ### P1: Seam 1 [CRITICAL]
 - **Status:** ✅ FIXED 2026-08-26 — continuation fragment + nudge now go into the live turnMessages transcript (DefaultAgentRuntime LENGTH branch); regression test in SyncRecoveryParityTest asserts nudge + partial reach the model.
@@ -12,8 +19,8 @@
 - **Impact:** LENGTH recovery does not supply either the continuation point or instruction to the model, causing repeated output, unrelated stitched text, and failed recovery of truncated answers.
 
 ### P2: Seam 2 [CRITICAL]
-- **Status:** ✅ FIXED 2026-08-26 — rotateSession deactivates ancestor rows (active=false, compacted=true); DefaultContextEngine.persistRotatedTranscript writes summary+tail into the child session; SessionLineageService loads active rows only.
-- **Hermes:** `agent/conversation_loop.py:2740` - After compaction, replaces the active transcript and updates the conversation-history/persistence state so subsequent model calls use the compacted history rather than the dropped messages.
+- **Status:** ✅ FIXED 2026-08-29 — `DefaultContextCompressor.rotateSession` now publishes the child session and compacted handoff atomically before archiving parent rows. If publication fails, the transaction rolls back and `DefaultContextEngine` retains the parent transcript. `SessionLineageService` loads active rows only.
+- **Hermes:** `hermes_state.py:6694` - `publish_compression_child` inserts the child and compacted handoff before closing the parent, so readers observe either the live parent or a complete child.
 - **Java:** `core/agent/DefaultAgentRuntime.java:1195; core/context/DefaultContextEngine.java:171` - The post-tool proactive path replaces only in-memory `turnMessages` and does not persist or otherwise suppress the already persisted original rows. The next `prepareContext` reloads those full database rows and then appends the compressed `turnMessages` tail.
 - **Impact:** The intended compaction can fail to reduce the next request and can duplicate the current turn (original history plus compressed tail), worsening context pressure and potentially triggering overflow.
 

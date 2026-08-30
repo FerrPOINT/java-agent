@@ -252,8 +252,7 @@ class FileSafetyValidatorTest {
     void checkWrite_sensitiveNameCheckedAfterExtension() {
         // .env has both a blocked extension AND a sensitive name
         Path file = tempDir.resolve(".env");
-        // Extension check comes first
-        assertThat(validator.checkWrite(file)).contains("extension");
+        assertThat(validator.checkWrite(file)).contains("sensitive file");
     }
 
     @Test

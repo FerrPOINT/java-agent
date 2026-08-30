@@ -83,9 +83,16 @@ public class CliReplRunner implements CommandLineRunner {
             }
         }
 
-        // C4: Save session on exit
-        final String finalSessionId = sessionId;
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> saveSession(finalSessionId)));
+        CliState cliState = commandRegistry.getCliState();
+        if (cliState != null) {
+            cliState.setCurrentSessionId(sessionId);
+        }
+
+        // Save whichever session is active at shutdown; /new and /resume may
+        // change it after the REPL starts.
+        final String initialSessionId = sessionId;
+        Runtime.getRuntime().addShutdownHook(new Thread(() ->
+            saveSession(cliState != null ? cliState.getCurrentSessionId() : initialSessionId)));
 
         boolean streaming = true;
 
@@ -181,9 +188,12 @@ public class CliReplRunner implements CommandLineRunner {
                         }
                     }
                     try {
+                        String activeSessionId = cliState != null && cliState.getCurrentSessionId() != null
+                            ? cliState.getCurrentSessionId()
+                            : sessionId;
                         String result;
                         try {
-                            result = commandRegistry.execute(line, backendClient, sessionId);
+                            result = commandRegistry.execute(line, backendClient, activeSessionId);
                         } catch (ExitCliException exitSignal) {
                             // m27: graceful exit — C4 session save + cleanup below the loop still run
                             System.out.println(exitSignal.getMessage());
@@ -207,23 +217,24 @@ public class CliReplRunner implements CommandLineRunner {
                 }
 
                 // P1-4: Record last user message for /retry
-                CliState cliState = commandRegistry.getCliState();
                 if (cliState != null) {
                     cliState.setLastUserMessage(line);
                 }
 
-                // P1-5: Record session in local store
+                String activeSessionId = cliState != null && cliState.getCurrentSessionId() != null
+                    ? cliState.getCurrentSessionId()
+                    : sessionId;
                 SessionStore sessionStore = commandRegistry.getSessionStore();
                 if (sessionStore != null) {
-                    sessionStore.recordSession(sessionId, null);
-                    sessionStore.incrementMessages(sessionId);
+                    sessionStore.recordSession(activeSessionId, null);
+                    sessionStore.incrementMessages(activeSessionId);
                 }
 
                 if (streaming) {
                     // Plain text — send as chat message via streaming SSE (pass cliState)
-                    handleChatStream(line, sessionId, cliState);
+                    handleChatStream(line, activeSessionId, cliState);
                 } else {
-                    handleChatNonStream(line, sessionId, cliState);
+                    handleChatNonStream(line, activeSessionId, cliState);
                 }
             }
         }

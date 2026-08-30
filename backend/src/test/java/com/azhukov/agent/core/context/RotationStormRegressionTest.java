@@ -85,7 +85,7 @@ class RotationStormRegressionTest {
         org.mockito.Mockito.doReturn((Object) null).when(cc).compress(any(), any(Integer.class));
         org.mockito.Mockito.doReturn(java.util.Optional.of(
             new DefaultContextCompressor.SessionRotationResult(UUID.randomUUID(), "child")))
-            .when(cc).rotateSession(any());
+            .when(cc).rotateSession(any(), any());
         com.azhukov.agent.persistence.entity.MessageEntity bulkyRow =
             new com.azhukov.agent.persistence.entity.MessageEntity();
         bulkyRow.setId(UUID.randomUUID());

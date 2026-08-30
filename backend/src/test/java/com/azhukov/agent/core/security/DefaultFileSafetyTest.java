@@ -380,7 +380,7 @@ class DefaultFileSafetyTest {
     // ─── Symlink escape tests (GAP: uses normalize() not toRealPath()) ───
 
     @Test
-    void symlinkEscape_currentlyNotResolved_usesNormalizeNotRealPath(@TempDir Path tempDir) throws Exception {
+    void symlinkEscape_isResolvedAndBlocked(@TempDir Path tempDir) throws Exception {
         // Only run if symlinks are supported
         org.junit.jupiter.api.Assumptions.assumeTrue(
                 !System.getProperty("os.name").toLowerCase().contains("win"),
@@ -403,11 +403,10 @@ class DefaultFileSafetyTest {
         properties.getSecurity().setAllowedPaths(List.of(allowedBase.toString()));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        // normalize() does NOT resolve symlinks, so the path still appears under allowed base
-        // GAP: should use toRealPath() to detect symlink escape, but currently uses normalize()
         assertThat(safety.isPathAllowed(symlink))
-                .as("Symlink inside allowed base pointing outside is currently ALLOWED — uses normalize() not toRealPath()")
-                .isTrue();
+                .as("Symlink inside an allowed base must resolve before the root check")
+                .isFalse();
+        assertThat(safety.isWriteAllowed(symlink)).isFalse();
     }
 
     // ─── Null and edge case tests ───
@@ -556,8 +555,9 @@ class DefaultFileSafetyTest {
         properties.getSecurity().setFileSafetyEnabled(true);
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        // Empty list → returns true for all non-denylisted paths
-        assertThat(safety.isPathAllowed(Paths.get("/etc/hostname"))).isTrue();
+        // Empty allowed roots permit ordinary paths, but never sensitive system
+        // locations; those remain denied by the shared write denylist.
+        assertThat(safety.isPathAllowed(Paths.get("/etc/hostname"))).isFalse();
     }
 
     // ─── P1-10: Cross-profile write guard tests ───
