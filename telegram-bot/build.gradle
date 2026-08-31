@@ -105,6 +105,29 @@ springBoot {
     buildInfo()
 }
 
+def ferrpointNoticeFiles = [
+    rootProject.file('LICENSE'),
+    rootProject.file('NOTICE'),
+    rootProject.file('THIRD_PARTY_NOTICES.md')
+]
+
+tasks.withType(Jar).configureEach {
+    ferrpointNoticeFiles.each { noticeFile ->
+        from(noticeFile) {
+            into 'META-INF'
+        }
+    }
+    manifest {
+        attributes(
+            'Implementation-Vendor': 'FerrPOINT',
+            'Implementation-Vendor-Id': 'FerrPOINT',
+            'License': 'LicenseRef-FerrPOINT-Proprietary',
+            'License-Name': 'FerrPOINT Proprietary Source-Available Evaluation License v1.0',
+            'License-File': 'META-INF/LICENSE'
+        )
+    }
+}
+
 // maxHeapSize prevents OOM/SIGKILL when real LLM calls buffer large payloads
 // inside the Gradle daemon JVM. For production-like runs prefer `java -jar`.
 tasks.named('bootRun') {

@@ -97,6 +97,12 @@ refactor(backend): split AgentController into 8 focused controllers
 docs: add CHANGELOG and CONTRIBUTING
 ```
 
+## License and Contribution Rights
+
+This project is proprietary source-available, not open source. A PR is accepted only if the contributor grants FerrPOINT an irrevocable, worldwide, perpetual, royalty-free, sublicensable, transferable right to use, reproduce, modify, distribute, relicense, commercialize, and sell the contribution as part of the software or related products and services.
+
+If you do not agree to this grant of rights, do not submit a PR, patch, documentation change, design, review suggestion, or other contribution.
+
 ## How to Add New Things
 
 ### New Tool
