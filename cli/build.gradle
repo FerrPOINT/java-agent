@@ -56,6 +56,29 @@ tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += ['-parameters']
 }
 
+def ferrpointNoticeFiles = [
+    rootProject.file('LICENSE'),
+    rootProject.file('NOTICE'),
+    rootProject.file('THIRD_PARTY_NOTICES.md')
+]
+
+tasks.withType(Jar).configureEach {
+    ferrpointNoticeFiles.each { noticeFile ->
+        from(noticeFile) {
+            into 'META-INF'
+        }
+    }
+    manifest {
+        attributes(
+            'Implementation-Vendor': 'FerrPOINT',
+            'Implementation-Vendor-Id': 'FerrPOINT',
+            'License': 'LicenseRef-FerrPOINT-Proprietary',
+            'License-Name': 'FerrPOINT Proprietary Source-Available Evaluation License v1.0',
+            'License-File': 'META-INF/LICENSE'
+        )
+    }
+}
+
 bootJar {
     manifest {
         attributes 'Start-Class': 'com.azhukov.agent.cli.CliApplication'

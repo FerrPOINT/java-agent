@@ -37,6 +37,7 @@ repositories {
 dependencies {
     // Spring Boot
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
@@ -91,6 +92,8 @@ dependencies {
     implementation 'org.jsoup:jsoup:1.18.3'
     implementation 'com.vladsch.flexmark:flexmark:0.64.8'
     implementation 'com.vladsch.flexmark:flexmark-html2md-converter:0.64.8'
+    implementation 'org.tomlj:tomlj:1.1.1'
+    implementation 'org.apache.pdfbox:pdfbox:3.0.8'
 
     // Commons utilities
     implementation 'com.cronutils:cron-utils:9.2.1'
@@ -203,6 +206,29 @@ tasks.withType(JavaCompile).configureEach {
 
 springBoot {
     buildInfo()
+}
+
+def ferrpointNoticeFiles = [
+    rootProject.file('LICENSE'),
+    rootProject.file('NOTICE'),
+    rootProject.file('THIRD_PARTY_NOTICES.md')
+]
+
+tasks.withType(Jar).configureEach {
+    ferrpointNoticeFiles.each { noticeFile ->
+        from(noticeFile) {
+            into 'META-INF'
+        }
+    }
+    manifest {
+        attributes(
+            'Implementation-Vendor': 'FerrPOINT',
+            'Implementation-Vendor-Id': 'FerrPOINT',
+            'License': 'LicenseRef-FerrPOINT-Proprietary',
+            'License-Name': 'FerrPOINT Proprietary Source-Available Evaluation License v1.0',
+            'License-File': 'META-INF/LICENSE'
+        )
+    }
 }
 
 // Allow JLine native terminal access without warning on Java 25.
