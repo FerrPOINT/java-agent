@@ -1,0 +1,32 @@
+# Skills hub: list, search, install nonexistent, bundles install/uninstall
+name: skills-hub-bundles
+steps:
+  - name: skills hub list (may fail if no hub repo)
+    path: /agent/skills-hub
+    assert: { status: 200 }
+
+  - name: skills hub search
+    path: /agent/skills-hub/search?q=deploy
+    assert: { status: 200 }
+
+  - name: install nonexistent skill fails gracefully
+    method: POST
+    path: /agent/skills-hub/install
+    body: { skill: "nonexistent-skill-12345" }
+    assert:
+      - { status: 200 }
+      - { path: ok, eq: false }
+
+  - name: bundles install nonexistent fails gracefully
+    method: POST
+    path: /agent/bundles/install
+    body: { bundleName: "nonexistent-bundle-12345" }
+    assert:
+      - { status: 200 }
+      - { path: ok, eq: false }
+
+  - name: bundles uninstall nonexistent is idempotent
+    method: POST
+    path: /agent/bundles/uninstall
+    body: { bundleName: "nonexistent-bundle-12345" }
+    assert: { status: 200 }

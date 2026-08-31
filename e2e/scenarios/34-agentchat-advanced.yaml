@@ -1,0 +1,22 @@
+# AgentChat advanced: per-session approvals, transcribe, debug-report, reasoning-levels
+name: agentchat-advanced
+steps:
+  - name: per-session approve with no pending
+    method: POST
+    path: /agent/approvals/00000000-0000-0000-0000-0000000000aa/approve
+    body: ""
+    assert:
+      - { status: 200 }
+
+  - name: per-session deny with no pending
+    method: POST
+    path: /agent/approvals/00000000-0000-0000-0000-0000000000bb/deny
+    body: ""
+    assert:
+      - { status: 200 }
+
+  - name: reasoning levels list
+    path: /agent/reasoning-levels
+    assert:
+      - { status: 200 }
+      - { path: "[0]", exists: true }

@@ -48,6 +48,7 @@ class FullApiE2ETest {
     private static UUID checkpointId;
     private static UUID kanbanItemId;
     private static UUID memoryEntryId;
+    private static UUID v2SessionId;
 
     // ── HTTP helpers ──
 
@@ -95,6 +96,16 @@ class FullApiE2ETest {
             .timeout(Duration.ofSeconds(60))
             .header("Content-Type", "application/json")
             .method("DELETE", HttpRequest.BodyPublishers.ofString(json))
+            .build();
+        return client.send(req, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> patch(String path, String json) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder()
+            .uri(URI.create(BASE_URL + path))
+            .timeout(Duration.ofSeconds(60))
+            .header("Content-Type", "application/json")
+            .method("PATCH", HttpRequest.BodyPublishers.ofString(json))
             .build();
         return client.send(req, HttpResponse.BodyHandlers.ofString());
     }
@@ -1202,6 +1213,372 @@ class FullApiE2ETest {
         UUID entryId = UUID.fromString(memories.get(0).get("id").asText());
         HttpResponse<String> resp = deleteWithRetry("/api/v1/agent/memory/e2e-delete-test/" + entryId);
         assertEquals(200, resp.statusCode());
+    }
+
+    // ── 34. V2 Session CRUD (SessionCrudController) ──
+
+    @Test @Order(310) @DisplayName("POST /api/v2/sessions — creates v2 session")
+    void v2CreateSession() throws Exception {
+        HttpResponse<String> resp = post("/api/v2/sessions",
+            "{\"userId\":\"e2e-v2-user\",\"title\":\"E2E V2 Session\"}");
+        assertEquals(201, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        assertNotNull(body.get("id"));
+        v2SessionId = UUID.fromString(body.get("id").asText());
+        assertEquals("E2E V2 Session", body.get("title").asText());
+    }
+
+    @Test @Order(311) @DisplayName("GET /api/v2/sessions/{sessionId} — returns session")
+    void v2GetSession() throws Exception {
+        Assumptions.assumeTrue(v2SessionId != null, "v2 session must be created first");
+        HttpResponse<String> resp = get("/api/v2/sessions/" + v2SessionId);
+        assertEquals(200, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        assertEquals(v2SessionId.toString(), body.get("id").asText());
+    }
+
+    @Test @Order(312) @DisplayName("PATCH /api/v2/sessions/{sessionId} — updates title")
+    void v2PatchSession() throws Exception {
+        Assumptions.assumeTrue(v2SessionId != null);
+        HttpResponse<String> resp = patch("/api/v2/sessions/" + v2SessionId,
+            "{\"title\":\"Updated V2 Title\"}");
+        assertEquals(200, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        assertEquals("Updated V2 Title", body.get("title").asText());
+    }
+
+    @Test @Order(313) @DisplayName("GET /api/v2/sessions/{sessionId}/messages — lists messages")
+    void v2GetMessages() throws Exception {
+        Assumptions.assumeTrue(v2SessionId != null);
+        HttpResponse<String> resp = get("/api/v2/sessions/" + v2SessionId + "/messages");
+        assertEquals(200, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        // Response format: {object: "list", data: [...], ...}
+        assertTrue(body.has("data") || body.has("messages") || body.isArray(),
+            "Expected 'data' or 'messages' field in response");
+    }
+
+    @Test @Order(314) @DisplayName("POST /api/v2/sessions/{sessionId}/chat — sync chat")
+    void v2SessionChat() throws Exception {
+        Assumptions.assumeTrue(v2SessionId != null);
+        HttpResponse<String> resp = postWithRetry("/api/v2/sessions/" + v2SessionId + "/chat",
+            "{\"message\":\"Say OK\"}");
+        assertTrue(resp.statusCode() == 200 || resp.statusCode() == 429,
+            "Expected 200 or 429, got " + resp.statusCode());
+    }
+
+    @Test @Order(315) @DisplayName("POST /api/v2/sessions/{sessionId}/chat/stream — SSE stream")
+    void v2SessionChatStream() throws Exception {
+        Assumptions.assumeTrue(v2SessionId != null);
+        HttpRequest req = HttpRequest.newBuilder()
+            .uri(URI.create(BASE_URL + "/api/v2/sessions/" + v2SessionId + "/chat/stream"))
+            .timeout(Duration.ofSeconds(120))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString("{\"message\":\"Say hi\"}"))
+            .build();
+        HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+        assertTrue(resp.statusCode() == 200 || resp.statusCode() == 429,
+            "Expected 200 or 429, got " + resp.statusCode());
+    }
+
+    @Test @Order(316) @DisplayName("DELETE /api/v2/sessions/{sessionId} — deletes session")
+    void v2DeleteSession() throws Exception {
+        Assumptions.assumeTrue(v2SessionId != null);
+        HttpResponse<String> resp = delete("/api/v2/sessions/" + v2SessionId);
+        assertEquals(200, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        assertTrue(body.get("deleted").asBoolean(), "Expected deleted=true");
+        // Verify it's gone
+        HttpResponse<String> getResp = get("/api/v2/sessions/" + v2SessionId);
+        assertEquals(404, getResp.statusCode());
+        v2SessionId = null;
+    }
+
+    // ── 35. Cron advanced: run, executions, delivered, suggestions/clear, heartbeat/nack ──
+
+    @Test @Order(320) @DisplayName("POST /api/v1/agent/cron/{id}/run — runs cron job now")
+    void cronRunNow() throws Exception {
+        Assumptions.assumeTrue(cronJobId != null, "Cron job must be created first (Order 240)");
+        HttpResponse<String> resp = post("/api/v1/agent/cron/" + cronJobId + "/run", "{}");
+        assertTrue(resp.statusCode() == 200 || resp.statusCode() == 404 || resp.statusCode() == 400,
+            "Expected 200/400/404, got " + resp.statusCode());
+    }
+
+    @Test @Order(321) @DisplayName("GET /api/v1/agent/cron/{id}/executions — lists executions")
+    void cronListExecutions() throws Exception {
+        Assumptions.assumeTrue(cronJobId != null);
+        HttpResponse<String> resp = get("/api/v1/agent/cron/" + cronJobId + "/executions");
+        assertTrue(resp.statusCode() == 200 || resp.statusCode() == 404,
+            "Expected 200 or 404, got " + resp.statusCode());
+        if (resp.statusCode() == 200) {
+            JsonNode body = parseJson(resp.body());
+            assertNotNull(body);
+            assertTrue(body.isArray(), "Expected an array of executions");
+        }
+    }
+
+    @Test @Order(322) @DisplayName("POST /api/v1/agent/cron/{id}/delivered — marks delivered")
+    void cronMarkDelivered() throws Exception {
+        Assumptions.assumeTrue(cronJobId != null);
+        HttpResponse<String> resp = post("/api/v1/agent/cron/" + cronJobId + "/delivered", "{}");
+        assertTrue(resp.statusCode() == 200 || resp.statusCode() == 404 || resp.statusCode() == 400,
+            "Expected 200/400/404, got " + resp.statusCode());
+    }
+
+    @Test @Order(323) @DisplayName("POST /api/v1/agent/cron/suggestions/clear — clears accepted suggestions")
+    void cronSuggestionsClear() throws Exception {
+        HttpResponse<String> resp = post("/api/v1/agent/cron/suggestions/clear", "{}");
+        assertEquals(200, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        assertTrue(body.has("cleared"), "Expected 'cleared' field in response");
+    }
+
+    @Test @Order(324) @DisplayName("POST /api/v1/agent/cron/heartbeat/{sessionId}/result/nack — nacks heartbeat result")
+    void cronHeartbeatNack() throws Exception {
+        UUID fakeSession = UUID.randomUUID();
+        HttpResponse<String> resp = post("/api/v1/agent/cron/heartbeat/" + fakeSession + "/result/nack", "{}");
+        assertEquals(200, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        assertTrue(body.has("drop"), "Expected 'drop' field in response");
+    }
+
+    // ── 36. MCP server tools and resources ──
+
+    @Test @Order(330) @DisplayName("GET /api/v1/mcp/servers/{name}/tools — lists tools for a server")
+    void mcpListServerTools() throws Exception {
+        // List servers first to get a name, or use a dummy name
+        HttpResponse<String> serversResp = get("/api/v1/mcp/servers");
+        assertEquals(200, serversResp.statusCode());
+        JsonNode servers = parseJson(serversResp.body());
+        String serverName = null;
+        if (servers != null && servers.size() > 0) {
+            serverName = servers.get(0).get("name").asText();
+        }
+        if (serverName == null) {
+            serverName = "nonexistent-server";
+        }
+        HttpResponse<String> resp = get("/api/v1/mcp/servers/" + serverName + "/tools");
+        assertTrue(resp.statusCode() == 200 || resp.statusCode() == 404,
+            "Expected 200 or 404, got " + resp.statusCode());
+        if (resp.statusCode() == 200) {
+            JsonNode body = parseJson(resp.body());
+            assertNotNull(body);
+            assertTrue(body.isArray(), "Expected an array of tools");
+        }
+    }
+
+    @Test @Order(331) @DisplayName("POST /api/v1/mcp/servers/{name}/tools/{toolName} — invokes tool (nonexistent server)")
+    void mcpInvokeTool() throws Exception {
+        HttpResponse<String> resp = post("/api/v1/mcp/servers/nonexistent-server/tools/nonexistent-tool",
+            "{}");
+        // Should fail gracefully — 4xx/5xx is acceptable
+        assertTrue(resp.statusCode() >= 400,
+            "Expected error status for nonexistent server/tool, got " + resp.statusCode());
+    }
+
+    @Test @Order(332) @DisplayName("POST /api/v1/mcp/servers/{name}/resources — reads resource (nonexistent server)")
+    void mcpReadResource() throws Exception {
+        HttpResponse<String> resp = post("/api/v1/mcp/servers/nonexistent-server/resources",
+            "{\"uri\":\"test://resource\"}");
+        assertTrue(resp.statusCode() >= 400,
+            "Expected error status for nonexistent server, got " + resp.statusCode());
+    }
+
+    // ── 37. Memory approve/reject/delete ──
+
+    @Test @Order(340) @DisplayName("POST /api/v1/agent/memory/approve — approve with no pending returns false")
+    void memoryApproveNoPending() throws Exception {
+        HttpResponse<String> resp = post("/api/v1/agent/memory/approve",
+            "{\"userId\":\"e2e-no-pending\",\"id\":\"00000000-0000-0000-0000-000000000001\"}");
+        assertEquals(200, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        assertFalse(body.asBoolean(), "Expected false when no pending memory to approve");
+    }
+
+    @Test @Order(341) @DisplayName("POST /api/v1/agent/memory/reject — reject with no pending returns false")
+    void memoryRejectNoPending() throws Exception {
+        HttpResponse<String> resp = post("/api/v1/agent/memory/reject",
+            "{\"userId\":\"e2e-no-pending\",\"id\":\"00000000-0000-0000-0000-000000000002\"}");
+        assertEquals(200, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        assertFalse(body.asBoolean(), "Expected false when no pending memory to reject");
+    }
+
+    @Test @Order(342) @DisplayName("DELETE /api/v1/agent/memory/{userId}/{entryId} — deletes a memory entry")
+    void memoryDeleteEntry() throws Exception {
+        // Store a memory to delete
+        postWithRetry("/api/v1/agent/memory",
+            "{\"userId\":\"e2e-mem-delete\",\"fact\":\"Temp fact for delete test\",\"category\":\"user\"}");
+        HttpResponse<String> listResp = getWithRetry("/api/v1/agent/memory/all/e2e-mem-delete");
+        JsonNode memories = parseJson(listResp.body());
+        Assumptions.assumeTrue(memories != null && memories.size() > 0, "Need at least one memory entry");
+
+        UUID entryId = UUID.fromString(memories.get(0).get("id").asText());
+        HttpResponse<String> resp = deleteWithRetry("/api/v1/agent/memory/e2e-mem-delete/" + entryId);
+        assertEquals(200, resp.statusCode());
+    }
+
+    // ── 38. Skill hub: list, search, install, audit, bundles ──
+
+    @Test @Order(350) @DisplayName("GET /api/v1/agent/skills-hub — lists hub skills")
+    void skillsHubList() throws Exception {
+        HttpResponse<String> resp = get("/api/v1/agent/skills-hub");
+        // May fail if no hub repo configured — accept 200 or error
+        if (resp.statusCode() == 200) {
+            JsonNode body = parseJson(resp.body());
+            assertNotNull(body);
+            assertTrue(body.isArray(), "Expected an array of hub skills");
+        } else {
+            System.out.println("skills-hub returned " + resp.statusCode() + " (hub may not be configured)");
+        }
+    }
+
+    @Test @Order(351) @DisplayName("GET /api/v1/agent/skills-hub/search — searches hub skills")
+    void skillsHubSearch() throws Exception {
+        HttpResponse<String> resp = get("/api/v1/agent/skills-hub/search?q=deploy");
+        if (resp.statusCode() == 200) {
+            JsonNode body = parseJson(resp.body());
+            assertNotNull(body);
+            assertTrue(body.isArray(), "Expected an array of search results");
+        } else {
+            System.out.println("skills-hub/search returned " + resp.statusCode() + " (hub may not be configured)");
+        }
+    }
+
+    @Test @Order(352) @DisplayName("POST /api/v1/agent/skills-hub/install — install nonexistent skill fails gracefully")
+    void skillsHubInstallNonexistent() throws Exception {
+        HttpResponse<String> resp = post("/api/v1/agent/skills-hub/install",
+            "{\"skill\":\"nonexistent-skill-12345\"}");
+        assertTrue(resp.statusCode() == 200,
+            "Expected 200 (graceful failure), got " + resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        // Should return ok=false for nonexistent skill
+        if (body.has("ok")) {
+            assertFalse(body.get("ok").asBoolean(), "Expected ok=false for nonexistent skill");
+        }
+    }
+
+    @Test @Order(353) @DisplayName("GET /api/v1/agent/skills/{name}/audit — returns audit log")
+    void skillAudit() throws Exception {
+        HttpResponse<String> resp = get("/api/v1/agent/skills/deploy-checklist/audit");
+        assertEquals(200, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        assertTrue(body.isArray(), "Expected an array of audit log entries");
+    }
+
+    @Test @Order(354) @DisplayName("POST /api/v1/agent/bundles/install — nonexistent bundle fails gracefully")
+    void bundlesInstallNonexistent() throws Exception {
+        HttpResponse<String> resp = post("/api/v1/agent/bundles/install",
+            "{\"bundleName\":\"nonexistent-bundle-12345\"}");
+        assertEquals(200, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        if (body.has("ok")) {
+            assertFalse(body.get("ok").asBoolean(), "Expected ok=false for nonexistent bundle");
+        }
+    }
+
+    @Test @Order(355) @DisplayName("POST /api/v1/agent/bundles/uninstall — nonexistent bundle is idempotent")
+    void bundlesUninstallNonexistent() throws Exception {
+        HttpResponse<String> resp = post("/api/v1/agent/bundles/uninstall",
+            "{\"bundleName\":\"nonexistent-bundle-12345\"}");
+        assertEquals(200, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        // uninstall is idempotent — returns ok=true even for nonexistent bundle
+        assertTrue(body.has("ok") || body.has("message"),
+            "Expected 'ok' or 'message' field in response");
+    }
+
+    // ── 39. AgentChat: per-session approvals, transcribe, debug-report ──
+
+    @Test @Order(360) @DisplayName("POST /api/v1/agent/approvals/{sessionId}/approve — approve with no pending")
+    void approvalsSessionApprove() throws Exception {
+        UUID fakeSession = UUID.randomUUID();
+        HttpResponse<String> resp = post("/api/v1/agent/approvals/" + fakeSession + "/approve", "");
+        // No pending approval → returns null or error, but should not crash
+        assertTrue(resp.statusCode() == 200 || resp.statusCode() == 404,
+            "Expected 200 or 404, got " + resp.statusCode());
+    }
+
+    @Test @Order(361) @DisplayName("POST /api/v1/agent/approvals/{sessionId}/deny — deny with no pending")
+    void approvalsSessionDeny() throws Exception {
+        UUID fakeSession = UUID.randomUUID();
+        HttpResponse<String> resp = post("/api/v1/agent/approvals/" + fakeSession + "/deny", "");
+        assertTrue(resp.statusCode() == 200 || resp.statusCode() == 404,
+            "Expected 200 or 404, got " + resp.statusCode());
+    }
+
+    @Test @Order(362) @DisplayName("POST /api/v1/agent/transcribe — empty audio returns error")
+    void transcribeEmpty() throws Exception {
+        // Send multipart with empty file body — should not crash
+        String boundary = "e2e-boundary-" + System.currentTimeMillis();
+        String body = "--" + boundary + "\r\n"
+            + "Content-Disposition: form-data; name=\"file\"; filename=\"test.wav\"\r\n"
+            + "Content-Type: audio/wav\r\n\r\n"
+            + "\r\n"
+            + "--" + boundary + "--\r\n";
+        HttpRequest req = HttpRequest.newBuilder()
+            .uri(URI.create(BASE_URL + "/api/v1/agent/transcribe"))
+            .timeout(Duration.ofSeconds(30))
+            .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build();
+        HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+        // Should return 200 with error or empty text — not 500
+        assertTrue(resp.statusCode() == 200,
+            "Expected 200 (graceful error), got " + resp.statusCode());
+        JsonNode bodyNode = parseJson(resp.body());
+        assertNotNull(bodyNode);
+        assertTrue(bodyNode.has("text"), "Expected 'text' field in response");
+    }
+
+    @Test @Order(363) @DisplayName("POST /api/v1/agent/debug-report — uploads debug report")
+    void debugReport() throws Exception {
+        String boundary = "e2e-boundary-" + System.currentTimeMillis();
+        String systemInfo = "E2E test system info";
+        String body = "--" + boundary + "\r\n"
+            + "Content-Disposition: form-data; name=\"systemInfo\"\r\n\r\n"
+            + systemInfo + "\r\n"
+            + "--" + boundary + "\r\n"
+            + "Content-Disposition: form-data; name=\"logs\"\r\n\r\n"
+            + "E2E test logs\r\n"
+            + "--" + boundary + "--\r\n";
+        HttpRequest req = HttpRequest.newBuilder()
+            .uri(URI.create(BASE_URL + "/api/v1/agent/debug-report"))
+            .timeout(Duration.ofSeconds(30))
+            .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build();
+        HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, resp.statusCode());
+        JsonNode bodyNode = parseJson(resp.body());
+        assertNotNull(bodyNode);
+        assertTrue(bodyNode.has("id"), "Expected 'id' field in debug report response");
+        assertTrue(bodyNode.has("link"), "Expected 'link' field in debug report response");
+    }
+
+    // ── 40. Reasoning levels ──
+
+    @Test @Order(370) @DisplayName("GET /api/v1/agent/reasoning-levels — returns valid reasoning levels")
+    void reasoningLevels() throws Exception {
+        HttpResponse<String> resp = get("/api/v1/agent/reasoning-levels");
+        assertEquals(200, resp.statusCode());
+        JsonNode body = parseJson(resp.body());
+        assertNotNull(body);
+        assertTrue(body.isArray(), "Expected an array of reasoning levels");
+        assertTrue(body.size() > 0, "Expected at least one reasoning level");
     }
 
     // ── 33. Restart (last — would kill the server) ──

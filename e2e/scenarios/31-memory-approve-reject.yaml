@@ -1,0 +1,39 @@
+# Memory approve/reject/delete — pending memory workflow
+name: memory-approve-reject
+steps:
+  - name: approve with no pending returns false
+    method: POST
+    path: /agent/memory/approve
+    body: { userId: "e2e-no-pending", id: "00000000-0000-0000-0000-000000000001" }
+    assert:
+      - { status: 200 }
+
+  - name: reject with no pending returns false
+    method: POST
+    path: /agent/memory/reject
+    body: { userId: "e2e-no-pending", id: "00000000-0000-0000-0000-000000000002" }
+    assert:
+      - { status: 200 }
+
+  - name: store a memory for delete test
+    method: POST
+    path: /agent/memory
+    body: { userId: "e2e-mem-del", fact: "Temp fact for delete test", category: "user" }
+    assert: { status: 200 }
+
+  - name: list memories for delete user
+    path: /agent/memory/all/e2e-mem-del
+    assert: { status: 200 }
+    extract:
+      "[0].id": del_id
+
+  - name: delete the memory entry
+    method: DELETE
+    path: /agent/memory/e2e-mem-del/{del_id}
+    assert: { status: 200 }
+
+  - name: verify deletion — list is empty
+    path: /agent/memory/all/e2e-mem-del
+    assert:
+      - { status: 200 }
+      - { path: "$", len_eq: 0 }

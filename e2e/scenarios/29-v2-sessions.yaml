@@ -1,0 +1,54 @@
+# V2 Session CRUD API — full lifecycle: create, get, patch, messages, chat, delete
+name: v2-sessions
+steps:
+  - name: create v2 session
+    method: POST
+    path: /api/v2/sessions
+    body: { userId: "e2e-v2", title: "E2E V2 Test" }
+    assert:
+      - { status: 201 }
+      - { path: object, eq: session }
+      - { path: id, exists: true }
+    extract:
+      id: id
+
+  - name: get session by id
+    path: /api/v2/sessions/{id}
+    assert:
+      - { status: 200 }
+      - { path: id, exists: true }
+
+  - name: patch session title
+    method: PATCH
+    path: /api/v2/sessions/{id}
+    body: { title: "Updated V2 Title" }
+    assert:
+      - { status: 200 }
+      - { path: title, eq: "Updated V2 Title" }
+
+  - name: list session messages (empty for new session)
+    path: /api/v2/sessions/{id}/messages
+    assert:
+      - { status: 200 }
+      - { path: object, eq: list }
+      - { path: data, exists: true }
+
+  - name: v2 sync chat returns response
+    method: POST
+    path: /api/v2/sessions/{id}/chat
+    body: { message: "Ответь одним словом: ок" }
+    timeout: 90
+    assert:
+      - { path: content, exists: true }
+
+  - name: delete session
+    method: DELETE
+    path: /api/v2/sessions/{id}
+    assert:
+      - { status: 200 }
+      - { path: deleted, eq: true }
+
+  - name: deleted session returns 404
+    path: /api/v2/sessions/{id}
+    assert:
+      - { status: 404 }

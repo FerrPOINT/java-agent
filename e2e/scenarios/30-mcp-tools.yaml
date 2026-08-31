@@ -1,0 +1,24 @@
+# MCP server tools and resources — list tools, invoke nonexistent, read resource
+name: mcp-tools-resources
+steps:
+  - name: list MCP servers (may be empty)
+    path: /mcp/servers
+    assert: { status: 200 }
+
+  - name: list tools for nonexistent server returns 200 (empty array)
+    path: /mcp/servers/nonexistent-server/tools
+    assert: { status: 200 }
+
+  - name: invoke tool on nonexistent server fails with 4xx
+    method: POST
+    path: /mcp/servers/nonexistent-server/tools/nonexistent-tool
+    body: {}
+    assert:
+      - { status: 400 }
+
+  - name: read resource on nonexistent server fails
+    method: POST
+    path: /mcp/servers/nonexistent-server/resources
+    body: { uri: "test://resource" }
+    assert:
+      - { status: 500 }

@@ -32,10 +32,10 @@ CASES = [
         "/exit",
     ], ["goal", "subgoal", "paused", "cleared"]),
 
-    ("model-info", ["/model", "/exit"], ["app-test", "model"]),
+    ("model-info", ["/model", "/exit"], ["main-dev", "model"]),
 
-    ("model-switch-same", ["/model app-test", "/model", "/exit"],
-     ["app-test"]),
+    ("model-switch-same", ["/model main-dev", "/model", "/exit"],
+     ["main-dev"]),
 
     ("toolsets-list", ["/toolsets", "/exit"], ["skills", "terminal"]),
 
@@ -106,6 +106,40 @@ CASES = [
 
     ("tool-turn", ["Выполни через терминал: echo cli-e2e-77 && скажи вывод", "/exit"],
      ["cli-e2e-77"]),
+
+    ("memory-approve-reject", [
+        "/memory-approve e2e-cli 00000000-0000-0000-0000-0000000000ff",
+        "/memory-reject e2e-cli 00000000-0000-0000-0000-0000000000fe",
+        "/exit",
+    ], []),
+
+    ("bundles-list", ["/bundles", "/exit"], []),
+
+    ("skills-hub", ["/skills-hub", "/exit"], []),
+
+    ("export", ["/export", "/exit"], ["session", "Session"]),
+
+    ("yolo-toggle", ["/yolo", "/yolo", "/exit"], []),
+
+    ("retry", ["/retry", "/exit"], []),
+
+    ("verbose-cycle", ["/verbose", "/verbose", "/verbose", "/exit"], []),
+
+    ("profile", ["/profile", "/exit"], []),
+
+    ("whoami", ["/whoami", "/exit"], []),
+
+    ("platforms", ["/platforms", "/exit"], []),
+
+    ("codex-runtime", ["/codex-runtime", "/exit"], []),
+
+    ("curator", ["/curator status", "/exit"], []),
+
+    ("debug-toggle", ["/debug", "/debug", "/exit"], []),
+
+    ("snapshot", ["/snapshot e2e cli snapshot", "/exit"], []),
+
+    ("delete-checkpoint-noop", ["/delete-checkpoint 00000000-0000-0000-0000-0000000000cc", "/exit"], []),
 ]
 
 

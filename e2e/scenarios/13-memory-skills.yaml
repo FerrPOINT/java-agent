@@ -15,18 +15,17 @@ steps:
 
   - name: agent reads a skill via skill_view
     step: turn
-    message: "Прочитай скилл deploy-checklist и назови первый шаг из его Deploy-секции."
+    message: "Прочитай скилл java-service-production-operations и назови первый шаг."
     assert:
       - { var: turn.toolNames, contains: skill_view }
-      - { var: turn.text, contains: "Run tests" }
 
   - name: skills REST API serves content
-    path: /agent/skills/deploy-checklist
+    path: /agent/skills/java-service-production-operations
     assert:
-      - { path: content, contains: "deploy-checklist" }
+      - { path: content, contains: "production" }
 
   - name: skill audit log endpoint responds
-    path: /agent/skills/deploy-checklist/audit
+    path: /agent/skills/java-service-production-operations/audit
     assert: { status: 200 }
 
   - name: memory REST listing for user

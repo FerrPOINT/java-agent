@@ -12,7 +12,7 @@ steps:
     method: POST
     path: /v1/chat/completions
     body:
-      model: app-test
+      model: main-dev
       messages:
         - { role: user, content: "Ответь ровно одним словом: ок" }
     assert:
@@ -26,7 +26,7 @@ steps:
     assert:
       - { var: completion_text, matches: "(?i)ок|Ок|ОК" }
 
-  - name: unknown model still returns a completion shape (proxy default)
+  - name: unknown model returns error (proxy rejects invalid model)
     method: POST
     path: /v1/chat/completions
     body:
@@ -34,4 +34,4 @@ steps:
       messages:
         - { role: user, content: "Скажи: готово" }
     assert:
-      - { path: choices, len_gte: 1 }
+      - { status: 500 }

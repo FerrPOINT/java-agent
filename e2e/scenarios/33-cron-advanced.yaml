@@ -1,0 +1,52 @@
+# Cron advanced: run now, executions, delivered, suggestions/clear, heartbeat/nack
+name: cron-advanced
+steps:
+  - name: create a cron job for advanced ops
+    method: POST
+    path: /agent/cron
+    body:
+      name: "e2e-cron-advanced"
+      schedule: "0 0 1 1 *"
+      prompt: "test prompt"
+    assert: { status: 200 }
+    extract:
+      id: cron_id
+
+  - name: run cron job now
+    method: POST
+    path: /agent/cron/{cron_id}/run
+    body: {}
+    assert:
+      - { status: 200 }
+
+  - name: list executions for cron job
+    path: /agent/cron/{cron_id}/executions
+    assert: { status: 200 }
+
+  - name: mark delivered
+    method: POST
+    path: /agent/cron/{cron_id}/delivered
+    body: {}
+    assert:
+      - { status: 200 }
+
+  - name: clear accepted suggestions
+    method: POST
+    path: /agent/cron/suggestions/clear
+    body: {}
+    assert:
+      - { status: 200 }
+      - { path: cleared, exists: true }
+
+  - name: heartbeat result nack on nonexistent session
+    method: POST
+    path: /agent/cron/heartbeat/00000000-0000-0000-0000-0000000000ee/result/nack
+    body: {}
+    assert:
+      - { status: 200 }
+      - { path: drop, exists: true }
+
+  - name: cleanup delete cron job
+    method: DELETE
+    path: /agent/cron/{cron_id}
+    assert: { status: 200 }

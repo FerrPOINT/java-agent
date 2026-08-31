@@ -1,0 +1,29 @@
+# Telegram gateway E2E: bot health, webhook auth, backend chat through bot pipeline
+name: telegram-gateway
+steps:
+  - name: bot health endpoint
+    path: "{bot_base}/bot/health"
+    assert:
+      - { status: 200 }
+      - { path: status, eq: UP }
+      - { path: service, eq: telegram-bot }
+
+  - name: webhook without secret returns 403
+    method: POST
+    path: "{bot_base}/webhook/telegram"
+    body: { update_id: 1 }
+    assert:
+      - { status: 403 }
+
+  - name: webhook with wrong secret returns 403
+    method: POST
+    path: "{bot_base}/webhook/telegram"
+    headers: { X-Telegram-Bot-Api-Secret-Token: "wrong-e2e-secret" }
+    body: { update_id: 1 }
+    assert:
+      - { status: 403 }
+
+  - name: backend health confirms bot can reach agent
+    path: /agent/health
+    assert:
+      - { status: 200 }

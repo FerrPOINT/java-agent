@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -25,6 +26,7 @@ import yaml
 
 HERE = Path(__file__).parent
 DEFAULT_BASE = "http://localhost:8090/api/v1"
+BOT_BASE = os.getenv("E2E_BOT_BASE", "http://localhost:18091")
 SSE_TIMEOUT = 180          # seconds for a full streaming turn
 POLL_TIMEOUT = 120         # seconds for wait_for steps
 
@@ -151,7 +153,7 @@ def wait_for(fn, timeout: int = POLL_TIMEOUT, interval: float = 2.0):
 class Runner:
     def __init__(self, base: str):
         self.base = base
-        self.vars: dict[str, object] = {}
+        self.vars: dict[str, object] = {"bot_base": BOT_BASE}
         self.session_ids: list[str] = []
 
     def subst(self, value):
@@ -169,17 +171,21 @@ class Runner:
     def do_request(self, step: dict):
         method = step.get("method", "GET").upper()
         path = str(self.subst(step["path"]))
-        # /v1/* controllers live OUTSIDE the /api/v1 prefix — absolute paths
-        # (starting with /v1/) bind to the server root.
-        if path.startswith("/v1/"):
+        # Explicit absolute URLs support E2E checks for separate adapters
+        # (for example the Telegram bot on port 8091).
+        if path.startswith("http://") or path.startswith("https://"):
+            url = path
+        # /v1/* and /api/v2/* controllers live outside the /api/v1 prefix.
+        elif path.startswith("/v1/") or path.startswith("/api/"):
             url = self.base.rsplit("/api/v1", 1)[0] + path
         else:
             url = self.base + path
         body = self.subst(step.get("body", {}))
         params = self.subst(step.get("params", {}))
+        headers = self.subst(step.get("headers", {}))
         timeout = step.get("timeout", 30)
         r = requests.request(method, url, json=body or None, params=params or None,
-                             timeout=timeout)
+                             headers=headers or None, timeout=timeout)
         # Store basics even on failure so asserts can inspect status
         self.vars["status"] = r.status_code
         self.vars["response"] = safe_json(r)
