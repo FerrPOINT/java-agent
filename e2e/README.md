@@ -73,6 +73,14 @@ values, `session_id` (last turn's session), `status`, `response`.
 | 25-process-gateway | process listing, cronjob tool, mcp_tool guard |
 | 26-feature-audit | undo semantics, voice/reasoning toggles, state reset, agents monitor |
 | 27-mcp-reload | reload-mcp survives repeated reloads (RejectedExecutionException regression) |
+| 28-blueprint-hub | blueprint catalog, unknown key rejection, hub search |
+| 29-v2-sessions | v2 session CRUD: create/get/patch/messages/chat/delete/404 |
+| 30-mcp-tools | MCP server tools list, tool invoke (nonexistent → 4xx), resource read (nonexistent → 500) |
+| 31-memory-approve-reject | memory approve/reject (no pending → false), store + delete + verify empty |
+| 32-skills-hub-bundles | skills-hub list/search, install nonexistent (ok=false), bundles install/uninstall |
+| 33-cron-advanced | cron run-now, executions list, mark delivered, suggestions clear, heartbeat nack |
+| 34-agentchat-advanced | per-session approve/deny (no pending), reasoning-levels list |
+| 35-telegram-gateway | bot health (200), webhook without secret (403), webhook wrong secret (403) |
 
 Bugs this suite has caught so far (keep the cases that found them):
 CLI /toolsets hitting a nonexistent path (404 forever), toolset
