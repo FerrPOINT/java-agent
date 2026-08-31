@@ -550,26 +550,26 @@ class SessionControllerT1Test {
 
     @Test
     void createSnapshot_success() throws Exception {
-        when(checkpointManager.snapshot("desc")).thenReturn(null);
+        when(checkpointManager.snapshot(org.mockito.ArgumentMatchers.nullable(String.class), eq("desc"))).thenReturn(null);
 
         String body = objectMapper.writeValueAsString(new SnapshotRequest("desc"));
         mockMvc.perform(post("/api/v1/agent/snapshot")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
             .andExpect(status().isOk());
-        verify(checkpointManager).snapshot("desc");
+        verify(checkpointManager).snapshot(org.mockito.ArgumentMatchers.isNull(), eq("desc"));
     }
 
     @Test
     void createSnapshot_nullDescription_defaultsToEmpty() throws Exception {
-        when(checkpointManager.snapshot("")).thenReturn(null);
+        when(checkpointManager.snapshot(org.mockito.ArgumentMatchers.nullable(String.class), eq(""))).thenReturn(null);
 
         String body = "{}";
         mockMvc.perform(post("/api/v1/agent/snapshot")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
             .andExpect(status().isOk());
-        verify(checkpointManager).snapshot("");
+        verify(checkpointManager).snapshot(org.mockito.ArgumentMatchers.isNull(), eq(""));
     }
 
     // ── branchSession() ──

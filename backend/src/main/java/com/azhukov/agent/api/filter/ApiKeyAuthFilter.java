@@ -1,14 +1,16 @@
 package com.azhukov.agent.api.filter;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
+import com.azhukov.agent.service.UserAccessService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
@@ -33,51 +35,81 @@ import java.util.Map;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
     private final AgentProperties agentProperties;
+    private final UserAccessService userAccessService;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Autowired
+    public ApiKeyAuthFilter(AgentProperties agentProperties, UserAccessService userAccessService) {
+        this.agentProperties = agentProperties;
+        this.userAccessService = userAccessService;
+    }
+
+    /** Test-only compatibility constructor. */
+    public ApiKeyAuthFilter(AgentProperties agentProperties) {
+        this.agentProperties = agentProperties;
+        this.userAccessService = null;
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                      HttpServletResponse response,
                                      FilterChain filterChain) throws ServletException, IOException {
-        String configuredKey = agentProperties.getSecurity().getApiKey();
+        try {
+            String configuredKey = agentProperties.getSecurity().getApiKey();
 
-        // Auth disabled — dev mode: set a default authenticated principal
-        if (configuredKey == null || configuredKey.isBlank()) {
-            SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("dev"));
-            filterChain.doFilter(request, response);
-            return;
+            // Auth disabled — dev mode: set default user as admin
+            if (configuredKey == null || configuredKey.isBlank()) {
+                SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("dev"));
+                UserContext.set(AgentProperties.DEFAULT_USER_ID, UserContext.ROLE_ADMIN);
+                filterChain.doFilter(request, response);
+                return;
+            }
+
+            String requestUri = request.getRequestURI();
+
+            // Health endpoints are always exempt
+            if (isHealthEndpoint(requestUri)) {
+                SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("health"));
+                UserContext.set("health", UserContext.ROLE_ADMIN);
+                filterChain.doFilter(request, response);
+                return;
+            }
+
+            String providedKey = extractApiKey(request);
+
+            // Per-user API keys take precedence over the legacy global admin key.
+            UserAccessService.AuthenticatedUser user = userAccessService != null
+                ? userAccessService.authenticate(providedKey) : null;
+            if (user != null) {
+                SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication(providedKey));
+                UserContext.set(user.userId(), user.role());
+                filterChain.doFilter(request, response);
+                return;
+            }
+
+            if (providedKey != null && constantTimeEquals(configuredKey, providedKey)) {
+                // Global API key = admin access
+                Authentication auth = new ApiKeyAuthentication(providedKey);
+                SecurityContextHolder.getContext().setAuthentication(auth);
+                UserContext.set(AgentProperties.DEFAULT_USER_ID, UserContext.ROLE_ADMIN);
+                filterChain.doFilter(request, response);
+                return;
+            }
+
+            // Auth failed — return 401 JSON error
+            log.warn("API key authentication failed for request: {} {}", request.getMethod(), requestUri);
+            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.setCharacterEncoding("UTF-8");
+            response.getWriter().write(errorJson("UNAUTHORIZED", "Invalid or missing API key"));
+        } finally {
+            // Always clear ThreadLocal to prevent leakage across virtual threads
+            UserContext.clear();
+            SecurityContextHolder.clearContext();
         }
-
-        String requestUri = request.getRequestURI();
-
-        // Health endpoints are always exempt: set a default authenticated principal
-        if (isHealthEndpoint(requestUri)) {
-            SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("health"));
-            filterChain.doFilter(request, response);
-            return;
-        }
-
-        String providedKey = extractApiKey(request);
-
-        if (providedKey != null && constantTimeEquals(configuredKey, providedKey)) {
-            // Set authentication in SecurityContext so Spring Security's
-            // anyRequest().authenticated() check passes.
-            Authentication auth = new ApiKeyAuthentication(providedKey);
-            SecurityContextHolder.getContext().setAuthentication(auth);
-            filterChain.doFilter(request, response);
-            return;
-        }
-
-        // Auth failed — return 401 JSON error
-        log.warn("API key authentication failed for request: {} {}", request.getMethod(), requestUri);
-        response.setStatus(HttpStatus.UNAUTHORIZED.value());
-        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        response.setCharacterEncoding("UTF-8");
-        response.getWriter().write(errorJson("UNAUTHORIZED", "Invalid or missing API key"));
     }
 
     private String extractApiKey(HttpServletRequest request) {

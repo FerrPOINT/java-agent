@@ -3,6 +3,7 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.api.dto.CheckpointDiffDto;
 import com.azhukov.agent.api.dto.CheckpointDto;
 import com.azhukov.agent.api.mapper.CheckpointDtoMapper;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.CheckpointManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
@@ -36,13 +37,13 @@ public class CheckpointController {
     @PostMapping("/agent/checkpoint")
     public CheckpointDto createCheckpoint(@RequestBody(required = false) CheckpointRequest request) {
         String description = request != null ? request.description() : "Manual checkpoint";
-        return checkpointDtoMapper.toDto(checkpointManager.snapshot(description));
+        return checkpointDtoMapper.toDto(checkpointManager.snapshot(UserContext.getUserId(), description));
     }
 
     @Operation(summary = "List all checkpoints")
     @GetMapping("/agent/checkpoint")
     public List<CheckpointDto> listCheckpoints() {
-        return checkpointDtoMapper.toDtoList(checkpointManager.list());
+        return checkpointDtoMapper.toDtoList(checkpointManager.list(UserContext.scopeUserId()));
     }
 
     @Operation(summary = "Diff two checkpoints")

@@ -3,6 +3,7 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.api.dto.CronExecutionLogDto;
 import com.azhukov.agent.api.dto.CronJobDto;
 import com.azhukov.agent.api.mapper.CronJobDtoMapper;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.azhukov.agent.service.CronJobService;
 import com.azhukov.agent.service.CronSuggestionService;
@@ -31,6 +32,7 @@ public class CronJobController {
     @PostMapping
     public CronJobDto create(@Valid @RequestBody CreateCronRequest request) {
         return cronJobDtoMapper.toDto(cronJobService.create(
+            UserContext.getUserId(),
             request.name(), request.schedule(), request.prompt(), request.deliverTo(),
             request.skills(), request.contextFrom(),
             null, null, false, request.enabledToolsets(), request.workdir(),
@@ -39,7 +41,7 @@ public class CronJobController {
 
     @GetMapping
     public List<CronJobDto> list() {
-        return cronJobDtoMapper.toDtoList(cronJobService.list());
+        return cronJobDtoMapper.toDtoList(cronJobService.list(UserContext.scopeUserId()));
     }
 
     @PutMapping("/{id}")

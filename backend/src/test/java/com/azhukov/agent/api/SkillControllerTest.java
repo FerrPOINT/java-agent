@@ -70,7 +70,7 @@ class SkillControllerTest {
 
     @Test
     void skillsReturnsAllSkillNames() throws Exception {
-        when(skillManager.listSkillNames()).thenReturn(List.of("python-dev", "qa-testing"));
+        when(skillManager.listSkillNames(org.mockito.ArgumentMatchers.nullable(String.class))).thenReturn(List.of("python-dev", "qa-testing"));
 
         mockMvc.perform(get("/api/v1/agent/skills"))
             .andExpect(status().isOk())
@@ -80,7 +80,7 @@ class SkillControllerTest {
 
     @Test
     void skillsReturnsEmptyListWhenNoSkills() throws Exception {
-        when(skillManager.listSkillNames()).thenReturn(List.of());
+        when(skillManager.listSkillNames(org.mockito.ArgumentMatchers.nullable(String.class))).thenReturn(List.of());
 
         mockMvc.perform(get("/api/v1/agent/skills"))
             .andExpect(status().isOk())

@@ -50,7 +50,7 @@ class CronJobControllerTest {
         entity.setSchedule("0 * * * *");
         entity.setPrompt("test prompt");
         entity.setEnabled(true);
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
 
         mockMvc.perform(post("/api/v1/agent/cron")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -70,7 +70,7 @@ class CronJobControllerTest {
         entity.setPrompt("p");
         entity.setEnabled(true);
         entity.setContextFrom("11111111-1111-1111-1111-111111111111");
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
 
         mockMvc.perform(post("/api/v1/agent/cron")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -82,7 +82,7 @@ class CronJobControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.contextFrom").value("11111111-1111-1111-1111-111111111111"));
 
-        verify(cronJobService).create(eq("chained"), eq("0 * * * *"), eq("p"), isNull(), isNull(),
+        verify(cronJobService).create(isNull(), eq("chained"), eq("0 * * * *"), eq("p"), isNull(), isNull(),
             eq("11111111-1111-1111-1111-111111111111"),
             isNull(), isNull(), eq(false), eq("web"), eq("/tmp"), isNull(), isNull(), isNull());
     }
@@ -92,7 +92,7 @@ class CronJobControllerTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
         entity.setName("job1");
-        when(cronJobService.list()).thenReturn(List.of(entity));
+        when(cronJobService.list(org.mockito.ArgumentMatchers.nullable(String.class))).thenReturn(List.of(entity));
 
         mockMvc.perform(get("/api/v1/agent/cron"))
             .andExpect(status().isOk())

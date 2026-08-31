@@ -51,6 +51,14 @@ public class DatabaseSkillManager implements SkillManager {
  }
 
  @Override
+ public List<String> listSkillNames(String userId) {
+ if (userId == null) return listSkillNames();
+ return skillRepository.findVisibleSkills(userId).stream()
+ .map(SkillEntity::getName)
+ .toList();
+ }
+
+ @Override
  public String getSkill(String name) {
  return skillRepository.findByName(name)
  .map(SkillEntity::getContent)

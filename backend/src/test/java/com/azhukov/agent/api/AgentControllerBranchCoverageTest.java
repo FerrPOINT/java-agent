@@ -806,7 +806,7 @@ class AgentControllerBranchCoverageTest {
         CheckpointEntity cp = new CheckpointEntity();
         cp.setId(UUID.randomUUID());
         cp.setDescription("test");
-        when(checkpointManager.snapshot("Manual checkpoint")).thenReturn(cp);
+        when(checkpointManager.snapshot(any(), eq("Manual checkpoint"))).thenReturn(cp);
 
         mockMvc.perform(post("/api/v1/agent/checkpoint"))
             .andExpect(status().isOk());
@@ -818,7 +818,7 @@ class AgentControllerBranchCoverageTest {
         CheckpointEntity cp = new CheckpointEntity();
         cp.setId(UUID.randomUUID());
         cp.setDescription("custom");
-        when(checkpointManager.snapshot("custom desc")).thenReturn(cp);
+        when(checkpointManager.snapshot(any(), eq("custom desc"))).thenReturn(cp);
 
         mockMvc.perform(post("/api/v1/agent/checkpoint")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -833,7 +833,7 @@ class AgentControllerBranchCoverageTest {
     @Test
     void listCheckpointsReturnsList() throws Exception {
         mockMvc = checkpointMockMvc();
-        when(checkpointManager.list()).thenReturn(List.of());
+        when(checkpointManager.list(org.mockito.ArgumentMatchers.nullable(String.class))).thenReturn(List.of());
 
         mockMvc.perform(get("/api/v1/agent/checkpoint"))
             .andExpect(status().isOk())
@@ -1079,7 +1079,7 @@ class AgentControllerBranchCoverageTest {
     @Test
     void skillsReturnsList() throws Exception {
         mockMvc = skillMockMvc();
-        when(skillManager.listSkillNames()).thenReturn(List.of("coding", "web"));
+        when(skillManager.listSkillNames(org.mockito.ArgumentMatchers.nullable(String.class))).thenReturn(List.of("coding", "web"));
 
         mockMvc.perform(get("/api/v1/agent/skills"))
             .andExpect(status().isOk())

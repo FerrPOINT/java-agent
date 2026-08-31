@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.SkillAuditLogDto;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.repository.SkillAuditLogRepository;
 import com.azhukov.agent.service.AgentRuntimeService;
@@ -37,7 +38,7 @@ public class SkillController {
     @Operation(summary = "List all skill names")
     @GetMapping("/agent/skills")
     public List<String> skills() {
-        return skillManager.listSkillNames();
+        return skillManager.listSkillNames(UserContext.scopeUserId());
     }
 
     // ── Skills hub (SIMPLIFIED Hermes parity: one GitHub repo source) ──

@@ -74,6 +74,21 @@ class CheckpointRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    void findByUserIdDoesNotLeakOtherUsersCheckpoints() {
+        CheckpointEntity alice = newCheckpoint(DESCRIPTION_1, 1, 100L);
+        alice.setUserId("alice");
+        CheckpointEntity bob = newCheckpoint(DESCRIPTION_2, 2, 200L);
+        bob.setUserId("bob");
+        checkpointRepository.saveAll(List.of(alice, bob));
+
+        assertThat(checkpointRepository.findByUserId("alice"))
+            .extracting(CheckpointEntity::getDescription)
+            .containsExactly(DESCRIPTION_1);
+        assertThat(checkpointRepository.findByIdAndUserId(bob.getId(), "alice")).isEmpty();
+        assertThat(checkpointRepository.findByIdAndUserId(bob.getId(), "bob")).isPresent();
+    }
+
+    @Test
     void deleteByIdRemovesEntity() {
         CheckpointEntity saved = checkpointRepository.save(newCheckpoint(DESCRIPTION_1, 2, 2048L));
         UUID id = saved.getId();

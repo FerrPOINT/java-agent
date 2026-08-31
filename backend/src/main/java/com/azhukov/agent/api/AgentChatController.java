@@ -5,6 +5,8 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.api.dto.BackgroundRequest;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.api.dto.ChatRequestIdentity;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.api.dto.RefineRequest;
 import com.azhukov.agent.api.dto.DenyRequest;
 import com.azhukov.agent.api.dto.DoctorDto;
@@ -71,7 +73,7 @@ public class AgentChatController {
     @PostMapping("/agent/chat")
     public ChatResponseDto chat(@Valid @RequestBody ChatRequest request) {
         if (agentMetrics != null) agentMetrics.incrementChatRequests();
-        return agentRuntimeService.runTurn(request);
+        return agentRuntimeService.runTurn(ChatRequestIdentity.bind(request));
     }
 
     @Operation(summary = "Stream a chat response via SSE")
@@ -81,13 +83,13 @@ public class AgentChatController {
             agentMetrics.incrementChatRequests();
             agentMetrics.incrementChatStreaming();
         }
-        return streamingService.streamTurn(request);
+        return streamingService.streamTurn(ChatRequestIdentity.bind(request));
     }
 
     @PostMapping("/agent/delegate")
     public ChatResponseDto delegate(@Valid @RequestBody ChatRequest request) {
         if (agentMetrics != null) agentMetrics.incrementChatRequests();
-        return agentRuntimeService.runDelegate(request);
+        return agentRuntimeService.runDelegate(ChatRequestIdentity.bind(request));
     }
 
     // ── Doctor / diagnostics ──

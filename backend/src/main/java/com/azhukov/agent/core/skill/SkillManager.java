@@ -7,6 +7,14 @@ public interface SkillManager {
 
     List<String> listSkillNames();
 
+    /**
+     * List skill names visible to a specific user.
+     * Null userId = all skills (admin). Non-null = personal + shared skills.
+     */
+    default List<String> listSkillNames(String userId) {
+        return listSkillNames();
+    }
+
     String getSkill(String name);
 
     void saveSkill(String name, String content);

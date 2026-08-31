@@ -100,6 +100,21 @@ class CronJobRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    void findByUserIdDoesNotLeakOtherUsersJobs() {
+        CronJobEntity alice = newCronJob(NAME_1, SCHEDULE_1, PROMPT_1, true);
+        alice.setUserId("alice");
+        CronJobEntity bob = newCronJob(NAME_2, SCHEDULE_2, PROMPT_2, true);
+        bob.setUserId("bob");
+        cronJobRepository.saveAll(List.of(alice, bob));
+
+        assertThat(cronJobRepository.findByUserId("alice"))
+            .extracting(CronJobEntity::getName)
+            .containsExactly(NAME_1);
+        assertThat(cronJobRepository.findByIdAndUserId(bob.getId(), "alice")).isEmpty();
+        assertThat(cronJobRepository.findByIdAndUserId(bob.getId(), "bob")).isPresent();
+    }
+
+    @Test
     void deleteByIdRemovesEntity() {
         CronJobEntity saved = cronJobRepository.save(newCronJob(NAME_1, SCHEDULE_1, PROMPT_1, true));
         UUID id = saved.getId();

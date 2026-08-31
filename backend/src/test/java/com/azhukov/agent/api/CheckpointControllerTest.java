@@ -62,7 +62,7 @@ class CheckpointControllerTest {
         entity.setFileCount(5);
         entity.setTotalSizeBytes(1024L);
         entity.setCreatedAt(FIXED_TIME);
-        when(checkpointManager.snapshot(any())).thenReturn(entity);
+        when(checkpointManager.snapshot(any(), any())).thenReturn(entity);
 
         mockMvc.perform(post("/api/v1/agent/checkpoint")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -82,7 +82,7 @@ class CheckpointControllerTest {
         entity.setFileCount(0);
         entity.setTotalSizeBytes(0L);
         entity.setCreatedAt(FIXED_TIME);
-        when(checkpointManager.snapshot(any())).thenReturn(entity);
+        when(checkpointManager.snapshot(any(), any())).thenReturn(entity);
 
         mockMvc.perform(post("/api/v1/agent/checkpoint"))
             .andExpect(status().isOk())
@@ -105,7 +105,7 @@ class CheckpointControllerTest {
         entity2.setTotalSizeBytes(2048L);
         entity2.setCreatedAt(FIXED_TIME.plusSeconds(60));
 
-        when(checkpointManager.list()).thenReturn(List.of(entity1, entity2));
+        when(checkpointManager.list(org.mockito.ArgumentMatchers.nullable(String.class))).thenReturn(List.of(entity1, entity2));
 
         mockMvc.perform(get("/api/v1/agent/checkpoint"))
             .andExpect(status().isOk())
@@ -121,7 +121,7 @@ class CheckpointControllerTest {
 
     @Test
     void listCheckpointsEmptyReturnsEmptyArray() throws Exception {
-        when(checkpointManager.list()).thenReturn(List.of());
+        when(checkpointManager.list(org.mockito.ArgumentMatchers.nullable(String.class))).thenReturn(List.of());
 
         mockMvc.perform(get("/api/v1/agent/checkpoint"))
             .andExpect(status().isOk())

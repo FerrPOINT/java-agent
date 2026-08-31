@@ -143,6 +143,21 @@ public class CronJobService {
             null, null, false, null, null, null, null, null);
     }
 
+    public CronJobEntity create(
+        String userId,
+        String name, String schedule, String prompt, String deliverTo,
+        String skills, String contextFrom,
+        Integer repeatCount,
+        String script, boolean noAgent,
+        String enabledToolsets, String workdir,
+        String modelProvider, String modelName, String baseUrl
+    ) {
+        CronJobEntity entity = create(name, schedule, prompt, deliverTo, skills, contextFrom,
+            repeatCount, script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl);
+        entity.setUserId(userId);
+        return cronJobRepository.save(entity);
+    }
+
     /**
      * Full-featured create with all Hermes parity fields.
      */
@@ -206,6 +221,15 @@ public class CronJobService {
         // H13: Add deterministic sort to avoid unbounded unordered results.
         return cronJobRepository.findAll(org.springframework.data.domain.Sort.by(
             org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
+    }
+
+    /**
+     * List cron jobs scoped to a user. Null userId = admin/global access (all jobs).
+     * Non-null userId = only that user's jobs (userId field matches).
+     */
+    public List<CronJobEntity> list(String userId) {
+        if (userId == null) return list();
+        return cronJobRepository.findByUserId(userId);
     }
 
     // ── Update overloads (backward-compatible) ──

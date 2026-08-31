@@ -29,4 +29,22 @@ public interface SkillRepository extends JpaRepository<SkillEntity, UUID> {
     // S7: Find skills not accessed since a given time (stale detection)
     @Query("SELECT s FROM SkillEntity s WHERE s.archived = false AND (s.lastActivityAt IS NULL OR s.lastActivityAt < :before)")
     List<SkillEntity> findStaleSkills(Instant before);
+
+    // ── Multi-user: userId-scoped queries ──
+
+    /** Find skills owned by a specific user (personal skills). */
+    List<SkillEntity> findByUserId(String userId);
+
+    /** Find non-archived skills owned by a specific user. */
+    List<SkillEntity> findByUserIdAndArchivedFalse(String userId);
+
+    /** Find a skill by name, scoped to a specific user. */
+    Optional<SkillEntity> findByNameAndUserId(String name, String userId);
+
+    /**
+     * Find skills visible to a user: personal skills (userId = owner) plus
+     * shared/global skills (userId = null). Used for listing.
+     */
+    @Query("SELECT s FROM SkillEntity s WHERE s.archived = false AND (s.userId = :userId OR s.userId IS NULL)")
+    List<SkillEntity> findVisibleSkills(String userId);
 }

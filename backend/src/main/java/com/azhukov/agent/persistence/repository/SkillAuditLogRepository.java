@@ -10,4 +10,12 @@ import java.util.List;
 public interface SkillAuditLogRepository extends JpaRepository<SkillAuditLogEntity, Long> {
 
     List<SkillAuditLogEntity> findBySkillNameOrderByTimestampDesc(String skillName);
+
+    // ── Multi-user: userId-scoped queries ──
+
+    /** Find audit entries for a skill, scoped to a specific user. */
+    List<SkillAuditLogEntity> findBySkillNameAndUserIdOrderByTimestampDesc(String skillName, String userId);
+
+    /** Find all audit entries for a specific user. */
+    List<SkillAuditLogEntity> findByUserIdOrderByTimestampDesc(String userId);
 }

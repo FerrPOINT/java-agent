@@ -142,11 +142,16 @@ public class CheckpointManager {
      * short transactional method.
      */
     public CheckpointEntity snapshot(String description) {
+        return snapshot(null, description);
+    }
+
+    /** Takes a checkpoint owned by the supplied user (null = system/admin). */
+    public CheckpointEntity snapshot(String userId, String description) {
         // Phase 1: filesystem collection — NO transaction
         List<CollectedFile> collectedFiles = collectFilesForSnapshot(description);
 
         // Phase 2: persistence — short @Transactional via Spring proxy
-        CheckpointEntity saved = self.getObject().persistCheckpoint(description, collectedFiles);
+        CheckpointEntity saved = self.getObject().persistCheckpoint(userId, description, collectedFiles);
 
         // Auto-prune (already @Transactional via proxy)
         self.getObject().prune(properties.getCheckpoints().getMaxSnapshots());
@@ -221,7 +226,13 @@ public class CheckpointManager {
      */
     @Transactional
     public CheckpointEntity persistCheckpoint(String description, List<CollectedFile> collectedFiles) {
+        return persistCheckpoint(null, description, collectedFiles);
+    }
+
+    @Transactional
+    public CheckpointEntity persistCheckpoint(String userId, String description, List<CollectedFile> collectedFiles) {
         CheckpointEntity entity = new CheckpointEntity();
+        entity.setUserId(userId);
         entity.setDescription(description);
         entity.setCreatedAt(Instant.now());
 
@@ -263,6 +274,16 @@ public class CheckpointManager {
 
     public List<CheckpointEntity> list() {
         return checkpointRepository.findAll().stream()
+            .sorted(Comparator.comparing(CheckpointEntity::getCreatedAt).reversed())
+            .toList();
+    }
+
+    /**
+     * List checkpoints scoped to a user. Null userId = admin/global access.
+     */
+    public List<CheckpointEntity> list(String userId) {
+        if (userId == null) return list();
+        return checkpointRepository.findByUserId(userId).stream()
             .sorted(Comparator.comparing(CheckpointEntity::getCreatedAt).reversed())
             .toList();
     }

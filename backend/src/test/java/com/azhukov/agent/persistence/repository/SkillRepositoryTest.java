@@ -118,6 +118,22 @@ class SkillRepositoryTest extends PostgresTestContainer {
             .containsExactlyInAnyOrder(NAME_PLANNING, NAME_RESEARCH);
     }
 
+    @Test
+    void visibleSkillsIncludeSharedAndPersonalButNotOtherUsers() {
+        SkillEntity shared = newSkill("shared", CATEGORY_CORE, CONTENT_PLANNING, T1);
+        SkillEntity alice = newSkill("alice-private", CATEGORY_CORE, CONTENT_PLANNING, T1);
+        alice.setUserId("alice");
+        SkillEntity bob = newSkill("bob-private", CATEGORY_CORE, CONTENT_PLANNING, T1);
+        bob.setUserId("bob");
+        skillRepository.saveAll(List.of(shared, alice, bob));
+
+        assertThat(skillRepository.findVisibleSkills("alice"))
+            .extracting(SkillEntity::getName)
+            .containsExactlyInAnyOrder("shared", "alice-private")
+            .doesNotContain("bob-private");
+        assertThat(skillRepository.findByNameAndUserId("bob-private", "alice")).isEmpty();
+    }
+
     private SkillEntity newSkill(String name, String category, String content, Instant createdAt) {
         SkillEntity skill = new SkillEntity();
         skill.setName(name);

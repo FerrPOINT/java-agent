@@ -10,6 +10,7 @@ import jakarta.validation.Valid;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.CheckpointManager;
 import com.azhukov.agent.service.TodoService;
@@ -204,7 +205,7 @@ public class SessionController {
     @PostMapping("/agent/snapshot")
     public ResponseEntity<SessionSummaryDto> createSnapshot(@Valid @RequestBody SnapshotRequest body) {
         String description = body.description() != null ? body.description() : "";
-        checkpointManager.snapshot(description);
+        checkpointManager.snapshot(UserContext.getUserId(), description);
         return ResponseEntity.ok().build();
     }
 

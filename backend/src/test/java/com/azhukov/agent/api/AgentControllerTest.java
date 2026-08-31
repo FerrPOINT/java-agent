@@ -287,7 +287,7 @@ class AgentControllerTest {
     @Test
     void createSnapshotReturnsOk() throws Exception {
         mockMvc = sessionMockMvc();
-        when(checkpointManager.snapshot(any())).thenReturn(null);
+        when(checkpointManager.snapshot(any(), any())).thenReturn(null);
 
         mockMvc.perform(post("/api/v1/agent/snapshot")
                 .contentType(MediaType.APPLICATION_JSON)
