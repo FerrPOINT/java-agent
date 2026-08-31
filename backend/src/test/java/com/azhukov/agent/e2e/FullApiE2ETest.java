@@ -145,6 +145,18 @@ class FullApiE2ETest {
         return delete(path);
     }
 
+    /** Retry on 429 (rate limit) and 5xx (provider errors) with exponential backoff. */
+    private HttpResponse<String> postWithRetry5xx(String path, String json) throws Exception {
+        for (int attempt = 0; attempt < 4; attempt++) {
+            HttpResponse<String> resp = post(path, json);
+            int code = resp.statusCode();
+            if (code != 429 && code < 500) return resp;
+            // 429 or 5xx — retry with backoff
+            Thread.sleep(3000L * (attempt + 1));
+        }
+        return post(path, json);
+    }
+
     /** Parse JSON safely, returning null if body is not valid JSON. */
     private JsonNode parseJson(String body) {
         try {
@@ -1108,9 +1120,9 @@ class FullApiE2ETest {
 
     @Test @Order(260) @DisplayName("POST /v1/chat/completions — sync completion")
     void openAiSyncCompletion() throws Exception {
-        HttpResponse<String> resp = postWithRetry("/v1/chat/completions",
-            "{\"model\":\"kimi-k2.6\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one word\"}]}");
-        assertEquals(200, resp.statusCode(), "OpenAI completion should return 200, got: " + resp.statusCode());
+        HttpResponse<String> resp = postWithRetry5xx("/v1/chat/completions",
+            "{\"model\":\"main-dev\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one word\"}]}");
+        assertEquals(200, resp.statusCode(), "OpenAI completion should return 200, got: " + resp.statusCode() + " body: " + resp.body());
         JsonNode body = parseJson(resp.body());
         assertEquals("chat.completion", body.get("object").asText());
         assertTrue(body.get("choices").isArray());
@@ -1122,8 +1134,8 @@ class FullApiE2ETest {
 
     @Test @Order(261) @DisplayName("POST /v1/chat/completions — with temperature and maxTokens")
     void openAiCompletionWithParams() throws Exception {
-        HttpResponse<String> resp = postWithRetry("/v1/chat/completions",
-            "{\"model\":\"kimi-k2.6\",\"messages\":[{\"role\":\"user\",\"content\":\"What is 3+3? Just the number.\"}],\"temperature\":0.3,\"maxTokens\":50}");
+        HttpResponse<String> resp = postWithRetry5xx("/v1/chat/completions",
+            "{\"model\":\"main-dev\",\"messages\":[{\"role\":\"user\",\"content\":\"What is 3+3? Just the number.\"}],\"temperature\":0.3,\"maxTokens\":50}");
         assertEquals(200, resp.statusCode());
         JsonNode body = parseJson(resp.body());
         assertEquals("chat.completion", body.get("object").asText());
@@ -1133,8 +1145,8 @@ class FullApiE2ETest {
     @Test @Order(262) @DisplayName("POST /v1/chat/completions — streaming via SSE")
     void openAiStreamCompletion() throws Exception {
         try {
-            HttpResponse<String> resp = post("/v1/chat/completions",
-                "{\"model\":\"kimi-k2.6\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"Say hi\"}]}");
+            HttpResponse<String> resp = postWithRetry5xx("/v1/chat/completions",
+                "{\"model\":\"main-dev\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"Say hi\"}]}");
             if (resp.statusCode() == 200) {
                 String body = resp.body();
                 assertTrue(body.contains("data:") || body.contains("delta") || body.contains("content"),
@@ -1147,8 +1159,8 @@ class FullApiE2ETest {
 
     @Test @Order(263) @DisplayName("POST /v1/chat/completions — with tools")
     void openAiCompletionWithTools() throws Exception {
-        HttpResponse<String> resp = postWithRetry("/v1/chat/completions",
-            "{\"model\":\"kimi-k2.6\",\"messages\":[{\"role\":\"user\",\"content\":\"Read the file /etc/hostname and tell me what it contains\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}}]}");
+        HttpResponse<String> resp = postWithRetry5xx("/v1/chat/completions",
+            "{\"model\":\"main-dev\",\"messages\":[{\"role\":\"user\",\"content\":\"Read the file /etc/hostname and tell me what it contains\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}}]}");
         assertEquals(200, resp.statusCode());
         JsonNode body = parseJson(resp.body());
         assertEquals("chat.completion", body.get("object").asText());
