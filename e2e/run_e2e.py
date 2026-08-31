@@ -26,7 +26,7 @@ import yaml
 
 HERE = Path(__file__).parent
 DEFAULT_BASE = "http://localhost:8090/api/v1"
-BOT_BASE = os.getenv("E2E_BOT_BASE", "http://localhost:18091")
+BOT_BASE = os.getenv("E2E_BOT_BASE", "http://localhost:8091")
 SSE_TIMEOUT = 180          # seconds for a full streaming turn
 POLL_TIMEOUT = 120         # seconds for wait_for steps
 
