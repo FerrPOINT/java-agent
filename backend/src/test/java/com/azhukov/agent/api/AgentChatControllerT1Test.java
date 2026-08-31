@@ -420,6 +420,15 @@ class AgentChatControllerT1Test {
     }
 
     @Test
+    void approve_omittedAllDefaultsToFalse() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/approve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+            .andExpect(status().isOk())
+            .andExpect(content().string("No pending approvals"));
+    }
+
+    @Test
     void approve_invalidSessionIdScope() throws Exception {
         String body = "{\"all\":false,\"scope\":\"not-a-uuid\"}";
         mockMvc.perform(post("/api/v1/agent/approve")
@@ -447,6 +456,15 @@ class AgentChatControllerT1Test {
         mockMvc.perform(post("/api/v1/agent/deny")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
+            .andExpect(status().isOk())
+            .andExpect(content().string("No pending approvals"));
+    }
+
+    @Test
+    void deny_omittedAllDefaultsToFalse() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/deny")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
             .andExpect(status().isOk())
             .andExpect(content().string("No pending approvals"));
     }

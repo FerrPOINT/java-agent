@@ -148,23 +148,27 @@ public class CronDeliveryPoller {
                 log.debug("Session messages fetch for cron delivery: HTTP {}", resp.statusCode());
                 return null;
             }
-            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(resp.body());
-            JsonNode messages = root.path("messages");
-            if (!messages.isArray()) {
-                return null;
-            }
-            for (int i = messages.size() - 1; i >= 0; i--) {
-                JsonNode m = messages.get(i);
-                if ("assistant".equals(m.path("role").asText())) {
-                    String content = m.path("content").asText(null);
-                    return (content == null || content.isBlank()) ? null : content;
-                }
-            }
-            return null;
+            return lastAssistantMessage(objectMapper.readTree(resp.body()));
         } catch (Exception e) {
             log.debug("fetchLastAssistantMessage failed: {}", e.getMessage());
             return null;
         }
+    }
+
+    /** Read the newest assistant output from the backend's v2 message envelope. */
+    static String lastAssistantMessage(JsonNode root) {
+        JsonNode messages = root.path("data");
+        if (!messages.isArray()) {
+            return null;
+        }
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            JsonNode message = messages.get(i);
+            if ("assistant".equals(message.path("role").asText())) {
+                String content = message.path("content").asText(null);
+                return (content == null || content.isBlank()) ? null : content;
+            }
+        }
+        return null;
     }
 
     private Long resolveChatId(String deliverTo) {

@@ -1,6 +1,7 @@
 package com.azhukov.agent.bot.cron;
 
 import com.azhukov.agent.bot.formatting.MessageSplitter;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -14,6 +15,27 @@ import static org.assertj.core.api.Assertions.assertThat;
  * MessageSplitter so no output tail is silently dropped.
  */
 class CronDeliveryChunkingTest {
+
+    @Test
+    void v2EnvelopeReturnsLatestAssistantMessage() throws Exception {
+        var root = new ObjectMapper().readTree("""
+            {"object":"list","data":[
+              {"role":"user","content":"first"},
+              {"role":"assistant","content":"old"},
+              {"role":"tool","content":"ignored"},
+              {"role":"assistant","content":"latest cron output"}
+            ]}
+            """);
+
+        assertThat(CronDeliveryPoller.lastAssistantMessage(root)).isEqualTo("latest cron output");
+    }
+
+    @Test
+    void missingV2DataEnvelopeReturnsNull() throws Exception {
+        var legacyRoot = new ObjectMapper().readTree("{\"messages\":[]}");
+
+        assertThat(CronDeliveryPoller.lastAssistantMessage(legacyRoot)).isNull();
+    }
 
     @Test
     void longUnicodeOutputSplitsIntoOrderedChunks() {

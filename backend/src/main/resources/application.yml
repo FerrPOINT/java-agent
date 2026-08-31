@@ -273,6 +273,7 @@ agent:
   security:
     api-key: ${AGENT_API_KEY:}
     approvals-enabled: ${AGENT_SECURITY_APPROVALS_ENABLED:true}
+    always-require-approval-tools: ${AGENT_SECURITY_ALWAYS_REQUIRE_APPROVAL_TOOLS:}
     file-safety-enabled: ${AGENT_SECURITY_FILE_SAFETY_ENABLED:true}
     url-safety-enabled: ${AGENT_SECURITY_URL_SAFETY_ENABLED:true}
     redact-enabled: ${AGENT_SECURITY_REDACT_ENABLED:true}

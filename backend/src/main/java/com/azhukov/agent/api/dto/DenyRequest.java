@@ -1,3 +1,6 @@
 package com.azhukov.agent.api.dto;
 
-public record DenyRequest(boolean all) {}
+/** Denial request body. {@code all} defaults to false when omitted. */
+public record DenyRequest(Boolean all) {
+    public boolean isAll() { return all != null && all; }
+}

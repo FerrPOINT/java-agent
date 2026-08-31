@@ -199,7 +199,7 @@ public class AgentChatController {
 
     @PostMapping("/agent/approve")
     public String approve(@Valid @RequestBody ApproveRequest request) {
-        if (request.all()) {
+        if (request.isAll()) {
             for (var pending : approvalQueue.getPendingApprovals()) {
                 approvalQueue.approve(pending.sessionId(), "approve", null);
             }
@@ -224,7 +224,7 @@ public class AgentChatController {
 
     @PostMapping("/agent/deny")
     public String deny(@Valid @RequestBody DenyRequest request) {
-        if (request.all()) {
+        if (request.isAll()) {
             for (var pending : approvalQueue.getPendingApprovals()) {
                 approvalQueue.deny(pending.sessionId(), null);
             }
