@@ -59,15 +59,6 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
                                      FilterChain filterChain) throws ServletException, IOException {
         try {
             String configuredKey = agentProperties.getSecurity().getApiKey();
-
-            // Auth disabled — dev mode: set default user as admin
-            if (configuredKey == null || configuredKey.isBlank()) {
-                SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("dev"));
-                UserContext.set(AgentProperties.DEFAULT_USER_ID, UserContext.ROLE_ADMIN);
-                filterChain.doFilter(request, response);
-                return;
-            }
-
             String requestUri = request.getRequestURI();
 
             // Health endpoints are always exempt
@@ -80,12 +71,24 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
             String providedKey = extractApiKey(request);
 
-            // Per-user API keys take precedence over the legacy global admin key.
+            // Per-user API keys take precedence over everything else.
+            // This check runs BEFORE the dev-mode bypass so that even when
+            // the global API key is not configured, per-user keys still work.
             UserAccessService.AuthenticatedUser user = userAccessService != null
                 ? userAccessService.authenticate(providedKey) : null;
             if (user != null) {
                 SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication(providedKey));
                 UserContext.set(user.userId(), user.role());
+                filterChain.doFilter(request, response);
+                return;
+            }
+
+            // Auth disabled — dev mode: set default user as admin.
+            // Per-user keys were already checked above; if none matched, fall
+            // through to admin access so existing dev workflows keep working.
+            if (configuredKey == null || configuredKey.isBlank()) {
+                SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("dev"));
+                UserContext.set(AgentProperties.DEFAULT_USER_ID, UserContext.ROLE_ADMIN);
                 filterChain.doFilter(request, response);
                 return;
             }
