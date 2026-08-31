@@ -199,8 +199,15 @@ public class StreamEditor {
      * fresh finals) lands in the same topic.
      */
     public Optional<Long> startStream(long chatId, String initialText, String chatType, long threadId) {
+        return startStream(chatId, initialText, chatType, threadId, 0L);
+    }
+
+    /** Start a stream routed to a forum topic and replying to a user message. */
+    public Optional<Long> startStream(long chatId, String initialText, String chatType,
+                                      long threadId, long replyToMessageId) {
         StreamSession session = sessionFor(chatId);
         session.messageThreadId = threadId;
+        session.replyToMessageId = replyToMessageId;
         return startStream(chatId, initialText, chatType, session);
     }
 
@@ -1192,7 +1199,21 @@ public class StreamEditor {
         // P2.S6: route into the forum topic the stream was started in (StreamSession carries it).
         StreamSession session = sessionFor(chatId);
         Integer threadId = session.messageThreadId > 0 ? (int) session.messageThreadId : null;
-        return telegramClient.sendMessage(chatId, text, null, null, threadId, disableNotification);
+        // Reply-to: only on the initial streaming message (reply-to-mode: first semantics).
+        // After the first send, clear the replyToMessageId so edits, splits, and fresh-finals
+        // do not reply to the user message — matching sendFormatted's "first" behavior.
+        Long replyToMessageId = null;
+        if (session.replyToMessageId > 0) {
+            String mode = properties.getReplyToMode();
+            if (mode == null || mode.isBlank() || "first".equalsIgnoreCase(mode) || "all".equalsIgnoreCase(mode)) {
+                replyToMessageId = session.replyToMessageId;
+            }
+            // "first" → only the initial message replies; clear after use.
+            if (mode == null || mode.isBlank() || "first".equalsIgnoreCase(mode)) {
+                session.replyToMessageId = 0L;
+            }
+        }
+        return telegramClient.sendMessage(chatId, text, null, replyToMessageId, threadId, disableNotification);
     }
 
     /**

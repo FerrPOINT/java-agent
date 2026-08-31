@@ -34,6 +34,9 @@ public class StreamSession {
     /** Telegram forum thread the stream was started in (0 = no thread routing). */
     public volatile long messageThreadId = 0L;
 
+    // ── Reply-to: the user message ID to reply to (0 = no reply). ──
+    public volatile long replyToMessageId = 0L;
+
     // ─── B5: Adaptive rate limiting ───────────────────────────────
     /** Per-chat adaptive edit interval in ms; starts at minIntervalMs, grows on 429. */
     public final AtomicLong editInterval = new AtomicLong(0);
@@ -105,6 +108,7 @@ public class StreamSession {
         currentToolName = null;
         currentMessageId.set(-1L);
         heartbeatMessageId.set(-1L);
+        replyToMessageId = 0L;
         useDraftStreaming = false;
         draftId = 0;
         draftFailures.set(0);

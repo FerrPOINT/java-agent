@@ -115,7 +115,8 @@ public class StreamingOrchestrator {
         // Try streaming first
         try {
             // Start with an initial message (P2.S6: routed into the originating forum topic)
-            Optional<Long> initialMsgId = streamEditor.startStream(chatId, "…", "dm", messageThreadId);
+            Optional<Long> initialMsgId = streamEditor.startStream(
+                chatId, "…", "dm", messageThreadId, userMessageId);
             if (initialMsgId.isPresent()) {
                 messageId[0] = initialMsgId.get();
             }

@@ -69,6 +69,7 @@ class StreamingOrchestratorTest {
         // StreamEditor defaults
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(1L));
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.of(1L));
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.of(1L));
         when(streamEditor.editStream(anyLong(), anyLong(), anyString())).thenReturn(true);
         when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString())).thenReturn(true);
 
@@ -162,7 +163,7 @@ class StreamingOrchestratorTest {
 
     @Test
     void streamChat_draftCompletionFinalizesTheDraftSession() {
-        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong()))
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
             .thenReturn(Optional.empty()); // Native drafts intentionally have no message id.
         stubChatStream(ctx -> {
             ctx.tokenConsumer.accept("draft answer");
@@ -250,6 +251,7 @@ class StreamingOrchestratorTest {
         // startStream succeeds → messageId >= 0 → clearStream is invoked on failure
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(1L));
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.of(1L));
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.of(1L));
         when(backendClient.chatStream(anyString(), nullable(String.class), any(),
             any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("connection refused"));
@@ -268,6 +270,7 @@ class StreamingOrchestratorTest {
         // Native drafts have no message id but still own a heartbeat/session that must be cleared.
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.empty());
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.empty());
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.empty());
         when(backendClient.chatStream(anyString(), nullable(String.class), any(),
             any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("connection refused"));
@@ -281,7 +284,7 @@ class StreamingOrchestratorTest {
 
     @Test
     void streamChat_delayedStartCommitsTextBeforeToolProgress() {
-        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong()))
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
             .thenReturn(Optional.empty());
         stubChatStream(ctx -> {
             ctx.tokenConsumer.accept("preface");
