@@ -6,6 +6,7 @@
   <a href="#features"><img src="https://img.shields.io/badge/%E2%9C%A8%20Features-0B1220?style=for-the-badge" alt="Features" /></a>
   <a href="#stack"><img src="https://img.shields.io/badge/%F0%9F%94%A7%20Stack-111827?style=for-the-badge" alt="Stack" /></a>
   <a href="#api"><img src="https://img.shields.io/badge/%F0%9F%94%8C%20API-1F2937?style=for-the-badge" alt="API" /></a>
+  <a href="#boundaries"><img src="https://img.shields.io/badge/%F0%9F%A7%B1%20Boundaries-334155?style=for-the-badge" alt="Boundaries" /></a>
   <a href="#cli"><img src="https://img.shields.io/badge/%F0%9F%96%A5%EF%B8%8F%20CLI-374151?style=for-the-badge" alt="CLI" /></a>
   <a href="#architecture"><img src="https://img.shields.io/badge/%F0%9F%8F%97%EF%B8%8F%20Architecture-4B5563?style=for-the-badge" alt="Architecture" /></a>
   <a href="#license"><img src="https://img.shields.io/badge/%F0%9F%94%92%20License-Proprietary%20source--available-7F1D1D?style=for-the-badge" alt="License" /></a>
@@ -25,7 +26,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/JUnit-green?style=flat-square" alt="JUnit" />
   <img src="https://img.shields.io/badge/Testcontainers-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Testcontainers" />
-  <img src="https://img.shields.io/badge/Jacoco-75%25%20gate-0A9EDC?style=flat-square" alt="Jacoco" />
+  <img src="https://img.shields.io/badge/Jacoco-75%25%20LINE%20gate-0A9EDC?style=flat-square" alt="Jacoco" />
   <img src="https://img.shields.io/badge/source--available-not%20open%20source-7F1D1D?style=flat-square" alt="Not open source" />
 </p>
 
@@ -46,6 +47,7 @@ The project is an active product line. `AGENTS.md` is the canonical development 
 | Modules | `backend`, `telegram-bot`, `cli` |
 | Runtime | Java 25 LTS, Spring Boot 4.1, Gradle 9.6.1 |
 | Data | PostgreSQL 16, JPA/Hibernate, Flyway |
+| AI/tooling | LangChain4j 1.18, MCP Java SDK 2.0, Repomix MCP, built-in tool registry |
 | Interfaces | REST/SSE, OpenAI-compatible `/v1/*`, Telegram bot, CLI REPL |
 | License | FerrPOINT Proprietary Source-Available Evaluation License v1.0 |
 
@@ -62,6 +64,7 @@ The project is an active product line. `AGENTS.md` is the canonical development 
 | MCP | Client/server support, dynamic tool discovery and Repomix integration. |
 | Telegram gateway | Streaming, media handling, model override, steer mode, busy-ack, group filters and inline keyboards. |
 | CLI REPL | 92 slash commands, SSE streaming, JLine autocomplete and markdown rendering. |
+| Deployment/test matrix | Production, local and E2E compose files, Flyway migrations and a large regression suite. |
 
 <a name="stack"></a>
 ## 🔧 Core Stack
@@ -90,6 +93,14 @@ The project is an active product line. `AGENTS.md` is the canonical development 
 | `GET/POST /api/v2/sessions` | Session list/create |
 | `GET /actuator/health` | Health check |
 
+<a name="boundaries"></a>
+## 🧱 Boundaries
+
+- Production deployment must provide real model credentials, DB credentials, API keys and secret redaction settings.
+- Browser, file, terminal and network tools require explicit operational policy before exposing outside trusted environments.
+- `server.shutdown: immediate` is kept as a Spring Boot 4.1 workaround.
+- Java/Gradle artifacts are packaged with proprietary license metadata; third-party dependencies remain under their own licenses.
+
 <a name="cli"></a>
 ## 🖥️ CLI
 
@@ -107,6 +118,15 @@ export OLLAMA_API_KEY=***
 java -jar build/libs/backend-0.0.1-SNAPSHOT.jar \
   --spring.profiles.active=dev \
   --spring.datasource.password=project_workflow \
+  --server.port=8090
+```
+
+Run a NoOp backend without LLM/PostgreSQL:
+
+```bash
+cd backend
+java -jar build/libs/backend-0.0.1-SNAPSHOT.jar \
+  --spring.profiles.active=noop \
   --server.port=8090
 ```
 
@@ -164,6 +184,8 @@ docker compose -f docker-compose.e2e.yml up --build
 | `docker-compose.prod.yml` | Production-like stack on port `8080` with PostgreSQL `5432` |
 | `docker-compose.local.yml` | Local dev stack on `18090`/`18091` |
 | `docker-compose.e2e.yml` | E2E testing stack |
+
+Docker images use `eclipse-temurin:25-jre-noble`; slim images install Chromium at runtime.
 
 ## 🛡️ Quality Bar
 
