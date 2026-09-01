@@ -213,13 +213,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
     public TurnResult runTurn(Session session, String userInput, List<String> references,
                               ModelRequestOptions options) {
         ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
-        // Acquire per-session lock to prevent concurrent turns on the same session.
-        // Audit H1: use tryLock with a bounded wait instead of blocking indefinitely.
-        // The previous lock.lock() would block for up to 5 minutes while an
-        // approval gate was being awaited inside runTurnInternal, effectively
-        // hanging the session if a second request arrived during that window.
+        // Runtime callers include delegate and gateway paths that do not pass
+        // through AgentRuntimeService, so this remains the canonical safety lock.
         UUID sid = session.id();
-        java.util.concurrent.locks.ReentrantLock lock = sessionLocks.computeIfAbsent(sid, k -> new java.util.concurrent.locks.ReentrantLock());
+        java.util.concurrent.locks.ReentrantLock lock = sessionLocks.computeIfAbsent(
+            sid, k -> new java.util.concurrent.locks.ReentrantLock());
         boolean acquired;
         try {
             acquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);

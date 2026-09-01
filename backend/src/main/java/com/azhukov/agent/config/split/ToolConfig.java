@@ -11,6 +11,6 @@ import org.springframework.context.annotation.Configuration;
  * future tool-related {@code @Bean} definitions and to keep the domain split
  * complete.
  */
-@Configuration
+@Configuration(proxyBeanMethods = false)
 public class ToolConfig {
 }

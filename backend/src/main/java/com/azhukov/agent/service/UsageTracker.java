@@ -228,13 +228,11 @@ public class UsageTracker {
      * and {@link #getCreditsSummary} all share a single {@code findAll()} call.
      */
     private List<UsageEntity> loadAllRecords(String userId) {
-        List<UsageEntity> allRecords = usageRepository.findAll();
         if (userId != null && !userId.isBlank()) {
-            allRecords = allRecords.stream()
-                .filter(e -> userId.equals(e.getUserId()))
-                .toList();
+            return usageRepository.findByUserIdAndCreatedAtBetween(
+                userId, Instant.parse("2000-01-01T00:00:00Z"), Instant.now());
         }
-        return allRecords;
+        return usageRepository.findAll();
     }
 
     /**

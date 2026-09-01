@@ -65,6 +65,12 @@ public class DefaultContextEngine implements ContextEngine {
  private final Map<UUID, UUID> rotatedSessionIds = new ConcurrentHashMap<>();
  private final Map<UUID, String> lastMemoryHash = new ConcurrentHashMap<>();
  private final ConcurrentHashMap<UUID, Instant> lastCompressedAt = new ConcurrentHashMap<>();
+ // The in-flight messages list is unique to one agent turn. Key the snapshot
+ // by identity to avoid repeated lineage loads without retaining it across a
+ // later turn on the same virtual thread.
+ private final ThreadLocal<TurnHistorySnapshot> turnHistorySnapshot = new ThreadLocal<>();
+ private record TurnHistorySnapshot(UUID sessionId, List<Message> turnMessages, List<Message> history) {
+ }
 
  /**
   * If the given session was rotated during a recent prepareContext call, return the
@@ -158,6 +164,9 @@ public class DefaultContextEngine implements ContextEngine {
  @Override
  public List<Message> prepareContext(Session session, List<Message> messages) {
  long __pcStart = System.nanoTime();
+ if (agentMetrics != null) {
+     agentMetrics.incrementPrepareContextCalls();
+ }
  List<Message> __result = prepareContextInner(session, messages);
  if (agentMetrics != null) {
      agentMetrics.recordPrepareContext((System.nanoTime() - __pcStart) / 1_000_000);
@@ -184,7 +193,7 @@ public class DefaultContextEngine implements ContextEngine {
  }
 
  // Then add recent history (excluding the current turn messages to avoid duplication)
- appendRecentHistory(session, context);
+ appendRecentHistory(session, context, messages);
 
  // Deduplicate the current turn's user message: mid-turn persistence already
  // wrote it to the DB, so appendRecentHistory loaded it as the LAST history
@@ -547,15 +556,33 @@ public class DefaultContextEngine implements ContextEngine {
  return total;
  }
 
- private void appendRecentHistory(Session session, List<Message> context) {
+ private void appendRecentHistory(Session session, List<Message> context, List<Message> turnMessages) {
      try {
-         // When SessionLineageService is available, load messages from the
-         // entire session lineage (root-to-tip) so that ancestor messages from
-         // compression-rotated sessions are included. Mirrors Hermes
-         // get_messages_as_conversation(include_ancestors=True).
-         if (sessionLineageService != null) {
-             List<Message> lineageMessages = sessionLineageService.loadMessagesWithAncestors(session.id());
-             if (lineageMessages != null && !lineageMessages.isEmpty()) {
+         List<Message> lineageMessages = null;
+         boolean historyLoadedFromDb = false;
+         // Turn-scoped cache: avoid re-reading full lineage history from DB on
+         // every prepareContext() call within this agentic loop.
+         UUID sid = session.id();
+         TurnHistorySnapshot snapshot = turnHistorySnapshot.get();
+         if (snapshot != null && snapshot.sessionId().equals(sid) && snapshot.turnMessages() == turnMessages) {
+             lineageMessages = snapshot.history();
+         }
+         if (lineageMessages == null) {
+             // When SessionLineageService is available, load messages from the
+             // entire session lineage (root-to-tip) so that ancestor messages from
+             // compression-rotated sessions are included. Mirrors Hermes
+             // get_messages_as_conversation(include_ancestors=True).
+             if (sessionLineageService != null) {
+                 lineageMessages = sessionLineageService.loadMessagesWithAncestors(sid);
+                 historyLoadedFromDb = true;
+             }
+             // Cache the loaded history for reuse within this turn
+             if (lineageMessages != null) {
+                 turnHistorySnapshot.set(new TurnHistorySnapshot(sid, turnMessages, List.copyOf(lineageMessages)));
+             }
+         }
+         if (sessionLineageService != null && lineageMessages != null) {
+             if (!lineageMessages.isEmpty()) {
                  // Only the dedicated compaction carrier survives persistence. All
                  // ordinary system/developer prompts are rebuilt for every turn.
                  List<Message> active = new ArrayList<>(lineageMessages.size());
@@ -582,6 +609,9 @@ public class DefaultContextEngine implements ContextEngine {
                      recent = new ArrayList<>(active);
                  }
                  context.addAll(recent);
+                 if (agentMetrics != null && historyLoadedFromDb) {
+                     agentMetrics.recordHistoryRowsLoaded(lineageMessages.size());
+                 }
                  return;
              }
              // No lineage messages found — fall through to current-session query
@@ -598,6 +628,9 @@ public class DefaultContextEngine implements ContextEngine {
          // Reverse to get ascending order (defensive copy in case the list is immutable)
          java.util.List<MessageEntity> ascHistory = new java.util.ArrayList<>(descHistory);
          java.util.Collections.reverse(ascHistory);
+         if (agentMetrics != null) {
+             agentMetrics.recordHistoryRowsLoaded(ascHistory.size());
+         }
          for (MessageEntity e : ascHistory) {
              String role = e.getRole();
              String content = e.getContent() != null ? e.getContent() : "";
@@ -651,5 +684,17 @@ public class DefaultContextEngine implements ContextEngine {
         snapshotCache.remove(sessionId);
         lastMemoryHash.remove(sessionId);
         lastCompressedAt.remove(sessionId);
+        evictTurnCache(sessionId);
+    }
+
+    /**
+     * Evict the turn-scoped history snapshot for the current request thread.
+     * Called when a new turn starts or compression rotates the session.
+     */
+    public void evictTurnCache(UUID sessionId) {
+        TurnHistorySnapshot snapshot = turnHistorySnapshot.get();
+        if (snapshot != null && (sessionId == null || snapshot.sessionId().equals(sessionId))) {
+            turnHistorySnapshot.remove();
+        }
     }
 }

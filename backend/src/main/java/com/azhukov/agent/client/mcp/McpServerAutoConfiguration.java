@@ -18,7 +18,7 @@ import org.springframework.context.annotation.Configuration;
  * this configuration is skipped entirely to avoid registering a null servlet.
  */
 @Slf4j
-@Configuration
+@Configuration(proxyBeanMethods = false)
 @RequiredArgsConstructor
 @ConditionalOnProperty(prefix = "agent.mcp.server", name = "enabled", havingValue = "true")
 public class McpServerAutoConfiguration {

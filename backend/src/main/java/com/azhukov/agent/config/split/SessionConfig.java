@@ -22,7 +22,7 @@ import java.util.function.Consumer;
  * Gateway/session-related beans: {@link InboundMessageProcessor} (as the
  * {@code gatewayMessageHandler} bean) and {@link GatewayRoutingService}.
  */
-@Configuration
+@Configuration(proxyBeanMethods = false)
 public class SessionConfig {
 
     @Bean(name = "gatewayMessageHandler")

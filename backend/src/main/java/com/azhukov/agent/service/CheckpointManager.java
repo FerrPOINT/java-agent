@@ -273,9 +273,8 @@ public class CheckpointManager {
     }
 
     public List<CheckpointEntity> list() {
-        return checkpointRepository.findAll().stream()
-            .sorted(Comparator.comparing(CheckpointEntity::getCreatedAt).reversed())
-            .toList();
+        return checkpointRepository.findAll(org.springframework.data.domain.Sort.by(
+            org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
     }
 
     /**
@@ -362,9 +361,8 @@ public class CheckpointManager {
 
     @Transactional
     public int prune(int maxSnapshots) {
-        List<CheckpointEntity> all = checkpointRepository.findAll().stream()
-            .sorted(Comparator.comparing(CheckpointEntity::getCreatedAt).reversed())
-            .toList();
+        List<CheckpointEntity> all = checkpointRepository.findAll(org.springframework.data.domain.Sort.by(
+            org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
 
         if (all.size() <= maxSnapshots) return 0;
 

@@ -128,7 +128,7 @@ class AgentRuntimeServiceTest {
             transactionTemplate,
             new AgentSessionResolver(sessionRepository, Mappers.getMapper(SessionEntityMapper.class), transactionTemplate, messageRepository, mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
             new CliStateApplier(),
-            new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class), conversationCompressor),
+            new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class), conversationCompressor, org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class, org.mockito.Mockito.RETURNS_SELF)),
             mock(com.azhukov.agent.core.context.ContextCompressor.class),
             mock(com.azhukov.agent.core.metadata.ModelMetadataService.class), null,
             null, null
@@ -245,10 +245,10 @@ class AgentRuntimeServiceTest {
 
         agentRuntimeService.runTurn(request);
 
-        ArgumentCaptor<MessageEntity> messageCaptor = ArgumentCaptor.forClass(MessageEntity.class);
-        verify(messageRepository, times(4)).save(messageCaptor.capture());
+        ArgumentCaptor<java.util.List<MessageEntity>> messageCaptor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(messageRepository).saveAll(messageCaptor.capture());
 
-        List<MessageEntity> saved = messageCaptor.getAllValues();
+        List<MessageEntity> saved = messageCaptor.getValue();
         assertThat(saved).hasSize(4);
 
         assertThat(saved.get(0).getSessionId()).isEqualTo(EXISTING_SESSION_ID);

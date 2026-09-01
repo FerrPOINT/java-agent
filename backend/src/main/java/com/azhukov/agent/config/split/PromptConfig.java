@@ -16,7 +16,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Prompt-related beans: {@link PromptBuilder} and {@link PromptCacheTracker}.
  */
-@Configuration
+@Configuration(proxyBeanMethods = false)
 public class PromptConfig {
 
     @Bean

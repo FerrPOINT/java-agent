@@ -61,7 +61,7 @@ class CheckpointManagerBranchCoverageTest {
         Files.writeString(tempDir.resolve("visible.txt"), "content");
 
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll()).thenReturn(List.of());
+        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("test");
         assertThat(entity.getFileCount()).isEqualTo(1);
@@ -216,7 +216,7 @@ class CheckpointManagerBranchCoverageTest {
     @Test
     void snapshotEmptyDirectoryCreatesZeroFileCheckpoint() {
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll()).thenReturn(List.of());
+        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("empty");
         assertThat(entity.getFileCount()).isZero();
@@ -228,7 +228,7 @@ class CheckpointManagerBranchCoverageTest {
     @Test
     void snapshotWithNullDescriptionCreatesCheckpoint() {
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll()).thenReturn(List.of());
+        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot(null);
         assertThat(entity.getDescription()).isNull();
@@ -242,7 +242,7 @@ class CheckpointManagerBranchCoverageTest {
         e1.setId(UUID.randomUUID());
         e1.setCreatedAt(java.time.Instant.now());
 
-        when(checkpointRepository.findAll()).thenReturn(List.of(e1));
+        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of(e1));
 
         int removed = manager.prune(1);
         assertThat(removed).isZero();
@@ -358,7 +358,7 @@ class CheckpointManagerBranchCoverageTest {
         e2.setCreatedAt(t2);
         e2.setDescription("newer");
 
-        when(checkpointRepository.findAll()).thenReturn(List.of(e1, e2));
+        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of(e2, e1));
 
         List<CheckpointEntity> result = manager.list();
         assertThat(result.get(0).getDescription()).isEqualTo("newer");

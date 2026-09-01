@@ -1,6 +1,7 @@
 package com.azhukov.agent.persistence.repository;
 
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -15,6 +16,8 @@ public interface CheckpointRepository extends JpaRepository<CheckpointEntity, UU
 
     /** Find checkpoints owned by a specific user. */
     List<CheckpointEntity> findByUserId(String userId);
+
+    List<CheckpointEntity> findByUserId(String userId, Sort sort);
 
     /** Find a checkpoint by ID, scoped to a specific user. */
     Optional<CheckpointEntity> findByIdAndUserId(UUID id, String userId);

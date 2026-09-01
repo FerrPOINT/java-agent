@@ -34,10 +34,13 @@ public class CdpClient {
     // Use list of listeners per method so concurrent waitForEvent calls don't overwrite each other
     private final Map<String, List<Consumer<JsonNode>>> eventListeners = new ConcurrentHashMap<>();
     private final AtomicInteger messageId = new AtomicInteger(1);
-    private WebSocketClient webSocketClient;
-    private String webSocketUrl;
+    private volatile WebSocketClient webSocketClient;
+    private volatile String webSocketUrl;
     private volatile boolean connected = false;
+    // Serializes only connection-state transitions. Network discovery and CDP
+    // enable calls run outside this lock and concurrent callers join one future.
     private final ReentrantLock lock = new ReentrantLock();
+    private volatile CompletableFuture<Void> connectionFuture;
 
     public CdpClient(URI webSocketUrl, ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
@@ -56,11 +59,27 @@ public class CdpClient {
     }
 
     public void connect(String cdpBaseUrl) throws Exception {
-        if (!lock.tryLock(130, TimeUnit.SECONDS)) {
-            throw new IllegalStateException("Could not acquire CDP client lock within 130 seconds");
-        }
+        CompletableFuture<Void> inFlight;
+        lock.lockInterruptibly();
         try {
-            if (connected) return;
+            if (connected) {
+                return;
+            }
+            if (connectionFuture == null || connectionFuture.isDone()) {
+                connectionFuture = new CompletableFuture<>();
+                CompletableFuture<Void> created = connectionFuture;
+                Thread.startVirtualThread(() -> connectInternal(cdpBaseUrl, created));
+            }
+            inFlight = connectionFuture;
+        } finally {
+            lock.unlock();
+        }
+        // Do not hold the transition lock while discovery or CDP I/O waits.
+        inFlight.get(130, TimeUnit.SECONDS);
+    }
+
+    private void connectInternal(String cdpBaseUrl, CompletableFuture<Void> future) {
+        try {
             String listUrl = cdpBaseUrl.endsWith("/") ? cdpBaseUrl + "json/list" : cdpBaseUrl + "/json/list";
             HttpRequest request = HttpRequest.newBuilder(URI.create(listUrl))
                 .timeout(Duration.ofSeconds(120))
@@ -71,14 +90,16 @@ public class CdpClient {
             if (!arr.isArray() || arr.isEmpty()) {
                 throw new IllegalStateException("No CDP targets available at " + cdpBaseUrl);
             }
-            this.webSocketUrl = arr.get(0).get("webSocketDebuggerUrl").asText();
+            webSocketUrl = arr.get(0).get("webSocketDebuggerUrl").asText();
             connectWebSocket();
             send("Page.enable", null).get(60, TimeUnit.SECONDS);
             send("Runtime.enable", null).get(60, TimeUnit.SECONDS);
             send("DOM.enable", null).get(60, TimeUnit.SECONDS);
             connected = true;
-        } finally {
-            lock.unlock();
+            future.complete(null);
+        } catch (Exception e) {
+            connected = false;
+            future.completeExceptionally(e);
         }
     }
 

@@ -71,6 +71,11 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     void updateLastActiveAndMessageCount(UUID id, Instant lastActive, int messageCount);
 
     @Modifying
+    @Query("UPDATE SessionEntity s SET s.lastActive = :lastActive, s.messageCount = "
+        + "COALESCE(s.messageCount, 0) + :delta WHERE s.id = :id")
+    void incrementMessageCount(UUID id, Instant lastActive, int delta);
+
+    @Modifying
     @Query("UPDATE SessionEntity s SET s.preview = :preview WHERE s.id = :id")
     void updatePreview(UUID id, String preview);
 }

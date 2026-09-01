@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Configuration;
 
 import java.time.Duration;
 
-@Configuration
+@Configuration(proxyBeanMethods = false)
 public class TelegramConfig {
 
     @Bean

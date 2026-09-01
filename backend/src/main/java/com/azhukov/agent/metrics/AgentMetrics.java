@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.DistributionSummary;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -27,6 +28,11 @@ public class AgentMetrics {
     private final Timer compressionLatency; // summary model call inside compress()
     private final Counter sessionRotations;
     private final Counter compressionCalls;
+    private final Timer sseDuration;
+    private final Timer sessionLockWait;
+    private final DistributionSummary historyRowsLoaded;
+    private final DistributionSummary persistenceBatchSize;
+    private final Counter prepareContextCalls;
     private final AtomicInteger contextLengthGauge = new AtomicInteger(0);
 
     public AgentMetrics(MeterRegistry meterRegistry) {
@@ -62,6 +68,25 @@ public class AgentMetrics {
         this.compressionCalls = Counter.builder("agent.compression.calls")
             .description("Compression attempts (preflight-triggered)")
             .register(meterRegistry);
+        this.sseDuration = Timer.builder("agent.sse.duration")
+            .description("SSE stream duration from dispatch to completion")
+            .publishPercentiles(0.5, 0.95, 0.99)
+            .register(meterRegistry);
+        this.sessionLockWait = Timer.builder("agent.session.lock.wait")
+            .description("Time spent waiting for a per-session turn lock")
+            .publishPercentiles(0.5, 0.95, 0.99)
+            .register(meterRegistry);
+        this.historyRowsLoaded = DistributionSummary.builder("agent.history.rows.loaded")
+            .description("History rows loaded for each context construction")
+            .publishPercentiles(0.5, 0.95, 0.99)
+            .register(meterRegistry);
+        this.persistenceBatchSize = DistributionSummary.builder("agent.persistence.batch.size")
+            .description("Non-system messages written by one persistence flush")
+            .publishPercentiles(0.5, 0.95, 0.99)
+            .register(meterRegistry);
+        this.prepareContextCalls = Counter.builder("agent.context.prepare.calls")
+            .description("Total prepareContext invocations")
+            .register(meterRegistry);
 
         Gauge.builder("agent.sessions.active", activeSessions, AtomicInteger::get)
             .description("Number of active agent sessions")
@@ -81,6 +106,11 @@ public class AgentMetrics {
             .register(meterRegistry).record(java.time.Duration.ofMillis(ms));
     }
     public void recordCompression(long ms) { compressionLatency.record(java.time.Duration.ofMillis(ms)); }
+    public void recordSseDuration(long ms) { sseDuration.record(java.time.Duration.ofMillis(ms)); }
+    public void recordSessionLockWait(long ms) { sessionLockWait.record(java.time.Duration.ofMillis(ms)); }
+    public void recordHistoryRowsLoaded(int rows) { historyRowsLoaded.record(Math.max(0, rows)); }
+    public void recordPersistenceBatchSize(int messages) { persistenceBatchSize.record(Math.max(0, messages)); }
+    public void incrementPrepareContextCalls() { prepareContextCalls.increment(); }
     public void incrementSessionRotations() { sessionRotations.increment(); }
     public void incrementCompressionCalls() { compressionCalls.increment(); }
     public void setContextWindow(int tokens) { contextLengthGauge.set(Math.max(0, tokens)); }

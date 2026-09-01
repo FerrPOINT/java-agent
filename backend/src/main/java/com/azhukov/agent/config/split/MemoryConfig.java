@@ -22,7 +22,7 @@ import org.springframework.context.annotation.Configuration;
  * {@link MemoryThreatScanner}, {@link MemoryStore}, {@link WriteApprovalGate},
  * and {@link BackgroundReviewService}.
  */
-@Configuration
+@Configuration(proxyBeanMethods = false)
 public class MemoryConfig {
 
     @Bean

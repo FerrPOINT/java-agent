@@ -73,4 +73,19 @@ class AgentMetricsTest {
         agentMetrics.decrementActiveSessions();
         assertThat(meterRegistry.get("agent.sessions.active").gauge().value()).isEqualTo(-1.0);
     }
+
+    @Test
+    void performanceMetrics_recordMeasurements() {
+        agentMetrics.recordSseDuration(125);
+        agentMetrics.recordSessionLockWait(7);
+        agentMetrics.recordHistoryRowsLoaded(42);
+        agentMetrics.recordPersistenceBatchSize(3);
+        agentMetrics.incrementPrepareContextCalls();
+
+        assertThat(meterRegistry.get("agent.sse.duration").timer().count()).isEqualTo(1);
+        assertThat(meterRegistry.get("agent.session.lock.wait").timer().count()).isEqualTo(1);
+        assertThat(meterRegistry.get("agent.history.rows.loaded").summary().count()).isEqualTo(1);
+        assertThat(meterRegistry.get("agent.persistence.batch.size").summary().count()).isEqualTo(1);
+        assertThat(meterRegistry.get("agent.context.prepare.calls").counter().count()).isEqualTo(1.0);
+    }
 }

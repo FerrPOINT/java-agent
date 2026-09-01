@@ -2,6 +2,7 @@ package com.azhukov.agent.core.context;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.context.SessionLineagePort;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
@@ -214,6 +215,32 @@ class DefaultContextEngineTest {
         assertThat(result.get(0).role()).isEqualTo(Role.USER);
         assertThat(result.get(0).content()).isEqualTo("Just a user message");
         verify(memoryProvider, never()).recall(anyString(), anyString(), anyInt());
+    }
+
+    @Test
+    void prepareContextReusesLineageHistoryWithinSameTurn() {
+        SessionLineagePort lineage = org.mockito.Mockito.mock(SessionLineagePort.class);
+        contextEngine.setSessionLineageService(lineage);
+        when(lineage.loadMessagesWithAncestors(session.id())).thenReturn(List.of(Message.user("previous")));
+        List<Message> turnMessages = new ArrayList<>(List.of(Message.system("System"), Message.user("Current")));
+
+        contextEngine.prepareContext(session, turnMessages);
+        turnMessages.add(Message.assistant("tool result", 1));
+        contextEngine.prepareContext(session, turnMessages);
+
+        verify(lineage).loadMessagesWithAncestors(session.id());
+    }
+
+    @Test
+    void prepareContextReloadsLineageHistoryForAnotherTurn() {
+        SessionLineagePort lineage = org.mockito.Mockito.mock(SessionLineagePort.class);
+        contextEngine.setSessionLineageService(lineage);
+        when(lineage.loadMessagesWithAncestors(session.id())).thenReturn(List.of(Message.user("previous")));
+
+        contextEngine.prepareContext(session, new ArrayList<>(List.of(Message.system("System"), Message.user("First"))));
+        contextEngine.prepareContext(session, new ArrayList<>(List.of(Message.system("System"), Message.user("Second"))));
+
+        verify(lineage, org.mockito.Mockito.times(2)).loadMessagesWithAncestors(session.id());
     }
 
     private MessageEntity entity(String role, String content, int turnIndex) {

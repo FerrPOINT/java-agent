@@ -159,14 +159,11 @@ class DefaultAgentRuntimeLockTest {
         }
 
         threads[0].start();
-        // Wait until the first thread has acquired the lock and entered the mock
         firstThreadInLock.await(5, TimeUnit.SECONDS);
         threads[1].start();
         latch.await(15, TimeUnit.SECONDS);
 
-        // Since turns are serialized, maxConcurrent should be 1
         assertThat(maxConcurrent.get()).isEqualTo(1);
-        // Both should complete successfully
         assertThat(results[0]).isNotNull();
         assertThat(results[1]).isNotNull();
         assertThat(results[0].completed()).isTrue();

@@ -312,6 +312,7 @@ public class AgentStreamingService {
                     long __turnMs = System.currentTimeMillis() - __turnStart;
                     if (agentMetrics != null) {
                         agentMetrics.recordTurnDuration(__turnMs);
+                        agentMetrics.recordSseDuration(__turnMs);
                     }
                     // Perf breakdown: one INFO line per turn with the phases that
                     // dominate latency. Correlate with agent.turn.latency /

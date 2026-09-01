@@ -63,7 +63,7 @@ import org.springframework.context.annotation.Import;
  * domain: {@link AgentRuntime}, {@link TurnStateManager}, {@link AgentState},
  * {@link AgentConstants}, and {@link CommentaryCallback}.
  */
-@Configuration
+@Configuration(proxyBeanMethods = false)
 @Import({
     ModelClientConfig.class,
     PromptConfig.class,

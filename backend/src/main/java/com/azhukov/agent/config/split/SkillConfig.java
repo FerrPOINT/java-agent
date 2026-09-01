@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Skill-related beans: {@link SkillManager} (database or noop).
  */
-@Configuration
+@Configuration(proxyBeanMethods = false)
 public class SkillConfig {
 
     @Bean

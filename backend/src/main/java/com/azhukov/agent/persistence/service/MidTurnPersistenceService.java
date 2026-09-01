@@ -6,6 +6,7 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.metrics.AgentMetrics;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,7 @@ public class MidTurnPersistenceService implements MidTurnPersistenceCallback {
     private final MessageMapper messageMapper;
     private final TransactionTemplate transactionTemplate;
     private final SessionRepository sessionRepository;
+    private final AgentMetrics agentMetrics;
 
     @Override
     public boolean persistNewMessages(UUID sessionId, List<Message> messages, int fromIndex) {
@@ -54,8 +56,9 @@ public class MidTurnPersistenceService implements MidTurnPersistenceCallback {
             return true; // treat as flushed so the caller advances its cursor
         }
         try {
-            transactionTemplate.execute(status -> {
+            int persistedCount = transactionTemplate.execute(status -> {
                 Instant now = Instant.now();
+                java.util.List<MessageEntity> batch = new java.util.ArrayList<>();
                 for (int i = fromIndex; i < messages.size(); i++) {
                     Message m = messages.get(i);
                     // Skip system/developer messages — they are regenerated each turn
@@ -63,22 +66,31 @@ public class MidTurnPersistenceService implements MidTurnPersistenceCallback {
                     MessageEntity e = messageMapper.toEntity(m);
                     e.setSessionId(sessionId);
                     e.setCreatedAt(now);
-                    messageRepository.save(e);
+                    batch.add(e);
                 }
-                return null;
+                if (!batch.isEmpty()) {
+                    messageRepository.saveAll(batch);
+                }
+                return batch.size();
             });
-            log.debug("Mid-turn persistence: flushed messages [{}..{}] for session {}",
-                fromIndex, messages.size() - 1, sessionId);
-            // Update session stats (message_count, last_active) so session_search
-            // browse mode shows accurate data even for mid-turn persisted sessions.
-            try {
-                long count = messageRepository.countBySessionId(sessionId);
-                transactionTemplate.execute(status -> {
-                    sessionRepository.updateLastActiveAndMessageCount(sessionId, Instant.now(), (int) count);
-                    return null;
-                });
-            } catch (Exception statEx) {
-                log.debug("Failed to update session stats after mid-turn persistence: {}", statEx.getMessage());
+            log.debug("Mid-turn persistence: flushed {} messages [{}..{}] for session {}",
+                persistedCount, fromIndex, messages.size() - 1, sessionId);
+            // Record batch size metric
+            if (agentMetrics != null && persistedCount > 0) {
+                agentMetrics.recordPersistenceBatchSize(persistedCount);
+            }
+            // Each flush touches session metadata once using an atomic delta.
+            // This avoids a COUNT(*) over the full message history and remains
+            // correct when a session already has persisted messages.
+            if (persistedCount > 0) {
+                try {
+                    transactionTemplate.execute(status -> {
+                        sessionRepository.incrementMessageCount(sessionId, Instant.now(), persistedCount);
+                        return null;
+                    });
+                } catch (Exception statEx) {
+                    log.debug("Failed to update session stats after mid-turn persistence: {}", statEx.getMessage());
+                }
             }
             return true;
         } catch (Exception e) {

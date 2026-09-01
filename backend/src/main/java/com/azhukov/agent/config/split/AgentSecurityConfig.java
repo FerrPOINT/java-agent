@@ -27,7 +27,7 @@ import org.springframework.context.annotation.Configuration;
  * Security-related beans: sanitizers, redactors, file/URL safety, guardrails,
  * approval manager, SSRF-safe HTTP client.
  */
-@Configuration
+@Configuration(proxyBeanMethods = false)
 public class AgentSecurityConfig {
 
     @Bean

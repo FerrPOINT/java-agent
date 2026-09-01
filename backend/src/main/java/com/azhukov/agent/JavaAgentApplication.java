@@ -7,7 +7,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.retry.annotation.EnableRetry;
 
-@SpringBootApplication(excludeName = "org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration")
+@SpringBootApplication(proxyBeanMethods = false, excludeName = "org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration")
 @EnableConfigurationProperties(AgentProperties.class)
 @EnableRetry
 public class JavaAgentApplication {

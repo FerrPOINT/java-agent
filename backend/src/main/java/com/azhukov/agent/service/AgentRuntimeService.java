@@ -614,6 +614,7 @@ public class AgentRuntimeService {
     private void persistMessages(UUID sessionId, List<Message> messages) {
         transactionTemplate.execute(status -> {
             Instant now = Instant.now();
+            java.util.List<MessageEntity> batch = new java.util.ArrayList<>();
             for (Message m : messages) {
                 // Hermes parity: SYSTEM/DEVELOPER messages are regenerated each
                 // turn — never persisted (persisting them leaked a full system
@@ -629,7 +630,10 @@ public class AgentRuntimeService {
                     e.setToolCallName(m.toolCalls().get(0).name());
                     e.setToolCallArguments(m.toolCalls().get(0).arguments());
                 }
-                messageRepository.save(e);
+                batch.add(e);
+            }
+            if (!batch.isEmpty()) {
+                messageRepository.saveAll(batch);
             }
             return null;
         });

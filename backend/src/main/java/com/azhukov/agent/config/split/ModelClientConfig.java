@@ -23,7 +23,7 @@ import org.springframework.context.annotation.Configuration;
  * Model-client related beans: the {@link ModelClient} (noop or OpenAI-compatible),
  * shared {@link ObjectMapper}, {@link IterationBudget}, and Resilience4j registries.
  */
-@Configuration
+@Configuration(proxyBeanMethods = false)
 public class ModelClientConfig {
 
     @Bean

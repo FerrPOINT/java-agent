@@ -19,6 +19,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -264,7 +265,7 @@ class UsageTrackerBranchTest {
         UUID sessionId = UUID.randomUUID();
         UsageEntity e1 = createUsageEntity(sessionId, "user-1", "gpt-4", 500, 0.01);
         UsageEntity e2 = createUsageEntity(sessionId, "user-2", "gpt-4", 300, 0.01);
-        when(usageRepository.findAll()).thenReturn(List.of(e1, e2));
+        when(usageRepository.findByUserIdAndCreatedAtBetween(eq("user-1"), any(), any())).thenReturn(List.of(e1));
 
         InsightsDto insights = tracker.getInsights("user-1");
 
@@ -338,7 +339,7 @@ class UsageTrackerBranchTest {
         UUID sessionId = UUID.randomUUID();
         UsageEntity e1 = createUsageEntity(sessionId, "user-1", "gpt-4", 500, 0.01);
         UsageEntity e2 = createUsageEntity(sessionId, "user-2", "gpt-4", 300, 0.02);
-        when(usageRepository.findAll()).thenReturn(List.of(e1, e2));
+        when(usageRepository.findByUserIdAndCreatedAtBetween(eq("user-1"), any(), any())).thenReturn(List.of(e1));
 
         var credits = tracker.getCreditsSummary("user-1");
 

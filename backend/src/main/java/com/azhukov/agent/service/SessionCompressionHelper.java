@@ -6,6 +6,7 @@ import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
@@ -37,6 +38,7 @@ public class SessionCompressionHelper {
     private final MessageRepository messageRepository;
     private final MessageMapper messageMapper;
     private final ConversationCompressor conversationCompressor;
+    private final ObjectProvider<SessionCompressionHelper> self;
 
     /**
      * Main entry point — no @Transactional here so the LLM call runs without
@@ -47,8 +49,11 @@ public class SessionCompressionHelper {
                maxAttempts = 3,
                backoff = @Backoff(delay = 1000, multiplier = 2))
     public void compressSessionInternal(UUID sessionId, String focusTopic, Integer keepLastN) {
+        // Use self-proxy to engage @Transactional proxies on inner methods
+        // (same pattern as CheckpointManager — avoids self-invocation bypass).
+        SessionCompressionHelper proxy = self.getObject();
         // 1. Read messages in a short read-only transaction
-        List<Message> messages = readMessages(sessionId);
+        List<Message> messages = proxy.readMessages(sessionId);
         if (messages.size() <= 4) return;
 
         // 2. Compress OUTSIDE any transaction (LLM call may take 10-60+ seconds)
@@ -60,7 +65,7 @@ public class SessionCompressionHelper {
         }
 
         // 3. Persist results in a short write transaction
-        persistCompressed(sessionId, compressed);
+        proxy.persistCompressed(sessionId, compressed);
     }
 
     /**

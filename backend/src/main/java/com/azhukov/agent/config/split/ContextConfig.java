@@ -22,7 +22,7 @@ import org.springframework.context.annotation.Configuration;
  * Context-related beans: {@link ContextCompressor}, {@link ContextReferenceService},
  * and {@link ContextEngine}.
  */
-@Configuration
+@Configuration(proxyBeanMethods = false)
 public class ContextConfig {
 
     @Bean

@@ -35,6 +35,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 
 @RestController
 @RequestMapping("/v1/chat/completions")
@@ -47,6 +48,9 @@ public class ChatCompletionsController {
     private final ModelClient modelClient;
     private final ObjectMapper objectMapper;
     private final OpenAiMapper openAiMapper;
+    private final ExecutorService streamingExecutor =
+        java.util.concurrent.Executors.newThreadPerTaskExecutor(
+            Thread.ofVirtual().name("openai-sse-", 0).factory());
 
     @PostMapping
     public Object completions(@Valid @RequestBody OpenAiChatRequest request) {
@@ -109,7 +113,7 @@ public class ChatCompletionsController {
                 sendDone(emitter);
                 emitter.complete();
             }
-        });
+        }, streamingExecutor);
 
         return emitter;
     }

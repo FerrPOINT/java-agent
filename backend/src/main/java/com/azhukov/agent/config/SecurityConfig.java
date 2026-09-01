@@ -25,7 +25,7 @@ import jakarta.servlet.DispatcherType;
  *   <li>All other endpoints require API key authentication</li>
  * </ul>
  */
-@Configuration
+@Configuration(proxyBeanMethods = false)
 @EnableWebSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {

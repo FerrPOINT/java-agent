@@ -13,6 +13,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -38,7 +39,8 @@ class MidTurnPersistenceServiceTest {
         MessageMapper messageMapper = org.mapstruct.factory.Mappers.getMapper(MessageMapper.class);
         lenient().when(messageRepository.countBySessionId(any())).thenReturn(0L);
         lenient().when(sessionRepository.existsById(any())).thenReturn(true);
-        service = new MidTurnPersistenceService(messageRepository, messageMapper, transactionTemplate, sessionRepository);
+        service = new MidTurnPersistenceService(messageRepository, messageMapper, transactionTemplate, sessionRepository,
+            new com.azhukov.agent.metrics.AgentMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
     }
 
     private void stubTransaction() {
@@ -62,19 +64,21 @@ class MidTurnPersistenceServiceTest {
 
         service.persistNewMessages(sessionId, messages, 2);
 
-        // Should save messages from index 2 onward (assistant + tool result)
+        // Should saveAll messages from index 2 onward (assistant + tool result)
         // System and user messages (indices 0-1) should be skipped
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<MessageEntity> captor = ArgumentCaptor.forClass(MessageEntity.class);
-        verify(messageRepository, times(2)).save(captor.capture());
+        ArgumentCaptor<java.util.List<MessageEntity>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(messageRepository).saveAll(captor.capture());
 
-        List<MessageEntity> saved = captor.getAllValues();
+        List<MessageEntity> saved = captor.getValue();
         assertThat(saved).hasSize(2);
         assertThat(saved.get(0).getRole()).isEqualTo("assistant");
         assertThat(saved.get(0).getContent()).isEqualTo("response");
         assertThat(saved.get(0).getSessionId()).isEqualTo(sessionId);
         assertThat(saved.get(1).getRole()).isEqualTo("tool");
         assertThat(saved.get(1).getContent()).isEqualTo("result");
+        verify(messageRepository, never()).countBySessionId(sessionId);
+        verify(sessionRepository).incrementMessageCount(eq(sessionId), any(Instant.class), eq(2));
     }
 
     @Test
@@ -88,9 +92,10 @@ class MidTurnPersistenceServiceTest {
 
         service.persistNewMessages(sessionId, messages, 0);
 
-        ArgumentCaptor<MessageEntity> captor = ArgumentCaptor.forClass(MessageEntity.class);
-        verify(messageRepository).save(captor.capture());
-        assertThat(captor.getValue().getToolCallsJson()).contains("call-one", "call-two");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<MessageEntity>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(messageRepository).saveAll(captor.capture());
+        assertThat(captor.getValue().get(0).getToolCallsJson()).contains("call-one", "call-two");
     }
 
     @Test
@@ -106,10 +111,11 @@ class MidTurnPersistenceServiceTest {
         service.persistNewMessages(sessionId, messages, 0);
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<MessageEntity> captor = ArgumentCaptor.forClass(MessageEntity.class);
-        verify(messageRepository, times(1)).save(captor.capture());
+        ArgumentCaptor<java.util.List<MessageEntity>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(messageRepository).saveAll(captor.capture());
 
-        assertThat(captor.getValue().getRole()).isEqualTo("assistant");
+        assertThat(captor.getValue()).hasSize(1);
+        assertThat(captor.getValue().get(0).getRole()).isEqualTo("assistant");
     }
 
     @Test
@@ -137,13 +143,13 @@ class MidTurnPersistenceServiceTest {
         UUID sessionId = UUID.randomUUID();
         List<Message> messages = List.of(Message.assistant("test", 1));
 
-        when(messageRepository.save(any())).thenThrow(new RuntimeException("DB error"));
+        when(messageRepository.saveAll(any())).thenThrow(new RuntimeException("DB error"));
 
         // M6: Should not throw — just return false
         boolean result = service.persistNewMessages(sessionId, messages, 0);
 
         assertThat(result).isFalse();
-        verify(messageRepository).save(any());
+        verify(messageRepository).saveAll(any());
     }
 
     @Test
@@ -156,6 +162,7 @@ class MidTurnPersistenceServiceTest {
         boolean result = service.persistNewMessages(sessionId, messages, 0);
         assertThat(result).isTrue(); // treated as flushed, caller advances cursor
         verify(messageRepository, never()).save(any());
+        verify(messageRepository, never()).saveAll(any());
         verify(transactionTemplate, never()).execute(any());
     }
 }
