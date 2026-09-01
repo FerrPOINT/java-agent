@@ -1,4 +1,4 @@
-# Terminal tool: exit-code failure must reach the model with output intact
+# Terminal tool: real command execution, tool call registration, exit-code failure, side effect
 name: terminal-tool
 steps:
   - name: successful command round-trip
@@ -7,11 +7,41 @@ steps:
     assert:
       - { var: turn.toolNames, contains: terminal }
       - { var: turn.text, contains: "e2e-marker-123" }
+      - { var: turn.error, eq: null }
+
+  - name: tool result was registered
+    step: turn
+    message: "Выполни через терминал: echo e2e-marker-456. Верни только вывод команды."
+    assert:
+      - { var: turn.toolNames, contains: terminal }
+      - { var: turn.toolResultCount, gte: 1 }
+      - { var: turn.text, contains: "e2e-marker-456" }
+
+  - name: real filesystem side effect — create file
+    step: turn
+    message: "Выполни через терминал: touch /tmp/e2e_terminal_sideffect_test. Затем выведи ls /tmp/e2e_terminal_sideffect_test. Подтверди, что файл существует."
+    assert:
+      - { var: turn.toolNames, contains: terminal }
+      - { var: turn.text, contains: "e2e_terminal_sideffect_test" }
+
+  - name: verify file exists via second turn
+    step: turn
+    message: "Выполни через терминал: test -f /tmp/e2e_terminal_sideffect_test && echo FILE_EXISTS || echo FILE_MISSING. Верни только результат."
+    assert:
+      - { var: turn.toolNames, contains: terminal }
+      - { var: turn.text, contains: "FILE_EXISTS" }
+
+  - name: cleanup — remove file
+    step: turn
+    message: "Выполни через терминал: rm -f /tmp/e2e_terminal_sideffect_test. Затем выполни test -f /tmp/e2e_terminal_sideffect_test && echo FILE_EXISTS || echo FILE_MISSING. Верни только результат."
+    assert:
+      - { var: turn.toolNames, contains: terminal }
+      - { var: turn.text, contains: "FILE_MISSING" }
 
   - name: failing command — model sees exit code and stderr
     step: turn
     message: "Выполни через терминал команду ls /nonexistent_e2e_dir. Назови точный код возврата и текст ошибки."
     assert:
       - { var: turn.toolNames, contains: terminal }
-      - { var: turn.text, matches: "(?i)(2|exit)" }
+      - { var: turn.text, matches: "(?i)(2|exit|error|no such)" }
       - { var: turn.text, contains: "nonexistent_e2e_dir" }

@@ -8,7 +8,11 @@ steps:
       name: "e2e-cron-advanced"
       schedule: "0 0 1 1 *"
       prompt: "test prompt"
-    assert: { status: 200 }
+    assert:
+      - { status: 200 }
+      - { path: name, eq: "e2e-cron-advanced" }
+      - { path: enabled, eq: true }
+      - { path: lastRunAt, eq: null }
     extract:
       id: cron_id
 
@@ -18,10 +22,17 @@ steps:
     body: {}
     assert:
       - { status: 200 }
+      - { path: lastStatus, eq: success }
+      - { path: lastRunAt, exists: true }
+      - { path: lastRunSessionId, exists: true }
 
-  - name: list executions for cron job
+  - name: list successful execution for cron job
     path: /agent/cron/{cron_id}/executions
-    assert: { status: 200 }
+    assert:
+      - { status: 200 }
+      - { path: "[0].jobId", eq: "{cron_id}" }
+      - { path: "[0].status", eq: success }
+      - { path: "[0].finishedAt", exists: true }
 
   - name: mark delivered
     method: POST
@@ -29,6 +40,9 @@ steps:
     body: {}
     assert:
       - { status: 200 }
+      - { path: lastStatus, eq: success }
+      - { path: lastDeliveredRunAt, exists: true }
+      - { path: lastDeliveredRunAt, ne: null }
 
   - name: clear accepted suggestions
     method: POST
@@ -50,3 +64,9 @@ steps:
     method: DELETE
     path: /agent/cron/{cron_id}
     assert: { status: 200 }
+
+  - name: deleted cron job is absent from list
+    path: /agent/cron
+    assert:
+      - { status: 200 }
+      - { path: "[*].id", not_contains: "{cron_id}" }

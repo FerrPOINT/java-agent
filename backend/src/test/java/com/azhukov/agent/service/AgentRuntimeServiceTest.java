@@ -34,6 +34,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -358,6 +361,54 @@ class AgentRuntimeServiceTest {
 
         assertThat(ctx.goal()).isEqualTo("fix all bugs");
         assertThat(ctx.goalPaused()).isTrue();
+    }
+
+    @Test
+    void concurrentSameSessionRequestsSerializePersistenceAndRuntime() throws Exception {
+        SessionEntity existing = newSessionEntity(EXISTING_SESSION_ID, USER_ID, "concurrent chat");
+        when(sessionRepository.findById(EXISTING_SESSION_ID)).thenReturn(Optional.of(existing));
+        TurnResult first = new TurnResult(List.of(
+            Message.user("first"), Message.assistant("FIRST", 1)), true, null);
+        TurnResult second = new TurnResult(List.of(
+            Message.user("second"), Message.assistant("SECOND", 2)), true, null);
+        CountDownLatch firstRuntimeEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirstRuntime = new CountDownLatch(1);
+        AtomicInteger concurrentRuntimeCalls = new AtomicInteger();
+        AtomicInteger maxConcurrentRuntimeCalls = new AtomicInteger();
+        when(agentRuntime.runTurn(any(Session.class), anyString(), eq(List.of()), any()))
+            .thenAnswer(invocation -> {
+                int active = concurrentRuntimeCalls.incrementAndGet();
+                maxConcurrentRuntimeCalls.accumulateAndGet(active, Math::max);
+                try {
+                    if ("first".equals(invocation.getArgument(1))) {
+                        firstRuntimeEntered.countDown();
+                        releaseFirstRuntime.await(5, TimeUnit.SECONDS);
+                        return first;
+                    }
+                    return second;
+                } finally {
+                    concurrentRuntimeCalls.decrementAndGet();
+                }
+            });
+
+        ChatResponseDto[] responses = new ChatResponseDto[2];
+        Thread firstThread = new Thread(() -> responses[0] = agentRuntimeService.runTurn(
+            ChatRequest.simple(EXISTING_SESSION_ID, "first", null, null)));
+        Thread secondThread = new Thread(() -> responses[1] = agentRuntimeService.runTurn(
+            ChatRequest.simple(EXISTING_SESSION_ID, "second", null, null)));
+
+        firstThread.start();
+        assertThat(firstRuntimeEntered.await(5, TimeUnit.SECONDS)).isTrue();
+        secondThread.start();
+        Thread.sleep(100);
+        assertThat(maxConcurrentRuntimeCalls.get()).isEqualTo(1);
+        releaseFirstRuntime.countDown();
+        firstThread.join(5_000);
+        secondThread.join(5_000);
+
+        assertThat(responses[0].content()).isEqualTo("FIRST");
+        assertThat(responses[1].content()).isEqualTo("SECOND");
+        assertThat(maxConcurrentRuntimeCalls.get()).isEqualTo(1);
     }
 
     private SessionEntity newSessionEntity(UUID id, String userId, String title) {

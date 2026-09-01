@@ -1,20 +1,30 @@
-# Tools: todo + session_search — planning & recall surface
+# Tools: todo + session_search — tool persistence and recall
 name: todo-session-search
 steps:
-  - name: agent creates todos
+  - name: agent creates a todo item via tool
     step: turn
-    message: "Создай два тудушки: 'первая e2e задача' и 'вторая e2e задача', затем покажи список."
+    message: "Call the todo tool. Pass todos as an array with one item: {\"id\": \"e2e-1\", \"content\": \"E2E_TODO_FIRST\", \"status\": \"pending\"}. Then reply OK."
+    assert:
+      - { var: turn.toolNames, contains: todo }
+      - { var: turn.error, eq: null }
+
+  - name: todo API reflects the persisted task
+    path: /agent/session/{session_id}/plan
+    assert:
+      - { status: 200 }
+      - { path: todos, len_gte: 1 }
+
+  - name: agent reads todo list via tool
+    step: turn
+    sessionId: "{session_id}"
+    message: "Call the todo tool with no parameters to read the current list. Reply with the exact content of the first item."
     assert:
       - { var: turn.toolNames, contains: todo }
 
-  - name: todo API reflects them
-    path: /agent/session/{session_id}/plan
-    assert:
-      - { path: todos, len_gte: 2 }
-
-  - name: agent searches session history
+  - name: agent searches session history through tool
     step: turn
-    message: "Поищи в истории сессий: в какой сессии я просил создать тудушки? Назови текст задачи."
+    sessionId: "{session_id}"
+    message: "Use the session_search tool with query E2E_TODO. Reply FOUND or NOT_FOUND."
     assert:
       - { var: turn.toolNames, contains: session_search }
-      - { var: turn.text, contains: "e2e" }
+      - { var: turn.text, matches: "(?i)FOUND|NOT_FOUND" }

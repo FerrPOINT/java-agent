@@ -1,32 +1,69 @@
-# Cron jobs CRUD: create, list, pause/resume, delete
+# Cron jobs CRUD: create, list, pause/resume idempotency, update, delete, negative cases
 name: cron-crud
 steps:
   - name: create job
     method: POST
     path: /agent/cron
     body:
-      name: "e2e-cleanup-job"
+      name: "e2e-crud-job"
       schedule: "0 5 * * *"
       prompt: "e2e: report nothing, this is a lifecycle probe"
       deliverTo: "origin"
     assert:
-      - { path: name, eq: "e2e-cleanup-job" }
+      - { status: 200 }
+      - { path: name, eq: "e2e-crud-job" }
+      - { path: enabled, eq: true }
+      - { path: id, exists: true }
     extract:
       id: id
 
   - name: list contains the job
     path: /agent/cron
-    assert: { status: 200 }
+    assert:
+      - { status: 200 }
+      - { path: "[*].id", contains: "{id}" }
 
   - name: pause job
     method: POST
     path: /agent/cron/{id}/pause
-    assert: { status: 200 }
+    assert:
+      - { status: 200 }
+      - { path: enabled, eq: false }
+
+  - name: double pause is idempotent
+    method: POST
+    path: /agent/cron/{id}/pause
+    assert:
+      - { status: 200 }
+      - { path: enabled, eq: false }
 
   - name: resume job
     method: POST
     path: /agent/cron/{id}/resume
-    assert: { status: 200 }
+    assert:
+      - { status: 200 }
+      - { path: enabled, eq: true }
+
+  - name: double resume is idempotent
+    method: POST
+    path: /agent/cron/{id}/resume
+    assert:
+      - { status: 200 }
+      - { path: enabled, eq: true }
+
+  - name: update job schedule
+    method: PUT
+    path: /agent/cron/{id}
+    body:
+      name: "e2e-crud-job-renamed"
+      schedule: "0 6 * * *"
+      prompt: "e2e: updated prompt"
+      deliverTo: "origin"
+      enabled: true
+    assert:
+      - { status: 200 }
+      - { path: name, eq: "e2e-crud-job-renamed" }
+      - { path: schedule, eq: "0 6 * * *" }
 
   - name: delete job
     method: DELETE
@@ -37,3 +74,18 @@ steps:
     method: DELETE
     path: /agent/cron/{id}
     assert: { status: 404 }
+
+  - name: pause non-existent job rejected
+    method: POST
+    path: /agent/cron/00000000-0000-0000-0000-0000000000ff/pause
+    assert: { status: 400 }
+
+  - name: create with invalid schedule rejected
+    method: POST
+    path: /agent/cron
+    body:
+      name: "e2e-bad-schedule"
+      schedule: "not-a-cron-expression"
+      prompt: "test"
+      deliverTo: "origin"
+    assert: { status: 400 }

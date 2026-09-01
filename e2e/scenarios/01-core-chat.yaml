@@ -3,13 +3,15 @@ name: core-chat
 steps:
   - name: health via /agent/health
     path: /agent/health
-    assert: { status: 200 }
+    assert:
+      - { status: 200 }
+      - { path: status, eq: UP }
 
   - name: streaming turn answers
     step: turn
-    message: "Ответь ровно одним словом: ок"
+    message: "Reply with the exact ASCII token: E2E_OK"
     assert:
-      - { var: turn.text, matches: "(?i)ок" }
+      - { var: turn.text, contains: "E2E_OK" }
       - { var: turn.error, eq: null }
 
   - name: session persisted with messages
@@ -21,11 +23,12 @@ steps:
   - name: history has the user message verbatim
     path: /agent/session/{session_id}/history
     assert:
-      - { path: "[0].content", contains: "одним словом" }
+      - { path: "[0].content", contains: "E2E_OK" }
 
   - name: second turn keeps the same session
     step: turn
-    message: "Что я просил тебя сделать в предыдущем сообщении? Ответь кратко."
+    message: "What exact ASCII token did I ask you to reply with? Reply with that token only."
     sessionId: "{session_id}"
     assert:
-      - { var: turn.text, contains: "слов" }
+      - { var: turn.text, contains: "E2E_OK" }
+      - { var: turn.error, eq: null }

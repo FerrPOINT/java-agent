@@ -1,42 +1,76 @@
-# Session management: context, title, undo, compress, snapshot/restore
+# Session management: counters, title persistence, undo, snapshot, compression and live v2 state
 name: session-mgmt
 steps:
   - name: probe turn
     step: turn
     message: "Ответь одним словом: ок"
+    assert:
+      - { var: turn.error, eq: null }
 
   - name: context endpoint returns counters
     path: /agent/session/{session_id}/context
     assert:
+      - { status: 200 }
       - { path: messageCount, gte: 1 }
 
-  - name: usage endpoint responds
+  - name: usage endpoint returns counters
     path: /agent/session/{session_id}/usage
-    assert: { status: 200 }
+    assert:
+      - { status: 200 }
+      - { path: messageCount, gte: 1 }
+      - { path: tokenEstimate, gte: 0 }
 
-  - name: set title
+  - name: set title through v1 compatibility endpoint
     method: POST
     path: /agent/session/title
     body: { sessionId: "{session_id}", title: "e2e-title-test" }
     assert: { status: 200 }
 
-  - name: undo last turn
+  - name: v2 session exposes persisted title
+    method: GET
+    path: /api/v2/sessions/{session_id}
+    assert:
+      - { status: 200 }
+      - { path: title, eq: "e2e-title-test" }
+
+  - name: history has complete first turn before undo
+    path: /agent/session/{session_id}/history
+    assert:
+      - { status: 200 }
+      - { path: "[*].role", contains: user }
+      - { path: "[*].role", contains: assistant }
+
+  - name: undo last turn removes response
     method: POST
     path: /agent/session/{session_id}/undo
     assert: { status: 200 }
 
-  - name: history after undo is still readable
+  - name: history remains readable after undo
     path: /agent/session/{session_id}/history
     assert: { status: 200 }
 
-  - name: snapshot before compress
+  - name: second turn rebuilds history
+    step: turn
+    sessionId: "{session_id}"
+    message: "Ответь точным токеном: SESSION_AFTER_UNDO"
+    assert:
+      - { var: turn.text, contains: "SESSION_AFTER_UNDO" }
+      - { var: turn.error, eq: null }
+
+  - name: snapshot before compression
     method: POST
     path: /agent/snapshot
-    body: { sessionId: "{session_id}" }
+    body: { sessionId: "{session_id}", description: "e2e pre-compression snapshot" }
     assert: { status: 200 }
 
-  - name: compress session
+  - name: compress session returns success text
     method: POST
     path: /agent/session/{session_id}/compress
     body: { focus: "e2e test compression" }
+    assert:
+      - { status: 200 }
+      - { path: _raw, contains: "Context compressed" }
+
+  - name: compressed session remains readable
+    path: /agent/session/{session_id}/history
     assert: { status: 200 }

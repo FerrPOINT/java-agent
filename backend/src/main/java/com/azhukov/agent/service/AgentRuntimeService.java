@@ -82,6 +82,10 @@ public class AgentRuntimeService {
     private final com.azhukov.agent.core.agent.MidTurnPersistenceCallback midTurnPersistenceCallback;
     private final com.azhukov.agent.core.agent.MemoryNudgeManager memoryNudgeManager;
     private final com.azhukov.agent.core.prompt.DefaultPromptBuilder promptBuilder;
+    // Guard the full request lifecycle, including user-message persistence,
+    // so a queued same-session turn cannot interleave DB writes with its predecessor.
+    private final java.util.concurrent.ConcurrentHashMap<UUID, java.util.concurrent.locks.ReentrantLock> sessionTurnLocks =
+        new java.util.concurrent.ConcurrentHashMap<>();
 
     private static final String UNKNOWN_MODEL = "unknown";
 
@@ -121,6 +125,26 @@ public class AgentRuntimeService {
             applied.sessionId(), AgentProperties.DEFAULT_USER_ID, properties.getModel().getModelName());
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
+        var lock = sessionTurnLocks.computeIfAbsent(session.id(), ignored ->
+            new java.util.concurrent.locks.ReentrantLock());
+        boolean acquired;
+        try {
+            acquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for session turn", e);
+        }
+        if (!acquired) {
+            throw new IllegalStateException("Session " + session.id() + " is busy (another turn is in progress). Retry later.");
+        }
+        try {
+            return runResolvedTurn(applied, session, isNew);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private ChatResponseDto runResolvedTurn(ChatRequest applied, Session session, boolean isNew) {
 
         // P1-5: When mid-turn persistence is active, persist the user message before
         // the turn starts. The DefaultAgentRuntime will persist assistant messages

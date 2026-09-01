@@ -1,12 +1,13 @@
-# Tools: execute_code + patch + delete_file — coding surface
+# Coding tools: execute_code + patch + delete_file — full create/patch/delete lifecycle
 name: coding-tools
 steps:
   - name: agent executes python code
     step: turn
-    message: "Выполни python-код: print(6*7) — и назови результат."
+    message: "Используй ТОЛЬКО инструмент execute_code, НЕ используй terminal. Выполни код Python print(6*7) и верни только число."
     assert:
       - { var: turn.toolNames, contains: execute_code }
       - { var: turn.text, contains: "42" }
+      - { var: turn.error, eq: null }
 
   - name: agent creates then patches a file
     step: turn
@@ -15,13 +16,21 @@ steps:
       - { var: turn.toolNames, contains: patch }
       - { var: turn.text, contains: "version=2" }
 
-  - name: agent deletes a file
+  - name: agent reads patched file to confirm
     step: turn
-    message: "Удали файл /tmp/e2e-patch.txt и подтверди."
+    message: "Прочитай /tmp/e2e-patch.txt и назови точное содержимое."
+    assert:
+      - { var: turn.toolNames, contains: read_file }
+      - { var: turn.text, contains: "version=2" }
+
+  - name: agent deletes the file using delete_file
+    step: turn
+    message: "Используй ТОЛЬКО инструмент delete_file, НЕ используй terminal. Удали файл /tmp/e2e-patch.txt и подтверди."
     assert:
       - { var: turn.toolNames, contains: delete_file }
 
-  - name: file is really gone
-    method: GET
-    path: /agent/health
-    assert: { status: 200 }
+  - name: agent confirms file is gone
+    step: turn
+    message: "Проверь через поиск файлов, существует ли e2e-patch.txt в /tmp. Ответь EXISTS или GONE."
+    assert:
+      - { var: turn.text, matches: "(?i)GONE" }

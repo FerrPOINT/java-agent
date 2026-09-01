@@ -56,10 +56,15 @@ def json_path(data, path: str):
                 raise StepFailure(f"path {path}: index {i} out of range ({len(cur)} items)")
             cur = cur[i]
         else:
-            if not isinstance(cur, dict) or tok not in cur:
+            if isinstance(cur, list):
+                if not all(isinstance(item, dict) and tok in item for item in cur):
+                    raise StepFailure(f"path {path}: key {tok!r} missing in one or more list items")
+                cur = [item[tok] for item in cur]
+            elif not isinstance(cur, dict) or tok not in cur:
                 raise StepFailure(
                     f"path {path}: key {tok!r} missing in {json.dumps(cur, default=str)[:200]}")
-            cur = cur[tok]
+            else:
+                cur = cur[tok]
     return cur
 
 
@@ -151,10 +156,13 @@ def wait_for(fn, timeout: int = POLL_TIMEOUT, interval: float = 2.0):
 # ─────────────────────────────────────────────────────────────────────
 
 class Runner:
-    def __init__(self, base: str):
+    def __init__(self, base: str, evidence_dir: Path | None = None):
         self.base = base
+        self.evidence_dir = evidence_dir
         self.vars: dict[str, object] = {"bot_base": BOT_BASE}
         self.session_ids: list[str] = []
+        self.evidence: list[dict[str, object]] = []
+        self.last_request: dict[str, object] | None = None
 
     def subst(self, value):
         """Replace {var} placeholders from the vars store."""
@@ -190,6 +198,17 @@ class Runner:
         self.vars["status"] = r.status_code
         self.vars["response"] = safe_json(r)
         self.track_session_in_response(self.vars["response"])
+        evidence = {
+            "method": method,
+            "url": url,
+            "request_body": body,
+            "request_params": params,
+            "request_headers": headers,
+            "status": r.status_code,
+            "response": self.vars["response"],
+        }
+        self.last_request = evidence
+        self.evidence.append(evidence)
         return r
 
     def track_session_in_response(self, response):
@@ -214,6 +233,16 @@ class Runner:
             self.session_ids.append(summary["sessionId"])
         self.vars["turn"] = summary
         self.vars["status"] = 200
+        self.vars["response"] = summary
+        self.evidence.append({
+            "method": "POST",
+            "url": f"{self.base}/agent/chat/stream",
+            "request_body": body,
+            "request_params": {},
+            "request_headers": {},
+            "status": 200,
+            "response": summary,
+        })
         return summary
 
     def run_step(self, step: dict, idx: int):
@@ -222,6 +251,8 @@ class Runner:
 
         if kind == "turn":
             summary = self.do_turn(step)
+            if "assert" in step:
+                self.check_asserts(step["assert"], label)
             return label, summary
         if kind == "wait_for":
             target = step["path"]
@@ -251,13 +282,27 @@ class Runner:
             self.do_extracts(step["extract"])
         return label, self.vars.get("response")
 
+    def resolve_var(self, path: str):
+        """Resolve a stored variable, optionally descending through a dot path."""
+        if path in self.vars:
+            return self.vars[path]
+        head, *tail = path.split(".")
+        if head not in self.vars:
+            raise StepFailure(f"variable {head!r} is not set")
+        value = self.vars[head]
+        return json_path(value, ".".join(tail)) if tail else value
+
+    def subst_assertion(self, value):
+        """Apply scenario variables to expected values too, not only requests."""
+        return self.subst(value)
+
     def check_asserts(self, asserts: dict | list, label: str):
         items = asserts if isinstance(asserts, list) else [asserts]
         for a in items:
             if "path" in a:
                 value = json_path(self.vars["response"], a["path"])
             elif "var" in a:
-                value = self.vars.get(a["var"])
+                value = self.resolve_var(a["var"])
             elif "status" in a:
                 value = self.vars.get("status")   # bare 'status' → HTTP status
                 check_condition(value, "eq", a["status"])
@@ -273,7 +318,7 @@ class Runner:
             for cond, expected in a.items():
                 if cond in ("path", "var", "name"):
                     continue
-                check_condition(value, cond, expected)
+                check_condition(value, cond, self.subst_assertion(expected))
 
     def do_extracts(self, extracts: dict):
         for path, var in extracts.items():
@@ -290,6 +335,7 @@ class Runner:
         scenario = yaml.safe_load(file.read_text())
         name = scenario.get("name", file.stem)
         steps = scenario.get("steps", [])
+        evidence_file = None
         print(f"\n▶ {name}  [{file.name}, {len(steps)} steps]")
         log: list[str] = []
         ok = True
@@ -311,7 +357,17 @@ class Runner:
                     if not scenario.get("continue_on_error"):
                         break
         finally:
+            if self.evidence_dir is not None:
+                self.evidence_dir.mkdir(parents=True, exist_ok=True)
+                evidence_file = self.evidence_dir / f"{file.stem}.json"
+                evidence_file.write_text(json.dumps({
+                    "scenario": name,
+                    "passed": ok,
+                    "steps": self.evidence,
+                }, ensure_ascii=False, indent=2, default=str))
             self.cleanup_sessions()
+        if evidence_file is not None:
+            log.append(f"EVIDENCE {evidence_file}")
         return ok, log
 
     def cleanup_sessions(self):
@@ -376,6 +432,12 @@ def main(argv):
         base = args[i + 1]
         args = args[:i] + args[i + 2:]
 
+    evidence_dir = None
+    if "--evidence-dir" in args:
+        i = args.index("--evidence-dir")
+        evidence_dir = Path(args[i + 1])
+        args = args[:i] + args[i + 2:]
+
     files = [HERE / "scenarios" / a for a in args] if args else \
         sorted((HERE / "scenarios").glob("*.yaml"))
     if not files:
@@ -393,7 +455,7 @@ def main(argv):
 
     results, all_logs = {}, []
     for f in files:
-        runner = Runner(base)
+        runner = Runner(base, evidence_dir)
         try:
             ok, log = runner.run_scenario(f)
         except Exception:  # noqa: BLE001

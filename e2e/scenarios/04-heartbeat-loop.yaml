@@ -1,15 +1,62 @@
-# Heartbeat/loop: set, status, validation, LOOP_COMPLETE auto-stop, persistence
+# Heartbeat/loop: validation, set, status, pause/resume lifecycle, LOOP_COMPLETE auto-stop, result/ack, cleanup
 name: heartbeat-loop
 steps:
   - name: reject interval below minimum
     method: POST
     path: /agent/cron/heartbeat
-    body: { sessionId: "00000000-0000-0000-0000-000000000001", prompt: x, intervalSeconds: 30 }
-    assert: { ok: false }
+    body: { sessionId: "00000000-0000-0000-0000-000000000001", prompt: "x", intervalSeconds: 30 }
+    assert:
+      - { status: 200 }
+      - { ok: false }
+
+  - name: reject missing prompt
+    method: POST
+    path: /agent/cron/heartbeat
+    body: { sessionId: "00000000-0000-0000-0000-000000000002", intervalSeconds: 60 }
+    assert:
+      - { status: 200 }
+      - { ok: false }
+
+  - name: reject missing sessionId
+    method: POST
+    path: /agent/cron/heartbeat
+    body: { prompt: "test", intervalSeconds: 60 }
+    assert:
+      - { status: 200 }
+      - { ok: false }
+
+  - name: status of non-existent session returns set=false
+    path: /agent/cron/heartbeat/00000000-0000-0000-0000-000000000003
+    assert:
+      - { status: 200 }
+      - { set: false }
+
+  - name: pause non-existent rejected
+    method: POST
+    path: /agent/cron/heartbeat/00000000-0000-0000-0000-000000000003/pause
+    assert:
+      - { status: 200 }
+      - { ok: false }
+
+  - name: resume non-existent rejected
+    method: POST
+    path: /agent/cron/heartbeat/00000000-0000-0000-0000-000000000003/resume
+    assert:
+      - { status: 200 }
+      - { ok: false }
+
+  - name: clear non-existent is no-op
+    method: POST
+    path: /agent/cron/heartbeat/00000000-0000-0000-0000-000000000003/clear
+    assert:
+      - { status: 200 }
+      - { ok: false }
 
   - name: create probe session
     step: turn
     message: "скажи ок"
+    assert:
+      - { var: turn.error, eq: null }
 
   - name: set heartbeat (1 min, max 2 ticks)
     method: POST
@@ -42,6 +89,11 @@ steps:
     method: POST
     path: /agent/cron/heartbeat/{session_id}/resume
     assert: { ok: true }
+
+  - name: double resume rejected
+    method: POST
+    path: /agent/cron/heartbeat/{session_id}/resume
+    assert: { ok: false }
 
   - name: wait for the tick to fire and the loop to self-stop
     step: wait_for

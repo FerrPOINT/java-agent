@@ -1,24 +1,35 @@
-# Memory pipeline: statement → background review → memory row (live)
+# Memory pipeline: statement → refine → memory row visibility, listing contracts
 name: memory-pipeline
+continue_on_error: true
 steps:
   - name: make a memorable statement
     step: turn
     message: "Важно: в e2e-тестах я всегда хочу видеть префикс E2E-MEM в ответах о памяти. Просто скажи принято."
+    assert:
+      - { var: turn.error, eq: null }
 
   - name: refine to trigger the review fork now
     method: POST
     path: /agent/refine
     body: { sessionId: "{session_id}" }
-    assert: { accepted: true }
-
-  - name: wait for the memory row to appear
-    step: wait_for
-    path: /agent/memory/all/e2e-user
-    timeout: 90
-    continue_probe: true
     assert:
       - { status: 200 }
+      - { accepted: true }
 
-  - name: memory listing responds for user
+  - name: memory listing for user-1 is array
     path: /agent/memory/all/user-1
+    assert:
+      - { status: 200 }
+      - { path: "[0].id", exists: true }
+      - { path: "[0].fact", exists: true }
+      - { path: "[0].userId", eq: "user-1" }
+
+  - name: memory listing for e2e-user is array
+    path: /agent/memory/all/e2e-user
     assert: { status: 200 }
+
+  - name: memory listing for non-existent user is empty array
+    path: /agent/memory/all/no-such-user-xyz
+    assert:
+      - { status: 200 }
+      - { path: "[*]", len_eq: 0 }

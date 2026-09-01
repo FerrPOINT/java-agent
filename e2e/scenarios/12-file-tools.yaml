@@ -1,4 +1,4 @@
-# Tools e2e: read_file / write_file / search_files via the live agent
+# File tools: write_file → read_file → search_files round-trip with cleanup
 name: file-tools
 steps:
   - name: agent writes a marker file
@@ -6,6 +6,7 @@ steps:
     message: "Создай файл /tmp/e2e-agent-marker.txt с содержимым 'e2e-round-trip-42' и подтверди одним словом."
     assert:
       - { var: turn.toolNames, contains: write_file }
+      - { var: turn.error, eq: null }
 
   - name: agent reads it back and quotes the content
     step: turn
@@ -18,4 +19,17 @@ steps:
     step: turn
     message: "Найди файлы по маске e2e-agent-marker* в /tmp через поиск и скажи полный путь."
     assert:
+      - { var: turn.toolNames, contains: search_files }
       - { var: turn.text, contains: "/tmp/e2e-agent-marker.txt" }
+
+  - name: agent deletes the marker file using delete_file
+    step: turn
+    message: "Используй ТОЛЬКО инструмент delete_file, НЕ используй terminal. Удали файл /tmp/e2e-agent-marker.txt и подтверди удаление."
+    assert:
+      - { var: turn.toolNames, contains: delete_file }
+
+  - name: agent confirms file is gone
+    step: turn
+    message: "Проверь через поиск, существует ли файл e2e-agent-marker* в /tmp. Назови результат: EXISTS или GONE."
+    assert:
+      - { var: turn.text, matches: "(?i)GONE" }

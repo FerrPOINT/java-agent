@@ -1,26 +1,62 @@
-# /refine: on-demand background review with optional focus
+# /refine: valid-session acceptance, focus contract, unknown/empty-session rejection, repeat dispatch
 name: refine
 steps:
-  - name: seed a memorable fact into a fresh session
-    step: turn
-    message: "Запомни: я люблю краткие ответы. Просто подтверди одним словом."
+  - name: unknown session is rejected with reason
+    method: POST
+    path: /agent/refine
+    body: { sessionId: "00000000-0000-0000-0000-0000000000ff" }
+    assert:
+      - { status: 200 }
+      - { accepted: false }
+      - { path: reason, contains: "session not found" }
 
-  - name: refine accepted (no focus)
+  - name: create a session with persisted conversation
+    step: turn
+    message: "Запомни только для этого диалога: E2E_REFINE_FACT. Подтверди одним словом."
+    assert:
+      - { var: turn.error, eq: null }
+      - { var: turn.text, len_gte: 1 }
+
+  - name: history confirms session is non-empty
+    path: /agent/session/{session_id}/history
+    assert:
+      - { status: 200 }
+      - { path: "[0].content", contains: "E2E_REFINE_FACT" }
+
+  - name: refine without focus is accepted and returns session
     method: POST
     path: /agent/refine
     body: { sessionId: "{session_id}" }
-    assert: { accepted: true }
+    assert:
+      - { status: 200 }
+      - { accepted: true }
+      - { path: sessionId, eq: "{session_id}" }
+      - { path: message, contains: "Reviewing this conversation" }
 
-  - name: refine with focus accepted
+  - name: refine with focus is accepted and echoes focus
     method: POST
     path: /agent/refine
     body:
       sessionId: "{session_id}"
       focus: "communication preferences"
-    assert: { accepted: true }
+    assert:
+      - { status: 200 }
+      - { accepted: true }
+      - { path: sessionId, eq: "{session_id}" }
+      - { path: message, contains: "focus: communication preferences" }
 
-  - name: refine unknown session rejected
+  - name: repeat focused refine is accepted
     method: POST
     path: /agent/refine
-    body: { sessionId: "00000000-0000-0000-0000-0000000000ff" }
-    assert: { accepted: false }
+    body:
+      sessionId: "{session_id}"
+      focus: "communication preferences"
+    assert:
+      - { status: 200 }
+      - { accepted: true }
+
+  - name: background review never deletes original session
+    path: /agent/session/{session_id}/history
+    assert:
+      - { status: 200 }
+      - { path: "[0].content", contains: "E2E_REFINE_FACT" }

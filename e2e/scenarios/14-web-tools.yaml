@@ -1,4 +1,4 @@
-# Tools: web_search + web_extract — live web surface
+# Web tools: web_search + web_extract — live web surface with content verification
 name: web-tools
 steps:
   - name: agent searches the web
@@ -7,6 +7,7 @@ steps:
     assert:
       - { var: turn.toolNames, contains: web_search }
       - { var: turn.text, contains: "spring.io" }
+      - { var: turn.error, eq: null }
 
   - name: agent extracts a page
     step: turn
@@ -14,3 +15,4 @@ steps:
     assert:
       - { var: turn.toolNames, contains: web_extract }
       - { var: turn.text, matches: "(?i)Example Domain" }
+      - { var: turn.error, eq: null }

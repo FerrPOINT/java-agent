@@ -288,4 +288,43 @@ class TodoToolTest {
         assertThat(TodoTool.validateStatus("waiting", null)).isNull();
         assertThat(TodoTool.validateStatus("todo", null)).isNull();
     }
+
+    // ── Stringified JSON array regression (DEFECT-01) ──
+
+    @Test
+    @DisplayName("todos as array of JSON strings (LLM wraps each item as string)")
+    void todosAsStringifiedItems() {
+        TodoTool tool = new TodoTool(todoRepository);
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        doNothing().when(todoRepository).deleteByUserId(USER_ID);
+
+        // Model sends: {"todos": ["{\"id\":\"1\",\"content\":\"Task\",\"status\":\"pending\"}"]}
+        String args = "{\"todos\":[\"{\\\"id\\\":\\\"1\\\",\\\"content\\\":\\\"Task\\\",\\\"status\\\":\\\"pending\\\"}\"]}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        ArgumentCaptor<TodoEntity> captor = ArgumentCaptor.forClass(TodoEntity.class);
+        verify(todoRepository).save(captor.capture());
+        assertThat(captor.getValue().getTitle()).isEqualTo("Task");
+        assertThat(captor.getValue().getStatus()).isEqualTo("pending");
+    }
+
+    @Test
+    @DisplayName("todos as single JSON string (not array) — TodoListDeserializer path")
+    void todosAsSingleJsonString() {
+        TodoTool tool = new TodoTool(todoRepository);
+        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        doNothing().when(todoRepository).deleteByUserId(USER_ID);
+
+        // Model sends: {"todos": "[{\"id\":\"1\",\"content\":\"Task\",\"status\":\"pending\"}]"}
+        String args = "{\"todos\":\"[{\\\"id\\\":\\\"1\\\",\\\"content\\\":\\\"Task\\\",\\\"status\\\":\\\"pending\\\"}]\"}";
+
+        ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
+
+        assertThat(result.success()).isTrue();
+        verify(todoRepository).save(any(TodoEntity.class));
+    }
 }

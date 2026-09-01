@@ -9,7 +9,15 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.persistence.entity.TodoEntity;
 import com.azhukov.agent.persistence.repository.TodoRepository;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.type.TypeFactory;
 import lombok.RequiredArgsConstructor;
+
+import java.io.IOException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -222,8 +230,33 @@ public class TodoTool implements ToolHandler {
 
     // ─── Hermes-parity schema ──────────────────────────────────────
 
+    /**
+     * Custom deserializer for the {@code todos} field that handles the case
+     * where the LLM sends the array as a JSON-encoded string instead of a
+     * proper JSON array (Hermes parity: same guard in todo_tool.py).
+     */
+    public static class TodoListDeserializer extends JsonDeserializer<List<TodoItem>> {
+        @Override
+        public List<TodoItem> deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+            if (p.currentToken() == JsonToken.VALUE_STRING) {
+                String str = p.getText();
+                if (str == null || str.isBlank()) {
+                    return null;
+                }
+                // Parse the string as JSON array
+                return p.getCodec().readValue(
+                    p.getCodec().getFactory().createParser(str),
+                    ctxt.getTypeFactory().constructCollectionType(List.class, TodoItem.class)
+                );
+            }
+            // Normal array deserialization
+            return ctxt.readValue(p, ctxt.getTypeFactory().constructCollectionType(List.class, TodoItem.class));
+        }
+    }
+
     public static class TodoArgs {
         @JsonProperty("todos")
+        @JsonDeserialize(using = TodoListDeserializer.class)
         @ToolParam(description = "Task items to write. Omit to read current list.", required = false)
         private List<TodoItem> todos;
 
@@ -258,6 +291,24 @@ public class TodoTool implements ToolHandler {
         private String status;
 
         public TodoItem() {}
+
+        /**
+         * Fallback: some LLMs wrap each todo object as a JSON string inside
+         * the todos array (e.g. todos: ["{\"id\":\"1\",...}"]).
+         * Jackson tries to construct TodoItem from a String value; this
+         * constructor accepts that, parses the inner JSON, and delegates.
+         */
+        public TodoItem(String json) {
+            try {
+                var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(json);
+                this.id = node.has("id") ? node.get("id").asText() : null;
+                this.content = node.has("content") ? node.get("content").asText() : null;
+                this.status = node.has("status") ? node.get("status").asText() : null;
+            } catch (Exception e) {
+                // If it's not JSON, treat the raw string as content
+                this.content = json;
+            }
+        }
 
         public String id() { return id; }
         public String content() { return content; }

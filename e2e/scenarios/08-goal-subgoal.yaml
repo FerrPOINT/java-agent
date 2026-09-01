@@ -1,9 +1,11 @@
-# Goal & subgoal lifecycle: set, show, pause, resume, clear
+# Goal & subgoal lifecycle: set, show, pause, resume, clear, negative cases
 name: goal-subgoal
 steps:
   - name: probe session
     step: turn
     message: "Ответь одним словом: ок"
+    assert:
+      - { var: turn.error, eq: null }
 
   - name: set goal
     method: POST
@@ -16,20 +18,30 @@ steps:
   - name: context shows the goal
     path: /agent/session/{session_id}/context
     assert:
-      - { path: goal, contains: "verify goal" }
+      - { path: goal, contains: "verify goal lifecycle" }
+      - { path: goalPaused, eq: false }
 
-  - name: add subgoal
+  - name: add first subgoal
     method: POST
     path: /agent/subgoal
     body:
       sessionId: "{session_id}"
-      subgoal: "e2e subgoal criterion"
+      subgoal: "e2e subgoal criterion 1"
     assert: { status: 200 }
 
-  - name: context shows subgoals
+  - name: add second subgoal
+    method: POST
+    path: /agent/subgoal
+    body:
+      sessionId: "{session_id}"
+      subgoal: "e2e subgoal criterion 2"
+    assert: { status: 200 }
+
+  - name: context shows both subgoals
     path: /agent/session/{session_id}/context
     assert:
-      - { path: subgoals, contains: "e2e subgoal" }
+      - { path: subgoals, contains: "criterion 1" }
+      - { path: subgoals, contains: "criterion 2" }
 
   - name: pause goal
     method: POST
@@ -42,17 +54,33 @@ steps:
     assert:
       - { path: goalPaused, eq: true }
 
+  - name: double pause is idempotent
+    method: POST
+    path: /agent/goal/pause
+    body: { sessionId: "{session_id}" }
+    assert: { status: 200 }
+
   - name: resume goal
     method: POST
     path: /agent/goal/resume
     body: { sessionId: "{session_id}" }
     assert: { status: 200 }
 
+  - name: context shows resumed
+    path: /agent/session/{session_id}/context
+    assert:
+      - { path: goalPaused, eq: false }
+
   - name: clear subgoals
     method: POST
     path: /agent/subgoal/clear
     body: { sessionId: "{session_id}" }
     assert: { status: 200 }
+
+  - name: context no longer shows subgoals
+    path: /agent/session/{session_id}/context
+    assert:
+      - { path: subgoals, eq: null }
 
   - name: clear goal
     method: POST
@@ -64,3 +92,15 @@ steps:
     path: /agent/session/{session_id}/context
     assert:
       - { path: goal, eq: null }
+
+  - name: pause on unknown session rejected
+    method: POST
+    path: /agent/goal/pause
+    body: { sessionId: "00000000-0000-0000-0000-0000000000ff" }
+    assert: { status: 400 }
+
+  - name: set goal on unknown session rejected
+    method: POST
+    path: /agent/goal
+    body: { sessionId: "00000000-0000-0000-0000-0000000000ff", goal: "x" }
+    assert: { status: 400 }

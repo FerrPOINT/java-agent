@@ -1,37 +1,95 @@
-# Model & toolset management: list, switch, toolsets, capabilities
+# Model and toolset discovery: session-scoped model state, catalog contracts, invalid-model storage
 name: model-tools
 steps:
-  - name: probe session
+  - name: create probe session
     step: turn
     message: "Ответь одним словом: ок"
+    assert:
+      - { var: turn.error, eq: null }
 
-  - name: model info responds
+  - name: model info returns current model and counters
     path: /agent/model
-    assert: { status: 200 }
+    params: { sessionId: "{session_id}" }
+    assert:
+      - { status: 200 }
+      - { path: sessionId, eq: "{session_id}" }
+      - { path: model, exists: true }
+      - { path: messageCount, gte: 1 }
+    extract:
+      model: original_model
 
-  - name: switch to same model is a no-op success
+  - name: switch to same model is a successful no-op
     method: POST
     path: /agent/model
     body:
       sessionId: "{session_id}"
-      model: app-test
-    assert: { ok: true }
+      model: "{original_model}"
+    assert:
+      - { status: 200 }
+      - { ok: true }
+      - { path: model, eq: "{original_model}" }
 
-  - name: toolsets listed
+  - name: unknown model override is retained as requested
+    method: POST
+    path: /agent/model
+    body:
+      sessionId: "{session_id}"
+      model: "e2e-unknown-model"
+    assert:
+      - { status: 200 }
+      - { ok: true }
+      - { path: model, eq: "e2e-unknown-model" }
+
+  - name: model info exposes override
+    path: /agent/model
+    params: { sessionId: "{session_id}" }
+    assert:
+      - { status: 200 }
+      - { path: model, eq: "e2e-unknown-model" }
+
+  - name: restore original model
+    method: POST
+    path: /agent/model
+    body:
+      sessionId: "{session_id}"
+      model: "{original_model}"
+    assert:
+      - { status: 200 }
+      - { ok: true }
+      - { path: model, eq: "{original_model}" }
+
+  - name: model endpoint rejects missing sessionId
+    path: /agent/model
+    assert:
+      - { status: 200 }
+      - { path: error, contains: "sessionId required" }
+
+  - name: toolsets are structured list with configured tools
     path: /v1/toolsets
     assert:
-      - { path: data, len_gte: 1 }
+      - { status: 200 }
       - { path: object, eq: list }
+      - { path: data, len_gte: 1 }
+      - { path: "data[0].name", exists: true }
+      - { path: "data[0].tools", len_gte: 1 }
 
-  - name: tools listed
+  - name: tools list includes terminal
     path: /agent/tools
-    assert: { status: 200 }
+    assert:
+      - { status: 200 }
+      - { path: "[*]", contains: terminal }
 
-  - name: capabilities advertise approvals truthfully
+  - name: capabilities advertise session and approval APIs
     path: /v1/capabilities
     assert:
-      - { path: features.approval_events, exists: true }
+      - { status: 200 }
+      - { path: object, eq: "java-agent.api_server.capabilities" }
+      - { path: features.approval_events, eq: true }
+      - { path: features.session_chat, eq: true }
+      - { path: toolsets, contains: terminal }
 
-  - name: skills list responds
+  - name: skills list returns installed names
     path: /agent/skills
-    assert: { status: 200 }
+    assert:
+      - { status: 200 }
+      - { path: "[0]", exists: true }

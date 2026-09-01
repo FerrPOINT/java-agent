@@ -1,34 +1,74 @@
-# Guardrails: session busy signal, unknown session 404s, steer/stop surface
+# Guardrails: unknown-session 400/404 contracts, malformed body, stop surface, double-stop
 name: guardrails
 steps:
   - name: unknown session refine rejected
     method: POST
     path: /agent/refine
     body: { sessionId: "00000000-0000-0000-0000-0000000000aa" }
-    assert: { accepted: false }
+    assert:
+      - { status: 200 }
+      - { accepted: false }
 
-  - name: unknown session context is empty but not a 500
+  - name: unknown session context returns 200 with empty state
     path: /agent/session/00000000-0000-0000-0000-0000000000bb/context
-    assert: { status: 200 }
+    assert:
+      - { status: 200 }
+      - { path: messageCount, eq: 0 }
+
+  - name: unknown session history returns 404 or empty
+    path: /agent/session/00000000-0000-0000-0000-0000000000bb/history
+    assert:
+      - { status: 200 }
 
   - name: heartbeat pause on unknown session rejected
     method: POST
     path: /agent/cron/heartbeat/00000000-0000-0000-0000-0000000000cc/pause
-    assert: { ok: false }
+    assert:
+      - { status: 200 }
+      - { ok: false }
 
   - name: heartbeat clear on unknown session rejected
     method: POST
     path: /agent/cron/heartbeat/00000000-0000-0000-0000-0000000000dd/clear
-    assert: { ok: false }
+    assert:
+      - { status: 200 }
+      - { ok: false }
 
-  - name: malformed body rejected (interval as string)
+  - name: heartbeat resume on unknown session rejected
+    method: POST
+    path: /agent/cron/heartbeat/00000000-0000-0000-0000-0000000000dd/resume
+    assert:
+      - { status: 200 }
+      - { ok: false }
+
+  - name: malformed heartbeat body rejected (interval as string)
     method: POST
     path: /agent/cron/heartbeat
     body: { sessionId: "00000000-0000-0000-0000-0000000000ee", prompt: "x", intervalSeconds: "not-a-number" }
     assert: { status: 400 }
 
-  - name: stop endpoint exists (no active turn)
+  - name: stop on unknown session returns 200 (no-op)
     method: POST
     path: /agent/stop
     body: { sessionId: "00000000-0000-0000-0000-0000000000ff" }
     assert: { status: 200 }
+
+  - name: stop without body is still accepted
+    method: POST
+    path: /agent/stop
+    assert: { status: 200 }
+
+  - name: unknown session undo is safe no-op
+    method: POST
+    path: /agent/session/00000000-0000-0000-0000-0000000000ee/undo
+    assert:
+      - { status: 200 }
+      - { var: response, eq: 0 }
+
+  - name: unknown session compress is safe no-op
+    method: POST
+    path: /agent/session/00000000-0000-0000-0000-0000000000ee/compress
+    body: { focus: "test" }
+    assert:
+      - { status: 200 }
+      - { path: _raw, contains: "Context compressed" }
