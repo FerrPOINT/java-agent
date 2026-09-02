@@ -1,0 +1,82 @@
+FerrPOINT Proprietary Source-Available Evaluation License v1.0
+
+Copyright (c) 2026 FerrPOINT. All rights reserved.
+
+This software, including source code, documentation, configuration,
+database migrations, tests, user interface assets, build scripts, and other
+project materials owned by FerrPOINT, is proprietary and source-available
+only for limited internal evaluation.
+
+1. Limited Evaluation Permission
+You may view and internally evaluate the source code solely to understand
+the software before entering into a separate written license agreement with
+FerrPOINT. This limited permission is personal, non-exclusive,
+non-transferable, revocable, and does not grant any production, commercial,
+distribution, hosting, sublicensing, or derivative-work rights.
+
+2. Prohibited Uses
+Without a separate written agreement signed by FerrPOINT, you may not:
+(a) use the software in production or for any commercial purpose;
+(b) copy the software except as strictly necessary for internal evaluation;
+(c) modify, merge, adapt, translate, create derivative works from, or fork
+    the software for use outside internal evaluation;
+(d) publish, distribute, redistribute, rent, lease, lend, sell, resell,
+    sublicense, assign, or transfer the software or any portion of it;
+(e) provide, operate, host, expose, or make the software available as a
+    service, managed service, SaaS, API, hosted product, or outsourced
+    offering for any third party;
+(f) include the software in a product, package, marketplace listing,
+    consulting deliverable, training dataset, model-training corpus,
+    code-generation system, benchmark, or other redistributed material;
+(g) remove, alter, hide, or misrepresent copyright, license, proprietary,
+    attribution, or trademark notices;
+(h) claim ownership of the software or present it as your own work.
+
+3. No Implied Rights
+All rights not expressly granted in this license are reserved by FerrPOINT.
+Access to a repository, copy of the source code, build artifact, container
+image, package, documentation, or API description does not grant any right to
+use the software beyond the limited evaluation permission above.
+
+4. Third-Party Components
+Third-party dependencies, generated third-party files, vendored code, and
+upstream projects remain governed by their own licenses. This license applies
+only to FerrPOINT-owned code, documentation, assets, configuration, and
+FerrPOINT modifications unless a file states otherwise.
+
+5. Contributions
+Unless a separate written agreement says otherwise, by submitting an issue,
+pull request, patch, review suggestion, documentation change, design, or other
+contribution, you grant FerrPOINT an irrevocable, worldwide, perpetual,
+royalty-free, sublicensable, transferable right to use, reproduce, modify,
+prepare derivative works from, distribute, relicense, commercialize, sell, and
+otherwise exploit that contribution as part of the software or related
+products and services.
+
+6. Termination
+Any violation of this license automatically terminates all permissions granted
+to you. Upon termination, you must stop all use and delete all copies under
+your control, except where retention is required by law.
+
+7. Trademarks
+This license does not grant any right to use FerrPOINT names, logos, product
+names, service names, trademarks, or trade dress.
+
+8. No Warranty
+The software is provided "as is" and "as available", without warranties or
+conditions of any kind, whether express, implied, statutory, or otherwise,
+including warranties of merchantability, fitness for a particular purpose,
+title, and non-infringement.
+
+9. Limitation of Liability
+To the maximum extent permitted by law, FerrPOINT and its owners,
+contributors, suppliers, and licensors are not liable for any indirect,
+incidental, special, consequential, exemplary, punitive, or similar damages,
+or for lost profits, lost revenue, lost data, loss of goodwill, business
+interruption, or procurement of substitute goods or services arising from or
+related to the software or this license.
+
+10. Separate Commercial License
+Production, commercial, redistribution, resale, SaaS, managed-service,
+integration, OEM, marketplace, consulting, and other uses require a separate
+written license agreement signed by FerrPOINT.
