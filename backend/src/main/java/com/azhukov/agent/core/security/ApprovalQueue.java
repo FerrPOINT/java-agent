@@ -230,7 +230,9 @@ public class ApprovalQueue {
             Thread.currentThread().interrupt();
             return false;
         } finally {
-            latches.remove(sessionId);
+            // A newer request may already have installed its own latch. Never
+            // remove it when this waiter belongs to the superseded request.
+            latches.remove(sessionId, latch);
         }
     }
 

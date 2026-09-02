@@ -13,6 +13,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import jakarta.transaction.Transactional;
+
 @Repository
 public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     SessionEntity findByUserId(String userId);
@@ -63,19 +65,23 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     SessionEntity findByTitleIgnoreCase(String title);
 
     @Modifying
+    @Transactional
     @Query("UPDATE SessionEntity s SET s.updatedAt = :updatedAt WHERE s.id = :id")
     void touchUpdatedAt(UUID id, Instant updatedAt);
 
     @Modifying
+    @Transactional
     @Query("UPDATE SessionEntity s SET s.lastActive = :lastActive, s.messageCount = :messageCount WHERE s.id = :id")
     void updateLastActiveAndMessageCount(UUID id, Instant lastActive, int messageCount);
 
     @Modifying
+    @Transactional
     @Query("UPDATE SessionEntity s SET s.lastActive = :lastActive, s.messageCount = "
         + "COALESCE(s.messageCount, 0) + :delta WHERE s.id = :id")
     void incrementMessageCount(UUID id, Instant lastActive, int delta);
 
     @Modifying
+    @Transactional
     @Query("UPDATE SessionEntity s SET s.preview = :preview WHERE s.id = :id")
     void updatePreview(UUID id, String preview);
 }
