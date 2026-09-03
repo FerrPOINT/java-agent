@@ -37,6 +37,25 @@ public class ProcessTool implements ToolHandler {
 
     private final Map<String, ManagedProcess> processes = new ConcurrentHashMap<>();
 
+    // rev-113 Hermes parity (process_registry.py:3236 _redact_process_result):
+    // process output mirrors the terminal redaction — secrets in env dumps,
+    // tokens in command output etc. must be masked before the result reaches
+    // conversation history. TerminalTool redacts its own output; background
+    // process results were passing through verbatim.
+    private final com.azhukov.agent.core.security.Redactor redactor;
+
+    public ProcessTool(com.azhukov.agent.core.security.Redactor redactor) {
+        this.redactor = redactor;
+    }
+
+    /** Test-only: no-op redactor (keeps direct-instantiation tests simple). */
+    ProcessTool() {
+        this.redactor = new com.azhukov.agent.core.security.Redactor() {
+            @Override public String redact(String output) { return output; }
+            @Override public String redactEnvVars(String output) { return output; }
+        };
+    }
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         ProcessArgs args = ToolHandler.parseJson(arguments, ProcessArgs.class);
@@ -106,7 +125,10 @@ public class ProcessTool implements ToolHandler {
         List<String> lines = new ArrayList<>();
         for (ManagedProcess p : processes.values()) {
             String status = p.process.isAlive() ? "running" : "exited";
-            lines.add(String.format("%s | %s | pid=%s | %s", p.id, status, p.pid, p.command));
+            // rev-113: command line redacted too (Hermes redact_sensitive_text
+            // on s.command, process_registry.py:2748) — env vars with secrets
+            // often ride the command line.
+            lines.add(String.format("%s | %s | pid=%s | %s", p.id, status, p.pid, redactor.redact(p.command)));
         }
         return ToolResult.ok(String.join("\n", lines));
     }
@@ -158,7 +180,8 @@ public class ProcessTool implements ToolHandler {
             return ToolResult.ok("");
         }
         int end = Math.min(lines.size(), start + (limit > 0 ? limit : 200));
-        return ToolResult.ok(String.join("\n", lines.subList(start, end)));
+        // rev-113: log output redacted (Hermes _redact_process_result).
+        return ToolResult.ok(redactor.redact(String.join("\n", lines.subList(start, end))));
     }
 
     private ToolResult waitFor(String sessionId, int timeout) {
@@ -215,11 +238,13 @@ public class ProcessTool implements ToolHandler {
         boolean alive = p.process.isAlive();
         int exitCode = alive ? -1 : p.process.exitValue();
         String output = fullOutput ? p.getOutput() : p.getRecentOutput(1000);
+        // rev-113: output redacted (Hermes _redact_process_result) — poll/wait
+        // results reach conversation history verbatim otherwise.
         return String.format(
             "session_id: %s\npid: %s\nstatus: %s\nexit_code: %s\nuptime_seconds: %d\noutput:\n%s",
             p.id, p.pid, alive ? "running" : "exited", exitCode,
             java.time.Duration.between(p.startedAt, Instant.now()).getSeconds(),
-            output
+            redactor.redact(output)
         );
     }
 
