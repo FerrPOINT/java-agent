@@ -189,4 +189,15 @@ public class MemoryNudgeManager {
         turnsSinceMemory.remove(sessionId);
         itersSinceSkill.remove(sessionId);
     }
+
+    /**
+     * rev-67: Session deletion must also clear nudge counters — previously
+     * only /reset called clearSession; deleteSession published
+     * SessionDeletedEvent but no listener cleared MemoryNudgeManager maps,
+     * leaking turnsSinceMemory/itersSinceSkill entries forever.
+     */
+    @org.springframework.context.event.EventListener
+    public void onSessionDeleted(com.azhukov.agent.core.agent.SessionDeletedEvent event) {
+        clearSession(event.sessionId());
+    }
 }

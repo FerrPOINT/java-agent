@@ -121,10 +121,23 @@ public class SkillViewDedupTracker {
     @EventListener
     public void onContextCompressed(ContextCompressedEvent event) {
         if (event.sessionId() != null) {
-            bySession.remove(event.sessionId());
+            bySession.remove(String.valueOf(event.sessionId()));
         } else {
             bySession.clear();
         }
+    }
+
+    /**
+     * rev-67: Session deletion must also clear the dedup tracker —
+     * previously only ContextCompressedEvent triggered cleanup; deleted
+     * sessions leaked their bySession entries forever.
+     * Also fixed: onContextCompressed passed UUID to String-keyed map
+     * (Map.remove(Object) — UUID never matched String keys, so cleanup
+     * was a no-op).
+     */
+    @EventListener
+    public void onSessionDeleted(com.azhukov.agent.core.agent.SessionDeletedEvent event) {
+        bySession.remove(String.valueOf(event.sessionId()));
     }
 
     private static String key(String name, String filePath) {

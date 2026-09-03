@@ -1093,6 +1093,17 @@ public class DefaultPromptBuilder implements PromptBuilder {
     }
 
     /**
+     * rev-67: Session deletion must also invalidate the memory prefix cache —
+     * previously only /reset called invalidateMemoryPrefix; deleteSession
+     * published SessionDeletedEvent but no listener cleared the cache,
+     * leaking memoryPrefixCache entries for every deleted session.
+     */
+    @org.springframework.context.event.EventListener
+    public void onSessionDeleted(com.azhukov.agent.core.agent.SessionDeletedEvent event) {
+        invalidateMemoryPrefix(String.valueOf(event.sessionId()));
+    }
+
+    /**
      * Internal method that builds the memory prefix from the provider.
      * C1: Uses getRawEntries (non-FTS) instead of recall (FTS with empty query).
      * <p>
