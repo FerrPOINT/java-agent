@@ -153,6 +153,16 @@ public class AgentStreamingService {
         this.memoryNudgeManager = memoryNudgeManager;
     }
 
+    // rev-91: session auto-title — the streaming path (all Telegram turns) had
+    // only inline 50-char truncation while the sync path used the LLM-backed
+    // SessionTitleService (3-7 word titles, user language, TITLE_PROMPT_TEMPLATE).
+    private com.azhukov.agent.service.SessionTitleService sessionTitleService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSessionTitleService(com.azhukov.agent.service.SessionTitleService sessionTitleService) {
+        this.sessionTitleService = sessionTitleService;
+    }
+
     private ApprovalQueue approvalQueue;
     private ToolGuardrails toolGuardrails;
 
@@ -1653,6 +1663,17 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     }
                     sessionRepository.save(se);
                 });
+                // rev-91: LLM-backed auto-title for streaming sessions (Hermes
+                // parity with the sync path) — runs AFTER the transaction so a
+                // slow model call doesn't hold the DB. maybeUpdateTitle guards
+                // against overwriting manually set titles (h91).
+                if (isNew && sessionTitleService != null) {
+                    try {
+                        sessionTitleService.maybeUpdateTitle(session.id(), turnMessages, true);
+                    } catch (Exception e) {
+                        log.debug("Auto-title failed for session {}: {}", session.id(), e.getMessage());
+                    }
+                }
                 return null;
             });
         } catch (Exception e) {
