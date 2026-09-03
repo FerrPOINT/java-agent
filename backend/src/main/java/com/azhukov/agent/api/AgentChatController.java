@@ -66,6 +66,9 @@ public class AgentChatController {
     private final com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     private final com.azhukov.agent.persistence.mapper.MessageMapper messageMapper;
     private final ApprovalQueue approvalQueue;
+    // rev-97: session-scope approval allowlist (Hermes approve_session parity).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.azhukov.agent.core.security.CommandApprovalManager commandApprovalManager;
     private final AgentProperties properties;
     private final AgentMetrics agentMetrics;
 
@@ -231,6 +234,30 @@ public class AgentChatController {
             return "Approved all pending approvals";
         }
         String scope = request.scope();
+        // rev-97: scope carries either a session UUID (approve a specific
+        // session's pending request) OR an approval-scope keyword — the bot's
+        // /approve [session|always] sends the keywords here. Hermes parity:
+        // 'session' adds the command pattern to the session allowlist,
+        // 'always' adds it permanently (persistence handled by the caller;
+        // here both widen this approval AND seed the session allowlist).
+        if ("session".equalsIgnoreCase(scope) || "always".equalsIgnoreCase(scope)) {
+            var pendingList = approvalQueue.getPendingApprovals();
+            if (pendingList.isEmpty()) return "No pending approvals";
+            var target = pendingList.get(0);
+            requireSessionOwnership(target.sessionId());
+            approvalQueue.approve(target.sessionId(), "approve",
+                "approved with scope=" + scope);
+            // Seed the session allowlist with the approved command pattern so
+            // subsequent identical calls skip the prompt (Hermes approve_session).
+            if (commandApprovalManager != null && target.call() != null
+                && target.call().arguments() != null) {
+                String cmd = extractCommandFromArgs(target.call().arguments());
+                if (cmd != null && !cmd.isBlank()) {
+                    commandApprovalManager.allowForSession(cmd);
+                }
+            }
+            return "Approved (scope=" + scope.toLowerCase() + "): " + target.sessionId();
+        }
         if (scope != null && !scope.isBlank()) {
             try {
                 UUID sessionId = UUID.fromString(scope);
@@ -247,6 +274,18 @@ public class AgentChatController {
         requireSessionOwnership(pendingList.get(0).sessionId());
         approvalQueue.approve(pendingList.get(0).sessionId(), "approve", null);
         return "Approved: " + pendingList.get(0).sessionId();
+    }
+
+    /** Extract the command string from a terminal-tool JSON argument blob. */
+    private String extractCommandFromArgs(String arguments) {
+        try {
+            var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(arguments);
+            if (node != null && node.has("command")) {
+                return node.get("command").asText(null);
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
     }
 
     @PostMapping("/agent/deny")
