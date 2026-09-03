@@ -55,7 +55,7 @@ class SessionCrudControllerTest {
     void setUp() {
         SessionCrudController controller = new SessionCrudController(sessionQueryService, agentRuntimeService, streamingService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 

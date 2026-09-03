@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class GlobalExceptionHandlerTest {
 
-    GlobalExceptionHandler h = new GlobalExceptionHandler();
+    GlobalExceptionHandler h = new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper());
 
     @Test
     void agentExceptionReturnsCorrectStatusTypeAndMessage() {

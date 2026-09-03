@@ -74,7 +74,7 @@ class ChatCompletionsControllerStreamingTest {
         );
 
         mockMvc = standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
 
         lenient().when(promptBuilder.buildSystemMessage(any()))

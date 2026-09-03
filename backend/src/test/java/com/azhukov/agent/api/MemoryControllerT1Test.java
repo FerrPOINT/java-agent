@@ -58,7 +58,7 @@ class MemoryControllerT1Test {
     void setUp() {
         MemoryController controller = new MemoryController(memoryProvider, agentRuntimeService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 

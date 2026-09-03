@@ -83,7 +83,7 @@ class SessionControllerT1Test {
             agentRuntimeService, domainDtoMapper, properties, checkpointManager,
             todoService, messageRepository, sessionRepository);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 

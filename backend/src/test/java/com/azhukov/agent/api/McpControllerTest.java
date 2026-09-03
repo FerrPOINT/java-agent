@@ -45,7 +45,7 @@ class McpControllerTest {
         properties = new AgentProperties();
         McpController controller = new McpController(mcpLifecycleManager, properties, objectMapper);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 

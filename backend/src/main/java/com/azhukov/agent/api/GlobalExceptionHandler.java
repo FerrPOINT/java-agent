@@ -25,6 +25,12 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+    public GlobalExceptionHandler(com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
     /**
      * Detect whether the current request is an SSE streaming endpoint by checking
      * the Accept header for text/event-stream. When an exception propagates here
@@ -50,12 +56,16 @@ public class GlobalExceptionHandler {
      * Build an SSE error response for streaming endpoints.
      * Returns an SseEmitter that immediately emits an error event and completes.
      */
-    private static SseEmitter sseErrorEvent(HttpStatus status, String type, String message) {
+    private SseEmitter sseErrorEvent(HttpStatus status, String type, String message) {
         SseEmitter emitter = new SseEmitter(5_000L);
         try {
-            String payload = "{\"type\":\"" + type + "\",\"error\":\"" +
-                message.replace("\"", "\\\"").replace("\n", "\\n") + "\"}";
-            emitter.send(SseEmitter.event().name("error").data(payload));
+            // rev-75: use ObjectMapper for proper JSON escaping instead of manual
+            // string concatenation — the old code only escaped " and \n, missing
+            // backslash, \t, \r, and control characters, producing invalid JSON
+            // on messages containing those bytes.
+            Map<String, String> payload = Map.of("type", type, "error", message);
+            String json = objectMapper.writeValueAsString(payload);
+            emitter.send(SseEmitter.event().name("error").data(json));
             emitter.complete();
         } catch (Exception e) {
             emitter.completeWithError(e);

@@ -117,7 +117,7 @@ class AgentControllerBranchCoverageTest {
             null
         );
         return MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 
@@ -125,28 +125,28 @@ class AgentControllerBranchCoverageTest {
         SessionController controller = new SessionController(
             agentRuntimeService, domainDtoMapper, agentProperties, checkpointManager, todoService, null, sessionRepository);
         return MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 
     private MockMvc memoryMockMvc() {
         MemoryController controller = new MemoryController(memoryProvider, agentRuntimeService);
         return MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 
     private MockMvc skillMockMvc() {
         SkillController controller = new SkillController(skillManager, agentRuntimeService, skillAuditLogRepository, mock(com.azhukov.agent.core.skill.SkillsHubService.class), domainDtoMapper);
         return MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 
     private MockMvc checkpointMockMvc() {
         CheckpointController controller = new CheckpointController(checkpointManager, Mappers.getMapper(com.azhukov.agent.api.mapper.CheckpointDtoMapper.class));
         return MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 
@@ -157,21 +157,21 @@ class AgentControllerBranchCoverageTest {
             runtimeConfigService, agentRuntimeService, urlSafetyHandler
         );
         return MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 
     private MockMvc kanbanMockMvc() {
         KanbanController controller = new KanbanController(todoService);
         return MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 
     private MockMvc curatorMockMvc() {
         CuratorController controller = new CuratorController(curatorService);
         return MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 

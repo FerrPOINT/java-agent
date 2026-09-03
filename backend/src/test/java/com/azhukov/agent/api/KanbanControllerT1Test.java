@@ -52,7 +52,7 @@ class KanbanControllerT1Test {
     void setUp() {
         KanbanController controller = new KanbanController(todoService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
     }
 

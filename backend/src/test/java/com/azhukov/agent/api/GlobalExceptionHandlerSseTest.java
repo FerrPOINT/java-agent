@@ -33,7 +33,7 @@ import static org.mockito.Mockito.when;
  */
 class GlobalExceptionHandlerSseTest {
 
-    GlobalExceptionHandler h = new GlobalExceptionHandler();
+    GlobalExceptionHandler h = new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper());
 
     // ── SSE detection: AgentException on SSE endpoint ──
 
