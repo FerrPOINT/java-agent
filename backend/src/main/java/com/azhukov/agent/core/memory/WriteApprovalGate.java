@@ -26,6 +26,10 @@ public class WriteApprovalGate {
     private final PendingMemoryRepository pendingRepository;
     private final MemoryProvider memoryProvider;
     private final AgentProperties properties;
+    // rev-87: optional SkillManageTool for replaying staged skill writes.
+    // ObjectProvider to avoid a constructor-signature break for tests.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.tools.memory.SkillManageTool> skillManageToolProvider;
     private volatile boolean enabled;
 
 
@@ -96,6 +100,7 @@ public class WriteApprovalGate {
                 case "replace" -> memoryProvider.replace(userId, target, e.getOldText(), e.getContent());
                 case "remove" -> memoryProvider.remove(userId, target, e.getOldText());
                 case "batch" -> applyBatchFromStagedJson(userId, target, e.getContent());
+                case "skill_manage" -> applySkillManageFromStagedJson(e.getContent());
                 default -> {
                     log.warn("Unknown pending action: {}", action);
                     return false;
@@ -114,6 +119,47 @@ public class WriteApprovalGate {
             org.springframework.transaction.interceptor.TransactionAspectSupport
                 .currentTransactionStatus().setRollbackOnly();
             return false;
+        }
+    }
+
+    /**
+     * Replay a staged skill_manage write (Hermes apply_skill_pending parity):
+     * the full tool args were serialized to JSON in the pending row's content.
+     * Delegates to the real SkillManageTool via a replay bypass — the gate is
+     * skipped because the write was already approved.
+     */
+    private void applySkillManageFromStagedJson(String argsJson) {
+        if (argsJson == null || argsJson.isBlank()) {
+            throw new IllegalStateException(
+                "Staged skill_manage has no serialized args — the write cannot be replayed");
+        }
+        com.azhukov.agent.tools.memory.SkillManageTool tool = skillManageToolProvider != null
+            ? skillManageToolProvider.getIfAvailable() : null;
+        if (tool == null) {
+            throw new IllegalStateException("SkillManageTool unavailable — cannot replay staged skill write");
+        }
+        try {
+            // Replay bypass: run with the gate disabled for THIS call only.
+            // The staged write was approved by the user; re-gating it would
+            // stage it again forever (Hermes uses a ContextVar bypass — here
+            // we temporarily flip the volatile enabled flag on this thread's
+            // behalf; approve() is user-triggered and single-threaded per row.
+            boolean wasEnabled = enabled;
+            try {
+                setApproval(false);
+                com.azhukov.agent.core.model.ToolResult result =
+                    tool.execute(argsJson, null, null);
+                if (result == null || !result.success()) {
+                    throw new IllegalStateException("skill_manage replay failed: "
+                        + (result != null ? result.content() : "null result"));
+                }
+            } finally {
+                setApproval(wasEnabled);
+            }
+        } catch (IllegalStateException | IllegalArgumentException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to replay staged skill_manage: " + ex.getMessage(), ex);
         }
     }
 

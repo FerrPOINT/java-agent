@@ -69,9 +69,65 @@ public class SkillManageTool implements ToolHandler {
     @Autowired(required = false)
     private transient com.azhukov.agent.core.prompt.PromptCacheTracker promptCacheTracker;
 
+    // rev-87: skill write-approval gate (Hermes evaluate_gate(SKILLS) parity) —
+    // skills always stage when the gate is on (too large to review inline).
+    @Autowired(required = false)
+    private com.azhukov.agent.core.memory.WriteApprovalGate writeApprovalGate;
+
+    private static final java.util.Set<String> MUTATING_ACTIONS = java.util.Set.of(
+        "create", "edit", "update", "patch", "delete", "write_file", "remove_file");
+
+    /**
+     * When the write-approval gate is enabled, stage a mutating skill_manage
+     * call instead of applying it (Hermes skill_manager_tool.py:1580: "Approval
+     * gate: when on, stages the write for review (skills are too large to
+     * review inline)"). The full args are serialized so the approval handler
+     * can replay them.
+     */
+    private ToolResult maybeStageForApproval(SkillManageArgs args, Session session) {
+        if (writeApprovalGate == null || !writeApprovalGate.isEnabled()) {
+            return null;
+        }
+        if (!MUTATING_ACTIONS.contains(args.action().toLowerCase())) {
+            return null;
+        }
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper =
+                new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("tool", "skill_manage");
+            payload.put("action", args.action());
+            payload.put("name", args.name());
+            if (args.content() != null) payload.put("content", args.content());
+            if (args.old_text() != null) payload.put("old_text", args.old_text());
+            if (args.new_text() != null) payload.put("new_text", args.new_text());
+            if (args.file_path() != null) payload.put("file_path", args.file_path());
+            if (args.replace_all() != null) payload.put("replace_all", args.replace_all());
+            if (args.absorbed_into() != null) payload.put("absorbed_into", args.absorbed_into());
+            String payloadJson = mapper.writeValueAsString(payload);
+            String gist = "Skill " + args.action() + ": " + args.name()
+                + (args.file_path() != null ? " (" + args.file_path() + ")" : "");
+            var id = writeApprovalGate.stageWrite(
+                session != null ? session.userId() : "default",
+                "skill_manage", "skills", payloadJson, null, gist,
+                com.azhukov.agent.core.memory.WriteContext.effectiveExecutionContext());
+            return ToolResult.ok("Staged for approval (id: " + id + "). Skill writes are "
+                + "gated — review pending approvals to apply.");
+        } catch (Exception e) {
+            log.error("Failed to stage skill write: {}", e.getMessage());
+            return null; // fail open — proceed with the write (matches Hermes "except → fail open")
+        }
+    }
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         SkillManageArgs args = parseJson(arguments, SkillManageArgs.class);
+        // rev-87: skill write-approval gate — stage mutating actions for review
+        // when enabled (Hermes parity: skills always stage, never inline).
+        ToolResult staged = maybeStageForApproval(args, session);
+        if (staged != null) {
+            return staged;
+        }
         // S3: Get the effective write origin from WriteContext (FOREGROUND by default,
         // BACKGROUND_REVIEW during review)
         WriteOrigin origin = WriteContext.effectiveOrigin();
