@@ -143,13 +143,20 @@ public interface OpenAiMapper {
         OpenAiChatResponse.Message message = toolCalls.isEmpty()
             ? new OpenAiChatResponse.Message("assistant", content, null)
             : new OpenAiChatResponse.Message("assistant", null, toolCalls);
+        // rev-95: report the provider-reported usage (Hermes maps input/output/
+        // total tokens into the OpenAI usage block). Was hardcoded 0,0,0 — SDKs
+        // metering off this endpoint saw zero consumption.
+        com.azhukov.agent.core.model.TokenUsage usage = response.usage();
+        OpenAiChatResponse.Usage usageDto = usage != null
+            ? new OpenAiChatResponse.Usage(usage.promptTokens(), usage.completionTokens(), usage.totalTokens())
+            : new OpenAiChatResponse.Usage(0, 0, 0);
         return new OpenAiChatResponse(
             java.util.UUID.randomUUID().toString(),
             "chat.completion",
             java.time.Instant.now().getEpochSecond(),
             model,
             List.of(new OpenAiChatResponse.Choice(0, message, "stop")),
-            new OpenAiChatResponse.Usage(0, 0, 0)
+            usageDto
         );
     }
 }
