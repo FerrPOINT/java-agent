@@ -174,6 +174,15 @@ public class GlobalExceptionHandler {
         ));
     }
 
+    @ExceptionHandler(java.lang.SecurityException.class)
+    public ResponseEntity<Map<String, Object>> handleSecurity(java.lang.SecurityException ex) {
+        log.warn("Access denied: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+            "type", "forbidden",
+            "error", ex.getMessage()
+        ));
+    }
+
     @ExceptionHandler(Exception.class)
     public Object handleGeneric(Exception ex) {
         log.error("Unhandled exception", ex);

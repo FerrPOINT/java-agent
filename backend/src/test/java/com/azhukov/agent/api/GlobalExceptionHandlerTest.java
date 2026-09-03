@@ -199,4 +199,15 @@ class GlobalExceptionHandlerTest {
         assertThat(r.getBody()).isNotNull();
         assertThat(r.getBody().get("type")).isEqualTo("method_not_allowed");
     }
+
+    @Test
+    void securityExceptionReturns403Forbidden() {
+        java.lang.SecurityException ex =
+            new java.lang.SecurityException("Session does not belong to the current user");
+        ResponseEntity<Map<String, Object>> r = h.handleSecurity(ex);
+        assertThat(r.getStatusCode().value()).isEqualTo(403);
+        assertThat(r.getBody()).isNotNull();
+        assertThat(r.getBody().get("type")).isEqualTo("forbidden");
+        assertThat(r.getBody().get("error")).isEqualTo("Session does not belong to the current user");
+    }
 }
