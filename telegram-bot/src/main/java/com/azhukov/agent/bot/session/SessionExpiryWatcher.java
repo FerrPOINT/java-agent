@@ -32,6 +32,14 @@ public class SessionExpiryWatcher {
     private final BotSessionStore sessionStore;
     private final SessionResetPolicy resetPolicy;
     private final AgentBackendClient backendClient;
+    // rev-123 Hermes parity (gateway/session.py:1421 _has_active_processes_safe,
+    // :2396): sessions with active work are NEVER considered expired. Java
+    // equivalent of "active processes": a busy chat (mid-turn) — finalizing a
+    // session mid-turn orphans its in-flight results (messages persisted to a
+    // deactivated session, backend per-session state wiped under a running
+    // agent). Checked via BusySessionHandler.isBusy; check failures also keep
+    // the session alive (Hermes fails CLOSED on registry errors).
+    private final BusySessionHandler busyHandler;
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "session-expiry-watcher");
@@ -73,6 +81,22 @@ public class SessionExpiryWatcher {
             Instant now = Instant.now();
             List<BotSessionEntity> activeSessions = sessionStore.listActiveSessions();
             for (BotSessionEntity session : activeSessions) {
+                // rev-123: never finalize a session whose chat is mid-turn
+                // (Hermes _has_active_processes_safe).
+                try {
+                    if (busyHandler != null && session.getChatId() != null
+                        && busyHandler.isBusy(Long.parseLong(session.getChatId()))) {
+                        log.debug("Session {} not expired — chat busy (active turn)", session.getId());
+                        continue;
+                    }
+                } catch (NumberFormatException nfe) {
+                    // Non-numeric chat id (e.g. DM topic key) — no busy mapping possible.
+                } catch (Exception busyEx) {
+                    // Fail CLOSED (Hermes): unknown busy state keeps the session alive.
+                    log.warn("Busy check failed for session {}; keeping it alive: {}",
+                        session.getId(), busyEx.getMessage());
+                    continue;
+                }
                 String reason = resetPolicy.shouldReset(session.getCreatedAt(), session.getUpdatedAt(), now);
                 if (reason != null) {
                     log.info("Finalizing expired session {} (reason={}, userId={})",

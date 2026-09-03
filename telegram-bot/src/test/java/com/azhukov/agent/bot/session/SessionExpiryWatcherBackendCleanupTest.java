@@ -30,7 +30,8 @@ class SessionExpiryWatcherBackendCleanupTest {
         resetPolicy.setMode(SessionResetMode.IDLE);
         resetPolicy.setIdleMinutes(1);
         backendClient = mock(AgentBackendClient.class);
-        watcher = new SessionExpiryWatcher(sessionStore, resetPolicy, backendClient);
+        watcher = new SessionExpiryWatcher(sessionStore, resetPolicy, backendClient,
+            mock(com.azhukov.agent.bot.session.BusySessionHandler.class));
     }
 
     @AfterEach

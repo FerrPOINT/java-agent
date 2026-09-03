@@ -17,6 +17,7 @@ class SessionExpiryWatcherTest {
     private BotSessionStore sessionStore;
     private SessionResetPolicy resetPolicy;
     private SessionExpiryWatcher watcher;
+    private com.azhukov.agent.bot.core.AgentBackendClient backendClientRef;
 
     @BeforeEach
     void setUp() {
@@ -24,9 +25,10 @@ class SessionExpiryWatcherTest {
         resetPolicy = new SessionResetPolicy();
         resetPolicy.setMode(SessionResetMode.IDLE);
         resetPolicy.setIdleMinutes(1);
-        com.azhukov.agent.bot.core.AgentBackendClient backendClient = mock(
+        backendClientRef = mock(
             com.azhukov.agent.bot.core.AgentBackendClient.class);
-        watcher = new SessionExpiryWatcher(sessionStore, resetPolicy, backendClient);
+        watcher = new SessionExpiryWatcher(sessionStore, resetPolicy, backendClientRef,
+            mock(com.azhukov.agent.bot.session.BusySessionHandler.class));
     }
 
     @AfterEach
@@ -59,6 +61,30 @@ class SessionExpiryWatcherTest {
         // Only the expired session should be finalized
         verify(sessionStore).finalizeSession(expiredSession.getId());
         verify(sessionStore, never()).finalizeSession(freshSession.getId());
+    }
+
+    @Test
+    void busySessionIsNeverFinalizedEvenWhenExpired() {
+        // rev-123 Hermes parity: active work blocks expiry (_has_active_processes_safe).
+        // The expired session's chat is mid-turn → must stay alive.
+        BotSessionEntity expiredBusy = new BotSessionEntity();
+        expiredBusy.setId(UUID.randomUUID());
+        expiredBusy.setUserId("user-busy");
+        expiredBusy.setChatId("111222333");
+        expiredBusy.setCreatedAt(Instant.now().minusSeconds(3600));
+        expiredBusy.setUpdatedAt(Instant.now().minusSeconds(3600));
+        expiredBusy.setActive(true);
+
+        com.azhukov.agent.bot.session.BusySessionHandler busy =
+            mock(com.azhukov.agent.bot.session.BusySessionHandler.class);
+        when(busy.isBusy(111222333L)).thenReturn(true);
+        watcher = new SessionExpiryWatcher(sessionStore, resetPolicy, backendClientRef, busy);
+
+        when(sessionStore.listActiveSessions()).thenReturn(List.of(expiredBusy));
+
+        watcher.checkExpiredSessions();
+
+        verify(sessionStore, never()).finalizeSession(any());
     }
 
     @Test
