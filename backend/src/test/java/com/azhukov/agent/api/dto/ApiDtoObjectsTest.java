@@ -348,7 +348,8 @@ class ApiDtoObjectsTest {
             var choice = new OpenAiStreamChunk.Choice(0, delta, "stop");
             OpenAiStreamChunk chunk = new OpenAiStreamChunk("chatcmpl-chunk-1",
                     "chat.completion.chunk", 1699999999L, "gpt-4",
-                    List.of(choice));
+                    List.of(choice),
+            null);
 
             assertThat(chunk.id()).isEqualTo("chatcmpl-chunk-1");
             assertThat(chunk.object()).isEqualTo("chat.completion.chunk");
@@ -375,7 +376,8 @@ class ApiDtoObjectsTest {
             var delta = new OpenAiStreamChunk.Delta(null, "world", null);
             var choice = new OpenAiStreamChunk.Choice(0, delta, null);
             OpenAiStreamChunk chunk = new OpenAiStreamChunk("id",
-                    "chat.completion.chunk", 1L, "gpt-4", List.of(choice));
+                    "chat.completion.chunk", 1L, "gpt-4", List.of(choice),
+            null);
 
             assertThat(chunk.choices().get(0).delta().role()).isNull();
             assertThat(chunk.choices().get(0).delta().content()).isEqualTo("world");
@@ -391,7 +393,8 @@ class ApiDtoObjectsTest {
             var choice = new OpenAiStreamChunk.Choice(0, delta, "length");
             OpenAiStreamChunk original = new OpenAiStreamChunk("chunk-1",
                     "chat.completion.chunk", 999999L, "gpt-4o",
-                    List.of(choice));
+                    List.of(choice),
+            null);
 
             String json = mapper.writeValueAsString(original);
             assertThat(json).contains("\"object\":\"chat.completion.chunk\"");
@@ -403,7 +406,8 @@ class ApiDtoObjectsTest {
         @Test
         void jsonRoundTripEmptyChoices() throws Exception {
             OpenAiStreamChunk original = new OpenAiStreamChunk("chunk-2",
-                    "chat.completion.chunk", 1L, "gpt-4", List.of());
+                    "chat.completion.chunk", 1L, "gpt-4", List.of(),
+            null);
 
             OpenAiStreamChunk deserialized = mapper.readValue(
                     mapper.writeValueAsString(original), OpenAiStreamChunk.class);

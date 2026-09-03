@@ -109,7 +109,16 @@ public class ChatCompletionsController {
 
                     @Override
                     public void onComplete() {
-                        sendSse(emitter, createFinishEvent(id, model));
+                        sendSse(emitter, createFinishEvent(id, model, null, null));
+                        sendDone(emitter);
+                        safeComplete(emitter);
+                    }
+
+                    @Override
+                    public void onComplete(String finishReason, Long outputTokens) {
+                        // rev-121: real finish_reason + usage on the terminal
+                        // chunk (Hermes api_server.py:5535-5548).
+                        sendSse(emitter, createFinishEvent(id, model, finishReason, outputTokens));
                         sendDone(emitter);
                         safeComplete(emitter);
                     }
@@ -201,7 +210,8 @@ public class ChatCompletionsController {
             model,
             List.of(new OpenAiStreamChunk.Choice(0,
                 new OpenAiStreamChunk.Delta("assistant", token, toOpenAiToolCalls(toolCalls)),
-                null))
+                null)),
+            null
         );
     }
 
@@ -213,8 +223,44 @@ public class ChatCompletionsController {
             model,
             List.of(new OpenAiStreamChunk.Choice(0,
                 new OpenAiStreamChunk.Delta("assistant", null, null),
-                "stop"))
+                "stop")),
+            null
         );
+    }
+
+    /**
+     * rev-121 Hermes parity (api_server.py:5535-5548): the finish chunk carries
+     * usage (prompt/completion/total tokens) and the REAL finish reason —
+     * "length" for truncation, "error" for failure, "stop" otherwise. Cost-
+     * tracking clients read the terminal chunk's usage; a hard-coded
+     * finish_reason="stop" masked truncations and errors as clean completions.
+     */
+    private OpenAiStreamChunk createFinishEvent(String id, String model, String finishReason, Long outputTokens) {
+        String reason = finishReason != null ? mapFinishReason(finishReason) : "stop";
+        return new OpenAiStreamChunk(
+            id,
+            "chat.completion.chunk",
+            Instant.now().getEpochSecond(),
+            model,
+            List.of(new OpenAiStreamChunk.Choice(0,
+                new OpenAiStreamChunk.Delta("assistant", null, null),
+                reason)),
+            new OpenAiStreamChunk.Usage(
+                0,
+                outputTokens != null ? outputTokens.intValue() : 0,
+                outputTokens != null ? outputTokens.intValue() : 0)
+        );
+    }
+
+    /** Map provider finish reasons to the OpenAI triad Hermes uses. */
+    private static String mapFinishReason(String finishReason) {
+        if (finishReason == null) return "stop";
+        return switch (finishReason.toUpperCase()) {
+            case "LENGTH", "MAX_TOKENS" -> "length";
+            case "CONTENT_FILTER" -> "content_filter";
+            case "ERROR" -> "error";
+            default -> "stop";
+        };
     }
 
     private OpenAiStreamError createErrorEvent(String message) {
