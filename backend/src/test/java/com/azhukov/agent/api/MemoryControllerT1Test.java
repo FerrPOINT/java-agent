@@ -7,6 +7,7 @@ import com.azhukov.agent.api.dto.PendingMemoryDto;
 import com.azhukov.agent.api.dto.RejectMemoryRequest;
 import com.azhukov.agent.api.dto.StoreMemoryRequest;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -313,4 +314,55 @@ class MemoryControllerT1Test {
 
     // (imports for matchers)
     private static final String _UNUSED = null;
+
+    // ── multi-user ownership ──
+
+    @Test
+    void storeMemory_nonAdminCannotWriteToAnotherUser() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(post("/api/v1/agent/memory")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(
+                        new StoreMemoryRequest("victim-user", "fact", "user", "memory"))))
+                .andExpect(status().isOk());
+            // userId must be rewritten to the authenticated user, not "victim-user"
+            verify(memoryProvider).store(eq("user-77"), eq("memory"), eq("user"), eq("fact"));
+            verify(memoryProvider, never()).store(eq("victim-user"), any(), any(), any());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void approveMemory_nonAdminCannotApproveForAnotherUser() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            when(agentRuntimeService.approvePendingMemory(any())).thenReturn(true);
+            mockMvc.perform(post("/api/v1/agent/memory/approve")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(
+                        new ApproveMemoryRequest("victim-user", ENTRY_ID))))
+                .andExpect(status().isOk());
+            // the rewritten request must carry the authenticated user id
+            verify(agentRuntimeService).approvePendingMemory(
+                org.mockito.ArgumentMatchers.argThat(r -> "user-77".equals(r.userId())));
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void listAllMemory_nonAdminSeesOnlyOwnEntries() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            when(agentRuntimeService.listAllMemory("user-77")).thenReturn(List.of());
+            mockMvc.perform(get("/api/v1/agent/memory/all/victim-user"))
+                .andExpect(status().isOk());
+            verify(agentRuntimeService).listAllMemory("user-77");
+        } finally {
+            UserContext.clear();
+        }
+    }
+
 }

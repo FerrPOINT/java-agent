@@ -39,13 +39,14 @@ public class MemoryController {
     @Operation(summary = "Recall memory entries for the default user")
     @GetMapping("/agent/memory")
     public List<String> memory() {
-        return memoryProvider.recall("default", "", 100);
+        return memoryProvider.recall(currentUser(), "", 100);
     }
 
     @Operation(summary = "Store a new memory entry")
     @PostMapping("/agent/memory")
     public void storeMemory(@Valid @RequestBody StoreMemoryRequest body) {
-        String userId = body.userId() != null ? body.userId() : "default";
+        String userId = UserContext.effectiveUserId(body.userId());
+        if (userId == null) userId = "default";
         String fact = body.fact();
         String category = body.category() != null ? body.category() : "user";
         String target = body.target() != null ? body.target() : "memory";
@@ -56,17 +57,17 @@ public class MemoryController {
 
     @GetMapping("/agent/memory/pending/{userId}")
     public List<PendingMemoryDto> listPendingMemory(@PathVariable String userId) {
-        return agentRuntimeService.listPendingMemory(userId);
+        return agentRuntimeService.listPendingMemory(UserContext.effectiveUserId(userId));
     }
 
     @PostMapping("/agent/memory/approve")
     public boolean approveMemory(@RequestBody ApproveMemoryRequest request) {
-        return agentRuntimeService.approvePendingMemory(request);
+        return agentRuntimeService.approvePendingMemory(scope(request));
     }
 
     @PostMapping("/agent/memory/reject")
     public boolean rejectMemory(@RequestBody RejectMemoryRequest request) {
-        return agentRuntimeService.rejectPendingMemory(request);
+        return agentRuntimeService.rejectPendingMemory(scope(request));
     }
 
     @PostMapping("/agent/memory/approval")
@@ -81,12 +82,37 @@ public class MemoryController {
 
     @GetMapping("/agent/memory/all/{userId}")
     public List<MemoryDto> listAllMemory(@PathVariable String userId) {
-        return agentRuntimeService.listAllMemory(userId);
+        return agentRuntimeService.listAllMemory(UserContext.effectiveUserId(userId));
     }
 
     @DeleteMapping("/agent/memory/{userId}/{entryId}")
     public void deleteMemory(@PathVariable String userId, @PathVariable UUID entryId) {
         String effectiveUserId = UserContext.effectiveUserId(userId);
         agentRuntimeService.deleteMemory(effectiveUserId, entryId);
+    }
+
+    /**
+     * Scoped user for memory reads: authenticated user's own id, "default"
+     * in dev/no-auth mode.
+     */
+    private static String currentUser() {
+        String scoped = UserContext.scopeUserId();
+        return scoped != null ? scoped : "default";
+    }
+
+    /**
+     * Rewrite the request's userId so a non-admin key cannot approve/reject
+     * another user's pending memory writes. Admins keep the requested id.
+     */
+    private static ApproveMemoryRequest scope(ApproveMemoryRequest request) {
+        if (request == null) return null;
+        String scoped = UserContext.effectiveUserId(request.userId());
+        return new ApproveMemoryRequest(scoped, request.id());
+    }
+
+    private static RejectMemoryRequest scope(RejectMemoryRequest request) {
+        if (request == null) return null;
+        String scoped = UserContext.effectiveUserId(request.userId());
+        return new RejectMemoryRequest(scoped, request.id());
     }
 }

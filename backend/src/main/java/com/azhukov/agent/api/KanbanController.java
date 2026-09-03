@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.KanbanAddRequest;
 import com.azhukov.agent.api.dto.TodoDto;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.TodoService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -32,14 +33,14 @@ public class KanbanController {
     @Operation(summary = "List all kanban/todo items")
     @GetMapping("/agent/kanban")
     public List<TodoDto> getKanban() {
-        return todoService.listByUserId("default");
+        return todoService.listByUserId(currentUser());
     }
 
     @Operation(summary = "Add a new kanban/todo item")
     @PostMapping("/agent/kanban/add")
     public TodoDto addKanbanItem(@Valid @RequestBody KanbanAddRequest body) {
         String text = body.text();
-        return todoService.add("default", text);
+        return todoService.add(currentUser(), text);
     }
 
     @PostMapping("/agent/kanban/done/{id}")
@@ -51,7 +52,16 @@ public class KanbanController {
 
     @DeleteMapping("/agent/kanban")
     public ResponseEntity<Void> deleteKanbanItem() {
-        todoService.clearByUserId("default");
+        todoService.clearByUserId(currentUser());
         return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Scoped user for kanban operations: the authenticated user's own id,
+     * falling back to "default" in dev/no-auth mode.
+     */
+    private static String currentUser() {
+        String scoped = UserContext.scopeUserId();
+        return scoped != null ? scoped : "default";
     }
 }

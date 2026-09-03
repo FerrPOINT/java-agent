@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.KanbanAddRequest;
 import com.azhukov.agent.api.dto.TodoDto;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.TodoService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -194,6 +195,47 @@ class KanbanControllerT1Test {
 
         mockMvc.perform(delete("/api/v1/agent/kanban"))
             .andExpect(status().isInternalServerError());
+    }
+
+
+    // ── multi-user ownership ──
+
+    @Test
+    void getKanban_scopesToAuthenticatedUser() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            when(todoService.listByUserId("user-77")).thenReturn(List.of());
+            mockMvc.perform(get("/api/v1/agent/kanban"))
+                .andExpect(status().isOk());
+            verify(todoService).listByUserId("user-77");
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void addKanbanItem_scopesToAuthenticatedUser() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            TodoDto dto = new TodoDto(TODO_ID, null, "user-77", "task", "pending", "medium", FIXED_TIME);
+            when(todoService.add("user-77", "task")).thenReturn(dto);
+            mockMvc.perform(post("/api/v1/agent/kanban/add")
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(new KanbanAddRequest("task"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value("user-77"));
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void markDone_otherUsersTask_returns403() throws Exception {
+        when(todoService.markDone(TODO_ID)).thenThrow(
+            new SecurityException("Task does not belong to the current user"));
+        mockMvc.perform(post("/api/v1/agent/kanban/done/" + TODO_ID))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.type").value("forbidden"));
     }
 
 }

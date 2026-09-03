@@ -1,6 +1,7 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.TodoDto;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.TodoEntity;
 import com.azhukov.agent.persistence.repository.TodoRepository;
 import lombok.RequiredArgsConstructor;
@@ -50,6 +51,11 @@ public class TodoService {
     public Optional<TodoDto> markDone(UUID id) {
         return todoRepository.findById(id)
             .map(todo -> {
+                // Ownership: a non-admin key can only complete its own items
+                String scoped = UserContext.scopeUserId();
+                if (scoped != null && !scoped.equals(todo.getUserId())) {
+                    throw new SecurityException("Task does not belong to the current user");
+                }
                 todo.setStatus("done");
                 todo.setUpdatedAt(Instant.now());
                 return toDto(todoRepository.save(todo));
