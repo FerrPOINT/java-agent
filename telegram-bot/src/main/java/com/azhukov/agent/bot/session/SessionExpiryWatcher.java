@@ -6,6 +6,8 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
+import com.azhukov.agent.bot.core.AgentBackendClient;
+
 import jakarta.annotation.PreDestroy;
 import java.time.Instant;
 import java.util.List;
@@ -29,6 +31,7 @@ public class SessionExpiryWatcher {
 
     private final BotSessionStore sessionStore;
     private final SessionResetPolicy resetPolicy;
+    private final AgentBackendClient backendClient;
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "session-expiry-watcher");
@@ -74,6 +77,17 @@ public class SessionExpiryWatcher {
                 if (reason != null) {
                     log.info("Finalizing expired session {} (reason={}, userId={})",
                         session.getId(), reason, session.getUserId());
+                    // rev-69: notify backend to clean up per-session state
+                    // (context engine, guardrails, nudge counters, prompt cache,
+                    // interrupt tokens, steer buffer). Without this, expired bot
+                    // sessions leak backend state forever — the bot deactivates
+                    // its own row but the backend never knows.
+                    try {
+                        backendClient.resetSession(session.getId().toString());
+                    } catch (Exception e) {
+                        log.debug("Backend cleanup for expired session {} failed: {}",
+                            session.getId(), e.getMessage());
+                    }
                     sessionStore.finalizeSession(session.getId());
                 }
             }

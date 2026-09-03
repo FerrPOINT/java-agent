@@ -24,7 +24,9 @@ class SessionExpiryWatcherTest {
         resetPolicy = new SessionResetPolicy();
         resetPolicy.setMode(SessionResetMode.IDLE);
         resetPolicy.setIdleMinutes(1);
-        watcher = new SessionExpiryWatcher(sessionStore, resetPolicy);
+        com.azhukov.agent.bot.core.AgentBackendClient backendClient = mock(
+            com.azhukov.agent.bot.core.AgentBackendClient.class);
+        watcher = new SessionExpiryWatcher(sessionStore, resetPolicy, backendClient);
     }
 
     @AfterEach
