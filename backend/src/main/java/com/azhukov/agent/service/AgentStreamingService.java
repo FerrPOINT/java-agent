@@ -6,6 +6,7 @@ import com.azhukov.agent.api.dto.StreamEvent;
 import com.azhukov.agent.core.agent.TurnExitReason;
 import com.azhukov.agent.core.agent.TurnFinalizer;
 import com.azhukov.agent.core.agent.ThinkingTimeoutGuidance;
+import com.azhukov.agent.core.memory.MemoryContextFence;
 import com.azhukov.agent.core.agent.ResponseRecoveryPolicy;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
@@ -376,6 +377,14 @@ public class AgentStreamingService {
 
     private void runAgenticLoop(ChatRequest request, SseEmitter emitter, StreamContext streamCtx) {
         ThinkScrubber scrubber = new ThinkScrubber();
+        // rev-111 Hermes parity (#5719): stateful scrubber for <memory-context>
+        // spans split across stream deltas. The one-shot sanitize_context regex
+        // cannot survive chunk boundaries — a span opened in one delta and
+        // closed in a later delta leaks its payload (the full memory contents)
+        // to the UI. Runs AFTER the think scrubber (Hermes
+        // run_agent.py:6956-6966: think.feed → context.feed → emit).
+        MemoryContextFence.StreamingContextScrubber ctxScrubber =
+            new MemoryContextFence.StreamingContextScrubber();
 
         // Resolve or create session — if sessionId is provided but not found in backend DB,
         // create a new session (the bot may have a sessionId from its own bot_sessions table
@@ -656,7 +665,7 @@ public class AgentStreamingService {
                                 log.info("Streaming interrupted mid-token for session {}", sessionId);
                                 return;
                             }
-                            String scrubbed = scrubber.scrub(token);
+                            String scrubbed = ctxScrubber.feed(scrubber.scrub(token));
                             if (!scrubbed.isEmpty()) {
                                 eventHelper().send(emitter, new StreamEvent("token", scrubbed, null, null), streamCtx);
                                 contentBuilder.append(scrubbed);
@@ -672,6 +681,13 @@ public class AgentStreamingService {
                         @Override
                         public void onComplete() {
                             String remaining = scrubber.flush();
+                            // rev-111: route the think tail through the context
+                            // scrubber too (Hermes run_agent.py:6578-6585) so a
+                            // memory-context span straddling the final boundary
+                            // is still caught.
+                            if (remaining != null && !remaining.isEmpty()) {
+                                remaining = ctxScrubber.feed(remaining);
+                            }
                             if (remaining != null && !remaining.isEmpty()) {
                                 eventHelper().send(emitter, new StreamEvent("token", remaining, null, null), streamCtx);
                                 contentBuilder.append(remaining);
@@ -974,7 +990,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     activeStreamClient.stream(context, tools, boostedOptions, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
-                            String scrubbed = scrubber.scrub(token);
+                            String scrubbed = ctxScrubber.feed(scrubber.scrub(token));
                             if (!scrubbed.isEmpty()) {
                                 contentBuilder.append(scrubbed);
                             }
