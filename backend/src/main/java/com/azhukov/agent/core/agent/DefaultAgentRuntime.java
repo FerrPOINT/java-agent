@@ -1157,6 +1157,14 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
                     approvalQueue.clear(session.id());
                 } else {
+                    // rev-131 Hermes parity ('once' semantics, approval.py:4368):
+                    // single-use consent — consume the approval with the
+                    // execution it authorized. Leaving it approved in the map
+                    // let every later dangerous call (any tool) execute with
+                    // no prompt (fail-open).
+                    if (approvalRequired) {
+                        approvalQueue.clear(session.id());
+                    }
                     long toolStart = System.currentTimeMillis();
                     // L6: Reset skill counter BEFORE execution (parity with Hermes
                     // which resets _iters_since_skill before the tool runs, not after).

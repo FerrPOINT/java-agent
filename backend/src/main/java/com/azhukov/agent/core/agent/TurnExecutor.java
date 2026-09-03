@@ -718,6 +718,15 @@ public class TurnExecutor {
                     toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
                     approvalQueue.clear(session.id());
                 } else {
+                    // rev-131 Hermes parity ('once' semantics, approval.py:4368):
+                    // a user approval is SINGLE-USE. The approved entry must be
+                    // consumed by the execution it authorized — otherwise it
+                    // stays in the map forever and every later dangerous call
+                    // (any tool) skips the prompt via getPending()!=null and
+                    // executes without consent. Fail-open lived here.
+                    if (approvalRequired) {
+                        approvalQueue.clear(session.id());
+                    }
                     // Reset skill/memory counters before execution
                     resetNudgeCounters(call, session.id());
                     ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState);

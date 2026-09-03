@@ -112,4 +112,30 @@ class ApprovalFailClosedTest {
         assertTrue(queue.isApproved(session));
         assertFalse(queue.isPending(session));
     }
+
+    /**
+     * rev-131 Hermes parity ('once' semantics, approval.py:4368): an approval
+     * is single-use. The runtime consumes it (clear) with the execution it
+     * authorized — after consumption a NEW dangerous call must re-prompt
+     * (isPending true again after requestApproval), not sail through on the
+     * stale approved entry.
+     */
+    @Test
+    void approvalIsSingleUse_ConsumedByExecution() {
+        ApprovalQueue queue = new ApprovalQueue();
+        UUID session = UUID.randomUUID();
+
+        // First dangerous call → prompt → user approves → gate consumes.
+        queue.request(session, new ToolCall("c1", "delete_file", "{}"), "destructive", Duration.ofMinutes(5));
+        queue.approve(session, "approve", null);
+        assertTrue(queue.isApproved(session), "approved before execution");
+        queue.clear(session); // runtime consumes (rev-131)
+
+        // Second dangerous call: guardrail fires again, queue re-prompts.
+        assertFalse(queue.isApproved(session), "consumed approval must not linger");
+        assertNull(queue.getPending(session), "consumed entry fully removed");
+        queue.request(session, new ToolCall("c2", "terminal", "{}"), "another destructive", Duration.ofMinutes(5));
+        assertTrue(queue.isPending(session), "fresh dangerous call must re-prompt");
+        assertFalse(queue.isApproved(session), "re-prompt starts undecided");
+    }
 }
