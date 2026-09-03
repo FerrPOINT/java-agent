@@ -156,6 +156,18 @@ public class AgentRuntimeService {
             return runResolvedTurn(applied, session, isNew);
         } finally {
             lock.unlock();
+            // Remove the lock from the map to prevent unbounded growth — each
+            // session leaves a ReentrantLock entry forever otherwise. Only remove
+            // if no other thread is waiting (tryLock succeeds immediately after
+            // unlock, meaning no contention). This is safe because a new turn on
+            // the same session will computeIfAbsent a fresh lock if needed.
+            if (lock.tryLock()) {
+                try {
+                    sessionTurnLocks.remove(session.id(), lock);
+                } finally {
+                    lock.unlock();
+                }
+            }
         }
     }
 

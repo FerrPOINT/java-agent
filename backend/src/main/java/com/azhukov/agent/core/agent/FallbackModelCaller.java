@@ -446,6 +446,15 @@ public class FallbackModelCaller {
 
     public boolean tryActivateFallback(ModelCallContext ctx, ErrorClassifier.ErrorType errorType, Exception error) {
         if (ctx.fallbackManager == null || !ctx.fallbackManager.hasPendingFallback()) {
+            // Hermes parity: arm a short cooldown when the chain is exhausted
+            // and the failure was NOT a rate-limit/billing event — prevents the
+            // cross-turn replay storm (#24996) from re-marshaling the whole
+            // context across every provider every turn.
+            if (errorType != ErrorClassifier.ErrorType.RATE_LIMIT
+                && errorType != ErrorClassifier.ErrorType.BILLING
+                && errorType != ErrorClassifier.ErrorType.OVERLOADED) {
+                ctx.fallbackManager.setChainExhaustedCooldown();
+            }
             return false;
         }
 

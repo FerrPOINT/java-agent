@@ -39,7 +39,20 @@ public class FallbackManager {
     // Rate-limit cooldown — when set, the primary provider is skipped until
     // this timestamp. Mirrors Hermes {@code _rate_limited_until}.
     private volatile long rateLimitedUntil = 0;
-    private static final long RATE_LIMIT_COOLDOWN_MS = 60_000;
+
+    // Hermes parity (chat_completion_helpers.py:2453): exponential backoff for
+    // CONSECUTIVE rate-limits — 60s → 2m → 4m → 8m → ... → 4h cap. The first 429
+    // must NOT bench the primary for half an hour; fast primary restore is the
+    // common case, escalation only punishes providers that keep 429ing.
+    // Counter is reset by restorePrimary() on successful restore.
+    private volatile int rateLimitBackoffCount = 0;
+    private static final long RATE_LIMIT_INITIAL_MS = 60_000;       // 60 s
+    private static final long RATE_LIMIT_MAX_MS = 14400_000L;       // 4 h cap
+
+    // Hermes parity: cooldown when the ENTIRE fallback chain is exhausted and
+    // the failure was NOT a rate-limit/billing event — prevents the cross-turn
+    // replay storm (#24996) from re-marshaling the whole context every turn.
+    private static final long FALLBACK_EXHAUSTED_COOLDOWN_MS = 120_000; // 2 min
 
     public FallbackManager(List<FallbackConfig> chain,
                            String primaryProvider, String primaryModel,
@@ -172,11 +185,28 @@ public class FallbackManager {
     }
 
     /**
-     * Set the rate-limit cooldown timestamp.
-     * Mirrors Hermes {@code _rate_limited_until = monotonic() + 60s}.
+     * Set the rate-limit cooldown timestamp using exponential backoff.
+     * Mirrors Hermes {@code _rate_limited_until = monotonic() + backoff_seconds}.
+     * <p>
+     * Exponential: 60s → 2m → 4m → 8m → ... → 4h cap. The counter is reset on
+     * successful primary restore.
      */
     public void setRateLimitCooldown() {
-        this.rateLimitedUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS;
+        long backoffMs = Math.min(RATE_LIMIT_INITIAL_MS * (1L << rateLimitBackoffCount), RATE_LIMIT_MAX_MS);
+        rateLimitBackoffCount++;
+        this.rateLimitedUntil = System.currentTimeMillis() + backoffMs;
+        log.info("Rate-limit backoff level {}: cooldown {}s ({:.1f} min, backoff#{})",
+            rateLimitBackoffCount - 1, backoffMs / 1000, backoffMs / 60000.0, rateLimitBackoffCount);
+    }
+
+    /**
+     * Cooldown when the entire fallback chain is exhausted (Hermes parity:
+     * {@code _FALLBACK_EXHAUSTED_COOLDOWN_S}). Prevents the cross-turn replay
+     * storm from re-marshaling the whole context across every provider again.
+     */
+    public void setChainExhaustedCooldown() {
+        this.rateLimitedUntil = Math.max(this.rateLimitedUntil,
+            System.currentTimeMillis() + FALLBACK_EXHAUSTED_COOLDOWN_MS);
     }
 
     /**
@@ -214,6 +244,8 @@ public class FallbackManager {
         fallbackActivated = false;
         fallbackIndex = 0;
         activeFallbackIndex = -1;
+        // Hermes parity: reset backoff counter on successful restore
+        rateLimitBackoffCount = 0;
         return true;
     }
 
