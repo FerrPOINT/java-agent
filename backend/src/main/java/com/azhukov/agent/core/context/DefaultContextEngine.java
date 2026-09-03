@@ -690,6 +690,7 @@ public class DefaultContextEngine implements ContextEngine {
         snapshotCache.remove(sessionId);
         lastMemoryHash.remove(sessionId);
         lastCompressedAt.remove(sessionId);
+        rotatedSessionIds.remove(sessionId);
         evictTurnCache(sessionId);
     }
 
