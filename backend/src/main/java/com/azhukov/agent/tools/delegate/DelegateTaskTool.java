@@ -895,7 +895,7 @@ public class DelegateTaskTool implements ToolHandler {
             required = false) String role,
         @ToolParam(description = "timeout in seconds for each child (0 = use config default)",
             required = false) @JsonProperty("timeout_seconds") @JsonAlias("timeoutSeconds") int timeoutSeconds,
-        @ToolParam(description = "batch mode: JSON array of {goal, context, toolsets, role, timeoutSeconds, acpCommand, acpArgs} objects",
+        @ToolParam(description = "batch mode: JSON array of {goal, context, toolsets, role, timeoutSeconds, acpCommand, acpArgs} objects. Batch size is capped by agent.delegation.max-concurrent-children (batches above it fail with 'Too many tasks')",
             required = false) List<TaskSpec> tasks,
         @ToolParam(description = "maximum iterations (model calls) per child subagent (0 = use config default delegation.max_iterations)",
             required = false) @JsonProperty("max_iterations") @JsonAlias("maxIterations") Integer maxIterations,
