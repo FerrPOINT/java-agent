@@ -346,9 +346,12 @@ class InboundMessageProcessorTest {
         verify(agentRuntime).runTurn(any(Session.class), eq(USER_TEXT), eq(List.of()));
     }
 
+    private final java.util.concurrent.atomic.AtomicInteger evtCounter =
+        new java.util.concurrent.atomic.AtomicInteger();
+
     private MessageEvent messageEvent(SessionSource source, String text) {
         return new MessageEvent(
-            "evt-1",
+            "evt-" + evtCounter.incrementAndGet(),
             source,
             MessageType.TEXT,
             text,

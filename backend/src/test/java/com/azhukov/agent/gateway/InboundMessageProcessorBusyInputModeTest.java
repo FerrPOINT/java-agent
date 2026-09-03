@@ -157,6 +157,45 @@ class InboundMessageProcessorBusyInputModeTest {
     }
 
     @Test
+    void duplicateEventIdIsProcessedOnce() {
+        Session session = new Session(SESSION_ID, USER_ID, "Test", "openai-compatible", "gpt-4", null, Map.of());
+        when(sessionResolver.resolve(any())).thenReturn(session);
+        when(agentRuntime.runTurn(any(Session.class), any(String.class), eq(List.of())))
+            .thenReturn(new TurnResult(List.of(Message.assistant("Hi", 1)), true, null));
+        when(routingService.send(any(), any(), any(String.class)))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "ok", null)));
+
+        SessionSource source = new SessionSource(Platform.TELEGRAM, CHAT_ID, USER_ID, USERNAME, USERNAME);
+        // Same eventId = Telegram webhook redelivery
+        MessageEvent redelivered = new MessageEvent("70001", source, MessageType.TEXT, "hi",
+            List.of(), Map.of(), Instant.now());
+
+        processor.accept(redelivered);
+        processor.accept(redelivered);
+
+        // Only ONE turn for one logical message
+        verify(agentRuntime, times(1)).runTurn(any(Session.class), eq("hi"), eq(List.of()));
+    }
+
+    @Test
+    void distinctEventIdsAreBothProcessed() {
+        Session session = new Session(SESSION_ID, USER_ID, "Test", "openai-compatible", "gpt-4", null, Map.of());
+        when(sessionResolver.resolve(any())).thenReturn(session);
+        when(agentRuntime.runTurn(any(Session.class), any(String.class), eq(List.of())))
+            .thenReturn(new TurnResult(List.of(Message.assistant("Hi", 1)), true, null));
+        when(routingService.send(any(), any(), any(String.class)))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "ok", null)));
+
+        SessionSource source = new SessionSource(Platform.TELEGRAM, CHAT_ID, USER_ID, USERNAME, USERNAME);
+        processor.accept(new MessageEvent("70002", source, MessageType.TEXT, "one",
+            List.of(), Map.of(), Instant.now()));
+        processor.accept(new MessageEvent("70003", source, MessageType.TEXT, "two",
+            List.of(), Map.of(), Instant.now()));
+
+        verify(agentRuntime, times(2)).runTurn(any(Session.class), any(String.class), eq(List.of()));
+    }
+
+    @Test
     void steerBufferConcatenatesMultipleSteers() {
         steerBuffer.steer(SESSION_ID, "first");
         steerBuffer.steer(SESSION_ID, "second");
@@ -231,9 +270,12 @@ class InboundMessageProcessorBusyInputModeTest {
         first.get(5, java.util.concurrent.TimeUnit.SECONDS);
     }
 
+    private final java.util.concurrent.atomic.AtomicInteger evtCounter =
+        new java.util.concurrent.atomic.AtomicInteger();
+
     private MessageEvent messageEvent(SessionSource source, String text) {
         return new MessageEvent(
-            "evt-1",
+            "evt-" + evtCounter.incrementAndGet(),
             source,
             MessageType.TEXT,
             text,

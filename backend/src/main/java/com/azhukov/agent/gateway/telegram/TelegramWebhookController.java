@@ -64,8 +64,11 @@ public class TelegramWebhookController {
             username == null ? "" : username,
             username == null ? "" : username
         );
+        // Platform update id — used for redelivery dedup (Telegram retries
+        // webhook POSTs on timeout/5xx).
+        String updateId = Optional.ofNullable(update.get("update_id")).map(Object::toString).orElse(null);
         routingService.dispatchInbound(new MessageEvent(
-            null,
+            updateId,
             source,
             MessageType.TEXT,
             text,

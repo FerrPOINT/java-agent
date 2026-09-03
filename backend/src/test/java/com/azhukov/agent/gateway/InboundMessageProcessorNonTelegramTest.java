@@ -86,7 +86,7 @@ class InboundMessageProcessorNonTelegramTest {
         // If there were other platforms, they should also be allowed through
         UUID sessionId = UUID.randomUUID();
         SessionSource source = new SessionSource(Platform.UNKNOWN, "d-1", "u-1", "user", "User");
-        MessageEvent event = new MessageEvent("evt-1", source, MessageType.TEXT, "test",
+        MessageEvent event = new MessageEvent("evt-2", source, MessageType.TEXT, "test",
             List.of(), Map.of(), Instant.parse("2026-01-01T00:00:00Z"));
 
         Session session = new Session(sessionId, "u-1", "Discord user",

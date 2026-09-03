@@ -38,6 +38,31 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     /** Per-session queue for messages arriving while busy in "queue" mode. */
     private final ConcurrentHashMap<String, ConcurrentLinkedQueue<MessageEvent>> pendingQueues = new ConcurrentHashMap<>();
 
+    /**
+     * Bounded dedup of platform redeliveries: Telegram retries webhook POSTs
+     * and can redeliver long-poll updates after reconnect. Keyed by
+     * "platform:eventId"; null eventIds (synthetic events, late-steer
+     * handoffs) never dedup. Bounded to avoid an unbounded leak.
+     */
+    private static final int DEDUP_MAX_ENTRIES = 10_000;
+    private final java.util.Set<String> seenEventIds =
+        java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(
+            new java.util.LinkedHashMap<String, Boolean>(16, 0.75f, false) {
+                @Override
+                protected boolean removeEldestEntry(java.util.Map.Entry<String, Boolean> eldest) {
+                    return size() > DEDUP_MAX_ENTRIES;
+                }
+            }));
+
+    private boolean isDuplicateRedelivery(MessageEvent event) {
+        if (event == null || event.eventId() == null || event.eventId().isBlank()) {
+            return false;
+        }
+        String key = event.source().platform() + ":" + event.eventId();
+        // add() returns false when already present → duplicate redelivery
+        return !seenEventIds.add(key);
+    }
+
     @Override
     public void accept(MessageEvent event) {
         SessionSource source = event.source();
@@ -48,6 +73,14 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
         if (!isAuthorized(source)) {
             log.warn("Skipping unauthorized inbound message from platform={} userId={} chatId={}",
                 source.platform(), source.userId(), source.chatId());
+            return;
+        }
+
+        // Platform redelivery dedup (Telegram retries webhook POSTs on
+        // timeout/5xx): a repeated eventId is a redelivery, not a new message.
+        if (isDuplicateRedelivery(event)) {
+            log.info("Skipping duplicate redelivery: platform={} eventId={}",
+                source.platform(), event.eventId());
             return;
         }
 

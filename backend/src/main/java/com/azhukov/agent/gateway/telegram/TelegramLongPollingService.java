@@ -230,8 +230,11 @@ public class TelegramLongPollingService {
             username == null ? "" : username,
             username == null ? "" : username
         );
+        // Platform update id — used for redelivery dedup (Telegram retries
+        // POSTs on timeout/5xx; without dedup the same message would be
+        // processed twice).
         routingService.dispatchInbound(new MessageEvent(
-            null, source, MessageType.TEXT, text, List.of(), Map.of(), java.time.Instant.now()
+            String.valueOf(updateId), source, MessageType.TEXT, text, List.of(), Map.of(), java.time.Instant.now()
         ));
     }
 }
