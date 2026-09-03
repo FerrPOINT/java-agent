@@ -119,6 +119,7 @@ public class AgentChatController {
     public Map<String, Object> stop(@Valid @RequestBody(required = false) StopRequest request) {
         UUID sessionId = request != null ? request.sessionId() : null;
         if (sessionId != null) {
+            requireSessionOwnership(sessionId);
             interruptToken.cancel(sessionId);
         }
         return Map.of("ok", true, "message", "Agent stopped");
@@ -133,8 +134,23 @@ public class AgentChatController {
         if (request.sessionId() == null || request.text() == null || request.text().isBlank()) {
             return Map.of("accepted", false, "reason", "sessionId and text are required");
         }
+        requireSessionOwnership(request.sessionId());
         boolean accepted = steerBuffer.steer(request.sessionId(), request.text());
         return Map.of("accepted", accepted, "sessionId", request.sessionId().toString());
+    }
+
+    /**
+     * Ownership guard: a non-admin key may only stop/steer its own session.
+     * @throws SecurityException when the session belongs to another user
+     */
+    private void requireSessionOwnership(UUID sessionId) {
+        String scoped = com.azhukov.agent.core.security.UserContext.scopeUserId();
+        if (scoped == null) return; // admin or no-auth → full access
+        sessionRepository.findById(sessionId).ifPresent(session -> {
+            if (!scoped.equals(session.getUserId())) {
+                throw new SecurityException("Session does not belong to the current user");
+            }
+        });
     }
 
 
@@ -152,6 +168,12 @@ public class AgentChatController {
     public java.util.Map<String, Object> backgroundStatus(@org.springframework.web.bind.annotation.PathVariable java.util.UUID id) {
         var job = backgroundJobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Unknown background job: " + id));
+        // Ownership: a job's result may only be read by the session owner.
+        // Jobs without a session (ephemeral prompts) stay readable to all
+        // authenticated users — they carry no other user's conversation.
+        if (job.getSessionId() != null) {
+            requireSessionOwnership(job.getSessionId());
+        }
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("jobId", job.getId().toString());
         out.put("status", job.getStatus());
@@ -203,6 +225,7 @@ public class AgentChatController {
     public String approve(@Valid @RequestBody ApproveRequest request) {
         if (request.isAll()) {
             for (var pending : approvalQueue.getPendingApprovals()) {
+                requireSessionOwnership(pending.sessionId());
                 approvalQueue.approve(pending.sessionId(), "approve", null);
             }
             return "Approved all pending approvals";
@@ -211,6 +234,7 @@ public class AgentChatController {
         if (scope != null && !scope.isBlank()) {
             try {
                 UUID sessionId = UUID.fromString(scope);
+                requireSessionOwnership(sessionId);
                 var result = approvalQueue.approve(sessionId, "approve", null);
                 if (result == null) return "No pending approval for session: " + scope;
                 return "Approved: " + scope;
@@ -220,6 +244,7 @@ public class AgentChatController {
         }
         var pendingList = approvalQueue.getPendingApprovals();
         if (pendingList.isEmpty()) return "No pending approvals";
+        requireSessionOwnership(pendingList.get(0).sessionId());
         approvalQueue.approve(pendingList.get(0).sessionId(), "approve", null);
         return "Approved: " + pendingList.get(0).sessionId();
     }
@@ -228,12 +253,14 @@ public class AgentChatController {
     public String deny(@Valid @RequestBody DenyRequest request) {
         if (request.isAll()) {
             for (var pending : approvalQueue.getPendingApprovals()) {
+                requireSessionOwnership(pending.sessionId());
                 approvalQueue.deny(pending.sessionId(), null);
             }
             return "Denied all pending approvals";
         }
         var pendingList = approvalQueue.getPendingApprovals();
         if (pendingList.isEmpty()) return "No pending approvals";
+        requireSessionOwnership(pendingList.get(0).sessionId());
         approvalQueue.deny(pendingList.get(0).sessionId(), null);
         return "Denied: " + pendingList.get(0).sessionId();
     }
@@ -242,16 +269,27 @@ public class AgentChatController {
 
     @GetMapping("/agent/approvals/pending")
     public List<ApprovalQueue.PendingApproval> pendingApprovals() {
-        return approvalQueue.getPendingApprovals();
+        String scoped = com.azhukov.agent.core.security.UserContext.scopeUserId();
+        if (scoped == null) {
+            return approvalQueue.getPendingApprovals();
+        }
+        // Non-admin users only see pending approvals for their own sessions
+        return approvalQueue.getPendingApprovals().stream()
+            .filter(p -> sessionRepository.findById(p.sessionId())
+                .map(s -> scoped.equals(s.getUserId()))
+                .orElse(false))
+            .toList();
     }
 
     @PostMapping("/agent/approvals/{sessionId}/approve")
     public ApprovalQueue.PendingApproval approveTool(@PathVariable UUID sessionId, @RequestParam(required = false, defaultValue = "approve") String decision, @RequestBody(required = false) String note) {
+        requireSessionOwnership(sessionId);
         return approvalQueue.approve(sessionId, decision, note);
     }
 
     @PostMapping("/agent/approvals/{sessionId}/deny")
     public ApprovalQueue.PendingApproval denyTool(@PathVariable UUID sessionId, @RequestBody(required = false) String note) {
+        requireSessionOwnership(sessionId);
         return approvalQueue.deny(sessionId, note);
     }
 

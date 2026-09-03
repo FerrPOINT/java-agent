@@ -18,6 +18,7 @@ import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.security.ApprovalQueue;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.metrics.AgentMetrics;
 import com.azhukov.agent.persistence.entity.BackgroundJobEntity;
@@ -543,5 +544,85 @@ class AgentChatControllerT1Test {
                 .contentType(MediaType.MULTIPART_FORM_DATA))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.logsIncluded").value(false));
+    }
+
+    // ── multi-user ownership: stop / steer / approvals ──
+
+    private SessionEntity sessionOf(String userId) {
+        SessionEntity e = new SessionEntity();
+        e.setId(SESSION_ID);
+        e.setUserId(userId);
+        return e;
+    }
+
+    @Test
+    void stop_otherUsersSession_returns403() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
+            mockMvc.perform(post("/api/v1/agent/stop")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new StopRequest(SESSION_ID))))
+                .andExpect(status().isForbidden());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void steer_otherUsersSession_returns403() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
+            mockMvc.perform(post("/api/v1/agent/steer")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new SteerRequest(SESSION_ID, "hijack"))))
+                .andExpect(status().isForbidden());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void approveTool_otherUsersSession_returns403() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
+            mockMvc.perform(post("/api/v1/agent/approvals/" + SESSION_ID + "/approve"))
+                .andExpect(status().isForbidden());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void stop_ownSession_stillWorks() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("user-77")));
+            mockMvc.perform(post("/api/v1/agent/stop")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new StopRequest(SESSION_ID))))
+                .andExpect(status().isOk());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void backgroundStatus_otherUsersSessionJob_returns403() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            BackgroundJobEntity job = new BackgroundJobEntity();
+            job.setId(UUID.randomUUID());
+            job.setStatus("DONE");
+            job.setSessionId(SESSION_ID);
+            when(backgroundJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
+            mockMvc.perform(get("/api/v1/agent/background/" + job.getId()))
+                .andExpect(status().isForbidden());
+        } finally {
+            UserContext.clear();
+        }
     }
 }
