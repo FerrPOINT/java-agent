@@ -778,11 +778,50 @@ public class DelegateTaskTool implements ToolHandler {
      * Hermes parity (delegate_tool.py:466-579): these run synchronously
      * in-turn and operate on this conversation's active subagents.
      */
+    /**
+     * rev-133 Hermes parity (delegate_tool.py:384 _is_descendant_of): a session
+     * may steer/stop/list its own children AND grandchildren — any node in its
+     * spawn subtree, never a sibling tree owned by another conversation.
+     * Walks the registry upward from the child (child.parentSessionId → the
+     * record whose childSessionId matches → its parentSessionId, ...) bounded
+     * by MAX_ANCESTRY_HOPS (Hermes max_hops=8). Identity comparison on session
+     * ids only, mirroring Hermes' identity-comparison-only doctrine.
+     */
+    static final int MAX_ANCESTRY_HOPS = 8;
+
+    boolean isOwnedDescendant(SubagentRecord record, UUID ancestorSessionId) {
+        if (record == null || ancestorSessionId == null) {
+            return false;
+        }
+        String current = record.parentSessionId();
+        for (int hop = 0; hop < MAX_ANCESTRY_HOPS && current != null; hop++) {
+            if (ancestorSessionId.toString().equals(current)) {
+                return true;
+            }
+            // Find the record whose child session IS the current parent —
+            // i.e. step one level further up the spawn tree.
+            String next = null;
+            for (SubagentRecord r : activeSubagents.values()) {
+                if (current.equals(r.childSessionId().toString())) {
+                    next = r.parentSessionId();
+                    break;
+                }
+            }
+            if (next == null || next.equals(current)) {
+                return false;
+            }
+            current = next;
+        }
+        return false;
+    }
+
     private ToolResult handleControlAction(String action, String subagentId, String message, Session session) {
         switch (action) {
             case "list" -> {
+                // rev-133: ancestor visibility — list the whole spawn subtree,
+                // not only direct children (Hermes list_active_subagents).
                 var entries = activeSubagents.entrySet().stream()
-                    .filter(e -> session.id().toString().equals(e.getValue().parentSessionId()))
+                    .filter(e -> isOwnedDescendant(e.getValue(), session.id()))
                     .map(e -> "{subagent_id:" + e.getKey() + ",goal:" + e.getValue().goal() + "}")
                     .toList();
                 if (entries.isEmpty()) {
@@ -795,7 +834,7 @@ public class DelegateTaskTool implements ToolHandler {
                     return ToolResult.fail("action='stop' requires subagent_id (from the spawn dispatch response or action='list').");
                 }
                 var record = activeSubagents.get(subagentId);
-                if (record == null || !session.id().toString().equals(record.parentSessionId())) {
+                if (record == null || !isOwnedDescendant(record, session.id())) {
                     return ToolResult.fail("Subagent '" + subagentId + "' not found or already finished. Use action='list' to see live children.");
                 }
                 InterruptToken interruptToken = interruptTokenProvider != null ? interruptTokenProvider.getIfAvailable() : null;
@@ -813,7 +852,7 @@ public class DelegateTaskTool implements ToolHandler {
                     return ToolResult.fail("action='steer' requires a non-empty 'message' describing the course correction.");
                 }
                 var record = activeSubagents.get(subagentId);
-                if (record == null || !session.id().toString().equals(record.parentSessionId())) {
+                if (record == null || !isOwnedDescendant(record, session.id())) {
                     return ToolResult.fail("Subagent '" + subagentId + "' is no longer accepting steering (finishing or not found). Use action='list' to see live children.");
                 }
                 SteerBuffer steerBuffer = steerBufferProvider != null ? steerBufferProvider.getIfAvailable() : null;

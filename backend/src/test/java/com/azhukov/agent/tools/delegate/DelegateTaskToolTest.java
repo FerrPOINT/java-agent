@@ -296,4 +296,74 @@ class DelegateTaskToolTest {
         assertThat(DelegateTaskTool.normalizeRole("LEAF")).isEqualTo("leaf");
         assertThat(DelegateTaskTool.normalizeRole("orchestrator")).isEqualTo("orchestrator");
     }
+    // ── rev-133: ancestor ownership (Hermes _is_descendant_of parity) ──────
+
+    private void registerSubagent(DelegateTaskTool tool, String sid, String parentSid, UUID childSid, int depth) {
+        try {
+            var field = DelegateTaskTool.class.getDeclaredField("activeSubagents");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            var map = (java.util.Map<String, DelegateTaskTool.SubagentRecord>) field.get(tool);
+            map.put(sid, new DelegateTaskTool.SubagentRecord(sid, depth, "g", System.currentTimeMillis(), parentSid, childSid));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Test
+    void ancestorMayControlGrandchildren() {
+        DelegateTaskTool tool = newTool(properties());
+        UUID root = UUID.randomUUID();
+        UUID orchestratorChild = UUID.randomUUID();
+        UUID grandchild = UUID.randomUUID();
+        registerSubagent(tool, "mid", root.toString(), orchestratorChild, 1);
+        registerSubagent(tool, "leaf-b", orchestratorChild.toString(), grandchild, 2);
+
+        var midRec = readRecord(tool, "mid");
+        var leafRec = readRecord(tool, "leaf-b");
+        org.junit.jupiter.api.Assertions.assertTrue(tool.isOwnedDescendant(leafRec, root),
+            "root must steer/stop its grandchild (ancestor chain, Hermes _is_descendant_of)");
+        org.junit.jupiter.api.Assertions.assertTrue(tool.isOwnedDescendant(midRec, root),
+            "direct child is owned");
+        org.junit.jupiter.api.Assertions.assertTrue(tool.isOwnedDescendant(leafRec, orchestratorChild),
+            "mid orchestrator owns its direct child");
+    }
+
+    @Test
+    void siblingTreeIsNeverOwned() {
+        DelegateTaskTool tool = newTool(properties());
+        UUID root = UUID.randomUUID();
+        UUID otherRoot = UUID.randomUUID();
+        UUID strangerChild = UUID.randomUUID();
+        registerSubagent(tool, "stranger", otherRoot.toString(), strangerChild, 1);
+
+        var rec = readRecord(tool, "stranger");
+        org.junit.jupiter.api.Assertions.assertFalse(tool.isOwnedDescendant(rec, root),
+            "another conversation's subtree must not be controllable");
+    }
+
+    @Test
+    void nullsAndCyclesAreRejected() {
+        DelegateTaskTool tool = newTool(properties());
+        org.junit.jupiter.api.Assertions.assertFalse(tool.isOwnedDescendant(null, UUID.randomUUID()));
+        UUID root = UUID.randomUUID();
+        UUID child = UUID.randomUUID();
+        registerSubagent(tool, "c", root.toString(), child, 1);
+        var rec = readRecord(tool, "c");
+        org.junit.jupiter.api.Assertions.assertFalse(tool.isOwnedDescendant(rec, null));
+        org.junit.jupiter.api.Assertions.assertFalse(tool.isOwnedDescendant(rec, child),
+            "self is not its own ancestor");
+    }
+
+    private DelegateTaskTool.SubagentRecord readRecord(DelegateTaskTool tool, String sid) {
+        try {
+            var field = DelegateTaskTool.class.getDeclaredField("activeSubagents");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            var map = (java.util.Map<String, DelegateTaskTool.SubagentRecord>) field.get(tool);
+            return map.get(sid);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
 }
