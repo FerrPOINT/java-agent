@@ -80,7 +80,7 @@ install: jar
 	@mkdir -p $(INSTALL_DIR)/bin
 	@mkdir -p $(INSTALL_DIR)/lib
 	@mkdir -p $(INSTALL_DIR)/config
-	@cp backend/build/libs/backend-0.0.1-SNAPSHOT.jar $(INSTALL_DIR)/lib/java-agent-backend-$(VERSION).jar
+	@cp backend/build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar $(INSTALL_DIR)/lib/java-agent-backend-$(VERSION).jar
 	@cp cli/build/libs/cli-0.0.1-SNAPSHOT.jar $(INSTALL_DIR)/lib/java-agent-cli-$(VERSION).jar
 	@cp telegram-bot/build/libs/telegram-bot-0.0.1-SNAPSHOT.jar $(INSTALL_DIR)/lib/java-agent-bot-$(VERSION).jar
 	@# Symlinks for latest version

@@ -13,7 +13,10 @@ Environment="DB_PORT=5432"
 Environment="DB_NAME=java_agent"
 Environment="DB_USER=project_workflow"
 EnvironmentFile=-/etc/java-agent/env
-ExecStart=/usr/bin/java --enable-native-access=ALL-UNNAMED -jar /opt/java-agent/java-agent-backend.jar
+# Deploy layout: /opt/java-agent/lib/java-agent-backend-<ver>.jar + latest symlink.
+# The symlink is atomically repointed by the deploy ladder (cp versioned jar,
+# update VERSION, ln -sfn), so the service file never needs editing per release.
+ExecStart=/usr/bin/java --enable-native-access=ALL-UNNAMED -jar /opt/java-agent/lib/java-agent-backend-latest.jar
 Restart=on-failure
 RestartSec=5
 
