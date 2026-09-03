@@ -138,6 +138,21 @@ class StreamingEventHelper {
         }
     }
 
+    /**
+     * Complete the emitter, swallowing {@link IllegalStateException} when the
+     * client has already disconnected or the emitter was completed by a
+     * lifecycle callback (onTimeout / onCompletion / onError). Without this,
+     * bare {@code emitter.complete()} calls in the agentic loop log noisy
+     * exceptions on client-disconnect race paths.
+     */
+    void safeComplete(SseEmitter emitter) {
+        try {
+            emitter.complete();
+        } catch (IllegalStateException e) {
+            log.debug("SSE emitter already completed: {}", e.getMessage());
+        }
+    }
+
     // ── Private helpers (moved from AgentStreamingService) ─────────────────
 
     private String resolveModelUsed(Session session) {

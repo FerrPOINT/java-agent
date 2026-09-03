@@ -481,7 +481,7 @@ public class AgentStreamingService {
                 log.info("Streaming turn cancelled by interrupt for session {}", session.id());
                 eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
-                emitter.complete();
+                eventHelper().safeComplete(emitter);
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
             }
@@ -492,7 +492,7 @@ public class AgentStreamingService {
                     + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
                 eventHelper().send(emitter, new StreamEvent("token", budgetMsg, null, null), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
-                emitter.complete();
+                eventHelper().safeComplete(emitter);
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
             }
@@ -792,7 +792,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                                         eventHelper().send(emitter, new StreamEvent("interrupted", null, null,
                                             "Turn cancelled by user."), streamCtx);
                                         eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
-                                        emitter.complete();
+                                        eventHelper().safeComplete(emitter);
                                         if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                                         return;
                                     }
@@ -1204,7 +1204,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 turnMessages.add(Message.assistant(response.content(), turnIndex));
                 eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
-                emitter.complete();
+                eventHelper().safeComplete(emitter);
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
             }
@@ -1284,7 +1284,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 }
                 eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens());
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
-                emitter.complete();
+                eventHelper().safeComplete(emitter);
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
             }
@@ -1330,7 +1330,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 log.info("Streaming turn cancelled by interrupt before tool execution for session {}", session.id());
                 eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
-                emitter.complete();
+                eventHelper().safeComplete(emitter);
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
             }
@@ -1350,7 +1350,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 eventHelper().send(emitter, new StreamEvent("error", null, null,
                     "Response truncated due to output length limit"), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
-                emitter.complete();
+                eventHelper().safeComplete(emitter);
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
             }
@@ -1377,7 +1377,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                         call.name(), session.id());
                     eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                     eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
-                    emitter.complete();
+                    eventHelper().safeComplete(emitter);
                     if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                     return;
                 }
@@ -1528,7 +1528,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
         // Max turns reached
         eventHelper().send(emitter, new StreamEvent("token", "Reached maximum turns without completion.", null, null), streamCtx);
         eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
-        emitter.complete();
+        eventHelper().safeComplete(emitter);
         if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
         } finally {
             // Clean up interrupt token map entry and ThreadLocal after stream completion
