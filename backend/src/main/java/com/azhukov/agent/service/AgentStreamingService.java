@@ -1360,17 +1360,22 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
 
             TurnState turnState = turnStateManager.getOrStart(session.id(), 1);
             int toolBatchStart = turnMessages.size();
-            for (ToolCall call : pipeline.executableCalls()) {
-                // Skill-creation nudge (Hermes parity: conversation_loop.py:1977-1980):
-                // each tool-calling iteration counts toward the skill review threshold;
-                // skill_manage itself resets it (handled in resetNudgeCounters).
-                if (memoryNudgeManager != null) {
-                    try {
-                        memoryNudgeManager.incrementSkillIters(session.id());
-                    } catch (Exception e) {
-                        log.debug("Skill iter increment failed for {}: {}", session.id(), e.getMessage());
-                    }
+            // Skill-creation nudge (Hermes parity: conversation_loop.py:2099-2102):
+            // increment ONCE per tool-calling iteration (not per tool call).
+            // Hermes: `agent._iters_since_skill += 1` runs after the model
+            // response, guarded by `_skill_nudge_interval > 0 and
+            // "skill_manage" in valid_tool_names`. Previously this was inside
+            // the per-tool for-loop, so a batch of 3 tool calls counted +3
+            // instead of +1, tripling the nudge rate.
+            int skillNudgeInterval = properties.getSkills().getCreationNudgeInterval();
+            if (memoryNudgeManager != null && skillNudgeInterval > 0) {
+                try {
+                    memoryNudgeManager.incrementSkillIters(session.id());
+                } catch (Exception e) {
+                    log.debug("Skill iter increment failed for {}: {}", session.id(), e.getMessage());
                 }
+            }
+            for (ToolCall call : pipeline.executableCalls()) {
                 // Check interrupt before each tool execution
                 if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                     log.info("Streaming turn cancelled by interrupt before tool {} for session {}",
