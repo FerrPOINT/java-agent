@@ -491,16 +491,22 @@ public class DefaultContextEngine implements ContextEngine {
  }
 
  List<Message> trimmed = new ArrayList<>(context);
+ // Hermes parity (context_engine.py protect_first_n): the first N non-system
+ // messages are always preserved verbatim — they carry the initial task/setup
+ // context that must survive hard overflow trimming.
+ int protectFirstN = contextProps.getProtectFirstN();
  while (trimmed.size() > maxMessages || estimateChars(trimmed) > targetChars) {
  if (trimmed.size() <= 2) break;
  boolean removed = false;
  for (int i = 1; i < trimmed.size() - 1; i++) {
+     // Skip protected head messages (first N non-system after index 0)
+     if (i <= protectFirstN) continue;
  // M25: If this message is a tool call (has toolCalls), also remove
  // the following tool result messages to keep pairs together.
  trimmed.remove(i);
  // Remove trailing TOOL messages that follow the removed tool call
  while (i < trimmed.size() - 1 && trimmed.get(i).role() == Role.TOOL) {
- trimmed.remove(i);
+     trimmed.remove(i);
  }
  removed = true;
  break;
