@@ -1094,6 +1094,21 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // subagent_auto_approve=true (set by DelegateTaskTool when
                 // agent.delegation.subagent-auto-approve is enabled).
                 boolean skipApproval = "true".equals(session.getMetadata("subagent_auto_approve"));
+                // rev-115 Hermes parity (delegate_tool.py:66-97): subagent child
+                // sessions auto-DENY dangerous calls immediately instead of
+                // blocking 5 minutes on an approval request no user will ever
+                // see (the user watches the parent session, not the child).
+                if (!skipApproval && session.getMetadata("delegation_parent_session") != null) {
+                    log.warn("Subagent session {} auto-denied dangerous tool {} (delegation.subagent_auto-approve=false)", session.id(), call.name());
+                    ToolResult deniedResult = ToolResult.fail(
+                        "Tool execution denied by subagent policy: dangerous command '"
+                        + call.name() + "' requires approval, but subagent sessions cannot ask the user. "
+                        + "Set agent.delegation.subagent-auto-approve=true to allow subagents to run dangerous commands.");
+                    toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                    turnMessages.addAll(toolResults);
+                    turnIndex++;
+                    continue;
+                }
                 // F16 fix: create the request when the guardrail flags the tool — the
                 // queue never had a producer, so isPending alone was always false.
                 boolean approvalRequired = !skipApproval && approvalQueue != null

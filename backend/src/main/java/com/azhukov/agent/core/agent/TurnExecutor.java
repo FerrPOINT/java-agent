@@ -655,6 +655,25 @@ public class TurnExecutor {
                 // F16 fix: the gate was dead code — requiresApproval/requestApproval had
                 // ZERO callers, so no request was ever created and isPending was always
                 // false. Create the request here when the guardrail flags the tool.
+                // rev-115 Hermes parity (delegate_tool.py:66-97): subagent child
+                // sessions NEVER wait for a user decision. Hermes installs a
+                // TLS callback into every worker thread — auto-deny by default
+                // ("Deny fast and log loudly... so the caller can surface a
+                // real error"), auto-approve only under the opt-in
+                // delegation.subagent_auto_approve config. Without this, a
+                // child's approval request queued on a session no user ever
+                // sees blocked the child 5 minutes per dangerous call before
+                // the fail-closed timeout denied it.
+                boolean isSubagentChild = !skipApproval && session.getMetadata("delegation_parent_session") != null;
+                if (isSubagentChild) {
+                    log.warn("Subagent session {} auto-denied dangerous tool {} (delegation.subagent_auto-approve=false)", session.id(), call.name());
+                    ToolResult deniedResult = ToolResult.fail(
+                        "Tool execution denied by subagent policy: dangerous command '"
+                        + call.name() + "' requires approval, but subagent sessions cannot ask the user. "
+                        + "Set agent.delegation.subagent-auto-approve=true to allow subagents to run dangerous commands.");
+                    toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                    continue;
+                }
                 boolean approvalRequired = !skipApproval && approvalQueue != null
                     && (approvalQueue.isPending(session.id())
                         || (toolGuardrails != null && toolGuardrails.requiresApproval(call)
