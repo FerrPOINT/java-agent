@@ -195,7 +195,12 @@ public class TerminalTool implements ToolHandler {
                 cwdMarker = "\n__CWD_MARKER__:";
                 // Capture both cwd and exported env vars after the command runs.
                 // env_marker uses a unique format unlikely to appear in command output.
-                String envCapture = "; printf '" + cwdMarker + "' && pwd && printf '\\n__ENV_MARKER__\\n' && env -0";
+                // Hermes parity (environments/base.py _wrap_command): the ORIGINAL
+                // command's exit code is captured into __ec=$? BEFORE the capture
+                // printf/env chain runs, and the wrapper exits with it — otherwise
+                // the trailing `env -0` (always exit 0) masks every non-zero
+                // command exit as success, blinding failure detection entirely.
+                String envCapture = "; __ec=$?; printf '" + cwdMarker + "' && pwd && printf '\\n__ENV_MARKER__\\n' && env -0; exit $__ec";
                 pb = new ProcessBuilder("bash", "-c", command + envCapture);
             } else if (usePty) {
                 pb = new ProcessBuilder("script", "-qec", command, "/dev/null");

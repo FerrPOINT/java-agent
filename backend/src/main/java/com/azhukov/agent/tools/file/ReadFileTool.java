@@ -37,8 +37,16 @@ public class ReadFileTool implements ToolHandler {
     );
 
     private static final Set<String> BLOCKED_DEVICE_PATHS = Set.of(
-        "/dev/zero", "/dev/random", "/dev/urandom",
-        "/dev/null", "/dev/full", "/dev/tcp"
+        // Infinite output — never reach EOF
+        "/dev/zero", "/dev/random", "/dev/urandom", "/dev/full",
+        // Blocks waiting for input
+        "/dev/stdin", "/dev/tty", "/dev/console",
+        // Nonsensical to read
+        "/dev/stdout", "/dev/stderr",
+        // fd aliases
+        "/dev/fd/0", "/dev/fd/1", "/dev/fd/2",
+        // Legacy entries kept from the original java set
+        "/dev/null", "/dev/tcp"
     );
 
     private final AgentProperties properties;

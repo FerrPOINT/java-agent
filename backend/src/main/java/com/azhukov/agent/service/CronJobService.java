@@ -1,6 +1,7 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.tools.terminal.TerminalTool;
 import com.azhukov.agent.persistence.entity.CronExecutionLogEntity;
@@ -240,6 +241,18 @@ public class CronJobService {
     }
 
     /**
+     * Ownership guard: a non-admin authenticated user may only modify/run
+     * their own cron jobs. Null/absent user id on the entity (legacy rows)
+     * is treated as shared — allowed for backward compatibility.
+     */
+    private void requireOwnership(CronJobEntity entity) {
+        String scoped = UserContext.scopeUserId();
+        if (scoped != null && entity.getUserId() != null && !scoped.equals(entity.getUserId())) {
+            throw new SecurityException("Cron job does not belong to the current user");
+        }
+    }
+
+/**
      * Full-featured update with all Hermes parity fields.
      * Each field is only applied if non-null (Boolean fields use explicit non-null check).
      */
@@ -253,6 +266,7 @@ public class CronJobService {
     ) {
         CronJobEntity entity = cronJobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
+        requireOwnership(entity);
 
         if (name != null) entity.setName(name);
         if (schedule != null) {
@@ -317,6 +331,7 @@ public class CronJobService {
     public CronJobEntity pause(UUID id) {
         CronJobEntity entity = cronJobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
+        requireOwnership(entity);
         entity.setEnabled(false);
         entity = cronJobRepository.save(entity);
         cancelJob(id);
@@ -327,6 +342,7 @@ public class CronJobService {
     public CronJobEntity resume(UUID id) {
         CronJobEntity entity = cronJobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
+        requireOwnership(entity);
         entity.setEnabled(true);
         entity = cronJobRepository.save(entity);
         if (properties.getCron().isEnabled()) {
@@ -341,6 +357,7 @@ public class CronJobService {
     }
 
     public void remove(UUID id) {
+        cronJobRepository.findById(id).ifPresent(this::requireOwnership);
         cancelJob(id);
         cronJobRepository.deleteById(id);
         log.info("Removed cron job: {}", id);
@@ -349,6 +366,7 @@ public class CronJobService {
     public CronJobEntity runNow(UUID id) {
         CronJobEntity entity = cronJobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
+        requireOwnership(entity);
         executeJob(entity);
         return entity;
     }

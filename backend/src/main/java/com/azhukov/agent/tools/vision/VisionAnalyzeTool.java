@@ -9,6 +9,7 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.security.UrlSafety;
 import com.azhukov.agent.service.ImageShrinkerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -32,6 +33,12 @@ public class VisionAnalyzeTool implements ToolHandler {
 
     private final ModelClient modelClient;
     private final ImageShrinkerService imageShrinker;
+    private final UrlSafety urlSafety;
+
+    /** Hermes parity (image_source._download_to_bytes): 50MB stream cap. */
+    private static final long MAX_IMAGE_BYTES = 50L * 1024 * 1024;
+    /** Connect/read timeout for remote image fetches. */
+    private static final int FETCH_TIMEOUT_MS = 20_000;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -53,10 +60,24 @@ public class VisionAnalyzeTool implements ToolHandler {
     private String loadImageBase64(String source) throws Exception {
         byte[] bytes;
         if (source.startsWith("http://") || source.startsWith("https://")) {
-            try (InputStream in = URI.create(source).toURL().openStream();
+            // Hermes parity (image_source._http_block_reason): refuse unsafe or
+            // private URLs BEFORE any network I/O — raw openStream() allowed
+            // SSRF probes against internal networks.
+            String blockReason = urlSafety.checkUrl(source);
+            if (blockReason != null) {
+                throw new IllegalArgumentException("blocked: " + blockReason);
+            }
+            var connection = URI.create(source).toURL().openConnection();
+            connection.setConnectTimeout(FETCH_TIMEOUT_MS);
+            connection.setReadTimeout(FETCH_TIMEOUT_MS);
+            try (InputStream in = connection.getInputStream();
                  ByteArrayOutputStream out = new ByteArrayOutputStream()) {
                 in.transferTo(out);
                 bytes = out.toByteArray();
+            }
+            // Hermes parity: 50MB stream cap (image_source.SourceTooLarge)
+            if (bytes.length > MAX_IMAGE_BYTES) {
+                throw new IllegalArgumentException("Image exceeds 50MB limit: " + bytes.length + " bytes");
             }
         } else {
             Path path = Paths.get(source);

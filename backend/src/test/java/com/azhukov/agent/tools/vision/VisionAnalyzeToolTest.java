@@ -20,6 +20,7 @@ class VisionAnalyzeToolTest {
 
     private ModelClient modelClient;
     private ImageShrinkerService imageShrinker;
+    private com.azhukov.agent.core.security.UrlSafety urlSafety;
     private VisionAnalyzeTool tool;
 
     @TempDir
@@ -29,8 +30,10 @@ class VisionAnalyzeToolTest {
     void setUp() {
         modelClient = mock(ModelClient.class);
         imageShrinker = mock(ImageShrinkerService.class);
+        urlSafety = mock(com.azhukov.agent.core.security.UrlSafety.class);
+        when(urlSafety.checkUrl(anyString())).thenReturn(null);
         when(imageShrinker.shrinkIfNeeded(anyString())).thenAnswer(inv -> inv.getArgument(0));
-        tool = new VisionAnalyzeTool(modelClient, imageShrinker);
+        tool = new VisionAnalyzeTool(modelClient, imageShrinker, urlSafety);
     }
 
     @Test
@@ -115,5 +118,16 @@ class VisionAnalyzeToolTest {
 
         verify(imageShrinker).shrinkIfNeeded(anyString());
         verify(modelClient).analyzeImage(eq("shrunk-base64"), anyString());
+    }
+
+    @Test
+    void ssrfUnsafeUrlIsBlockedBeforeFetch() {
+        when(urlSafety.checkUrl("http://169.254.169.254/latest/meta-data")).thenReturn("unsafe or private URL");
+        var result = tool.execute(
+            "{\"image\":\"http://169.254.169.254/latest/meta-data\",\"prompt\":\"describe\"}",
+            null, null);
+        org.assertj.core.api.Assertions.assertThat(result.success()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(result.error())
+            .contains("blocked");
     }
 }

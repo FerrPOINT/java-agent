@@ -15,7 +15,8 @@ class VisionAnalyzeNoOpLiveTest {
 
     @Test
     void noOpVisionReturnsPlaceholder() {
-        VisionAnalyzeTool tool = new VisionAnalyzeTool(new NoOpModelClient(), new ImageShrinkerService(new AgentProperties()));
+        VisionAnalyzeTool tool = new VisionAnalyzeTool(new NoOpModelClient(), new ImageShrinkerService(new AgentProperties()),
+            new com.azhukov.agent.core.security.DefaultUrlSafety(new AgentProperties()));
         var result = tool.execute(
             "{\"image\":\"https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png\",\"prompt\":\"describe\"}",
             null,
