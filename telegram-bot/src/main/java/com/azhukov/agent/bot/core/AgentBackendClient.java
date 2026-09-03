@@ -273,6 +273,11 @@ public class AgentBackendClient {
         return skills.reloadSkills();
     }
 
+    /** rev-105: skill slash-command invocation (Hermes gateway/run.py:18055+). */
+    public String invokeSkill(String command, String userInstruction, String sessionId) {
+        return skills.invokeSkill(command, userInstruction, sessionId);
+    }
+
     public String reloadAll() {
         return skills.reloadAll();
     }

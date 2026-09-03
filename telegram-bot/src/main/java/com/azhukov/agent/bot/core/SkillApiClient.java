@@ -67,6 +67,34 @@ public class SkillApiClient extends BaseBackendClient {
         }
     }
 
+    /**
+     * rev-105: Hermes parity (gateway/run.py:18055+) — build a skill
+     * slash-command invocation message. Returns the activation text to
+     * submit as a user turn, or null if the command does not resolve.
+     */
+    public String invokeSkill(String command, String userInstruction, String sessionId) {
+        try {
+            Map<String, Object> body = body();
+            body.put("command", command);
+            body.put("userInstruction", userInstruction == null ? "" : userInstruction);
+            if (sessionId != null) body.put("sessionId", sessionId);
+            String json = restClient.post()
+                .uri("/api/v1/agent/skill-invoke")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            JsonNode parsed = readTree(json);
+            if (parsed != null && parsed.has("resolved") && parsed.get("resolved").asBoolean()) {
+                return parsed.get("message").asText(null);
+            }
+            return null;
+        } catch (Exception e) {
+            log.debug("invokeSkill failed for /{}: {}", command, e.getMessage());
+            return null;
+        }
+    }
+
     // ------------------------------------------------------------------
     // Bundles
     // ------------------------------------------------------------------

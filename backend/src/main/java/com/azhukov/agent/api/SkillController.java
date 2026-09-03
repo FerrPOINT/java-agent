@@ -30,6 +30,9 @@ import java.util.Map;
 public class SkillController {
 
     private final SkillManager skillManager;
+    // rev-105: skill slash-command invocation service
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.azhukov.agent.core.skill.SkillCommandService skillCommandService;
     private final AgentRuntimeService agentRuntimeService;
     private final SkillAuditLogRepository skillAuditLogRepository;
     private final com.azhukov.agent.core.skill.SkillsHubService skillsHubService;
@@ -39,6 +42,35 @@ public class SkillController {
     @GetMapping("/agent/skills")
     public List<String> skills() {
         return skillManager.listSkillNames(UserContext.scopeUserId());
+    }
+
+    // ── rev-105: skill slash-command invocation (Hermes gateway/run.py:18055+) ──
+
+    public record SkillInvocationRequest(String command, String userInstruction, String sessionId) {}
+
+    /**
+     * Build the skill slash-command invocation message (the user turn that
+     * loads SKILL.md). Hermes parity: unknown /commands fall through to skill
+     * commands; the activation message is built server-side (preprocessing,
+     * activation note) and returned for the caller to submit as a chat turn.
+     * Returns 404-style body when the command does not resolve to a skill.
+     */
+    @Operation(summary = "Build a skill slash-command invocation message")
+    @PostMapping("/agent/skill-invoke")
+    public java.util.Map<String, Object> skillInvoke(@org.springframework.web.bind.annotation.RequestBody SkillInvocationRequest request) {
+        String message = skillCommandService.buildSkillInvocationMessage(
+            "/" + request.command().replaceFirst("^/", ""),
+            request.userInstruction() == null ? "" : request.userInstruction(),
+            request.sessionId() == null ? "" : request.sessionId());
+        if (message == null) {
+            return java.util.Map.of("resolved", false);
+        }
+        // S6: bump use telemetry (Hermes bump_use parity)
+        try {
+            skillCommandService.bumpUse(request.command().replaceFirst("^/", ""));
+        } catch (Exception ignored) {
+        }
+        return java.util.Map.of("resolved", true, "message", message);
     }
 
     // ── Skills hub (SIMPLIFIED Hermes parity: one GitHub repo source) ──

@@ -133,6 +133,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         String commandName = event.commandName();
         CommandHandler handler = commandRegistry.get(commandName);
         if (handler == null) {
+            // rev-105: Hermes parity (gateway/run.py:18055+) — unknown slash
+            // commands fall through to skill commands (/skill-name loads the
+            // skill's SKILL.md as a user turn). SkillCommandService was fully
+            // ported but had ZERO callers — /skill:name never worked in the bot.
+            if (trySkillCommandInvocation(event, commandName)) {
+                return;
+            }
             telegramClient.sendMessage(event.chatId(),
                 "Unknown command: /" + commandName + "\nUse /help to see available commands.");
             return;
@@ -585,6 +592,41 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     break;
                 }
             }
+        }
+    }
+
+    /**
+     * rev-105: Hermes parity (gateway/run.py:18055+) — when an unknown slash
+     * command arrives, try resolving it as a skill command (/skill-name).
+     * If resolved, build the activation message server-side and submit it as
+     * a normal user turn so the agent processes the skill content.
+     * Returns true if the command was handled (resolved to a skill), false
+     * to fall through to "Unknown command".
+     */
+    private boolean trySkillCommandInvocation(UpdateEvent event, String commandName) {
+        if (commandName == null || commandName.isBlank()) return false;
+        // Normalize Telegram underscore→hyphen (Hermes resolve_skill_command_key)
+        String normalized = commandName.replace('_', '-');
+        try {
+            BotSessionEntity session = resolveSession(event);
+            String sessionId = session != null && session.getBackendSessionId() != null
+                ? session.getBackendSessionId().toString() : null;
+            String userInstruction = event.commandArgs() == null ? "" : event.commandArgs().strip();
+            String activationMessage = backendClient.invokeSkill(normalized, userInstruction, sessionId);
+            if (activationMessage == null || activationMessage.isBlank()) {
+                return false;
+            }
+            // Submit the activation message as a normal user turn.
+            UpdateEvent skillEvent = new UpdateEvent(
+                event.updateId(), UpdateEvent.Type.TEXT, event.chatId(), event.userId(),
+                event.username(), event.firstName(), event.languageCode(),
+                activationMessage, null, null, null, null, null, null,
+                false, null, null, event.messageId(), null, 0, event.forwardedFrom());
+            handleTextOrMedia(skillEvent);
+            return true;
+        } catch (Exception e) {
+            log.debug("Skill command invocation for /{} failed: {}", normalized, e.getMessage());
+            return false;
         }
     }
 
