@@ -102,6 +102,25 @@ public class DefaultPromptBuilder implements PromptBuilder {
         cause repeated work or override the user's current request. Procedures and
         workflows belong in skills, not memory.""";
 
+    /**
+     * Narrower guidance injected when the memory store is disabled but the user
+     * profile store is enabled. Hermes parity (prompt_builder.py
+     * USER_PROFILE_GUIDANCE): steers writes ONLY to the user profile.
+     */
+    static final String USER_PROFILE_GUIDANCE = """
+        You have a persistent user profile across sessions. Save durable facts about
+        the user with the memory tool (target='user'): name, role, preferences,
+        corrections, and communication style. The profile is injected into every turn,
+        so keep it compact and focused on facts that will still matter later.
+        The built-in memory notes store is disabled — write only to the user profile
+        (target='user'), never target='memory'.
+        Prioritize what reduces future user steering — the most valuable entry is one
+        that prevents the user from having to correct or remind you again.
+        Write entries as declarative facts, not instructions to yourself.
+        'User prefers concise responses' ✓ — 'Always respond concisely' ✗.
+        Imperative phrasing gets re-read as a directive in later sessions and can
+        cause repeated work or override the user's current request.""";
+
     /** Guidance injected when the `session_search` tool is available. Ported from Hermes. */
     static final String SESSION_SEARCH_GUIDANCE = """
         ## Session Search Guidance
@@ -653,7 +672,18 @@ public class DefaultPromptBuilder implements PromptBuilder {
         Set<String> toolNames = getAvailableToolNames();
 
         if (toolNames.contains("memory")) {
-            blocks.add(MEMORY_GUIDANCE);
+            // Hermes parity (system_prompt.py:425-443): when the memory store is
+            // disabled but the user profile is enabled, inject the narrower
+            // USER_PROFILE_GUIDANCE instead of the full MEMORY_GUIDANCE — the
+            // full block steers the model at a MEMORY.md store that returns
+            // "Memory is not available" on every call.
+            boolean memoryStoreEnabled = !(memoryProvider instanceof com.azhukov.agent.core.memory.NoOpMemoryProvider);
+            boolean profileEnabled = properties.getMemory().isUserProfileEnabled();
+            if (memoryStoreEnabled) {
+                blocks.add(MEMORY_GUIDANCE);
+            } else if (profileEnabled) {
+                blocks.add(USER_PROFILE_GUIDANCE);
+            }
         }
         if (toolNames.contains("session_search")) {
             blocks.add(SESSION_SEARCH_GUIDANCE);
