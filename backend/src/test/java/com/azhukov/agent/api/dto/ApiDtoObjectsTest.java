@@ -311,7 +311,7 @@ class ApiDtoObjectsTest {
 
             String json = mapper.writeValueAsString(original);
             assertThat(json).contains("\"id\":\"resp-1\"");
-            assertThat(json).contains("\"finishReason\":\"tool_calls\"");
+            assertThat(json).contains("\"finish_reason\":\"tool_calls\"");
 
             OpenAiChatResponse deserialized = mapper.readValue(json, OpenAiChatResponse.class);
             assertThat(deserialized).isEqualTo(original);

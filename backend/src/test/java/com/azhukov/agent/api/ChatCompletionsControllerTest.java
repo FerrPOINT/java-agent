@@ -121,7 +121,7 @@ class ChatCompletionsControllerTest {
             }
             """;
 
-        mockMvc.perform(post("/v1/chat/completions")
+        var mvcResult = mockMvc.perform(post("/v1/chat/completions")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(requestBody))
             .andExpect(status().isOk())
@@ -131,10 +131,10 @@ class ChatCompletionsControllerTest {
             .andExpect(jsonPath("$.choices[0].index").value(0))
             .andExpect(jsonPath("$.choices[0].message.role").value("assistant"))
             .andExpect(jsonPath("$.choices[0].message.content").value("Hello from the test agent"))
-            .andExpect(jsonPath("$.choices[0].finishReason").value("stop"))
-            .andExpect(jsonPath("$.usage.promptTokens").exists())
-            .andExpect(jsonPath("$.usage.completionTokens").exists())
-            .andExpect(jsonPath("$.usage.totalTokens").exists())
+            .andExpect(jsonPath("$.choices[0].finish_reason").value("stop"))
+            .andExpect(jsonPath("$.usage.prompt_tokens").exists())
+            .andExpect(jsonPath("$.usage.completion_tokens").exists())
+            .andExpect(jsonPath("$.usage.total_tokens").exists())
             .andExpect(jsonPath("$.id").exists())
             .andExpect(jsonPath("$.created").isNumber());
 
@@ -203,7 +203,7 @@ class ChatCompletionsControllerTest {
 
         JsonNode finishChunk = chunks.get(chunks.size() - 1);
         assertThat(finishChunk.get("object").asText()).isEqualTo("chat.completion.chunk");
-        assertThat(finishChunk.get("choices").get(0).get("finishReason").asText()).isEqualTo("stop");
+        assertThat(finishChunk.get("choices").get(0).get("finish_reason").asText()).isEqualTo("stop");
         assertThat(finishChunk.get("choices").get(0).get("delta").path("content").isNull()).isTrue();
     }
 
@@ -273,10 +273,10 @@ class ChatCompletionsControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.choices[0].message.role").value("assistant"))
             .andExpect(jsonPath("$.choices[0].message.content").doesNotExist())
-            .andExpect(jsonPath("$.choices[0].message.toolCalls[0].id").value("call-abc"))
-            .andExpect(jsonPath("$.choices[0].message.toolCalls[0].type").value("function"))
-            .andExpect(jsonPath("$.choices[0].message.toolCalls[0].function.name").value("web_search"))
-            .andExpect(jsonPath("$.choices[0].message.toolCalls[0].function.arguments")
+            .andExpect(jsonPath("$.choices[0].message.tool_calls[0].id").value("call-abc"))
+            .andExpect(jsonPath("$.choices[0].message.tool_calls[0].type").value("function"))
+            .andExpect(jsonPath("$.choices[0].message.tool_calls[0].function.name").value("web_search"))
+            .andExpect(jsonPath("$.choices[0].message.tool_calls[0].function.arguments")
                 .value("{\"query\":\"Java 25\"}"));
     }
 

@@ -2,7 +2,6 @@ package com.azhukov.agent.api.dto;
 
 import java.util.List;
 
-@com.fasterxml.jackson.databind.annotation.JsonNaming(com.fasterxml.jackson.databind.PropertyNamingStrategies.SnakeCaseStrategy.class)
 public record OpenAiStreamChunk(
     String id,
     String object,
@@ -12,13 +11,13 @@ public record OpenAiStreamChunk(
     Usage usage
 ) {
     /** rev-121: terminal-chunk usage (Hermes api_server.py:5539-5548). */
-    public record Usage(int promptTokens, int completionTokens, int totalTokens) {}
+        public record Usage(@com.fasterxml.jackson.annotation.JsonProperty("prompt_tokens") int promptTokens, @com.fasterxml.jackson.annotation.JsonProperty("completion_tokens") int completionTokens, @com.fasterxml.jackson.annotation.JsonProperty("total_tokens") int totalTokens) {}
 
-    public record Choice(int index, Delta delta, String finishReason) {}
+        public record Choice(int index, Delta delta, @com.fasterxml.jackson.annotation.JsonProperty("finish_reason") String finishReason) {}
 
-    public record Delta(String role, String content, List<ToolCall> toolCalls) {}
+        public record Delta(String role, String content, @com.fasterxml.jackson.annotation.JsonProperty("tool_calls") List<ToolCall> toolCalls) {}
 
-    public record ToolCall(String id, String type, Function function) {}
+        public record ToolCall(String id, String type, Function function) {}
 
-    public record Function(String name, String arguments) {}
+        public record Function(String name, String arguments) {}
 }

@@ -215,7 +215,7 @@ class ChatCompletionsControllerStreamingTest {
 
         JsonNode lastChunk = parseJson(dataLines.get(dataLines.size() - 1).substring(5).trim());
         assertThat(lastChunk.get("object").asText()).isEqualTo("chat.completion.chunk");
-        assertThat(lastChunk.get("choices").get(0).get("finishReason").asText()).isEqualTo("stop");
+        assertThat(lastChunk.get("choices").get(0).get("finish_reason").asText()).isEqualTo("stop");
         assertThat(lastChunk.get("choices").get(0).get("delta").path("content").isNull()).isTrue();
     }
 
@@ -307,7 +307,7 @@ class ChatCompletionsControllerStreamingTest {
             .map(line -> parseJson(line.substring(5).trim()))
             .anyMatch(node -> {
                 JsonNode delta = node.path("choices").get(0).path("delta");
-                JsonNode tc = delta.path("toolCalls");
+                JsonNode tc = delta.path("tool_calls");
                 return !tc.isMissingNode() && !tc.isNull() && tc.size() > 0;
             });
 
