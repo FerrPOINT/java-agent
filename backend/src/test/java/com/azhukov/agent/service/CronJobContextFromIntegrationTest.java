@@ -263,4 +263,57 @@ class CronJobContextFromIntegrationTest {
             throw new RuntimeException(e);
         }
     }
+
+    // ── rev-119: per-source 8K truncation (Hermes cron/scheduler.py:4312) ──
+
+    @Test
+    void contextFrom_truncationIsPerSource_notTotal() throws Exception {
+        // Two upstream jobs, each with a >8K output. Hermes truncates EACH
+        // source to 8000 chars — the concatenation must therefore be ~16K+,
+        // not clipped at a global 8000.
+        UUID upstreamA = UUID.randomUUID();
+        UUID upstreamB = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+
+        com.azhukov.agent.persistence.entity.CronJobEntity job = new com.azhukov.agent.persistence.entity.CronJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setContextFrom(upstreamA + "," + upstreamB);
+
+        String bigA = "A".repeat(12000);
+        String bigB = "B".repeat(12000);
+
+        com.azhukov.agent.persistence.entity.CronJobEntity srcA = new com.azhukov.agent.persistence.entity.CronJobEntity();
+        srcA.setId(upstreamA);
+        srcA.setName("job-a");
+        com.azhukov.agent.persistence.entity.CronJobEntity srcB = new com.azhukov.agent.persistence.entity.CronJobEntity();
+        srcB.setId(upstreamB);
+        srcB.setName("job-b");
+
+        com.azhukov.agent.persistence.entity.CronExecutionLogEntity logA =
+            new com.azhukov.agent.persistence.entity.CronExecutionLogEntity();
+        logA.setOutputText(bigA);
+        com.azhukov.agent.persistence.entity.CronExecutionLogEntity logB =
+            new com.azhukov.agent.persistence.entity.CronExecutionLogEntity();
+        logB.setOutputText(bigB);
+
+        when(cronJobRepository.findById(upstreamA)).thenReturn(java.util.Optional.of(srcA));
+        when(cronJobRepository.findById(upstreamB)).thenReturn(java.util.Optional.of(srcB));
+        when(cronExecutionLogRepository.findFirstByJobIdOrderByStartedAtDesc(upstreamA))
+            .thenReturn(java.util.Optional.of(logA));
+        when(cronExecutionLogRepository.findFirstByJobIdOrderByStartedAtDesc(upstreamB))
+            .thenReturn(java.util.Optional.of(logB));
+
+        java.lang.reflect.Method method = CronJobService.class
+            .getDeclaredMethod("loadContextFromOutput", com.azhukov.agent.persistence.entity.CronJobEntity.class);
+        method.setAccessible(true);
+        String result = (String) method.invoke(service, job);
+
+        assertThat(result).isNotNull();
+        // Each source contributes 8000 chars of payload → total payload 16000.
+        assertThat(result).doesNotContain("A".repeat(8001));
+        assertThat(result).doesNotContain("B".repeat(8001));
+        assertThat(result).contains("A".repeat(8000));
+        assertThat(result).contains("B".repeat(8000));
+        assertThat(result).contains("[... output truncated ...]");
+    }
 }

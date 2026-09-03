@@ -897,27 +897,33 @@ public class CronJobService {
                     || latest.getOutputText().isBlank()) {
                     continue;
                 }
+                // rev-119 Hermes parity (cron/scheduler.py:4312-4314): the 8K
+                // truncation cap is PER-SOURCE, not total — each chained job's
+                // output is individually bounded so a large first source does
+                // not starve the later ones (Java previously truncated the
+                // CONCATENATED result, dropping later sources almost entirely).
+                String output = latest.getOutputText().trim();
+                final int maxContextChars = 8000;
+                if (output.length() > maxContextChars) {
+                    output = output.substring(0, maxContextChars) + "\n\n[... output truncated ...]";
+                }
                 if (isSelf) {
                     sb.append("## Your previous run's output\n");
                     sb.append("The following is this job's most recent output from its previous run. ")
                         .append("Use it for continuity: avoid repeating what was already reported, and continue ")
                         .append("where the last run left off.\n\n```\n")
-                        .append(latest.getOutputText().trim()).append("\n```\n\n");
+                        .append(output).append("\n```\n\n");
                 } else {
                     sb.append("## Output from job '").append(sourceJob.getName()).append("'\n");
                     sb.append("The following is the most recent output from a preceding cron job. ")
                         .append("Use it as context for your analysis.\n\n```\n")
-                        .append(latest.getOutputText().trim()).append("\n```\n\n");
+                        .append(output).append("\n```\n\n");
                 }
             } catch (Exception e) {
                 log.warn("context_from: failed to load output for job '{}': {}", reference, e.getMessage());
             }
         }
-        String result = sb.toString().trim();
-        if (result.length() > 8000) {
-            result = result.substring(0, 8000) + "\n\n[... output truncated ...]";
-        }
-        return result.isEmpty() ? null : result;
+        return sb.isEmpty() ? null : sb.toString().trim();
     }
 
     private void cancelJob(UUID id) {
