@@ -32,6 +32,12 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     private final SteerBuffer steerBuffer;
     private final ObjectProvider<com.azhukov.agent.core.agent.InterruptToken> interruptTokenProvider;
 
+    // rev-83: subagent protection (#30170 parity) — demote interrupt to queue
+    // when the running agent has active subagents, so a conversational follow-up
+    // doesn't destroy minutes of subagent work.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.azhukov.agent.tools.delegate.DelegateTaskTool delegateTaskTool;
+
     /** Tracks active sessions per chat to detect busy state. */
     private final ConcurrentHashMap<String, Boolean> activeSessions = new ConcurrentHashMap<>();
 
@@ -114,6 +120,20 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                     "⏳ Queued for the next turn. I'll respond once the current task finishes.");
                 return;
             } else if (isBusy && "interrupt".equalsIgnoreCase(busyInputMode)) {
+                // rev-83: subagent protection (#30170 parity) — demote interrupt
+                // to queue when the running agent has active subagents, so a
+                // conversational follow-up doesn't destroy minutes of subagent
+                // work. Explicit /stop and /new slash commands bypass the
+                // gateway entirely (handled by BotCommandDispatcher), so the
+                // operator still has a way to force-cancel everything.
+                if (delegateTaskTool != null && delegateTaskTool.getActiveSubagentCount() > 0) {
+                    log.info("Demoting busy-input-mode 'interrupt' to 'queue' for session {} "
+                        + "because the running agent has active subagents (#30170)", session.id());
+                    pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(event);
+                    routingServiceProvider.getIfAvailable().send(source.platform(), source,
+                        "⏳ Queued for the next turn. Active subagents detected — I'll respond once they finish.");
+                    return;
+                }
                 // Interrupt mode — cancel the current turn (Hermes parity:
                 // request_hard_interrupt) and queue the message for immediate
                 // processing after the turn is interrupted.
