@@ -18,6 +18,7 @@ class TelegramWebhookControllerTest {
     void receivesMessageAndDispatches() {
         AgentProperties props = new AgentProperties();
         props.getGateway().getTelegram().setAllowByDefault(true);
+        props.getGateway().getTelegram().setWebhookSecret("test-secret");
         MessageEvent[] captured = new MessageEvent[1];
         GatewayRoutingService routing = new GatewayRoutingService(List.of(), evt -> captured[0] = evt);
         TelegramWebhookController c = new TelegramWebhookController(routing, props);
@@ -31,8 +32,9 @@ class TelegramWebhookControllerTest {
                 "text", "hello"
             )
         );
-        String r = c.receive(update);
-        assertThat(r).isEqualTo("OK");
+        var r = c.receive("test-secret", update);
+        assertThat(r.getStatusCode().value()).isEqualTo(200);
+        assertThat(r.getBody()).isEqualTo("OK");
         assertThat(captured[0]).isNotNull();
         assertThat(captured[0].source().platform()).isEqualTo(Platform.TELEGRAM);
         assertThat(captured[0].text()).isEqualTo("hello");
@@ -41,8 +43,10 @@ class TelegramWebhookControllerTest {
     @Test
     void returnsOkWhenNoMessage() {
         AgentProperties props = new AgentProperties();
+        props.getGateway().getTelegram().setWebhookSecret("test-secret");
         TelegramWebhookController c = new TelegramWebhookController(null, props);
-        assertThat(c.receive(Map.of("update_id", 1))).isEqualTo("OK");
+        var r2 = c.receive("test-secret", Map.of("update_id", 1));
+        assertThat(r2.getStatusCode().value()).isEqualTo(200);
     }
 
     @Test
@@ -60,7 +64,7 @@ class TelegramWebhookControllerTest {
                 "text", "hi"
             )
         );
-        assertThat(c.receive(update)).isEqualTo("FORBIDDEN");
+        var r3 = c.receive("test-secret", update); assertThat(r3.getStatusCode().value()).isEqualTo(403);
         assertThat(captured[0]).isNull();
     }
 }

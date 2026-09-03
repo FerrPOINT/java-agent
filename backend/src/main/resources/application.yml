@@ -272,6 +272,10 @@ agent:
       allow-by-default: ${AGENT_GATEWAY_TELEGRAM_ALLOW_BY_DEFAULT:false}
       webhook:
         enabled: ${AGENT_GATEWAY_TELEGRAM_WEBHOOK_ENABLED:false}
+      # Fail-closed webhook auth (GHSA-3vpc-7q5r-276h parity): when webhook is
+      # enabled, requests without a matching X-Telegram-Bot-Api-Secret-Token are
+      # rejected. Must match the secret_token registered via setWebhook.
+      webhook-secret: ${AGENT_GATEWAY_TELEGRAM_WEBHOOK_SECRET:}
       long-polling:
         enabled: ${AGENT_GATEWAY_TELEGRAM_LONG_POLLING_ENABLED:false}
   

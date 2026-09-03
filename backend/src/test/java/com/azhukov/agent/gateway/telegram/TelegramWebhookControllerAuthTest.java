@@ -32,6 +32,7 @@ class TelegramWebhookControllerAuthTest {
     @Test
     void allowByDefaultOverridesEmptyLists() {
         var props = new com.azhukov.agent.config.AgentProperties();
+        props.getGateway().getTelegram().setWebhookSecret("test-secret");
         props.getGateway().getTelegram().setAllowByDefault(true);
         var controller = new TelegramWebhookController(null, props);
 

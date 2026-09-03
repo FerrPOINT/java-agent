@@ -445,6 +445,13 @@ public class AgentProperties {
         private final List<String> allowedUserIds = new ArrayList<>();
         private final List<String> allowedUsernames = new ArrayList<>();
         private boolean allowByDefault = false;
+        /**
+         * Webhook secret token (Telegram setWebhook secret_token). When the
+         * webhook endpoint is enabled and this is blank, the controller
+         * rejects every request — fail-closed, mirroring the upstream
+         * advisory GHSA-3vpc-7q5r-276h (forgeable updates otherwise).
+         */
+        private String webhookSecret = "";
     }
 
     @Getter @Setter
