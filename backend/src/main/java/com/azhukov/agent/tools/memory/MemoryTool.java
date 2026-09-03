@@ -127,6 +127,32 @@ public class MemoryTool implements ToolHandler {
      * if any op fails, nothing is written. Budget is checked against the
      * FINAL state, not intermediate states.
      */
+    /**
+     * Serialize batch operations to JSON for approval staging.
+     * Format: [{"action":"add","content":"...","old_text":null}, ...]
+     */
+    private String serializeOperations(List<MemoryOperation> operations) {
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper =
+                new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.List<java.util.Map<String, String>> list = new ArrayList<>(operations.size());
+            for (MemoryOperation op : operations) {
+                String opContent = (op != null && op.content() != null && !op.content().isBlank())
+                    ? op.content()
+                    : (op != null ? op.new_text() : null);
+                java.util.Map<String, String> m = new java.util.LinkedHashMap<>();
+                m.put("action", op == null ? null : op.action());
+                m.put("content", opContent);
+                m.put("old_text", op == null ? null : op.old_text());
+                list.add(m);
+            }
+            return mapper.writeValueAsString(list);
+        } catch (Exception e) {
+            log.error("Failed to serialize batch operations: {}", e.getMessage());
+            return null;
+        }
+    }
+
     private ToolResult doBatchOperations(Session session, String target,
                                           List<MemoryOperation> operations,
                                           Map<String, String> provenance) {
@@ -134,11 +160,18 @@ public class MemoryTool implements ToolHandler {
             return ToolResult.fail("operations list is empty.");
         }
 
-        // S3: Write approval gate
+        // S3: Write approval gate — serialize the operations so approve() can
+        // replay them (Hermes apply_memory_pending stores payload["operations"];
+        // the Java port previously staged content=null, and approve() marked
+        // the batch approved WITHOUT applying anything — silent data loss).
         String origin = WriteContext.effectiveExecutionContext();
         if (writeApprovalGate != null && writeApprovalGate.isEnabled()) {
+            String opsJson = serializeOperations(operations);
+            if (opsJson == null) {
+                return ToolResult.fail("Failed to serialize batch operations for approval staging.");
+            }
             var id = writeApprovalGate.stageWrite(
-                session.userId(), "batch", target, null, null,
+                session.userId(), "batch", target, opsJson, null,
                 "Batch: " + operations.size() + " operation(s)", origin);
             return ToolResult.ok("Staged for approval (id: " + id + ")");
         }

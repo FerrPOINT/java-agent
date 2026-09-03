@@ -95,7 +95,11 @@ public class WriteApprovalGate {
                 case "add" -> memoryProvider.store(userId, target, "auto", e.getContent());
                 case "replace" -> memoryProvider.replace(userId, target, e.getOldText(), e.getContent());
                 case "remove" -> memoryProvider.remove(userId, target, e.getOldText());
-                default -> log.warn("Unknown pending action: {}", action);
+                case "batch" -> applyBatchFromStagedJson(userId, target, e.getContent());
+                default -> {
+                    log.warn("Unknown pending action: {}", action);
+                    return false;
+                }
             }
             e.setStatus("approved");
             e.setResolvedAt(Instant.now());
@@ -110,6 +114,39 @@ public class WriteApprovalGate {
             org.springframework.transaction.interceptor.TransactionAspectSupport
                 .currentTransactionStatus().setRollbackOnly();
             return false;
+        }
+    }
+
+    /**
+     * Replay a staged batch write (Hermes apply_memory_pending "batch" parity):
+     * the operations were serialized to JSON in the pending row's content.
+     */
+    private void applyBatchFromStagedJson(String userId, String target, String opsJson) {
+        if (opsJson == null || opsJson.isBlank()) {
+            throw new IllegalStateException(
+                "Staged batch has no serialized operations — the write cannot be replayed");
+        }
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper =
+                new com.fasterxml.jackson.databind.ObjectMapper();
+            List<com.fasterxml.jackson.databind.node.ObjectNode> ops = mapper.readValue(
+                opsJson,
+                mapper.getTypeFactory().constructCollectionType(List.class, com.fasterxml.jackson.databind.node.ObjectNode.class));
+            List<MemoryProvider.MemoryBatchOperation> batch = new java.util.ArrayList<>(ops.size());
+            for (var node : ops) {
+                batch.add(new MemoryProvider.MemoryBatchOperation(
+                    node.path("action").asText(null),
+                    node.path("content").asText(null),
+                    node.path("old_text").asText(null)));
+            }
+            String error = memoryProvider.applyBatch(userId, target, batch, java.util.Map.of());
+            if (error != null) {
+                throw new IllegalStateException(error);
+            }
+        } catch (IllegalStateException | IllegalArgumentException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to replay staged batch: " + ex.getMessage(), ex);
         }
     }
 
