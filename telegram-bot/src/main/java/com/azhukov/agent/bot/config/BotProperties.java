@@ -20,6 +20,13 @@ public class BotProperties {
     private String mode = "polling"; // polling | webhook
     private String agentName = "Джава агент";
     private String backendUrl = "http://localhost:8090";
+    /**
+     * Optional API key forwarded as {@code X-API-Key} on every backend call.
+     * Required when the backend runs with {@code agent.security.api-key} set
+     * — without it the bot receives 401 on all requests.
+     * Empty in dev mode where backend auth is disabled.
+     */
+    private String backendApiKey = "";
     @Min(1)
     private int maxMessageLength = 4096;
     private Duration typingRefreshInterval = Duration.ofSeconds(4);

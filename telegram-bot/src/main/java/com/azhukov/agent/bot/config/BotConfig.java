@@ -78,10 +78,17 @@ public class BotConfig {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout((int) Duration.ofSeconds(10).toMillis());
         factory.setReadTimeout((int) Duration.ofMinutes(10).toMillis());
-        return RestClient.builder()
+        RestClient.Builder builder = RestClient.builder()
             .baseUrl(properties.getBackendUrl())
-            .requestFactory(factory)
-            .build();
+            .requestFactory(factory);
+        // Forward the backend API key when configured — required when the
+        // backend runs with agent.security.api-key enabled (else every bot
+        // request would 401). No-op header when unset.
+        String apiKey = properties.getBackendApiKey();
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder.defaultHeader("X-API-Key", apiKey);
+        }
+        return builder.build();
     }
 
     @Bean

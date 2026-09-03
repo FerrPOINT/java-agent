@@ -346,6 +346,16 @@ public class TerminalTool implements ToolHandler {
             String enhanced = TerminalOutputEnhancer.enhance(
                 redactedOutput, exitCode, workdir, false, actualCwd);
 
+            // Hermes parity (_interpret_exit_code): some non-zero exits are
+            // normal semantics, not errors — grep=1 "no matches", diff=1
+            // "files differ". Append the note so the model understands, and
+            // treat the call as successful so failure-loop detection does not
+            // count routine greps toward "Tool loop warning".
+            String exitNote = TerminalOutputEnhancer.interpretExitCode(command, exitCode);
+            if (exitNote != null) {
+                return ToolResult.ok(enhanced + "\n[exit " + exitCode + ": " + exitNote + "]");
+            }
+
             // Hermes parity (display.py _detect_tool_failure:1350-1358): a non-zero
             // exit code is the CANONICAL failure signal — the loop guardrail and
             // the result classifier both key off result.success. Returning ok()

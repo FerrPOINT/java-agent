@@ -144,6 +144,62 @@ public final class TerminalOutputEnhancer {
         return enhance(rawOutput, exitCode, workdir, false, null);
     }
 
+
+    // ── Exit-code semantics (Hermes _interpret_exit_code parity) ────────
+
+    /**
+     * Interpret non-zero exit codes that are not real errors, mirroring
+     * Hermes terminal_tool._interpret_exit_code: grep=1 means "no matches",
+     * diff=1 means "files differ", etc. Returns a short informational note
+     * appended to the output, or null when the code is a real error.
+     *
+     * <p>Failure-loop detection keys off the failed flag; interpreting
+     * these codes as normal prevents false "Tool loop warning" firing when
+     * the agent runs a few greps that find nothing.
+     */
+    public static String interpretExitCode(String command, int exitCode) {
+        if (exitCode == 0 || command == null || command.isBlank()) {
+            return null;
+        }
+        // Take the last pipeline segment, then the first word that is not
+        // a VAR=val assignment — the effective base command.
+        String[] segments = command.split("(?:\\|\\||&&|[|;])");
+        String lastSegment = segments.length > 0 ? segments[segments.length - 1].trim() : command;
+        String baseCmd = null;
+        for (String w : lastSegment.split("\\s+")) {
+            if (w.contains("=") && !w.startsWith("-")) {
+                continue; // skip VAR=val
+            }
+            baseCmd = w.substring(w.lastIndexOf('/') + 1);
+            break;
+        }
+        if (baseCmd == null || baseCmd.isEmpty()) {
+            return null;
+        }
+        switch (baseCmd) {
+            case "grep", "egrep", "fgrep", "rg", "ag", "ack":
+                return exitCode == 1 ? "No matches found (not an error)" : null;
+            case "diff", "colordiff":
+                return exitCode == 1 ? "Files differ (expected, not an error)" : null;
+            case "find":
+                return exitCode == 1 ? "Some directories were inaccessible (partial results may still be valid)" : null;
+            case "test", "[":
+                return exitCode == 1 ? "Condition evaluated to false (expected, not an error)" : null;
+            case "curl":
+                return switch (exitCode) {
+                    case 6 -> "Could not resolve host";
+                    case 7 -> "Failed to connect to host";
+                    case 22 -> "HTTP response code indicated error (e.g. 404, 500)";
+                    case 28 -> "Operation timed out";
+                    default -> null;
+                };
+            case "git":
+                return exitCode == 1 ? "Non-zero exit (often normal - e.g. 'git diff' returns 1 when files differ)" : null;
+            default:
+                return null;
+        }
+    }
+
     // ── Workdir resolution (h49) ─────────────────────────────────────────
 
     /**

@@ -37,6 +37,7 @@ bot:
   mode: ${BOT_MODE:polling}
   agent-name: ${BOT_AGENT_NAME:Джава агент}
   backend-url: ${BOT_BACKEND_URL:http://localhost:8090}
+  backend-api-key: ${BOT_BACKEND_API_KEY:}
   max-message-length: 4096
   typing-refresh-interval: 4s
   stream-edit-interval: 800ms
