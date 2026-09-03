@@ -145,4 +145,48 @@ class MediaCacheTest {
         assertThat(result).isPresent();
         assertThat(result.get()).isEqualTo("new".getBytes());
     }
+
+    // ── rev-117: bounded cache regression tests ──
+
+    @Test
+    void evictsOldestWhenOverBytesCap() {
+        MediaCache bounded = new MediaCache(java.time.Duration.ofHours(1), 150);
+        byte[] a = new byte[60];
+        byte[] b = new byte[60];
+        byte[] c = new byte[60];
+
+        bounded.put("a", a);
+        bounded.put("b", b); // total 120 ≤ 150 — both fit
+        bounded.put("c", c); // total 180 > 150 → evicts oldest ("a")
+
+        assertThat(bounded.get("a")).isEmpty();
+        assertThat(bounded.get("b")).isPresent();
+        assertThat(bounded.get("c")).isPresent();
+        assertThat(bounded.size()).isEqualTo(2);
+    }
+
+    @Test
+    void skipsOversizedPayloads() {
+        MediaCache bounded = new MediaCache(java.time.Duration.ofHours(1), 100);
+
+        bounded.put("huge", new byte[200]);
+
+        assertThat(bounded.get("huge")).isEmpty();
+        assertThat(bounded.size()).isZero();
+    }
+
+    @Test
+    void overwriteDoesNotDoubleCountBytes() {
+        MediaCache bounded = new MediaCache(java.time.Duration.ofHours(1), 100);
+
+        bounded.put("a", new byte[60]);
+        bounded.put("a", new byte[50]); // replaces, total 50 — no eviction needed
+
+        assertThat(bounded.get("a")).isPresent();
+        assertThat(bounded.size()).isEqualTo(1);
+        // Room for one more 50-byte entry without evicting "a"
+        bounded.put("b", new byte[50]);
+        assertThat(bounded.get("a")).isPresent();
+        assertThat(bounded.get("b")).isPresent();
+    }
 }

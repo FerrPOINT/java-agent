@@ -12,22 +12,40 @@ import java.util.Map;
 /**
  * Simple in-memory cache mapping file_id → byte[] with TTL-based expiry.
  * Default TTL is 24 hours.
+ * <p>
+ * rev-117: BOUNDED — a size cap (entries) plus a total-bytes cap with
+ * insertion-order eviction. The old unbounded map kept every downloaded
+ * media file (up to 20 MB each) in memory forever: TTL was lazy (entries
+ * only expired when read again), so media never re-read stayed resident
+ * for the process lifetime. A media-heavy chat accumulated gigabytes.
  */
 @Service
 @Slf4j
 public class MediaCache {
 
+    /** rev-117: max total cached bytes (default 64 MB — a few large documents). */
+    static final long DEFAULT_MAX_TOTAL_BYTES = 64L * 1024 * 1024;
+
     private record CacheEntry(byte[] data, Instant expiresAt) {}
 
     private final Duration ttl;
+    private final long maxTotalBytes;
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
+    /** Insertion order for cheap oldest-first eviction. */
+    private final java.util.concurrent.ConcurrentLinkedDeque<String> order = new java.util.concurrent.ConcurrentLinkedDeque<>();
+    private final java.util.concurrent.atomic.AtomicLong totalBytes = new java.util.concurrent.atomic.AtomicLong();
 
     public MediaCache() {
-        this(Duration.ofHours(24));
+        this(Duration.ofHours(24), DEFAULT_MAX_TOTAL_BYTES);
     }
 
     public MediaCache(Duration ttl) {
+        this(ttl, DEFAULT_MAX_TOTAL_BYTES);
+    }
+
+    public MediaCache(Duration ttl, long maxTotalBytes) {
         this.ttl = ttl;
+        this.maxTotalBytes = maxTotalBytes;
     }
 
     /**
@@ -38,7 +56,29 @@ public class MediaCache {
      */
     public void put(String fileId, byte[] data) {
         if (fileId == null || data == null) return;
-        cache.put(fileId, new CacheEntry(data, Instant.now().plus(ttl)));
+        // rev-117: never cache payloads larger than the whole budget — they
+        // would evict everything else and still bust the cap.
+        if (data.length > maxTotalBytes) {
+            log.debug("Skipping cache for oversized media fileId={} ({} bytes > cap {})", fileId, data.length, maxTotalBytes);
+            return;
+        }
+        CacheEntry previous = cache.put(fileId, new CacheEntry(data, Instant.now().plus(ttl)));
+        if (previous != null) {
+            totalBytes.addAndGet(-previous.data().length);
+        } else {
+            order.addLast(fileId);
+        }
+        long now = totalBytes.addAndGet(data.length);
+        // Evict oldest entries until under the cap.
+        while (now > maxTotalBytes) {
+            String oldest = order.pollFirst();
+            if (oldest == null) break;
+            CacheEntry evicted = cache.remove(oldest);
+            if (evicted != null) {
+                now = totalBytes.addAndGet(-evicted.data().length);
+                log.debug("Evicted cached media fileId={} ({} bytes) — over cap", oldest, evicted.data().length);
+            }
+        }
         log.debug("Cached media for fileId={} ({} bytes)", fileId, data.length);
     }
 
@@ -54,6 +94,8 @@ public class MediaCache {
         if (entry == null) return Optional.empty();
         if (Instant.now().isAfter(entry.expiresAt())) {
             cache.remove(fileId);
+            order.remove(fileId);
+            totalBytes.addAndGet(-entry.data().length);
             log.debug("Expired cache entry for fileId={}", fileId);
             return Optional.empty();
         }
@@ -76,7 +118,11 @@ public class MediaCache {
      * @param fileId Telegram file_id
      */
     public void evict(String fileId) {
-        cache.remove(fileId);
+        CacheEntry removed = cache.remove(fileId);
+        order.remove(fileId);
+        if (removed != null) {
+            totalBytes.addAndGet(-removed.data().length);
+        }
     }
 
     /**
@@ -84,6 +130,8 @@ public class MediaCache {
      */
     public void clear() {
         cache.clear();
+        order.clear();
+        totalBytes.set(0);
         log.debug("Media cache cleared");
     }
 
