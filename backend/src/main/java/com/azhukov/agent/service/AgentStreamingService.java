@@ -506,19 +506,18 @@ public class AgentStreamingService {
         // Per-request model override (/model command or API "model" field):
         // the model was already resolved before context preparation above; record
         // it in session metadata for the footer and metadata event.
-        if (requestModel != null) {
-            session = session.withMetadata("modelOverride", requestModel);
+        com.azhukov.agent.core.client.ModelRequestOptions streamOptions =
+            com.azhukov.agent.service.RuntimeModelOptionsResolver.resolve(
+                properties, request, session, runtimeConfigService);
+        // Record the RESOLVED model (request override or stored session route
+        // expanded to its target model) so the metadata event and the bot
+        // footer show what actually serves the turn — a stored route alias
+        // like "alias" is meaningless to the user.
+        String resolvedModel = streamOptions != null ? streamOptions.modelName() : requestModel;
+        if (resolvedModel != null) {
+            session = session.withMetadata("modelOverride", resolvedModel);
         }
         eventHelper().sendMetadataEvent(emitter, session, streamCtx);
-        com.azhukov.agent.core.client.ModelRequestOptions streamOptions =
-            new com.azhukov.agent.core.client.ModelRequestOptions(
-                requestModel,
-                request.reasoningEffort(),
-                request.fastMode(),
-                request.voiceMode(),
-                request.personality(),
-                request.subgoal(),
-                null);
 
         // P-08 (Hermes #92450): bound escaped outer-loop exceptions per turn.
         com.azhukov.agent.core.agent.OuterErrorBudget outerErrors =
@@ -1411,6 +1410,25 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 return;
             }
             if (!pipeline.syntheticResults().isEmpty()) {
+                // Emit tool_result previews for synthetic (rejected) calls so the
+                // client SEES the validation failure, not a silent drop. The
+                // synthetic message content carries the failure payload; the tool
+                // name is resolved from the original call by pairing id.
+                java.util.Map<String, String> nameByPairingId = new java.util.HashMap<>();
+                if (response.toolCalls() != null) {
+                    for (ToolCall tc : response.toolCalls()) {
+                        nameByPairingId.put(tc.pairingId(), tc.name());
+                    }
+                }
+                for (Message synthetic : pipeline.syntheticResults()) {
+                    if (synthetic.role() == com.azhukov.agent.core.model.Role.TOOL) {
+                        String toolName = nameByPairingId.getOrDefault(
+                            synthetic.toolCallId() == null ? "" : synthetic.toolCallId(), "unknown");
+                        eventHelper().send(emitter, new StreamEvent("tool_result", null, null, null,
+                            null, null, null, toolName,
+                            synthetic.content() == null ? "" : synthetic.content()), streamCtx);
+                    }
+                }
                 turnMessages.addAll(pipeline.syntheticResults());
             }
 

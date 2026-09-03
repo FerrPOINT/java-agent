@@ -41,11 +41,25 @@ class ApiKeyAuthFilterConstantTimeTest {
     }
 
     @Test
-    void correctKeyWithDifferentLengthFailsQuickly() throws ServletException, IOException {
+    void keyWithDifferentLengthFails() throws ServletException, IOException {
         agentProperties.getSecurity().setApiKey("secret-key-123");
         when(request.getRequestURI()).thenReturn("/api/test");
         when(request.getMethod()).thenReturn("GET");
         when(request.getHeader("X-API-Key")).thenReturn("short");
+        when(request.getParameter("api_key")).thenReturn(null);
+
+        filter.doFilter(request, response, chain);
+
+        verify(chain, never()).doFilter(request, response);
+        verify(response).setStatus(401);
+    }
+
+    @Test
+    void nonAsciiProvidedKeyReturnsUnauthorizedWithoutCrashingLikeHermes() throws ServletException, IOException {
+        agentProperties.getSecurity().setApiKey("secret-key-123");
+        when(request.getRequestURI()).thenReturn("/api/test");
+        when(request.getMethod()).thenReturn("GET");
+        when(request.getHeader("X-API-Key")).thenReturn("sk\u00e9-not-the-key");
         when(request.getParameter("api_key")).thenReturn(null);
 
         filter.doFilter(request, response, chain);

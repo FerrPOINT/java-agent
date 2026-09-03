@@ -100,7 +100,10 @@ class GlobalExceptionHandlerTest {
         assertThat(r.getStatusCode().value()).isEqualTo(400);
         assertThat(r.getBody()).isNotNull();
         assertThat(r.getBody().get("type")).isEqualTo("bad_request");
-        assertThat(r.getBody().get("error")).asString().contains("malformed payload");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> nested = (Map<String, Object>) r.getBody().get("error");
+        assertThat(nested.get("type")).isEqualTo("invalid_request_error");
+        assertThat(nested.get("message")).isEqualTo("Invalid JSON");
     }
 
     @Test

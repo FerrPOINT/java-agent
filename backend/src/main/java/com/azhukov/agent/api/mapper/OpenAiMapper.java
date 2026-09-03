@@ -2,6 +2,7 @@ package com.azhukov.agent.api.mapper;
 
 import com.azhukov.agent.api.dto.OpenAiChatRequest;
 import com.azhukov.agent.api.dto.OpenAiChatResponse;
+import com.azhukov.agent.api.OpenAiContentNormalizer;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.ToolCall;
@@ -12,6 +13,7 @@ import org.mapstruct.Named;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Maps between domain models and OpenAI-compatible DTOs.
@@ -68,13 +70,16 @@ public interface OpenAiMapper {
         if (toolCalls == null || toolCalls.isEmpty()) {
             return null;
         }
-        return toolCalls.stream()
-            .map(tc -> new OpenAiChatRequest.OpenAiToolCall(
-                tc.id(),
+        java.util.ArrayList<OpenAiChatRequest.OpenAiToolCall> mapped = new java.util.ArrayList<>(toolCalls.size());
+        for (int i = 0; i < toolCalls.size(); i++) {
+            ToolCall tc = toolCalls.get(i);
+            mapped.add(new OpenAiChatRequest.OpenAiToolCall(
+                safeToolCallId(tc, i),
                 "function",
                 new OpenAiChatRequest.OpenAiFunctionCall(tc.name(), tc.arguments())
-            ))
-            .toList();
+            ));
+        }
+        return mapped;
     }
 
     @Named("openAiToolCallsToDomain")
@@ -82,9 +87,18 @@ public interface OpenAiMapper {
         if (toolCalls == null || toolCalls.isEmpty()) {
             return Collections.emptyList();
         }
-        return toolCalls.stream()
-            .map(tc -> new ToolCall(tc.id(), tc.function().name(), tc.function().arguments()))
-            .toList();
+        java.util.ArrayList<ToolCall> mapped = new java.util.ArrayList<>(toolCalls.size());
+        for (int i = 0; i < toolCalls.size(); i++) {
+            OpenAiChatResponse.ToolCall tc = toolCalls.get(i);
+            if (tc == null || tc.function() == null || !hasText(tc.function().name())) {
+                continue;
+            }
+            String name = tc.function().name().trim();
+            String args = normalizeArguments(tc.function().arguments());
+            String id = hasText(tc.id()) ? tc.id().trim() : ToolCall.deterministicCallId(name, args, i);
+            mapped.add(new ToolCall(id, name, args));
+        }
+        return mapped;
     }
 
     // ── Reverse mappings for ChatCompletionsController ──
@@ -92,44 +106,71 @@ public interface OpenAiMapper {
     default Message toMessage(OpenAiChatRequest.OpenAiMessage m) {
         if (m == null) return Message.user("");
         String role = m.role() != null ? m.role() : "user";
+        if ("system".equals(role)) {
+            return Message.system(OpenAiContentNormalizer.normalizeSystemText(m.content()));
+        }
+        if ("developer".equals(role)) {
+            return Message.developer(OpenAiContentNormalizer.normalizeSystemText(m.content()));
+        }
+        OpenAiContentNormalizer.NormalizedConversationContent normalized =
+            OpenAiContentNormalizer.normalizeConversationContent(m.content());
+        String content = normalized.text();
+        int imageCount = normalized.imageCount();
         return switch (role) {
-            case "system" -> Message.system(m.content());
-            case "developer" -> Message.developer(m.content());
             case "assistant" -> {
-                List<ToolCall> calls = toDomainToolCalls(m.toolCalls());
-                yield calls.isEmpty()
-                    ? Message.assistant(m.content(), 0)
-                    : Message.assistantWithToolCalls(m.content(), calls, 0);
+                List<ToolCall> toolCalls = openAiToolCallsToDomainRequest(m.toolCalls());
+                if (!toolCalls.isEmpty()) {
+                    yield withImageCount(Message.assistantWithToolCalls(content, toolCalls, 0), imageCount);
+                }
+                yield withImageCount(Message.assistant(content, 0), imageCount);
             }
-            case "tool" -> Message.toolResult(m.toolCallId(), m.content(), 0);
-            default -> Message.user(m.content());
+            case "tool" -> withImageCount(Message.toolResult(m.toolCallId(), content, 0), imageCount);
+            default -> imageCount > 0 ? Message.userWithImages(content, imageCount) : Message.user(content);
         };
     }
 
-    /** Preserve OpenAI assistant tool calls on API ingress; dropping them makes
-     * every following tool result orphaned on the next model request. */
-    private static List<ToolCall> toDomainToolCalls(List<OpenAiChatRequest.OpenAiToolCall> toolCalls) {
+    default Message withImageCount(Message message, int imageCount) {
+        return imageCount > 0 ? Message.withImageCount(message, imageCount) : message;
+    }
+
+    default List<ToolCall> openAiToolCallsToDomainRequest(List<OpenAiChatRequest.OpenAiToolCall> toolCalls) {
         if (toolCalls == null || toolCalls.isEmpty()) {
-            return List.of();
+            return Collections.emptyList();
         }
-        return toolCalls.stream()
-            .filter(tc -> tc != null && tc.function() != null)
-            .map(tc -> new ToolCall(tc.id(), tc.function().name(), tc.function().arguments()))
-            .toList();
+        java.util.ArrayList<ToolCall> mapped = new java.util.ArrayList<>(toolCalls.size());
+        for (int i = 0; i < toolCalls.size(); i++) {
+            OpenAiChatRequest.OpenAiToolCall tc = toolCalls.get(i);
+            if (tc == null || tc.function() == null || !hasText(tc.function().name())) {
+                continue;
+            }
+            String name = tc.function().name().trim();
+            String args = normalizeArguments(tc.function().arguments());
+            String id = hasText(tc.id()) ? tc.id().trim() : ToolCall.deterministicCallId(name, args, i);
+            mapped.add(new ToolCall(id, name, args));
+        }
+        return mapped;
     }
 
     default ToolDefinition toToolDefinition(OpenAiChatRequest.OpenAiTool tool) {
         if (tool == null || tool.function() == null) return null;
+        if (tool.function().name() == null || tool.function().name().isBlank()) return null;
+        Map<String, Object> parameters = tool.function().parameters() != null
+            ? tool.function().parameters()
+            : Map.of("type", "object", "properties", Map.of(), "required", List.of());
         return new ToolDefinition(
-            tool.function().name(),
-            tool.function().description(),
-            tool.function().parameters()
+            tool.function().name().trim(),
+            tool.function().description() != null ? tool.function().description() : "",
+            parameters
         );
     }
 
     default OpenAiChatResponse.ToolCall toOpenAiToolCall(ToolCall tc) {
+        return toOpenAiToolCall(tc, 0);
+    }
+
+    default OpenAiChatResponse.ToolCall toOpenAiToolCall(ToolCall tc, int index) {
         return new OpenAiChatResponse.ToolCall(
-            tc.id() != null ? tc.id() : java.util.UUID.randomUUID().toString(),
+            safeToolCallId(tc, index),
             "function",
             new OpenAiChatResponse.Function(tc.name(), tc.arguments())
         );
@@ -137,26 +178,39 @@ public interface OpenAiMapper {
 
     default OpenAiChatResponse toOpenAiResponse(String model, com.azhukov.agent.core.model.ChatResponse response) {
         String content = response.content() != null ? response.content() : "";
-        List<OpenAiChatResponse.ToolCall> toolCalls = response.toolCalls() != null
-            ? response.toolCalls().stream().map(this::toOpenAiToolCall).toList()
-            : List.of();
+        java.util.ArrayList<OpenAiChatResponse.ToolCall> toolCalls = new java.util.ArrayList<>();
+        if (response.toolCalls() != null) {
+            for (int i = 0; i < response.toolCalls().size(); i++) {
+                toolCalls.add(toOpenAiToolCall(response.toolCalls().get(i), i));
+            }
+        }
         OpenAiChatResponse.Message message = toolCalls.isEmpty()
             ? new OpenAiChatResponse.Message("assistant", content, null)
-            : new OpenAiChatResponse.Message("assistant", null, toolCalls);
-        // rev-95: report the provider-reported usage (Hermes maps input/output/
-        // total tokens into the OpenAI usage block). Was hardcoded 0,0,0 — SDKs
-        // metering off this endpoint saw zero consumption.
-        com.azhukov.agent.core.model.TokenUsage usage = response.usage();
-        OpenAiChatResponse.Usage usageDto = usage != null
-            ? new OpenAiChatResponse.Usage(usage.promptTokens(), usage.completionTokens(), usage.totalTokens())
-            : new OpenAiChatResponse.Usage(0, 0, 0);
+            : new OpenAiChatResponse.Message("assistant", content.isBlank() ? null : content, toolCalls);
+        String finishReason = toolCalls.isEmpty() ? "stop" : "tool_calls";
         return new OpenAiChatResponse(
             java.util.UUID.randomUUID().toString(),
             "chat.completion",
             java.time.Instant.now().getEpochSecond(),
             model,
-            List.of(new OpenAiChatResponse.Choice(0, message, "stop")),
-            usageDto
+            List.of(new OpenAiChatResponse.Choice(0, message, finishReason)),
+            new OpenAiChatResponse.Usage(0, 0, 0)
         );
+    }
+
+    private String normalizeArguments(String arguments) {
+        return hasText(arguments) ? arguments : "{}";
+    }
+
+    private String safeToolCallId(ToolCall tc, int index) {
+        String id = tc.id();
+        if (hasText(id)) {
+            return id.trim();
+        }
+        return ToolCall.deterministicCallId(tc.name(), normalizeArguments(tc.arguments()), index);
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 }

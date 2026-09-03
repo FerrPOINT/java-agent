@@ -16,7 +16,11 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -46,7 +50,6 @@ public class SkillsHubService {
 
  private static final Pattern PATH_TRAVERSAL = Pattern.compile("\\.\\.[/\\\\]");
  private static final int MAX_FILE_SIZE = 100_000;
- private static final int MAX_DESCRIPTION_LENGTH = 120;
 
  /** SIMPLIFIED: single source of truth (Hermes routes 9 sources). */
  public static final String DEFAULT_HUB_REPO = "https://github.com/FerrPOINT/skills";
@@ -91,10 +94,94 @@ public class SkillsHubService {
   return all;
  }
 
+ /**
+  * Read-only dashboard preview for the configured single-repo hub.
+  */
+ public HubPreview preview(String identifier) {
+  String ident = identifier == null ? "" : identifier.trim();
+  if (ident.isBlank()) {
+   throw new IllegalArgumentException("identifier is required");
+  }
+  String skillName = skillNameFromIdentifier(ident);
+  String repoUrl = hubRepo();
+  String skillMdUrl = repoUrlToRawUrl(repoUrl) + "/" + skillName + "/SKILL.md";
+  String content;
+  try {
+   content = fetchUrl(skillMdUrl);
+  } catch (IOException | InterruptedException e) {
+   if (e instanceof InterruptedException interrupted) {
+    Thread.currentThread().interrupt();
+   }
+   throw new IllegalStateException(e.getMessage(), e);
+  }
+  if (content == null || content.isBlank()) {
+   return null;
+  }
+
+  List<String> files = new ArrayList<>();
+  files.add("SKILL.md");
+  files.addAll(listSupportFileNames(repoUrl, skillName));
+  Collections.sort(files);
+  return new HubPreview(
+   skillName,
+   descriptionFromContent(content),
+   "github",
+   ident,
+   TrustLevel.COMMUNITY,
+   repoUrl,
+   List.of(),
+   content,
+   List.copyOf(files)
+  );
+ }
+
+ /**
+  * Run the install-time scanner over a hub skill without installing it.
+  */
+ public HubScan scan(String identifier) {
+  HubPreview preview = preview(identifier);
+  if (preview == null) {
+   return null;
+  }
+  SkillSecurityScanner.ScanResult result =
+   SkillSecurityScanner.scan(preview.name(), preview.skillMd(), preview.trustLevel());
+  boolean allowed = SkillSecurityScanner.shouldAllow(result);
+  String policy = allowed ? "allow" : "block";
+  String reason = allowed ? "allowed by install policy" : "blocked by install policy";
+  List<Map<String, Object>> findings = result.findings().stream()
+   .map(f -> {
+    Map<String, Object> finding = new LinkedHashMap<>();
+    finding.put("severity", f.severity());
+    finding.put("category", f.category());
+    finding.put("file", f.file());
+    finding.put("line", f.line());
+    finding.put("description", f.description());
+    return finding;
+   })
+   .toList();
+  Map<String, Integer> severityCounts = severityCounts(result.findings());
+  return new HubScan(
+   result.skillName(),
+   preview.identifier(),
+   "github",
+   preview.trustLevel(),
+   result.verdict().name().toLowerCase(Locale.ROOT),
+   result.summary(),
+   policy,
+   reason,
+   findings,
+   severityCounts
+  );
+ }
+
  private String fetchSkillDescription(String repoUrl, String skillName) {
   String rawUrl = repoUrlToRawUrl(repoUrl) + "/" + skillName + "/SKILL.md";
   String content = fetchQuietly(rawUrl);
   if (content == null) return "";
+  return descriptionFromContent(content);
+ }
+
+ private String descriptionFromContent(String content) {
   // front-matter description: or first non-heading, non-empty line
   for (String line : content.split("\n", 30)) {
    String t = line.trim();
@@ -102,9 +189,58 @@ public class SkillsHubService {
   }
   for (String line : content.split("\n", 15)) {
    String t = line.strip();
-   if (!t.isEmpty() && !t.startsWith("#") && !t.startsWith("---")) return t.length() > MAX_DESCRIPTION_LENGTH ? t.substring(0, MAX_DESCRIPTION_LENGTH) + "…" : t;
+   if (!t.isEmpty() && !t.startsWith("#") && !t.startsWith("---")) return t.length() > 120 ? t.substring(0, 120) + "…" : t;
   }
   return "";
+ }
+
+ private List<String> listSupportFileNames(String repoUrl, String skillName) {
+  List<String> files = new ArrayList<>();
+  String apiRoot = repoUrlToApiUrl(repoUrl);
+  for (String subdir : List.of("references", "templates", "scripts", "assets")) {
+   String dirListingUrl = apiRoot + "/" + skillName + "/" + subdir;
+   try {
+    String dirListing = fetchUrl(dirListingUrl);
+    if (dirListing == null || dirListing.isBlank()) {
+     continue;
+    }
+    JsonNode root = objectMapper.readTree(dirListing);
+    if (!root.isArray()) {
+     continue;
+    }
+    for (JsonNode item : root) {
+     JsonNode nameNode = item.get("name");
+     if (nameNode == null || nameNode.isNull()) {
+      continue;
+     }
+     String fileName = nameNode.asText();
+     if (!fileName.isBlank() && !PATH_TRAVERSAL.matcher(fileName).find()) {
+      files.add(subdir + "/" + fileName);
+     }
+    }
+   } catch (Exception e) {
+    log.debug("No {} directory for skill {}", subdir, skillName);
+   }
+  }
+  return files;
+ }
+
+ private static Map<String, Integer> severityCounts(List<SkillSecurityScanner.Finding> findings) {
+  Map<String, Integer> counts = new LinkedHashMap<>();
+  counts.put("critical", 0);
+  counts.put("high", 0);
+  counts.put("medium", 0);
+  counts.put("low", 0);
+  for (SkillSecurityScanner.Finding finding : findings) {
+   counts.computeIfPresent(finding.severity(), (key, count) -> count + 1);
+  }
+  return counts;
+ }
+
+ private static String skillNameFromIdentifier(String identifier) {
+  String normalized = identifier.replace('\\', '/');
+  int slash = normalized.lastIndexOf('/');
+  return slash >= 0 ? normalized.substring(slash + 1) : normalized;
  }
 
  private String fetchQuietly(String url) {
@@ -260,8 +396,8 @@ public class SkillsHubService {
  /**
  * Fetch a URL and return the body as string.
  */
- private String fetchUrl(String url) throws IOException, InterruptedException {
- try (HttpClient client = HttpClient.newHttpClient()) {
+ protected String fetchUrl(String url) throws IOException, InterruptedException {
+ HttpClient client = HttpClient.newHttpClient();
  HttpRequest.Builder rb = HttpRequest.newBuilder()
  .uri(URI.create(url))
  .header("Accept", "application/vnd.github.v3+json")
@@ -279,12 +415,42 @@ public class SkillsHubService {
  log.debug("Fetch {} returned status {}", url, response.statusCode());
  return null;
  }
- }
 
  /**
  * S11: Remote skill info.
  */
  public record RemoteSkillInfo(String name, String description, String url) {}
+
+ /**
+  * Read-only dashboard hub preview.
+  */
+ public record HubPreview(
+  String name,
+  String description,
+  String source,
+  String identifier,
+  TrustLevel trustLevel,
+  String repo,
+  List<String> tags,
+  String skillMd,
+  List<String> files
+ ) {}
+
+ /**
+  * Read-only dashboard hub security scan.
+  */
+ public record HubScan(
+  String name,
+  String identifier,
+  String source,
+  TrustLevel trustLevel,
+  String verdict,
+  String summary,
+  String policy,
+  String policyReason,
+  List<Map<String, Object>> findings,
+  Map<String, Integer> severityCounts
+ ) {}
 
  /**
  * S11: Install result.

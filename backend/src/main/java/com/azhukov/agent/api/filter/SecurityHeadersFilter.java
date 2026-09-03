@@ -16,10 +16,11 @@ import java.io.IOException;
  * <ul>
  *   <li>{@code X-Content-Type-Options: nosniff}</li>
  *   <li>{@code X-Frame-Options: DENY}</li>
- *   <li>{@code X-XSS-Protection: 1; mode=block}</li>
+ *   <li>{@code X-XSS-Protection: 0}</li>
  *   <li>{@code Strict-Transport-Security: max-age=31536000; includeSubDomains}</li>
- *   <li>{@code Content-Security-Policy: default-src 'self'}</li>
- *   <li>{@code Referrer-Policy: strict-origin-when-cross-origin}</li>
+ *   <li>{@code Content-Security-Policy: default-src 'none'; frame-ancestors 'none'}</li>
+ *   <li>{@code Permissions-Policy: camera=(), microphone=(), geolocation=()}</li>
+ *   <li>{@code Referrer-Policy: no-referrer}</li>
  *   <li>{@code Cache-Control: no-store, no-cache, must-revalidate}</li>
  * </ul>
  * Registered in {@link com.azhukov.agent.config.SecurityConfig} before the
@@ -32,14 +33,21 @@ public class SecurityHeadersFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        response.setHeader("X-Content-Type-Options", "nosniff");
-        response.setHeader("X-Frame-Options", "DENY");
-        response.setHeader("X-XSS-Protection", "1; mode=block");
-        response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-        response.setHeader("Content-Security-Policy", "default-src 'self'");
-        response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-        response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+        setDefaultHeader(response, "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+        setDefaultHeader(response, "Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+        setDefaultHeader(response, "Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+        setDefaultHeader(response, "X-Content-Type-Options", "nosniff");
+        setDefaultHeader(response, "X-Frame-Options", "DENY");
+        setDefaultHeader(response, "X-XSS-Protection", "0");
+        setDefaultHeader(response, "Referrer-Policy", "no-referrer");
+        setDefaultHeader(response, "Cache-Control", "no-store, no-cache, must-revalidate");
 
         filterChain.doFilter(request, response);
+    }
+
+    private static void setDefaultHeader(HttpServletResponse response, String name, String value) {
+        if (response.getHeader(name) == null) {
+            response.setHeader(name, value);
+        }
     }
 }

@@ -5,15 +5,18 @@ import com.azhukov.agent.config.FallbackConfig;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse.Builder;
+import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -25,11 +28,11 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,23 +45,27 @@ class FallbackModelClientTest {
     /**
      * Helper: intercept the static OpenAiChatModel.builder() chain to inject a mock model.
      * The FallbackModelClient constructor calls builder().baseUrl().apiKey().modelName()
-     * .timeout().maxRetries().temperature().build() — we mock all builder methods to return
+     * .timeout().maxRetries().build() — we mock all builder methods to return
      * the mock builder, then return our mock OpenAiChatModel from build().
      */
     @SuppressWarnings("unchecked")
     private FallbackModelClient createClientWithMockedModel() {
+        return createClientWithMockedModel("gpt-4o");
+    }
+
+    @SuppressWarnings("unchecked")
+    private FallbackModelClient createClientWithMockedModel(String model) {
         OpenAiChatModel.OpenAiChatModelBuilder mockBuilder = mock(OpenAiChatModel.OpenAiChatModelBuilder.class);
         when(mockBuilder.baseUrl(anyString())).thenReturn(mockBuilder);
         when(mockBuilder.apiKey(anyString())).thenReturn(mockBuilder);
         when(mockBuilder.modelName(anyString())).thenReturn(mockBuilder);
         when(mockBuilder.timeout(any(Duration.class))).thenReturn(mockBuilder);
         when(mockBuilder.maxRetries(anyInt())).thenReturn(mockBuilder);
-        when(mockBuilder.temperature(anyDouble())).thenReturn(mockBuilder);
         when(mockBuilder.build()).thenReturn(mockOpenAiModel);
 
         try (MockedStatic<OpenAiChatModel> staticMock = mockStatic(OpenAiChatModel.class)) {
             staticMock.when(OpenAiChatModel::builder).thenReturn(mockBuilder);
-            return new FallbackModelClient("openai-compatible", "gpt-4o",
+            return new FallbackModelClient("openai-compatible", model,
                 "http://localhost:8080", "test-key", 30, 2, 0.5);
         }
     }
@@ -147,6 +154,31 @@ class FallbackModelClientTest {
     }
 
     @Test
+    @DisplayName("Should canonicalize replayed assistant tool-call arguments")
+    void shouldCanonicalizeReplayedAssistantToolCallArguments() {
+        FallbackModelClient client = createClientWithMockedModel();
+
+        when(mockOpenAiModel.chat(any(ChatRequest.class))).thenReturn(
+            new Builder().aiMessage(AiMessage.from("ok")).build());
+
+        Message assistantWithTool = Message.assistantWithToolCalls(
+            "calling",
+            List.of(new ToolCall("call-1", "inspect", "{\"b\":2,\"a\":1}")),
+            0);
+
+        client.complete(
+            List.of(Message.user("go"), assistantWithTool, Message.toolResult("call-1", "done", 0)),
+            List.of(),
+            ModelRequestOptions.empty());
+
+        ArgumentCaptor<ChatRequest> request = ArgumentCaptor.forClass(ChatRequest.class);
+        verify(mockOpenAiModel).chat(request.capture());
+        AiMessage replayed = (AiMessage) request.getValue().messages().get(1);
+        assertThat(replayed.toolExecutionRequests().getFirst().arguments())
+            .isEqualTo("{\"a\":1,\"b\":2}");
+    }
+
+    @Test
     @DisplayName("Should return tool calls without text when text is blank")
     void shouldReturnToolCallsWithoutTextWhenTextIsBlank() {
         FallbackModelClient client = createClientWithMockedModel();
@@ -232,6 +264,57 @@ class FallbackModelClientTest {
     }
 
     @Test
+    @DisplayName("Should honor request max tokens on legacy fallback wire field")
+    void shouldHonorRequestMaxTokensOnLegacyFallbackWireField() {
+        FallbackModelClient client = createClientWithMockedModel("claude-3-opus");
+        when(mockOpenAiModel.chat(any(ChatRequest.class))).thenReturn(
+            new Builder().aiMessage(AiMessage.from("ok")).build());
+
+        ModelRequestOptions options = new ModelRequestOptions(
+            null, null, null, null, null, null, 1234);
+        client.complete(List.of(Message.user("Hi")), List.of(), options);
+
+        ArgumentCaptor<ChatRequest> request = ArgumentCaptor.forClass(ChatRequest.class);
+        verify(mockOpenAiModel).chat(request.capture());
+        OpenAiChatRequestParameters params = (OpenAiChatRequestParameters) request.getValue().parameters();
+        assertThat(params.maxOutputTokens()).isEqualTo(1234);
+        assertThat(params.maxCompletionTokens()).isNull();
+    }
+
+    @Test
+    @DisplayName("Should honor request max tokens and service tier on OpenAI family fallback")
+    void shouldHonorRequestMaxTokensAndServiceTierOnOpenAiFamilyFallback() {
+        OpenAiChatModel.OpenAiChatModelBuilder mockBuilder = mock(OpenAiChatModel.OpenAiChatModelBuilder.class);
+        when(mockBuilder.baseUrl(anyString())).thenReturn(mockBuilder);
+        when(mockBuilder.apiKey(anyString())).thenReturn(mockBuilder);
+        when(mockBuilder.modelName(anyString())).thenReturn(mockBuilder);
+        when(mockBuilder.timeout(any(Duration.class))).thenReturn(mockBuilder);
+        when(mockBuilder.maxRetries(anyInt())).thenReturn(mockBuilder);
+        when(mockBuilder.build()).thenReturn(mockOpenAiModel);
+
+        FallbackModelClient client;
+        try (MockedStatic<OpenAiChatModel> staticMock = mockStatic(OpenAiChatModel.class)) {
+            staticMock.when(OpenAiChatModel::builder).thenReturn(mockBuilder);
+            client = new FallbackModelClient("openai-compatible", "openai/gpt-5.4",
+                "https://openrouter.example/v1", "test-key", 30, 2, 0.5);
+        }
+        when(mockOpenAiModel.chat(any(ChatRequest.class))).thenReturn(
+            new Builder().aiMessage(AiMessage.from("ok")).build());
+
+        ModelRequestOptions options = new ModelRequestOptions(
+            null, null, null, null, null, null, 8192,
+            null, null, null, "priority");
+        client.complete(List.of(Message.user("Hi")), List.of(), options);
+
+        ArgumentCaptor<ChatRequest> request = ArgumentCaptor.forClass(ChatRequest.class);
+        verify(mockOpenAiModel).chat(request.capture());
+        OpenAiChatRequestParameters params = (OpenAiChatRequestParameters) request.getValue().parameters();
+        assertThat(params.maxOutputTokens()).isNull();
+        assertThat(params.maxCompletionTokens()).isEqualTo(8192);
+        assertThat(params.serviceTier()).isEqualTo("priority");
+    }
+
+    @Test
     @DisplayName("Should create client from FallbackConfig via factory method")
     void shouldCreateClientFromFallbackConfig() {
         FallbackConfig config = new FallbackConfig();
@@ -251,7 +334,6 @@ class FallbackModelClientTest {
         when(mockBuilder.modelName(anyString())).thenReturn(mockBuilder);
         when(mockBuilder.timeout(any(Duration.class))).thenReturn(mockBuilder);
         when(mockBuilder.maxRetries(anyInt())).thenReturn(mockBuilder);
-        when(mockBuilder.temperature(anyDouble())).thenReturn(mockBuilder);
         when(mockBuilder.build()).thenReturn(mockOpenAiModel);
 
         try (MockedStatic<OpenAiChatModel> staticMock = mockStatic(OpenAiChatModel.class)) {

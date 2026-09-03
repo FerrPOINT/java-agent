@@ -1,11 +1,14 @@
 package com.azhukov.agent.tools.memory;
 
+import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.core.memory.WriteContext;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.skill.WriteOrigin;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,7 +20,6 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -28,6 +30,8 @@ import static org.mockito.Mockito.*;
  */
 @ExtendWith(MockitoExtension.class)
 class SkillManageToolTest {
+
+    private static final ObjectMapper JSON = SharedObjectMapper.get();
 
     @Mock private SkillManager skillManager;
 
@@ -56,6 +60,30 @@ class SkillManageToolTest {
         return Message.assistant("test", 0);
     }
 
+    private JsonNode json(ToolResult result) {
+        try {
+            return JSON.readTree(result.content());
+        } catch (Exception e) {
+            throw new AssertionError("Expected JSON tool result: " + result.content(), e);
+        }
+    }
+
+    private String message(ToolResult result) {
+        return json(result).path("message").asText();
+    }
+
+    private String error(ToolResult result) {
+        assertThat(result.success()).isFalse();
+        String error = json(result).path("error").asText();
+        assertThat(error).isNotBlank();
+        assertThat(result.error()).isEqualTo(error);
+        return error;
+    }
+
+    private String skillContent(String name, String description) {
+        return "---\nname: " + name + "\ndescription: \"" + description + "\"\n---\nbody";
+    }
+
     @Test
     void successfulMutationBumpsManageCountAndInvalidatesPromptCache() {
         // Hermes parity (skill_manager_tool.py:1653): every successful mutation
@@ -73,36 +101,52 @@ class SkillManageToolTest {
 
     @Test
     void createSavesSkillWithFrontmatter() {
-        String args = "{\"action\":\"create\",\"name\":\"my-skill\",\"content\":\"hello world\"}";
+        String args = "{\"action\":\"create\",\"name\":\"my-skill\",\"content\":\""
+            + skillContent("my-skill", "demo").replace("\n", "\\n").replace("\"", "\\\"")
+            + "\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("created");
+        assertThat(message(result)).contains("created");
+        assertThat(json(result).path("hint").asText()).contains("write_file");
+        assertThat(json(result).path("_change").path("description").asText()).isEqualTo("demo");
         verify(skillManager).saveSkill(eq("my-skill"), any(), any());
     }
 
     @Test
-    void createWithBlankContentGeneratesDefault() {
+    void createWithBlankContentReturnsJsonError() {
         String args = "{\"action\":\"create\",\"name\":\"my-skill\",\"content\":\"\"}";
         ToolResult result = tool.execute(args, assistant(), session());
-        assertThat(result.success()).isTrue();
-        verify(skillManager).saveSkill(eq("my-skill"), any(), any());
+        assertThat(result.success()).isFalse();
+        assertThat(error(result)).contains("content is required");
+        verify(skillManager, never()).saveSkill(eq("my-skill"), any(), any());
+    }
+
+    @Test
+    void invalidJsonReturnsStructuredError() {
+        ToolResult result = tool.execute("{not-json", assistant(), session());
+
+        assertThat(error(result)).contains("Invalid tool arguments");
+        verifyNoInteractions(skillManager);
     }
 
     @Test
     void createWithExistingFrontmatterPreservesIt() {
-        String args = "{\"action\":\"create\",\"name\":\"my-skill\",\"content\":\"---\\nname: x\\n---\\nbody\"}";
+        String args = "{\"action\":\"create\",\"name\":\"my-skill\",\"content\":\"---\\nname: x\\ndescription: y\\n---\\nbody\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isTrue();
-        verify(skillManager).saveSkill(eq("my-skill"), any(), any());
+        verify(skillManager).saveSkill(eq("my-skill"), eq("---\nname: x\ndescription: y\n---\nbody"), any());
     }
 
     @Test
     void updateSavesSkillContent() {
-        String args = "{\"action\":\"update\",\"name\":\"my-skill\",\"content\":\"new content\"}";
+        String content = skillContent("my-skill", "new description");
+        String args = "{\"action\":\"update\",\"name\":\"my-skill\",\"content\":\""
+            + content.replace("\n", "\\n").replace("\"", "\\\"") + "\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("updated");
-        verify(skillManager).saveSkill(eq("my-skill"), eq("new content"), any(), any());
+        assertThat(message(result)).contains("updated");
+        assertThat(json(result).path("_change").path("description").asText()).isEqualTo("new description");
+        verify(skillManager).saveSkill(eq("my-skill"), eq(content), any(), any());
     }
 
     @Test
@@ -111,7 +155,7 @@ class SkillManageToolTest {
         String args = "{\"action\":\"delete\",\"name\":\"my-skill\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("deleted");
+        assertThat(message(result)).contains("deleted");
         verify(skillManager).deleteSkill("my-skill");
     }
 
@@ -121,7 +165,7 @@ class SkillManageToolTest {
         String args = "{\"action\":\"delete\",\"name\":\"my-skill\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("not found");
+        assertThat(error(result)).contains("not found");
     }
 
     @Test
@@ -130,7 +174,8 @@ class SkillManageToolTest {
         String args = "{\"action\":\"patch\",\"name\":\"my-skill\",\"old_text\":\"old\",\"new_text\":\"new\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("patched");
+        assertThat(message(result)).contains("Patched SKILL.md");
+        assertThat(json(result).path("_change").path("old").asText()).isEqualTo("old");
     }
 
     @Test
@@ -138,7 +183,7 @@ class SkillManageToolTest {
         String args = "{\"action\":\"patch\",\"name\":\"my-skill\",\"old_text\":\"\",\"new_text\":\"new\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("old_text is required");
+        assertThat(error(result)).contains("old_string/new_string");
     }
 
     @Test
@@ -146,7 +191,34 @@ class SkillManageToolTest {
         String args = "{\"action\":\"patch\",\"name\":\"my-skill\",\"old_text\":\"old\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("new_text is required");
+        assertThat(error(result)).contains("new_string is required");
+    }
+
+    @Test
+    void patchWithContentPerformsFullRewrite() {
+        String content = skillContent("my-skill", "rewritten");
+        String args = "{\"action\":\"patch\",\"name\":\"my-skill\",\"content\":\""
+            + content.replace("\n", "\\n").replace("\"", "\\\"") + "\"}";
+
+        ToolResult result = tool.execute(args, assistant(), session());
+
+        assertThat(result.success()).isTrue();
+        assertThat(message(result)).contains("updated (full rewrite)");
+        verify(skillManager).saveSkill(eq("my-skill"), eq(content), any(), any());
+    }
+
+    @Test
+    void patchContentCannotCombineWithOldString() {
+        String content = skillContent("my-skill", "rewritten");
+        String args = "{\"action\":\"patch\",\"name\":\"my-skill\",\"content\":\""
+            + content.replace("\n", "\\n").replace("\"", "\\\"")
+            + "\",\"old_string\":\"old\",\"new_string\":\"new\"}";
+
+        ToolResult result = tool.execute(args, assistant(), session());
+
+        assertThat(result.success()).isFalse();
+        assertThat(error(result)).contains("Pass EITHER content");
+        verify(skillManager, never()).saveSkill(any(), any(), any(), any());
     }
 
     @Test
@@ -155,7 +227,19 @@ class SkillManageToolTest {
         String args = "{\"action\":\"patch\",\"name\":\"my-skill\",\"old_text\":\"old\",\"new_text\":\"new\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("not found");
+        assertThat(error(result)).contains("not found");
+    }
+
+    @Test
+    void patchAmbiguousMatchReturnsFail() {
+        when(skillManager.patchSkill("my-skill", "old", "new", false))
+            .thenThrow(new IllegalArgumentException("old_text matches 2 times; use replace_all=true"));
+        String args = "{\"action\":\"patch\",\"name\":\"my-skill\",\"old_text\":\"old\",\"new_text\":\"new\"}";
+
+        ToolResult result = tool.execute(args, assistant(), session());
+
+        assertThat(result.success()).isFalse();
+        assertThat(error(result)).contains("old_text matches 2 times");
     }
 
     @Test
@@ -163,7 +247,16 @@ class SkillManageToolTest {
         String args = "{\"action\":\"write_file\",\"name\":\"my-skill\",\"file_path\":\"references/ref.md\",\"content\":\"data\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("written");
+        assertThat(message(result)).contains("written");
+        assertThat(json(result).path("file_path").asText()).isEqualTo("references/ref.md");
+        verify(skillManager).writeSupportFile("my-skill", "references/ref.md", "data");
+    }
+
+    @Test
+    void writeFileAcceptsHermesFileContentAlias() {
+        String args = "{\"action\":\"write_file\",\"name\":\"my-skill\",\"file_path\":\"references/ref.md\",\"file_content\":\"data\"}";
+        ToolResult result = tool.execute(args, assistant(), session());
+        assertThat(result.success()).isTrue();
         verify(skillManager).writeSupportFile("my-skill", "references/ref.md", "data");
     }
 
@@ -172,7 +265,7 @@ class SkillManageToolTest {
         String args = "{\"action\":\"write_file\",\"name\":\"my-skill\",\"file_path\":\"\",\"content\":\"data\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("file_path is required");
+        assertThat(error(result)).contains("file_path is required");
     }
 
     @Test
@@ -180,7 +273,7 @@ class SkillManageToolTest {
         String args = "{\"action\":\"write_file\",\"name\":\"my-skill\",\"file_path\":\"references/ref.md\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("content is required");
+        assertThat(error(result)).contains("file_content is required");
     }
 
     @Test
@@ -190,7 +283,7 @@ class SkillManageToolTest {
         String args = "{\"action\":\"write_file\",\"name\":\"my-skill\",\"file_path\":\"references/ref.md\",\"content\":\"data\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("disk full");
+        assertThat(error(result)).contains("disk full");
     }
 
     @Test
@@ -199,7 +292,7 @@ class SkillManageToolTest {
         String args = "{\"action\":\"remove_file\",\"name\":\"my-skill\",\"file_path\":\"references/ref.md\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("removed");
+        assertThat(message(result)).contains("removed");
     }
 
     @Test
@@ -208,7 +301,7 @@ class SkillManageToolTest {
         String args = "{\"action\":\"remove_file\",\"name\":\"my-skill\",\"file_path\":\"references/ref.md\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("not found");
+        assertThat(error(result)).contains("not found");
     }
 
     @Test
@@ -216,7 +309,7 @@ class SkillManageToolTest {
         String args = "{\"action\":\"remove_file\",\"name\":\"my-skill\",\"file_path\":\"\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("file_path is required");
+        assertThat(error(result)).contains("file_path is required");
     }
 
     @Test
@@ -224,29 +317,35 @@ class SkillManageToolTest {
         String args = "{\"action\":\"bogus\",\"name\":\"my-skill\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Unknown action");
+        assertThat(error(result)).contains("Unknown action");
     }
 
     @Test
-    void createInvalidSkillNameThrows() {
-        // "My Skill" has a space and uppercase → invalid
-        String args = "{\"action\":\"create\",\"name\":\"My Skill\",\"content\":\"hello\"}";
-        assertThatThrownBy(() -> tool.execute(args, assistant(), session()))
-            .isInstanceOf(IllegalArgumentException.class);
+    void createInvalidSkillNameReturnsJsonError() {
+        // "My Skill" has a space and uppercase -> invalid
+        String args = "{\"action\":\"create\",\"name\":\"My Skill\",\"content\":\""
+            + skillContent("My Skill", "bad").replace("\n", "\\n").replace("\"", "\\\"") + "\"}";
+        ToolResult result = tool.execute(args, assistant(), session());
+        assertThat(result.success()).isFalse();
+        assertThat(error(result)).contains("Invalid skill name");
     }
 
     @Test
-    void createBlankNameThrows() {
-        String args = "{\"action\":\"create\",\"name\":\"\",\"content\":\"hello\"}";
-        assertThatThrownBy(() -> tool.execute(args, assistant(), session()))
-            .isInstanceOf(IllegalArgumentException.class);
+    void createBlankNameReturnsJsonError() {
+        String args = "{\"action\":\"create\",\"name\":\"\",\"content\":\""
+            + skillContent("blank", "bad").replace("\n", "\\n").replace("\"", "\\\"") + "\"}";
+        ToolResult result = tool.execute(args, assistant(), session());
+        assertThat(result.success()).isFalse();
+        assertThat(error(result)).contains("blank");
     }
 
     @Test
-    void createConsecutiveHyphensThrows() {
-        String args = "{\"action\":\"create\",\"name\":\"my--skill\",\"content\":\"hello\"}";
-        assertThatThrownBy(() -> tool.execute(args, assistant(), session()))
-            .isInstanceOf(IllegalArgumentException.class);
+    void createConsecutiveHyphensAllowedLikeHermes() {
+        String args = "{\"action\":\"create\",\"name\":\"my--skill\",\"content\":\""
+            + skillContent("my--skill", "ok").replace("\n", "\\n").replace("\"", "\\\"") + "\"}";
+        ToolResult result = tool.execute(args, assistant(), session());
+        assertThat(result.success()).isTrue();
+        verify(skillManager).saveSkill(eq("my--skill"), any(), any());
     }
 
     @Test
@@ -254,7 +353,8 @@ class SkillManageToolTest {
         WriteContext.set(WriteOrigin.BACKGROUND_REVIEW, "background_review",
             "session-1", "parent-1", "telegram", "memory");
         try {
-            String args = "{\"action\":\"create\",\"name\":\"my-skill\",\"content\":\"hello\"}";
+            String args = "{\"action\":\"create\",\"name\":\"my-skill\",\"content\":\""
+                + skillContent("my-skill", "background").replace("\n", "\\n").replace("\"", "\\\"") + "\"}";
             ToolResult result = tool.execute(args, assistant(), session());
             assertThat(result.success()).isTrue();
             verify(skillManager).saveSkill(eq("my-skill"), any(), eq(WriteOrigin.BACKGROUND_REVIEW));
@@ -272,7 +372,7 @@ class SkillManageToolTest {
         String args = "{\"action\":\"patch\",\"name\":\"my-skill\",\"old_text\":\"old\",\"new_text\":\"new\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("patched");
+        assertThat(message(result)).contains("Patched SKILL.md");
         verify(skillManager).patchSkill("my-skill", "old", "new", false);
     }
 
@@ -302,8 +402,8 @@ class SkillManageToolTest {
         String args = "{\"action\":\"patch\",\"name\":\"my-skill\",\"file_path\":\"references/ref.md\",\"old_text\":\"old\",\"new_text\":\"new\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("patched");
-        assertThat(result.content()).contains("references/ref.md");
+        assertThat(message(result)).contains("Patched references/ref.md");
+        assertThat(json(result).path("file_path").asText()).isEqualTo("references/ref.md");
     }
 
     @Test
@@ -321,7 +421,19 @@ class SkillManageToolTest {
         String args = "{\"action\":\"patch\",\"name\":\"my-skill\",\"file_path\":\"references/ref.md\",\"old_text\":\"old\",\"new_text\":\"new\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("not found");
+        assertThat(error(result)).contains("not found");
+    }
+
+    @Test
+    void patchSupportFileAmbiguousMatchReturnsFail() {
+        when(skillManager.patchSupportFile("my-skill", "references/ref.md", "old", "new", false))
+            .thenThrow(new IllegalArgumentException("old_text matches 2 times; use replace_all=true"));
+        String args = "{\"action\":\"patch\",\"name\":\"my-skill\",\"file_path\":\"references/ref.md\",\"old_text\":\"old\",\"new_text\":\"new\"}";
+
+        ToolResult result = tool.execute(args, assistant(), session());
+
+        assertThat(result.success()).isFalse();
+        assertThat(error(result)).contains("old_text matches 2 times");
     }
 
     // ─── absorbed_into in delete tests ───
@@ -332,7 +444,8 @@ class SkillManageToolTest {
         String args = "{\"action\":\"delete\",\"name\":\"my-skill\",\"absorbed_into\":\"umbrella-skill\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("deleted");
+        assertThat(message(result)).contains("deleted");
+        assertThat(json(result).path("absorbed_into").asText()).isEqualTo("umbrella-skill");
         verify(skillManager).deleteSkill("my-skill", "umbrella-skill");
         verify(skillManager, never()).deleteSkill("my-skill");
     }
@@ -361,7 +474,7 @@ class SkillManageToolTest {
         String args = "{\"action\":\"delete\",\"name\":\"my-skill\",\"absorbed_into\":\"umbrella\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("not found");
+        assertThat(error(result)).contains("not found");
     }
 
     // ─── P2-49: Security scan rollback tests ───
@@ -372,20 +485,22 @@ class SkillManageToolTest {
         // and return ToolResult.fail instead of propagating the exception.
         doThrow(new SecurityException("Security scan blocked skill 'evil' (trust: AGENT_CREATED, verdict: DANGEROUS)"))
             .when(skillManager).saveSkill(eq("evil-skill"), any(), any());
-        String args = "{\"action\":\"create\",\"name\":\"evil-skill\",\"content\":\"rm -rf /\"}";
+        String args = "{\"action\":\"create\",\"name\":\"evil-skill\",\"content\":\""
+            + skillContent("evil-skill", "bad").replace("\n", "\\n").replace("\"", "\\\"") + "\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Security scan blocked");
+        assertThat(error(result)).contains("Security scan blocked");
     }
 
     @Test
     void updateSecurityExceptionReturnsFailNotThrows() {
         doThrow(new SecurityException("Security scan blocked skill 'evil' (trust: AGENT_CREATED, verdict: DANGEROUS)"))
             .when(skillManager).saveSkill(eq("evil-skill"), any(), any(), any());
-        String args = "{\"action\":\"update\",\"name\":\"evil-skill\",\"content\":\"rm -rf /\"}";
+        String args = "{\"action\":\"update\",\"name\":\"evil-skill\",\"content\":\""
+            + skillContent("evil-skill", "bad").replace("\n", "\\n").replace("\"", "\\\"") + "\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Security scan blocked");
+        assertThat(error(result)).contains("Security scan blocked");
     }
 
     @Test
@@ -398,7 +513,7 @@ class SkillManageToolTest {
         String args = "{\"action\":\"patch\",\"name\":\"evil-skill\",\"old_text\":\"safe\",\"new_text\":\"rm -rf /\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Security scan blocked");
+        assertThat(error(result)).contains("Security scan blocked");
     }
 
     @Test
@@ -408,6 +523,6 @@ class SkillManageToolTest {
         String args = "{\"action\":\"write_file\",\"name\":\"evil-skill\",\"file_path\":\"references/ref.md\",\"content\":\"rm -rf /\"}";
         ToolResult result = tool.execute(args, assistant(), session());
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Security scan blocked");
+        assertThat(error(result)).contains("Security scan blocked");
     }
 }

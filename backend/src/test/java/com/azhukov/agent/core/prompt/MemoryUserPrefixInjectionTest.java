@@ -2,6 +2,7 @@ package com.azhukov.agent.core.prompt;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.memory.MemoryScope;
 import com.azhukov.agent.core.model.Session;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -14,6 +15,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -110,5 +113,22 @@ class MemoryUserPrefixInjectionTest {
             .thenThrow(new RuntimeException("db down"));
 
         assertThat(builder.buildMemoryPrefix(session())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("named profile memory prefix uses profile-scoped memory user")
+    void namedProfileMemoryPrefixUsesProfileScopedUser() {
+        Session workSession = session().withMetadata("profile", "work");
+        String scopedUserId = MemoryScope.userId(workSession);
+        when(memoryProvider.getRawEntries(scopedUserId, "user"))
+            .thenReturn(List.of("Work-profile user fact."));
+        when(memoryProvider.getRawEntries(scopedUserId, "memory"))
+            .thenReturn(List.of());
+
+        String prefix = builder.buildMemoryPrefix(workSession);
+
+        assertThat(prefix).contains("Work-profile user fact.");
+        verify(memoryProvider).getRawEntries(scopedUserId, "user");
+        verify(memoryProvider, never()).getRawEntries("user-1", "user");
     }
 }

@@ -34,13 +34,15 @@ class ToolResultStorageTest {
         props.getToolOutput().setPersistThresholdBytes(100); // Small threshold for testing
         ToolResultStorage store = storage(props);
 
-        // Use content larger than PREVIEW_CHARS (2000) so truncation occurs
+        // Use content larger than PREVIEW_CHARS (1500) so preview truncation occurs
         String largeContent = "A".repeat(5000);
         String result = store.maybePersist(largeContent, "test_tool", "call_2");
 
-        assertThat(result).contains("[Full output saved to");
+        assertThat(result).contains("<persisted-output>");
+        assertThat(result).contains("Full output saved to:");
+        assertThat(result).contains("Use the read_file tool with offset and limit");
         assertThat(result).contains("Preview");
-        assertThat(result).contains("[truncated]");
+        assertThat(result).contains("</persisted-output>");
         assertThat(result).isNotEqualTo(largeContent);
     }
 
@@ -55,6 +57,19 @@ class ToolResultStorageTest {
 
         assertThat(result).contains("java-agent-results");
         assertThat(result).contains(".txt");
+    }
+
+    @Test
+    void readFileResultIsPinnedAndNeverPersisted() {
+        AgentProperties props = new AgentProperties();
+        props.getToolOutput().setPersistThresholdBytes(10);
+        ToolResultStorage store = storage(props);
+
+        String content = "R".repeat(5000);
+        String result = store.maybePersist(content, "read_file", "call_read");
+
+        assertThat(result).isEqualTo(content);
+        assertThat(result).doesNotContain("<persisted-output>");
     }
 
     @Test
@@ -85,7 +100,7 @@ class ToolResultStorageTest {
         ToolResult result = store.maybePersist(large, "test_tool", "call_6");
 
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("[Full output saved to");
+        assertThat(result.content()).contains("<persisted-output>");
     }
 
     @Test
@@ -114,7 +129,7 @@ class ToolResultStorageTest {
         List<String> result = store.enforceTurnBudget(contents, ids);
 
         // Total was 300, budget is 200, so at least one should be persisted
-        assertThat(result).anyMatch(c -> c.contains("[Full output saved to"));
+        assertThat(result).anyMatch(c -> c.contains("<persisted-output>"));
     }
 
     @Test
@@ -142,7 +157,7 @@ class ToolResultStorageTest {
         String content = "яяяяяя";
         String result = store.maybePersist(content, "test_tool", "unicode-call");
 
-        assertThat(result).contains("[Full output saved to");
+        assertThat(result).contains("<persisted-output>");
     }
 
     @Test
@@ -153,7 +168,7 @@ class ToolResultStorageTest {
 
         String result = store.maybePersist("A".repeat(100), "test_tool", "../../outside.txt");
 
-        assertThat(result).contains("[Full output saved to");
+        assertThat(result).contains("<persisted-output>");
         assertThat(result).doesNotContain("outside.txt");
         assertThat(result).doesNotContain("../");
     }

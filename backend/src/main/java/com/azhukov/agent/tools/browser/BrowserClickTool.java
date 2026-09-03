@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 
 @AgentTool(
     name = "browser_click",
-    description = "Click an element in the browser by CSS selector.",
+    description = "Click an element identified by a ref ID from browser_snapshot, for example @e5.",
     toolset = "browser"
 )
 @Component
@@ -22,16 +22,41 @@ public class BrowserClickTool implements ToolHandler {
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        ClickArgs args = ToolHandler.parseJson(arguments, ClickArgs.class);
+        ClickArgs args;
         try {
-            String result = browserService.click(args.selector());
-            return ToolResult.ok(result);
+            args = ToolHandler.parseJson(arguments, ClickArgs.class);
+        } catch (IllegalArgumentException e) {
+            return BrowserToolResponses.failureResult(e.getMessage());
+        }
+        String target = args.target();
+        if (target == null || target.isBlank()) {
+            return BrowserToolResponses.failureResult("ref is required");
+        }
+        try {
+            String result = browserService.click(target);
+            if (BrowserToolResponses.looksLikeFailure(result)) {
+                return BrowserToolResponses.failureResult(result);
+            }
+            return ToolResult.ok(BrowserToolResponses.success("clicked", displayRef(target)));
         } catch (Exception e) {
-            return ToolResult.fail("Browser click failed: " + e.getMessage());
+            return BrowserToolResponses.failureResult("Browser click failed: " + e.getMessage());
         }
     }
 
+    private String displayRef(String target) {
+        if (target == null || target.isBlank()) {
+            return "";
+        }
+        String trimmed = target.trim();
+        return trimmed.startsWith("@") || trimmed.matches("e\\d+") ? "@" + trimmed.replaceFirst("^@", "") : trimmed;
+    }
+
     public record ClickArgs(
-        @ToolParam(description = "CSS selector of the element to click") String selector
-    ) {}
+        @ToolParam(description = "element reference from browser_snapshot, for example @e5") String ref,
+        @ToolParam(description = "legacy CSS selector fallback", required = false) String selector
+    ) {
+        String target() {
+            return ref != null && !ref.isBlank() ? ref : selector;
+        }
+    }
 }

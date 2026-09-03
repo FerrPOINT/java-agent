@@ -7,8 +7,10 @@ import org.springframework.validation.annotation.Validated;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 @Validated
 @ConfigurationProperties(prefix = "agent")
@@ -34,11 +36,13 @@ public class AgentProperties {
     private final SkillsProperties skills = new SkillsProperties();
     private final SessionSearchProperties sessionSearch = new SessionSearchProperties();
     private final ToolOutputProperties toolOutput = new ToolOutputProperties();
+    private final TimeoutsProperties timeouts = new TimeoutsProperties();
     private final ContextProperties context = new ContextProperties();
     private final DelegationProperties delegation = new DelegationProperties();
     private final McpProperties mcp = new McpProperties();
     private final GatewayProperties gateway = new GatewayProperties();
     private final SecurityProperties security = new SecurityProperties();
+    private final ApiProperties api = new ApiProperties();
     private final CoreProperties core = new CoreProperties();
     private final BudgetProperties budget = new BudgetProperties();
     private final PromptCachingProperties promptCaching = new PromptCachingProperties();
@@ -129,6 +133,8 @@ public class AgentProperties {
     @Getter @Setter
     public static class BrowserProperties {
         private String cdpUrl = "http://localhost:9222";
+        private String cloudProvider = "local";
+        private String backend = "";
         private int defaultTimeoutMs = 120000;
         private int pageLoadTimeoutMs = 120000;
         private int maxTabs = 5;
@@ -154,6 +160,8 @@ public class AgentProperties {
         private int searchResults = 5;
         private int extractTimeoutSeconds = 120;
         private int extractMaxChars = 100000;
+        /** Optional override for web_extract full-text cache. Default mirrors Hermes: ~/.hermes/cache/web. */
+        private String extractCacheDir = "";
         private String searchProvider = "ddg";
         /** Feature 1: SearXNG instance URL. If set, web_search uses SearXNG instead of DuckDuckGo. */
         private String searxngUrl = "";
@@ -193,6 +201,8 @@ public class AgentProperties {
         private int memoryCharLimit = 2200;
         /** Maximum total characters for the "user" store (default 1375). */
         private int userCharLimit = 1375;
+        /** Enable/disable the assistant notes memory store (default true). */
+        private boolean memoryEnabled = true;
         /** How many user turns between memory reviews (0 = disabled, default 10). */
         private int nudgeInterval = 10;
         /** Enable/disable user profile in memory (default true). */
@@ -215,16 +225,15 @@ public class AgentProperties {
         private boolean enabled = true;
         private int maxSkillsInPrompt = 20;
         private int maxCharsPerSkill = 4000;
-        // Hermes parity: skills tools (skill_view/skills_list/skill_manage) are
-        // DEFAULT-ON — Hermes enables ALL toolsets when none are explicitly
-        // configured, and the skills guidance ("patch a stale skill
-        // immediately", "save as a skill") requires skill_manage to be
-        // reachable. It was missing from the whitelist entirely.
-        private List<String> defaultToolsets = new ArrayList<>(List.of("web", "file", "browser", "terminal", "coding", "memory", "core", "delegation", "gateway", "todo", "skills"));
+        // Hermes parity: the interactive/default surface is the composite
+        // hermes-cli toolset. It includes skills, memory, browser, files,
+        // terminal, todo, cron, TTS/image tools, and delegation, but does not
+        // expose platform-owned send_message to the agent loop.
+        private List<String> defaultToolsets = new ArrayList<>(List.of("hermes-cli"));
         // S6: External skill directories (expanded ~/ and ${VAR})
         private final List<String> externalDirs = new ArrayList<>();
         // S6: Disabled skills (global list)
-        private final List<String> disabled = new ArrayList<>();
+        private final List<String> disabled = new CopyOnWriteArrayList<>();
         // S6: Per-platform disabled skills: platform name -> list of skill names
         private final Map<String, List<String>> platformDisabled = new HashMap<>();
         // S6: Skill config values (skills.config.<key> = value)
@@ -279,6 +288,17 @@ public class AgentProperties {
         private int webExtractMaxChars = 0;
 
         public int getTimeoutSecondsOrDefault(int fallback) { return timeoutSeconds > 0 ? timeoutSeconds : fallback; }
+    }
+
+    @Getter @Setter
+    public static class TimeoutsProperties {
+        private final McpTimeoutProperties mcp = new McpTimeoutProperties();
+
+        @Getter @Setter
+        public static class McpTimeoutProperties {
+            /** Hermes parity: global MCP tool-call timeout in seconds. 0 = use historical default. */
+            private double toolCall = 0;
+        }
     }
 
     @Getter @Setter
@@ -349,7 +369,8 @@ public class AgentProperties {
             "clarify",          // no user interaction
             "memory",           // no writes to shared MEMORY.md
             "send_message",     // no cross-platform side effects
-            "execute_code"      // children should reason step-by-step, not write scripts
+            "cronjob",          // no scheduling more work in the parent's name
+            "delete_file"       // Java-only destructive file tool; Hermes has no peer
         ));
 
         public void setBlockedTools(List<String> tools) { this.blockedTools.clear(); this.blockedTools.addAll(tools); }
@@ -369,19 +390,35 @@ public class AgentProperties {
 
         @Getter @Setter
         public static class ServerProperties {
+            private boolean enabled = true;
             private String name = "";
             private String transport = "stdio";
             private String command = "";
             private final List<String> args = new ArrayList<>();
             private final Map<String, String> env = new HashMap<>();
+            private final Map<String, String> headers = new HashMap<>();
+            private final Tools tools = new Tools();
             private String baseUrl = "";
-            private int timeoutSeconds = 30;
+            /** Hermes-like per-server tool-call timeout in seconds. Wins over agent.timeouts.mcp.tool-call. */
+            private double timeout = 0;
+            /** Backward-compatible Java config alias. 0 = unset. */
+            private int timeoutSeconds = 0;
+            /** MCP trust tier: "full" (default) or "untrusted". Unknown values fail closed at use sites. */
+            private String trust = "full";
             // OAuth configuration for remote MCP servers
             private String oauthTokenUrl = "";
             private String oauthClientId = "";
             private String oauthClientSecret = "";
             /** OAuth scopes (space-separated), empty = use server defaults */
             private String oauthScopes = "";
+        }
+
+        @Getter @Setter
+        public static class Tools {
+            /** Explicit whitelist. Null means no include filter; an empty list means register no native tools. */
+            private List<String> include;
+            /** Blacklist used only when include is absent. Entries may be exact names or simple globs. */
+            private List<String> exclude;
         }
 
         /** MCP server mode: expose the agent's own tools to external MCP clients. */
@@ -426,6 +463,51 @@ public class AgentProperties {
         public void setBlockedCommands(List<String> blockedCommands) { this.blockedCommands.clear(); this.blockedCommands.addAll(blockedCommands); }
         public void setBlockedUrlHosts(List<String> blockedUrlHosts) { this.blockedUrlHosts.clear(); this.blockedUrlHosts.addAll(blockedUrlHosts); }
         public void setSecretPatterns(List<String> secretPatterns) { this.secretPatterns.clear(); this.secretPatterns.addAll(secretPatterns); }
+    }
+
+    @Getter @Setter
+    public static class ApiProperties {
+        /** Stable virtual model advertised by OpenAI-compatible discovery endpoints. */
+        private String modelName = "hermes-agent";
+        /** Toolsets exposed by the OpenAI-compatible /v1/chat/completions endpoint when the request omits tools. */
+        private final List<String> chatCompletionToolsets = new ArrayList<>(List.of("hermes-api-server"));
+        /** Browser origins allowed to call the API server. Empty means browser CORS is disabled. */
+        private final List<String> corsOrigins = new ArrayList<>();
+        /** Per-client OpenAI-compatible model aliases, mirroring Hermes api_server model_routes. */
+        private final Map<String, ModelRouteProperties> modelRoutes = new LinkedHashMap<>();
+        /** Whether bare request model names switch runtime models when they are not virtual aliases or routes. */
+        private boolean directModelRequests = false;
+        /** Maximum concurrent OpenAI-compatible API agent runs; 0 disables the cap. */
+        private int maxConcurrentRuns = 10;
+
+        public void setChatCompletionToolsets(List<String> toolsets) {
+            this.chatCompletionToolsets.clear();
+            if (toolsets != null) {
+                this.chatCompletionToolsets.addAll(toolsets);
+            }
+        }
+
+        public void setCorsOrigins(List<String> origins) {
+            this.corsOrigins.clear();
+            if (origins != null) {
+                this.corsOrigins.addAll(origins);
+            }
+        }
+
+        public void setModelRoutes(Map<String, ModelRouteProperties> routes) {
+            this.modelRoutes.clear();
+            if (routes != null) {
+                this.modelRoutes.putAll(routes);
+            }
+        }
+
+        @Getter @Setter
+        public static class ModelRouteProperties {
+            private String model = "";
+            private String provider = "";
+            private String baseUrl = "";
+            private String apiKey = "";
+        }
     }
 
     @Getter @Setter
@@ -537,6 +619,7 @@ public class AgentProperties {
         private boolean enabled = false;
         private String provider = "edge";
         private String apiKey = "";
+        private String model = "gpt-4o-mini-tts";
         private String voice = "alloy";
         private boolean autoTts = false;
     }

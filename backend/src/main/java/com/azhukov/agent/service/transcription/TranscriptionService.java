@@ -32,6 +32,15 @@ public class TranscriptionService {
         return provider.transcribe(audioBytes);
     }
 
+    public String transcribe(byte[] audioBytes, String filename, String contentType) {
+        TranscriptionProvider provider = providerProvider.getIfAvailable();
+        if (provider == null) {
+            log.debug("Transcription is not enabled");
+            return null;
+        }
+        return provider.transcribe(audioBytes, filename, contentType);
+    }
+
     /**
      * Check if transcription is available.
      */

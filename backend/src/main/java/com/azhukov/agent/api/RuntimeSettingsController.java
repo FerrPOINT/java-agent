@@ -79,8 +79,8 @@ public class RuntimeSettingsController {
             properties.getCore().getReasoningConfig(),
             Map.of(
                 "memory", memoryProvider != null,
-                "tts", ttsService != null,
-                "transcription", transcriptionService != null,
+                "tts", ttsService != null && ttsService.isAvailable(),
+                "transcription", transcriptionService != null && transcriptionService.isAvailable(),
                 "browser", properties.getBrowser() != null,
                 "cron", properties.getCron() != null && properties.getCron().isEnabled()
             )
@@ -294,13 +294,19 @@ public class RuntimeSettingsController {
     @GetMapping("/agent/codex-runtime")
     public Map<String, Object> codexRuntimeStatus() {
         Map<String, Object> status = new LinkedHashMap<>();
-        String override = runtimeConfigService.getModelOverride();
+        RuntimeConfigService.RuntimeModelSelection selection = runtimeConfigService.getModelSelection();
+        String override = selection != null ? selection.model() : runtimeConfigService.getModelOverride();
         status.put("model", override != null ? override : properties.getModel().getModelName());
-        status.put("provider", properties.getModel().getProvider());
+        status.put("provider", selection != null && selection.provider() != null
+            ? selection.provider()
+            : properties.getModel().getProvider());
         status.put("maxRetries", properties.getModel().getMaxRetries());
         status.put("maxTokens", properties.getModel().getMaxTokens());
         status.put("timeoutSeconds", properties.getModel().getTimeoutSeconds());
         status.put("modelOverride", override);
+        if (selection != null && selection.baseUrl() != null) {
+            status.put("baseUrl", selection.baseUrl());
+        }
         return status;
     }
 

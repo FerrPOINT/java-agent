@@ -66,7 +66,7 @@ class PhotoBatchDebouncerTest {
         assertThat(merged.fileId()).contains("file1");
         assertThat(merged.fileId()).contains("file2");
         assertThat(merged.fileId()).contains("file3");
-        assertThat(merged.caption()).isEqualTo("caption1\ncaption2"); // merged captions
+        assertThat(merged.caption()).isEqualTo("caption1\n\ncaption2"); // merged captions
     }
 
     @Test
@@ -84,6 +84,18 @@ class PhotoBatchDebouncerTest {
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(dispatchCount.get()).isEqualTo(2);
+    }
+
+    @Test
+    void mergeCaptionDeduplicatesExactTrimmedRepeatsLikeHermes() {
+        assertThat(PhotoBatchDebouncer.mergeCaption("Revenue", "Revenue  "))
+            .isEqualTo("Revenue");
+    }
+
+    @Test
+    void mergeCaptionKeepsShorterSubstringCaptionLikeHermes() {
+        assertThat(PhotoBatchDebouncer.mergeCaption("Meeting agenda", "Meeting"))
+            .isEqualTo("Meeting agenda\n\nMeeting");
     }
 
     private UpdateEvent makePhotoEvent(long updateId, long chatId, String fileId,

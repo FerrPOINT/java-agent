@@ -115,6 +115,32 @@ public final class HistorySanitizer {
             }
         }
 
+        // ── Pass 0.5: alias-dedup tool_calls inside one assistant message ──
+        // Two entries whose ids are spellings of the SAME call (e.g. "call_1|fc_1"
+        // and "call_1" — Hermes tool_call_id_variants, #63000) make strict
+        // providers see one answered twice. Keep the FIRST spelling of each.
+        for (int m = 0; m < collapsed.size(); m++) {
+            Message msg = collapsed.get(m);
+            if (msg.role() != Role.ASSISTANT || msg.toolCalls() == null || msg.toolCalls().size() < 2) {
+                continue;
+            }
+            java.util.Set<String> seenCalls = new HashSet<>();
+            List<ToolCall> deduped = new ArrayList<>();
+            for (ToolCall tc : msg.toolCalls()) {
+                boolean dup = !seenCalls.add(tc.pairingId().isEmpty()
+                    ? (tc.id() == null ? "" : tc.id())
+                    : tc.pairingId());
+                if (!dup) {
+                    deduped.add(tc);
+                }
+            }
+            if (deduped.size() != msg.toolCalls().size()) {
+                repairs += msg.toolCalls().size() - deduped.size();
+                collapsed.set(m, new Message(Role.ASSISTANT, msg.content(), msg.toolCall(),
+                    deduped, msg.toolCallId(), msg.turnIndex(), msg.imageCount(), msg.createdAt()));
+            }
+        }
+
         // ── Pass 1: repair tool-call / tool-result pairing ────────────────
         // A provider requires both sides of every historical tool exchange.
         // Keep a trailing assistant tool-call as an in-flight executor request;

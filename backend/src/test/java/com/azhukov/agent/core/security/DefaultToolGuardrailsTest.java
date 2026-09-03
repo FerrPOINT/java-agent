@@ -46,6 +46,30 @@ class DefaultToolGuardrailsTest {
     }
 
     @Test
+    void requiresApprovalForWriteCapableToolOnUntrustedMcpServer() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setApprovalsEnabled(true);
+        McpToolTrustService trustService = new McpToolTrustService();
+        trustService.recordTool("srv", "untrusted", "mcp__srv__delete_repo", false);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
+        guardrails.setMcpToolTrustService(trustService);
+
+        assertThat(guardrails.requiresApproval(new ToolCall("1", "mcp__srv__delete_repo", "{}"))).isTrue();
+    }
+
+    @Test
+    void skipsApprovalForReadOnlyToolOnUntrustedMcpServer() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setApprovalsEnabled(true);
+        McpToolTrustService trustService = new McpToolTrustService();
+        trustService.recordTool("srv", "untrusted", "mcp__srv__list_repos", true);
+        DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
+        guardrails.setMcpToolTrustService(trustService);
+
+        assertThat(guardrails.requiresApproval(new ToolCall("1", "mcp__srv__list_repos", "{}"))).isFalse();
+    }
+
+    @Test
     void noApprovalWhenApprovalsDisabled() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(false);

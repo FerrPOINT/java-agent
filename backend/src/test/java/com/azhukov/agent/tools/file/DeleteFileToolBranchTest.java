@@ -36,13 +36,17 @@ class DeleteFileToolBranchTest {
         return Message.assistant("test", 0);
     }
 
+    private static String jsonPath(Path path) {
+        return path.toString().replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
     @Test
     void delete_fileSafetyDisabled_allowsAnyPath(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("test.txt");
         Files.writeString(file, "hello");
         properties.getSecurity().setFileSafetyEnabled(false);
 
-        ToolResult result = tool.execute("{\"path\":\"" + file + "\"}", assistant(), session());
+        ToolResult result = tool.execute("{\"path\":\"" + jsonPath(file) + "\"}", assistant(), session());
         assertThat(result.success()).isTrue();
         assertThat(Files.exists(file)).isFalse();
     }
@@ -55,7 +59,7 @@ class DeleteFileToolBranchTest {
         // allowedPaths is initialized to a list, set to null
         properties.getSecurity().getAllowedPaths().clear();
 
-        ToolResult result = tool.execute("{\"path\":\"" + file + "\"}", assistant(), session());
+        ToolResult result = tool.execute("{\"path\":\"" + jsonPath(file) + "\"}", assistant(), session());
         assertThat(result.success()).isTrue();
     }
 
@@ -66,7 +70,7 @@ class DeleteFileToolBranchTest {
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(new java.util.ArrayList<>());
 
-        ToolResult result = tool.execute("{\"path\":\"" + file + "\"}", assistant(), session());
+        ToolResult result = tool.execute("{\"path\":\"" + jsonPath(file) + "\"}", assistant(), session());
         assertThat(result.success()).isTrue();
     }
 
@@ -147,7 +151,7 @@ class DeleteFileToolBranchTest {
         Path file = dir.resolve("test.txt");
         Files.writeString(file, "hello");
 
-        ToolResult result = tool.execute("{\"path\":\"" + file + "\"}", assistant(), session());
+        ToolResult result = tool.execute("{\"path\":\"" + jsonPath(file) + "\"}", assistant(), session());
         assertThat(result.success()).isTrue();
     }
 }

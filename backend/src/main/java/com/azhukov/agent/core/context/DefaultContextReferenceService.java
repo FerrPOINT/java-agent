@@ -18,6 +18,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
@@ -157,10 +158,12 @@ public class DefaultContextReferenceService implements ContextReferenceService {
  if (ref.startsWith("skill://")) {
  return new ContextReference(ReferenceType.SKILL, ref.substring(8), ref, null);
  }
- if (ref.startsWith("file://")) {
- String path = ref.substring(7);
- return new ContextReference(ReferenceType.FILE, path, Paths.get(path).getFileName().toString(), null);
- }
+  if (ref.startsWith("file://")) {
+  String path = ref.substring(7);
+  Optional<Path> filePath = safePath(path);
+  String displayName = filePath.map(Path::getFileName).map(Path::toString).orElse(path);
+  return new ContextReference(ReferenceType.FILE, path, displayName, null);
+  }
  // @diff, @staged, @git, @folder reference types
  if (ref.startsWith("@diff") || ref.equals("@diff")) {
  return new ContextReference(ReferenceType.DIFF, "", "@diff", null);
@@ -176,20 +179,28 @@ public class DefaultContextReferenceService implements ContextReferenceService {
  String path = ref.startsWith("@folder:") ? ref.substring(8) : ref.substring(9);
  return new ContextReference(ReferenceType.FOLDER, path, path, null);
  }
- if (ref.startsWith("@")) {
- // Try as file reference with @ prefix
- String path = ref.substring(1);
- Path candidate = Paths.get(path);
- if (Files.exists(candidate)) {
- return new ContextReference(ReferenceType.FILE, path, candidate.getFileName().toString(), null);
- }
- }
- Path candidate = Paths.get(ref);
- if (Files.exists(candidate)) {
- return new ContextReference(ReferenceType.FILE, ref, candidate.getFileName().toString(), null);
- }
- return new ContextReference(ReferenceType.UNKNOWN, ref, ref, "unrecognized reference");
- }
+  if (ref.startsWith("@")) {
+  // Try as file reference with @ prefix
+  String path = ref.substring(1);
+  Optional<Path> candidate = safePath(path);
+  if (candidate.isPresent() && Files.exists(candidate.get())) {
+  return new ContextReference(ReferenceType.FILE, path, candidate.get().getFileName().toString(), null);
+  }
+  }
+  Optional<Path> candidate = safePath(ref);
+  if (candidate.isPresent() && Files.exists(candidate.get())) {
+  return new ContextReference(ReferenceType.FILE, ref, candidate.get().getFileName().toString(), null);
+  }
+  return new ContextReference(ReferenceType.UNKNOWN, ref, ref, "unrecognized reference");
+  }
+
+  private Optional<Path> safePath(String value) {
+  try {
+  return Optional.of(Paths.get(value));
+  } catch (InvalidPathException e) {
+  return Optional.empty();
+  }
+  }
 
  /**
  * Check if a path is sensitive and should be blocked.

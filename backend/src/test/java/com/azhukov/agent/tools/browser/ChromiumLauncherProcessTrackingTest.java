@@ -14,6 +14,17 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class ChromiumLauncherProcessTrackingTest {
 
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    private static ProcessBuilder longRunningProcessBuilder() {
+        if (isWindows()) {
+            return new ProcessBuilder("cmd.exe", "/d", "/c", "ping -n 30 127.0.0.1 >NUL");
+        }
+        return new ProcessBuilder("sleep", "30");
+    }
+
     @Test
     void hasLaunchedProcessField() throws Exception {
         Field field = ChromiumLauncher.class.getDeclaredField("launchedProcess");
@@ -43,8 +54,7 @@ class ChromiumLauncherProcessTrackingTest {
         ChromiumLauncher launcher = new ChromiumLauncher(properties);
 
         // Start a dummy process
-        ProcessBuilder pb = new ProcessBuilder("sleep", "30");
-        Process process = pb.start();
+        Process process = longRunningProcessBuilder().start();
 
         // Set the launchedProcess field
         Field field = ChromiumLauncher.class.getDeclaredField("launchedProcess");

@@ -31,6 +31,14 @@ class SkillUtilsTest {
         return new SkillUtils(createProperties());
     }
 
+    private static String currentPlatformFrontmatterValue() {
+        return switch (SkillUtils.currentPlatformId()) {
+            case "win32" -> "windows";
+            case "darwin" -> "macos";
+            default -> SkillUtils.currentPlatformId();
+        };
+    }
+
     // ── Frontmatter parsing ──────────────────────────────────────────────
 
     @Test
@@ -107,13 +115,16 @@ class SkillUtilsTest {
 
     @Test
     void skillMatchesPlatform_singlePlatform() {
-        // Linux should match linux
-        assertThat(SkillUtils.skillMatchesPlatform(Map.of("platforms", List.of("linux")))).isTrue();
+        assertThat(SkillUtils.skillMatchesPlatform(Map.of(
+            "platforms", List.of(currentPlatformFrontmatterValue())
+        ))).isTrue();
     }
 
     @Test
     void skillMatchesPlatform_multiplePlatforms() {
-        assertThat(SkillUtils.skillMatchesPlatform(Map.of("platforms", List.of("macos", "linux")))).isTrue();
+        assertThat(SkillUtils.skillMatchesPlatform(Map.of(
+            "platforms", List.of("nonexistent-os", currentPlatformFrontmatterValue())
+        ))).isTrue();
     }
 
     // ── Environment matching ─────────────────────────────────────────────

@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.memory;
 
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MemoryEntity;
@@ -9,6 +10,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -223,6 +225,21 @@ class DatabaseMemoryProviderTest {
     }
 
     @Test
+    void clearDeletesAllEntriesForOneTarget() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        MemoryEntity e1 = memoryEntity("u", "memory", "first");
+        MemoryEntity e2 = memoryEntity("u", "memory", "second");
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "memory"))
+            .thenReturn(List.of(e1, e2));
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+
+        int deleted = p.clear("u", "memory");
+
+        assertThat(deleted).isEqualTo(2);
+        verify(repo).deleteAll(List.of(e1, e2));
+    }
+
+    @Test
     void readReturnsEmptyStringWhenNoEntries() {
         MemoryRepository repo = mock(MemoryRepository.class);
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem")).thenReturn(List.of());
@@ -296,6 +313,56 @@ class DatabaseMemoryProviderTest {
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         p.syncTurn("session-1", null);
         verifyNoInteractions(repo);
+    }
+
+    @Test
+    void applyBatchValidationFailureDoesNotMutateExistingEntity() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        MemoryEntity existing = memoryEntity("u", "memory", "old stable fact");
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "memory"))
+            .thenReturn(List.of(existing));
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+
+        String result = p.applyBatch("u", "memory", List.of(
+            new MemoryProvider.MemoryBatchOperation("replace", "new stable fact", "old stable"),
+            new MemoryProvider.MemoryBatchOperation("remove", null, "missing entry")
+        ), Map.of());
+
+        assertThat(result).contains("Operation 2").contains("no entry matched");
+        assertThat(existing.getFact()).isEqualTo("old stable fact");
+        verify(repo, never()).save(any());
+        verify(repo, never()).delete(any());
+    }
+
+    @Test
+    void applyBatchReplaceCommitsOnlyAfterValidation() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        MemoryEntity existing = memoryEntity("u", "memory", "old stable fact");
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "memory"))
+            .thenReturn(List.of(existing));
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
+
+        String result = p.applyBatch("u", "memory", List.of(
+            new MemoryProvider.MemoryBatchOperation("replace", "new stable fact", "old stable")
+        ), Map.of());
+
+        assertThat(result).isNull();
+        assertThat(existing.getFact()).isEqualTo("new stable fact");
+        verify(repo).save(existing);
+        verify(repo, never()).delete(any());
+    }
+
+    @Test
+    void getCharLimitUsesConfiguredTargetLimits() {
+        MemoryRepository repo = mock(MemoryRepository.class);
+        AgentProperties properties = new AgentProperties();
+        properties.getMemory().setMemoryCharLimit(333);
+        properties.getMemory().setUserCharLimit(222);
+        DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo, properties);
+
+        assertThat(p.getCharLimit("memory")).isEqualTo(333);
+        assertThat(p.getCharLimit("user")).isEqualTo(222);
+        assertThat(p.getCharLimit("other")).isEqualTo(333);
     }
 
     // ── Drift detection tests (parity with Hermes _detect_external_drift) ──
@@ -408,5 +475,16 @@ class DatabaseMemoryProviderTest {
             .hasMessageContaining("Resolve the drift first")
             .hasMessageContaining("silent data loss")
             .hasMessageContaining("#26045");
+    }
+
+    private static MemoryEntity memoryEntity(String userId, String target, String fact) {
+        MemoryEntity entity = new MemoryEntity();
+        entity.setUserId(userId);
+        entity.setTarget(target);
+        entity.setCategory("auto");
+        entity.setFact(fact);
+        entity.setCreatedAt(Instant.now());
+        entity.setUpdatedAt(Instant.now());
+        return entity;
     }
 }

@@ -114,7 +114,8 @@ class AgentControllerBranchCoverageTest {
             null, null, null,
             approvalQueue,
             agentProperties,
-            null
+            null,
+            org.mockito.Mockito.mock(com.azhukov.agent.core.tool.ToolRegistry.class)
         );
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
@@ -1233,7 +1234,7 @@ class AgentControllerBranchCoverageTest {
     void kanbanDoneTaskFoundReturnsOk() throws Exception {
         mockMvc = kanbanMockMvc();
         TodoDto dto = new TodoDto(SESSION_ID, null, "default", "Test", "done", "medium", FIXED_TIME);
-        when(todoService.markDone(SESSION_ID)).thenReturn(Optional.of(dto));
+        when(todoService.markDoneForUser(SESSION_ID, "default")).thenReturn(Optional.of(dto));
 
         mockMvc.perform(post("/api/v1/agent/kanban/done/" + SESSION_ID))
             .andExpect(status().isOk());

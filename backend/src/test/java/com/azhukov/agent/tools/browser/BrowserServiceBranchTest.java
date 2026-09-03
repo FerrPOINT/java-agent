@@ -170,13 +170,8 @@ class BrowserServiceBranchTest {
             .thenReturn(CompletableFuture.completedFuture(result));
 
         BrowserService service = new BrowserService(client, () -> "http://localhost:9222", mock(UrlSafety.class));
-        // Null data node should return the "Screenshot failed" message
         String resultStr = service.screenshot();
-        // When data is a NullNode, asText() returns "null", so it actually starts with the data prefix
-        // But the check is data == null (the JsonNode itself), not isNull()
-        // Actually the code does: JsonNode data = result.get("data"); if (data == null) return "Screenshot failed: no data";
-        // So when the JsonNode exists but is NullNode, data != null, so it proceeds
-        assertThat(resultStr).isNotNull();
+        assertThat(resultStr).contains("Screenshot failed");
     }
 
     // ── BrowserService.evaluate ──

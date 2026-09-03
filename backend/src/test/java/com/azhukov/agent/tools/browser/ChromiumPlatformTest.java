@@ -7,10 +7,29 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ChromiumPlatformTest {
 
+    private static ChromiumPlatform.Platform expectedCurrentPlatform() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        String arch = System.getProperty("os.arch", "").toLowerCase();
+        if (os.contains("linux")) {
+            return ChromiumPlatform.Platform.LINUX_X64;
+        }
+        if (os.contains("mac") || os.contains("darwin")) {
+            return arch.contains("aarch64") || arch.contains("arm64")
+                ? ChromiumPlatform.Platform.MAC_ARM64
+                : ChromiumPlatform.Platform.MAC_X64;
+        }
+        if (os.contains("win")) {
+            return arch.contains("64")
+                ? ChromiumPlatform.Platform.WIN_X64
+                : ChromiumPlatform.Platform.WIN_X86;
+        }
+        return ChromiumPlatform.Platform.UNSUPPORTED;
+    }
+
     @Test
-    void detectsLinux() {
+    void detectsCurrentPlatform() {
         ChromiumPlatform.Platform p = ChromiumPlatform.detect();
-        assertThat(p).isEqualTo(ChromiumPlatform.Platform.LINUX_X64);
+        assertThat(p).isEqualTo(expectedCurrentPlatform());
     }
 
     @Test

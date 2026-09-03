@@ -92,6 +92,21 @@ class ReplayCleanupTest {
     }
 
     @Test
+    @DisplayName("interrupted side-effecting alias result keeps UNKNOWN recovery")
+    void interruptedSideEffectingAliasResultKeepsUnknownRecovery() {
+        ToolCall writeCall = new ToolCall("call-1|fc-1", "write_file", "{\"path\":\"test.txt\"}");
+        Message assistant = Message.assistantWithToolCalls("writing file", List.of(writeCall), 1);
+        Message toolResult = Message.toolResult("call-1", "[command interrupted]", 1);
+
+        List<Message> input = List.of(assistant, toolResult);
+        List<Message> result = ReplayCleanup.stripInterruptedToolTails(input);
+
+        assertEquals(Role.TOOL, result.get(1).role());
+        assertTrue(result.get(1).content().contains("UNKNOWN"));
+        assertFalse(result.get(1).content().contains("read-only tool did not complete"));
+    }
+
+    @Test
     @DisplayName("preserves non-interrupted assistant→tool blocks")
     void preservesNonInterruptedBlocks() {
         ToolCall readCall = new ToolCall("call-1", "read_file", "{}");

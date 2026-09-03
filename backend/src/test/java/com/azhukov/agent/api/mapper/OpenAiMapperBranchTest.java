@@ -214,14 +214,13 @@ class OpenAiMapperBranchTest {
         assertThat(mapper.toToolDefinition(tool)).isNull();
     }
 
-    // ── toOpenAiToolCall: null id generates UUID ──
+    // ── toOpenAiToolCall: blank id gets deterministic fallback ──
 
     @Test
-    void toOpenAiToolCall_nullId_generatesUuid() {
+    void toOpenAiToolCall_blankId_getsDeterministicFallback() {
         ToolCall tc = new ToolCall("", "search", "{}");
         var result = mapper.toOpenAiToolCall(tc);
-        // Empty string id should not be replaced — only null would, but ToolCall requires non-null
-        assertThat(result.id()).isEqualTo("");
+        assertThat(result.id()).isEqualTo(ToolCall.deterministicCallId("search", "{}", 0));
     }
 
     // ── toOpenAiResponse: content null and empty toolCalls ──

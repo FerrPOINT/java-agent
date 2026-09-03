@@ -1022,6 +1022,33 @@ public class DefaultContextCompressor implements ContextCompressor {
      * Prevents API 400 "No tool call found for function call output" errors.
      */
     private List<Message> sanitizeToolPairs(List<Message> messages) {
+        // 0. Alias-dedup assistant tool_calls: two entries whose ids are
+        //    spellings of the SAME call (e.g. "call_1|fc_1" and "call_1" —
+        //    Hermes tool_call_id_variants, #63000) would make strict providers
+        //    see one answered twice. Keep the FIRST spelling of each call.
+        messages = new ArrayList<>(messages);
+        for (int m = 0; m < messages.size(); m++) {
+            Message msg = messages.get(m);
+            if (msg.toolCalls() == null || msg.toolCalls().size() < 2) {
+                continue;
+            }
+            Set<String> seenCalls = new HashSet<>();
+            List<ToolCall> deduped = new ArrayList<>();
+            for (ToolCall tc : msg.toolCalls()) {
+                boolean dup = !seenCalls.add(tc.pairingId().isEmpty()
+                    ? (tc.id() == null ? "" : tc.id())
+                    : tc.pairingId());
+                if (!dup) {
+                    deduped.add(tc);
+                }
+            }
+            if (deduped.size() != msg.toolCalls().size()) {
+                messages.set(m, Message.assistantToolCalls(deduped, msg.turnIndex()));
+                log.debug("Compression sanitizer: dropped {} duplicate tool_call alias(es)",
+                    msg.toolCalls().size() - deduped.size());
+            }
+        }
+
         // Collect all surviving tool_call IDs from assistant messages
         // (alias-aware: id/call_id/response_item_id/composite spellings all
         // reference the same call — Hermes tool_call_id_variants, #63000)

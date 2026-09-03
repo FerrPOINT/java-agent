@@ -453,7 +453,8 @@ public class DefaultContextEngine implements ContextEngine {
              }
          }
          // Fallback: current session only (lineage unavailable/no ancestors)
-         List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+         List<MessageEntity> rawMessages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        List<MessageEntity> messages = rawMessages.stream().filter(DefaultContextEngine::isActive).toList();
          return messages.stream()
              .filter(m -> "user".equalsIgnoreCase(m.getRole()))
              .count();
@@ -473,9 +474,7 @@ public class DefaultContextEngine implements ContextEngine {
 
  private int charsPerToken() {
  if (modelMetadataService != null) {
- return modelMetadataService.getMetadata(
- contextProps != null ? contextProps.toString() : ""
- ).charsPerToken();
+ return modelMetadataService.getMetadata(currentModel).charsPerToken();
  }
  return 4;
  }
@@ -656,7 +655,8 @@ public class DefaultContextEngine implements ContextEngine {
              maxMessages = 50;
          }
          List<MessageEntity> descHistory = messageRepository.findBySessionIdOrderByCreatedAtDesc(
-             session.id(), org.springframework.data.domain.PageRequest.of(0, maxMessages));
+                 session.id(), org.springframework.data.domain.PageRequest.of(0, maxMessages)).stream()
+             .filter(DefaultContextEngine::isActive).toList();
          // Reverse to get ascending order (defensive copy in case the list is immutable)
          java.util.List<MessageEntity> ascHistory = new java.util.ArrayList<>(descHistory);
          java.util.Collections.reverse(ascHistory);
@@ -685,6 +685,15 @@ public class DefaultContextEngine implements ContextEngine {
                      List<com.azhukov.agent.core.model.ToolCall> calls =
                          com.azhukov.agent.persistence.mapper.ToolCallPersistenceCodec
                              .deserialize(e.getToolCallsJson());
+                     if (calls.isEmpty()) {
+                         // PR-3 parity: rows persisted in OpenAI wire format
+                         // ({id,type,function:{name,arguments}}) — the tolerant parser
+                         com.azhukov.agent.persistence.mapper.MessageMapper bridge =
+                             com.azhukov.agent.persistence.mapper.MessageMapper.INSTANCE;
+                         if (bridge != null) {
+                             calls = bridge.parseToolCalls(e.getToolCallsJson());
+                         }
+                     }
                      if (!calls.isEmpty()) {
                          yield Message.assistantWithToolCalls(content, calls, turnIdx);
                      }
@@ -730,4 +739,9 @@ public class DefaultContextEngine implements ContextEngine {
             turnHistorySnapshot.remove();
         }
     }
+    /** PR-3 parity: soft-deleted/archived rows must never re-enter the context. */
+    private static boolean isActive(MessageEntity entity) {
+        return entity != null && !Boolean.FALSE.equals(entity.getActive());
+    }
+
 }

@@ -2,11 +2,15 @@ package com.azhukov.agent.core.tool;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ToolOutputLimiterTest {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final AgentProperties properties = new AgentProperties();
     private final ToolOutputLimiter limiter = new ToolOutputLimiter(properties);
@@ -44,5 +48,30 @@ class ToolOutputLimiterTest {
     void truncate_nullContent_returnsNull() {
         String result = limiter.truncate(null, 1000);
         assertThat(result).isNull();
+    }
+
+    @Test
+    void truncate_failedResultWithDiagnosticContent_keepsFailureAndTruncatesContent() {
+        properties.getToolOutput().setMaxChars(10);
+        ToolResult result = limiter.truncate(new ToolResult(false, "1234567890ABCDEF", "exit 1"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.content()).startsWith("1234");
+        assertThat(result.content()).endsWith("ABCDEF");
+        assertThat(result.content()).contains("OUTPUT TRUNCATED");
+        assertThat(result.error()).isEqualTo("exit 1");
+    }
+
+    @Test
+    void truncate_failedResultWithoutDiagnosticContent_returnsStructuredJsonError() throws Exception {
+        properties.getToolOutput().setMaxChars(100);
+
+        ToolResult result = limiter.truncate(ToolResult.fail("plain failure"));
+
+        assertThat(result.success()).isFalse();
+        JsonNode json = JSON.readTree(result.content());
+        assertThat(json.path("success").asBoolean()).isFalse();
+        assertThat(json.path("error").asText()).isEqualTo("plain failure");
+        assertThat(result.error()).isEqualTo("plain failure");
     }
 }

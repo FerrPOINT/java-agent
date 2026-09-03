@@ -25,6 +25,10 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
     @org.springframework.data.jpa.repository.Modifying
     void deleteBySessionIdAndCreatedAtBefore(UUID sessionId, java.time.Instant cutoff);
 
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.transaction.annotation.Transactional
+    void deleteBySessionId(UUID sessionId);
+
     Page<MessageEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId, Pageable pageable);
 
     List<MessageEntity> findBySessionIdAndTurnIndexOrderByCreatedAtAsc(UUID sessionId, Integer turnIndex);
@@ -92,4 +96,42 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
     default List<MessageEntity> findAllBySessionIdOrdered(UUID sessionId) {
         return findBySessionIdOrderByCreatedAtAsc(sessionId);
     }
+
+    @Query(value = """
+        SELECT * FROM messages
+        WHERE session_id = :sessionId
+          AND COALESCE(active, TRUE) = TRUE
+        ORDER BY created_at ASC, id ASC
+        LIMIT :limit OFFSET :offset
+        """, nativeQuery = true)
+    List<MessageEntity> findActivePageBySessionIdOrderByCreatedAtAsc(
+        @Param("sessionId") UUID sessionId,
+        @Param("limit") int limit,
+        @Param("offset") int offset);
+
+
+    @Query(value = """
+        SELECT * FROM messages
+        WHERE session_id = :sessionId
+          AND COALESCE(active, TRUE) = TRUE
+        ORDER BY created_at DESC, id DESC
+        LIMIT :limit OFFSET :offset
+        """, nativeQuery = true)
+    List<MessageEntity> findActivePageBySessionIdOrderByCreatedAtDesc(
+        @Param("sessionId") UUID sessionId,
+        @Param("limit") int limit,
+        @Param("offset") int offset);
+
+
+    @Query(value = """
+        SELECT * FROM messages
+        WHERE session_id = :sessionId
+        ORDER BY created_at DESC, id DESC
+        LIMIT :limit OFFSET :offset
+        """, nativeQuery = true)
+    List<MessageEntity> findPageBySessionIdOrderByCreatedAtDesc(
+        @Param("sessionId") UUID sessionId,
+        @Param("limit") int limit,
+        @Param("offset") int offset);
+
 }

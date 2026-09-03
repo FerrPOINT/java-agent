@@ -31,6 +31,11 @@ public class GlobalExceptionHandler {
         this.objectMapper = objectMapper;
     }
 
+    /** Convenience ctor for tests/standalone MockMvc setups. */
+    public GlobalExceptionHandler() {
+        this.objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    }
+
     /**
      * Detect whether the current request is an SSE streaming endpoint by checking
      * the Accept header for text/event-stream. When an exception propagates here
@@ -113,10 +118,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleBadJson(HttpMessageNotReadableException ex) {
         log.debug("Malformed JSON request body: {}", ex.getMessage());
-        return ResponseEntity.badRequest().body(Map.of(
-            "type", "bad_request",
-            "error", "Invalid JSON body: " + ex.getMessage()
-        ));
+        // Hermes/OpenAI contract keeps the message generic; details stay in logs.
+        String message = "Invalid JSON";
+        Map<String, Object> nested = Map.of(
+            "type", "invalid_request_error",
+            "message", message
+        );
+        Map<String, Object> body = new HashMap<>();
+        body.put("type", "bad_request");
+        body.put("error", nested);
+        return ResponseEntity.badRequest().body(body);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -148,19 +149,24 @@ public class SlashCommandRegistry {
      * @return the resolved command name, or null if not found/ambiguous
      */
     public String resolveCommand(String name) {
+        String normalized = normalizeCommandName(name);
+        if (normalized == null) {
+            return null;
+        }
+
         // 1. Exact match
-        if (commands.containsKey(name)) {
-            return name;
+        if (commands.containsKey(normalized)) {
+            return normalized;
         }
         // 2. Alias match
-        String aliased = aliases.get(name);
+        String aliased = aliases.get(normalized);
         if (aliased != null && commands.containsKey(aliased)) {
             return aliased;
         }
         // 3. Prefix match
         List<String> matches = new ArrayList<>();
         for (String cmdName : commands.keySet()) {
-            if (cmdName.startsWith(name)) {
+            if (cmdName.startsWith(normalized)) {
                 matches.add(cmdName);
             }
         }
@@ -202,7 +208,8 @@ public class SlashCommandRegistry {
      * Get the description for a command by name.
      */
     public String getCommandDescription(String name) {
-        return descriptions.getOrDefault(name, "");
+        String normalized = normalizeCommandName(name);
+        return normalized == null ? "" : descriptions.getOrDefault(normalized, "");
     }
 
     /**
@@ -216,14 +223,16 @@ public class SlashCommandRegistry {
      * C6: Register a dynamic skill command.
      */
     public void registerDynamicSkill(String skillName) {
-        if (commands.containsKey(skillName) || aliases.containsKey(skillName)) {
+        String normalized = normalizeCommandName(skillName);
+        if (normalized == null || commands.containsKey(normalized) || aliases.containsKey(normalized)) {
             return; // Don't overwrite existing commands
         }
-        dynamicSkillNames.add(skillName);
-        register(skillName, "Skill: " + skillName, (args, client, sessionId) -> {
-            String content = client.getSkillContent(skillName);
+        String requestedSkillName = skillName.strip();
+        dynamicSkillNames.add(normalized);
+        register(normalized, "Skill: " + requestedSkillName, (args, client, sessionId) -> {
+            String content = client.getSkillContent(requestedSkillName);
             if (content == null || content.isBlank()) {
-                return "Skill '" + skillName + "' not found or empty.";
+                return "Skill '" + requestedSkillName + "' not found or empty.";
             }
             return content;
         });
@@ -251,15 +260,24 @@ public class SlashCommandRegistry {
      * c8: Register a command (package-visible for {@link CommandGroup} classes).
      */
     void register(String name, String description, SlashCommand command) {
-        commands.put(name, command);
-        descriptions.put(name, description);
+        String normalized = normalizeCommandName(name);
+        if (normalized == null) {
+            return;
+        }
+        commands.put(normalized, command);
+        descriptions.put(normalized, description);
     }
 
     /**
      * C7: Register an alias (package-visible for {@link CommandGroup} classes).
      */
     void registerAlias(String alias, String target) {
-        aliases.put(alias, target);
+        String normalizedAlias = normalizeCommandName(alias);
+        String normalizedTarget = normalizeCommandName(target);
+        if (normalizedAlias == null || normalizedTarget == null) {
+            return;
+        }
+        aliases.put(normalizedAlias, normalizedTarget);
     }
 
     /**
@@ -292,5 +310,19 @@ public class SlashCommandRegistry {
      */
     public SessionStore getSessionStore() {
         return sessionStore;
+    }
+
+    private static String normalizeCommandName(String name) {
+        if (name == null) {
+            return null;
+        }
+        String normalized = name.strip();
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1).stripLeading();
+        }
+        if (normalized.isEmpty()) {
+            return null;
+        }
+        return normalized.toLowerCase(Locale.ROOT);
     }
 }

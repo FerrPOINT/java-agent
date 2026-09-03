@@ -22,10 +22,29 @@ public interface AgentRuntime {
 
     TurnResult runTurn(Session session, String userInput, List<String> references, ModelRequestOptions options);
 
+    default TurnResult runTurn(Session session, Message userInput, List<String> references, ModelRequestOptions options) {
+        return runTurn(session, userInput != null ? userInput.content() : "", references, options);
+    }
+
     ChatResponse run(List<Message> messages, List<ToolDefinition> tools);
 
     default ChatResponse run(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
         return run(messages, tools);
+    }
+
+    default TurnResult runMessages(List<Message> messages, List<ToolDefinition> tools) {
+        return runMessages(messages, tools, ModelRequestOptions.empty());
+    }
+
+    default TurnResult runMessages(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
+        ChatResponse response = run(messages, tools, options);
+        if (response == null) {
+            return new TurnResult(List.of(), true, null);
+        }
+        Message assistant = response.hasToolCalls()
+            ? Message.assistantWithToolCalls(response.content(), response.toolCalls(), 1)
+            : Message.assistant(response.content(), 1);
+        return new TurnResult(List.of(assistant), true, null);
     }
 
     /**

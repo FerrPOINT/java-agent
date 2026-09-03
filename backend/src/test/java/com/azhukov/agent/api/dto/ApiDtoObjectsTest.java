@@ -71,6 +71,40 @@ class ApiDtoObjectsTest {
         }
 
         @Test
+        void toStringRedactsApiKey() {
+            ChatRequest request = new ChatRequest(
+                UUID.randomUUID(),
+                "msg",
+                null,
+                null,
+                "route-model",
+                "openrouter",
+                "https://openrouter.example/v1",
+                "sk-route-secret",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            );
+
+            assertThat(request.toString()).contains("apiKey=<redacted>");
+            assertThat(request.toString()).doesNotContain("sk-route-secret");
+        }
+
+        @Test
         void jsonRoundTrip() throws Exception {
             UUID sid = UUID.randomUUID();
             ChatRequest original = ChatRequest.simple(sid, "hello world", 3, 10000L);
@@ -156,14 +190,15 @@ class ApiDtoObjectsTest {
             var message = new OpenAiChatRequest.OpenAiMessage("user", "What's the weather?",
                     List.of(toolCall), null);
             OpenAiChatRequest request = new OpenAiChatRequest("gpt-4",
-                    List.of(message), List.of(tool), 0.7, 4096, true);
+                    List.of(message), List.of(tool), 0.7, Map.of("reasoning_effort", "high"), 4096, true);
 
             assertThat(request.model()).isEqualTo("gpt-4");
             assertThat(request.messages()).hasSize(1);
             assertThat(request.tools()).hasSize(1);
             assertThat(request.temperature()).isEqualTo(0.7);
+            assertThat(request.modelOptions()).containsEntry("reasoning_effort", "high");
             assertThat(request.maxTokens()).isEqualTo(4096);
-            assertThat(request.stream()).isTrue();
+            assertThat(request.stream()).isEqualTo(Boolean.TRUE);
 
             var msg = request.messages().get(0);
             assertThat(msg.role()).isEqualTo("user");
@@ -185,10 +220,11 @@ class ApiDtoObjectsTest {
         void nullOptionalsAreAllowed() {
             var msg = new OpenAiChatRequest.OpenAiMessage("assistant", "hi", null, null);
             OpenAiChatRequest req = new OpenAiChatRequest("gpt-4",
-                    List.of(msg), null, null, null, null);
+                    List.of(msg), null, null, null, null, null);
 
             assertThat(req.tools()).isNull();
             assertThat(req.temperature()).isNull();
+            assertThat(req.modelOptions()).isNull();
             assertThat(req.maxTokens()).isNull();
             assertThat(req.stream()).isNull();
         }
@@ -217,10 +253,12 @@ class ApiDtoObjectsTest {
             var msg = new OpenAiChatRequest.OpenAiMessage("user", "search for cats",
                     null, null);
             OpenAiChatRequest original = new OpenAiChatRequest("gpt-4o",
-                    List.of(msg), List.of(tool), 0.5, 2048, false);
+                    List.of(msg), List.of(tool), 0.5, Map.of("fast", true), 2048, false);
 
             String json = mapper.writeValueAsString(original);
             assertThat(json).contains("\"model\":\"gpt-4o\"");
+            assertThat(json).contains("\"max_tokens\":2048");
+            assertThat(json).contains("\"model_options\"");
             assertThat(json).contains("\"stream\":false");
 
             OpenAiChatRequest deserialized = mapper.readValue(json, OpenAiChatRequest.class);
@@ -234,11 +272,33 @@ class ApiDtoObjectsTest {
             var msg = new OpenAiChatRequest.OpenAiMessage("system", "You are helpful",
                     null, null);
             OpenAiChatRequest original = new OpenAiChatRequest("gpt-4",
-                    List.of(msg), null, null, null, null);
+                    List.of(msg), null, null, null, null, null);
 
             String json = mapper.writeValueAsString(original);
             OpenAiChatRequest deserialized = mapper.readValue(json, OpenAiChatRequest.class);
             assertThat(deserialized).isEqualTo(original);
+        }
+
+        @Test
+        void jsonDeserializesOpenAiContentParts() throws Exception {
+            String json = """
+                {
+                  "model": "gpt-4",
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        {"type": "text", "text": "hello"},
+                        {"type": "input_text", "text": "world"}
+                      ]
+                    }
+                  ]
+                }
+                """;
+
+            OpenAiChatRequest deserialized = mapper.readValue(json, OpenAiChatRequest.class);
+
+            assertThat(deserialized.messages().get(0).content()).isInstanceOf(List.class);
         }
     }
 
@@ -312,6 +372,10 @@ class ApiDtoObjectsTest {
             String json = mapper.writeValueAsString(original);
             assertThat(json).contains("\"id\":\"resp-1\"");
             assertThat(json).contains("\"finish_reason\":\"tool_calls\"");
+            assertThat(json).contains("\"tool_calls\":[");
+            assertThat(json).contains("\"prompt_tokens\":10");
+            assertThat(json).contains("\"completion_tokens\":20");
+            assertThat(json).contains("\"total_tokens\":30");
 
             OpenAiChatResponse deserialized = mapper.readValue(json, OpenAiChatResponse.class);
             assertThat(deserialized).isEqualTo(original);
@@ -348,8 +412,7 @@ class ApiDtoObjectsTest {
             var choice = new OpenAiStreamChunk.Choice(0, delta, "stop");
             OpenAiStreamChunk chunk = new OpenAiStreamChunk("chatcmpl-chunk-1",
                     "chat.completion.chunk", 1699999999L, "gpt-4",
-                    List.of(choice),
-            null);
+                    List.of(choice));
 
             assertThat(chunk.id()).isEqualTo("chatcmpl-chunk-1");
             assertThat(chunk.object()).isEqualTo("chat.completion.chunk");
@@ -376,8 +439,7 @@ class ApiDtoObjectsTest {
             var delta = new OpenAiStreamChunk.Delta(null, "world", null);
             var choice = new OpenAiStreamChunk.Choice(0, delta, null);
             OpenAiStreamChunk chunk = new OpenAiStreamChunk("id",
-                    "chat.completion.chunk", 1L, "gpt-4", List.of(choice),
-            null);
+                    "chat.completion.chunk", 1L, "gpt-4", List.of(choice));
 
             assertThat(chunk.choices().get(0).delta().role()).isNull();
             assertThat(chunk.choices().get(0).delta().content()).isEqualTo("world");
@@ -393,11 +455,12 @@ class ApiDtoObjectsTest {
             var choice = new OpenAiStreamChunk.Choice(0, delta, "length");
             OpenAiStreamChunk original = new OpenAiStreamChunk("chunk-1",
                     "chat.completion.chunk", 999999L, "gpt-4o",
-                    List.of(choice),
-            null);
+                    List.of(choice));
 
             String json = mapper.writeValueAsString(original);
             assertThat(json).contains("\"object\":\"chat.completion.chunk\"");
+            assertThat(json).contains("\"finish_reason\":\"length\"");
+            assertThat(json).contains("\"tool_calls\":[");
 
             OpenAiStreamChunk deserialized = mapper.readValue(json, OpenAiStreamChunk.class);
             assertThat(deserialized).isEqualTo(original);
@@ -406,8 +469,7 @@ class ApiDtoObjectsTest {
         @Test
         void jsonRoundTripEmptyChoices() throws Exception {
             OpenAiStreamChunk original = new OpenAiStreamChunk("chunk-2",
-                    "chat.completion.chunk", 1L, "gpt-4", List.of(),
-            null);
+                    "chat.completion.chunk", 1L, "gpt-4", List.of());
 
             OpenAiStreamChunk deserialized = mapper.readValue(
                     mapper.writeValueAsString(original), OpenAiStreamChunk.class);

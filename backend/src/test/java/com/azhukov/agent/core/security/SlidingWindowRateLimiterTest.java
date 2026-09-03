@@ -121,29 +121,40 @@ class SlidingWindowRateLimiterTest {
         int threads = 10;
         int callsPerThread = 10;
         int maxCalls = 20;
-        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-        CountDownLatch latch = new CountDownLatch(threads);
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        CountDownLatch ready = new CountDownLatch(threads);
+        CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch done = new CountDownLatch(threads);
         AtomicInteger allowed = new AtomicInteger(0);
         AtomicInteger blocked = new AtomicInteger(0);
 
-        for (int t = 0; t < threads; t++) {
-            executor.submit(() -> {
-                try {
-                    for (int i = 0; i < callsPerThread; i++) {
-                        if (limiter.tryAcquire("shared", maxCalls, 60)) {
-                            allowed.incrementAndGet();
-                        } else {
-                            blocked.incrementAndGet();
+        try {
+            for (int t = 0; t < threads; t++) {
+                executor.submit(() -> {
+                    ready.countDown();
+                    try {
+                        start.await();
+                        for (int i = 0; i < callsPerThread; i++) {
+                            if (limiter.tryAcquire("shared", maxCalls, 60)) {
+                                allowed.incrementAndGet();
+                            } else {
+                                blocked.incrementAndGet();
+                            }
                         }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    } finally {
+                        done.countDown();
                     }
-                } finally {
-                    latch.countDown();
-                }
-            });
-        }
+                });
+            }
 
-        latch.await(5, TimeUnit.SECONDS);
-        executor.shutdown();
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            executor.shutdownNow();
+        }
 
         int total = allowed.get() + blocked.get();
         assertThat(total).isEqualTo(threads * callsPerThread);

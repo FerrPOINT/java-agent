@@ -3,6 +3,7 @@ package com.azhukov.agent.core.context;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.metadata.ModelMetadataService;
+import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -14,9 +15,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Collections;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -144,5 +147,25 @@ class DefaultContextEngineUpdateModelTest {
         engine.updateModel("model-200k");
 
         assertThat(engine.getContextLength()).isEqualTo(200_000);
+    }
+
+    @Test
+    @DisplayName("preflight token estimate uses chars-per-token metadata for the active model")
+    void shouldCompressPreflightUsesActiveModelMetadata() {
+        ContextCompressor compressor = mock(ContextCompressor.class);
+        var engine = new DefaultContextEngine(
+            memoryProvider, skillManager, messageRepository, compressor, properties, null, modelMetadataService
+        );
+
+        when(modelMetadataService.detectContextLength("qwen3-coder")).thenReturn(100);
+        when(modelMetadataService.getMetadata("qwen3-coder"))
+            .thenReturn(new ModelMetadataService.ModelMetadata("qwen3-coder", "qwen3-coder", 100, 3));
+
+        engine.updateModel("qwen3-coder");
+
+        // rev-129 parity: window=100 < 512K → 75% floor → degenerate 85% rule →
+        // threshold 85 tokens. 300 chars / charsPerToken(3) = 100 tokens > 85.
+        assertThat(engine.shouldCompressPreflight(List.of(Message.user("x".repeat(300))))).isTrue();
+        verify(modelMetadataService).getMetadata("qwen3-coder");
     }
 }

@@ -6,8 +6,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpEntity;
 import org.springframework.http.MediaType;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
@@ -73,6 +75,11 @@ class TelegramClientMediaDeliveryTest {
 
     private TelegramResponse errorResponse(int errorCode, String description) {
         return new TelegramResponse(false, errorCode, description, null, null);
+    }
+
+    private Object partBody(MultiValueMap<String, HttpEntity<?>> parts, String name) {
+        HttpEntity<?> entity = parts.getFirst(name);
+        return entity != null ? entity.getBody() : null;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -180,6 +187,47 @@ class TelegramClientMediaDeliveryTest {
             stubMultipartChain(successResponseWithMessageId(53L));
             Optional<Long> result = client.sendAudioAsVoice(123L, new byte[]{1}, "voice.ogg", "  ");
             assertThat(result).contains(53L);
+        }
+
+        @Test
+        @DisplayName("sendAudioAsVoice formats caption as MarkdownV2")
+        void sendAudioAsVoiceFormatsCaptionMarkdownV2() {
+            stubMultipartChain(successResponseWithMessageId(54L));
+
+            Optional<Long> result = client.sendAudioAsVoice(123L, new byte[]{1}, "voice.ogg", "*bold* reply");
+
+            assertThat(result).contains(54L);
+            @SuppressWarnings({"rawtypes", "unchecked"})
+            ArgumentCaptor<MultiValueMap<String, HttpEntity<?>>> captor =
+                (ArgumentCaptor) ArgumentCaptor.forClass(MultiValueMap.class);
+            verify(bodySpec).body(captor.capture());
+            assertThat(partBody(captor.getValue(), "parse_mode")).isEqualTo("MarkdownV2");
+            assertThat(partBody(captor.getValue(), "caption")).isEqualTo("_bold_ reply");
+        }
+
+        @Test
+        @DisplayName("sendAudioAsVoice retries plain caption on MarkdownV2 parse error")
+        void sendAudioAsVoiceRetriesPlainCaptionOnMarkdownV2ParseError() {
+            when(restClient.post()).thenReturn(postUriSpec);
+            when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
+            when(bodySpec.contentType(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.body(any(MultiValueMap.class))).thenReturn(bodySpec);
+            when(bodySpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.body(TelegramResponse.class)).thenReturn(
+                errorResponse(400, "Bad Request: can't parse entities"),
+                successResponseWithMessageId(55L)
+            );
+
+            Optional<Long> result = client.sendAudioAsVoice(123L, new byte[]{1}, "voice.ogg", "*bold* reply");
+
+            assertThat(result).contains(55L);
+            @SuppressWarnings({"rawtypes", "unchecked"})
+            ArgumentCaptor<MultiValueMap<String, HttpEntity<?>>> captor =
+                (ArgumentCaptor) ArgumentCaptor.forClass(MultiValueMap.class);
+            verify(bodySpec, times(2)).body(captor.capture());
+            assertThat(partBody(captor.getAllValues().get(0), "parse_mode")).isEqualTo("MarkdownV2");
+            assertThat(partBody(captor.getAllValues().get(1), "parse_mode")).isNull();
+            assertThat(partBody(captor.getAllValues().get(1), "caption")).isEqualTo("*bold* reply");
         }
 
         @Test

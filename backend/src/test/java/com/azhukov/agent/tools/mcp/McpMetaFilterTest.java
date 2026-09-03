@@ -1,11 +1,21 @@
 package com.azhukov.agent.tools.mcp;
 
+import com.azhukov.agent.client.mcp.McpLifecycleManager;
+import com.azhukov.agent.client.mcp.McpOAuthManager;
+import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Hermes parity tests: MCP tool-result _meta filtering
@@ -57,5 +67,48 @@ class McpMetaFilterTest {
         assertEquals("", McpTool.formatMeta(Map.of()));
         // all keys reserved → nothing model-facing
         assertEquals("", McpTool.formatMeta(Map.of("mcp.x/key", "v")));
+    }
+
+    @Test
+    void executeReturnsFailureForProtocolErrorResult() throws Exception {
+        McpLifecycleManager lifecycleManager = mock(McpLifecycleManager.class);
+        McpOAuthManager oauthManager = mock(McpOAuthManager.class);
+        when(oauthManager.getToken("srv")).thenReturn(Optional.empty());
+        when(lifecycleManager.executeTool("srv", "tool", "{}")).thenReturn(
+            new McpSchema.CallToolResult(
+                List.of(new McpSchema.TextContent(null, "remote error")),
+                true,
+                null,
+                null));
+
+        ToolResult result = new McpTool(lifecycleManager, oauthManager).execute(
+            "{\"server_name\":\"srv\",\"tool_name\":\"tool\"}", null, null);
+
+        assertFalse(result.success());
+        assertTrue(result.error().contains("remote error"));
+        JsonNode json = errorPayload(result);
+        assertFalse(json.get("success").asBoolean());
+        assertTrue(json.get("error").asText().contains("remote error"));
+        assertEquals(result.error(), json.get("error").asText());
+    }
+
+    @Test
+    void executeReturnsStructuredFailureForInvalidJson() throws Exception {
+        McpLifecycleManager lifecycleManager = mock(McpLifecycleManager.class);
+        McpOAuthManager oauthManager = mock(McpOAuthManager.class);
+
+        ToolResult result = new McpTool(lifecycleManager, oauthManager).execute("not-json", null, null);
+
+        assertFalse(result.success());
+        JsonNode json = errorPayload(result);
+        assertFalse(json.get("success").asBoolean());
+        assertTrue(json.get("error").asText().contains("Invalid tool arguments"));
+    }
+
+    private JsonNode errorPayload(ToolResult result) throws Exception {
+        assertFalse(result.content().isBlank());
+        JsonNode json = new ObjectMapper().readTree(result.content());
+        assertTrue(json.has("error"));
+        return json;
     }
 }

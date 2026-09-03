@@ -9,6 +9,7 @@ import com.azhukov.agent.core.security.SecretRedactor;
 import com.azhukov.agent.core.security.ToolCallGuardrail;
 import com.azhukov.agent.core.state.TurnState;
 import io.github.resilience4j.retry.Retry;
+import java.util.UUID;
 import io.github.resilience4j.retry.RetryConfig;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -30,6 +31,7 @@ import java.util.function.Supplier;
 @Slf4j
 @RequiredArgsConstructor
 public class ToolExecutionService {
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
 
     private final ToolRegistry toolRegistry;
     private final AgentProperties properties;
@@ -81,10 +83,18 @@ public class ToolExecutionService {
             .build());
 
     public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session, TurnState turnState) {
+        // PR-3 parity: guardrails must observe the executing session (scope
+        // guardrail callbacks to the session so InterruptToken.currentSessionId()
+        // resolves inside before/afterCall).
+        UUID previousSessionScope = com.azhukov.agent.core.agent.InterruptToken.currentSessionId();
+        if (session != null) {
+            com.azhukov.agent.core.agent.InterruptToken.setCurrentSessionId(session.id());
+        }
+        try {
         var before = turnState == null ? guardrail.beforeCall(toolName, arguments) : guardrail.beforeCall(toolName, arguments, turnState);
         if (before.isBlockOrHalt()) {
             log.warn("Guardrail {} tool {}: {}", before.action(), toolName, before.message());
-            return ToolResult.fail(before.message());
+            return failureResult(before.message());
         }
 
         // Tool loop guardrail (Hermes parity: tool_guardrails.py before_call)
@@ -95,7 +105,14 @@ public class ToolExecutionService {
                 // Runaway caps (web_search/delegate_task) are hard blocks;
                 // repeat warnings are advisory (append to result, don't block).
                 if (loopWarning.startsWith("Blocked ")) {
-                    return ToolResult.fail(loopWarning);
+                    // PR-3 parity: hard block returns a structured JSON envelope
+                    // with the machine-readable code the caller can branch on.
+                    com.fasterxml.jackson.databind.node.ObjectNode payload = JSON.createObjectNode();
+                    payload.put("success", false);
+                    payload.put("error", loopWarning);
+                    payload.put("code", "loop_" + toolName + "_cap");
+                    payload.put("action", "block");
+                    return new ToolResult(false, payload.toString(), loopWarning);
                 }
             }
         }
@@ -120,10 +137,10 @@ public class ToolExecutionService {
                 future.cancel(true);
                 log.warn("Tool {} timed out after {}s — worker interrupted", toolName,
                     properties.getToolOutput().getTimeoutSecondsOrDefault(120));
-                return ToolResult.fail("Tool timed out: " + toolName);
+                return failureResult("Tool timed out: " + toolName);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return ToolResult.fail("Interrupted: " + toolName);
+                return failureResult("Interrupted: " + toolName);
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause();
                 if (cause instanceof RuntimeException r) {
@@ -140,7 +157,7 @@ public class ToolExecutionService {
             failed = !result.success();
         } catch (Exception e) {
             log.warn("Tool {} execution failed after retries: {}", toolName, e.getMessage());
-            result = ToolResult.fail("Tool execution failed: " + toolName + " - " + e.getMessage());
+            result = failureResult("Tool execution failed: " + toolName + " - " + e.getMessage());
             failed = true;
         }
         long duration = System.currentTimeMillis() - start;
@@ -167,7 +184,9 @@ public class ToolExecutionService {
             result = ToolResult.fail((result.error() != null ? result.error() + "\n" : "") + "Guardrail: " + after.message());
         }
 
-        String safeContent = result.success() ? redactor.redact(result.content()) : redactor.redact(result.error());
+        String rawDiagnostic = result.content() != null && !result.content().isBlank()
+            ? result.content() : result.error();
+        String safeContent = result.success() ? redactor.redact(result.content()) : redactor.redact(rawDiagnostic);
         // Subdirectory hints (Hermes tool_executor.py:1768): on first visit to a
         // directory via a path/command argument, append AGENTS.md/CLAUDE.md/
         // .cursorrules content to the tool result. Only successful results get
@@ -206,7 +225,13 @@ public class ToolExecutionService {
                 log.debug("security guidance skipped for {}: {}", toolName, sgEx.getMessage());
             }
         }
-        ToolResult safeResult = result.success() ? ToolResult.ok(safeContent) : ToolResult.fail(safeContent);
+        // PR-3 parity: failed results carry a structured JSON envelope
+        // ({success:false,error}) so the model can parse the failure reason.
+        ToolResult safeResult = result.success()
+            ? ToolResult.ok(safeContent)
+            : (safeContent == null || safeContent.isBlank()
+                ? failureWithContent(null, redactor.redact(result.error()))
+                : failureWithContent(safeContent, redactor.redact(result.error())));
         // Tool loop guardrail (Hermes parity: tool_guardrails.py after_call)
         if (toolLoopGuardrail != null) {
             String loopWarning = toolLoopGuardrail.afterCall(toolName, arguments,
@@ -251,6 +276,15 @@ public class ToolExecutionService {
             return toolOutputLimiter.truncate(safeResult, toolName);
         }
         return truncateIfNeeded(safeResult, toolName);
+        } finally {
+            if (session != null) {
+                if (previousSessionScope != null) {
+                    com.azhukov.agent.core.agent.InterruptToken.setCurrentSessionId(previousSessionScope);
+                } else {
+                    com.azhukov.agent.core.agent.InterruptToken.clearCurrentSessionId();
+                }
+            }
+        }
     }
 
     public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session) {
@@ -411,4 +445,25 @@ public class ToolExecutionService {
             Thread.currentThread().interrupt();
         }
     }
+
+    private static ToolResult failureResult(String error) {
+        String message = error == null || error.isBlank() ? "Tool failed" : error;
+        com.fasterxml.jackson.databind.node.ObjectNode payload = JSON.createObjectNode();
+        payload.put("success", false);
+        payload.put("error", message);
+        return new ToolResult(false, payload.toString(), message);
+    }
+
+    private static ToolResult failureWithContent(String content, String error) {
+        String message = error == null || error.isBlank() ? "Tool failed" : error;
+        if (content == null || content.isBlank()) {
+            return failureResult(message);
+        }
+        com.fasterxml.jackson.databind.node.ObjectNode payload = JSON.createObjectNode();
+            payload.put("success", false);
+            payload.put("error", message);
+            payload.put("output", content);
+            return new ToolResult(false, payload.toString(), message);
+    }
+
 }

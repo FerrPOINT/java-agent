@@ -25,7 +25,7 @@ public class BrowserBackTool implements ToolHandler {
         try {
             return ToolResult.ok(browserService.evaluate("history.back()"));
         } catch (Exception e) {
-            return ToolResult.fail("Browser back failed: " + e.getMessage());
+            return BrowserToolResponses.failureResult("Browser back failed: " + e.getMessage());
         }
     }
 }

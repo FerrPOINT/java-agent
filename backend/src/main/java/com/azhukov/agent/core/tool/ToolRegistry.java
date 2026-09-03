@@ -21,5 +21,9 @@ public interface ToolRegistry {
 
     void registerDynamic(String toolName, ToolDefinition definition, ToolHandler handler);
 
+    default void registerDynamic(String toolName, String toolset, ToolDefinition definition, ToolHandler handler) {
+        registerDynamic(toolName, definition, handler);
+    }
+
     void deregisterDynamic(String toolName);
 }

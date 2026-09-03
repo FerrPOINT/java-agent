@@ -12,7 +12,7 @@ import org.mapstruct.Mapping;
 @Mapper(config = com.azhukov.agent.config.MapStructConfig.class, componentModel = "spring")
 public interface SessionEntityMapper {
 
-    @Mapping(target = "systemPrompt", ignore = true)
+    @Mapping(target = "systemPrompt", source = "systemPrompt")
     @Mapping(target = "metadata", ignore = true)
     Session toDomain(SessionEntity entity);
 
@@ -21,16 +21,22 @@ public interface SessionEntityMapper {
     @Mapping(target = "title", source = "title")
     @Mapping(target = "modelProvider", source = "modelProvider")
     @Mapping(target = "modelName", source = "modelName")
+    @Mapping(target = "systemPrompt", source = "systemPrompt")
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     @Mapping(target = "cliState", ignore = true)
     @Mapping(target = "parentSessionId", ignore = true)
     @Mapping(target = "sessionStatus", ignore = true)
     @Mapping(target = "source", ignore = true)
+    @Mapping(target = "profile", ignore = true)
     @Mapping(target = "endReason", ignore = true)
     @Mapping(target = "preview", ignore = true)
     @Mapping(target = "lastActive", ignore = true)
     @Mapping(target = "messageCount", ignore = true)
+    @Mapping(target = "pinned", ignore = true)
+    @Mapping(target = "archived", ignore = true)
+    @Mapping(target = "hidden", ignore = true)
+    @Mapping(target = "unread", ignore = true)
     @Mapping(target = "subgoal", ignore = true)
     SessionEntity toEntity(Session session);
 }

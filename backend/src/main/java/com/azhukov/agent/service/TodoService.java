@@ -1,7 +1,6 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.TodoDto;
-import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.TodoEntity;
 import com.azhukov.agent.persistence.repository.TodoRepository;
 import lombok.RequiredArgsConstructor;
@@ -29,7 +28,7 @@ public class TodoService {
     }
 
     public List<TodoDto> listBySessionId(UUID sessionId) {
-        return todoRepository.findBySessionId(sessionId).stream()
+        return todoRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
             .map(TodoService::toDto)
             .toList();
     }
@@ -52,11 +51,21 @@ public class TodoService {
         return todoRepository.findById(id)
             .map(todo -> {
                 // Ownership: a non-admin key can only complete its own items
-                String scoped = UserContext.scopeUserId();
+                String scoped = com.azhukov.agent.core.security.UserContext.scopeUserId();
                 if (scoped != null && !scoped.equals(todo.getUserId())) {
                     throw new SecurityException("Task does not belong to the current user");
                 }
-                todo.setStatus("done");
+                todo.setStatus("completed");
+                todo.setUpdatedAt(Instant.now());
+                return toDto(todoRepository.save(todo));
+            });
+    }
+
+    public Optional<TodoDto> markDoneForUser(UUID id, String userId) {
+        return todoRepository.findById(id)
+            .filter(todo -> userId != null && userId.equals(todo.getUserId()))
+            .map(todo -> {
+                todo.setStatus("completed");
                 todo.setUpdatedAt(Instant.now());
                 return toDto(todoRepository.save(todo));
             });

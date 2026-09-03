@@ -10,6 +10,11 @@ import org.mapstruct.Mapping;
 import org.mapstruct.Named;
 
 import java.util.Collections;
+import java.util.ArrayList;
+import java.util.Map;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 
 /**
@@ -17,6 +22,12 @@ import java.util.List;
  */
 @Mapper(config = com.azhukov.agent.config.MapStructConfig.class)
 public interface MessageMapper {
+    /** Standalone access for bridges that are not Spring-managed. */
+    MessageMapper INSTANCE = org.mapstruct.factory.Mappers.getMapper(MessageMapper.class);
+
+    ObjectMapper TOOL_CALLS_JSON = new ObjectMapper();
+    TypeReference<List<Map<String, Object>>> TOOL_CALLS_TYPE = new TypeReference<>() {};
+
 
     default Message toDomain(MessageEntity entity) {
         if (entity == null) {
@@ -104,4 +115,68 @@ public interface MessageMapper {
             entity.getToolCallArguments()
         );
     }
+
+    default List<ToolCall> parseToolCalls(String rawToolCalls) {
+        if (!hasText(rawToolCalls)) {
+            return Collections.emptyList();
+        }
+        try {
+            List<Map<String, Object>> raw = TOOL_CALLS_JSON.readValue(rawToolCalls, TOOL_CALLS_TYPE);
+            if (raw == null || raw.isEmpty()) {
+                return Collections.emptyList();
+            }
+            List<ToolCall> toolCalls = new ArrayList<>(raw.size());
+            for (int i = 0; i < raw.size(); i++) {
+                Map<String, Object> item = raw.get(i);
+                if (item == null) {
+                    continue;
+                }
+                Object rawFunction = item.get("function");
+                Map<?, ?> function = rawFunction instanceof Map<?, ?> map ? map : Map.of();
+                String name = stringValue(function.get("name"));
+                if (!hasText(name)) {
+                    name = stringValue(item.get("name"));
+                }
+                if (!hasText(name)) {
+                    continue;
+                }
+                String arguments = normalizeArguments(
+                    function.containsKey("arguments") ? function.get("arguments") : item.get("arguments"));
+                String id = stringValue(item.get("id"));
+                if (!hasText(id)) {
+                    id = ToolCall.deterministicCallId(name, arguments, i);
+                }
+                toolCalls.add(new ToolCall(id, name, arguments));
+            }
+            return toolCalls.isEmpty() ? Collections.emptyList() : List.copyOf(toolCalls);
+        } catch (Exception e) {
+            return Collections.emptyList();
+        }
+    }
+
+
+    default String normalizeArguments(Object arguments) {
+        if (arguments == null) {
+            return "{}";
+        }
+        if (arguments instanceof CharSequence text) {
+            String value = text.toString();
+            return hasText(value) ? value : "{}";
+        }
+        try {
+            return TOOL_CALLS_JSON.writeValueAsString(arguments);
+        } catch (JsonProcessingException e) {
+            String value = String.valueOf(arguments);
+            return hasText(value) ? value : "{}";
+        }
+    }
+
+    default String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    default boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
 }

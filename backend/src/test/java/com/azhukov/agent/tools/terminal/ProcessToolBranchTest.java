@@ -71,8 +71,8 @@ class ProcessToolBranchTest {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
             "{\"action\":\"poll\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test
@@ -94,8 +94,8 @@ class ProcessToolBranchTest {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
             "{\"action\":\"log\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test
@@ -127,8 +127,8 @@ class ProcessToolBranchTest {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
             "{\"action\":\"wait\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test
@@ -171,8 +171,8 @@ class ProcessToolBranchTest {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
             "{\"action\":\"kill\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test
@@ -193,8 +193,8 @@ class ProcessToolBranchTest {
         ToolResult result = processTool.execute(
             "{\"action\":\"write\",\"session_id\":\"nonexistent\",\"data\":\"hello\"}",
             null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test
@@ -215,8 +215,8 @@ class ProcessToolBranchTest {
         ToolResult result = processTool.execute(
             "{\"action\":\"submit\",\"session_id\":\"nonexistent\",\"data\":\"hello\"}",
             null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test
@@ -236,8 +236,8 @@ class ProcessToolBranchTest {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
             "{\"action\":\"close\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test

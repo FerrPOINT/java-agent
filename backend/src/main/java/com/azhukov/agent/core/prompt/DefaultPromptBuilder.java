@@ -1151,8 +1151,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
      */
     private String buildMemoryPrefixInternal(Session session) {
         try {
-            String userBlock = renderMemoryBlock(session.userId(), "user");
-            String memoryBlock = renderMemoryBlock(session.userId(), "memory");
+            // Profile-scoped memory user (Hermes MemoryScope): a session running
+            // under a named profile reads that profile's memory namespace, so
+            // "work" facts never leak into the default profile's prompt.
+            String scopedUserId = com.azhukov.agent.core.memory.MemoryScope.userId(session);
+            String userBlock = renderMemoryBlock(scopedUserId, "user");
+            String memoryBlock = renderMemoryBlock(scopedUserId, "memory");
             if (userBlock.isEmpty() && memoryBlock.isEmpty()) {
                 return "";
             }

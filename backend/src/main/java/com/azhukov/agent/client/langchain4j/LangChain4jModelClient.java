@@ -23,7 +23,6 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
-import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
@@ -49,8 +48,10 @@ public class LangChain4jModelClient implements ModelClient {
     private final RateLimitTracker rateLimitTracker;
     private final CredentialPool credentialPool;
     private final ImageShrinkerService imageShrinker;
+    private final String defaultBaseUrl;
+    private final String defaultApiKey;
 
-    /** Per-request model name (set in complete()/stream()); feeds the developer-role HTTP rewrite. */
+    /** Per-request model name; feeds the developer-role HTTP rewrite. */
     private volatile String currentModelName;
 
     public LangChain4jModelClient(AgentProperties properties, java.util.function.Consumer<Usage> usageConsumer,
@@ -86,88 +87,33 @@ public class LangChain4jModelClient implements ModelClient {
                 log.debug("Using credential from pool: {} for provider {}", cred.id(), cred.provider());
             }
         }
-        final String effectiveBaseUrl = baseUrl;
+        this.defaultBaseUrl = baseUrl;
+        this.defaultApiKey = apiKey;
 
+        final String effectiveBaseUrl = baseUrl;
         this.chatModel = dev.langchain4j.model.openai.OpenAiChatModel.builder()
             .baseUrl(baseUrl)
             .apiKey(apiKey)
             .modelName(properties.getModel().getModelName())
             .timeout(java.time.Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
             .maxRetries(0) // H21: Let DefaultAgentRuntime handle retries — avoids double-retry.
-            .temperature(properties.getModel().getTemperature())
             .returnThinking(properties.getModel().isReturnThinking())
             .sendThinking(properties.getModel().isReturnThinking(),
                           properties.getModel().getThinkingFieldName())
+            
             .httpClientBuilder(developerRoleHttpClientBuilder())
-            // P-06 (Hermes 21b92d2687): OpenRouter response caching must be
-            // disabled on empty-response retries, or the retry replays the
-            // cached empty answer and burns the whole retry budget. The
-            // Supplier form is evaluated per request, so the header rides
-            // only on retries flagged by the runtime.
-            .customHeaders(() -> EmptyRetryCacheBypass.headersFor(effectiveBaseUrl,
-                properties.getModel().getHeaders()))
-            .build();
+            .customHeaders(() -> EmptyRetryCacheBypass.headersFor(effectiveBaseUrl, properties.getModel().getHeaders())).build();
         this.streamingChatModel = dev.langchain4j.model.openai.OpenAiStreamingChatModel.builder()
             .baseUrl(baseUrl)
             .apiKey(apiKey)
             .modelName(properties.getModel().getModelName())
             .timeout(java.time.Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
-            .temperature(properties.getModel().getTemperature())
             .returnThinking(properties.getModel().isReturnThinking())
             .sendThinking(properties.getModel().isReturnThinking(),
                           properties.getModel().getThinkingFieldName())
+            
             .httpClientBuilder(developerRoleHttpClientBuilder())
-            .customHeaders(() -> EmptyRetryCacheBypass.headersFor(effectiveBaseUrl,
-                properties.getModel().getHeaders()))
-            .build();
-    }
-
-    /**
-     * Hermes parity: developer-role models (name contains gpt-5/codex) must
-     * get {@code role:"developer"} on the wire. LangChain4j 1.18 cannot emit
-     * that role from its message model, so every outgoing body is rewritten
-     * at the HTTP boundary. The model name is read per request through the
-     * supplier so per-request model overrides (/model command) are honored.
-     */
-    private dev.langchain4j.http.client.HttpClientBuilder developerRoleHttpClientBuilder() {
-        String configuredModel = properties.getModel().getModelName();
-        return new dev.langchain4j.http.client.HttpClientBuilder() {
-            private final java.time.Duration connectTimeout = java.time.Duration.ofSeconds(20);
-            private java.time.Duration readTimeout = java.time.Duration
-                .ofSeconds(properties.getModel().getTimeoutSeconds());
-
-            @Override
-            public java.time.Duration connectTimeout() {
-                return connectTimeout;
-            }
-
-            @Override
-            public dev.langchain4j.http.client.HttpClientBuilder connectTimeout(java.time.Duration d) {
-                return this;
-            }
-
-            @Override
-            public java.time.Duration readTimeout() {
-                return readTimeout;
-            }
-
-            @Override
-            public dev.langchain4j.http.client.HttpClientBuilder readTimeout(java.time.Duration d) {
-                this.readTimeout = d;
-                return this;
-            }
-
-            @Override
-            public dev.langchain4j.http.client.HttpClient build() {
-                dev.langchain4j.http.client.HttpClient inner =
-                    new dev.langchain4j.http.client.jdk.JdkHttpClientBuilder()
-                        .connectTimeout(connectTimeout)
-                        .readTimeout(readTimeout)
-                        .build();
-                return new DeveloperRoleHttpClient(inner,
-                    () -> currentModelName != null ? currentModelName : configuredModel);
-            }
-        };
+            .customHeaders(() -> EmptyRetryCacheBypass.headersFor(effectiveBaseUrl, properties.getModel().getHeaders())).build();
     }
 
     public LangChain4jModelClient(ChatModel chatModel, StreamingChatModel streamingChatModel,
@@ -195,6 +141,12 @@ public class LangChain4jModelClient implements ModelClient {
         this.rateLimitTracker = rateLimitTracker;
         this.credentialPool = credentialPool;
         this.imageShrinker = imageShrinker;
+        this.defaultBaseUrl = properties != null && properties.getModel() != null
+            ? properties.getModel().getBaseUrl()
+            : "";
+        this.defaultApiKey = properties != null && properties.getModel() != null
+            ? properties.getModel().getApiKey()
+            : "";
     }
 
     @Override
@@ -218,14 +170,8 @@ public class LangChain4jModelClient implements ModelClient {
 
         ChatRequest request = ChatRequest.builder()
             .messages(chatMessages)
-            .parameters(buildParameters(specs, reasoningEffort, fastMode, maxTokens,
-                options != null ? options.modelName() : null))
+            .parameters(buildParameters(specs, reasoningEffort, fastMode, maxTokens, options))
             .build();
-        // Track the per-request model so the HTTP-layer developer-role rewrite
-        // (Hermes parity) evaluates the policy against the ACTUAL model.
-        currentModelName = options != null && options.modelName() != null && !options.modelName().isBlank()
-            ? options.modelName()
-            : properties.getModel().getModelName();
 
         log.debug("Sending {} messages to model {}", chatMessages.size(), request);
 
@@ -235,9 +181,9 @@ public class LangChain4jModelClient implements ModelClient {
         }
 
         try {
-            dev.langchain4j.model.chat.response.ChatResponse response = chatModel.chat(request);
+            dev.langchain4j.model.chat.response.ChatResponse response = chatModelFor(options).chat(request);
             AiMessage aiMessage = response.aiMessage();
-            persistUsage(response);
+            persistUsage(response, options);
 
             if (aiMessage.hasToolExecutionRequests()) {
                 List<ToolCall> calls = new java.util.ArrayList<>();
@@ -255,14 +201,14 @@ public class LangChain4jModelClient implements ModelClient {
                 // Mirrors Hermes _emit_interim_assistant_message().
                 String text = aiMessage.text();
                 if (text != null && !text.isBlank()) {
-                    return new ChatResponse(text, calls, finishReasonOf(response)).withUsage(extractUsage(response));
+                    return new ChatResponse(text, calls, finishReasonOf(response));
                 }
-                return new ChatResponse("", calls, finishReasonOf(response)).withUsage(extractUsage(response));
+                return new ChatResponse("", calls, finishReasonOf(response));
             }
 
             // c2: carry the provider finish reason so BOTH runtimes can run the
             // shared recovery policies (LENGTH continuation). Missing → "STOP".
-            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "", finishReasonOf(response)).withUsage(extractUsage(response));
+            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "", finishReasonOf(response));
         } catch (Exception e) {
             ErrorClassifier.ErrorType errorType = errorClassifier != null ? errorClassifier.classify(e) : ErrorClassifier.ErrorType.RETRYABLE;
             log.warn("Model complete() failed — errorType={}: {}", errorType, e.getMessage());
@@ -302,14 +248,8 @@ public class LangChain4jModelClient implements ModelClient {
 
         ChatRequest request = ChatRequest.builder()
             .messages(chatMessages)
-            .parameters(buildParameters(specs, reasoningEffort, fastMode, maxTokens,
-                options != null ? options.modelName() : null))
+            .parameters(buildParameters(specs, reasoningEffort, fastMode, maxTokens, options))
             .build();
-        // Track the per-request model so the HTTP-layer developer-role rewrite
-        // (Hermes parity) evaluates the policy against the ACTUAL model.
-        currentModelName = options != null && options.modelName() != null && !options.modelName().isBlank()
-            ? options.modelName()
-            : properties.getModel().getModelName();
 
         // OpenAiStreamingChatModel.doChat() is async — block until streaming completes
         java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
@@ -320,7 +260,7 @@ public class LangChain4jModelClient implements ModelClient {
         final java.util.concurrent.atomic.AtomicBoolean errored = new java.util.concurrent.atomic.AtomicBoolean(false);
         final java.util.concurrent.atomic.AtomicBoolean completed = new java.util.concurrent.atomic.AtomicBoolean(false);
 
-        streamingChatModel.doChat(request, new StreamingChatResponseHandler() {
+        streamingChatModelFor(options).doChat(request, new StreamingChatResponseHandler() {
             private final StringBuilder content = new StringBuilder();
 
             @Override
@@ -344,7 +284,7 @@ public class LangChain4jModelClient implements ModelClient {
                     }
                     // H20: Persist token usage from the complete streaming response,
                     // mirroring what complete() does for the non-streaming path.
-                    persistUsage(completeResponse);
+                    persistUsage(completeResponse, options);
                     if (completeResponse.aiMessage().hasToolExecutionRequests()) {
                         List<ToolCall> calls = new java.util.ArrayList<>();
                         int callIdx = 0;
@@ -473,10 +413,11 @@ public class LangChain4jModelClient implements ModelClient {
         );
         ChatRequest request = ChatRequest.builder()
             .messages(List.of(message))
-            .parameters(buildParameters(List.of(), resolveReasoningEffort(options), resolveFastMode(options), resolveMaxTokens(options)))
+            .parameters(buildParameters(List.of(), resolveReasoningEffort(options), resolveFastMode(options),
+                resolveMaxTokens(options), options))
             .build();
-        dev.langchain4j.model.chat.response.ChatResponse response = chatModel.chat(request);
-        persistUsage(response);
+        dev.langchain4j.model.chat.response.ChatResponse response = chatModelFor(options).chat(request);
+        persistUsage(response, options);
         return response.aiMessage().text();
     }
 
@@ -497,18 +438,202 @@ public class LangChain4jModelClient implements ModelClient {
                                                                                        int reasoningEffort,
                                                                                        boolean fastMode,
                                                                                        int maxTokens,
-                                                                                       String modelOverride) {
-        String effectiveModel = modelOverride != null && !modelOverride.isBlank()
-            ? modelOverride
-            : properties.getModel().getModelName();
+                                                                                       ModelRequestOptions options) {
+        String effectiveModel = effectiveModelName(options);
         var builder = OpenAiChatRequestParameters.builder()
             .modelName(effectiveModel)
-            .toolSpecifications(specs)
-            .maxCompletionTokens(fastMode ? Math.min(maxTokens, 2048) : maxTokens);
-        if (reasoningEffort > 0 && !fastMode) {
+            .toolSpecifications(specs);
+        Double temperature = temperatureForModel(effectiveModel, properties.getModel().getTemperature());
+        if (temperature != null) {
+            builder.temperature(temperature);
+        }
+        int effectiveMaxTokens = fastMode ? Math.min(maxTokens, 2048) : maxTokens;
+        if (requiresMaxCompletionTokens(effectiveModel, effectiveBaseUrl(options))) {
+            builder.maxCompletionTokens(effectiveMaxTokens);
+        } else {
+            builder.maxOutputTokens(effectiveMaxTokens);
+        }
+        String serviceTier = clean(options != null ? options.serviceTier() : null);
+        if (serviceTier != null) {
+            builder.serviceTier(serviceTier);
+        }
+        if (reasoningEffort > 0
+            && !fastMode
+            && shouldSendTopLevelReasoningEffort(effectiveModel, effectiveBaseUrl(options))) {
             builder.reasoningEffort(effortToString(reasoningEffort));
         }
         return builder.build();
+    }
+
+    private ChatModel chatModelFor(ModelRequestOptions options) {
+        if (options == null || !options.hasTransportOverride()) {
+            return chatModel;
+        }
+        return dev.langchain4j.model.openai.OpenAiChatModel.builder()
+            .baseUrl(effectiveBaseUrl(options))
+            .apiKey(effectiveApiKey(options))
+            .modelName(effectiveModelName(options))
+            .timeout(java.time.Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
+            .maxRetries(0)
+            .returnThinking(properties.getModel().isReturnThinking())
+            .sendThinking(properties.getModel().isReturnThinking(),
+                properties.getModel().getThinkingFieldName())
+            .build();
+    }
+
+    private StreamingChatModel streamingChatModelFor(ModelRequestOptions options) {
+        if (options == null || !options.hasTransportOverride()) {
+            return streamingChatModel;
+        }
+        return dev.langchain4j.model.openai.OpenAiStreamingChatModel.builder()
+            .baseUrl(effectiveBaseUrl(options))
+            .apiKey(effectiveApiKey(options))
+            .modelName(effectiveModelName(options))
+            .timeout(java.time.Duration.ofSeconds(properties.getModel().getTimeoutSeconds()))
+            .returnThinking(properties.getModel().isReturnThinking())
+            .sendThinking(properties.getModel().isReturnThinking(),
+                properties.getModel().getThinkingFieldName())
+            .build();
+    }
+
+    private String effectiveModelName(ModelRequestOptions options) {
+        if (options != null && options.modelName() != null && !options.modelName().isBlank()) {
+            return options.modelName();
+        }
+        return properties.getModel().getModelName();
+    }
+
+    private String effectiveBaseUrl(ModelRequestOptions options) {
+        if (options != null && options.baseUrl() != null && !options.baseUrl().isBlank()) {
+            return options.baseUrl();
+        }
+        return defaultBaseUrl;
+    }
+
+    private String effectiveApiKey(ModelRequestOptions options) {
+        if (options != null && options.apiKey() != null && !options.apiKey().isBlank()) {
+            return options.apiKey();
+        }
+        return defaultApiKey;
+    }
+
+    static boolean requiresMaxCompletionTokens(String model, String baseUrl) {
+        String host = baseUrlHostname(baseUrl);
+        return "api.openai.com".equals(host)
+            || hostMatches(host, "openai.azure.com")
+            || "api.githubcopilot.com".equals(host)
+            || host.endsWith(".githubcopilot.com")
+            || modelForcesMaxCompletionTokens(model);
+    }
+
+    static boolean shouldSendTopLevelReasoningEffort(String model, String baseUrl) {
+        if (isKimiModel(model) || isDeepSeekReasoningModel(model) || isGlmReasoningModel(model)) {
+            return true;
+        }
+        String host = baseUrlHostname(baseUrl);
+        return ("api.openai.com".equals(host) || hostMatches(host, "openai.azure.com"))
+            && isOpenAiReasoningModel(model);
+    }
+
+    static boolean modelForcesMaxCompletionTokens(String model) {
+        String m = clean(model);
+        if (m == null) {
+            return false;
+        }
+        m = m.toLowerCase(java.util.Locale.ROOT);
+        int slash = m.lastIndexOf('/');
+        if (slash >= 0) {
+            m = m.substring(slash + 1);
+        }
+        return m.startsWith("gpt-4o")
+            || m.startsWith("gpt-4.1")
+            || m.startsWith("gpt-5")
+            || m.startsWith("o1")
+            || m.startsWith("o3")
+            || m.startsWith("o4");
+    }
+
+    private static boolean isOpenAiReasoningModel(String model) {
+        String bare = bareModelName(model);
+        return bare != null
+            && (bare.startsWith("gpt-5")
+                || bare.startsWith("o1")
+                || bare.startsWith("o3")
+                || bare.startsWith("o4"));
+    }
+
+    private static boolean isDeepSeekReasoningModel(String model) {
+        String bare = bareModelName(model);
+        return bare != null
+            && (bare.startsWith("deepseek-reasoner")
+                || bare.startsWith("deepseek-r1"));
+    }
+
+    private static boolean isGlmReasoningModel(String model) {
+        String m = clean(model);
+        if (m == null) {
+            return false;
+        }
+        m = m.toLowerCase(java.util.Locale.ROOT);
+        return m.contains("glm-5.2")
+            || m.contains("glm-5-2")
+            || m.contains("glm-5p2")
+            || m.contains("glm-5.3")
+            || m.contains("glm-5-3")
+            || m.contains("glm-5p3");
+    }
+
+    static Double temperatureForModel(String model, double configuredTemperature) {
+        if (isKimiModel(model)) {
+            return null;
+        }
+        if (isArceeTrinityThinking(model)) {
+            return 0.5d;
+        }
+        return configuredTemperature;
+    }
+
+    private static boolean isKimiModel(String model) {
+        String bare = bareModelName(model);
+        return bare != null && (bare.startsWith("kimi-") || "kimi".equals(bare));
+    }
+
+    private static boolean isArceeTrinityThinking(String model) {
+        return "trinity-large-thinking".equals(bareModelName(model));
+    }
+
+    private static String bareModelName(String model) {
+        String m = clean(model);
+        if (m == null) {
+            return null;
+        }
+        m = m.toLowerCase(java.util.Locale.ROOT);
+        int slash = m.lastIndexOf('/');
+        return slash >= 0 ? m.substring(slash + 1) : m;
+    }
+
+    private static String baseUrlHostname(String baseUrl) {
+        String raw = clean(baseUrl);
+        if (raw == null) {
+            return "";
+        }
+        try {
+            java.net.URI uri = java.net.URI.create(raw.contains("://") ? raw : "//" + raw);
+            String host = uri.getHost();
+            return host != null
+                ? host.toLowerCase(java.util.Locale.ROOT).replaceFirst("\\.+$", "")
+                : "";
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
+    }
+
+    private static boolean hostMatches(String host, String domain) {
+        return host.equals(domain) || host.endsWith("." + domain);
+    }
+
+    private static String clean(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     /**
@@ -601,7 +726,10 @@ public class LangChain4jModelClient implements ModelClient {
                             .arguments(canonicalizeArguments(c.arguments()))
                             .build())
                         .collect(Collectors.toList());
-                    yield AiMessage.from(requests);
+                    String content = message.content();
+                    yield content != null && !content.isBlank()
+                        ? AiMessage.from(content, requests)
+                        : AiMessage.from(requests);
                 }
                 yield AiMessage.from(message.content() != null ? message.content() : "");
             }
@@ -680,65 +808,79 @@ public class LangChain4jModelClient implements ModelClient {
         return ToolSpecification.builder()
             .name(definition.name())
             .description(definition.description())
-            .parameters(toJsonSchema(definition.parameters()))
+            .parameters(LangChain4jToolSchemaMapper.toJsonObjectSchema(definition.parameters()))
             .build();
     }
 
-    private JsonObjectSchema toJsonSchema(Map<String, Object> schema) {
-        if (schema == null) {
-            return JsonObjectSchema.builder().build();
-        }
-        @SuppressWarnings("unchecked")
-        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
-        @SuppressWarnings("unchecked")
-        List<String> required = (List<String>) schema.get("required");
-        JsonObjectSchema.Builder builder = JsonObjectSchema.builder();
-        if (props != null) {
-            for (Map.Entry<String, Object> e : props.entrySet()) {
-                builder.addStringProperty(e.getKey(), descriptionOf(e.getValue()));
-            }
-        }
-        if (required != null) {
-            builder.required(required);
-        }
-        return builder.build();
-    }
-
-    private String descriptionOf(Object spec) {
-        if (spec instanceof Map m) {
-            Object desc = m.get("description");
-            return desc != null ? desc.toString() : "";
-        }
-        return "";
-    }
-
-    private void persistUsage(dev.langchain4j.model.chat.response.ChatResponse response) {
+    private void persistUsage(dev.langchain4j.model.chat.response.ChatResponse response, ModelRequestOptions options) {
         try {
             if (response.tokenUsage() == null || usageConsumer == null) return;
             int prompt = response.tokenUsage().inputTokenCount();
             int completion = response.tokenUsage().outputTokenCount();
             // Build TokenUsage with cache token tracking (real token counts from API response)
             TokenUsage usage = TokenUsage.of(prompt, completion);
-            usageConsumer.accept(new Usage(properties.getModel().getProvider(), properties.getModel().getModelName(), prompt, completion));
+            usageConsumer.accept(new Usage(effectiveProvider(options), effectiveModelName(options), prompt, completion));
         } catch (Exception e) {
             log.warn("Could not persist model usage: {}", e.getMessage());
         }
     }
 
-    /** Extract provider usage for the returned ChatResponse (null when absent). */
-    private TokenUsage extractUsage(dev.langchain4j.model.chat.response.ChatResponse response) {
-        try {
-            var tu = response.tokenUsage();
-            if (tu == null) return null;
-            Integer input = tu.inputTokenCount();
-            Integer output = tu.outputTokenCount();
-            return TokenUsage.of(input != null ? input : 0, output != null ? output : 0);
-        } catch (Exception e) {
-            return null;
+    private String effectiveProvider(ModelRequestOptions options) {
+        if (options != null && options.provider() != null && !options.provider().isBlank()) {
+            return options.provider();
         }
+        return properties.getModel().getProvider();
     }
 
     public record Usage(String provider, String model, int promptTokens, int completionTokens) {
         public int totalTokens() { return promptTokens + completionTokens; }
+    }
+
+    /**
+     * Hermes parity: developer-role models (name contains gpt-5/codex) must
+     * get {@code role:"developer"} on the wire. LangChain4j 1.18 cannot emit
+     * that role from its message model, so every outgoing body is rewritten
+     * at the HTTP boundary. The model name is read per request through the
+     * supplier so per-request model overrides (/model command) are honored.
+     */
+    private dev.langchain4j.http.client.HttpClientBuilder developerRoleHttpClientBuilder() {
+        String configuredModel = properties.getModel().getModelName();
+        return new dev.langchain4j.http.client.HttpClientBuilder() {
+            private final java.time.Duration connectTimeout = java.time.Duration.ofSeconds(20);
+            private java.time.Duration readTimeout = java.time.Duration
+                .ofSeconds(properties.getModel().getTimeoutSeconds());
+
+            @Override
+            public java.time.Duration connectTimeout() {
+                return connectTimeout;
+            }
+
+            @Override
+            public dev.langchain4j.http.client.HttpClientBuilder connectTimeout(java.time.Duration d) {
+                return this;
+            }
+
+            @Override
+            public java.time.Duration readTimeout() {
+                return readTimeout;
+            }
+
+            @Override
+            public dev.langchain4j.http.client.HttpClientBuilder readTimeout(java.time.Duration d) {
+                this.readTimeout = d;
+                return this;
+            }
+
+            @Override
+            public dev.langchain4j.http.client.HttpClient build() {
+                dev.langchain4j.http.client.HttpClient inner =
+                    new dev.langchain4j.http.client.jdk.JdkHttpClientBuilder()
+                        .connectTimeout(connectTimeout)
+                        .readTimeout(readTimeout)
+                        .build();
+                return new DeveloperRoleHttpClient(inner,
+                    () -> currentModelName != null ? currentModelName : configuredModel);
+            }
+        };
     }
 }

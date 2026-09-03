@@ -81,8 +81,9 @@ public class ToolBatchPipeline {
                     validCalls.add(tc);
                 } else {
                     synthetic.add(Message.toolResult(tc.pairingId(),
-                        "Tool '" + tc.name() + "' does not exist. Available tools: "
-                            + String.join(", ", new java.util.TreeSet<>(registeredToolNames)),
+                        com.azhukov.agent.core.tool.ToolCallValidator.failurePayload(
+                            "Tool '" + tc.name() + "' does not exist. Available tools: "
+                                + String.join(", ", new java.util.TreeSet<>(registeredToolNames))),
                         turnIndex));
                 }
             }
@@ -104,14 +105,16 @@ public class ToolBatchPipeline {
                     .anyMatch(e -> e.contains("'" + tc.name() + "'"));
                 if (hasError) {
                     synthetic.add(Message.toolResult(tc.pairingId(),
-                        "Error: Invalid JSON arguments. Please retry with valid JSON. "
-                            + "For tools with no required parameters, use an empty object: {}.",
+                        com.azhukov.agent.core.tool.ToolCallValidator.failurePayload(
+                            "Error: Invalid JSON arguments. Please retry with valid JSON. "
+                            + "For tools with no required parameters, use an empty object: {}"),
                         turnIndex));
                 } else {
                     // The call itself parsed, but a sibling invalid call makes the
                     // whole batch unverifiable — skip it with a recovery result.
                     synthetic.add(Message.toolResult(tc.pairingId(),
-                        "Skipped: other tool call in this response had invalid JSON.",
+                        com.azhukov.agent.core.tool.ToolCallValidator.failurePayload(
+                            "Skipped: other tool call in this response had invalid JSON."),
                         turnIndex));
                 }
             }

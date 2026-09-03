@@ -16,6 +16,7 @@ import com.azhukov.agent.bot.formatting.ResponseFilter;
 import com.azhukov.agent.bot.goal.GoalAutoContinueService;
 import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
+import com.azhukov.agent.bot.media.AgentMediaPaths;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
 import com.azhukov.agent.bot.media.MediaDeliveryService;
 import com.azhukov.agent.bot.polling.UpdateEvent;
@@ -855,9 +856,9 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      */
     private boolean isMediaPathAllowed(String path) {
         try {
-            Path resolved = Paths.get(path).normalize();
-            Path workingDir = Paths.get(properties.getWorkingDirectory()).normalize();
-            Path mediaDir = Paths.get("/tmp/agent-media/").normalize();
+            Path resolved = Paths.get(path).toAbsolutePath().normalize();
+            Path workingDir = Paths.get(properties.getWorkingDirectory()).toAbsolutePath().normalize();
+            Path mediaDir = AgentMediaPaths.mediaDir();
             return resolved.startsWith(workingDir) || resolved.startsWith(mediaDir);
         } catch (Exception e) {
             return false;

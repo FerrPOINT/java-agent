@@ -56,7 +56,8 @@ class DebugReportControllerTest {
             null, null, null,
             new com.azhukov.agent.core.security.ApprovalQueue(),
             agentProperties,
-            null
+            null,
+            org.mockito.Mockito.mock(com.azhukov.agent.core.tool.ToolRegistry.class)
         );
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }

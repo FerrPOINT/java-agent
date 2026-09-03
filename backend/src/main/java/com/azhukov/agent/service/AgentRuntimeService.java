@@ -264,7 +264,9 @@ public class AgentRuntimeService {
     @Transactional
     public void resetSession(UUID sessionId) {
         requireSessionOwnership(sessionId);
-        messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
+        // Bulk delete (single DELETE statement) instead of load-then-deleteAll —
+        // avoids materializing the whole transcript and the N+1 flush.
+        messageRepository.deleteBySessionId(sessionId);
         // Hermes parity / leak fix (seam audit 2026-08-21): /reset must also drop
         // runtime per-session state, or stale counters leak into the "fresh" session:
         // - MemoryNudgeManager.clearSession (turnsSinceMemory, itersSinceSkill) and
@@ -695,4 +697,50 @@ public class AgentRuntimeService {
             reasoningEffort, fastMode, request.voiceMode(),
             request.personality(), request.subgoal(), maxTokens);
     }
+
+public ChatResponseDto runApiTurn(Session session, String message, ModelRequestOptions options) {
+        return runApiTurn(session, Message.user(message), options);
+    }
+
+public ChatResponseDto runApiTurn(Session session, Message message, ModelRequestOptions options) {
+        ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
+        Session runtimeSession = RuntimeModelOptionsResolver.applyEffectiveRuntime(session, properties, effectiveOptions);
+        Message userMessage = apiUserMessage(message);
+        if (midTurnPersistenceCallback != null) {
+            transactionTemplate.execute(status -> {
+                Instant now = Instant.now();
+                MessageEntity userMsg = new MessageEntity();
+                userMsg.setSessionId(runtimeSession.id());
+                userMsg.setRole("user");
+                userMsg.setContent(userMessage.content());
+                userMsg.setTurnIndex(0);
+                userMsg.setImageCount(userMessage.imageCount());
+                userMsg.setCreatedAt(now);
+                messageRepository.save(userMsg);
+                return null;
+            });
+        }
+
+        TurnResult result = agentRuntime.runTurn(runtimeSession, userMessage, List.of(), effectiveOptions);
+        if (midTurnPersistenceCallback == null) {
+            persistMessages(runtimeSession.id(), result.messages());
+        }
+
+        int[] usage = turnUsageCollector.getAndClear();
+        if (usage != null && usage.length == 2) {
+            usageTracker.recordTurn(runtimeSession.id(), runtimeSession.userId(),
+                resolveModelUsed(runtimeSession),
+                usage[0], usage[1]);
+        }
+
+        return buildResponse(runtimeSession, result, false);
+    }
+
+
+private Message apiUserMessage(Message message) {
+        String content = message != null && message.content() != null ? message.content() : "";
+        int imageCount = message != null && message.imageCount() != null ? message.imageCount() : 0;
+        return imageCount > 0 ? Message.userWithImages(content, imageCount) : Message.user(content);
+    }
+
 }

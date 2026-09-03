@@ -25,6 +25,7 @@ class SessionEntityMapperTest {
         entity.setTitle("title");
         entity.setModelProvider("openai");
         entity.setModelName("gpt-4");
+        entity.setSystemPrompt("Be precise.");
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
 
@@ -35,12 +36,13 @@ class SessionEntityMapperTest {
         assertThat(session.title()).isEqualTo("title");
         assertThat(session.modelProvider()).isEqualTo("openai");
         assertThat(session.modelName()).isEqualTo("gpt-4");
+        assertThat(session.systemPrompt()).isEqualTo("Be precise.");
     }
 
     @Test
     void toEntityMapsAllFields() {
         UUID id = UUID.randomUUID();
-        Session session = new Session(id, "u1", "title", "openai", "gpt-4", null, Map.of());
+        Session session = new Session(id, "u1", "title", "openai", "gpt-4", "Be precise.", Map.of());
 
         SessionEntity entity = mapper.toEntity(session);
 
@@ -49,6 +51,7 @@ class SessionEntityMapperTest {
         assertThat(entity.getTitle()).isEqualTo("title");
         assertThat(entity.getModelProvider()).isEqualTo("openai");
         assertThat(entity.getModelName()).isEqualTo("gpt-4");
+        assertThat(entity.getSystemPrompt()).isEqualTo("Be precise.");
     }
 
     @Test

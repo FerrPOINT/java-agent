@@ -336,9 +336,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
         List<Message> turnMessages = new ArrayList<>();
         // Pass system prompt override from session metadata (set by DelegateTaskTool)
         String systemPromptOverride = session.getMetadata("system_prompt_override");
-        if (systemPromptOverride != null && !systemPromptOverride.isBlank()
+        // PR-3 parity: a persisted per-session system prompt (session.systemPrompt())
+        // overrides the default base prompt, same priority as a delegation override.
+        String persistedPrompt = session.systemPrompt();
+        String effectiveOverride = (systemPromptOverride != null && !systemPromptOverride.isBlank())
+            ? systemPromptOverride
+            : (persistedPrompt != null && !persistedPrompt.isBlank() ? persistedPrompt : null);
+        if (effectiveOverride != null
                 && promptBuilder instanceof DefaultPromptBuilder dpb) {
-            turnMessages.add(dpb.buildSystemMessage(session, systemPromptOverride));
+            turnMessages.add(dpb.buildSystemMessage(session, effectiveOverride));
         } else {
             turnMessages.add(promptBuilder.buildSystemMessage(session));
         }
@@ -520,6 +526,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }
 
             List<Message> context = contextEngine.prepareContext(session, turnMessages);
+            session = resolveRotatedSession(session);
             // Hermes parity: pre-API-call /steer drain (conversation_loop.py:2104-2153).
             if (steerBuffer != null) {
                 String preApiSteer = steerBuffer.consume(session.id());
@@ -916,7 +923,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                             tracker.incrementVerificationStopNudges();
                             log.info("Verify-on-stop nudge issued for session {} (attempt {}, {} changed paths)",
                                 session.id(), tracker.getVerificationStopNudges(), changedPaths.size());
-                            turnMessages.add(Message.assistant(visibleContent, turnIndex));
+                            // assistant content already recorded above — do not duplicate (PR-3 fix)
                             turnMessages.add(Message.user(nudge));
                             // Continue the loop — model gets another turn to verify
                             continue;

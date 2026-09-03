@@ -20,6 +20,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
@@ -147,7 +148,7 @@ class KanbanControllerT1Test {
     @Test
     void completeKanbanItem_found_returnsOk() throws Exception {
         TodoDto dto = new TodoDto(TODO_ID, null, "default", "task", "done", null, FIXED_TIME);
-        when(todoService.markDone(TODO_ID)).thenReturn(Optional.of(dto));
+        when(todoService.markDoneForUser(eq(TODO_ID), anyString())).thenReturn(Optional.of(dto));
 
         mockMvc.perform(post("/api/v1/agent/kanban/done/{id}", TODO_ID))
             .andExpect(status().isOk());
@@ -155,7 +156,7 @@ class KanbanControllerT1Test {
 
     @Test
     void completeKanbanItem_notFound_returns404() throws Exception {
-        when(todoService.markDone(TODO_ID)).thenReturn(Optional.empty());
+        when(todoService.markDoneForUser(eq(TODO_ID), anyString())).thenReturn(Optional.empty());
 
         mockMvc.perform(post("/api/v1/agent/kanban/done/{id}", TODO_ID))
             .andExpect(status().isNotFound());
@@ -172,7 +173,7 @@ class KanbanControllerT1Test {
 
     @Test
     void completeKanbanItem_serviceThrows_returns500() throws Exception {
-        when(todoService.markDone(TODO_ID)).thenThrow(new RuntimeException("fail"));
+        when(todoService.markDoneForUser(eq(TODO_ID), anyString())).thenThrow(new RuntimeException("fail"));
 
         mockMvc.perform(post("/api/v1/agent/kanban/done/{id}", TODO_ID))
             .andExpect(status().isInternalServerError());
@@ -231,7 +232,7 @@ class KanbanControllerT1Test {
 
     @Test
     void markDone_otherUsersTask_returns403() throws Exception {
-        when(todoService.markDone(TODO_ID)).thenThrow(
+        when(todoService.markDoneForUser(eq(TODO_ID), anyString())).thenThrow(
             new SecurityException("Task does not belong to the current user"));
         mockMvc.perform(post("/api/v1/agent/kanban/done/" + TODO_ID))
             .andExpect(status().isForbidden())

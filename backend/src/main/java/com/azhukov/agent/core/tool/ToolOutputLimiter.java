@@ -1,7 +1,10 @@
 package com.azhukov.agent.core.tool;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -14,6 +17,8 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @RequiredArgsConstructor
 public class ToolOutputLimiter {
+
+    private static final ObjectMapper JSON = SharedObjectMapper.get();
 
     private final AgentProperties properties;
 
@@ -67,12 +72,24 @@ public class ToolOutputLimiter {
                 return result;
             }
             return ToolResult.ok(truncated);
-        } else {
-            String truncated = truncate(result.error(), maxChars);
-            if (truncated == result.error()) {
+        }
+        if (result.content() != null && !result.content().isEmpty()) {
+            String truncatedContent = truncate(result.content(), maxChars);
+            String truncatedError = truncate(result.error(), maxChars);
+            if (truncatedContent == result.content() && truncatedError == result.error()) {
                 return result;
             }
-            return ToolResult.fail(truncated);
+            return new ToolResult(false, truncatedContent, truncatedError);
         }
+        String truncated = truncate(result.error(), maxChars);
+        return failureResult(truncated);
+    }
+
+    private static ToolResult failureResult(String error) {
+        String message = error == null || error.isBlank() ? "Tool failed" : error;
+        ObjectNode payload = JSON.createObjectNode();
+        payload.put("success", false);
+        payload.put("error", message);
+        return new ToolResult(false, payload.toString(), message);
     }
 }

@@ -96,18 +96,49 @@ public class AgentSessionResolver {
      * The source becomes the platform in the system prompt volatile tier.
      */
     public Session createSession(String userId, String provider, String modelName, String source) {
+        SessionEntity e = newSessionEntity(userId, provider, modelName, source);
+        SessionEntity saved = transactionTemplate.execute(status -> sessionRepository.save(e));
+        return sessionMapper.toDomain(saved);
+    }
+
+    /**
+     * Load a known external session scope, or create it with that exact ID.
+     * Used by OpenAI-compatible stateless chat where Hermes derives a stable
+     * session key from the first prompt instead of minting a fresh scope on
+     * every request.
+     */
+    public Session loadOrCreateSession(UUID sessionId,
+                                       String userId,
+                                       String provider,
+                                       String modelName,
+                                       String source) {
+        if (sessionId == null) {
+            return createSession(userId, provider, modelName, source);
+        }
+        return transactionTemplate.execute(status -> {
+            SessionEntity existing = sessionRepository.findById(sessionId).orElse(null);
+            if (existing != null) {
+                return hydrateSession(existing);
+            }
+            SessionEntity entity = newSessionEntity(userId, provider, modelName, source);
+            entity.setId(sessionId);
+            return hydrateSession(sessionRepository.save(entity));
+        });
+    }
+
+    private SessionEntity newSessionEntity(String userId, String provider, String modelName, String source) {
+        Instant now = Instant.now();
         SessionEntity e = new SessionEntity();
         e.setUserId(userId);
         e.setModelProvider(provider);
         e.setModelName(modelName);
         e.setTitle("New chat");
-        e.setCreatedAt(Instant.now());
-        e.setUpdatedAt(Instant.now());
+        e.setCreatedAt(now);
+        e.setUpdatedAt(now);
         e.setSource(source);
-        e.setLastActive(Instant.now());
+        e.setLastActive(now);
         e.setMessageCount(0);
-        SessionEntity saved = transactionTemplate.execute(status -> sessionRepository.save(e));
-        return sessionMapper.toDomain(saved);
+        return e;
     }
 
     /**
@@ -126,33 +157,40 @@ public class AgentSessionResolver {
         return transactionTemplate.execute(status -> {
             SessionEntity e = sessionRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
-            // Force-initialize the lazy cliState collection inside the tx
-            Map<String, String> cliStateCopy;
-            if (Hibernate.isInitialized(e.getCliState())) {
-                cliStateCopy = new HashMap<>(e.getCliState());
-            } else {
-                Hibernate.initialize(e.getCliState());
-                cliStateCopy = new HashMap<>(e.getCliState());
-            }
-            Session session = sessionMapper.toDomain(e);
-            for (var entry : cliStateCopy.entrySet()) {
-                session = session.withMetadata(entry.getKey(), entry.getValue());
-            }
-            // Add source as platform metadata so the system prompt builder
-            // can include "Platform: telegram" in the volatile tier.
-            if (e.getSource() != null && !e.getSource().isBlank()) {
-                session = session.withMetadata("platform", e.getSource());
-            }
-            // Add userId as userDisplayName so the system prompt can include "User: ...".
-            if (e.getUserId() != null && !e.getUserId().isBlank() && !AgentProperties.DEFAULT_USER_ID.equals(e.getUserId())
-                    && (session.metadata() == null || !session.metadata().containsKey("userDisplayName"))) {
-                session = session.withMetadata("userDisplayName", e.getUserId());
-            }
-            if (e.getSubgoal() != null && !e.getSubgoal().isBlank()) {
-                session = session.withMetadata("subgoal", e.getSubgoal());
-            }
-            return session;
+            return hydrateSession(e);
         });
+    }
+
+    private Session hydrateSession(SessionEntity e) {
+        // Force-initialize the lazy cliState collection inside the tx
+        Map<String, String> cliStateCopy;
+        if (Hibernate.isInitialized(e.getCliState())) {
+            cliStateCopy = new HashMap<>(e.getCliState());
+        } else {
+            Hibernate.initialize(e.getCliState());
+            cliStateCopy = new HashMap<>(e.getCliState());
+        }
+        Session session = sessionMapper.toDomain(e);
+        for (var entry : cliStateCopy.entrySet()) {
+            session = session.withMetadata(entry.getKey(), entry.getValue());
+        }
+        // Add source as platform metadata so the system prompt builder
+        // can include "Platform: telegram" in the volatile tier.
+        if (e.getSource() != null && !e.getSource().isBlank()) {
+            session = session.withMetadata("platform", e.getSource());
+        }
+        if (e.getProfile() != null && !e.getProfile().isBlank()) {
+            session = session.withMetadata("profile", e.getProfile());
+        }
+        // Add userId as userDisplayName so the system prompt can include "User: ...".
+        if (e.getUserId() != null && !e.getUserId().isBlank() && !AgentProperties.DEFAULT_USER_ID.equals(e.getUserId())
+                && (session.metadata() == null || !session.metadata().containsKey("userDisplayName"))) {
+            session = session.withMetadata("userDisplayName", e.getUserId());
+        }
+        if (e.getSubgoal() != null && !e.getSubgoal().isBlank()) {
+            session = session.withMetadata("subgoal", e.getSubgoal());
+        }
+        return session;
     }
 
     /**

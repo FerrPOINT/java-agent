@@ -2,6 +2,8 @@ package com.azhukov.agent.tools.file;
 
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -17,8 +19,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SearchZeroMatchHintTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private final SearchFilesTool tool = new SearchFilesTool();
     private final Session session = Session.create("u", "p", "m");
+
+    private static JsonNode jsonContent(ToolResult result) throws Exception {
+        return JSON.readTree(result.content());
+    }
 
     @Test
     void zeroMatchWithCaseInsensitiveMatchesAppendsHint(@TempDir Path dir) throws Exception {
@@ -28,8 +36,9 @@ class SearchZeroMatchHintTest {
             "{\"pattern\":\"hello\",\"path\":\"" + dir + "\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("[hint: 0 case-sensitive matches, but 2 case-insensitive matches found");
-        assertThat(r.content()).contains("try with case-insensitive flag");
+        assertThat(jsonContent(r).path("warning").asText())
+            .contains("0 case-sensitive matches, but 2 case-insensitive matches found")
+            .contains("try with case-insensitive flag");
     }
 
     @Test
@@ -40,7 +49,7 @@ class SearchZeroMatchHintTest {
             "{\"pattern\":\"xyz\",\"path\":\"" + dir + "\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).doesNotContain("[hint:");
+        assertThat(jsonContent(r).has("warning")).isFalse();
     }
 
     @Test
@@ -51,7 +60,7 @@ class SearchZeroMatchHintTest {
             "{\"pattern\":\"hello\",\"path\":\"" + dir + "\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).doesNotContain("[hint: 0 case-sensitive");
+        assertThat(jsonContent(r).has("warning")).isFalse();
     }
 
     @Test
@@ -63,7 +72,7 @@ class SearchZeroMatchHintTest {
             "{\"pattern\":\"hello\",\"path\":\"" + dir + "\",\"fileGlob\":\"*.java\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("1 case-insensitive matches found");
+        assertThat(jsonContent(r).path("warning").asText()).contains("1 case-insensitive matches found");
     }
 
     @Test
@@ -76,7 +85,7 @@ class SearchZeroMatchHintTest {
             "{\"pattern\":\"fOO\",\"path\":\"" + dir + "\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("3 case-insensitive matches found");
+        assertThat(jsonContent(r).path("warning").asText()).contains("3 case-insensitive matches found");
     }
 
     @Test
@@ -86,7 +95,7 @@ class SearchZeroMatchHintTest {
             "{\"pattern\":\"anything\",\"path\":\"" + dir + "\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).doesNotContain("[hint:");
+        assertThat(jsonContent(r).has("warning")).isFalse();
     }
 
     @Test
@@ -97,6 +106,6 @@ class SearchZeroMatchHintTest {
             "{\"pattern\":\"TEST\\\\d+\",\"path\":\"" + dir + "\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("case-insensitive matches found");
+        assertThat(jsonContent(r).path("warning").asText()).contains("case-insensitive matches found");
     }
 }

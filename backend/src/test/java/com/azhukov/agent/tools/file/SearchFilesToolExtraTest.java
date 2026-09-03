@@ -2,6 +2,8 @@ package com.azhukov.agent.tools.file;
 
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -15,8 +17,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SearchFilesToolExtraTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private final SearchFilesTool tool = new SearchFilesTool();
     private final Session session = Session.create("u", "p", "m");
+
+    private static JsonNode jsonContent(ToolResult result) throws Exception {
+        return JSON.readTree(result.content());
+    }
 
     @Test
     void searchContentWithFileGlobFilter(@TempDir Path dir) throws Exception {
@@ -57,7 +65,9 @@ class SearchFilesToolExtraTest {
         ToolResult r = tool.execute(
             "{\"pattern\":\"match\",\"path\":\"" + dir + "\",\"limit\":5}", null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("Hint: Results truncated");
+        JsonNode json = jsonContent(r);
+        assertThat(json.path("truncated").asBoolean()).isTrue();
+        assertThat(json.path("hint").asText()).contains("Results truncated");
     }
 
     @Test
@@ -97,9 +107,7 @@ class SearchFilesToolExtraTest {
         ToolResult r = tool.execute(
             "{\"target\":\"files\",\"path\":\"" + dir + "\",\"pattern\":\"*.txt\",\"limit\":2}", null, session);
         assertThat(r.success()).isTrue();
-        // Should only return 2 files
-        String[] lines = r.content().split("\n");
-        assertThat(lines).hasSize(2);
+        assertThat(jsonContent(r).path("files")).hasSize(2);
     }
 
     @Test

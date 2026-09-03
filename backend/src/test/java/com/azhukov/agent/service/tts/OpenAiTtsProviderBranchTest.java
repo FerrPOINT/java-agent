@@ -1,14 +1,19 @@
 package com.azhukov.agent.service.tts;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
+import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -20,6 +25,8 @@ import static org.mockito.Mockito.*;
  * Covers endpoint URL construction, voice fallback, error paths, and escapeJson.
  */
 class OpenAiTtsProviderBranchTest {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private AgentProperties properties;
 
@@ -214,6 +221,65 @@ class OpenAiTtsProviderBranchTest {
 
         byte[] result = provider.synthesize("hello \"world\"\nnew\tline", null);
         assertThat(result).containsExactly(1, 2);
+    }
+
+    @Test
+    void synthesize_includesInstructionsAndOpenAiResponseFormat() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicReference<String> requestBody = new AtomicReference<>("");
+        server.createContext("/v1/audio/speech", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = new byte[]{7, 8};
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            properties.getModel().setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
+            OpenAiTtsProvider provider = new OpenAiTtsProvider(properties);
+
+            byte[] result = provider.synthesize("hello \"world\"\nnew line", "nova", 1.5, "Speak brightly");
+
+            assertThat(result).containsExactly(7, 8);
+            JsonNode body = MAPPER.readTree(requestBody.get());
+            assertThat(body.get("model").asText()).isEqualTo("gpt-4o-mini-tts");
+            assertThat(body.get("input").asText()).isEqualTo("hello \"world\"\nnew line");
+            assertThat(body.get("voice").asText()).isEqualTo("nova");
+            assertThat(body.get("speed").asDouble()).isEqualTo(1.5);
+            assertThat(body.get("response_format").asText()).isEqualTo("mp3");
+            assertThat(body.get("instructions").asText()).isEqualTo("Speak brightly");
+            assertThat(body.has("format")).isFalse();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void synthesize_usesConfiguredModelOverride() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicReference<String> requestBody = new AtomicReference<>("");
+        server.createContext("/v1/audio/speech", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = new byte[]{1};
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            properties.getTts().setModel("tts-1-hd");
+            properties.getModel().setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
+            OpenAiTtsProvider provider = new OpenAiTtsProvider(properties);
+
+            byte[] result = provider.synthesize("hello", null);
+
+            assertThat(result).containsExactly(1);
+            JsonNode body = MAPPER.readTree(requestBody.get());
+            assertThat(body.get("model").asText()).isEqualTo("tts-1-hd");
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test

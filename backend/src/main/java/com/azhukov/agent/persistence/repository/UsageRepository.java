@@ -20,4 +20,6 @@ public interface UsageRepository extends JpaRepository<UsageEntity, UUID> {
     List<UsageEntity> findByUserIdAndCreatedAtBetween(String userId, Instant start, Instant end);
 
     Page<UsageEntity> findByUserIdAndCreatedAtBetween(String userId, Instant start, Instant end, Pageable pageable);
+
+    List<UsageEntity> findByCreatedAtBetweenOrderByCreatedAtAsc(Instant start, Instant end);
 }

@@ -8,6 +8,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,7 +25,14 @@ public class DefaultUrlSafety implements UrlSafety {
     );
 
     private static final Set<String> METADATA_HOSTS = Set.of(
-            "metadata.google.internal"
+            "metadata.google.internal",
+            "metadata.goog"
+    );
+
+    private static final List<String> PROXY_ENV_VARS = List.of(
+            "HTTPS_PROXY", "https_proxy",
+            "HTTP_PROXY", "http_proxy",
+            "ALL_PROXY", "all_proxy"
     );
 
     @Override
@@ -54,23 +62,25 @@ public class DefaultUrlSafety implements UrlSafety {
             return false;
         }
         // Check configured blocked hosts
-        if (isHostBlocked(host)) {
+        String lowerHost = normalizeHost(host);
+        if (isHostBlocked(lowerHost)) {
             return false;
         }
         // Block localhost and known metadata endpoints by name
-        String lowerHost = host.toLowerCase();
         if (LOCALHOST_NAMES.contains(lowerHost)) {
             return false;
         }
-        if (METADATA_HOSTS.contains(lowerHost) || lowerHost.endsWith(".metadata.google.internal")) {
+        if (METADATA_HOSTS.contains(lowerHost)
+                || lowerHost.endsWith(".metadata.google.internal")
+                || lowerHost.endsWith(".metadata.goog")) {
             return false;
         }
         // Check for encoded private IPs (SSRF bypass techniques)
-        if (isEncodedPrivateIp(host)) {
+        if (isEncodedPrivateIp(lowerHost)) {
             return false;
         }
         // Resolve host and check for private/loopback/link-local/metadata IPs
-        if (isUnsafeAddress(host)) {
+        if (isUnsafeAddress(lowerHost)) {
             return false;
         }
         return true;
@@ -82,9 +92,9 @@ public class DefaultUrlSafety implements UrlSafety {
         if (blockedHosts == null || host == null) {
             return false;
         }
-        String lowerHost = host.toLowerCase();
+        String lowerHost = normalizeHost(host);
         for (String blocked : blockedHosts) {
-            String b = blocked.toLowerCase();
+            String b = normalizeHost(blocked);
             if (lowerHost.equals(b) || lowerHost.endsWith("." + b)) {
                 return true;
             }
@@ -94,37 +104,88 @@ public class DefaultUrlSafety implements UrlSafety {
 
     private boolean isUnsafeAddress(String host) {
         try {
-            // InetAddress.getByName handles DNS resolution and IP parsing.
+            // InetAddress handles DNS resolution and IP parsing.
             // It also normalizes decimal IP encodings (e.g., 2130706433 → 127.0.0.1).
-            InetAddress address = InetAddress.getByName(host);
-            if (address.isLoopbackAddress()) {
-                return true;
-            }
-            if (address.isAnyLocalAddress()) {
-                return true; // 0.0.0.0 or ::
-            }
-            if (address.isSiteLocalAddress()) {
-                return true; // 10.x, 172.16-31.x, 192.168.x
-            }
-            if (address.isLinkLocalAddress()) {
-                return true; // 169.254.x.x, fe80::
-            }
-            if (address.isMulticastAddress()) {
-                return true;
-            }
-            // Check for IPv6 unique local addresses (fc00::/7)
-            // Java's isSiteLocalAddress() does not cover IPv6 ULA
-            byte[] bytes = address.getAddress();
-            if (bytes != null && bytes.length == 16) {
-                if ((bytes[0] & 0xFE) == 0xFC) {
-                    return true; // fc00::/7 unique local
+            for (InetAddress address : resolveAll(host)) {
+                if (isUnsafeResolvedAddress(address)) {
+                    return true;
                 }
             }
         } catch (UnknownHostException e) {
-            // Can't resolve — allow, downstream HTTP client will handle
-            log.debug("Could not resolve host {}: {}", host, e.getMessage());
+            if (isProxyConfigured() && !isLikelyIpLiteral(host)) {
+                log.debug("Could not resolve host {}; proxy is configured, delegating DNS to proxy", host);
+                return false;
+            }
+            log.warn("Blocked URL because DNS resolution failed for host {}: {}", host, e.getMessage());
+            return true;
         }
         return false;
+    }
+
+    InetAddress[] resolveAll(String host) throws UnknownHostException {
+        return InetAddress.getAllByName(host);
+    }
+
+    boolean isProxyConfigured() {
+        for (String envName : PROXY_ENV_VARS) {
+            String value = System.getenv(envName);
+            if (value != null && !value.isBlank()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isUnsafeResolvedAddress(InetAddress address) {
+        if (address.isLoopbackAddress()) {
+            return true;
+        }
+        if (address.isAnyLocalAddress()) {
+            return true; // 0.0.0.0 or ::
+        }
+        if (address.isSiteLocalAddress()) {
+            return true; // 10.x, 172.16-31.x, 192.168.x
+        }
+        if (address.isLinkLocalAddress()) {
+            return true; // 169.254.x.x, fe80::
+        }
+        if (address.isMulticastAddress()) {
+            return true;
+        }
+        byte[] bytes = address.getAddress();
+        if (bytes == null) {
+            return false;
+        }
+        if (bytes.length == 4) {
+            return isBlockedIpv4Range(bytes, 0);
+        }
+        if (bytes.length == 16) {
+            if ((bytes[0] & 0xFE) == 0xFC) {
+                return true; // fc00::/7 unique local
+            }
+            if (isIpv4MappedAddress(bytes)) {
+                return isBlockedIpv4Range(bytes, 12);
+            }
+        }
+        return false;
+    }
+
+    private boolean isIpv4MappedAddress(byte[] bytes) {
+        for (int i = 0; i < 10; i++) {
+            if (bytes[i] != 0) {
+                return false;
+            }
+        }
+        return bytes[10] == (byte) 0xFF && bytes[11] == (byte) 0xFF;
+    }
+
+    private boolean isBlockedIpv4Range(byte[] bytes, int offset) {
+        return isPrivateRange(bytes[offset] & 0xFF, bytes[offset + 1] & 0xFF);
+    }
+
+    private boolean isLikelyIpLiteral(String host) {
+        return host.contains(":")
+                || host.matches("(?i)^(?:0x[0-9a-f]+|[0-9][0-9a-fx.:-]*)$");
     }
 
     /**
@@ -167,8 +228,18 @@ public class DefaultUrlSafety implements UrlSafety {
     private boolean isPrivateRange(int o1, int o2) {
         return o1 == 0 || o1 == 127 ||
                o1 == 10 ||
+               (o1 == 100 && o2 >= 64 && o2 <= 127) ||
                (o1 == 172 && o2 >= 16 && o2 <= 31) ||
+               (o1 == 198 && (o2 == 18 || o2 == 19)) ||
                (o1 == 192 && o2 == 168) ||
                (o1 == 169 && o2 == 254);
+    }
+
+    private String normalizeHost(String host) {
+        String normalized = host.toLowerCase(Locale.ROOT);
+        while (normalized.endsWith(".")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
     }
 }

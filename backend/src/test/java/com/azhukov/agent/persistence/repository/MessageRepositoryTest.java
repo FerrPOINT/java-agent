@@ -125,6 +125,56 @@ class MessageRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    void findByContentContainingIgnoreCaseMatchesStoredToolCalls() {
+        SessionEntity session = sessionRepository.save(newSession());
+        MessageEntity message = newMessage(session.getId(), "assistant", "", 0, T1);
+        message.setToolCalls("""
+            [{"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"terraform modules\\"}"}}]
+            """);
+        messageRepository.saveAndFlush(message);
+
+        List<MessageEntity> found = messageRepository.findByContentContainingIgnoreCase("terraform modules");
+
+        assertThat(found).extracting(MessageEntity::getId).contains(message.getId());
+    }
+
+    @Test
+    void searchByContentFtsExcludingSourcesMatchesStoredToolCalls() {
+        SessionEntity session = sessionRepository.save(newSession());
+        MessageEntity message = newMessage(session.getId(), "assistant", "", 0, T1);
+        message.setToolCalls("""
+            [{"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"terraform modules\\"}"}}]
+            """);
+        messageRepository.saveAndFlush(message);
+
+        List<MessageEntity> found = messageRepository.searchByContentFtsExcludingSources(
+            "terraform", List.of("kanban", "subagent", "tool")
+        );
+
+        assertThat(found).extracting(MessageEntity::getId).contains(message.getId());
+    }
+
+    @Test
+    void activePageQueriesExcludeArchivedCompactionRows() {
+        SessionEntity session = sessionRepository.save(newSession());
+        UUID sessionId = session.getId();
+        MessageEntity archived = newMessage(sessionId, "user", "archived", 0, T1);
+        archived.setActive(false);
+        archived.setCompacted(true);
+        messageRepository.save(archived);
+        messageRepository.save(newMessage(sessionId, "assistant", "live one", 1, T2));
+        messageRepository.saveAndFlush(newMessage(sessionId, "user", "live two", 2, T3));
+
+        List<MessageEntity> asc = messageRepository.findActivePageBySessionIdOrderByCreatedAtAsc(sessionId, 10, 0);
+        List<MessageEntity> desc = messageRepository.findActivePageBySessionIdOrderByCreatedAtDesc(sessionId, 10, 0);
+
+        assertThat(asc).extracting(MessageEntity::getContent)
+            .containsExactly("live one", "live two");
+        assertThat(desc).extracting(MessageEntity::getContent)
+            .containsExactly("live two", "live one");
+    }
+
+    @Test
     void messageWithoutSessionFailsForeignKeyConstraint() {
         MessageEntity orphan = newMessage(
             UUID.fromString(UNKNOWN_SESSION_ID),

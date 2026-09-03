@@ -77,6 +77,35 @@ class WebsitePolicyTest {
     }
 
     @Test
+    @DisplayName("Should support wildcard rules for subdomains only")
+    void shouldSupportWildcardRules() {
+        properties.getWeb().getBlockedDomains().add("*.bad.com");
+
+        assertNull(policy.checkAccess("https://bad.com/page"));
+        assertNotNull(policy.checkAccess("https://sub.bad.com/page"));
+        assertNotNull(policy.checkAccess("https://deep.sub.bad.com/page"));
+    }
+
+    @Test
+    @DisplayName("Should normalize URL-shaped and www-prefixed rules")
+    void shouldNormalizeUrlShapedRules() {
+        properties.getWeb().getBlockedDomains().add("https://www.malicious.com/some/path");
+
+        assertNotNull(policy.checkAccess("https://malicious.com/page"));
+        assertNotNull(policy.checkAccess("https://cdn.malicious.com/page"));
+    }
+
+    @Test
+    @DisplayName("Should ignore blank and commented rules")
+    void shouldIgnoreBlankAndCommentRules() {
+        properties.getWeb().getBlockedDomains().add("  ");
+        properties.getWeb().getBlockedDomains().add("# disabled.example");
+        properties.getWeb().getAllowedDomains().add("  ");
+
+        assertNull(policy.checkAccess("https://example.com/page"));
+    }
+
+    @Test
     @DisplayName("Should enforce allow-list when non-empty")
     void shouldEnforceAllowList() {
         properties.getWeb().getAllowedDomains().add("trusted.com");

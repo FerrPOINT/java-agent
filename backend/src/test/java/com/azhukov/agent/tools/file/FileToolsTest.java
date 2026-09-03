@@ -36,8 +36,9 @@ class FileToolsTest {
 
         var result = readTool.execute("{\"path\":\"" + file + "\",\"offset\":2,\"limit\":2}", null, null);
         assertThat(result.content()).contains("2|b", "3|c");
-        // With limit=2 and more lines remaining, truncation marker is shown
-        assertThat(result.content()).contains("[truncated:");
+        // With limit=2 and more lines remaining, the JSON envelope carries the
+        // continuation hint (offset=4) instead of a plain-text marker.
+        assertThat(result.content()).contains("\"truncated\":true", "\"hint\":\"Use offset=4");
     }
 
     @Test

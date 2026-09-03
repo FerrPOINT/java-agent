@@ -37,6 +37,16 @@ class TranscriptionProviderTest {
     }
 
     @Test
+    void transcribe_forwardsMultipartMetadataWhenProvided() {
+        when(providerProvider.getIfAvailable()).thenReturn(provider);
+        when(provider.transcribe(any(), eq("voice.mp3"), eq("audio/mpeg"))).thenReturn("Hello mp3");
+
+        String result = service.transcribe("audio-data".getBytes(), "voice.mp3", "audio/mpeg");
+
+        assertThat(result).isEqualTo("Hello mp3");
+    }
+
+    @Test
     void transcribe_returnsNullWhenNoProvider() {
         when(providerProvider.getIfAvailable()).thenReturn(null);
 

@@ -5,6 +5,7 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.persistence.service.ToolResultNameResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -15,6 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -32,11 +35,27 @@ import java.util.UUID;
  * 3. Persist results in a short write transaction
  */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class SessionCompressionHelper {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    public SessionCompressionHelper(
+            MessageRepository messageRepository,
+            MessageMapper messageMapper,
+            ConversationCompressor conversationCompressor,
+            org.springframework.beans.factory.ObjectProvider<SessionCompressionHelper> self,
+            org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.memory.MemoryManager> memoryManagerProvider,
+            com.azhukov.agent.persistence.repository.SessionRepository sessionRepository) {
+        this.messageRepository = messageRepository;
+        this.messageMapper = messageMapper;
+        this.conversationCompressor = conversationCompressor;
+        this.self = self;
+        this.memoryManagerProvider = memoryManagerProvider;
+        this.sessionRepository = sessionRepository;
+    }
+
     private final MessageRepository messageRepository;
+    private final com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
     private final MessageMapper messageMapper;
     private final ConversationCompressor conversationCompressor;
     private final ObjectProvider<SessionCompressionHelper> self;
@@ -81,7 +100,7 @@ public class SessionCompressionHelper {
         }
 
         // 3. Persist results in a short write transaction (race-safe)
-        proxy.persistCompressed(sessionId, compressed, cutoff);
+        proxy.persistCompressed(sessionId, compressed, cutoff, compressionWatermarkIds);
     }
 
     /**
@@ -90,10 +109,19 @@ public class SessionCompressionHelper {
     @Transactional(readOnly = true)
     List<Message> readMessages(UUID sessionId) {
         List<MessageEntity> messageEntities = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        // Capture the compression-start watermark (Hermes get_active_message_watermark):
+        // ids active at the moment the snapshot was taken. Rows absent from this set
+        // at persist time arrived DURING the LLM call and must survive compaction.
+        compressionWatermarkIds = messageIds(
+            messageEntities.stream().filter(SessionCompressionHelper::isActive).toList());
         return messageEntities.stream()
+            .filter(SessionCompressionHelper::isActive)
             .map(messageMapper::toDomain)
             .toList();
     }
+
+    /** Compression-start watermark: active row ids when the snapshot was read. */
+    private transient java.util.Set<UUID> compressionWatermarkIds;
 
     /**
      * rev-103: Hermes parity — collect the memory provider's pre-compress
@@ -152,16 +180,123 @@ public class SessionCompressionHelper {
      * compression call (10-60s window). Without this guard, a new message
      * persisted mid-compression would be deleted by {@code deleteAll(existing)}.
      */
-    @Transactional
     void persistCompressed(UUID sessionId, List<Message> compressed, Instant cutoffTimestamp) {
-        // Delete only messages that existed before compression started
-        messageRepository.deleteBySessionIdAndCreatedAtBefore(sessionId, cutoffTimestamp);
+        persistCompressed(sessionId, compressed, cutoffTimestamp, null);
+    }
+
+    @Transactional
+    void persistCompressed(UUID sessionId, List<Message> compressed, Instant cutoffTimestamp,
+                           java.util.Set<UUID> watermarkIds) {
+        // Hermes archive_and_compact parity (hermes_state.py:11191): old rows are
+        // soft-archived (active=false, compacted=true) in one saveAll — NOT deleted, so
+        // session_search keeps finding them and the transcript stays recoverable.
+        // Concurrent-append safety (#75316): rows that arrived DURING the slow LLM call
+        // (absent from the compression-start watermark) are re-sequenced after the
+        // compacted set by a column clone. watermarkIds mirrors Hermes's
+        // get_active_message_watermark captured at compression START; when absent we
+        // fall back to the cutoff timestamp.
+        List<MessageEntity> currentActive = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)
+            .stream()
+            .filter(SessionCompressionHelper::isActive)
+            .toList();
+        java.util.Set<UUID> originalIds = watermarkIds != null ? watermarkIds : messageIds(
+            currentActive.stream()
+                .filter(entity -> entity.getCreatedAt() != null
+                    && cutoffTimestamp != null
+                    && entity.getCreatedAt().isBefore(cutoffTimestamp))
+                .toList());
+        List<MessageEntity> concurrentTail = currentActive.stream()
+            .filter(entity -> entity.getId() != null && !originalIds.contains(entity.getId()))
+            .toList();
+        for (MessageEntity old : currentActive) {
+            old.setActive(false);
+            old.setCompacted(true);
+        }
+        messageRepository.saveAll(currentActive);
         Instant now = Instant.now();
+        int sequence = 0;
+        Map<String, String> toolNamesByCallId = ToolResultNameResolver.collect(compressed);
         for (Message m : compressed) {
             MessageEntity e = messageMapper.toEntity(m);
+            ToolResultNameResolver.apply(e, m, toolNamesByCallId);
             e.setSessionId(sessionId);
-            e.setCreatedAt(now);
+            e.setCreatedAt(now.plusNanos(sequence++));
+            e.setActive(true);
+            e.setCompacted(false);
             messageRepository.save(e);
         }
+        for (MessageEntity tail : concurrentTail) {
+            MessageEntity clone = cloneLiveMessage(tail);
+            clone.setSessionId(sessionId);
+            clone.setCreatedAt(now.plusNanos(sequence++));
+            clone.setActive(true);
+            clone.setCompacted(false);
+            messageRepository.save(clone);
+        }
+        if (sessionRepository != null) {
+            sessionRepository.updateLastActiveAndMessageCount(sessionId, now, compressed.size() + concurrentTail.size());
+        }
     }
+
+    private static boolean isActive(MessageEntity entity) {
+        return entity != null && !Boolean.FALSE.equals(entity.getActive());
+    }
+
+    private static java.util.Set<UUID> messageIds(List<MessageEntity> messages) {
+        java.util.Set<UUID> ids = new java.util.HashSet<>();
+        for (MessageEntity message : messages) {
+            if (message != null && message.getId() != null) {
+                ids.add(message.getId());
+            }
+        }
+        return ids;
+    }
+
+    private static MessageEntity cloneLiveMessage(MessageEntity source) {
+        MessageEntity clone = new MessageEntity();
+        clone.setRole(source.getRole());
+        clone.setContent(source.getContent());
+        clone.setToolCallId(source.getToolCallId());
+        clone.setToolCallName(source.getToolCallName());
+        clone.setToolCallArguments(source.getToolCallArguments());
+        clone.setToolCalls(source.getToolCalls());
+        clone.setTurnIndex(source.getTurnIndex());
+        clone.setImageCount(source.getImageCount());
+        return clone;
+    }
+
+    /** Back-compat 5-arg ctor for existing unit tests: no SessionRepository touch. */
+    public SessionCompressionHelper(
+            MessageRepository messageRepository,
+            MessageMapper messageMapper,
+            ConversationCompressor conversationCompressor,
+            ObjectProvider<SessionCompressionHelper> self,
+            ObjectProvider<com.azhukov.agent.core.memory.MemoryManager> memoryManagerProvider) {
+        this(messageRepository, messageMapper, conversationCompressor, self, memoryManagerProvider, null);
+    }
+
+    /** PR-3 parity ctor: direct deps for standalone tests. Not the Spring ctor. */
+    public SessionCompressionHelper(
+            com.azhukov.agent.persistence.repository.MessageRepository messageRepository,
+            com.azhukov.agent.persistence.mapper.MessageMapper messageMapper,
+            ConversationCompressor conversationCompressor,
+            com.azhukov.agent.persistence.repository.SessionRepository sessionRepository) {
+        this.messageRepository = messageRepository;
+        this.sessionRepository = sessionRepository;
+        this.messageMapper = messageMapper;
+        this.conversationCompressor = conversationCompressor;
+        this.self = new org.springframework.beans.factory.ObjectProvider<SessionCompressionHelper>() {
+            @Override public SessionCompressionHelper getObject(Object... args) { return SessionCompressionHelper.this; }
+            @Override public SessionCompressionHelper getObject() { return SessionCompressionHelper.this; }
+            @Override public SessionCompressionHelper getIfAvailable() { return null; }
+            @Override public SessionCompressionHelper getIfUnique() { return null; }
+        };
+        this.memoryManagerProvider = new org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.memory.MemoryManager>() {
+            @Override public com.azhukov.agent.core.memory.MemoryManager getObject(Object... args) { throw new UnsupportedOperationException(); }
+            @Override public com.azhukov.agent.core.memory.MemoryManager getObject() { throw new UnsupportedOperationException(); }
+            @Override public com.azhukov.agent.core.memory.MemoryManager getIfAvailable() { return null; }
+            @Override public com.azhukov.agent.core.memory.MemoryManager getIfUnique() { return null; }
+        };
+    }
+
 }

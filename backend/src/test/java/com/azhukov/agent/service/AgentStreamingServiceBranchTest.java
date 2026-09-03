@@ -12,6 +12,7 @@ import com.azhukov.agent.core.agent.TokenEstimator;
 import com.azhukov.agent.core.agent.ToolResultFormatter;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.model.Message;
@@ -28,9 +29,11 @@ import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -298,6 +301,47 @@ class AgentStreamingServiceBranchTest {
         assertThat(metadata.modelUsed()).isEqualTo("my-session-model");
     }
 
+    @Test
+    void streamTurnResolvesStoredSessionModelRouteAliasLikeHermes() throws Exception {
+        AgentProperties.ApiProperties.ModelRouteProperties route =
+            new AgentProperties.ApiProperties.ModelRouteProperties();
+        route.setModel("route/model");
+        route.setProvider("openrouter");
+        route.setBaseUrl("https://openrouter.example/v1");
+        route.setApiKey("sk-route-secret");
+        properties.getApi().getModelRoutes().put("alias", route);
+        SessionEntity entity = newSessionEntity(SESSION_ID, "alias");
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(entity));
+
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            handler.onToken("ok");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        ArgumentCaptor<ModelRequestOptions> optionsCaptor = ArgumentCaptor.forClass(ModelRequestOptions.class);
+        verify(modelClient).stream(any(List.class), any(List.class), optionsCaptor.capture(), any(StreamingResponseHandler.class));
+        ModelRequestOptions options = optionsCaptor.getValue();
+        assertThat(options.modelName()).isEqualTo("route/model");
+        assertThat(options.provider()).isEqualTo("openrouter");
+        assertThat(options.baseUrl()).isEqualTo("https://openrouter.example/v1");
+        assertThat(options.apiKey()).isEqualTo("sk-route-secret");
+
+        SseEvent metadataEvent = emitter.events.stream()
+            .filter(e -> "metadata".equals(e.name))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("No metadata event"));
+        StreamEvent metadata = deserialize(metadataEvent.data, StreamEvent.class);
+        assertThat(metadata.modelUsed()).isEqualTo("route/model");
+    }
+
     // ── resolveModelUsed: all blank/null → "unknown" ──
 
     @Test
@@ -382,13 +426,15 @@ class AgentStreamingServiceBranchTest {
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 
-        // Find tool_result event — should contain "Error: Tool execution failed"
+        // Find tool_result event — failed tool results should remain structured JSON.
         SseEvent toolResultEvent = emitter.events.stream()
             .filter(e -> "tool_result".equals(e.name))
             .findFirst()
             .orElseThrow(() -> new AssertionError("No tool_result event"));
         StreamEvent resultEvent = deserialize(toolResultEvent.data, StreamEvent.class);
-        assertThat(resultEvent.toolResult()).contains("Error: Tool execution failed");
+        assertThat(resultEvent.toolResult())
+            .contains("\"success\":false")
+            .contains("\"error\":\"Tool execution failed\"");
     }
 
     // ── Tool error result: preview > 500 chars ──
@@ -396,7 +442,7 @@ class AgentStreamingServiceBranchTest {
     @Test
     void toolErrorResultPreviewTruncatedWhenLongerThan500Chars() throws Exception {
         ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
-        ToolCall toolCall = new ToolCall("call-1", "failing-tool", "{\"x\":1}");
+        ToolCall toolCall = new ToolCall("call-1", "weather", "{\"x\":1}");
         CollectingEmitter emitter = new CollectingEmitter(1000L);
 
         AtomicInteger callCount = new AtomicInteger(0);
@@ -413,7 +459,7 @@ class AgentStreamingServiceBranchTest {
 
         // Tool returns an error with very long error message
         String longError = "E".repeat(2000);
-        when(toolExecutionService.execute(eq("failing-tool"), eq("call-1"), any(String.class),
+        when(toolExecutionService.execute(eq("weather"), eq("call-1"), any(String.class),
             any(), any(Session.class), any()))
             .thenReturn(ToolResult.fail(longError));
 
@@ -428,6 +474,39 @@ class AgentStreamingServiceBranchTest {
         // Error content = "Error: " + longError, truncated to 500 chars + "..."
         assertThat(resultEvent.toolResult().length()).isLessThanOrEqualTo(504);
         assertThat(resultEvent.toolResult()).endsWith("...");
+    }
+
+    @Test
+    void invalidToolCallNameStillEmitsToolResultPreview() throws Exception {
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
+        ToolCall toolCall = new ToolCall("call-1", "missing_tool", "{}");
+        CollectingEmitter emitter = new CollectingEmitter(10_000L);
+
+        AtomicInteger callCount = new AtomicInteger(0);
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            if (callCount.incrementAndGet() == 1) {
+                handler.onToolCalls(List.of(toolCall));
+            } else {
+                handler.onToken("Done");
+            }
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        SseEvent toolResultEvent = emitter.events.stream()
+            .filter(e -> "tool_result".equals(e.name))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("No tool_result event"));
+        StreamEvent resultEvent = deserialize(toolResultEvent.data, StreamEvent.class);
+        assertThat(resultEvent.toolName()).isEqualTo("missing_tool");
+        JsonNode payload = objectMapper.readTree(resultEvent.toolResult());
+        assertThat(payload.path("success").asBoolean()).isFalse();
+        assertThat(payload.path("error").asText()).contains("does not exist");
+        verify(toolExecutionService, never()).execute(eq("missing_tool"), any(), any(), any(), any(), any());
     }
 
     // ── New session path (null sessionId) ──

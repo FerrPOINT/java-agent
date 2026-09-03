@@ -733,7 +733,12 @@ public class CuratorService {
              }
 
              // Add tool result to conversation
-             messages.add(Message.toolResult(call.pairingId(), result.content(), iteration));
+             // Failed executions carry an empty content — surface the structured
+            // error payload so the curator loop sees the failure (Hermes parity).
+            String curatorResultContent = result.content() != null && !result.content().isBlank()
+                ? result.content()
+                : com.azhukov.agent.core.tool.ToolCallValidator.failurePayload(result.error());
+            messages.add(Message.toolResult(call.pairingId(), curatorResultContent, iteration));
 
              log.debug("Curator agent loop iteration {}: executed tool {} → success={}",
                      iteration, call.name(), result.success());

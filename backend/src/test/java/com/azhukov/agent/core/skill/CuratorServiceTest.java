@@ -809,6 +809,15 @@ class CuratorServiceTest {
 
         // The loop should continue despite tool failure
         verify(toolExecutionService, times(1)).execute(any(), any(), any(), any(), any(), any());
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<Message>> messagesCaptor =
+            org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(modelClient, times(2)).complete(messagesCaptor.capture(), any());
+        assertThat(messagesCaptor.getAllValues().get(1)).anySatisfy(message -> {
+            assertThat(message.role()).isEqualTo(com.azhukov.agent.core.model.Role.TOOL);
+            assertThat(message.content()).contains("\"success\":false");
+            assertThat(message.content()).contains("\"error\":\"Permission denied\"");
+        });
         // The parsing should still work on the final summary
         assertThat(report).isNotNull();
     }

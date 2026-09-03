@@ -95,14 +95,9 @@ class MessageSanitizerBranchTest {
             Message.user("msg2"),
             Message.user("msg3")
         ));
-        // Should insert assistant placeholders between consecutive user messages
-        assertThat(result.size()).isGreaterThan(3);
-        // Verify alternation
-        for (int i = 1; i < result.size(); i++) {
-            Role prev = result.get(i - 1).role();
-            Role curr = result.get(i).role();
-            assertThat(prev).isNotEqualTo(curr);
-        }
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).role()).isEqualTo(Role.USER);
+        assertThat(result.get(0).content()).isEqualTo("msg1\n\nmsg2\n\nmsg3");
     }
 
     @Test
@@ -112,12 +107,27 @@ class MessageSanitizerBranchTest {
             Message.assistant("msg1", 0),
             Message.assistant("msg2", 0)
         ));
-        assertThat(result.size()).isGreaterThan(2);
-        for (int i = 1; i < result.size(); i++) {
-            Role prev = result.get(i - 1).role();
-            Role curr = result.get(i).role();
-            assertThat(prev).isNotEqualTo(curr);
-        }
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).role()).isEqualTo(Role.ASSISTANT);
+        assertThat(result.get(0).content()).isEqualTo("msg1\nmsg2");
+    }
+
+    @Test
+    void sanitizePreservesConsecutiveToolResultsForOneAssistantBatch() {
+        MessageSanitizer s = sanitizer();
+        List<Message> result = s.sanitize(List.of(
+            Message.assistantToolCalls(List.of(
+                new ToolCall("call-1", "read_file", "{}"),
+                new ToolCall("call-2", "search_files", "{}")), 1),
+            Message.toolResult("call-1", "first", 1),
+            Message.toolResult("call-2", "second", 1)
+        ));
+
+        assertThat(result).hasSize(3);
+        assertThat(result.get(1).role()).isEqualTo(Role.TOOL);
+        assertThat(result.get(2).role()).isEqualTo(Role.TOOL);
+        assertThat(result.get(1).toolCallId()).isEqualTo("call-1");
+        assertThat(result.get(2).toolCallId()).isEqualTo("call-2");
     }
 
     @Test

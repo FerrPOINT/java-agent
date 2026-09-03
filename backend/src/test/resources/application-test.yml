@@ -38,8 +38,8 @@ management:
     health:
       groups:
         readiness:
-          include: db,model
+          include: db
         liveness:
           include: livenessState,ping
         infrastructure:
-          include: mcp,browser,chromium
+          include: mcp,browser,chromium,model

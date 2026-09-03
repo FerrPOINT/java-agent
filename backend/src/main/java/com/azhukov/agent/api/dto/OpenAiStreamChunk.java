@@ -20,4 +20,9 @@ public record OpenAiStreamChunk(
         public record ToolCall(String id, String type, Function function) {}
 
         public record Function(String name, String arguments) {}
+
+    /** Convenience 5-arg ctor (usage omitted) for non-terminal chunks. */
+    public OpenAiStreamChunk(String id, String object, Long created, String model, List<Choice> choices) {
+        this(id, object, created, model, choices, null);
+    }
 }

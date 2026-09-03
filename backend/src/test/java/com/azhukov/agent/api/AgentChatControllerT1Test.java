@@ -95,6 +95,7 @@ class AgentChatControllerT1Test {
     @Mock private MessageRepository messageRepository;
     private final MessageMapper messageMapper = org.mapstruct.factory.Mappers.getMapper(MessageMapper.class);
     private ApprovalQueue approvalQueue;
+    @Mock private com.azhukov.agent.core.tool.ToolRegistry toolRegistry;
     @Mock private AgentProperties properties;
     @Mock private AgentProperties.ModelProperties modelProperties;
     @Mock private AgentProperties.CoreProperties coreProperties;
@@ -119,6 +120,9 @@ class AgentChatControllerT1Test {
         lenient().when(budgetProperties.getMaxModelCallsPerTurn()).thenReturn(50);
         lenient().when(skillManager.listSkillNames()).thenReturn(List.of("a", "b"));
         lenient().when(skillsProperties.getDefaultToolsets()).thenReturn(List.of("memory", "skills"));
+        lenient().when(toolRegistry.getDefinitions(org.mockito.ArgumentMatchers.anySet()))
+            .thenReturn(List.of(new com.azhukov.agent.core.model.ToolDefinition(
+                "skill_manage", "desc", java.util.Map.of())));
 
         AgentChatController controller = new AgentChatController(
             agentRuntimeService, streamingService, memoryProvider, skillManager,
@@ -129,7 +133,8 @@ class AgentChatControllerT1Test {
             sessionRepository, messageRepository, messageMapper,
             approvalQueue,
             properties,
-            agentMetrics
+            agentMetrics,
+            toolRegistry
         );
         // rev-97: inject CommandApprovalManager for session/always scope tests
         try {

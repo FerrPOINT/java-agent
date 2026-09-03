@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -23,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * Mirrors Hermes tools/tool_result_storage.py — maybe_persist_tool_result().
  * When tool output exceeds threshold (default 50KB), writes full output to
- * temp file, replaces in-context with: "[Full output saved to {path}]\n{preview}...\n[truncated]"
+ * temp file, replaces in-context with a Hermes-style {@code <persisted-output>} preview block.
  *
  * 3-tier: per-tool cap → per-result persist → per-turn aggregate budget (200KB)
  */
@@ -33,7 +34,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ToolResultStorage {
 
     private final AgentProperties properties;
-    private static final int PREVIEW_CHARS = 2000;
+    private static final String PERSISTED_OUTPUT_TAG = "<persisted-output>";
+    private static final String PERSISTED_OUTPUT_CLOSING_TAG = "</persisted-output>";
+    private static final int PREVIEW_CHARS = 1500;
 
     // h42: When an MCP server reuses the same tool_call_id for different calls,
     // keep all tool results instead of overwriting/dropping. Store results in a
@@ -103,6 +106,9 @@ public class ToolResultStorage {
         if (content == null || content.isEmpty()) {
             return content;
         }
+        if ("read_file".equals(toolName) || content.contains(PERSISTED_OUTPUT_TAG)) {
+            return content;
+        }
 
         int threshold = properties.getToolOutput().getPersistThresholdBytes();
         if (threshold <= 0) {
@@ -127,25 +133,15 @@ public class ToolResultStorage {
             log.warn("Failed to persist tool result for {}: {}", toolName, e.getMessage());
             // Fallback: inline truncation
             return generatePreview(content, PREVIEW_CHARS)
-                + "\n\n[Truncated: tool response was " + content.length() + " chars. "
-                + "Full output could not be saved to disk.]";
+                + "\n\n[Truncated: tool response was " + formatCount(content.length()) + " chars. "
+                + "Full output could not be saved to sandbox.]";
         }
 
         log.info("Persisted large tool result: {} ({} chars -> {})", toolName, content.length(), outputPath);
 
-        String sizeStr = formatSize(content.length());
         String preview = generatePreview(content, PREVIEW_CHARS);
         boolean hasMore = preview.length() < content.length();
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("[Full output saved to ").append(outputPath).append("]\n");
-        sb.append("Tool result was too large (").append(content.length()).append(" chars, ").append(sizeStr).append(").\n");
-        sb.append("Preview (first ").append(preview.length()).append(" chars):\n");
-        sb.append(preview);
-        if (hasMore) {
-            sb.append("\n...\n[truncated]");
-        }
-        return sb.toString();
+        return buildPersistedMessage(preview, hasMore, content.length(), outputPath.toString());
     }
 
     /**
@@ -182,7 +178,7 @@ public class ToolResultStorage {
         // Find largest non-persisted results and persist them
         java.util.List<Integer> indices = new java.util.ArrayList<>();
         for (int i = 0; i < contents.size(); i++) {
-            if (!contents.get(i).contains("[Full output saved to")) {
+            if (!contents.get(i).contains(PERSISTED_OUTPUT_TAG)) {
                 indices.add(i);
             }
         }
@@ -220,9 +216,35 @@ public class ToolResultStorage {
     private String formatSize(int chars) {
         double kb = chars / 1024.0;
         if (kb >= 1024) {
-            return String.format("%.1f MB", kb / 1024);
+            return String.format(Locale.ROOT, "%.1f MB", kb / 1024);
         }
-        return String.format("%.1f KB", kb);
+        return String.format(Locale.ROOT, "%.1f KB", kb);
+    }
+
+    private String formatCount(int chars) {
+        return String.format(Locale.ROOT, "%,d", chars);
+    }
+
+    private String buildPersistedMessage(String preview, boolean hasMore, int originalSize, String filePath) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(PERSISTED_OUTPUT_TAG).append('\n');
+        sb.append("This tool result was too large (")
+            .append(formatCount(originalSize))
+            .append(" characters, ")
+            .append(formatSize(originalSize))
+            .append(").\n");
+        sb.append("Full output saved to: ").append(filePath).append('\n');
+        sb.append("Use the read_file tool with offset and limit to access specific sections of this output.\n");
+        sb.append("Recovery: page through the saved file with read_file (offset/limit) or ")
+            .append("process it with execute_code - do NOT re-request the same data from the ")
+            .append("remote API; the full result is already on disk.\n\n");
+        sb.append("Preview (first ").append(preview.length()).append(" chars):\n");
+        sb.append(preview);
+        if (hasMore) {
+            sb.append("\n...");
+        }
+        sb.append('\n').append(PERSISTED_OUTPUT_CLOSING_TAG);
+        return sb.toString();
     }
 
     /**

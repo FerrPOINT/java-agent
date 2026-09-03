@@ -66,7 +66,12 @@ class RateLimitFilterTest {
 
         verify(chain, times(capacity)).doFilter(request, response);
         verify(response, times(1)).setStatus(429);
+        verify(response, times(1)).setContentType("application/json");
+        verify(response, times(1)).setCharacterEncoding("UTF-8");
+        verify(response, times(1)).setHeader("Retry-After", "60");
         assertThat(responseWriter.toString()).contains("Rate limit exceeded");
+        assertThat(responseWriter.toString()).contains("\"type\":\"rate_limit_error\"");
+        assertThat(responseWriter.toString()).contains("\"code\":\"rate_limit_exceeded\"");
     }
 
     @Test

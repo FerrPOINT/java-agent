@@ -134,7 +134,7 @@ public class McpServerService {
                 argumentsJson, Message.user(""), session);
 
             McpSchema.CallToolResult.Builder builder = McpSchema.CallToolResult.builder()
-                .addTextContent(result.success() ? result.content() : result.error());
+                .addTextContent(modelVisibleResult(result));
 
             if (!result.success()) {
                 builder.isError(true);
@@ -148,6 +148,19 @@ public class McpServerService {
                 .isError(true)
                 .build();
         }
+    }
+
+    private String modelVisibleResult(ToolResult result) {
+        if (result.success()) {
+            return result.content();
+        }
+        if (result.content() != null && !result.content().isBlank()) {
+            return result.content();
+        }
+        if (result.error() != null && !result.error().isBlank()) {
+            return result.error();
+        }
+        return "Tool failed";
     }
 
     /**

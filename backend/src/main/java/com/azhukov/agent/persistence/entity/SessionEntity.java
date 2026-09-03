@@ -35,6 +35,9 @@ public class SessionEntity {
 
     private String modelName;
 
+    @Column(columnDefinition = "TEXT")
+    private String systemPrompt;
+
     private Instant createdAt;
 
     private Instant updatedAt;
@@ -48,6 +51,10 @@ public class SessionEntity {
     /** Session source: telegram, cli, cron, subagent, kanban, tool. Used for hidden/demoted filtering. */
     private String source;
 
+    /** Owning Hermes profile. The default profile is the root agent home. */
+    @Column(name = "profile")
+    private String profile = "default";
+
     /** End reason: compression, new_session, idle_timeout, daily_reset, branched. Used for lineage logic. */
     private String endReason;
 
@@ -60,6 +67,18 @@ public class SessionEntity {
 
     /** Cached message count for browse mode efficiency. */
     private Integer messageCount = 0;
+
+    /** Whether the session is pinned in Hermes-compatible session browsers. */
+    private Boolean pinned = false;
+
+    /** Archived sessions are hidden from default session lists. */
+    private Boolean archived = false;
+
+    /** Hidden sessions are hidden from default session lists. */
+    private Boolean hidden = false;
+
+    /** Unread flag accepted by Hermes PATCH; not exposed in the public safe response. */
+    private Boolean unread = false;
 
     @Column(columnDefinition = "TEXT")
     private String subgoal;

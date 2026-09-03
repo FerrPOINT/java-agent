@@ -1,6 +1,8 @@
 package com.azhukov.agent.core.tool;
 
 import com.azhukov.agent.core.model.ToolCall;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -24,11 +26,22 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class ToolCallValidatorTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private static final Set<String> REGISTERED = Set.of(
         "read_file", "write_file", "patch", "terminal", "search_files",
         "delegate_task", "clarify", "skill_view", "session_search",
         "web_search", "web_extract", "vision_analyze"
     );
+
+    @Test
+    @DisplayName("failurePayload returns structured JSON error")
+    void failurePayloadReturnsStructuredJsonError() throws Exception {
+        JsonNode payload = JSON.readTree(ToolCallValidator.failurePayload("bad arguments"));
+
+        assertThat(payload.path("success").asBoolean()).isFalse();
+        assertThat(payload.path("error").asText()).isEqualTo("bad arguments");
+    }
 
     // ── Tool name validation & repair ──────────────────────────────────────
 
@@ -336,6 +349,32 @@ class ToolCallValidatorTest {
             ));
             List<ToolCall> result = ToolCallValidator.deduplicateToolCalls(calls);
             assertThat(result).hasSize(2);
+        }
+
+        @Test
+        @DisplayName("Equivalent JSON objects with reordered keys are duplicates")
+        void reorderedJsonObjectsAreDuplicates() {
+            List<ToolCall> calls = new ArrayList<>(List.of(
+                new ToolCall("c1", "terminal", "{\"command\":\"printf hello >> out.log\",\"timeout\":10}"),
+                new ToolCall("c2", "terminal", "{\"timeout\":10,\"command\":\"printf hello >> out.log\"}")
+            ));
+            List<ToolCall> result = ToolCallValidator.deduplicateToolCalls(calls);
+            assertThat(result).hasSize(1);
+            assertThat(result.get(0).id()).isEqualTo("c1");
+        }
+
+        @Test
+        @DisplayName("Malformed JSON uses raw arguments for deduplication")
+        void malformedJsonUsesRawArguments() {
+            List<ToolCall> calls = new ArrayList<>(List.of(
+                new ToolCall("c1", "terminal", "{\"command\":\"one\""),
+                new ToolCall("c2", "terminal", "{\"command\":\"one\""),
+                new ToolCall("c3", "terminal", "{ \"command\":\"one\"")
+            ));
+            List<ToolCall> result = ToolCallValidator.deduplicateToolCalls(calls);
+            assertThat(result).hasSize(2);
+            assertThat(result.get(0).id()).isEqualTo("c1");
+            assertThat(result.get(1).id()).isEqualTo("c3");
         }
 
         @Test

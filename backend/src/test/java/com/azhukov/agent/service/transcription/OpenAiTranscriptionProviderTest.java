@@ -9,6 +9,7 @@ import org.springframework.web.client.RestClient;
 
 import java.lang.reflect.Field;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.*;
@@ -97,6 +98,25 @@ class OpenAiTranscriptionProviderTest {
     }
 
     @Test
+    void transcribe_audioOverOpenAiUploadLimit_throwsIllegalArgumentException() {
+        byte[] tooLarge = new byte[25 * 1024 * 1024 + 1];
+
+        assertThatThrownBy(() -> provider.transcribe(tooLarge))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("too large")
+            .hasMessageContaining("max 25MB");
+    }
+
+    @Test
+    void transcribe_blankApiKey_throwsIllegalStateException() {
+        properties.getTranscription().setApiKey("   ");
+
+        assertThatThrownBy(() -> provider.transcribe("audio".getBytes()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("api-key");
+    }
+
+    @Test
     void transcribe_emptyResponseBody_throwsRuntimeException() {
         server.expect(requestTo("https://api.openai.com/v1/audio/transcriptions"))
             .andRespond(withSuccess("", MediaType.APPLICATION_JSON));
@@ -173,5 +193,39 @@ class OpenAiTranscriptionProviderTest {
 
         assertThat(result).isEqualTo("Hi");
         server.verify();
+    }
+
+    @Test
+    void transcribe_preservesSupportedFilenameAndContentType() {
+        server.expect(requestTo("https://api.openai.com/v1/audio/transcriptions"))
+            .andExpect(content().string(containsString("filename=\"voice.mp3\"")))
+            .andExpect(content().string(containsString("Content-Type: audio/mpeg")))
+            .andRespond(withSuccess("{\"text\":\"MP3 result\"}", MediaType.APPLICATION_JSON));
+
+        String result = provider.transcribe("audio".getBytes(), "voice.mp3", "audio/mpeg");
+
+        assertThat(result).isEqualTo("MP3 result");
+        server.verify();
+    }
+
+    @Test
+    void transcribe_infersExtensionFromAudioContentTypeWhenFilenameHasNoExtension() {
+        server.expect(requestTo("https://api.openai.com/v1/audio/transcriptions"))
+            .andExpect(content().string(containsString("filename=\"blob.webm\"")))
+            .andExpect(content().string(containsString("Content-Type: audio/webm")))
+            .andRespond(withSuccess("{\"text\":\"WebM result\"}", MediaType.APPLICATION_JSON));
+
+        String result = provider.transcribe("audio".getBytes(), "blob", "audio/webm");
+
+        assertThat(result).isEqualTo("WebM result");
+        server.verify();
+    }
+
+    @Test
+    void transcribe_rejectsUnsupportedFilenameExtensionBeforeUpload() {
+        assertThatThrownBy(() -> provider.transcribe("audio".getBytes(), "notes.txt", "text/plain"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Unsupported audio format")
+            .hasMessageContaining(".txt");
     }
 }

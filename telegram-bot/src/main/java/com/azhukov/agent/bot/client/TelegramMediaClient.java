@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.client;
 
+import com.azhukov.agent.bot.formatting.MarkdownConverter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ByteArrayResource;
@@ -131,19 +132,57 @@ class TelegramMediaClient {
 
     Optional<Long> sendAudioAsVoice(long chatId, byte[] audio, String fileName, String caption) {
         String name = (fileName == null || fileName.isBlank()) ? "voice.ogg" : fileName;
-        MultipartBodyBuilder builder = new MultipartBodyBuilder();
-        builder.part("chat_id", String.valueOf(chatId));
-        builder.part("voice", new ByteArrayResource(audio) {
-            @Override public String getFilename() { return name; }
-        }, MediaType.parseMediaType("audio/ogg"));
-        if (caption != null && !caption.isBlank()) builder.part("caption", caption);
-        try {
-            return client.callMultipartApi("sendVoice", builder.build())
-                    .flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
-        } catch (TelegramApiException e) {
-            log.warn("sendAudioAsVoice failed: {}", e.getMessage());
-            return Optional.empty();
+        // Caption ladder: MarkdownV2 first, plain retry when Telegram rejects
+        // the entities. A bare '*' or '_' in a transcript must not kill the
+        // voice bubble (PR contract, mirrors sendMessage parse fallback).
+        TelegramApiException lastParseError = null;
+        String plain = caption == null ? null : truncateUtf16(caption, 1024);
+        String formatted = null;
+        if (caption != null && !caption.isBlank()) {
+            try {
+                formatted = MarkdownConverter.convert(caption);
+            } catch (Exception e) {
+                log.debug("Voice caption MarkdownV2 formatting failed; sending plain caption", e);
+            }
         }
+        boolean tryMarkdown = formatted != null && !formatted.isBlank()
+            && formatted.length() <= 1024;
+        java.util.List<String> texts = new java.util.ArrayList<>();
+        java.util.List<String> modes = new java.util.ArrayList<>();
+        if (tryMarkdown) {
+            texts.add(formatted); modes.add("MarkdownV2");
+        }
+        if (plain != null) {
+            texts.add(plain); modes.add(null);
+        }
+        if (texts.isEmpty()) {
+            texts.add(null); modes.add(null);
+        }
+        for (int i = 0; i < texts.size(); i++) {
+            MultipartBodyBuilder builder = new MultipartBodyBuilder();
+            builder.part("chat_id", String.valueOf(chatId));
+            builder.part("voice", new ByteArrayResource(audio) {
+                @Override public String getFilename() { return name; }
+            }, MediaType.parseMediaType("audio/ogg"));
+            if (texts.get(i) != null && !texts.get(i).isBlank()) builder.part("caption", texts.get(i));
+            if (modes.get(i) != null) builder.part("parse_mode", modes.get(i));
+            try {
+                return client.callMultipartApi("sendVoice", builder.build())
+                        .flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+            } catch (TelegramApiException e) {
+                if (modes.get(i) != null && e.isParseError()) {
+                    log.warn("sendAudioAsVoice MarkdownV2 caption rejected, retrying plain text: {}", e.getMessage());
+                    lastParseError = e;
+                    continue;
+                }
+                log.warn("sendAudioAsVoice failed: {}", e.getMessage());
+                return Optional.empty();
+            }
+        }
+        if (lastParseError != null) {
+            log.warn("sendAudioAsVoice failed after caption fallback: {}", lastParseError.getMessage());
+        }
+        return Optional.empty();
     }
 
     // ─── Media Group (album) ──────────────────────────────────────
@@ -245,5 +284,10 @@ class TelegramMediaClient {
         if (lower.endsWith(".gif")) return MediaType.IMAGE_GIF;
         if (lower.endsWith(".webp")) return MediaType.parseMediaType("image/webp");
         return MediaType.IMAGE_JPEG;
+    }
+
+    private static String truncateUtf16(String text, int max) {
+        if (text == null) return null;
+        return text.length() <= max ? text : text.substring(0, max);
     }
 }

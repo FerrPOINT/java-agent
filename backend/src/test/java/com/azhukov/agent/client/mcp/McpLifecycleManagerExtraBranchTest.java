@@ -8,6 +8,7 @@ import com.azhukov.agent.core.security.McpToolDefinitionScanner;
 import com.azhukov.agent.core.security.SlidingWindowRateLimiter;
 import com.azhukov.agent.core.security.ToolArgumentInjectionScanner;
 import com.azhukov.agent.core.security.ToolFingerprintStore;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -197,6 +198,23 @@ class McpLifecycleManagerExtraBranchTest {
     }
 
     @Test
+    void connectConfiguredServers_skipsDisabledServer() {
+        AgentProperties properties = new AgentProperties();
+        properties.getMcp().setEnabled(true);
+        AgentProperties.McpProperties.ServerProperties server = new AgentProperties.McpProperties.ServerProperties();
+        server.setName("disabled");
+        server.setEnabled(false);
+        properties.getMcp().getServers().add(server);
+        McpLifecycleManager manager = spy(new McpLifecycleManager(properties, new ObjectMapper(),
+            null, null, null, null, null, null));
+
+        manager.connectConfiguredServers();
+
+        verify(manager, never()).connect(server);
+        assertThat(manager.listServers()).isEmpty();
+    }
+
+    @Test
     void mcpToolHandler_executeThrows_returnsFailedResult() throws Exception {
         AgentProperties properties = new AgentProperties();
         McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null,
@@ -214,6 +232,7 @@ class McpLifecycleManagerExtraBranchTest {
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("[REDACTED]");
         assertThat(result.error()).doesNotContain("supersecret");
+        assertJsonError(result).contains("[REDACTED]");
     }
 
     @Test
@@ -233,6 +252,7 @@ class McpLifecycleManagerExtraBranchTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("MCP tool failed");
+        assertJsonError(result).contains("MCP tool failed");
     }
 
     @Test
@@ -248,12 +268,20 @@ class McpLifecycleManagerExtraBranchTest {
     }
 
     @Test
-    void convertToolDefinition_nullDescription_throwsNPE() {
+    void convertToolDefinition_nullDescription_usesHermesFallbackDescription() {
         McpSchema.Tool tool = McpSchema.Tool.builder("test").inputSchema(Map.of()).build();
-        // ToolDefinition requires non-null description
-        assertThatThrownBy(() -> McpLifecycleManager.convertToolDefinition("srv__test", tool))
-            .isInstanceOf(NullPointerException.class)
-            .hasMessageContaining("description must not be null");
+        var def = McpLifecycleManager.convertToolDefinition("mcp__srv__test", tool);
+        assertThat(def.description()).isEqualTo("MCP tool test from srv");
+    }
+
+    @Test
+    void mcpPrefixedToolName_sanitizesComponentsLikeHermes() {
+        assertThat(McpLifecycleManager.sanitizeMcpNameComponent("my-server.tool"))
+            .isEqualTo("my_server_tool");
+        assertThat(McpLifecycleManager.mcpPrefixedToolName("my-server", "read-file"))
+            .isEqualTo("mcp__my_server__read_file");
+        assertThat(McpLifecycleManager.mcpToolsetName("my-server"))
+            .isEqualTo("mcp-my-server");
     }
 
     @Test
@@ -286,5 +314,14 @@ class McpLifecycleManagerExtraBranchTest {
         java.lang.reflect.Constructor<?> ctor = stateClass.getDeclaredConstructors()[0];
         ctor.setAccessible(true);
         map.put(name, ctor.newInstance(props, client, tools));
+    }
+
+    private String assertJsonError(ToolResult result) throws Exception {
+        assertThat(result.content()).isNotBlank();
+        JsonNode json = new ObjectMapper().readTree(result.content());
+        assertThat(json.get("success").asBoolean()).isFalse();
+        String error = json.get("error").asText();
+        assertThat(result.error()).isEqualTo(error);
+        return error;
     }
 }

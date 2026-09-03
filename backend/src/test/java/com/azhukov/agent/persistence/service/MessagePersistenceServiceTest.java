@@ -4,11 +4,13 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.TurnResult;
+import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mapstruct.factory.Mappers;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
@@ -39,7 +41,7 @@ class MessagePersistenceServiceTest {
         sessionRepo = mock(SessionRepository.class);
         when(repository.countBySessionId(any(UUID.class))).thenReturn(0L);
         when(sessionRepo.existsById(any(UUID.class))).thenReturn(true);
-        service = new MessagePersistenceService(repository, sessionRepo);
+        service = new MessagePersistenceService(repository, sessionRepo, Mappers.getMapper(MessageMapper.class));
     }
 
     @Test
@@ -75,7 +77,35 @@ class MessagePersistenceServiceTest {
 
         service.persistTurn(SESSION, "read file", result);
 
-        verify(repository, times(4)).save(any(MessageEntity.class)); // user + tool_call + tool_result + assistant
+        ArgumentCaptor<MessageEntity> captor = ArgumentCaptor.forClass(MessageEntity.class);
+        verify(repository, times(4)).save(captor.capture()); // user + tool_call + tool_result + assistant
+
+        List<MessageEntity> saved = captor.getAllValues();
+        assertThat(saved.get(1).getRole()).isEqualTo("assistant");
+        assertThat(saved.get(1).getToolCallName()).isEqualTo("read_file");
+        assertThat(saved.get(2).getRole()).isEqualTo("tool");
+        assertThat(saved.get(2).getToolCallName()).isEqualTo("read_file");
+    }
+
+    @Test
+    void persistTurn_savesMultipleToolCallsInOneAssistantRow() {
+        TurnResult result = new TurnResult(List.of(
+            Message.assistantToolCalls(List.of(
+                new ToolCall("call-1", "read_file", "{\"path\":\"/tmp/a\"}"),
+                new ToolCall("call-2", "web_search", "{\"query\":\"java\"}")), 1)
+        ), true, null);
+
+        service.persistTurn(SESSION, "two tools", result);
+
+        ArgumentCaptor<MessageEntity> captor = ArgumentCaptor.forClass(MessageEntity.class);
+        verify(repository, times(2)).save(captor.capture());
+        MessageEntity assistant = captor.getAllValues().get(1);
+        assertThat(assistant.getRole()).isEqualTo("assistant");
+        assertThat(assistant.getToolCallId()).isEqualTo("call-1");
+        assertThat(assistant.getToolCalls())
+            .contains("\"id\":\"call-1\"")
+            .contains("\"id\":\"call-2\"")
+            .contains("\"name\":\"web_search\"");
     }
 
     @Test

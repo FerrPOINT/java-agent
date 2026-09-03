@@ -24,13 +24,18 @@ public class BrowserGetImagesTool implements ToolHandler {
         try {
             String script = """
                 Array.from(document.querySelectorAll('img'))
-                  .map(img => ({ src: img.src, alt: img.alt }))
-                  .filter(i => i.src)
+                  .map(img => ({
+                    src: img.src,
+                    alt: img.alt || '',
+                    width: img.naturalWidth,
+                    height: img.naturalHeight
+                  }))
+                  .filter(i => i.src && !i.src.startsWith('data:'))
                   .slice(0, 20)
                 """;
             return ToolResult.ok(browserService.evaluate(script));
         } catch (Exception e) {
-            return ToolResult.fail("Browser get_images failed: " + e.getMessage());
+            return BrowserToolResponses.failureResult("Browser get_images failed: " + e.getMessage());
         }
     }
 }

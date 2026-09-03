@@ -1,11 +1,17 @@
 package com.azhukov.agent.core.tool;
 
+import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,6 +41,10 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Component
 public class ToolLoopGuardrail {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper CANONICAL_MAPPER = new ObjectMapper()
+        .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
 
     // ── Hermes parity: IDEMPOTENT_TOOL_NAMES (tool_guardrails.py) ──────
     private static final Set<String> IDEMPOTENT_TOOLS = Set.of(
@@ -113,7 +123,7 @@ public class ToolLoopGuardrail {
         if (!enabled) return null;
 
         // ── Runaway caps (hard ceiling, always enforced) ───────────────
-        String capWarning = checkRunawayCap(toolName);
+        String capWarning = checkRunawayCap(toolName, arguments);
         if (capWarning != null) return capWarning;
 
         // Exact-call tracking is failure-only. Successful idempotent calls are
@@ -251,7 +261,7 @@ public class ToolLoopGuardrail {
      * Check per-turn runaway caps for web_search and delegate_task.
      * Hermes parity: LoopCapConfig — hard ceiling regardless of hard_stop.
      */
-    private String checkRunawayCap(String toolName) {
+    private String checkRunawayCap(String toolName, String arguments) {
         if ("web_search".equals(toolName)) {
             int count = turnToolCounts.getOrDefault("web_search", 0);
             if (maxWebSearches > 0 && count >= maxWebSearches) {
@@ -267,6 +277,10 @@ public class ToolLoopGuardrail {
 
         if ("delegate_task".equals(toolName)) {
             int count = turnToolCounts.getOrDefault("delegate_task", 0);
+            int spawnCount = subagentSpawnCount(arguments);
+            if (spawnCount == 0) {
+                return null;
+            }
             if (maxSubagents > 0 && count >= maxSubagents) {
                 return String.format(
                     "Blocked delegate_task: this turn has already spawned " +
@@ -275,10 +289,32 @@ public class ToolLoopGuardrail {
                     count, maxSubagents
                 );
             }
-            turnToolCounts.merge("delegate_task", 1, Integer::sum);
+            turnToolCounts.merge("delegate_task", spawnCount, Integer::sum);
         }
 
         return null;
+    }
+
+    private int subagentSpawnCount(String arguments) {
+        try {
+            JsonNode root = MAPPER.readTree(arguments == null || arguments.isBlank() ? "{}" : arguments);
+            if (root != null && root.isObject()) {
+                String action = root.hasNonNull("action")
+                    ? root.get("action").asText("").trim().toLowerCase(Locale.ROOT)
+                    : "";
+                if ("list".equals(action) || "steer".equals(action) || "stop".equals(action)) {
+                    return 0;
+                }
+                JsonNode tasks = root.get("tasks");
+                if (tasks != null && tasks.isArray() && !tasks.isEmpty()) {
+                    return tasks.size();
+                }
+            }
+        } catch (Exception ignored) {
+            // Invalid JSON is handled by the call validator; count it as a single
+            // attempted spawn if execution reaches this runtime guardrail.
+        }
+        return 1;
     }
 
     private boolean isIdempotent(String toolName) {
@@ -295,16 +331,67 @@ public class ToolLoopGuardrail {
         return (result != null ? result : "") + "\n\n[Tool loop guardrail: " + warning + "]";
     }
 
+    /**
+     * Build a Hermes-style synthetic tool result for hard-blocked loop caps.
+     */
+    public ToolResult blockedResult(String toolName, String arguments, String message) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("success", false);
+        payload.put("error", message);
+
+        Map<String, Object> guardrail = new LinkedHashMap<>();
+        guardrail.put("action", "block");
+        guardrail.put("code", blockedCode(toolName));
+        guardrail.put("message", message);
+        guardrail.put("tool_name", toolName);
+        guardrail.put("count", turnToolCounts.getOrDefault(toolName, 0));
+
+        Map<String, String> signature = new LinkedHashMap<>();
+        signature.put("tool_name", toolName);
+        signature.put("args_hash", hashCanonicalArgs(arguments));
+        guardrail.put("signature", signature);
+
+        payload.put("guardrail", guardrail);
+        try {
+            return new ToolResult(false, MAPPER.writeValueAsString(payload), message);
+        } catch (Exception e) {
+            com.fasterxml.jackson.databind.node.ObjectNode fallback = MAPPER.createObjectNode();
+            fallback.put("success", false);
+            fallback.put("error", message);
+            return new ToolResult(false, fallback.toString(), message);
+        }
+    }
+
+    private String blockedCode(String toolName) {
+        if ("web_search".equals(toolName)) {
+            return "loop_web_search_cap";
+        }
+        if ("delegate_task".equals(toolName)) {
+            return "loop_subagent_cap";
+        }
+        return "tool_loop_guardrail";
+    }
+
     private String hashArgs(String arguments) {
-        if (arguments == null || arguments.isEmpty()) {
-            return "empty";
+        String hash = hashCanonicalArgs(arguments);
+        return hash.length() > 16 ? hash.substring(0, 16) : hash;
+    }
+
+    private String hashCanonicalArgs(String arguments) {
+        String canonical;
+        try {
+            Object parsed = MAPPER.readValue(arguments == null || arguments.isBlank() ? "{}" : arguments, Object.class);
+            canonical = parsed instanceof Map<?, ?>
+                ? CANONICAL_MAPPER.writeValueAsString(parsed)
+                : "{}";
+        } catch (Exception e) {
+            canonical = arguments == null ? "" : arguments;
         }
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] hash = md.digest(arguments.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hash).substring(0, 16);
+            return HexFormat.of().formatHex(md.digest(canonical.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
-            return Integer.toString(arguments.hashCode());
+            return Integer.toString(canonical.hashCode());
         }
     }
 
@@ -312,12 +399,22 @@ public class ToolLoopGuardrail {
         if (result == null || result.isEmpty()) {
             return "empty";
         }
+        String canonical = canonicalizeResult(result);
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] hash = md.digest(result.getBytes(StandardCharsets.UTF_8));
+            byte[] hash = md.digest(canonical.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash).substring(0, 16);
         } catch (Exception e) {
-            return Integer.toString(result.hashCode());
+            return Integer.toString(canonical.hashCode());
+        }
+    }
+
+    private String canonicalizeResult(String result) {
+        try {
+            Object parsed = MAPPER.readValue(result, Object.class);
+            return CANONICAL_MAPPER.writeValueAsString(parsed);
+        } catch (Exception ignored) {
+            return result;
         }
     }
 

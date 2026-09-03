@@ -62,6 +62,27 @@ class TodoServiceTest {
     }
 
     @Test
+    void listBySessionId_usesStableCreatedAtOrder() {
+        UUID sessionId = UUID.randomUUID();
+        TodoEntity entity = new TodoEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setSessionId(sessionId);
+        entity.setUserId("user-1");
+        entity.setTitle("Session task");
+        entity.setStatus("pending");
+        entity.setPriority("medium");
+        entity.setCreatedAt(Instant.now());
+
+        when(todoRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of(entity));
+
+        List<TodoDto> result = todoService.listBySessionId(sessionId);
+
+        assertThat(result).singleElement()
+            .satisfies(dto -> assertThat(dto.title()).isEqualTo("Session task"));
+        verify(todoRepository).findBySessionIdOrderByCreatedAtAsc(sessionId);
+    }
+
+    @Test
     void add_createsAndReturnsTodo() {
         TodoEntity saved = new TodoEntity();
         saved.setId(UUID.randomUUID());
@@ -114,7 +135,7 @@ class TodoServiceTest {
         Optional<TodoDto> result = todoService.markDone(id);
 
         assertThat(result).isPresent();
-        assertThat(result.get().status()).isEqualTo("done");
+        assertThat(result.get().status()).isEqualTo("completed");
     }
 
     @Test
@@ -125,6 +146,25 @@ class TodoServiceTest {
         Optional<TodoDto> result = todoService.markDone(id);
 
         assertThat(result).isEmpty();
+    }
+
+    @Test
+    void markDoneForUserRejectsTodoOwnedByAnotherProfileScope() {
+        UUID id = UUID.randomUUID();
+        TodoEntity entity = new TodoEntity();
+        entity.setId(id);
+        entity.setUserId("default::profile::work");
+        entity.setTitle("Task");
+        entity.setStatus("pending");
+        entity.setPriority("medium");
+        entity.setCreatedAt(Instant.now());
+
+        when(todoRepository.findById(id)).thenReturn(Optional.of(entity));
+
+        Optional<TodoDto> result = todoService.markDoneForUser(id, "default");
+
+        assertThat(result).isEmpty();
+        assertThat(entity.getStatus()).isEqualTo("pending");
     }
 
     @Test

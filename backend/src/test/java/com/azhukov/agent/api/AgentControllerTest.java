@@ -86,7 +86,8 @@ class AgentControllerTest {
             null, null, null,
             new com.azhukov.agent.core.security.ApprovalQueue(),
             agentProperties,
-            null
+            null,
+            org.mockito.Mockito.mock(com.azhukov.agent.core.tool.ToolRegistry.class)
         );
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
@@ -809,7 +810,7 @@ class AgentControllerTest {
     @Test
     void kanbanDoneTaskNotFoundReturns404() throws Exception {
         mockMvc = kanbanMockMvc();
-        when(todoService.markDone(SESSION_ID)).thenReturn(Optional.empty());
+        when(todoService.markDoneForUser(SESSION_ID, "default")).thenReturn(Optional.empty());
 
         mockMvc.perform(post("/api/v1/agent/kanban/done/" + SESSION_ID))
             .andExpect(status().isNotFound());

@@ -104,7 +104,8 @@ class AgentControllerPhase2Test {
             null, null, null,
             new com.azhukov.agent.core.security.ApprovalQueue(),
             agentProperties,
-            null
+            null,
+            org.mockito.Mockito.mock(com.azhukov.agent.core.tool.ToolRegistry.class)
         );
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))

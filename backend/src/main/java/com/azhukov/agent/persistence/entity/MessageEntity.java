@@ -42,6 +42,10 @@ public class MessageEntity {
     @Column(columnDefinition = "TEXT")
     private String toolCallsJson;
 
+    /** Legacy-name aliases (PR-3 call sites use toolCalls). */
+    public void setToolCalls(String json) { this.toolCallsJson = json; }
+    public String getToolCalls() { return this.toolCallsJson; }
+
     /**
      * Responses-format response item id for this tool call (alias of
      * {@link #toolCallId}). Nullable: Chat Completions histories carry one
@@ -51,6 +55,13 @@ public class MessageEntity {
     private String toolResponseItemId;
 
     private Integer turnIndex;
+
+    /** PR-3 parity: image attachments on the message (V40 migration column). */
+    @jakarta.persistence.Column(name = "image_count")
+    private Integer imageCount = 0;
+
+    public Integer getImageCount() { return imageCount; }
+    public void setImageCount(Integer imageCount) { this.imageCount = imageCount == null ? 0 : imageCount; }
 
     /** Whether the message is in live context (false after compaction archive). */
     private Boolean active = true;

@@ -23,6 +23,7 @@ class CronJobDtoMapperTest {
         Instant now = Instant.now();
         CronJobEntity entity = new CronJobEntity();
         entity.setId(id);
+        entity.setProfile("work");
         entity.setName("job1");
         entity.setSchedule("0 * * * *");
         entity.setPrompt("prompt");
@@ -30,6 +31,12 @@ class CronJobDtoMapperTest {
         entity.setDeliverTo("telegram");
         entity.setSkills("skill-a,skill-b");
         entity.setContextFrom("upstream-id");
+        entity.setMonitor("checks/state.py");
+        entity.setMonitorLastHash("abc123");
+        entity.setMonitorLastOutput("ok");
+        entity.setMonitorLastChangedAt(now);
+        entity.setContinuityEnabled(true);
+        entity.setAttachedSessionId(id);
         entity.setRepeatCount(5);
         entity.setRepeatCompleted(2);
         entity.setScript("echo hi");
@@ -39,6 +46,8 @@ class CronJobDtoMapperTest {
         entity.setModelProvider("openai-compatible");
         entity.setModelName("gpt-4");
         entity.setBaseUrl("http://localhost");
+        entity.setProviderSnapshot("openai-compatible");
+        entity.setModelSnapshot("gpt-5");
         entity.setCreatedAt(now);
         entity.setLastRunAt(now);
         entity.setNextRunAt(now);
@@ -51,6 +60,7 @@ class CronJobDtoMapperTest {
 
         assertThat(dto).isNotNull();
         assertThat(dto.id()).isEqualTo(id);
+        assertThat(dto.profile()).isEqualTo("work");
         assertThat(dto.name()).isEqualTo("job1");
         assertThat(dto.schedule()).isEqualTo("0 * * * *");
         assertThat(dto.prompt()).isEqualTo("prompt");
@@ -58,6 +68,12 @@ class CronJobDtoMapperTest {
         assertThat(dto.deliverTo()).isEqualTo("telegram");
         assertThat(dto.skills()).isEqualTo("skill-a,skill-b");
         assertThat(dto.contextFrom()).isEqualTo("upstream-id");
+        assertThat(dto.monitor()).isEqualTo("checks/state.py");
+        assertThat(dto.monitorLastHash()).isEqualTo("abc123");
+        assertThat(dto.monitorLastOutput()).isEqualTo("ok");
+        assertThat(dto.monitorLastChangedAt()).isEqualTo(now);
+        assertThat(dto.continuityEnabled()).isTrue();
+        assertThat(dto.attachedSessionId()).isEqualTo(id);
         assertThat(dto.repeatCount()).isEqualTo(5);
         assertThat(dto.repeatCompleted()).isEqualTo(2);
         assertThat(dto.script()).isEqualTo("echo hi");
@@ -67,6 +83,8 @@ class CronJobDtoMapperTest {
         assertThat(dto.modelProvider()).isEqualTo("openai-compatible");
         assertThat(dto.modelName()).isEqualTo("gpt-4");
         assertThat(dto.baseUrl()).isEqualTo("http://localhost");
+        assertThat(dto.providerSnapshot()).isEqualTo("openai-compatible");
+        assertThat(dto.modelSnapshot()).isEqualTo("gpt-5");
         assertThat(dto.createdAt()).isEqualTo(now);
         assertThat(dto.lastRunAt()).isEqualTo(now);
         assertThat(dto.nextRunAt()).isEqualTo(now);

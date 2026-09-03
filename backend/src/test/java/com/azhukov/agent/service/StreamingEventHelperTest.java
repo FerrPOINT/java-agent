@@ -164,8 +164,10 @@ class StreamingEventHelperTest {
     @Test
     void formatResultPreviewFormatsErrorResult() {
         ToolResult result = ToolResult.fail("disk full");
-        // ToolResultFormatter prepends "Error: " for empty-content failures
-        assertThat(helper.formatResultPreview(result)).isEqualTo("Error: disk full");
+        // Structured failure envelope (Hermes parity): failed results with no
+        // content surface as {"success":false,"error":...} JSON.
+        assertThat(helper.formatResultPreview(result))
+            .isEqualTo("{\"success\":false,\"error\":\"disk full\"}");
     }
 
     @Test

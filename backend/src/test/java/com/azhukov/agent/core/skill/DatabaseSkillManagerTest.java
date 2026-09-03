@@ -291,6 +291,33 @@ class DatabaseSkillManagerTest {
     }
 
     @Test
+    void writeSupportFile_validatesPath_rejectsAllowedSubdirPrefix() {
+        SkillRepository repo = mock(SkillRepository.class);
+        DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
+        assertThatThrownBy(() -> mgr.writeSupportFile("test", "references_evil/script.sh", "content"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("must be under");
+    }
+
+    @Test
+    void writeSupportFile_validatesPath_rejectsDirectoryOnlyAllowedSubdir() {
+        SkillRepository repo = mock(SkillRepository.class);
+        DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
+        assertThatThrownBy(() -> mgr.writeSupportFile("test", "references", "content"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("filename");
+    }
+
+    @Test
+    void writeSupportFile_validatesSkillNameBeforeResolvingPath() {
+        SkillRepository repo = mock(SkillRepository.class);
+        DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
+        assertThatThrownBy(() -> mgr.writeSupportFile("../outside", "references/ref.md", "content"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid skill name");
+    }
+
+    @Test
     void writeSupportFile_validatesPath_acceptsAllowedSubdir() {
         SkillRepository repo = mock(SkillRepository.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);

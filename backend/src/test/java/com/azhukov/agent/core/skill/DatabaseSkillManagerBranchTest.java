@@ -375,6 +375,78 @@ class DatabaseSkillManagerBranchTest {
         assertThat(files).anyMatch(f -> f.contains("tmpl.md"));
     }
 
+    @Test
+    void patchSkill_defaultRefusesAmbiguousMatch() {
+        SkillRepository repo = mock(SkillRepository.class);
+        SkillEntity e = new SkillEntity();
+        e.setName("test-skill");
+        e.setContent("""
+            ---
+            name: test-skill
+            description: Test
+            ---
+            old
+            old
+            """);
+        when(repo.findByName("test-skill")).thenReturn(Optional.of(e));
+        DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
+
+        assertThatThrownBy(() -> mgr.patchSkill("test-skill", "old", "new", false))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("old_text matches 2 times");
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void patchSkill_replaceAllUpdatesEveryMatch() {
+        SkillRepository repo = mock(SkillRepository.class);
+        SkillEntity e = new SkillEntity();
+        e.setName("test-skill");
+        e.setContent("""
+            ---
+            name: test-skill
+            description: Test
+            ---
+            old
+            old
+            """);
+        when(repo.findByName("test-skill")).thenReturn(Optional.of(e));
+        DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
+
+        assertThat(mgr.patchSkill("test-skill", "old", "new", true)).isTrue();
+
+        verify(repo).save(argThat(saved ->
+            saved.getContent().contains("new\nnew")
+                && !saved.getContent().contains("old\nold")));
+    }
+
+    @Test
+    void patchSupportFile_defaultRefusesAmbiguousMatch(@TempDir Path tempDir) throws Exception {
+        AgentProperties props = new AgentProperties();
+        props.getCore().setWorkingDirectory(tempDir.toString());
+        SkillRepository repo = mock(SkillRepository.class);
+        DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
+        mgr.writeSupportFile("test-skill", "references/file.md", "old\nold\n");
+
+        assertThatThrownBy(() -> mgr.patchSupportFile("test-skill", "references/file.md", "old", "new", false))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("old_text matches 2 times");
+        assertThat(mgr.readSupportFile("test-skill", "references/file.md")).isEqualTo("old\nold\n");
+    }
+
+    @Test
+    void patchSupportFile_replaceAllUpdatesEveryMatch(@TempDir Path tempDir) throws Exception {
+        AgentProperties props = new AgentProperties();
+        props.getCore().setWorkingDirectory(tempDir.toString());
+        SkillRepository repo = mock(SkillRepository.class);
+        DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
+        mgr.writeSupportFile("test-skill", "references/file.md", "old\nold\n");
+
+        assertThat(mgr.patchSupportFile("test-skill", "references/file.md", "old", "new", true)).isTrue();
+
+        assertThat(mgr.readSupportFile("test-skill", "references/file.md")).isEqualTo("new\nnew\n");
+    }
+
     // ─── reload ───
 
     @Test
@@ -688,6 +760,21 @@ class DatabaseSkillManagerBranchTest {
         when(repo.findByName("test")).thenReturn(Optional.of(e));
 
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
+        SkillManager.SkillInfo info = mgr.getSkillInfo("test");
+        assertThat(info.disabled()).isTrue();
+    }
+
+    @Test
+    void getSkillInfo_detectsDisabledFromRuntimeConfig() {
+        SkillRepository repo = mock(SkillRepository.class);
+        SkillEntity e = new SkillEntity();
+        e.setName("test");
+        e.setContent(VALID_FRONTMATTER);
+        when(repo.findByName("test")).thenReturn(Optional.of(e));
+        AgentProperties props = new AgentProperties();
+        props.getSkills().getDisabled().add("test");
+
+        DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         SkillManager.SkillInfo info = mgr.getSkillInfo("test");
         assertThat(info.disabled()).isTrue();
     }

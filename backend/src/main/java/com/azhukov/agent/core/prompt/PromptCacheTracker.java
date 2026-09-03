@@ -59,8 +59,8 @@ public class PromptCacheTracker {
     }
 
     public void invalidate(String sessionId) {
-        sessionPrefixHashes.remove(sessionId);
-        cachedSystemPrompts.remove(sessionId);
+        removeSessionEntries(sessionPrefixHashes, sessionId);
+        removeSessionEntries(cachedSystemPrompts, sessionId);
         log.debug("Invalidated cache for session {}", sessionId);
     }
 
@@ -84,9 +84,16 @@ public class PromptCacheTracker {
      * Called after context compression events.
      */
     public void invalidateSystemPrompt(String sessionId) {
-        cachedSystemPrompts.remove(sessionId);
-        sessionPrefixHashes.remove(sessionId);
+        removeSessionEntries(cachedSystemPrompts, sessionId);
+        removeSessionEntries(sessionPrefixHashes, sessionId);
         log.debug("Invalidated system prompt cache for session {}", sessionId);
+    }
+
+    private void removeSessionEntries(Map<String, ?> map, String sessionId) {
+        if (sessionId == null) {
+            return;
+        }
+        map.keySet().removeIf(key -> key.equals(sessionId) || key.startsWith(sessionId + "|"));
     }
 
     /**

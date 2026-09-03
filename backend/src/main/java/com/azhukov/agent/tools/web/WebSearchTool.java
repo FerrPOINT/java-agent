@@ -16,11 +16,14 @@ import org.jsoup.nodes.Element;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import jakarta.annotation.PostConstruct;
@@ -56,18 +59,18 @@ public class WebSearchTool implements ToolHandler {
     }
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        SearchArgs args = ToolHandler.parseJson(arguments, SearchArgs.class);
-        String query = args.query();
-        if (query == null || query.isBlank()) {
-            return ToolResult.fail("Query is required");
-        }
-
-        int limit = Math.min(
-            Math.max(1, args.limit() > 0 ? args.limit() : configuredLimit),
-            MAX_LIMIT
-        );
-
         try {
+            SearchArgs args = ToolHandler.parseJson(arguments, SearchArgs.class);
+            String query = args.query();
+            if (query == null || query.isBlank()) {
+                return jsonFailureResponse("Query is required");
+            }
+
+            int limit = Math.min(
+                Math.max(1, args.limit() > 0 ? args.limit() : configuredLimit),
+                MAX_LIMIT
+            );
+
             List<Map<String, String>> results;
             // Feature 1: Use SearXNG if configured, otherwise fall back to DuckDuckGo
             if (searXngProvider != null && searXngProvider.isAvailable()) {
@@ -85,16 +88,38 @@ public class WebSearchTool implements ToolHandler {
                 entry.put("title", src.getOrDefault("title", ""));
                 entry.put("url", src.getOrDefault("url", ""));
                 entry.put("description", src.getOrDefault("description", ""));
-                entry.put("position", i);
+                entry.put("position", i + 1);
                 webResults.add(entry);
             }
             Map<String, Object> response = new java.util.LinkedHashMap<>();
             response.put("success", true);
             response.put("data", java.util.Map.of("web", webResults));
-            return ToolResult.ok(objectMapper.writeValueAsString(response));
+            return ToolResult.ok(redact(objectMapper.writeValueAsString(response)));
         } catch (IOException e) {
-            return ToolResult.fail("Web search failed: " + e.getMessage());
+            return jsonFailureResponse("Web search failed: " + e.getMessage());
+        } catch (Exception e) {
+            return jsonFailureResponse("Web search failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+    }
+
+    private ToolResult jsonFailureResponse(String error) {
+        String safeError = redact(error);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("success", false);
+        response.put("error", safeError);
+        try {
+            return new ToolResult(false, objectMapper.writeValueAsString(response), safeError);
+        } catch (Exception e) {
+            return new ToolResult(false, "{\"success\":false,\"error\":\"Web search failed\"}", "Web search failed");
+        }
+    }
+
+    private String redact(String output) {
+        if (redactor == null) {
+            return output;
+        }
+        String redacted = redactor.redact(output);
+        return redacted == null ? output : redacted;
     }
 
     private List<Map<String, String>> searchDuckDuckGo(String query, int limit) throws IOException {
@@ -128,6 +153,10 @@ public class WebSearchTool implements ToolHandler {
 
     private String absUrl(Element link) {
         String href = link.attr("href");
+        String duckDuckGoTarget = decodeDuckDuckGoRedirect(href);
+        if (duckDuckGoTarget != null) {
+            return duckDuckGoTarget;
+        }
         if (href.startsWith("http")) {
             return href;
         }
@@ -138,6 +167,68 @@ public class WebSearchTool implements ToolHandler {
             return "https://duckduckgo.com" + href;
         }
         return href;
+    }
+
+    private String decodeDuckDuckGoRedirect(String href) {
+        if (href == null || href.isBlank()) {
+            return null;
+        }
+
+        String candidate = href.trim();
+        if (candidate.startsWith("//")) {
+            candidate = "https:" + candidate;
+        } else if (candidate.startsWith("/")) {
+            candidate = "https://duckduckgo.com" + candidate;
+        }
+
+        URI uri;
+        try {
+            uri = URI.create(candidate);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+
+        String host = uri.getHost();
+        String path = uri.getPath();
+        if (host == null
+            || !isDuckDuckGoHost(host)
+            || path == null
+            || !path.startsWith("/l/")) {
+            return null;
+        }
+
+        String query = uri.getRawQuery();
+        if (query == null || query.isBlank()) {
+            return null;
+        }
+        for (String pair : query.split("&")) {
+            int equals = pair.indexOf('=');
+            if (equals < 0) {
+                continue;
+            }
+            String key = urlDecode(pair.substring(0, equals));
+            if (!"uddg".equals(key)) {
+                continue;
+            }
+            String value = urlDecode(pair.substring(equals + 1));
+            if (value.startsWith("http://") || value.startsWith("https://")) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private boolean isDuckDuckGoHost(String host) {
+        String lower = host.toLowerCase(Locale.ROOT);
+        return lower.equals("duckduckgo.com") || lower.endsWith(".duckduckgo.com");
+    }
+
+    private String urlDecode(String value) {
+        try {
+            return URLDecoder.decode(value, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return value;
+        }
     }
 
     public record SearchArgs(

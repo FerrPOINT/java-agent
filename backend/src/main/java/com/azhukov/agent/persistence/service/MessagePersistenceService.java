@@ -33,6 +33,7 @@ public class MessagePersistenceService {
 
     private final MessageRepository messageRepository;
     private final SessionRepository sessionRepository;
+    private final com.azhukov.agent.persistence.mapper.MessageMapper messageMapper;
 
     /**
      * P1-5: Persist only the user message before a turn starts.
@@ -62,8 +63,13 @@ public class MessagePersistenceService {
                             msg.turnIndex() != null ? msg.turnIndex() : 0);
                     }
                 } else if (msg.role() == Role.TOOL) {
+                    // Backfill the tool name for the result row: strict providers
+                    // and session_search surface tool_result rows with the tool
+                    // name; the id alone is opaque. Resolution follows Hermes
+                    // tool_call pairing (assistant call earlier in this turn).
+                    String toolName = resolveToolName(turnResult.messages(), msg.toolCallId());
                     saveMessage(session.id(), Role.TOOL.name().toLowerCase(), msg.content(),
-                        msg.toolCallId(), null, null,
+                        msg.toolCallId(), toolName, null,
                         msg.turnIndex() != null ? msg.turnIndex() : 0);
                 }
             }
@@ -99,6 +105,25 @@ public class MessagePersistenceService {
     }
 
     /** Persist one assistant row per model response, including the entire tool-call batch. */
+private String resolveToolName(List<Message> messages, String toolCallId) {
+        if (toolCallId == null) {
+            return null;
+        }
+        for (Message m : messages) {
+            if (m.role() != Role.ASSISTANT) {
+                continue;
+            }
+            List<ToolCall> calls = m.toolCalls() != null ? m.toolCalls()
+                : m.toolCall() != null ? List.of(m.toolCall()) : List.of();
+            for (ToolCall tc : calls) {
+                if (tc.idVariants().contains(toolCallId) || tc.pairingId().equals(toolCallId)) {
+                    return tc.name();
+                }
+            }
+        }
+        return null;
+    }
+
     private void saveAssistantMessage(UUID sessionId, String content, List<ToolCall> calls, int turnIndex) {
         if (!sessionRepository.existsById(sessionId)) {
             log.debug("saveAssistantMessage skipped: session {} no longer exists", sessionId);

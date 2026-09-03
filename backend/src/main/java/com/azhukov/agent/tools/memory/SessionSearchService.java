@@ -33,6 +33,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class SessionSearchService {
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper TOOL_CALLS_JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+    private static final com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>> TOOL_CALLS_TYPE = new com.fasterxml.jackson.core.type.TypeReference<>() {};
+
     private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
     private final SessionLineageService sessionLineageService;
@@ -626,4 +629,204 @@ public class SessionSearchService {
         @com.fasterxml.jackson.annotation.JsonProperty("last_active") String lastActive,
         @com.fasterxml.jackson.annotation.JsonProperty("message_count") int messageCount,
         String preview) {}
+
+public Map<String, Object> webSearch(
+            String query,
+            Integer limit,
+            String profile,
+            String source,
+            String sources,
+            String excludeSources) {
+        if (query == null || query.isBlank()) {
+            return Map.of("results", List.of());
+        }
+        int safeLimit = limit != null ? clamp(limit, 1, 100) : 20;
+        List<String> includeSources = parseIncludeSources(source, sources);
+        List<String> explicitExcludeSources = parseCsv(excludeSources);
+        List<Map<String, Object>> webResults = new ArrayList<>();
+        LinkedHashSet<UUID> seenLineages = new LinkedHashSet<>();
+        UUID directSessionId = parseUuidOrNull(query.trim());
+        if (directSessionId != null) {
+            sessionRepository.findById(directSessionId)
+                .filter(session -> matchesSourceFilters(session, includeSources, explicitExcludeSources))
+                .ifPresent(session -> {
+                    webResults.add(buildWebSearchResult(
+                        new DiscoverResult(
+                            session.getId(),
+                            formatTimestamp(session.getCreatedAt()),
+                            session.getSource() != null ? session.getSource() : "unknown",
+                            session.getModelName() != null ? session.getModelName() : "unknown",
+                            session.getTitle(),
+                            null,
+                            null,
+                            session.getPreview() != null && !session.getPreview().isBlank()
+                                ? session.getPreview()
+                                : "Session ID: " + session.getId(),
+                            List.of(),
+                            List.of(),
+                            List.of(),
+                            0,
+                            0,
+                            "full",
+                            null,
+                            sessionLink(session.getId(), profile)),
+                        session));
+                    seenLineages.add(session.getId());
+                });
+        }
+        SearchResult result = discover(
+            query.trim(),
+            null,
+            safeLimit,
+            null,
+            "adaptive",
+            null,
+            profile);
+        if (result.discoverResults != null) {
+            for (DiscoverResult discoverResult : result.discoverResults) {
+                if (webResults.size() >= safeLimit) {
+                    break;
+                }
+                UUID lineageRoot = discoverResult.parentSessionId() != null
+                    ? discoverResult.parentSessionId()
+                    : discoverResult.sessionId();
+                if (!seenLineages.add(lineageRoot)) {
+                    continue;
+                }
+                webResults.add(buildWebSearchResult(discoverResult, null));
+            }
+        }
+        return Map.of(
+            "results",
+            webResults);
+    }
+
+
+List<String> parseIncludeSources(String source, String sources) {
+        String single = source != null ? source.trim() : "";
+        if (!single.isEmpty()) {
+            return List.of(single);
+        }
+        return parseCsv(sources);
+    }
+
+List<String> parseCsv(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(value.split(","))
+            .map(String::trim)
+            .filter(s -> !s.isEmpty())
+            .distinct()
+            .toList();
+    }
+
+UUID parseUuidOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+boolean matchesSourceFilters(
+            SessionEntity session,
+            List<String> includeSources,
+            List<String> excludeSources) {
+        if (session == null) {
+            return false;
+        }
+        String source = session.getSource();
+        if (includeSources != null && !includeSources.isEmpty()) {
+            return source != null && includeSources.contains(source);
+        }
+        return excludeSources == null || source == null || !excludeSources.contains(source);
+    }
+
+Map<String, Object> buildWebSearchResult(DiscoverResult result, SessionEntity knownSession) {
+        UUID sessionId = result.sessionId();
+        UUID lineageRoot = result.parentSessionId() != null ? result.parentSessionId() : sessionId;
+        SessionEntity session = knownSession != null
+            ? knownSession
+            : sessionRepository.findById(sessionId)
+                .or(() -> sessionRepository.findById(lineageRoot))
+                .orElse(null);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("session_id", sessionId != null ? sessionId.toString() : null);
+        row.put("lineage_root", lineageRoot != null ? lineageRoot.toString() : null);
+        row.put("id", session != null && session.getId() != null
+            ? session.getId().toString()
+            : sessionId != null ? sessionId.toString() : null);
+        row.put("snippet", result.snippet() != null ? result.snippet() : "");
+        row.put("role", result.matchedRole());
+        if (session != null) {
+            putSessionInfo(row, session);
+        } else {
+            row.put("source", result.source());
+            row.put("model", result.model());
+            row.put("title", result.title());
+            row.put("started_at", null);
+            row.put("ended_at", null);
+            row.put("last_active", null);
+            row.put("is_active", false);
+            row.put("message_count", 0);
+            row.put("tool_call_count", 0);
+            row.put("input_tokens", 0);
+            row.put("output_tokens", 0);
+            row.put("preview", null);
+            row.put("archived", false);
+        }
+        row.put("session_started", row.get("started_at"));
+        return row;
+    }
+
+
+private static void putSessionInfo(Map<String, Object> row, SessionEntity session) {
+        Instant startedAt = session.getCreatedAt();
+        Instant endedAt = endedAt(session);
+        Instant lastActive = session.getLastActive() != null ? session.getLastActive() : session.getUpdatedAt();
+        if (lastActive == null) {
+            lastActive = startedAt;
+        }
+        row.put("source", session.getSource());
+        row.put("model", session.getModelName());
+        row.put("title", session.getTitle());
+        row.put("started_at", startedAt != null ? startedAt.getEpochSecond() : null);
+        row.put("ended_at", endedAt != null ? endedAt.getEpochSecond() : null);
+        row.put("last_active", lastActive != null ? lastActive.getEpochSecond() : null);
+        row.put("is_active", endedAt == null && lastActive != null && lastActive.isAfter(Instant.now().minusSeconds(300)));
+        row.put("message_count", session.getMessageCount() != null ? session.getMessageCount() : 0);
+        row.put("tool_call_count", 0);
+        row.put("input_tokens", 0);
+        row.put("output_tokens", 0);
+        row.put("preview", session.getPreview());
+        row.put("parent_session_id", session.getParentSessionId() != null ? session.getParentSessionId().toString() : null);
+        row.put("archived", Boolean.TRUE.equals(session.getArchived()));
+        row.put("profile", "default");
+        row.put("is_default_profile", true);
+    }
+
+
+private static Instant endedAt(SessionEntity session) {
+        if (session == null) {
+            return null;
+        }
+        boolean ended = session.getEndReason() != null && !session.getEndReason().isBlank();
+        String status = session.getSessionStatus();
+        ended = ended || status != null && !status.isBlank() && !"active".equalsIgnoreCase(status);
+        if (!ended) {
+            return null;
+        }
+        if (session.getUpdatedAt() != null) {
+            return session.getUpdatedAt();
+        }
+        if (session.getLastActive() != null) {
+            return session.getLastActive();
+        }
+        return session.getCreatedAt();
+    }
+
 }

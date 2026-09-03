@@ -47,6 +47,9 @@ public class CliStateApplier {
             request.delegationDepth(),
             request.timeoutMs(),
             request.model(),
+            request.provider(),
+            request.baseUrl(),
+            request.apiKey(),
             reasoningEffort,
             request.fastMode(),
             request.voiceMode(),
@@ -55,6 +58,8 @@ public class CliStateApplier {
             request.disabledTools(),
             null, // consumed
             null,
+            request.maxCompletionTokens(),
+            request.systemPromptOverride(),
             request.cdpUrl(),
             null, // goal
             request.userId(),

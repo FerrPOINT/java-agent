@@ -1,14 +1,18 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
-import com.azhukov.agent.config.FallbackConfig;
+import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.RuntimeConfigService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -18,9 +22,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class ModelsControllerTest {
 
+    @TempDir
+    private Path tempDir;
+
     private MockMvc mockMvc;
     private AgentProperties properties;
-    private RuntimeConfigService runtimeConfigService;
+    private ProfileService profileService;
 
     @BeforeEach
     void setUp() {
@@ -29,19 +36,16 @@ class ModelsControllerTest {
         modelProps.setModelName("test-model");
         when(properties.getModel()).thenReturn(modelProps);
 
-        AgentProperties.AuxiliaryProperties auxProps = new AgentProperties.AuxiliaryProperties();
-        auxProps.setModelName("aux-model");
-        when(properties.getAuxiliary()).thenReturn(auxProps);
+        AgentProperties.ApiProperties apiProps = new AgentProperties.ApiProperties();
+        when(properties.getApi()).thenReturn(apiProps);
 
-        FallbackConfig fb = new FallbackConfig();
-        fb.setModel("fallback-model");
-        fb.setProvider("openai-compatible");
-        when(properties.getFallbackChain()).thenReturn(List.of(fb));
+        AgentProperties profileProperties = new AgentProperties();
+        profileProperties.getProfile().setName("default");
+        profileProperties.getProfile().setBaseDir(tempDir.resolve("profiles").toString());
+        profileProperties.getCore().setSoulMdPath(tempDir.resolve("SOUL.md").toString());
+        profileService = new ProfileService(profileProperties, new RuntimeConfigService());
 
-        runtimeConfigService = mock(RuntimeConfigService.class);
-        when(runtimeConfigService.getModelOverride()).thenReturn(null);
-
-        mockMvc = MockMvcBuilders.standaloneSetup(new ModelsController(properties, runtimeConfigService)).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(new ModelsController(properties, profileService)).build();
     }
 
     @Test
@@ -49,42 +53,113 @@ class ModelsControllerTest {
         mockMvc.perform(get("/v1/models"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.object").value("list"))
-            .andExpect(jsonPath("$.data[0].id").value("test-model"))
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].id").value("hermes-agent"))
             .andExpect(jsonPath("$.data[0].object").value("model"))
-            .andExpect(jsonPath("$.data[1].id").value("fallback-model"))
-            .andExpect(jsonPath("$.data[2].id").value("aux-model"));
+            .andExpect(jsonPath("$.data[0].owned_by").value("hermes"))
+            .andExpect(jsonPath("$.data[0].root").value("hermes-agent"));
     }
 
     @Test
-    void modelOverrideTakesPrecedence() throws Exception {
-        when(runtimeConfigService.getModelOverride()).thenReturn("override-model");
-        mockMvc.perform(get("/v1/models"))
+    void profilePrefixedModelsRouteAdvertisesProfileName() throws Exception {
+        createProfile("work");
+
+        mockMvc.perform(get("/p/work/v1/models"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data[0].id").value("override-model"));
+            .andExpect(jsonPath("$.object").value("list"))
+            .andExpect(jsonPath("$.data[0].id").value("work"))
+            .andExpect(jsonPath("$.data[0].root").value("work"));
     }
 
     @Test
-    void noDuplicateModels() throws Exception {
-        // When fallback model equals primary, it should not be listed twice
-        FallbackConfig fb = new FallbackConfig();
-        fb.setModel("test-model");
-        when(properties.getFallbackChain()).thenReturn(List.of(fb));
+    void profilePrefixedModelsRouteUsesProfileApiServerModelNameWhenSet() throws Exception {
+        createProfile("work");
+        profileService.writeConfig("work", Map.of(
+            "platforms", Map.of(
+                "api_server", Map.of(
+                    "extra", Map.of("model_name", "lucas")))));
+
+        mockMvc.perform(get("/p/work/v1/models"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data[0].id").value("lucas"))
+            .andExpect(jsonPath("$.data[0].root").value("lucas"));
+    }
+
+    @Test
+    void profilePrefixedModelsRouteRejectsUnknownProfile() throws Exception {
+        mockMvc.perform(get("/p/ghost/v1/models"))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void apiModelNameTakesPrecedence() throws Exception {
+        AgentProperties.ApiProperties apiProps = new AgentProperties.ApiProperties();
+        apiProps.setModelName("custom-agent");
+        when(properties.getApi()).thenReturn(apiProps);
 
         mockMvc.perform(get("/v1/models"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.length()").value(2)) // test-model + aux-model (no duplicate)
-            .andExpect(jsonPath("$.data[0].id").value("test-model"))
-            .andExpect(jsonPath("$.data[1].id").value("aux-model"));
+            .andExpect(jsonPath("$.data[0].id").value("custom-agent"));
+    }
+
+    @Test
+    void modelRoutesAreAdvertisedAsAliases() throws Exception {
+        AgentProperties.ApiProperties apiProps = new AgentProperties.ApiProperties();
+        AgentProperties.ApiProperties.ModelRouteProperties route =
+            new AgentProperties.ApiProperties.ModelRouteProperties();
+        route.setModel("openrouter/fast-model");
+        route.setApiKey("sk-route-secret");
+        apiProps.getModelRoutes().put("fast-agent", route);
+        when(properties.getApi()).thenReturn(apiProps);
+
+        MvcResult result = mockMvc.perform(get("/v1/models"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[1].id").value("fast-agent"))
+            .andExpect(jsonPath("$.data[1].root").value("openrouter/fast-model"))
+            .andExpect(jsonPath("$.data[1].parent").value("hermes-agent"))
+            .andExpect(jsonPath("$.data[1].apiKey").doesNotExist())
+            .andExpect(jsonPath("$.data[1].api_key").doesNotExist())
+            .andReturn();
+
+        assertThat(result.getResponse().getContentAsString()).doesNotContain("sk-route-secret");
+    }
+
+    @Test
+    void blankApiModelNameKeepsHermesVirtualModel() throws Exception {
+        AgentProperties.ApiProperties apiProps = new AgentProperties.ApiProperties();
+        apiProps.setModelName(" ");
+        when(properties.getApi()).thenReturn(apiProps);
+
+        mockMvc.perform(get("/v1/models"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].id").value("hermes-agent"))
+            .andExpect(jsonPath("$.data[0].root").value("hermes-agent"));
+    }
+
+    @Test
+    void blankApiModelNameStillRoutesHermesVirtualModelToConfiguredProviderModel() {
+        AgentProperties.ApiProperties apiProps = new AgentProperties.ApiProperties();
+        apiProps.setModelName(" ");
+        when(properties.getApi()).thenReturn(apiProps);
+
+        assertThat(OpenAiModelRouting.runtimeModelName(properties, "hermes-agent"))
+            .isEqualTo("test-model");
     }
 
     @Test
     void directCallReturnsMap() {
-        when(runtimeConfigService.getModelOverride()).thenReturn(null);
-        var controller = new ModelsController(properties, runtimeConfigService);
+        var controller = new ModelsController(properties);
         var result = controller.listModels();
         assertThat(result).containsEntry("object", "list");
         @SuppressWarnings("unchecked")
         var data = (List<?>) result.get("data");
-        assertThat(data).hasSize(3);
+        assertThat(data).hasSize(1);
+    }
+
+    private void createProfile(String name) throws Exception {
+        profileService.createProfile(new ProfileService.CreateProfileRequest(
+            name, null, false, false, true, null, null, null, null));
     }
 }

@@ -11,6 +11,7 @@ import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -26,6 +27,9 @@ public class RateLimitFilter implements Filter {
     // Synchronized LinkedHashMap with access-order eviction — oldest entries
     // are evicted when the map exceeds MAX_BUCKETS.
     private static final int MAX_BUCKETS = 10_000;
+    private static final String RATE_LIMIT_ERROR_JSON = """
+        {"error":{"message":"Rate limit exceeded","type":"rate_limit_error","code":"rate_limit_exceeded"}}\
+        """;
 
     private final Map<String, Bucket> buckets = new LinkedHashMap<>(256, 0.75f, true) {
         @Override
@@ -54,7 +58,10 @@ public class RateLimitFilter implements Filter {
             chain.doFilter(request, response);
         } else {
             res.setStatus(429);
-            res.getWriter().write("Rate limit exceeded");
+            res.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            res.setCharacterEncoding("UTF-8");
+            res.setHeader("Retry-After", "60");
+            res.getWriter().write(RATE_LIMIT_ERROR_JSON);
         }
     }
 

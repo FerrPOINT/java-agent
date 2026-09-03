@@ -1,21 +1,27 @@
 package com.azhukov.agent.core.tool;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.metrics.AgentMetrics;
-import com.azhukov.agent.core.security.GuardrailAction;
 import com.azhukov.agent.core.security.GuardrailDecision;
 import com.azhukov.agent.core.security.SecretRedactor;
 import com.azhukov.agent.core.security.ToolCallGuardrail;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -28,6 +34,8 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class ToolExecutionServiceTest {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private static final String USER_ID = "user-42";
     private static final Session SESSION = Session.create(USER_ID, "noop", "default");
@@ -148,6 +156,33 @@ class ToolExecutionServiceTest {
     }
 
     @Test
+    @DisplayName("Should preserve diagnostic content from failed tool results")
+    void shouldPreserveFailedToolDiagnosticContent() {
+        String toolName = "terminal";
+        String arguments = "{\"command\":\"failing-build\"}";
+        ToolResult rawResult = new ToolResult(false, "compiler output\nBUILD FAILED", "exit 1");
+
+        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+        when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION)))
+            .thenReturn(rawResult);
+        when(redactor.redact("compiler output\nBUILD FAILED")).thenReturn("compiler output\nBUILD FAILED");
+        when(redactor.redact("exit 1")).thenReturn("exit 1");
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow(toolName));
+        when(toolResultClassifier.classify(any(ToolResult.class)))
+            .thenReturn(ToolResultClassifier.ResultType.FAILURE);
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString()))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        ToolResult result = service.execute(toolName, "call-terminal-fail", arguments, LAST_MSG, SESSION);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.content()).contains("compiler output");
+        assertThat(result.content()).contains("BUILD FAILED");
+        assertThat(result.error()).isEqualTo("exit 1");
+    }
+
+    @Test
     @DisplayName("Should handle IllegalArgumentException without retry (ignored exception)")
     void shouldHandleIllegalArgumentExceptionWithoutRetry() {
         String toolName = "bad_args_tool";
@@ -248,7 +283,7 @@ class ToolExecutionServiceTest {
 
     @Test
     @DisplayName("Should handle unknown tool failure from registry")
-    void shouldHandleUnknownToolFromRegistry() {
+    void shouldHandleUnknownToolFromRegistry() throws Exception {
         String toolName = "nonexistent_tool";
         String arguments = "{}";
 
@@ -264,6 +299,10 @@ class ToolExecutionServiceTest {
         ToolResult result = service.execute(toolName, "call-9", arguments, LAST_MSG, SESSION);
 
         assertThat(result.success()).isFalse();
+        JsonNode json = JSON.readTree(result.content());
+        assertThat(json.path("success").asBoolean()).isFalse();
+        assertThat(json.path("error").asText()).contains("Unknown tool: " + toolName);
+        assertThat(result.error()).isEqualTo(json.path("error").asText());
         verify(agentMetrics).incrementToolErrors(toolName);
     }
 
@@ -288,6 +327,49 @@ class ToolExecutionServiceTest {
 
         assertThat(result.success()).isTrue();
         assertThat(result.content()).isEqualTo("ok");
+    }
+
+    @Test
+    @DisplayName("Should scope guardrail calls to the executing session")
+    void shouldScopeGuardrailCallsToSession() {
+        RecordingGuardrail recordingGuardrail = new RecordingGuardrail();
+        ToolExecutionService scopedService = new ToolExecutionService(
+            toolRegistry, properties, recordingGuardrail, redactor,
+            toolResultClassifier, toolOutputLimiter, agentMetrics);
+        String toolName = "web_search";
+        String arguments = "{}";
+        ToolResult rawResult = ToolResult.ok("ok");
+
+        when(toolRegistry.execute(toolName, "call-session", arguments, LAST_MSG, SESSION)).thenReturn(rawResult);
+        when(redactor.redact("ok")).thenReturn("ok");
+        when(toolResultClassifier.classify(any(ToolResult.class)))
+            .thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString()))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        ToolResult result = scopedService.execute(toolName, "call-session", arguments, LAST_MSG, SESSION);
+
+        assertThat(result.success()).isTrue();
+        assertThat(recordingGuardrail.beforeSessionIds).containsExactly(SESSION.id());
+        assertThat(recordingGuardrail.afterSessionIds).containsExactly(SESSION.id());
+        assertThat(InterruptToken.currentSessionId()).isNull();
+    }
+
+    private static class RecordingGuardrail implements ToolCallGuardrail {
+        final List<UUID> beforeSessionIds = new ArrayList<>();
+        final List<UUID> afterSessionIds = new ArrayList<>();
+
+        @Override
+        public GuardrailDecision beforeCall(String toolName, String arguments) {
+            beforeSessionIds.add(InterruptToken.currentSessionId());
+            return GuardrailDecision.allow(toolName);
+        }
+
+        @Override
+        public GuardrailDecision afterCall(String toolName, String arguments, ToolResult result, boolean failed) {
+            afterSessionIds.add(InterruptToken.currentSessionId());
+            return GuardrailDecision.allow(toolName);
+        }
     }
 
 
@@ -337,7 +419,10 @@ class ToolExecutionServiceTest {
         ToolResult blocked = service.execute(toolName, "call-2", arguments, LAST_MSG, SESSION);
 
         assertThat(blocked.success()).isFalse();
-        assertThat(blocked.error()).startsWith("Blocked web_search");
+        assertThat(blocked.error()).contains("Blocked web_search");
+        assertThat(blocked.content()).contains("\"error\":\"Blocked web_search");
+        assertThat(blocked.content()).contains("\"code\":\"loop_web_search_cap\"");
+        assertThat(blocked.content()).contains("\"action\":\"block\"");
         verify(toolRegistry, org.mockito.Mockito.times(1)).execute(anyString(), anyString(), anyString(), any(), any());
     }
 
@@ -375,7 +460,11 @@ class ToolExecutionServiceTest {
         String toolName = "terminal";
         String arguments = "{\"command\":\"long-output\"}";
         ToolResult rawResult = ToolResult.ok("very large output");
-        ToolResult persisted = ToolResult.ok("[Full output saved to /tmp/java-agent-results/id.txt]\npreview");
+        ToolResult persisted = ToolResult.ok("""
+            <persisted-output>
+            Full output saved to: /tmp/java-agent-results/id.txt
+            preview
+            </persisted-output>""");
 
         when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
         when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
@@ -388,7 +477,7 @@ class ToolExecutionServiceTest {
 
         ToolResult result = service.execute(toolName, "call-persist", arguments, LAST_MSG, SESSION);
 
-        assertThat(result.content()).contains("Full output saved to");
+        assertThat(result.content()).contains("<persisted-output>");
         verify(storage).maybePersist(any(ToolResult.class), eq(toolName), eq("call-persist"));
         verify(toolOutputLimiter).truncate(eq(persisted), eq("terminal"));
     }

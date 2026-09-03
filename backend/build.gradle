@@ -81,6 +81,11 @@ dependencies {
 
     // WebSocket client for CDP
     implementation 'org.java-websocket:Java-WebSocket:1.6.0'
+    // PR #3 parity deps: websocket event bus + profile tar.gz import/export
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    implementation 'org.apache.commons:commons-compress:1.27.1'
+    implementation 'org.tomlj:tomlj:1.1.1'
+    implementation 'org.apache.pdfbox:pdfbox:3.0.8'
 
     // HTML / markdown parsing
     implementation 'org.jsoup:jsoup:1.18.3'

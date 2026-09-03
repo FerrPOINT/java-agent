@@ -109,6 +109,128 @@ class WriteApprovalGateTest {
     }
 
     @Test
+    void approve_replaceFailureDoesNotMarkApproved() {
+        UUID id = UUID.randomUUID();
+        PendingMemoryEntity e = new PendingMemoryEntity();
+        e.setId(id);
+        e.setUserId("user1");
+        e.setStatus("pending");
+        e.setAction("replace");
+        e.setTarget("memory");
+        e.setOldText("old fact");
+        e.setContent("new fact");
+        when(pendingRepo.findByIdAndUserId(id, "user1")).thenReturn(Optional.of(e));
+        when(memoryProvider.replace("user1", "memory", "old fact", "new fact")).thenReturn("No unique match");
+
+        boolean result = gate.approve("user1", id);
+
+        assertThat(result).isFalse();
+        assertThat(e.getStatus()).isEqualTo("pending");
+        assertThat(e.getResolvedAt()).isNull();
+        verify(pendingRepo, never()).save(any());
+    }
+
+    @Test
+    void approve_removeFailureDoesNotMarkApproved() {
+        UUID id = UUID.randomUUID();
+        PendingMemoryEntity e = new PendingMemoryEntity();
+        e.setId(id);
+        e.setUserId("user1");
+        e.setStatus("pending");
+        e.setAction("remove");
+        e.setTarget("memory");
+        e.setOldText("old fact");
+        when(pendingRepo.findByIdAndUserId(id, "user1")).thenReturn(Optional.of(e));
+        when(memoryProvider.remove("user1", "memory", "old fact")).thenReturn("No unique match");
+
+        boolean result = gate.approve("user1", id);
+
+        assertThat(result).isFalse();
+        assertThat(e.getStatus()).isEqualTo("pending");
+        assertThat(e.getResolvedAt()).isNull();
+        verify(pendingRepo, never()).save(any());
+    }
+
+    @Test
+    void approve_appliesBatchToMemory() {
+        UUID id = UUID.randomUUID();
+        PendingMemoryEntity e = new PendingMemoryEntity();
+        e.setId(id);
+        e.setUserId("user1");
+        e.setStatus("pending");
+        e.setAction("batch");
+        e.setTarget("memory");
+        e.setOrigin("foreground");
+        e.setContent("""
+            [
+              {"action":"replace","old_text":"old fact","new_text":"new fact"},
+              {"action":"add","content":"extra fact"}
+            ]
+            """);
+        when(pendingRepo.findByIdAndUserId(id, "user1")).thenReturn(Optional.of(e));
+        when(pendingRepo.save(any())).thenReturn(e);
+
+        boolean result = gate.approve("user1", id);
+
+        assertThat(result).isTrue();
+        verify(memoryProvider).applyBatch(eq("user1"), eq("memory"), argThat(operations ->
+            operations.size() == 2
+                && "replace".equals(operations.get(0).action())
+                && "new fact".equals(operations.get(0).content())
+                && "old fact".equals(operations.get(0).oldText())
+                && "add".equals(operations.get(1).action())
+                && "extra fact".equals(operations.get(1).content())
+                && operations.get(1).oldText() == null
+        ), argThat(provenance ->
+            id.toString().equals(provenance.get("approved_pending_id"))
+                && "foreground".equals(provenance.get("origin"))
+        ));
+        assertThat(e.getStatus()).isEqualTo("approved");
+    }
+
+    @Test
+    void approve_unknownActionDoesNotMarkApproved() {
+        UUID id = UUID.randomUUID();
+        PendingMemoryEntity e = new PendingMemoryEntity();
+        e.setId(id);
+        e.setUserId("user1");
+        e.setStatus("pending");
+        e.setAction("unknown");
+        e.setTarget("memory");
+        when(pendingRepo.findByIdAndUserId(id, "user1")).thenReturn(Optional.of(e));
+
+        boolean result = gate.approve("user1", id);
+
+        assertThat(result).isFalse();
+        assertThat(e.getStatus()).isEqualTo("pending");
+        assertThat(e.getResolvedAt()).isNull();
+        verify(pendingRepo, never()).save(any());
+        verifyNoInteractions(memoryProvider);
+    }
+
+    @Test
+    void approve_batchFailureDoesNotMarkApproved() {
+        UUID id = UUID.randomUUID();
+        PendingMemoryEntity e = new PendingMemoryEntity();
+        e.setId(id);
+        e.setUserId("user1");
+        e.setStatus("pending");
+        e.setAction("batch");
+        e.setTarget("memory");
+        e.setContent("[{\"action\":\"add\",\"content\":\"new fact\"}]");
+        when(pendingRepo.findByIdAndUserId(id, "user1")).thenReturn(Optional.of(e));
+        when(memoryProvider.applyBatch(eq("user1"), eq("memory"), anyList(), anyMap()))
+            .thenReturn("Memory full");
+
+        boolean result = gate.approve("user1", id);
+
+        assertThat(result).isFalse();
+        assertThat(e.getStatus()).isEqualTo("pending");
+        assertThat(e.getResolvedAt()).isNull();
+        verify(pendingRepo, never()).save(any());
+    }
+
+    @Test
     void reject_marksAsRejected() {
         UUID id = UUID.randomUUID();
         PendingMemoryEntity e = new PendingMemoryEntity();

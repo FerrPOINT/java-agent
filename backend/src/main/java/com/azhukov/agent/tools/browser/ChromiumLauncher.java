@@ -52,8 +52,8 @@ public class ChromiumLauncher {
         args.addAll(chromium.getExtraArgs());
 
         ProcessBuilder pb = new ProcessBuilder(args);
-        pb.inheritIO();
         pb.redirectErrorStream(true);
+        pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
         log.info("Launching Chromium: {}", String.join(" ", args));
         Process process = pb.start();
         log.info("Chromium process started, pid={}", process.pid());

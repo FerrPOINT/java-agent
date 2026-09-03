@@ -362,8 +362,14 @@ public class BackgroundReviewService {
  ToolResult result = executeWhitelistedTool(call, reviewSession);
  anyToolExecuted = true;
 
- // S7: Build a tool-result message for stale-action filtering
- Message toolResultMsg = Message.toolResult(call.pairingId(), result.content(), turn);
+ // S7: Build a tool-result message for stale-action filtering.
+ // Failed executions carry an empty content — surface the structured
+ // error payload so the review loop SEES the failure and retries/stops
+ // (Hermes feeds the failure JSON back into the conversation).
+ String resultContent = result.content() != null && !result.content().isBlank()
+     ? result.content()
+     : com.azhukov.agent.core.tool.ToolCallValidator.failurePayload(result.error());
+ Message toolResultMsg = Message.toolResult(call.pairingId(), resultContent, turn);
 
  // S7: Skip stale actions — tool results already in prior conversation
  if (StaleActionFilter.isStale(toolResultMsg, priorResults)) {
@@ -382,7 +388,7 @@ public class BackgroundReviewService {
 
  // Add assistant tool call and tool result to conversation
  reviewMessages.add(Message.assistantToolCalls(List.of(call), turn));
- reviewMessages.add(Message.toolResult(call.pairingId(), result.content(), turn));
+ reviewMessages.add(Message.toolResult(call.pairingId(), resultContent, turn));
  }
 
  if (!anyToolExecuted) {

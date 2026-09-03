@@ -66,15 +66,23 @@ class SessionCompressionRaceTest {
 
         helper.compressSessionInternal(sessionId, null, null);
 
-        // The delete must be cutoff-bounded, NOT deleteAll
-        ArgumentCaptor<Instant> cutoff = ArgumentCaptor.forClass(Instant.class);
-        verify(messageRepository, atLeastOnce())
-            .deleteBySessionIdAndCreatedAtBefore(eq(sessionId), cutoff.capture());
-        // Cutoff must be BEFORE the LLM call, i.e. strictly in the past
-        assertThat(cutoff.getValue()).isBefore(Instant.now());
-        // Must NOT load-then-deleteAll (the old racy pattern)
+        // Hermes archive_and_compact contract (hermes_state.py:11191): old rows are
+        // soft-archived (active=false, compacted=true) in one saveAll — NEVER deleted,
+        // so session_search keeps finding them and the transcript stays recoverable.
+        org.mockito.Mockito.verify(messageRepository,
+            org.mockito.Mockito.never()).deleteBySessionIdAndCreatedAtBefore(
+                org.mockito.ArgumentMatchers.eq(sessionId), org.mockito.ArgumentMatchers.any());
         org.mockito.Mockito.verify(messageRepository,
             org.mockito.Mockito.never()).deleteAll(org.mockito.ArgumentMatchers.anyList());
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<com.azhukov.agent.persistence.entity.MessageEntity>> archived =
+            org.mockito.ArgumentCaptor.forClass((Class) List.class);
+        org.mockito.Mockito.verify(messageRepository).saveAll(archived.capture());
+        assertThat(archived.getValue()).isNotEmpty();
+        assertThat(archived.getValue()).allSatisfy(row -> {
+            assertThat(row.getActive()).isFalse();
+            assertThat(row.getCompacted()).isTrue();
+        });
     }
 
     private static MessageEntity entity(Message m, Instant createdAt) {
