@@ -3,6 +3,7 @@ package com.azhukov.agent.api.dto;
 import java.util.List;
 import java.util.Map;
 
+@com.fasterxml.jackson.databind.annotation.JsonNaming(com.fasterxml.jackson.databind.PropertyNamingStrategies.SnakeCaseStrategy.class)
 public record OpenAiChatResponse(
     String id,
     String object,
