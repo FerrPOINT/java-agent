@@ -307,8 +307,8 @@ public class AgentProperties {
         private int maxDepth = 3;
         /** Maximum spawn depth — agents at depths 0..maxSpawnDepth-1 can spawn; maxSpawnDepth is the leaf floor. Default 1 (matches Hermes MAX_DEPTH). */
         private int maxSpawnDepth = 1;
-        /** Maximum number of concurrent child subagents. Default 3. */
-        private int maxConcurrentChildren = 3;
+        /** Maximum number of concurrent child subagents. Default 10 (Hermes parity). */
+        private int maxConcurrentChildren = 10;
         /** Default timeout in seconds for a single child subagent. Default 300. */
         private int defaultTimeoutSeconds = 300;
         /** Hard wall-clock cap in seconds for a single child (0 or negative = disabled). Default 0 (disabled). */

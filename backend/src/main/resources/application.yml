@@ -230,7 +230,7 @@ agent:
     enabled: ${AGENT_DELEGATION_ENABLED:true}
     max-depth: ${AGENT_DELEGATION_MAX_DEPTH:3}
     max-spawn-depth: ${AGENT_DELEGATION_MAX_SPAWN_DEPTH:1}
-    max-concurrent-children: ${AGENT_DELEGATION_MAX_CONCURRENT_CHILDREN:3}
+    max-concurrent-children: ${AGENT_DELEGATION_MAX_CONCURRENT_CHILDREN:10}
     default-timeout-seconds: ${AGENT_DELEGATION_DEFAULT_TIMEOUT_SECONDS:300}
     child-timeout-seconds: ${AGENT_DELEGATION_CHILD_TIMEOUT_SECONDS:0}
     orchestrator-enabled: ${AGENT_DELEGATION_ORCHESTRATOR_ENABLED:true}
