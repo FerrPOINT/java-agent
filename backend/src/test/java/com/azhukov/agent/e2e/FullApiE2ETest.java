@@ -62,9 +62,19 @@ class FullApiE2ETest {
     }
 
     private HttpResponse<String> post(String path, String json) throws Exception {
+        return post(path, json, 120);
+    }
+
+    /**
+     * rev-127: live curator/run cycles run a full LLM agent loop (5+ iterations,
+     * 8+ tool calls) and can take ~3 minutes against a real model. The default
+     * 120s post timeout is tuned for the docker NoOp stack; long-running
+     * endpoints opt into a wider budget via this overload.
+     */
+    private HttpResponse<String> post(String path, String json, int timeoutSeconds) throws Exception {
         HttpRequest req = HttpRequest.newBuilder()
             .uri(URI.create(BASE_URL + path))
-            .timeout(Duration.ofSeconds(120))
+            .timeout(Duration.ofSeconds(timeoutSeconds))
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(json))
             .build();
@@ -805,7 +815,7 @@ class FullApiE2ETest {
 
     @Test @Order(123) @DisplayName("POST /api/v1/agent/curator/run — runs curator cycle")
     void curatorRun() throws Exception {
-        HttpResponse<String> resp = post("/api/v1/agent/curator/run", "");
+        HttpResponse<String> resp = post("/api/v1/agent/curator/run", "", 360);
         assertEquals(200, resp.statusCode());
         assertNotNull(resp.body());
         assertFalse(resp.body().isBlank());
