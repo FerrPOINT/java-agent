@@ -86,7 +86,8 @@ class ResetAndBackgroundReviewGateTest {
             null,                              // 25 modelMetadataService
             null,                              // 26 midTurnPersistenceCallback
             memoryNudgeManager,                // 27 memoryNudgeManager
-            promptBuilder);                    // 28 promptBuilder
+            promptBuilder,                    // 28 promptBuilder
+            new com.azhukov.agent.core.agent.SessionTurnLockManager()); // 29 sessionTurnLockManager
     }
 
     @Test

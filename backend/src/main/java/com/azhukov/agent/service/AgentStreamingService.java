@@ -168,6 +168,17 @@ public class AgentStreamingService {
             && toolGuardrails.requiresApproval(call);
     }
 
+    // ── Session turn lock (rev-79) ────────────────────────────────────────
+    // Shared with the sync path (AgentRuntimeService) so sync and streaming
+    // turns on the same session mutually exclude each other. Injected via
+    // optional setter to keep the @RequiredArgsConstructor signature stable.
+    private com.azhukov.agent.core.agent.SessionTurnLockManager sessionTurnLockManager;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSessionTurnLockManager(com.azhukov.agent.core.agent.SessionTurnLockManager sessionTurnLockManager) {
+        this.sessionTurnLockManager = sessionTurnLockManager;
+    }
+
     // ── Shared turn-execution logic (c2: extracted with DefaultAgentRuntime) ──
     // TurnExecutor contains the shared model-call-with-retry, tool execution,
     // think-block stripping, and context-compression-check logic. The streaming
@@ -304,6 +315,22 @@ public class AgentStreamingService {
         });
 
         CompletableFuture.runAsync(() -> {
+            // rev-79: per-session turn lock — mutual exclusion with the sync path
+            // AND other streaming turns on the same session. Live-verified race:
+            // two parallel /agent/chat/stream POSTs returned interleaved content
+            // ("CONCURRENT_A\nCONCURRENT_B"). Wait up to 30s like the sync path;
+            // on timeout emit a busy error instead of running a torn turn.
+            UUID lockSessionId = request.sessionId();
+            boolean locked = false;
+            if (sessionTurnLockManager != null && lockSessionId != null) {
+                locked = sessionTurnLockManager.tryAcquire(lockSessionId, 30);
+                if (!locked) {
+                    eventHelper().send(emitter, new StreamEvent("error", null, null,
+                        "Session " + lockSessionId + " is busy (another turn is in progress). Retry later."), streamCtx);
+                    eventHelper().safeComplete(emitter);
+                    return;
+                }
+            }
             try {
                 long __turnStart = System.currentTimeMillis();
                 try {
@@ -327,6 +354,9 @@ public class AgentStreamingService {
                 eventHelper().send(emitter, new StreamEvent("error", null, null, e.getMessage()), streamCtx);
                 eventHelper().safeCompleteWithError(emitter, e);
             } finally {
+                if (locked && sessionTurnLockManager != null && lockSessionId != null) {
+                    sessionTurnLockManager.release(lockSessionId);
+                }
                 // Safety net: clear ThreadLocal if runAgenticLoop didn't
                 InterruptToken.clearCurrentSessionId();
             }

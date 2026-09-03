@@ -132,7 +132,7 @@ class AgentRuntimeServiceTest {
             new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class), conversationCompressor, org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class, org.mockito.Mockito.RETURNS_SELF)),
             mock(com.azhukov.agent.core.context.ContextCompressor.class),
             mock(com.azhukov.agent.core.metadata.ModelMetadataService.class), null,
-            null, null
+            null, null, new com.azhukov.agent.core.agent.SessionTurnLockManager()
         );
     }
 

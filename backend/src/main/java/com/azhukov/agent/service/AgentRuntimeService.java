@@ -97,10 +97,8 @@ public class AgentRuntimeService {
     private final com.azhukov.agent.core.agent.MidTurnPersistenceCallback midTurnPersistenceCallback;
     private final com.azhukov.agent.core.agent.MemoryNudgeManager memoryNudgeManager;
     private final com.azhukov.agent.core.prompt.DefaultPromptBuilder promptBuilder;
-    // Guard the full request lifecycle, including user-message persistence,
-    // so a queued same-session turn cannot interleave DB writes with its predecessor.
-    private final java.util.concurrent.ConcurrentHashMap<UUID, java.util.concurrent.locks.ReentrantLock> sessionTurnLocks =
-        new java.util.concurrent.ConcurrentHashMap<>();
+    // Shared per-session turn lock — mutual exclusion between sync and streaming paths.
+    private final com.azhukov.agent.core.agent.SessionTurnLockManager sessionTurnLockManager;
 
     private static final String UNKNOWN_MODEL = "unknown";
 
@@ -140,34 +138,14 @@ public class AgentRuntimeService {
             applied.sessionId(), AgentProperties.DEFAULT_USER_ID, properties.getModel().getModelName());
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
-        var lock = sessionTurnLocks.computeIfAbsent(session.id(), ignored ->
-            new java.util.concurrent.locks.ReentrantLock());
-        boolean acquired;
-        try {
-            acquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while waiting for session turn", e);
-        }
+        boolean acquired = sessionTurnLockManager.tryAcquire(session.id(), 30);
         if (!acquired) {
             throw new IllegalStateException("Session " + session.id() + " is busy (another turn is in progress). Retry later.");
         }
         try {
             return runResolvedTurn(applied, session, isNew);
         } finally {
-            lock.unlock();
-            // Remove the lock from the map to prevent unbounded growth — each
-            // session leaves a ReentrantLock entry forever otherwise. Only remove
-            // if no other thread is waiting (tryLock succeeds immediately after
-            // unlock, meaning no contention). This is safe because a new turn on
-            // the same session will computeIfAbsent a fresh lock if needed.
-            if (lock.tryLock()) {
-                try {
-                    sessionTurnLocks.remove(session.id(), lock);
-                } finally {
-                    lock.unlock();
-                }
-            }
+            sessionTurnLockManager.release(session.id());
         }
     }
 
