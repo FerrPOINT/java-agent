@@ -58,7 +58,9 @@ public class SessionController {
     @Operation(summary = "Create a new chat session")
     @PostMapping("/agent/session")
     public ResponseEntity<SessionSummaryDto> createSession(@RequestBody(required = false) CreateSessionRequest request) {
-        String userId = request != null && request.userId() != null ? request.userId() : AgentProperties.DEFAULT_USER_ID;
+        String requestedUserId = request != null ? request.userId() : null;
+        String userId = UserContext.effectiveUserId(requestedUserId);
+        if (userId == null) userId = AgentProperties.DEFAULT_USER_ID;
         Session session = agentRuntimeService.createSession(userId, "openai-compatible", properties.getModel().getModelName());
         SessionSummaryDto dto = domainDtoMapper.toSessionSummaryDto(session);
         return ResponseEntity.created(URI.create("/api/v1/agent/session/" + session.id())).body(dto);
@@ -98,7 +100,7 @@ public class SessionController {
 
     @GetMapping("/agent/sessions/{userId}")
     public List<SessionSummaryDto> sessionsByUserId(@PathVariable String userId) {
-        return agentRuntimeService.listSessionsByUserId(userId);
+        return agentRuntimeService.listSessionsByUserId(UserContext.effectiveUserId(userId));
     }
 
     @Operation(summary = "Compress session context to reduce token usage")

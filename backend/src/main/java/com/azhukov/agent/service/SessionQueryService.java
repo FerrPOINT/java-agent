@@ -8,6 +8,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.agent.SessionDeletedEvent;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -167,6 +168,7 @@ public class SessionQueryService {
         if (entity == null) {
             return Optional.empty();
         }
+        requireOwnership(entity);
         return Optional.of(toSessionResponse(
             entity.getId(), entity.getUserId(), entity.getTitle(), entity.getModelName()));
     }
@@ -184,6 +186,7 @@ public class SessionQueryService {
         if (entity == null) {
             return Optional.empty();
         }
+        requireOwnership(entity);
         if (title != null) {
             entity.setTitle(title);
         }
@@ -207,6 +210,7 @@ public class SessionQueryService {
         if (entity == null) {
             return false;
         }
+        requireOwnership(entity);
         messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
         sessionRepository.delete(entity);
         eventPublisher.publishEvent(new SessionDeletedEvent(sessionId));
@@ -222,9 +226,11 @@ public class SessionQueryService {
      */
     @Transactional(readOnly = true)
     public Optional<MessageListDto> getSessionMessages(UUID sessionId, int limit, int offset) {
-        if (!sessionRepository.existsById(sessionId)) {
+        SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
+        if (entity == null) {
             return Optional.empty();
         }
+        requireOwnership(entity);
         int cappedLimit = Math.min(Math.max(limit, 1), 500);
         int cappedOffset = Math.max(offset, 0);
         int page = cappedOffset / cappedLimit;
@@ -255,6 +261,13 @@ public class SessionQueryService {
     }
 
     // ── Helpers ──
+
+    private static void requireOwnership(SessionEntity entity) {
+        String scoped = UserContext.scopeUserId();
+        if (scoped != null && !scoped.equals(entity.getUserId())) {
+            throw new SecurityException("Session does not belong to the current user");
+        }
+    }
 
     private static Map<String, Object> toSessionResponse(UUID id, String userId, String title, String model) {
         Map<String, Object> response = new LinkedHashMap<>();

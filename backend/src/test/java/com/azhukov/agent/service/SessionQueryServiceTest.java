@@ -3,6 +3,7 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
@@ -40,5 +41,30 @@ class SessionQueryServiceTest {
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
         org.mockito.Mockito.verify(sessionRepository).findAllByUserId(eq("user"), pageable.capture());
         assertThat(pageable.getValue().getOffset()).isEqualTo(20);
+    }
+
+    @Test
+    void deleteSessionRejectsAnotherUsersSession() {
+        SessionRepository sessionRepository = mock(SessionRepository.class);
+        SessionEntity session = new SessionEntity();
+        session.setUserId("owner");
+        java.util.UUID sessionId = java.util.UUID.randomUUID();
+        when(sessionRepository.findById(sessionId)).thenReturn(java.util.Optional.of(session));
+        SessionQueryService service = new SessionQueryService(
+            sessionRepository,
+            mock(MessageRepository.class),
+            mock(AgentSessionResolver.class),
+            mock(DomainDtoMapper.class),
+            new AgentProperties(),
+            mock(ApplicationEventPublisher.class));
+
+        UserContext.set("other-user", UserContext.ROLE_USER);
+        try {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.deleteSession(sessionId))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("does not belong");
+        } finally {
+            UserContext.clear();
+        }
     }
 }

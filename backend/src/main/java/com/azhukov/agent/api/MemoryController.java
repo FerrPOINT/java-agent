@@ -9,6 +9,7 @@ import com.azhukov.agent.api.dto.StoreMemoryRequest;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.service.AgentRuntimeService;
 import jakarta.validation.Valid;
+import com.azhukov.agent.core.security.UserContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -85,6 +86,7 @@ public class MemoryController {
 
     @DeleteMapping("/agent/memory/{userId}/{entryId}")
     public void deleteMemory(@PathVariable String userId, @PathVariable UUID entryId) {
-        agentRuntimeService.deleteMemory(userId, entryId);
+        String effectiveUserId = UserContext.effectiveUserId(userId);
+        agentRuntimeService.deleteMemory(effectiveUserId, entryId);
     }
 }

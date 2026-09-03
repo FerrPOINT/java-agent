@@ -6,6 +6,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.agent.CliStateApplier;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.context.DefaultContextCompressor;
 import com.azhukov.agent.core.memory.MemoryProvider;
@@ -52,6 +53,20 @@ public class AgentRuntimeService {
             t.setDaemon(true);
             return t;
         });
+
+    /**
+     * Ownership guard: verifies the session belongs to the current user (or admin).
+     * @throws SecurityException if the session exists but belongs to another user
+     */
+    public void requireSessionOwnership(UUID sessionId) {
+        String scoped = UserContext.scopeUserId();
+        if (scoped == null) return; // admin or no-auth → full access
+        sessionRepository.findById(sessionId).ifPresent(session -> {
+            if (!scoped.equals(session.getUserId())) {
+                throw new SecurityException("Session does not belong to the current user");
+            }
+        });
+    }
 
     private final AgentRuntime agentRuntime;
     private final com.azhukov.agent.persistence.repository.BackgroundJobRepository backgroundJobRepository;
@@ -220,7 +235,9 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public List<SessionSummaryDto> listSessions() {
-        return sessionRepository.findAllByUserId(AgentProperties.DEFAULT_USER_ID, PageRequest.of(0, 50)).stream()
+        String userId = UserContext.scopeUserId();
+        if (userId == null) userId = AgentProperties.DEFAULT_USER_ID;
+        return sessionRepository.findAllByUserId(userId, PageRequest.of(0, 50)).stream()
             .map(sessionMapper::toDomain)
             .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
@@ -228,6 +245,7 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public ContextInfoDto getContext(UUID sessionId) {
+        requireSessionOwnership(sessionId);
         List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
         int messageCount = messages.size();
         int tokenEstimate = messages.stream()
@@ -255,6 +273,7 @@ public class AgentRuntimeService {
 
     @Transactional
     public void resetSession(UUID sessionId) {
+        requireSessionOwnership(sessionId);
         messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
         // Hermes parity / leak fix (seam audit 2026-08-21): /reset must also drop
         // runtime per-session state, or stale counters leak into the "fresh" session:
@@ -286,6 +305,7 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public UsageDto getUsage(UUID sessionId) {
+        requireSessionOwnership(sessionId);
         return usageTracker.getSessionUsage(sessionId);
     }
 
@@ -297,7 +317,8 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public List<SessionSummaryDto> listSessionsByUserId(String userId) {
-        return sessionRepository.findAllByUserId(userId, PageRequest.of(0, 50)).stream()
+        String effectiveUserId = UserContext.effectiveUserId(userId);
+        return sessionRepository.findAllByUserId(effectiveUserId, PageRequest.of(0, 50)).stream()
             .map(sessionMapper::toDomain)
             .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
@@ -305,16 +326,19 @@ public class AgentRuntimeService {
 
     @Transactional
     public void compressSession(UUID sessionId, String focus) {
+        requireSessionOwnership(sessionId);
         sessionCompressionHelper.compressSessionInternal(sessionId, focus, null);
     }
 
     @Transactional
     public void compressSession(UUID sessionId, String focusTopic, Integer keepLastN) {
+        requireSessionOwnership(sessionId);
         sessionCompressionHelper.compressSessionInternal(sessionId, focusTopic, keepLastN);
     }
 
     @Transactional
     public int undoTurns(UUID sessionId, int turns) {
+        requireSessionOwnership(sessionId);
         List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
         if (messages.isEmpty()) return 0;
         List<Integer> turnIndices = messages.stream()
@@ -387,6 +411,7 @@ public class AgentRuntimeService {
 
     @Transactional
     public void switchModel(UUID sessionId, String model, String provider) {
+        requireSessionOwnership(sessionId);
         SessionEntity session = sessionRepository.findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));
         session.setModelName(model);
@@ -425,6 +450,7 @@ public class AgentRuntimeService {
 
     @Transactional
     public SessionSummaryDto branchSession(UUID sessionId, String name) {
+        requireSessionOwnership(sessionId);
         // Fork a session: load messages, create new session with copied messages
         SessionEntity source = sessionRepository.findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));

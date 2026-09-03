@@ -38,6 +38,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.azhukov.agent.core.security.UserContext;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -421,5 +422,95 @@ class AgentRuntimeServiceTest {
         entity.setCreatedAt(Instant.EPOCH);
         entity.setUpdatedAt(Instant.EPOCH);
         return entity;
+    }
+
+    // ── Ownership guard regression tests ──────────────────────────
+
+    @Test
+    void getContextThrowsForOtherUserSession() {
+        SessionEntity otherUserSession = newSessionEntity(EXISTING_SESSION_ID, "other-user", "Other");
+        when(sessionRepository.findById(EXISTING_SESSION_ID)).thenReturn(Optional.of(otherUserSession));
+        UserContext.set("user-1", UserContext.ROLE_USER);
+        try {
+            assertThatThrownBy(() -> agentRuntimeService.getContext(EXISTING_SESSION_ID))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("does not belong");
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void getContextAllowsForOwnSession() {
+        SessionEntity ownSession = newSessionEntity(EXISTING_SESSION_ID, USER_ID, "Mine");
+        when(sessionRepository.findById(EXISTING_SESSION_ID)).thenReturn(Optional.of(ownSession));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(EXISTING_SESSION_ID))
+            .thenReturn(List.of());
+        UserContext.set(USER_ID, UserContext.ROLE_USER);
+        try {
+            var ctx = agentRuntimeService.getContext(EXISTING_SESSION_ID);
+            assertThat(ctx).isNotNull();
+            assertThat(ctx.messageCount()).isEqualTo(0);
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void getContextAllowsAdminAccessToAnySession() {
+        SessionEntity otherUserSession = newSessionEntity(EXISTING_SESSION_ID, "other-user", "Other");
+        when(sessionRepository.findById(EXISTING_SESSION_ID)).thenReturn(Optional.of(otherUserSession));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(EXISTING_SESSION_ID))
+            .thenReturn(List.of());
+        UserContext.set("admin-id", UserContext.ROLE_ADMIN);
+        try {
+            var ctx = agentRuntimeService.getContext(EXISTING_SESSION_ID);
+            assertThat(ctx).isNotNull();
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void resetSessionThrowsForOtherUserSession() {
+        SessionEntity otherUserSession = newSessionEntity(EXISTING_SESSION_ID, "other-user", "Other");
+        when(sessionRepository.findById(EXISTING_SESSION_ID)).thenReturn(Optional.of(otherUserSession));
+        UserContext.set("user-1", UserContext.ROLE_USER);
+        try {
+            assertThatThrownBy(() -> agentRuntimeService.resetSession(EXISTING_SESSION_ID))
+                .isInstanceOf(SecurityException.class);
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void getUsageThrowsForOtherUserSession() {
+        SessionEntity otherUserSession = newSessionEntity(EXISTING_SESSION_ID, "other-user", "Other");
+        when(sessionRepository.findById(EXISTING_SESSION_ID)).thenReturn(Optional.of(otherUserSession));
+        UserContext.set("user-1", UserContext.ROLE_USER);
+        try {
+            assertThatThrownBy(() -> agentRuntimeService.getUsage(EXISTING_SESSION_ID))
+                .isInstanceOf(SecurityException.class);
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void listSessionsReturnsCurrentUserSessionsOnly() {
+        SessionEntity ownSession = newSessionEntity(EXISTING_SESSION_ID, "user-1", "Mine");
+        org.springframework.data.domain.Page<SessionEntity> page =
+            new org.springframework.data.domain.PageImpl<>(List.of(ownSession));
+        when(sessionRepository.findAllByUserId(eq("user-1"), any()))
+            .thenReturn(page);
+        UserContext.set("user-1", UserContext.ROLE_USER);
+        try {
+            var sessions = agentRuntimeService.listSessions();
+            assertThat(sessions).hasSize(1);
+            assertThat(sessions.get(0).userId()).isEqualTo("user-1");
+        } finally {
+            UserContext.clear();
+        }
     }
 }
