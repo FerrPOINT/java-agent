@@ -49,7 +49,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.lenient;
@@ -63,6 +65,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.containsString;
 
 /**
  * T1 phase A — focused NEW unit tests for {@link AgentChatController}.
@@ -98,6 +101,7 @@ class AgentChatControllerT1Test {
     @Mock private AgentProperties.BudgetProperties budgetProperties;
     @Mock private AgentProperties.SkillsProperties skillsProperties;
     @Mock private AgentMetrics agentMetrics;
+    @Mock private com.azhukov.agent.core.security.CommandApprovalManager commandApprovalManager;
 
     @BeforeEach
     void setUp() {
@@ -127,6 +131,14 @@ class AgentChatControllerT1Test {
             properties,
             agentMetrics
         );
+        // rev-97: inject CommandApprovalManager for session/always scope tests
+        try {
+            var field = AgentChatController.class.getDeclaredField("commandApprovalManager");
+            field.setAccessible(true);
+            field.set(controller, commandApprovalManager);
+        } catch (Exception e) {
+            // field injection is optional — ignore if missing
+        }
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
@@ -447,6 +459,50 @@ class AgentChatControllerT1Test {
                 .content(body))
             .andExpect(status().isOk())
             .andExpect(content().string("No pending approval for session: " + SESSION_ID));
+    }
+
+    // ── rev-97: approve with session/always scope keywords ──
+
+    @Test
+    void approve_sessionScope_approvesAndSeedsAllowlist() throws Exception {
+        UUID sid = SESSION_ID;
+        com.azhukov.agent.core.model.ToolCall call =
+            new com.azhukov.agent.core.model.ToolCall("pair-1", "terminal", "{\"command\":\"ls -la\"}");
+        approvalQueue.request(sid, call, "test");
+        String body = "{\"all\":false,\"scope\":\"session\"}";
+        mockMvc.perform(post("/api/v1/agent/approve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isOk())
+            .andExpect(content().string(containsString("Approved (scope=session)")));
+        assertThat(approvalQueue.isApproved(sid)).isTrue();
+        verify(commandApprovalManager).allowForSession("ls -la");
+    }
+
+    @Test
+    void approve_alwaysScope_approvesAndSeedsAllowlist() throws Exception {
+        UUID sid = SESSION_ID;
+        com.azhukov.agent.core.model.ToolCall call =
+            new com.azhukov.agent.core.model.ToolCall("pair-2", "terminal", "{\"command\":\"rm /tmp/foo\"}");
+        approvalQueue.request(sid, call, "test");
+        String body = "{\"all\":false,\"scope\":\"always\"}";
+        mockMvc.perform(post("/api/v1/agent/approve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isOk())
+            .andExpect(content().string(containsString("Approved (scope=always)")));
+        assertThat(approvalQueue.isApproved(sid)).isTrue();
+        verify(commandApprovalManager).allowForSession("rm /tmp/foo");
+    }
+
+    @Test
+    void approve_sessionScope_noPending_returnsNoApprovals() throws Exception {
+        String body = "{\"all\":false,\"scope\":\"session\"}";
+        mockMvc.perform(post("/api/v1/agent/approve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isOk())
+            .andExpect(content().string("No pending approvals"));
     }
 
     // ── deny() ──
