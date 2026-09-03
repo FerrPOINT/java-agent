@@ -28,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -36,10 +37,12 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping("/v1/chat/completions")
 @RequiredArgsConstructor
+@Slf4j
 public class ChatCompletionsController {
 
     private final AgentRuntime agentRuntime;
@@ -51,6 +54,19 @@ public class ChatCompletionsController {
     private final ExecutorService streamingExecutor =
         java.util.concurrent.Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("openai-sse-", 0).factory());
+
+    @jakarta.annotation.PreDestroy
+    void shutdown() {
+        streamingExecutor.shutdown();
+        try {
+            if (!streamingExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                streamingExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            streamingExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
 
     @PostMapping
     public Object completions(@Valid @RequestBody OpenAiChatRequest request) {
@@ -95,7 +111,7 @@ public class ChatCompletionsController {
                     public void onComplete() {
                         sendSse(emitter, createFinishEvent(id, model));
                         sendDone(emitter);
-                        emitter.complete();
+                        safeComplete(emitter);
                     }
 
                     @Override
@@ -105,13 +121,13 @@ public class ChatCompletionsController {
                         // so SDK consumers never wait for another chunk.
                         sendSse(emitter, createErrorEvent(error.getMessage()));
                         sendDone(emitter);
-                        emitter.complete();
+                        safeComplete(emitter);
                     }
                 });
             } catch (Exception e) {
                 sendSse(emitter, createErrorEvent(e.getMessage()));
                 sendDone(emitter);
-                emitter.complete();
+                safeComplete(emitter);
             }
         }, streamingExecutor);
 
@@ -149,7 +165,10 @@ public class ChatCompletionsController {
                 .id(UUID.randomUUID().toString())
                 .data(objectMapper.writeValueAsString(data)));
         } catch (IOException e) {
-            emitter.completeWithError(e);
+            log.debug("OpenAI SSE send failed (client disconnected): {}", e.getMessage());
+            safeComplete(emitter);
+        } catch (IllegalStateException e) {
+            log.debug("OpenAI SSE emitter already completed: {}", e.getMessage());
         }
     }
 
@@ -159,7 +178,18 @@ public class ChatCompletionsController {
             // string), which is the OpenAI terminal sentinel.
             emitter.send(SseEmitter.event().data("[DONE]"));
         } catch (IOException e) {
-            emitter.completeWithError(e);
+            log.debug("OpenAI SSE done send failed (client disconnected): {}", e.getMessage());
+        } catch (IllegalStateException e) {
+            log.debug("OpenAI SSE emitter already completed: {}", e.getMessage());
+        }
+    }
+
+    /** Complete the emitter, swallowing IllegalStateException on client-disconnect race. */
+    private void safeComplete(SseEmitter emitter) {
+        try {
+            emitter.complete();
+        } catch (IllegalStateException e) {
+            log.debug("OpenAI SSE emitter already completed: {}", e.getMessage());
         }
     }
 
