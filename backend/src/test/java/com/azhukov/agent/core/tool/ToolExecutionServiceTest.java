@@ -76,7 +76,7 @@ class ToolExecutionServiceTest {
             .thenReturn(GuardrailDecision.allow(toolName));
         when(toolResultClassifier.classify(any(ToolResult.class)))
             .thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString()))
             .thenAnswer(inv -> inv.getArgument(0));
 
         ToolResult result = service.execute(toolName, toolCallId, arguments, LAST_MSG, SESSION);
@@ -86,7 +86,7 @@ class ToolExecutionServiceTest {
         verify(agentMetrics).incrementToolCalls(toolName);
         verify(agentMetrics, never()).incrementToolErrors(toolName);
         verify(toolResultClassifier).classify(any(ToolResult.class));
-        verify(toolOutputLimiter).truncate(any(ToolResult.class));
+        verify(toolOutputLimiter).truncate(any(ToolResult.class), anyString());
     }
 
     @Test
@@ -135,7 +135,7 @@ class ToolExecutionServiceTest {
         when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
         when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
             .thenReturn(GuardrailDecision.allow(toolName));
-        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString()))
             .thenAnswer(inv -> inv.getArgument(0));
 
         ToolResult result = service.execute(toolName, "call-4", arguments, LAST_MSG, SESSION);
@@ -159,7 +159,7 @@ class ToolExecutionServiceTest {
         when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
         when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
             .thenReturn(GuardrailDecision.allow(toolName));
-        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString()))
             .thenAnswer(inv -> inv.getArgument(0));
 
         ToolResult result = service.execute(toolName, "call-5", arguments, LAST_MSG, SESSION);
@@ -187,7 +187,7 @@ class ToolExecutionServiceTest {
         when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
         when(toolResultClassifier.classify(any(ToolResult.class)))
             .thenReturn(ToolResultClassifier.ResultType.FAILURE);
-        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString()))
             .thenAnswer(inv -> inv.getArgument(0));
 
         ToolResult result = service.execute(toolName, "call-6", arguments, LAST_MSG, SESSION);
@@ -211,7 +211,7 @@ class ToolExecutionServiceTest {
             .thenReturn(GuardrailDecision.allow(toolName));
         when(toolResultClassifier.classify(any(ToolResult.class)))
             .thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString()))
             .thenAnswer(inv -> inv.getArgument(0));
 
         ToolResult result = service.execute(toolName, "call-7", arguments, LAST_MSG, SESSION);
@@ -237,7 +237,7 @@ class ToolExecutionServiceTest {
             .thenReturn(GuardrailDecision.allow(toolName));
         when(toolResultClassifier.classify(any(ToolResult.class)))
             .thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString()))
             .thenAnswer(inv -> inv.getArgument(0));
 
         ToolResult result = service.execute(toolName, "call-8", arguments, LAST_MSG, SESSION, turnState);
@@ -258,7 +258,7 @@ class ToolExecutionServiceTest {
         when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
         when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
             .thenReturn(GuardrailDecision.allow(toolName));
-        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString()))
             .thenAnswer(inv -> inv.getArgument(0));
 
         ToolResult result = service.execute(toolName, "call-9", arguments, LAST_MSG, SESSION);
@@ -281,7 +281,7 @@ class ToolExecutionServiceTest {
             .thenReturn(GuardrailDecision.allow(toolName));
         when(toolResultClassifier.classify(any(ToolResult.class)))
             .thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class)))
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString()))
             .thenAnswer(inv -> inv.getArgument(0));
 
         ToolResult result = service.execute(toolName, "call-10", arguments, LAST_MSG, SESSION);
@@ -306,7 +306,7 @@ class ToolExecutionServiceTest {
         when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(rawResult);
         when(redactor.redact("same content")).thenReturn("same content");
         when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         service.execute(toolName, "call-1", arguments, LAST_MSG, SESSION);
         ToolResult second = service.execute(toolName, "call-2", arguments, LAST_MSG, SESSION);
@@ -331,7 +331,7 @@ class ToolExecutionServiceTest {
         when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(rawResult);
         when(redactor.redact("result")).thenReturn("result");
         when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         service.execute(toolName, "call-1", arguments, LAST_MSG, SESSION);
         ToolResult blocked = service.execute(toolName, "call-2", arguments, LAST_MSG, SESSION);
@@ -356,7 +356,7 @@ class ToolExecutionServiceTest {
         when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(rawResult);
         when(redactor.redact("result")).thenReturn("result");
         when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         service.execute(toolName, "call-1", arguments, LAST_MSG, SESSION);
         service.resetLoopGuardrailForTurn();
@@ -384,13 +384,13 @@ class ToolExecutionServiceTest {
         when(redactor.redact("very large output")).thenReturn("very large output");
         when(storage.maybePersist(any(ToolResult.class), eq(toolName), eq("call-persist"))).thenReturn(persisted);
         when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         ToolResult result = service.execute(toolName, "call-persist", arguments, LAST_MSG, SESSION);
 
         assertThat(result.content()).contains("Full output saved to");
         verify(storage).maybePersist(any(ToolResult.class), eq(toolName), eq("call-persist"));
-        verify(toolOutputLimiter).truncate(eq(persisted));
+        verify(toolOutputLimiter).truncate(eq(persisted), eq("terminal"));
     }
 
 
@@ -410,7 +410,7 @@ class ToolExecutionServiceTest {
         when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(okResult);
         when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
         when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         service.execute(toolName, "call-ckpt-1", arguments, LAST_MSG, SESSION);
 
@@ -432,7 +432,7 @@ class ToolExecutionServiceTest {
         when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(okResult);
         when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
         when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         service.execute(toolName, "call-ckpt-2", arguments, LAST_MSG, SESSION);
 
@@ -454,7 +454,7 @@ class ToolExecutionServiceTest {
         when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(okResult);
         when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
         when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         service.execute(toolName, "call-ckpt-3", arguments, LAST_MSG, SESSION);
 
@@ -476,7 +476,7 @@ class ToolExecutionServiceTest {
         when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(okResult);
         when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
         when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         service.execute(toolName, "call-ckpt-4", arguments, LAST_MSG, SESSION);
 
@@ -498,7 +498,7 @@ class ToolExecutionServiceTest {
         when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(okResult);
         when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
         when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
-        when(toolOutputLimiter.truncate(any(ToolResult.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         service.execute(toolName, "call-ckpt-5", arguments, LAST_MSG, SESSION);
 

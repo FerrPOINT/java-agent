@@ -270,6 +270,13 @@ public class AgentProperties {
         private int persistThresholdBytes = 51200;
         /** Feature 8: Per-turn aggregate budget in bytes (default 204800 = 200KB). */
         private int turnBudgetBytes = 204800;
+        /** Feature 7: Per-tool output limits — override the generic max-chars
+         * for specific tools. 0 = use the generic max-chars. Previously declared
+         * in application.yml but never bound (orphaned keys silently ignored). */
+        private int terminalMaxChars = 0;
+        private int readFileMaxLines = 0;
+        private int perLineMaxChars = 0;
+        private int webExtractMaxChars = 0;
 
         public int getTimeoutSecondsOrDefault(int fallback) { return timeoutSeconds > 0 ? timeoutSeconds : fallback; }
     }

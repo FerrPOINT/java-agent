@@ -238,9 +238,9 @@ public class ToolExecutionService {
             && ("write_file".equals(toolName) || "patch".equals(toolName))) {
             fileMutationTracker.recordMutation(toolName, arguments, safeResult.content(), true);
         }
-        // Truncate output
+        // Truncate output (Feature 7: per-tool overrides for terminal/web_extract)
         if (toolOutputLimiter != null) {
-            return toolOutputLimiter.truncate(safeResult);
+            return toolOutputLimiter.truncate(safeResult, toolName);
         }
         return truncateIfNeeded(safeResult, toolName);
     }

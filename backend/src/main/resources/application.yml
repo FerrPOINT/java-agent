@@ -196,10 +196,10 @@ agent:
     timeout-seconds: ${AGENT_TOOL_OUTPUT_TIMEOUT_SECONDS:300}
     include-timestamps: ${AGENT_TOOL_OUTPUT_INCLUDE_TIMESTAMPS:true}
     # Feature 7: Configurable tool-output limits
-    terminal-max-chars: ${AGENT_TOOL_OUTPUT_TERMINAL_MAX_CHARS:50000}
-    read-file-max-lines: ${AGENT_TOOL_OUTPUT_READ_FILE_MAX_LINES:2000}
-    per-line-max-chars: ${AGENT_TOOL_OUTPUT_PER_LINE_MAX_CHARS:2000}
-    web-extract-max-chars: ${AGENT_TOOL_OUTPUT_WEB_EXTRACT_MAX_CHARS:5000}
+    terminal-max-chars: ${AGENT_TOOL_OUTPUT_TERMINAL_MAX_CHARS:0}
+    read-file-max-lines: ${AGENT_TOOL_OUTPUT_READ_FILE_MAX_LINES:0}
+    per-line-max-chars: ${AGENT_TOOL_OUTPUT_PER_LINE_MAX_CHARS:0}
+    web-extract-max-chars: ${AGENT_TOOL_OUTPUT_WEB_EXTRACT_MAX_CHARS:0}
     # Feature 8: Tool result persistence
     persist-threshold-bytes: ${AGENT_TOOL_OUTPUT_PERSIST_THRESHOLD_BYTES:51200}
     turn-budget-bytes: ${AGENT_TOOL_OUTPUT_TURN_BUDGET_BYTES:204800}

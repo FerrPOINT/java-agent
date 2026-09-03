@@ -43,7 +43,24 @@ public class ToolOutputLimiter {
      * {@link AgentProperties}.
      */
     public ToolResult truncate(ToolResult result) {
-        int maxChars = properties.getToolOutput().getMaxChars();
+        return truncate(result, null);
+    }
+
+    /**
+     * Per-tool truncation (Feature 7): terminal and web_extract have dedicated
+     * max-chars overrides; everything else uses the generic max-chars. A value
+     * of 0 means "not configured" and falls back to the generic limit.
+     */
+    public ToolResult truncate(ToolResult result, String toolName) {
+        var out = properties.getToolOutput();
+        int maxChars = out.getMaxChars();
+        if (toolName != null) {
+            if ("terminal".equals(toolName) && out.getTerminalMaxChars() > 0) {
+                maxChars = out.getTerminalMaxChars();
+            } else if ("web_extract".equals(toolName) && out.getWebExtractMaxChars() > 0) {
+                maxChars = out.getWebExtractMaxChars();
+            }
+        }
         if (result.success()) {
             String truncated = truncate(result.content(), maxChars);
             if (truncated == result.content()) {

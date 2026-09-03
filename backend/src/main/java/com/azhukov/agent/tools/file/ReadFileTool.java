@@ -86,7 +86,10 @@ public class ReadFileTool implements ToolHandler {
             List<String> lines = content.isEmpty() ? List.of() : List.of(content.split("\n", -1));
             int offset = Math.max(1, args.offset());
             int start = offset - 1;
-            int limit = args.limit() > 0 ? args.limit() : 2000;
+            int limit = args.limit() > 0 ? args.limit()
+                // Feature 7: operator-configurable default (agent.tool-output.read-file-max-lines)
+                : (properties.getToolOutput().getReadFileMaxLines() > 0
+                    ? properties.getToolOutput().getReadFileMaxLines() : 2000);
             int end = Math.min(lines.size(), start + limit);
 
             if (start >= lines.size()) {
