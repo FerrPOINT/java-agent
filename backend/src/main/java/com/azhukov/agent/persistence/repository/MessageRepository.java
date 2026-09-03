@@ -16,6 +16,15 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
 
     List<MessageEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId);
 
+    /**
+     * Deletes all messages of a session persisted strictly before the given
+     * timestamp. Used by compression to remove only the messages that existed
+     * when compression started — messages added during the LLM compression
+     * call (10-60s window) are preserved.
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    void deleteBySessionIdAndCreatedAtBefore(UUID sessionId, java.time.Instant cutoff);
+
     Page<MessageEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId, Pageable pageable);
 
     List<MessageEntity> findBySessionIdAndTurnIndexOrderByCreatedAtAsc(UUID sessionId, Integer turnIndex);

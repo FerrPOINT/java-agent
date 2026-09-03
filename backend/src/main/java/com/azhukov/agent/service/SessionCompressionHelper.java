@@ -52,6 +52,9 @@ public class SessionCompressionHelper {
         // Use self-proxy to engage @Transactional proxies on inner methods
         // (same pattern as CheckpointManager — avoids self-invocation bypass).
         SessionCompressionHelper proxy = self.getObject();
+        // Record the cutoff BEFORE reading messages — any message persisted
+        // after this timestamp (during the LLM compression call) is preserved.
+        Instant cutoff = Instant.now();
         // 1. Read messages in a short read-only transaction
         List<Message> messages = proxy.readMessages(sessionId);
         if (messages.size() <= 4) return;
@@ -64,8 +67,8 @@ public class SessionCompressionHelper {
             compressed = conversationCompressor.compress(messages, focusTopic);
         }
 
-        // 3. Persist results in a short write transaction
-        proxy.persistCompressed(sessionId, compressed);
+        // 3. Persist results in a short write transaction (race-safe)
+        proxy.persistCompressed(sessionId, compressed, cutoff);
     }
 
     /**
@@ -81,11 +84,16 @@ public class SessionCompressionHelper {
 
     /**
      * Delete old messages and persist compressed versions in a short transaction.
+     * <p>
+     * Race-safe: only deletes messages that existed at the start of compression
+     * (identified by a cutoff timestamp), NOT messages added during the LLM
+     * compression call (10-60s window). Without this guard, a new message
+     * persisted mid-compression would be deleted by {@code deleteAll(existing)}.
      */
     @Transactional
-    void persistCompressed(UUID sessionId, List<Message> compressed) {
-        List<MessageEntity> existing = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        messageRepository.deleteAll(existing);
+    void persistCompressed(UUID sessionId, List<Message> compressed, Instant cutoffTimestamp) {
+        // Delete only messages that existed before compression started
+        messageRepository.deleteBySessionIdAndCreatedAtBefore(sessionId, cutoffTimestamp);
         Instant now = Instant.now();
         for (Message m : compressed) {
             MessageEntity e = messageMapper.toEntity(m);
