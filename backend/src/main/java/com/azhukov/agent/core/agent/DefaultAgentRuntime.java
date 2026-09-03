@@ -1630,6 +1630,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
         if (steerBuffer != null) {
             steerBuffer.clear(sessionId);
         }
+        // rev-63: guardrail per-session state (history, halted, consecutive
+        // failures) was never removed — unbounded leak on long-running service.
+        if (toolGuardrails != null) {
+            toolGuardrails.removeSession(sessionId);
+        }
         log.debug("Cleaned up runtime state maps for session {}", sessionId);
     }
 

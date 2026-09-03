@@ -70,6 +70,16 @@ public interface ToolGuardrails {
     }
 
     /**
+     * Removes per-session guardrail state (history, halted flag, failure
+     * counters) to prevent unbounded memory growth on long-running services.
+     *
+     * @param sessionId the session to clean up
+     */
+    default void removeSession(java.util.UUID sessionId) {
+        // no-op by default for backward compatibility
+    }
+
+    /**
      * Returns the set of tools that are explicitly blocked.
      *
      * @return set of blocked tool names (empty by default)
