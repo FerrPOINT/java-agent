@@ -3,6 +3,9 @@ WORKDIR /workspace
 COPY settings.gradle ./
 COPY gradle ./gradle
 COPY gradlew ./
+# settings.gradle includes ':cli'; gradle requires the directory to exist even
+# when the bot does not depend on it — copy its build files too.
+COPY cli/build.gradle ./cli/build.gradle
 COPY backend/build.gradle ./backend/build.gradle
 COPY backend/src ./backend/src
 COPY telegram-bot/build.gradle ./telegram-bot/build.gradle
