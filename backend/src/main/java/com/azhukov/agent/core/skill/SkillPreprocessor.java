@@ -173,33 +173,53 @@ public class SkillPreprocessor {
          return "[inline-shell blocked by CommandGuard: " + blockReason + "]";
      }
      try {
- ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
- pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
- pb.redirectErrorStream(false);
- // S2 FIX: Set working directory to skill dir so relative paths work
- if (skillDir != null && !skillDir.isBlank()) {
- pb.directory(new File(skillDir));
+         ProcessBuilder pb = new ProcessBuilder(inlineShellCommand(command));
+         pb.redirectErrorStream(false);
+         // S2 FIX: Set working directory to skill dir so relative paths work.
+         // Windows cannot use POSIX paths like /tmp as a ProcessBuilder cwd; ignore
+         // invalid directories instead of failing before the command can run.
+         if (skillDir != null && !skillDir.isBlank()) {
+             File cwd = new File(skillDir);
+             if (cwd.isDirectory()) {
+                 pb.directory(cwd);
+             } else {
+                 log.debug("Inline shell skill directory does not exist, using process cwd: {}", skillDir);
+             }
+         }
+         Process process = pb.start();
+         process.getOutputStream().close();
+         boolean finished = process.waitFor(timeout, java.util.concurrent.TimeUnit.SECONDS);
+         if (!finished) {
+             process.destroyForcibly();
+             return "[inline-shell timeout after " + timeout + "s: " + command + "]";
+         }
+         String output = new String(process.getInputStream().readAllBytes()).trim();
+         if (output.isEmpty()) {
+             String stderr = new String(process.getErrorStream().readAllBytes()).trim();
+             if (!stderr.isEmpty()) output = stderr;
+         }
+         if (output.length() > INLINE_SHELL_MAX_OUTPUT) {
+             output = output.substring(0, INLINE_SHELL_MAX_OUTPUT) + "...[truncated]";
+         }
+         return output;
+     } catch (Exception e) {
+         if (e instanceof java.util.concurrent.TimeoutException) {
+             return "[inline-shell timeout after " + timeout + "s: " + command + "]";
+         }
+         return "[inline-shell error: " + e.getMessage() + "]";
+     }
  }
- Process process = pb.start();
- boolean finished = process.waitFor(timeout, java.util.concurrent.TimeUnit.SECONDS);
- if (!finished) {
- process.destroyForcibly();
- return "[inline-shell timeout after " + timeout + "s: " + command + "]";
+
+ private List<String> inlineShellCommand(String command) {
+     if (isWindows()) {
+         String comspec = System.getenv("ComSpec");
+         String shell = comspec != null && !comspec.isBlank() ? comspec : "cmd.exe";
+         return List.of(shell, "/d", "/c", command);
+     }
+     return List.of("bash", "-c", command);
  }
- String output = new String(process.getInputStream().readAllBytes()).trim();
- if (output.isEmpty()) {
- String stderr = new String(process.getErrorStream().readAllBytes()).trim();
- if (!stderr.isEmpty()) output = stderr;
- }
- if (output.length() > INLINE_SHELL_MAX_OUTPUT) {
- output = output.substring(0, INLINE_SHELL_MAX_OUTPUT) + "...[truncated]";
- }
- return output;
- } catch (Exception e) {
- if (e instanceof java.util.concurrent.TimeoutException) {
- return "[inline-shell timeout after " + timeout + "s: " + command + "]";
- }
- return "[inline-shell error: " + e.getMessage() + "]";
- }
+
+ private boolean isWindows() {
+     return System.getProperty("os.name", "").toLowerCase().contains("win");
  }
 }

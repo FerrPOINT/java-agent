@@ -1,6 +1,7 @@
 package com.azhukov.agent.persistence.service;
 
 import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -75,6 +76,27 @@ class MidTurnPersistenceServiceTest {
         assertThat(saved.get(0).getSessionId()).isEqualTo(sessionId);
         assertThat(saved.get(1).getRole()).isEqualTo("tool");
         assertThat(saved.get(1).getContent()).isEqualTo("result");
+        assertThat(saved.get(0).getCreatedAt()).isBefore(saved.get(1).getCreatedAt());
+    }
+
+    @Test
+    void persistNewMessages_backfillsToolNameFromEarlierAssistantToolCalls() {
+        stubTransaction();
+        UUID sessionId = UUID.randomUUID();
+        List<Message> messages = List.of(
+            Message.user("search"),
+            Message.assistantToolCalls(List.of(new ToolCall("call-1|response-1", "web_search", "{\"query\":\"java\"}")), 1),
+            Message.toolResult("call-1", "search result", 1)
+        );
+
+        service.persistNewMessages(sessionId, messages, 2);
+
+        ArgumentCaptor<MessageEntity> captor = ArgumentCaptor.forClass(MessageEntity.class);
+        verify(messageRepository).save(captor.capture());
+        MessageEntity saved = captor.getValue();
+        assertThat(saved.getRole()).isEqualTo("tool");
+        assertThat(saved.getToolCallId()).isEqualTo("call-1");
+        assertThat(saved.getToolCallName()).isEqualTo("web_search");
     }
 
     @Test

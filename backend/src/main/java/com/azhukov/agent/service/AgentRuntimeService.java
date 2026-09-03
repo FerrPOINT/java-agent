@@ -26,6 +26,7 @@ import com.azhukov.agent.persistence.repository.MemoryRepository;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.persistence.repository.UsageRepository;
+import com.azhukov.agent.persistence.service.ToolResultNameResolver;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,8 +35,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -120,16 +125,22 @@ public class AgentRuntimeService {
             applied.sessionId(), AgentProperties.DEFAULT_USER_ID, properties.getModel().getModelName());
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
+        if (applied.systemPromptOverride() != null && !applied.systemPromptOverride().isBlank()) {
+            session = session.withMetadata("system_prompt_override", applied.systemPromptOverride());
+        }
+        ModelRequestOptions options = toModelOptions(applied, session);
+        session = RuntimeModelOptionsResolver.applyEffectiveRuntime(session, properties, options);
 
         // P1-5: When mid-turn persistence is active, persist the user message before
         // the turn starts. The DefaultAgentRuntime will persist assistant messages
         // and tool results mid-turn via the MidTurnPersistenceCallback. This avoids
         // duplicate writes at end-of-turn.
         if (midTurnPersistenceCallback != null) {
+            UUID sessionIdForPersistence = session.id();
             transactionTemplate.execute(status -> {
                 Instant now = Instant.now();
                 MessageEntity userMsg = new MessageEntity();
-                userMsg.setSessionId(session.id());
+                userMsg.setSessionId(sessionIdForPersistence);
                 userMsg.setRole("user");
                 userMsg.setContent(applied.message());
                 userMsg.setTurnIndex(0);
@@ -139,7 +150,6 @@ public class AgentRuntimeService {
             });
         }
 
-        ModelRequestOptions options = toModelOptions(applied, session);
         TurnResult result = agentRuntime.runTurn(session, applied.message(), List.of(), options);
         // P1-5: Only call persistMessages if mid-turn persistence is NOT active
         // (mid-turn persistence already saved all new messages during the turn)
@@ -152,11 +162,55 @@ public class AgentRuntimeService {
         int[] usage = turnUsageCollector.getAndClear();
         if (usage != null && usage.length == 2) {
             usageTracker.recordTurn(session.id(), session.userId(),
-                session.modelName() != null ? session.modelName() : UNKNOWN_MODEL,
+                resolveModelUsed(session),
                 usage[0], usage[1]);
         }
 
         return buildResponse(session, result, false);
+    }
+
+    public ChatResponseDto runApiTurn(Session session, String message, ModelRequestOptions options) {
+        return runApiTurn(session, Message.user(message), options);
+    }
+
+    public ChatResponseDto runApiTurn(Session session, Message message, ModelRequestOptions options) {
+        ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
+        Session runtimeSession = RuntimeModelOptionsResolver.applyEffectiveRuntime(session, properties, effectiveOptions);
+        Message userMessage = apiUserMessage(message);
+        if (midTurnPersistenceCallback != null) {
+            transactionTemplate.execute(status -> {
+                Instant now = Instant.now();
+                MessageEntity userMsg = new MessageEntity();
+                userMsg.setSessionId(runtimeSession.id());
+                userMsg.setRole("user");
+                userMsg.setContent(userMessage.content());
+                userMsg.setTurnIndex(0);
+                userMsg.setImageCount(userMessage.imageCount());
+                userMsg.setCreatedAt(now);
+                messageRepository.save(userMsg);
+                return null;
+            });
+        }
+
+        TurnResult result = agentRuntime.runTurn(runtimeSession, userMessage, List.of(), effectiveOptions);
+        if (midTurnPersistenceCallback == null) {
+            persistMessages(runtimeSession.id(), result.messages());
+        }
+
+        int[] usage = turnUsageCollector.getAndClear();
+        if (usage != null && usage.length == 2) {
+            usageTracker.recordTurn(runtimeSession.id(), runtimeSession.userId(),
+                resolveModelUsed(runtimeSession),
+                usage[0], usage[1]);
+        }
+
+        return buildResponse(runtimeSession, result, false);
+    }
+
+    private Message apiUserMessage(Message message) {
+        String content = message != null && message.content() != null ? message.content() : "";
+        int imageCount = message != null && message.imageCount() != null ? message.imageCount() : 0;
+        return imageCount > 0 ? Message.userWithImages(content, imageCount) : Message.user(content);
     }
 
     private ChatResponseDto buildResponse(Session session, TurnResult result, boolean memoryUpdated) {
@@ -173,24 +227,87 @@ public class AgentRuntimeService {
             memoryUpdated,
             modelUsed,
             usage != null ? usage.tokenEstimate() : null,
-            contextLength
+            contextLength,
+            responseMessages(result.messages())
         );
     }
 
+    private List<Map<String, Object>> responseMessages(List<Message> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> projected = new ArrayList<>();
+        Map<String, String> toolNamesById = new HashMap<>();
+        for (Message message : messages) {
+            if (message == null) {
+                continue;
+            }
+            if (message.role() == Role.ASSISTANT) {
+                Map<String, Object> projectedMessage = assistantMessage(message);
+                if (!projectedMessage.isEmpty()) {
+                    projected.add(projectedMessage);
+                }
+                if (message.toolCalls() != null) {
+                    for (var toolCall : message.toolCalls()) {
+                        if (toolCall != null && toolCall.id() != null) {
+                            toolNamesById.put(toolCall.id(), toolCall.name());
+                        }
+                    }
+                }
+            } else if (message.role() == Role.TOOL) {
+                Map<String, Object> projectedMessage = new LinkedHashMap<>();
+                projectedMessage.put("role", "tool");
+                projectedMessage.put("content", message.content() != null ? message.content() : "");
+                projectedMessage.put("tool_call_id", message.toolCallId() != null ? message.toolCallId() : "");
+                String toolName = toolNamesById.get(message.toolCallId());
+                if (toolName != null && !toolName.isBlank()) {
+                    projectedMessage.put("tool_name", toolName);
+                }
+                projected.add(projectedMessage);
+            }
+        }
+        return projected.isEmpty() ? List.of() : List.copyOf(projected);
+    }
+
+    private Map<String, Object> assistantMessage(Message message) {
+        boolean hasContent = message.content() != null && !message.content().isBlank();
+        boolean hasToolCalls = message.toolCalls() != null && !message.toolCalls().isEmpty();
+        if (!hasContent && !hasToolCalls) {
+            return Map.of();
+        }
+        Map<String, Object> projected = new LinkedHashMap<>();
+        projected.put("role", "assistant");
+        projected.put("content", message.content() != null ? message.content() : "");
+        if (hasToolCalls) {
+            projected.put("tool_calls", toolCalls(message.toolCalls()));
+        }
+        return projected;
+    }
+
+    private List<Map<String, Object>> toolCalls(List<com.azhukov.agent.core.model.ToolCall> toolCalls) {
+        List<Map<String, Object>> projected = new ArrayList<>(toolCalls.size());
+        for (var toolCall : toolCalls) {
+            if (toolCall == null || toolCall.name() == null || toolCall.name().isBlank()) {
+                continue;
+            }
+            Map<String, Object> function = new LinkedHashMap<>();
+            function.put("name", toolCall.name());
+            function.put("arguments", toolCall.arguments() != null ? toolCall.arguments() : "{}");
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", toolCall.id() != null ? toolCall.id() : "");
+            item.put("type", "function");
+            item.put("function", function);
+            projected.add(item);
+        }
+        return projected.isEmpty() ? List.of() : List.copyOf(projected);
+    }
+
     private String resolveModelUsed(Session session) {
-        if (session.modelName() != null && !session.modelName().isBlank()) {
-            return session.modelName();
-        }
-        String override = runtimeConfigService.getModelOverride();
-        if (override != null && !override.isBlank()) {
-            return override;
-        }
-        if (properties != null && properties.getModel() != null
-            && properties.getModel().getModelName() != null
-            && !properties.getModel().getModelName().isBlank()) {
-            return properties.getModel().getModelName();
-        }
-        return UNKNOWN_MODEL;
+        return RuntimeModelOptionsResolver.modelUsed(
+            properties,
+            runtimeConfigService,
+            session,
+            UNKNOWN_MODEL);
     }
 
     @Transactional(readOnly = true)
@@ -203,7 +320,10 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public ContextInfoDto getContext(UUID sessionId) {
-        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)
+            .stream()
+            .filter(AgentRuntimeService::isActive)
+            .toList();
         int messageCount = messages.size();
         int tokenEstimate = messages.stream()
             .mapToInt(m -> m.getContent() != null ? m.getContent().length() : 0)
@@ -230,7 +350,7 @@ public class AgentRuntimeService {
 
     @Transactional
     public void resetSession(UUID sessionId) {
-        messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
+        messageRepository.deleteBySessionId(sessionId);
         // Hermes parity / leak fix (seam audit 2026-08-21): /reset must also drop
         // runtime per-session state, or stale counters leak into the "fresh" session:
         // - MemoryNudgeManager.clearSession (turnsSinceMemory, itersSinceSkill) and
@@ -290,7 +410,10 @@ public class AgentRuntimeService {
 
     @Transactional
     public int undoTurns(UUID sessionId, int turns) {
-        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)
+            .stream()
+            .filter(AgentRuntimeService::isActive)
+            .toList();
         if (messages.isEmpty()) return 0;
         List<Integer> turnIndices = messages.stream()
             .map(MessageEntity::getTurnIndex)
@@ -362,12 +485,18 @@ public class AgentRuntimeService {
 
     @Transactional
     public void switchModel(UUID sessionId, String model, String provider) {
+        switchModel(sessionId, model, provider, Map.of());
+    }
+
+    @Transactional
+    public void switchModel(UUID sessionId, String model, String provider, Map<String, Object> modelOptions) {
         SessionEntity session = sessionRepository.findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));
         session.setModelName(model);
         if (provider != null && !provider.isBlank()) {
             session.setModelProvider(provider);
         }
+        applyModelOptions(session, modelOptions);
         session.setUpdatedAt(Instant.now());
         sessionRepository.save(session);
 
@@ -382,6 +511,64 @@ public class AgentRuntimeService {
         }
     }
 
+    private void applyModelOptions(SessionEntity session, Map<String, Object> modelOptions) {
+        if (modelOptions == null || modelOptions.isEmpty()) {
+            return;
+        }
+        String reasoningEffort = stringOption(modelOptions, "reasoning_effort", "reasoningEffort");
+        if (reasoningEffort != null) {
+            session.setCliStateValue("reasoningEffort", reasoningEffort);
+        }
+        Boolean fastMode = booleanOption(modelOptions, "fast_mode", "fastMode");
+        if (fastMode != null) {
+            session.setCliStateValue("fastMode", String.valueOf(fastMode));
+        }
+        Integer maxTokens = positiveIntOption(
+            modelOptions, "max_completion_tokens", "maxCompletionTokens", "max_tokens", "maxTokens");
+        if (maxTokens != null) {
+            session.setCliStateValue("maxTokens", String.valueOf(maxTokens));
+        }
+    }
+
+    private String stringOption(Map<String, Object> options, String... keys) {
+        Object value = firstOption(options, keys);
+        if (value instanceof String string && !string.isBlank()) {
+            return string;
+        }
+        return null;
+    }
+
+    private Boolean booleanOption(Map<String, Object> options, String... keys) {
+        Object value = firstOption(options, keys);
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value instanceof String string && ("true".equalsIgnoreCase(string) || "false".equalsIgnoreCase(string))) {
+            return Boolean.parseBoolean(string);
+        }
+        return null;
+    }
+
+    private Integer positiveIntOption(Map<String, Object> options, String... keys) {
+        Object value = firstOption(options, keys);
+        Integer parsed = null;
+        if (value instanceof Number number) {
+            parsed = number.intValue();
+        } else if (value instanceof String string && string.matches("\\d+")) {
+            parsed = Integer.parseInt(string);
+        }
+        return parsed != null && parsed > 0 ? parsed : null;
+    }
+
+    private Object firstOption(Map<String, Object> options, String... keys) {
+        for (String key : keys) {
+            if (options.containsKey(key)) {
+                return options.get(key);
+            }
+        }
+        return null;
+    }
+
     @Transactional
     public void installBundle(String bundleName) {
         skillBundleService.install(bundleName);
@@ -393,27 +580,45 @@ public class AgentRuntimeService {
 
     @Transactional
     public SessionSummaryDto branchSession(UUID sessionId, String name) {
-        // Fork a session: load messages, create new session with copied messages
+        return branchSession(sessionId, null, name);
+    }
+
+    @Transactional
+    public SessionSummaryDto branchSession(UUID sessionId, UUID branchId, String name) {
         SessionEntity source = sessionRepository.findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));
-        SessionEntity branch = sessionMapper.toEntity(
-            new Session(null, source.getUserId(), name != null ? name : "Branch of " + source.getTitle(),
-                source.getModelProvider(), source.getModelName(), null, java.util.Map.of(), null)
-        );
-        branch.setCreatedAt(Instant.now());
-        branch.setUpdatedAt(Instant.now());
+        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+            .filter(AgentRuntimeService::isActive)
+            .toList();
+        Instant now = Instant.now();
+        String sourceTitle = source.getTitle() != null && !source.getTitle().isBlank()
+            ? source.getTitle() : "New chat";
+
+        SessionEntity branch = new SessionEntity();
+        branch.setId(branchId);
+        branch.setUserId(source.getUserId());
+        branch.setTitle(name != null && !name.isBlank() ? name : "Branch of " + sourceTitle);
+        branch.setModelProvider(source.getModelProvider());
+        branch.setModelName(source.getModelName());
+        branch.setSystemPrompt(source.getSystemPrompt());
+        branch.setParentSessionId(source.getId());
+        branch.setSource(source.getSource());
+        branch.setPreview(source.getPreview());
+        branch.setMessageCount(messages.size());
+        branch.setCreatedAt(now);
+        branch.setUpdatedAt(now);
+        branch.setLastActive(now);
         SessionEntity saved = sessionRepository.save(branch);
-        // Copy messages
-        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
         List<MessageEntity> copies = new java.util.ArrayList<>(messages.size());
         for (MessageEntity m : messages) {
-            MessageEntity copy = messageMapper.toEntity(messageMapper.toDomain(m));
-            copy.setSessionId(saved.getId());
-            copy.setCreatedAt(m.getCreatedAt());
-            copies.add(copy);
+            copies.add(copyMessageForSession(m, saved.getId()));
         }
         messageRepository.saveAll(copies);
-        return domainDtoMapper.toSessionSummaryDto(sessionMapper.toDomain(saved));
+
+        source.setEndReason("branched");
+        source.setUpdatedAt(now);
+        sessionRepository.save(source);
+        return domainDtoMapper.toSessionSummaryDto(saved);
     }
 
     public String runBackground(String prompt, String sessionId) {
@@ -487,8 +692,8 @@ public class AgentRuntimeService {
      */
     public String runBackground(String prompt, String sessionId, boolean skipBackgroundReview,
                                 java.util.Map<String, String> runtimeMetadata) {
-        // Background task — just run a turn in a new session
-        Session baseSession = createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "");
+        // Background task — use an explicit session when one is attached, otherwise isolate it.
+        Session baseSession = resolveBackgroundSession(sessionId);
         java.util.Map<String, String> metadata = new java.util.HashMap<>();
         if (runtimeMetadata != null) {
             runtimeMetadata.forEach((key, value) -> {
@@ -524,6 +729,25 @@ public class AgentRuntimeService {
             persistMessages(session.id(), result.messages());
         }
         return session.id().toString();
+    }
+
+    private Session resolveBackgroundSession(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "");
+        }
+        UUID requestedSessionId;
+        try {
+            requestedSessionId = UUID.fromString(sessionId);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid background session id: " + sessionId);
+        }
+        String modelName = properties.getModel() == null ? "" : properties.getModel().getModelName();
+        return sessionResolver.loadOrCreateSession(
+            requestedSessionId,
+            AgentProperties.DEFAULT_USER_ID,
+            "openai-compatible",
+            modelName == null ? "" : modelName,
+            "cron");
     }
 
     // ── Memory management methods (Stage 6.8) ──
@@ -582,10 +806,13 @@ public class AgentRuntimeService {
     private void persistMessages(UUID sessionId, List<Message> messages) {
         transactionTemplate.execute(status -> {
             Instant now = Instant.now();
+            int sequence = 0;
+            Map<String, String> toolNamesByCallId = ToolResultNameResolver.collect(messages);
             for (Message m : messages) {
                 MessageEntity e = messageMapper.toEntity(m);
+                ToolResultNameResolver.apply(e, m, toolNamesByCallId);
                 e.setSessionId(sessionId);
-                e.setCreatedAt(now);
+                e.setCreatedAt(now.plusNanos(sequence++));
                 if (m.toolCalls() != null && !m.toolCalls().isEmpty() && m.toolCall() == null) {
                     e.setToolCallName(m.toolCalls().get(0).name());
                     e.setToolCallArguments(m.toolCalls().get(0).arguments());
@@ -594,6 +821,27 @@ public class AgentRuntimeService {
             }
             return null;
         });
+    }
+
+    private static MessageEntity copyMessageForSession(MessageEntity source, UUID targetSessionId) {
+        MessageEntity copy = new MessageEntity();
+        copy.setSessionId(targetSessionId);
+        copy.setRole(source.getRole());
+        copy.setContent(source.getContent());
+        copy.setToolCallId(source.getToolCallId());
+        copy.setToolCallName(source.getToolCallName());
+        copy.setToolCallArguments(source.getToolCallArguments());
+        copy.setToolCalls(source.getToolCalls());
+        copy.setTurnIndex(source.getTurnIndex());
+        copy.setImageCount(source.getImageCount());
+        copy.setActive(true);
+        copy.setCompacted(false);
+        copy.setCreatedAt(source.getCreatedAt());
+        return copy;
+    }
+
+    private static boolean isActive(MessageEntity entity) {
+        return entity != null && !Boolean.FALSE.equals(entity.getActive());
     }
 
     /**
@@ -617,23 +865,6 @@ public class AgentRuntimeService {
     }
 
     private ModelRequestOptions toModelOptions(ChatRequest request, Session session) {
-        Boolean fastMode = request.fastMode();
-        String reasoningEffort = request.reasoningEffort();
-        if (fastMode == null) {
-            fastMode = Boolean.parseBoolean(session.metadata().getOrDefault("fastMode", "false"));
-        }
-        if (reasoningEffort == null || reasoningEffort.isBlank()) {
-            reasoningEffort = session.metadata().get("reasoningEffort");
-        }
-        Integer maxTokens;
-        try {
-            maxTokens = Integer.parseInt(session.metadata().getOrDefault("maxTokens", "0"));
-        } catch (NumberFormatException e) {
-            maxTokens = 0;
-        }
-        return new ModelRequestOptions(
-            request.model() != null && !request.model().isBlank() ? request.model() : null,
-            reasoningEffort, fastMode, request.voiceMode(),
-            request.personality(), request.subgoal(), maxTokens);
+        return RuntimeModelOptionsResolver.resolve(properties, request, session, runtimeConfigService);
     }
 }

@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.client;
 
+import com.azhukov.agent.bot.formatting.MarkdownConverter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ByteArrayResource;
@@ -466,6 +467,8 @@ public class TelegramClient {
 
     // ─── Media ────────────────────────────────────────────────────
 
+    private static final int TELEGRAM_CAPTION_MAX_LENGTH = 1024;
+
     public Optional<Long> sendPhoto(long chatId, byte[] photo, String caption, String parseMode) {
         MultipartBodyBuilder builder = new MultipartBodyBuilder();
         builder.part("chat_id", String.valueOf(chatId));
@@ -501,18 +504,7 @@ public class TelegramClient {
     }
 
     public Optional<Long> sendVoice(long chatId, byte[] voice, String caption) {
-        MultipartBodyBuilder builder = new MultipartBodyBuilder();
-        builder.part("chat_id", String.valueOf(chatId));
-        builder.part("voice", new ByteArrayResource(voice) {
-            @Override public String getFilename() { return "voice.ogg"; }
-        }, MediaType.parseMediaType("audio/ogg"));
-        if (caption != null && !caption.isBlank()) builder.part("caption", caption);
-        try {
-            return callMultipartApi("sendVoice", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
-        } catch (TelegramApiException e) {
-            log.warn("sendVoice failed: {}", e.getMessage());
-            return Optional.empty();
-        }
+        return sendVoiceWithCaptionFallback(chatId, voice, "voice.ogg", caption, "sendVoice");
     }
 
     /**
@@ -555,19 +547,82 @@ public class TelegramClient {
      */
     public Optional<Long> sendAudioAsVoice(long chatId, byte[] audio, String fileName, String caption) {
         String name = (fileName == null || fileName.isBlank()) ? "voice.ogg" : fileName;
+        return sendVoiceWithCaptionFallback(chatId, audio, name, caption, "sendAudioAsVoice");
+    }
+
+    private Optional<Long> sendVoiceWithCaptionFallback(long chatId, byte[] audio, String fileName,
+                                                        String caption, String logLabel) {
+        List<CaptionVariant> variants = voiceCaptionVariants(caption);
+        TelegramApiException lastParseError = null;
+        for (CaptionVariant variant : variants) {
+            try {
+                return callMultipartApi("sendVoice",
+                    buildVoiceMultipart(chatId, audio, fileName, variant.text(), variant.parseMode()))
+                    .flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+            } catch (TelegramApiException e) {
+                if (variant.parseMode() != null && e.isParseError()) {
+                    log.warn("{} MarkdownV2 caption rejected, retrying plain text: {}", logLabel, e.getMessage());
+                    lastParseError = e;
+                    continue;
+                }
+                log.warn("{} failed: {}", logLabel, e.getMessage());
+                return Optional.empty();
+            }
+        }
+        if (lastParseError != null) {
+            log.warn("{} failed after caption fallback: {}", logLabel, lastParseError.getMessage());
+        }
+        return Optional.empty();
+    }
+
+    private MultiValueMap<String, org.springframework.http.HttpEntity<?>> buildVoiceMultipart(
+        long chatId, byte[] audio, String fileName, String caption, String parseMode) {
         MultipartBodyBuilder builder = new MultipartBodyBuilder();
         builder.part("chat_id", String.valueOf(chatId));
         builder.part("voice", new ByteArrayResource(audio) {
-            @Override public String getFilename() { return name; }
+            @Override public String getFilename() { return fileName; }
         }, MediaType.parseMediaType("audio/ogg"));
         if (caption != null && !caption.isBlank()) builder.part("caption", caption);
-        try {
-            return callMultipartApi("sendVoice", builder.build()).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
-        } catch (TelegramApiException e) {
-            log.warn("sendAudioAsVoice failed: {}", e.getMessage());
-            return Optional.empty();
-        }
+        if (parseMode != null && !parseMode.isBlank()) builder.part("parse_mode", parseMode);
+        return builder.build();
     }
+
+    private List<CaptionVariant> voiceCaptionVariants(String caption) {
+        if (caption == null || caption.isBlank()) {
+            return List.of(new CaptionVariant(null, null));
+        }
+
+        String plainCaption = truncateUtf16(caption, TELEGRAM_CAPTION_MAX_LENGTH);
+        String formattedCaption = null;
+        try {
+            formattedCaption = MarkdownConverter.convert(caption);
+        } catch (Exception e) {
+            log.debug("Voice caption MarkdownV2 formatting failed; sending plain caption", e);
+        }
+
+        if (formattedCaption != null
+            && !formattedCaption.isBlank()
+            && formattedCaption.length() <= TELEGRAM_CAPTION_MAX_LENGTH) {
+            return List.of(
+                new CaptionVariant(formattedCaption, "MarkdownV2"),
+                new CaptionVariant(plainCaption, null)
+            );
+        }
+        return List.of(new CaptionVariant(plainCaption, null));
+    }
+
+    private static String truncateUtf16(String text, int maxLength) {
+        if (text.length() <= maxLength) {
+            return text;
+        }
+        int cut = maxLength;
+        if (cut > 0 && Character.isHighSurrogate(text.charAt(cut - 1))) {
+            cut--;
+        }
+        return text.substring(0, cut);
+    }
+
+    private record CaptionVariant(String text, String parseMode) {}
 
     /**
      * Send a group of photos as a Telegram album (sendMediaGroup).

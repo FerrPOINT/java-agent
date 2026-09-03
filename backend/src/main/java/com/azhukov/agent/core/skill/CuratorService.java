@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.skill;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.agent.ToolResultFormatter;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.memory.ReviewToolSchemas;
 import com.azhukov.agent.core.model.ChatResponse;
@@ -60,6 +61,8 @@ import java.util.concurrent.TimeUnit;
 @Service
 @Slf4j
 public class CuratorService {
+
+ private static final ToolResultFormatter TOOL_RESULT_FORMATTER = new ToolResultFormatter();
 
  private final SkillRepository skillRepository;
  private final AgentProperties properties;
@@ -733,7 +736,8 @@ public class CuratorService {
              }
 
              // Add tool result to conversation
-             messages.add(Message.toolResult(call.id(), result.content(), iteration));
+             messages.add(Message.toolResult(call.id(),
+                 TOOL_RESULT_FORMATTER.formatResult(call.name(), result), iteration));
 
              log.debug("Curator agent loop iteration {}: executed tool {} → success={}",
                      iteration, call.name(), result.success());

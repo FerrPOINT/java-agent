@@ -13,6 +13,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 
@@ -222,6 +223,31 @@ class McpServerServiceTest {
     }
 
     @Test
+    void toolCallFailurePreservesStructuredPayloadForMcpClient() throws Exception {
+        ToolResult failure = new ToolResult(false, "{\"success\":false,\"error\":\"bad input\"}", "bad input");
+        when(toolRegistry.execute(eq("fail_tool"), anyString(), anyString(), any(), any()))
+            .thenReturn(failure);
+        McpServerService service = new McpServerService(properties, objectMapper, toolRegistry);
+
+        McpSchema.CallToolResult result = invokeToolCall(service, "fail_tool", Map.of("x", 1));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(textContent(result)).isEqualTo("{\"success\":false,\"error\":\"bad input\"}");
+    }
+
+    @Test
+    void toolCallFailureFallsBackToErrorWhenPayloadIsBlank() throws Exception {
+        when(toolRegistry.execute(eq("fail_tool"), anyString(), anyString(), any(), any()))
+            .thenReturn(ToolResult.fail("plain failure"));
+        McpServerService service = new McpServerService(properties, objectMapper, toolRegistry);
+
+        McpSchema.CallToolResult result = invokeToolCall(service, "fail_tool", Map.of());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(textContent(result)).isEqualTo("plain failure");
+    }
+
+    @Test
     void shouldHandleUnknownTransportGracefully() {
         properties.getMcp().getServer().setEnabled(true);
         properties.getMcp().getServer().setTransport("unknown-transport");
@@ -265,5 +291,21 @@ class McpServerServiceTest {
         service.stop();
 
         assertThat(service.isRunning()).isFalse();
+    }
+
+    private McpSchema.CallToolResult invokeToolCall(McpServerService service,
+                                                    String toolName,
+                                                    Map<String, Object> arguments) throws Exception {
+        Method method = McpServerService.class.getDeclaredMethod(
+            "handleToolCall", String.class, McpSchema.CallToolRequest.class);
+        method.setAccessible(true);
+        return (McpSchema.CallToolResult) method.invoke(
+            service, toolName, new McpSchema.CallToolRequest(toolName, arguments));
+    }
+
+    private String textContent(McpSchema.CallToolResult result) {
+        assertThat(result.content()).hasSize(1);
+        assertThat(result.content().getFirst()).isInstanceOf(McpSchema.TextContent.class);
+        return ((McpSchema.TextContent) result.content().getFirst()).text();
     }
 }

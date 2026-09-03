@@ -11,7 +11,6 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Optional;
 
 /**
@@ -25,7 +24,7 @@ import java.util.Optional;
  *
  * <p>For photos, documents, and stickers, the file is downloaded via the
  * {@link MediaDownloader} (Telegram getFile API) and saved to
- * {@code /tmp/agent-media/} so vision tools can analyze it.
+ * the agent media temp directory so vision tools can analyze it.
  */
 @Service
 @RequiredArgsConstructor
@@ -33,7 +32,7 @@ import java.util.Optional;
 public class InboundMediaHandler {
 
     private static final long MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
-    private static final String MEDIA_DIR = "/tmp/agent-media";
+    private static final Path MEDIA_DIR = AgentMediaPaths.mediaDir();
 
     private final MediaDownloader mediaDownloader;
     private final StickerCache stickerCache;
@@ -125,7 +124,7 @@ public class InboundMediaHandler {
             return Optional.of(desc);
         }
 
-        // Save to /tmp/agent-media/
+        // Save to the shared agent media temp directory.
         Path savedPath = saveMedia(fileId, fileType, data);
         String description = describe(event, fileType, fileId, sizeBytes, savedPath);
         log.debug("Handled media: type={}, fileId={}, size={}bytes, saved={}",
@@ -134,7 +133,7 @@ public class InboundMediaHandler {
     }
 
     /**
-     * Save downloaded media bytes to /tmp/agent-media/ with a filename derived
+     * Save downloaded media bytes to the agent media temp directory with a filename derived
      * from the file_id and a sensible extension.
      *
      * @param fileId   Telegram file_id
@@ -144,7 +143,7 @@ public class InboundMediaHandler {
      */
     private Path saveMedia(String fileId, String fileType, byte[] data) {
         try {
-            Path dir = Paths.get(MEDIA_DIR);
+            Path dir = MEDIA_DIR;
             Files.createDirectories(dir);
 
             String ext = extensionFor(fileType);

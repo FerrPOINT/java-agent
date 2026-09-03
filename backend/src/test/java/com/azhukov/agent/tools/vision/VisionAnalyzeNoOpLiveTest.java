@@ -2,6 +2,7 @@ package com.azhukov.agent.tools.vision;
 
 import com.azhukov.agent.client.NoOpModelClient;
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.DefaultUrlSafety;
 import com.azhukov.agent.service.ImageShrinkerService;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -15,7 +16,11 @@ class VisionAnalyzeNoOpLiveTest {
 
     @Test
     void noOpVisionReturnsPlaceholder() {
-        VisionAnalyzeTool tool = new VisionAnalyzeTool(new NoOpModelClient(), new ImageShrinkerService(new AgentProperties()));
+        AgentProperties properties = new AgentProperties();
+        VisionAnalyzeTool tool = new VisionAnalyzeTool(
+            new NoOpModelClient(),
+            new ImageShrinkerService(properties),
+            new DefaultUrlSafety(properties));
         var result = tool.execute(
             "{\"image\":\"https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png\",\"prompt\":\"describe\"}",
             null,

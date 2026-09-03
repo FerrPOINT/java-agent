@@ -112,6 +112,21 @@ class TodoRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    void findBySessionIdOrderByCreatedAtAscReturnsOnlySessionTodosInOrder() {
+        SessionEntity session1 = sessionRepository.save(newSession(USER_ID_1, "First Session"));
+        SessionEntity session2 = sessionRepository.save(newSession(USER_ID_1, "Second Session"));
+        todoRepository.save(newTodo(session1.getId(), USER_ID_1, TITLE_WALK_DOG, STATUS_PENDING, PRIORITY_LOW, T2));
+        todoRepository.save(newTodo(session1.getId(), USER_ID_1, TITLE_BUY_MILK, STATUS_PENDING, PRIORITY_HIGH, T1));
+        todoRepository.save(newTodo(session2.getId(), USER_ID_1, TITLE_READ_BOOK, STATUS_PENDING, PRIORITY_HIGH, T3));
+
+        List<TodoEntity> found = todoRepository.findBySessionIdOrderByCreatedAtAsc(session1.getId());
+
+        assertThat(found)
+            .extracting(TodoEntity::getTitle)
+            .containsExactly(TITLE_BUY_MILK, TITLE_WALK_DOG);
+    }
+
+    @Test
     void findByUserIdAndStatusFiltersByStatus() {
         SessionEntity session = sessionRepository.save(newSession(USER_ID_1, "Status Filter Session"));
 
@@ -174,6 +189,33 @@ class TodoRepositoryTest extends PostgresTestContainer {
 
         List<TodoEntity> user2Todos = todoRepository.findByUserId(USER_ID_2);
         assertThat(user2Todos).hasSize(1);
+    }
+
+    @Test
+    void deleteBySessionIdDeletesOnlyThatSession() {
+        SessionEntity session1 = sessionRepository.save(newSession(USER_ID_1, "Delete Session 1"));
+        SessionEntity session2 = sessionRepository.save(newSession(USER_ID_1, "Keep Session 2"));
+        todoRepository.save(newTodo(session1.getId(), USER_ID_1, TITLE_BUY_MILK, STATUS_PENDING, PRIORITY_HIGH, T1));
+        todoRepository.save(newTodo(session2.getId(), USER_ID_1, TITLE_READ_BOOK, STATUS_PENDING, PRIORITY_HIGH, T2));
+
+        todoRepository.deleteBySessionId(session1.getId());
+
+        assertThat(todoRepository.findBySessionId(session1.getId())).isEmpty();
+        assertThat(todoRepository.findBySessionId(session2.getId()))
+            .singleElement()
+            .satisfies(todo -> assertThat(todo.getTitle()).isEqualTo(TITLE_READ_BOOK));
+    }
+
+    @Test
+    void deleteBySessionIdAndUserIdKeepsSameSessionOtherUserTodos() {
+        SessionEntity session = sessionRepository.save(newSession(USER_ID_1, "Shared Session"));
+        TodoEntity userTodo = todoRepository.save(newTodo(session.getId(), USER_ID_1, TITLE_BUY_MILK, STATUS_PENDING, PRIORITY_HIGH, T1));
+        TodoEntity otherUserTodo = todoRepository.save(newTodo(session.getId(), USER_ID_2, TITLE_READ_BOOK, STATUS_PENDING, PRIORITY_LOW, T2));
+
+        todoRepository.deleteBySessionIdAndUserId(session.getId(), USER_ID_1);
+
+        assertThat(todoRepository.findById(userTodo.getId())).isEmpty();
+        assertThat(todoRepository.findById(otherUserTodo.getId())).isPresent();
     }
 
     private SessionEntity newSession(String userId, String title) {

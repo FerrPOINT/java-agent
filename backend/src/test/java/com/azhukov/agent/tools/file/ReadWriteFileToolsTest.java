@@ -3,6 +3,8 @@ package com.azhukov.agent.tools.file;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -14,12 +16,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ReadWriteFileToolsTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private final Session session = Session.create("u","p","m");
 
     private AgentProperties props() {
         AgentProperties p = new AgentProperties();
         p.getSecurity().setFileSafetyEnabled(false);
         return p;
+    }
+
+    private static JsonNode jsonContent(ToolResult result) throws Exception {
+        return JSON.readTree(result.content());
     }
 
     @Test
@@ -31,8 +39,9 @@ class ReadWriteFileToolsTest {
         assertThat(r.success()).isTrue();
         assertThat(r.content()).contains("1|a");
         assertThat(r.content()).contains("2|b");
-        // With limit=2, truncation marker should appear since file has more lines
-        assertThat(r.content()).contains("[truncated:");
+        JsonNode json = jsonContent(r);
+        assertThat(json.path("truncated").asBoolean()).isTrue();
+        assertThat(json.path("hint").asText()).contains("Use offset=3");
     }
 
     @Test

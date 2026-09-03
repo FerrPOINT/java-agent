@@ -8,6 +8,7 @@ import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.core.agent.SessionLineageService;
+import com.azhukov.agent.tools.AgentTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,12 +38,13 @@ class SessionSearchToolTest {
     @Mock private MessageRepository messageRepository;
     @Mock private SessionLineageService sessionLineageService;
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private SessionSearchTool tool;
 
     @BeforeEach
     void setUp() {
         SessionSearchService service = new SessionSearchService(sessionRepository, messageRepository, sessionLineageService);
-        tool = new SessionSearchTool(service, new ObjectMapper());
+        tool = new SessionSearchTool(service, objectMapper);
 
         // Default lenient stubs
         lenient().when(sessionRepository.findByTitleIgnoreCase(anyString())).thenReturn(null);
@@ -63,6 +65,17 @@ class SessionSearchToolTest {
         return Message.assistant("test", 0);
     }
 
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> contentJson(ToolResult result) throws Exception {
+        Map<String, Object> payload = objectMapper.readValue(result.content(), Map.class);
+        if (Boolean.FALSE.equals(payload.get("success"))) {
+            assertThat(result.error()).isEqualTo(payload.get("error"));
+        } else {
+            assertThat(result.error()).isNull();
+        }
+        return payload;
+    }
+
     private SessionEntity sessionEntity(UUID id, String title, Instant createdAt) {
         SessionEntity e = new SessionEntity();
         e.setId(id);
@@ -75,11 +88,28 @@ class SessionSearchToolTest {
         return e;
     }
 
+    private SessionEntity sessionEntity(UUID id, String title, Instant createdAt, String source) {
+        SessionEntity e = sessionEntity(id, title, createdAt);
+        e.setSource(source);
+        return e;
+    }
+
     private MessageEntity msgEntity(UUID id, UUID sId, String content, String role, Instant t) {
         MessageEntity m = new MessageEntity();
         m.setId(id); m.setSessionId(sId); m.setContent(content); m.setRole(role);
         m.setCreatedAt(t); m.setActive(true); m.setCompacted(false);
         return m;
+    }
+
+    @Test
+    void agentToolAnnotationUsesHermesSessionSearchToolsetAndJavaStorageDescription() {
+        AgentTool annotation = SessionSearchTool.class.getAnnotation(AgentTool.class);
+
+        assertThat(annotation.toolset()).isEqualTo("session_search");
+        assertThat(annotation.description())
+            .contains("PostgreSQL tsvector")
+            .doesNotContain("SQLite")
+            .doesNotContain("FTS5-backed");
     }
 
     // ── BROWSE mode ──
@@ -148,14 +178,16 @@ class SessionSearchToolTest {
     }
 
     @Test
-    void readSessionNotFound_returnsFail() {
+    void readSessionNotFound_returnsFail() throws Exception {
         UUID sId = UUID.randomUUID();
         when(sessionRepository.findById(sId)).thenReturn(Optional.empty());
 
         ToolResult result = tool.execute("{\"session_id\":\"" + sId + "\"}", assistant(), session());
 
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("session_id not found");
+        Map<String, Object> payload = contentJson(result);
+        assertThat(payload).containsEntry("success", false);
+        assertThat(payload.get("error").toString()).contains("session_id not found");
     }
 
     // ── SCROLL mode ──
@@ -232,12 +264,73 @@ class SessionSearchToolTest {
     }
 
     @Test
-    void discoveryInvalidSessionIdFormat_returnsFail() {
+    void discoveryFallbackExcludesHiddenSessionSourcesFromMessageHits() {
+        UUID hiddenSid = UUID.randomUUID();
+        UUID visibleSid = UUID.randomUUID();
+        UUID hiddenMid = UUID.randomUUID();
+        UUID visibleMid = UUID.randomUUID();
+        Instant t = Instant.parse("2025-01-10T10:00:00Z");
+        MessageEntity hiddenMsg = msgEntity(hiddenMid, hiddenSid, "kubernetes hidden", "user", t);
+        MessageEntity visibleMsg = msgEntity(visibleMid, visibleSid, "kubernetes visible", "user", t);
+        SessionEntity hiddenSession = sessionEntity(hiddenSid, "Hidden child", t, "subagent");
+        SessionEntity visibleSession = sessionEntity(visibleSid, "Visible chat", t, "telegram");
+
+        when(messageRepository.findByContentContainingIgnoreCase("kubernetes"))
+            .thenReturn(List.of(hiddenMsg, visibleMsg));
+        when(sessionRepository.findAllById(any())).thenReturn(List.of(hiddenSession, visibleSession));
+        when(sessionRepository.findById(visibleSid)).thenReturn(Optional.of(visibleSession));
+        when(messageRepository.findById(visibleMid)).thenReturn(Optional.of(visibleMsg));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(visibleSid)).thenReturn(List.of(visibleMsg));
+        when(sessionLineageService.findAncestorSessionIds(any()))
+            .thenAnswer(inv -> List.of(inv.getArgument(0, UUID.class)));
+
+        ToolResult result = tool.execute("{\"query\":\"kubernetes\",\"limit\":5}", assistant(), session());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("Visible chat");
+        assertThat(result.content()).contains("kubernetes visible");
+        assertThat(result.content()).doesNotContain("Hidden child");
+        assertThat(result.content()).doesNotContain("kubernetes hidden");
+        assertThat(result.content()).doesNotContain(hiddenSid.toString());
+    }
+
+    @Test
+    void discoveryFallbackExcludesHiddenSessionSourcesFromTitleHits() {
+        UUID hiddenSid = UUID.randomUUID();
+        Instant t = Instant.parse("2025-01-10T10:00:00Z");
+        SessionEntity hiddenSession = sessionEntity(hiddenSid, "kubernetes hidden child", t, "subagent");
+
+        when(sessionRepository.findByTitleIgnoreCase("kubernetes")).thenReturn(hiddenSession);
+        when(sessionRepository.findByTitleContainingIgnoreCase("kubernetes")).thenReturn(List.of(hiddenSession));
+        when(sessionLineageService.findAncestorSessionIds(hiddenSid)).thenReturn(List.of(hiddenSid));
+
+        ToolResult result = tool.execute("{\"query\":\"kubernetes\",\"limit\":5}", assistant(), session());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"count\":0");
+        assertThat(result.content()).doesNotContain("kubernetes hidden child");
+        assertThat(result.content()).doesNotContain(hiddenSid.toString());
+    }
+
+    @Test
+    void discoveryInvalidSessionIdFormat_returnsFail() throws Exception {
         ToolResult result = tool.execute(
             "{\"session_id\":\"not-a-uuid\"}",
             assistant(), session()
         );
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Invalid session_id format");
+        Map<String, Object> payload = contentJson(result);
+        assertThat(payload).containsEntry("success", false);
+        assertThat(payload.get("error").toString()).contains("Invalid session_id format");
+    }
+
+    @Test
+    void invalidJsonArguments_returnsJsonErrorContent() throws Exception {
+        ToolResult result = tool.execute("{", assistant(), session());
+
+        assertThat(result.success()).isFalse();
+        Map<String, Object> payload = contentJson(result);
+        assertThat(payload).containsEntry("success", false);
+        assertThat(payload.get("error").toString()).contains("Session search error");
     }
 }

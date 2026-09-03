@@ -590,13 +590,14 @@ public class TurnExecutor {
     public ToolBatchResult executeToolBatch(List<ToolCall> toolCalls, Set<String> registeredToolNames,
                                               Session session, TurnState turnState, int currentTurnIndex,
                                               boolean skipApproval) {
+        UUID controlSessionId = RunControlScope.controlSessionId(session);
         boolean shouldParallel = ToolParallelSafety.shouldParallelize(toolCalls, registeredToolNames);
 
         if (!shouldParallel) {
             // Sequential path
             List<Message> toolResults = new ArrayList<>();
             for (ToolCall call : toolCalls) {
-                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                if (interruptToken != null && interruptToken.isCancelled(controlSessionId)) {
                     log.info("Turn cancelled by interrupt for session {}", session.id());
                     return ToolBatchResult.interruptedResult();
                 }
@@ -606,29 +607,29 @@ public class TurnExecutor {
                 // ZERO callers, so no request was ever created and isPending was always
                 // false. Create the request here when the guardrail flags the tool.
                 boolean approvalRequired = !skipApproval && approvalQueue != null
-                    && (approvalQueue.isPending(session.id())
+                    && (approvalQueue.isPending(controlSessionId)
                         || (toolGuardrails != null && toolGuardrails.requiresApproval(call)
-                            && approvalQueue.getPending(session.id()) == null
-                            && requestApproval(session.id(), call) != null));
+                            && approvalQueue.getPending(controlSessionId) == null
+                            && requestApproval(controlSessionId, call) != null));
                 if (approvalRequired) {
                     log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
                     long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
-                    boolean decided = approvalQueue.awaitDecision(session.id(), approvalTimeoutMs);
+                    boolean decided = approvalQueue.awaitDecision(controlSessionId, approvalTimeoutMs);
                     if (!decided) {
                         log.warn("Approval wait timed out for session {} after {} ms", session.id(), approvalTimeoutMs);
                     }
                     if (Thread.currentThread().isInterrupted()) {
                         log.info("Session {} interrupted while waiting for approval", session.id());
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
-                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
-                        approvalQueue.clear(session.id());
+                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(call.name(), deniedResult), currentTurnIndex));
+                        approvalQueue.clear(controlSessionId);
                         return new ToolBatchResult(toolResults, true);
                     }
-                    if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                    if (interruptToken != null && interruptToken.isCancelled(controlSessionId)) {
                         log.info("Session {} interrupted while waiting for approval", session.id());
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
-                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
-                        approvalQueue.clear(session.id());
+                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(call.name(), deniedResult), currentTurnIndex));
+                        approvalQueue.clear(controlSessionId);
                         return new ToolBatchResult(toolResults, true);
                     }
                 }
@@ -637,8 +638,8 @@ public class TurnExecutor {
                 // a user response still blocks the action ("no response" is not a
                 // denial, but it is not a consent either); the old gate (isDenied →
                 // else execute) let pending/timed-out approvals through (fail-open).
-                if (approvalRequired && !approvalQueue.isApproved(session.id())) {
-                    boolean denied = approvalQueue.isDenied(session.id());
+                if (approvalRequired && !approvalQueue.isApproved(controlSessionId)) {
+                    boolean denied = approvalQueue.isDenied(controlSessionId);
                     String why = denied
                         ? "Tool execution denied by user approval"
                         : "Approval wait timed out without a user decision — tool blocked (fail-closed). "
@@ -646,20 +647,20 @@ public class TurnExecutor {
                     log.info("Tool {} {} for session {}, skipping", call.name(),
                         denied ? "denied" : "unapproved after timeout", session.id());
                     ToolResult deniedResult = ToolResult.fail(why);
-                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
-                    approvalQueue.clear(session.id());
+                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(call.name(), deniedResult), currentTurnIndex));
+                    approvalQueue.clear(controlSessionId);
                 } else {
                     // Reset skill/memory counters before execution
                     resetNudgeCounters(call, session.id());
                     ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState);
-                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(result), currentTurnIndex));
+                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(call.name(), result), currentTurnIndex));
                 }
             }
-            injectSteer(toolResults, session.id(), currentTurnIndex);
+            injectSteer(toolResults, controlSessionId, currentTurnIndex);
             return new ToolBatchResult(toolExecutionService.enforceToolResultBudget(toolResults), false);
         } else {
             // Parallel path
-            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+            if (interruptToken != null && interruptToken.isCancelled(controlSessionId)) {
                 log.info("Turn cancelled by interrupt for session {}", session.id());
                 return ToolBatchResult.interruptedResult();
             }
@@ -668,12 +669,12 @@ public class TurnExecutor {
                 resetNudgeCounters(call, session.id());
             }
             List<Message> toolResults = executeToolsInParallel(toolCalls, session, turnState, currentTurnIndex);
-            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+            if (interruptToken != null && interruptToken.isCancelled(controlSessionId)) {
                 log.info("Turn cancelled by interrupt after parallel tool execution for session {}", session.id());
-                injectSteer(toolResults, session.id(), currentTurnIndex);
+                injectSteer(toolResults, controlSessionId, currentTurnIndex);
                 return new ToolBatchResult(toolResults, true);
             }
-            injectSteer(toolResults, session.id(), currentTurnIndex);
+            injectSteer(toolResults, controlSessionId, currentTurnIndex);
             return new ToolBatchResult(toolExecutionService.enforceToolResultBudget(toolResults), false);
         }
     }
@@ -756,7 +757,7 @@ public class TurnExecutor {
             log.debug("Parallel tool {} result: success={}, content length={}, error={}",
                 call.name(), result.success(),
                 result.content() != null ? result.content().length() : 0, result.error());
-            toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(result), currentTurnIndex));
+            toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(call.name(), result), currentTurnIndex));
         }
         return toolResults;
     }

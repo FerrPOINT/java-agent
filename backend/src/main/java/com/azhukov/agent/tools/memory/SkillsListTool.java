@@ -1,5 +1,6 @@
 package com.azhukov.agent.tools.memory;
 
+import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
@@ -7,10 +8,16 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeSet;
 
 /**
  * S9: SkillsListTool — progressive disclosure with name, description, category.
@@ -21,61 +28,121 @@ import java.util.List;
 @AgentTool(
     name = "skills_list",
     description = "List available skills (name + description). Use skill_view(name) to load full content.",
-    toolset = "core"
+    toolset = "skills"
 )
 @Component
 @RequiredArgsConstructor
 public class SkillsListTool implements ToolHandler {
 
+    private static final ObjectMapper JSON = SharedObjectMapper.get();
+
     private final SkillManager skillManager;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        SkillsListArgs args = ToolHandler.parseJson(arguments, SkillsListArgs.class);
-        String categoryFilter = args.category();
-
-        // S9: Return name + category + trust level (not just name)
-        List<SkillManager.SkillInfo> skills = skillManager.listSkills();
-        if (skills.isEmpty()) {
-            return ToolResult.ok("No skills available.");
+        SkillsListArgs args;
+        try {
+            args = ToolHandler.parseJson(arguments, SkillsListArgs.class);
+        } catch (Exception e) {
+            return jsonFail("Invalid tool arguments: " + e.getMessage());
         }
+        try {
+            String categoryFilter = args.category();
 
-        // P2-50: Filter by category when provided
-        if (categoryFilter != null && !categoryFilter.isBlank()) {
-            skills = skills.stream()
-                .filter(s -> s.category() != null
-                    && s.category().equalsIgnoreCase(categoryFilter))
-                .toList();
+            // S9: Return name + category + trust level (not just name)
+            List<SkillManager.SkillInfo> skills = skillManager.listSkills();
             if (skills.isEmpty()) {
-                return ToolResult.ok("No skills available in category: " + categoryFilter);
+                return skillsJson(List.of(), "No skills found in skills/ directory.");
+            }
+
+            // P2-50: Filter by category when provided
+            if (categoryFilter != null && !categoryFilter.isBlank()) {
+                skills = skills.stream()
+                    .filter(s -> s.category() != null
+                        && s.category().equalsIgnoreCase(categoryFilter))
+                    .toList();
+                if (skills.isEmpty()) {
+                    return skillsJson(List.of(), "No skills available in category: " + categoryFilter);
+                }
+            }
+
+            return skillsJson(skills, null);
+        } catch (Exception e) {
+            return jsonFail("Failed to list skills: " + e.getMessage());
+        }
+    }
+
+    private ToolResult skillsJson(List<SkillManager.SkillInfo> skills, String message) {
+        List<Map<String, Object>> rows = skills.stream()
+            .sorted(Comparator
+                .comparing((SkillManager.SkillInfo s) -> blankToEmpty(s.category()))
+                .thenComparing(SkillManager.SkillInfo::name))
+            .map(this::skillRow)
+            .toList();
+
+        TreeSet<String> categories = new TreeSet<>();
+        for (var skill : rows) {
+            Object category = skill.get("category");
+            if (category instanceof String s && !s.isBlank()) {
+                categories.add(s);
             }
         }
 
-        StringBuilder sb = new StringBuilder();
-        // Hermes parity (skills_tool.py:789 skills_list): tier-1 progressive
-        // disclosure — name + description + category so the model can CHOOSE
-        // a skill without loading each one. The old output had only
-        // name+category+trust, forcing a skill_view per candidate.
-        sb.append("Available Skills:\n");
-        for (var skill : skills) {
-            sb.append("  • ").append(skill.name());
-            if (skill.category() != null && !skill.category().isBlank()) {
-                sb.append(" [").append(skill.category()).append("]");
-            }
-            String desc = skill.description();
-            if (desc == null || desc.isBlank()) {
-                desc = frontmatterDescription(skill.content());
-            }
-            if (desc != null && !desc.isBlank()) {
-                sb.append(": ").append(desc);
-            }
-            if (skill.archived()) {
-                sb.append(" [ARCHIVED]");
-            }
-            sb.append("\n");
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("skills", rows);
+        result.put("categories", List.copyOf(categories));
+        result.put("count", rows.size());
+        result.put("hint", "Use skill_view(name) to see full content, tags, and linked files");
+        if (message != null && !message.isBlank()) {
+            result.put("message", message);
         }
-        sb.append("\nUse skill_view(name) to see full content, tags, and linked files.");
-        return ToolResult.ok(sb.toString().trim());
+        return jsonOk(result);
+    }
+
+    private Map<String, Object> skillRow(SkillManager.SkillInfo skill) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("name", skill.name());
+        row.put("description", descriptionOf(skill));
+        if (skill.category() != null && !skill.category().isBlank()) {
+            row.put("category", skill.category());
+        }
+        if (skill.archived()) {
+            row.put("archived", true);
+        }
+        return row;
+    }
+
+    private String descriptionOf(SkillManager.SkillInfo skill) {
+        String desc = skill.description();
+        if (desc == null || desc.isBlank()) {
+            desc = frontmatterDescription(skill.content());
+        }
+        return desc == null ? "" : desc;
+    }
+
+    private static String blankToEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static ToolResult jsonOk(Map<String, Object> result) {
+        try {
+            return ToolResult.ok(JSON.writeValueAsString(result));
+        } catch (IOException e) {
+            return ToolResult.ok(String.valueOf(result));
+        }
+    }
+
+    private static ToolResult jsonFail(String message) {
+        String error = message == null || message.isBlank() ? "Failed to list skills" : message;
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", false);
+        result.put("error", error);
+        try {
+            return new ToolResult(false, JSON.writeValueAsString(result), error);
+        } catch (IOException e) {
+            return new ToolResult(false, "{\"success\":false,\"error\":\"Failed to list skills\"}", error);
+        }
     }
 
     /** Best-effort frontmatter description parse (falls back to null). */

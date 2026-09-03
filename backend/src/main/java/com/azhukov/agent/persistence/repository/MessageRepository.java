@@ -4,11 +4,14 @@ import com.azhukov.agent.persistence.entity.MessageEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Collection;
 import java.util.UUID;
 
 @Repository
@@ -18,11 +21,82 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
 
     Page<MessageEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId, Pageable pageable);
 
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM MessageEntity m WHERE m.sessionId = :sessionId")
+    void deleteBySessionId(@Param("sessionId") UUID sessionId);
+
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM MessageEntity m WHERE m.sessionId IN :sessionIds")
+    void deleteBySessionIdIn(@Param("sessionIds") Collection<UUID> sessionIds);
+
+    @Query(value = """
+        SELECT * FROM messages
+        WHERE session_id = :sessionId
+        ORDER BY created_at ASC, id ASC
+        LIMIT :limit OFFSET :offset
+        """, nativeQuery = true)
+    List<MessageEntity> findPageBySessionIdOrderByCreatedAtAsc(
+        @Param("sessionId") UUID sessionId,
+        @Param("limit") int limit,
+        @Param("offset") int offset);
+
+    @Query(value = """
+        SELECT * FROM messages
+        WHERE session_id = :sessionId
+          AND COALESCE(active, TRUE) = TRUE
+        ORDER BY created_at ASC, id ASC
+        LIMIT :limit OFFSET :offset
+        """, nativeQuery = true)
+    List<MessageEntity> findActivePageBySessionIdOrderByCreatedAtAsc(
+        @Param("sessionId") UUID sessionId,
+        @Param("limit") int limit,
+        @Param("offset") int offset);
+
+    @Query(value = """
+        SELECT * FROM messages
+        WHERE session_id = :sessionId
+        ORDER BY created_at DESC, id DESC
+        LIMIT :limit OFFSET :offset
+        """, nativeQuery = true)
+    List<MessageEntity> findPageBySessionIdOrderByCreatedAtDesc(
+        @Param("sessionId") UUID sessionId,
+        @Param("limit") int limit,
+        @Param("offset") int offset);
+
+    @Query(value = """
+        SELECT * FROM messages
+        WHERE session_id = :sessionId
+          AND COALESCE(active, TRUE) = TRUE
+        ORDER BY created_at DESC, id DESC
+        LIMIT :limit OFFSET :offset
+        """, nativeQuery = true)
+    List<MessageEntity> findActivePageBySessionIdOrderByCreatedAtDesc(
+        @Param("sessionId") UUID sessionId,
+        @Param("limit") int limit,
+        @Param("offset") int offset);
+
+    @Query(value = """
+        SELECT * FROM messages
+        WHERE session_id = :sessionId
+          AND (COALESCE(active, TRUE) = TRUE OR COALESCE(compacted, FALSE) = TRUE)
+        ORDER BY created_at ASC, id ASC
+        """, nativeQuery = true)
+    List<MessageEntity> findDisplayBySessionIdOrderByCreatedAtAsc(@Param("sessionId") UUID sessionId);
+
     List<MessageEntity> findBySessionIdAndTurnIndexOrderByCreatedAtAsc(UUID sessionId, Integer turnIndex);
 
     long countBySessionId(UUID sessionId);
 
-    List<MessageEntity> findByContentContainingIgnoreCase(String content);
+    @Query(value = """
+        SELECT * FROM messages
+        WHERE LOWER(COALESCE(content, '')) LIKE LOWER(CONCAT('%', :content, '%'))
+           OR LOWER(COALESCE(tool_call_name, '')) LIKE LOWER(CONCAT('%', :content, '%'))
+           OR LOWER(COALESCE(tool_call_arguments, '')) LIKE LOWER(CONCAT('%', :content, '%'))
+           OR LOWER(COALESCE(tool_calls, '')) LIKE LOWER(CONCAT('%', :content, '%'))
+        """, nativeQuery = true)
+    List<MessageEntity> findByContentContainingIgnoreCase(@Param("content") String content);
 
     /**
      * Loads the last N messages for a session in descending order (newest first).
@@ -41,7 +115,7 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
     List<MessageEntity> findBySessionIdAndActiveTrueOrderByCreatedAtAsc(UUID sessionId);
 
     /**
-     * Full-text search on message content using PostgreSQL tsvector.
+     * Full-text search on message content and tool-call metadata using PostgreSQL tsvector.
      * Returns messages ranked by FTS relevance, limited to :limit results (H13).
      */
     @Query(value = "SELECT * FROM messages WHERE content_tsv @@ plainto_tsquery('english', :q) " +
@@ -50,7 +124,7 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
     List<MessageEntity> searchByContentFts(@Param("q") String query, @Param("limit") int limit);
 
     /**
-     * Full-text search on message content excluding hidden session sources.
+     * Full-text search on message content and tool-call metadata excluding hidden session sources.
      * Mirrors Hermes search_messages(exclude_sources=...).
      */
     @Query(value = "SELECT m.* FROM messages m " +

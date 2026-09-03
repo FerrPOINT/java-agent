@@ -8,7 +8,6 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
@@ -46,14 +45,14 @@ class MediaCleanupServiceTest {
 
     @Test
     void cleanupHandlesNonExistentDirectoryGracefully() {
-        // The /tmp/agent-media/ directory may not exist — should not throw
+        // The agent media directory may not exist — should not throw
         service.cleanupStaleMedia();
     }
 
     @Test
     void cleanupDeletesOnlyOldFilesInMediaDir() throws Exception {
-        // This test uses the real /tmp/agent-media/ directory
-        Path mediaDir = Paths.get("/tmp/agent-media/");
+        // This test uses the real agent media directory
+        Path mediaDir = AgentMediaPaths.mediaDir();
         Files.createDirectories(mediaDir);
 
         Path oldFile = mediaDir.resolve("test-old-" + System.currentTimeMillis() + ".jpg");
@@ -80,7 +79,7 @@ class MediaCleanupServiceTest {
 
     @Test
     void cleanupWithEmptyDirectoryDoesNothing() throws Exception {
-        Path mediaDir = Paths.get("/tmp/agent-media/");
+        Path mediaDir = AgentMediaPaths.mediaDir();
         Files.createDirectories(mediaDir);
         // Should not throw
         service.cleanupStaleMedia();
@@ -88,7 +87,7 @@ class MediaCleanupServiceTest {
 
     @Test
     void cleanupWithDirectoryEntrySkipsIt() throws Exception {
-        Path mediaDir = Paths.get("/tmp/agent-media/");
+        Path mediaDir = AgentMediaPaths.mediaDir();
         Files.createDirectories(mediaDir);
         Path subDir = mediaDir.resolve("test-subdir-" + System.currentTimeMillis());
         try {

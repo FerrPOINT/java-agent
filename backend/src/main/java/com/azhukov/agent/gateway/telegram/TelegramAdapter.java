@@ -105,12 +105,50 @@ public class TelegramAdapter implements BasePlatformAdapter {
         );
     }
 
+    @Override
+    public CompletableFuture<SendResult> addReaction(SessionSource target, String emoji, String messageId) {
+        if (!connected) {
+            return CompletableFuture.completedFuture(new SendResult(false, null, "Not connected"));
+        }
+        long chatId = extractChatId(target);
+        if (chatId == 0L) {
+            return CompletableFuture.completedFuture(new SendResult(false, null, "No chat_id in target"));
+        }
+        Long parsedMessageId = parseMessageId(messageId);
+        if (parsedMessageId == null) {
+            return CompletableFuture.completedFuture(new SendResult(false, null, "No message_id in target"));
+        }
+        String reaction = emoji == null ? "" : emoji;
+        return CompletableFuture.supplyAsync(() ->
+            botApiClient.setMessageReaction(chatId, parsedMessageId, reaction)
+                ? new SendResult(true, messageId, null)
+                : new SendResult(false, null, "Telegram setMessageReaction failed")
+        );
+    }
+
+    @Override
+    public CompletableFuture<SendResult> removeReaction(SessionSource target, String messageId) {
+        return addReaction(target, "", messageId);
+    }
+
     private long extractChatId(SessionSource target) {
         if (target == null || target.chatId() == null) return 0L;
         try {
             return Long.parseLong(target.chatId());
         } catch (NumberFormatException e) {
             return 0L;
+        }
+    }
+
+    private Long parseMessageId(String messageId) {
+        if (messageId == null || messageId.isBlank()) {
+            return null;
+        }
+        try {
+            long parsed = Long.parseLong(messageId.trim());
+            return parsed > 0L ? parsed : null;
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 

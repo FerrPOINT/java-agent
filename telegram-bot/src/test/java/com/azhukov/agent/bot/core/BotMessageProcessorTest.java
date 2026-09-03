@@ -14,6 +14,7 @@ import com.azhukov.agent.bot.formatting.ResponseFilter;
 import com.azhukov.agent.bot.goal.GoalAutoContinueService;
 import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
+import com.azhukov.agent.bot.media.AgentMediaPaths;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
 import com.azhukov.agent.bot.media.MediaDeliveryService;
 import com.azhukov.agent.bot.polling.UpdateEvent;
@@ -1876,8 +1877,8 @@ class BotMessageProcessorTest {
 
     @Test
     void mediaPathWithinAgentMediaDirSendsFile() throws Exception {
-        // The /tmp/agent-media/ directory is always allowed
-        Path mediaDir = Paths.get("/tmp/agent-media/");
+        // The agent media temp directory is always allowed
+        Path mediaDir = AgentMediaPaths.mediaDir();
         Files.createDirectories(mediaDir);
         Path mediaFile = mediaDir.resolve("traversal-test.jpg");
         try {

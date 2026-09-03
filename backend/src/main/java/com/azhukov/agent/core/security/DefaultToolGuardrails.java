@@ -5,6 +5,7 @@ import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.model.ToolCall;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -25,6 +26,8 @@ public class DefaultToolGuardrails implements ToolGuardrails {
 
  private final AgentProperties properties;
  private final ApprovalQueue approvalQueue;
+ @Autowired(required = false)
+ private McpToolTrustService mcpToolTrustService;
 
  // ─── Tool classification (A8) ───
 
@@ -239,11 +242,18 @@ public class DefaultToolGuardrails implements ToolGuardrails {
 
  @Override
  public boolean requiresApproval(ToolCall call) {
- if (!properties.getSecurity().isApprovalsEnabled() || call == null) {
- return false;
- }
- List<String> destructive = properties.getSecurity().getAlwaysRequireApprovalTools();
- return destructive != null && destructive.contains(call.name());
+  if (!properties.getSecurity().isApprovalsEnabled() || call == null) {
+  return false;
+  }
+  if (mcpToolTrustService != null && mcpToolTrustService.requiresApproval(call.name())) {
+  return true;
+  }
+  List<String> destructive = properties.getSecurity().getAlwaysRequireApprovalTools();
+  return destructive != null && destructive.contains(call.name());
+  }
+
+ public void setMcpToolTrustService(McpToolTrustService mcpToolTrustService) {
+  this.mcpToolTrustService = mcpToolTrustService;
  }
 
  /**

@@ -101,6 +101,7 @@ dependencies {
     // Commons utilities
     implementation 'org.apache.commons:commons-lang3:3.17.0'
     implementation 'commons-io:commons-io:2.18.0'
+    implementation 'org.apache.commons:commons-compress:1.27.1'
     implementation 'com.cronutils:cron-utils:9.2.1'
     implementation 'com.bucket4j:bucket4j-core:8.10.1'
 
@@ -129,7 +130,9 @@ tasks.named('test') {
         excludeTags 'live', 'slow', 'e2e'
     }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
-    maxHeapSize = '3g'
+    maxHeapSize = '4g'
+    maxParallelForks = 1
+    forkEvery = 750
     // Workaround for Gradle 9.x EOFException in test result serialization
     reports {
         junitXml.required = true

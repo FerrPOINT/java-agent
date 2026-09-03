@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.memory;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.memory.ReviewToolProvider;
 import com.azhukov.agent.core.model.ChatResponse;
@@ -15,6 +16,8 @@ import com.azhukov.agent.tools.memory.MemoryTool;
 import com.azhukov.agent.tools.memory.SkillManageTool;
 import com.azhukov.agent.tools.memory.SkillViewTool;
 import com.azhukov.agent.tools.memory.SkillsListTool;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +27,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -32,6 +36,8 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 class BackgroundReviewServiceTest {
+
+    private static final ObjectMapper JSON = SharedObjectMapper.get();
 
     private ModelClient modelClient;
     private MemoryProvider memoryProvider;
@@ -171,6 +177,35 @@ class BackgroundReviewServiceTest {
     }
 
     @Test
+    void reviewTurn_toolCallFailureFeedsErrorBackToReviewLoop() {
+        String toolArguments = "{\"action\":\"add\",\"content\":\"failed fact\"}";
+        ChatResponse response = new ChatResponse("", List.of(
+            new ToolCall("call_1", "memory", toolArguments)
+        ));
+        List<List<Message>> contexts = new CopyOnWriteArrayList<>();
+        when(modelClient.complete(any(), any())).thenAnswer(invocation -> {
+            contexts.add(List.copyOf(invocation.getArgument(0)));
+            return contexts.size() == 1 ? response : new ChatResponse("Done", List.of());
+        });
+        when(memoryTool.execute(any(), any(), any())).thenReturn(ToolResult.fail("store error"));
+
+        var svc = createService();
+        UUID sessionId = UUID.randomUUID();
+        svc.reviewTurn(sessionId, List.of(Message.user("test"), Message.assistant("ok", 0)));
+
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+            assertThat(contexts).hasSizeGreaterThanOrEqualTo(2)
+        );
+        assertThat(contexts.get(1)).anySatisfy(message -> {
+            assertThat(message.role()).isEqualTo(com.azhukov.agent.core.model.Role.TOOL);
+            JsonNode payload = JSON.readTree(message.content());
+            assertThat(payload.path("success").asBoolean()).isFalse();
+            assertThat(payload.path("error").asText()).isEqualTo("store error");
+        });
+        svc.shutdown();
+    }
+
+    @Test
     void reviewTurn_modelCallThrows_doesNotUpdateFlag() {
         when(modelClient.complete(any(), any())).thenThrow(new RuntimeException("model unavailable"));
 
@@ -202,6 +237,38 @@ class BackgroundReviewServiceTest {
         // Memory tool should not be called for non-whitelisted tool calls
         verifyNoInteractions(memoryTool);
         verifyNoInteractions(skillManageTool);
+        svc.shutdown();
+    }
+
+    @Test
+    void reviewTurn_nonWhitelistedToolResultFeedsStructuredErrorBackWhenLoopContinues() {
+        String memoryArguments = "{\"action\":\"add\",\"content\":\"safe fact\"}";
+        ChatResponse response = new ChatResponse("", List.of(
+            new ToolCall("call_denied", "web_search", "{\"query\":\"test\"}"),
+            new ToolCall("call_memory", "memory", memoryArguments)
+        ));
+        List<List<Message>> contexts = new CopyOnWriteArrayList<>();
+        when(modelClient.complete(any(), any())).thenAnswer(invocation -> {
+            contexts.add(List.copyOf(invocation.getArgument(0)));
+            return contexts.size() == 1 ? response : new ChatResponse("Done", List.of());
+        });
+        when(memoryTool.execute(eq(memoryArguments), isNull(), any()))
+            .thenReturn(ToolResult.ok("Added to memory store."));
+
+        var svc = createService();
+        UUID sessionId = UUID.randomUUID();
+        svc.reviewTurn(sessionId, List.of(Message.user("test"), Message.assistant("ok", 0)));
+
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+            assertThat(contexts).hasSizeGreaterThanOrEqualTo(2)
+        );
+        assertThat(contexts.get(1)).anySatisfy(message -> {
+            assertThat(message.role()).isEqualTo(com.azhukov.agent.core.model.Role.TOOL);
+            assertThat(message.toolCallId()).isEqualTo("call_denied");
+            JsonNode payload = JSON.readTree(message.content());
+            assertThat(payload.path("success").asBoolean()).isFalse();
+            assertThat(payload.path("error").asText()).isEqualTo("Tool not allowed in background review");
+        });
         svc.shutdown();
     }
 

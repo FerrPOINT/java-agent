@@ -298,19 +298,34 @@ public class SkillUtils {
  if (platformList.isEmpty()) {
  return true;
  }
- String currentOs = System.getProperty("os.name", "").toLowerCase();
- for (Object platform : platformList) {
- String normalized = String.valueOf(platform).toLowerCase().trim();
- String mapped = PLATFORM_MAP.getOrDefault(normalized, normalized);
- // Check if current OS starts with the mapped value
- if (currentOs.startsWith(mapped) || currentOs.contains(mapped)) {
- return true;
- }
- }
- return false;
- }
+ String currentPlatform = currentPlatformId();
+  for (Object platform : platformList) {
+  String normalized = String.valueOf(platform).toLowerCase().trim();
+  String mapped = PLATFORM_MAP.getOrDefault(normalized, normalized);
+  // Match against a sys.platform-style value (win32/darwin/linux),
+  // mirroring Hermes' Python implementation while running on Java os.name.
+  if (currentPlatform.startsWith(mapped)) {
+  return true;
+  }
+  }
+  return false;
+  }
 
- // ── Environment matching ──────────────────────────────────────────────
+  static String currentPlatformId() {
+  String currentOs = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+  if (currentOs.contains("win")) {
+  return "win32";
+  }
+  if (currentOs.contains("mac") || currentOs.contains("darwin")) {
+  return "darwin";
+  }
+  if (currentOs.contains("linux")) {
+  return "linux";
+  }
+  return currentOs.replaceAll("\\s+", "");
+  }
+
+  // ── Environment matching ──────────────────────────────────────────────
 
  /**
  * S6: Return true when the skill is relevant to the current runtime environment.

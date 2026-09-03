@@ -95,6 +95,35 @@ public interface MemoryProvider {
         return remove(userId, target, oldText);
     }
 
+    /**
+     * Remove every entry from one built-in memory target.
+     *
+     * <p>Dashboard reset needs an unambiguous clear operation. The fallback
+     * uses the atomic batch API so providers that support batch edits get a
+     * safe implementation automatically; storage-backed providers can override
+     * with a direct bulk delete.</p>
+     *
+     * @return number of entries removed
+     */
+    default int clear(String userId, String target) {
+        List<String> entries = getRawEntries(userId, target);
+        if (entries == null || entries.isEmpty()) {
+            return 0;
+        }
+        List<MemoryBatchOperation> operations = entries.stream()
+            .filter(entry -> entry != null && !entry.isBlank())
+            .map(entry -> new MemoryBatchOperation("remove", null, entry))
+            .toList();
+        if (operations.isEmpty()) {
+            return 0;
+        }
+        String error = applyBatch(userId, target, operations, Map.of("source", "dashboard_memory_reset"));
+        if (error != null) {
+            throw new IllegalStateException(error);
+        }
+        return operations.size();
+    }
+
  default String read(String userId, String target) {
      List<String> facts = recall(userId, "", 100);
      return String.join("§", facts);
@@ -128,6 +157,10 @@ public interface MemoryProvider {
  default int getEntryCount(String userId, String target) {
      List<String> entries = getRawEntries(userId, target);
      return entries == null ? 0 : entries.size();
+ }
+
+ default int getCharLimit(String target) {
+     return "user".equalsIgnoreCase(target) ? 1375 : 2200;
  }
 
  default Map<String, String> getSnapshot(String userId) {

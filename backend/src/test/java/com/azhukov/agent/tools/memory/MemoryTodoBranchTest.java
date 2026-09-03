@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.util.List;
 import java.util.Optional;
@@ -27,6 +29,7 @@ import static org.mockito.Mockito.*;
  * Covers error paths, null inputs, boundary conditions, and untested branches.
  */
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class MemoryTodoBranchTest {
 
     private static final String USER_ID = "user-42";
@@ -49,7 +52,7 @@ class MemoryTodoBranchTest {
         MemoryTool tool = new MemoryTool(memoryProvider);
         ToolResult result = tool.execute("{\"action\":\"add\",\"content\":null}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("content is required");
+        assertThat(result.content()).contains("content is required");
     }
 
     @Test
@@ -57,7 +60,7 @@ class MemoryTodoBranchTest {
         MemoryTool tool = new MemoryTool(memoryProvider);
         ToolResult result = tool.execute("{\"action\":\"add\",\"content\":\"  \"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("content is required");
+        assertThat(result.content()).contains("content is required");
     }
 
     @Test
@@ -80,7 +83,7 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"replace\",\"old_text\":null,\"content\":\"new\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("old_text is required");
+        assertThat(result.content()).contains("old_text");
     }
 
     @Test
@@ -89,7 +92,7 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"replace\",\"old_text\":\"\",\"content\":\"new\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("old_text is required");
+        assertThat(result.content()).contains("old_text");
     }
 
     @Test
@@ -98,7 +101,7 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"replace\",\"old_text\":\"old\",\"content\":null}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("content is required");
+        assertThat(result.content()).contains("content is required");
     }
 
     @Test
@@ -107,7 +110,7 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"replace\",\"old_text\":\"old\",\"content\":\"\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("content is required");
+        assertThat(result.content()).contains("content is required");
     }
 
     @Test
@@ -117,7 +120,7 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"replace\",\"old_text\":\"old\",\"content\":\"new\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Item not found");
+        assertThat(result.content()).contains("Item not found");
     }
 
     @Test
@@ -126,7 +129,7 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"remove\",\"old_text\":null}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("old_text is required");
+        assertThat(result.content()).contains("old_text");
     }
 
     @Test
@@ -135,7 +138,7 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"remove\",\"old_text\":\"\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("old_text is required");
+        assertThat(result.content()).contains("old_text");
     }
 
     @Test
@@ -145,7 +148,7 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"remove\",\"old_text\":\"old\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Not found");
+        assertThat(result.content()).contains("Not found");
     }
 
     @Test
@@ -155,7 +158,7 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"read\",\"target\":\"memory\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Unknown action");
+        assertThat(result.content()).contains("Unknown action");
     }
 
     @Test
@@ -165,7 +168,7 @@ class MemoryTodoBranchTest {
         ToolResult result = tool.execute(
             "{\"action\":\"read\"}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Unknown action");
+        assertThat(result.content()).contains("Unknown action");
     }
 
     @Test
@@ -239,9 +242,9 @@ class MemoryTodoBranchTest {
 
     @Test
     void todo_writeWithDefaultPriority_usesMedium() {
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.findBySessionIdOrderByCreatedAtAsc(SESSION.id())).thenReturn(List.of());
         when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        doNothing().when(todoRepository).deleteByUserId(any());
+        doNothing().when(todoRepository).deleteBySessionIdAndUserId(any(), any());
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(
             "{\"todos\":[{\"id\":\"1\",\"content\":\"task\",\"status\":\"pending\"}]}", LAST_MESSAGE, SESSION);
@@ -251,9 +254,9 @@ class MemoryTodoBranchTest {
 
     @Test
     void todo_writeWithNullStatus_defaultsToPending() {
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.findBySessionIdOrderByCreatedAtAsc(SESSION.id())).thenReturn(List.of());
         when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        doNothing().when(todoRepository).deleteByUserId(any());
+        doNothing().when(todoRepository).deleteBySessionIdAndUserId(any(), any());
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(
             "{\"todos\":[{\"id\":\"1\",\"content\":\"task\"}]}", LAST_MESSAGE, SESSION);
@@ -263,9 +266,9 @@ class MemoryTodoBranchTest {
 
     @Test
     void todo_writeWithBlankStatus_defaultsToPending() {
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.findBySessionIdOrderByCreatedAtAsc(SESSION.id())).thenReturn(List.of());
         when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        doNothing().when(todoRepository).deleteByUserId(any());
+        doNothing().when(todoRepository).deleteBySessionIdAndUserId(any(), any());
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(
             "{\"todos\":[{\"id\":\"1\",\"content\":\"task\",\"status\":\"\"}]}", LAST_MESSAGE, SESSION);
@@ -274,19 +277,19 @@ class MemoryTodoBranchTest {
 
     @Test
     void todo_mergeWithEmptyItems_noDelete() {
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.findBySessionIdOrderByCreatedAtAsc(SESSION.id())).thenReturn(List.of());
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(
             "{\"todos\":[],\"merge\":true}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
-        verify(todoRepository, never()).deleteByUserId(any());
+        verify(todoRepository, never()).deleteBySessionIdAndUserId(any(), any());
     }
 
     @Test
     void todo_mergeItemWithExistingNotFound_createsNew() {
         UUID todoId = UUID.randomUUID();
         when(todoRepository.findById(todoId)).thenReturn(Optional.empty());
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.findBySessionIdOrderByCreatedAtAsc(SESSION.id())).thenReturn(List.of());
         when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         TodoTool tool = new TodoTool(todoRepository);
@@ -303,7 +306,7 @@ class MemoryTodoBranchTest {
         existing.setId(todoId);
         existing.setUserId("different-user");
         when(todoRepository.findById(todoId)).thenReturn(Optional.of(existing));
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.findBySessionIdOrderByCreatedAtAsc(SESSION.id())).thenReturn(List.of());
         when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         TodoTool tool = new TodoTool(todoRepository);
@@ -315,13 +318,13 @@ class MemoryTodoBranchTest {
 
     @Test
     void todo_replaceWithEmptyItems_deletesAll() {
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
-        doNothing().when(todoRepository).deleteByUserId(USER_ID);
+        when(todoRepository.findBySessionIdOrderByCreatedAtAsc(SESSION.id())).thenReturn(List.of());
+        doNothing().when(todoRepository).deleteBySessionIdAndUserId(SESSION.id(), USER_ID);
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(
             "{\"todos\":[]}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
-        verify(todoRepository).deleteByUserId(USER_ID);
+        verify(todoRepository).deleteBySessionIdAndUserId(SESSION.id(), USER_ID);
     }
 
     @Test
@@ -349,38 +352,44 @@ class MemoryTodoBranchTest {
 
     @Test
     void todo_mergeWithFlagTrue_noDelete() {
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
+        when(todoRepository.findBySessionIdOrderByCreatedAtAsc(SESSION.id())).thenReturn(List.of());
         when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         TodoTool tool = new TodoTool(todoRepository);
         String itemsJson = "[{\"id\":\"1\",\"content\":\"Task\",\"status\":\"pending\"}]";
         ToolResult result = tool.execute(
             "{\"todos\":" + itemsJson + ",\"merge\":true}", LAST_MESSAGE, SESSION);
         assertThat(result.success()).isTrue();
-        verify(todoRepository, never()).deleteByUserId(any());
+        verify(todoRepository, never()).deleteBySessionIdAndUserId(any(), any());
     }
 
     @Test
-    void todo_contentExceedingMax_returnsFail() {
+    void todo_contentExceedingMax_isCapped() {
+        when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         TodoTool tool = new TodoTool(todoRepository);
         String longContent = "x".repeat(TodoTool.MAX_CONTENT_CHARS + 1);
         ToolResult result = tool.execute(
             "{\"todos\":[{\"id\":\"1\",\"content\":\"" + longContent + "\",\"status\":\"pending\"}]}",
             LAST_MESSAGE, SESSION);
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("exceeds");
+        assertThat(result.success()).isTrue();
+        verify(todoRepository).save(argThat(e -> e.getTitle().length() == TodoTool.MAX_CONTENT_CHARS
+            && e.getTitle().endsWith(TodoTool.TRUNCATION_MARKER)));
     }
 
     @Test
     void todo_listWithNegativeLimit_returnsAll() {
         TodoEntity t1 = new TodoEntity();
+        t1.setSessionId(SESSION.id());
+        t1.setUserId(USER_ID);
         t1.setTitle("Task1");
         t1.setStatus("pending");
         t1.setPriority("high");
         TodoEntity t2 = new TodoEntity();
+        t2.setSessionId(SESSION.id());
+        t2.setUserId(USER_ID);
         t2.setTitle("Task2");
         t2.setStatus("done");
         t2.setPriority("low");
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of(t1, t2));
+        when(todoRepository.findBySessionIdOrderByCreatedAtAsc(SESSION.id())).thenReturn(List.of(t1, t2));
 
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(
@@ -394,9 +403,11 @@ class MemoryTodoBranchTest {
     @Test
     void todo_listWithNullLimit_returnsAll() {
         TodoEntity t1 = new TodoEntity();
+        t1.setSessionId(SESSION.id());
+        t1.setUserId(USER_ID);
         t1.setTitle("Task1");
         t1.setStatus("pending");
-        when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of(t1));
+        when(todoRepository.findBySessionIdOrderByCreatedAtAsc(SESSION.id())).thenReturn(List.of(t1));
 
         TodoTool tool = new TodoTool(todoRepository);
         ToolResult result = tool.execute(

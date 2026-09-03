@@ -66,22 +66,21 @@ class CronJobServiceConcurrencyTest {
         job.setEnabled(true);
 
         CountDownLatch startLatch = new CountDownLatch(1);
-        CountDownLatch finishLatch = new CountDownLatch(1);
+        CountDownLatch releaseLatch = new CountDownLatch(1);
         AtomicInteger concurrentExecutions = new AtomicInteger(0);
         AtomicInteger maxConcurrent = new AtomicInteger(0);
 
         when(cronJobRepository.findById(jobId)).thenReturn(Optional.of(job));
         when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        when(agentRuntimeService.runBackground(anyString(), any()))
+        when(agentRuntimeService.runBackground(anyString(), any(), anyBoolean()))
             .thenAnswer(inv -> {
                 int current = concurrentExecutions.incrementAndGet();
                 maxConcurrent.updateAndGet(m -> Math.max(m, current));
                 startLatch.countDown();
-                Thread.sleep(100); // Hold the lock briefly
+                assertThat(releaseLatch.await(2, TimeUnit.SECONDS)).isTrue();
                 concurrentExecutions.decrementAndGet();
-                finishLatch.countDown();
-                return null;
+                return UUID.randomUUID().toString();
             });
 
         // Start two threads that try to execute the same job concurrently
@@ -89,14 +88,13 @@ class CronJobServiceConcurrencyTest {
         Thread t2 = new Thread(() -> service.runNow(jobId));
 
         t1.start();
+        assertThat(startLatch.await(2, TimeUnit.SECONDS)).isTrue();
         t2.start();
+        releaseLatch.countDown();
         t1.join(5000);
         t2.join(5000);
 
         // Only one execution should have happened concurrently (maxConcurrent == 1)
-        // Note: runNow calls executeJob directly (not through executeAndReschedule which has the lock),
-        // so the lock only prevents concurrent scheduled executions.
-        // The test verifies the lock mechanism exists.
-        assertThat(maxConcurrent.get()).isLessThanOrEqualTo(2);
+        assertThat(maxConcurrent.get()).isEqualTo(1);
     }
 }

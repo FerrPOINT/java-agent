@@ -1,5 +1,7 @@
 package com.azhukov.agent.api.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
 public record OpenAiStreamChunk(
@@ -9,9 +11,17 @@ public record OpenAiStreamChunk(
     String model,
     List<Choice> choices
 ) {
-    public record Choice(int index, Delta delta, String finishReason) {}
+    public record Choice(
+        int index,
+        Delta delta,
+        @JsonProperty("finish_reason") @JsonAlias("finishReason") String finishReason
+    ) {}
 
-    public record Delta(String role, String content, List<ToolCall> toolCalls) {}
+    public record Delta(
+        String role,
+        String content,
+        @JsonProperty("tool_calls") @JsonAlias("toolCalls") List<ToolCall> toolCalls
+    ) {}
 
     public record ToolCall(String id, String type, Function function) {}
 

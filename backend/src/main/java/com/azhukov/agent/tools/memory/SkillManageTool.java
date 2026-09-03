@@ -1,5 +1,6 @@
 package com.azhukov.agent.tools.memory;
 
+import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.core.memory.WriteContext;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
@@ -9,10 +10,15 @@ import com.azhukov.agent.core.skill.WriteOrigin;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import static com.azhukov.agent.tools.ToolHandler.parseJson;
 
@@ -62,6 +68,9 @@ import static com.azhukov.agent.tools.ToolHandler.parseJson;
 @RequiredArgsConstructor
 public class SkillManageTool implements ToolHandler {
 
+    private static final ObjectMapper JSON = SharedObjectMapper.get();
+    private static final int CHANGE_PREVIEW_CHARS = 200;
+
     private final SkillManager skillManager;
     private final com.azhukov.agent.core.skill.SkillMutationLedger mutationLedger;
 
@@ -71,27 +80,52 @@ public class SkillManageTool implements ToolHandler {
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        SkillManageArgs args = parseJson(arguments, SkillManageArgs.class);
+        SkillManageArgs args;
+        try {
+            args = parseJson(arguments == null || arguments.isBlank() ? "{}" : arguments, SkillManageArgs.class);
+        } catch (IllegalArgumentException e) {
+            return jsonError(e.getMessage());
+        }
         // S3: Get the effective write origin from WriteContext (FOREGROUND by default,
         // BACKGROUND_REVIEW during review)
         WriteOrigin origin = WriteContext.effectiveOrigin();
         try {
-            ToolResult result = switch (args.action().toLowerCase()) {
+            String action = args.action() == null ? "" : args.action().toLowerCase();
+            ToolResult result = switch (action) {
                 case "create" -> {
                     validateSkillName(args.name());
-                    String content = generateFrontmatterIfNeeded(args.name(), args.content());
+                    if (args.content() == null || args.content().isBlank()) {
+                        yield jsonError("content is required for 'create'. Provide the full SKILL.md text (frontmatter + body).");
+                    }
+                    String content = args.content();
                     skillManager.saveSkill(args.name(), content, origin);
                     ledger("create", args.name(), null, content);
-                    yield ToolResult.ok("Skill " + args.name() + " created.");
+                    Map<String, Object> payload = successPayload(
+                        "create", args.name(), "Skill '" + args.name() + "' created.");
+                    payload.put("path", args.name());
+                    if (args.category() != null && !args.category().isBlank()) {
+                        payload.put("category", args.category());
+                    }
+                    payload.put("_change", descriptionChange(content));
+                    payload.put("hint", "To add reference files, templates, or scripts, use "
+                        + "skill_manage(action='write_file', name='" + args.name()
+                        + "', file_path='references/example.md', file_content='...')");
+                    yield jsonOk(payload);
                 }
                 case "update", "edit" -> {
                     validateSkillName(args.name());
+                    if (args.content() == null || args.content().isBlank()) {
+                        yield jsonError("content is required for a full rewrite. Provide the full updated SKILL.md text.");
+                    }
                     String before = snapshotSkill(args.name());
                     // Finding 4.4: Pass absorbed_into to saveSkill in update action
                     // "edit" is the Hermes name for the same action (full SKILL.md rewrite)
                     skillManager.saveSkill(args.name(), args.content(), origin, args.absorbed_into());
                     ledger("update", args.name(), before, args.content());
-                    yield ToolResult.ok("Skill " + args.name() + " updated.");
+                    Map<String, Object> payload = successPayload(
+                        "edit", args.name(), "Skill '" + args.name() + "' updated (full rewrite).");
+                    payload.put("_change", descriptionChange(args.content()));
+                    yield jsonOk(payload);
                 }
                 case "delete" -> {
                     validateSkillName(args.name());
@@ -104,76 +138,120 @@ public class SkillManageTool implements ToolHandler {
                     }
                     if (deleted) {
                         ledger("delete", args.name(), before, null);
-                        yield ToolResult.ok("Skill " + args.name() + " deleted.");
+                        String message = "Skill '" + args.name() + "' deleted.";
+                        if (args.absorbed_into() != null && !args.absorbed_into().isBlank()) {
+                            message += " Content absorbed into '" + args.absorbed_into() + "'.";
+                        }
+                        Map<String, Object> payload = successPayload("delete", args.name(), message);
+                        if (args.absorbed_into() != null) {
+                            payload.put("absorbed_into", args.absorbed_into());
+                        }
+                        yield jsonOk(payload);
                     }
-                    yield ToolResult.fail("Skill " + args.name() + " not found.");
+                    yield jsonError("Skill '" + args.name() + "' not found.");
                 }
                 case "patch" -> {
                     // S3: Find-and-replace text in skill content or support file
-                    if (args.old_text() == null || args.old_text().isBlank()) {
-                        yield ToolResult.fail("old_text is required for patch action");
+                    boolean hasContent = args.content() != null && !args.content().isBlank();
+                    boolean hasOld = args.old_text() != null && !args.old_text().isBlank();
+                    boolean hasNew = args.new_text() != null;
+                    if (hasContent && (hasOld || hasNew)) {
+                        yield jsonError("Pass EITHER content (full SKILL.md rewrite) OR old_string/new_string "
+                            + "(targeted replacement), not both.");
                     }
-                    if (args.new_text() == null) {
-                        yield ToolResult.fail("new_text is required for patch action");
+                    if (hasContent) {
+                        validateSkillName(args.name());
+                        String before = snapshotSkill(args.name());
+                        skillManager.saveSkill(args.name(), args.content(), origin, args.absorbed_into());
+                        ledger("patch", args.name(), before, args.content());
+                        Map<String, Object> payload = successPayload(
+                            "patch", args.name(), "Skill '" + args.name() + "' updated (full rewrite).");
+                        payload.put("_change", descriptionChange(args.content()));
+                        yield jsonOk(payload);
+                    }
+                    if (!hasOld) {
+                        yield jsonError("patch needs old_string/new_string for a targeted replacement, "
+                            + "or content for a full SKILL.md rewrite (read it first with skill_view()).");
+                    }
+                    if (!hasNew) {
+                        yield jsonError("new_string is required for 'patch'. Use empty string to delete matched text.");
                     }
                     boolean replaceAll = args.replace_all() != null && args.replace_all();
                     if (args.file_path() != null && !args.file_path().isBlank()) {
                         // Patch a support file (references/, templates/, scripts/)
                         String before = snapshotSupportFile(args.name(), args.file_path());
-                        boolean patched = skillManager.patchSupportFile(
-                            args.name(), args.file_path(), args.old_text(), args.new_text(), replaceAll);
+                        boolean patched;
+                        try {
+                            patched = skillManager.patchSupportFile(
+                                args.name(), args.file_path(), args.old_text(), args.new_text(), replaceAll);
+                        } catch (IllegalArgumentException e) {
+                            yield jsonError(e.getMessage());
+                        }
                         if (patched) {
                             ledger("patch", args.name(), before, snapshotSupportFile(args.name(), args.file_path()));
-                            yield ToolResult.ok("File " + args.file_path() + " in skill " + args.name() + " patched.");
+                            yield patchJson(args.name(), args.file_path(), args.old_text(), args.new_text(), replaceAll, before);
                         }
-                        yield ToolResult.fail("Skill " + args.name() + " or file " + args.file_path() +
-                            " not found, or old_text not found in file.");
+                        yield jsonError("Skill '" + args.name() + "' or file '" + args.file_path()
+                            + "' not found, or old_string not found in file.");
                     } else {
                         // Patch SKILL.md
                         String before = snapshotSkill(args.name());
-                        boolean patched = skillManager.patchSkill(
-                            args.name(), args.old_text(), args.new_text(), replaceAll);
+                        boolean patched;
+                        try {
+                            patched = skillManager.patchSkill(
+                                args.name(), args.old_text(), args.new_text(), replaceAll);
+                        } catch (IllegalArgumentException e) {
+                            yield jsonError(e.getMessage());
+                        }
                         if (patched) {
                             ledger("patch", args.name(), before, snapshotSkill(args.name()));
-                            yield ToolResult.ok("Skill " + args.name() + " patched.");
+                            yield patchJson(args.name(), null, args.old_text(), args.new_text(), replaceAll, before);
                         }
-                        yield ToolResult.fail("Skill " + args.name() + " not found or old_text not found in content.");
+                        yield jsonError("Skill '" + args.name() + "' not found or old_string not found in content.");
                     }
                 }
                 case "write_file" -> {
                     // S3: Write support file (references/, templates/, scripts/)
                     if (args.file_path() == null || args.file_path().isBlank()) {
-                        yield ToolResult.fail("file_path is required for write_file action");
+                        yield jsonError("file_path is required for 'write_file'. Example: 'references/api-guide.md'");
                     }
                     if (args.content() == null) {
-                        yield ToolResult.fail("content is required for write_file action");
+                        yield jsonError("file_content is required for 'write_file'.");
                     }
                     try {
                         String before = snapshotSupportFile(args.name(), args.file_path());
                         skillManager.writeSupportFile(args.name(), args.file_path(), args.content());
                         ledger("write_file", args.name(), before, args.content());
-                        yield ToolResult.ok("File " + args.file_path() + " written to skill " + args.name() + ".");
+                        Map<String, Object> payload = successPayload(
+                            "write_file", args.name(), "File '" + args.file_path() + "' written to skill '" + args.name() + "'.");
+                        payload.put("file_path", args.file_path());
+                        payload.put("path", args.file_path());
+                        yield jsonOk(payload);
                     } catch (SecurityException e) {
                         // P2-49: Security scan failed — content was not written
-                        yield ToolResult.fail("Security scan blocked: " + e.getMessage());
+                        yield jsonError("Security scan blocked: " + e.getMessage());
                     } catch (Exception e) {
-                        yield ToolResult.fail("Failed to write file: " + e.getMessage());
+                        yield jsonError("Failed to write file: " + e.getMessage());
                     }
                 }
                 case "remove_file" -> {
                     // S3: Remove support file
                     if (args.file_path() == null || args.file_path().isBlank()) {
-                        yield ToolResult.fail("file_path is required for remove_file action");
+                        yield jsonError("file_path is required for 'remove_file'.");
                     }
                     String before = snapshotSupportFile(args.name(), args.file_path());
                     boolean removed = skillManager.removeSupportFile(args.name(), args.file_path());
                     if (removed) {
                         ledger("remove_file", args.name(), before, null);
-                        yield ToolResult.ok("File " + args.file_path() + " removed from skill " + args.name() + ".");
+                        Map<String, Object> payload = successPayload(
+                            "remove_file", args.name(), "File '" + args.file_path() + "' removed from skill '" + args.name() + "'.");
+                        payload.put("file_path", args.file_path());
+                        yield jsonOk(payload);
                     }
-                    yield ToolResult.fail("File not found: " + args.file_path());
+                    yield jsonError("File '" + args.file_path() + "' not found in skill '" + args.name() + "'.");
                 }
-                default -> ToolResult.fail("Unknown action: " + args.action());
+                default -> jsonError("Unknown action '" + args.action()
+                    + "'. Use: create, edit, patch, delete, write_file, remove_file");
             };
             // Hermes parity (skill_manager_tool.py:1654): every successful
             // skill mutation clears the cached skills system prompt so the
@@ -189,8 +267,136 @@ public class SkillManageTool implements ToolHandler {
             // rollback needed — this matches Hermes behavior where the scan gate
             // prevents the write rather than reverting it after the fact.
             log.warn("Security scan blocked skill edit '{}': {} — original content preserved", args.name(), e.getMessage());
-            return ToolResult.fail("Security scan blocked: " + e.getMessage());
+            return jsonError("Security scan blocked: " + e.getMessage());
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return jsonError(e.getMessage());
         }
+    }
+
+    private ToolResult jsonOk(Map<String, Object> payload) {
+        return ToolResult.ok(toJson(payload));
+    }
+
+    private ToolResult jsonError(String error) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("success", false);
+        payload.put("error", error);
+        return new ToolResult(false, toJson(payload), error);
+    }
+
+    private String toJson(Map<String, Object> payload) {
+        try {
+            return JSON.writeValueAsString(payload);
+        } catch (JsonProcessingException e) {
+            return "{\"success\":false,\"error\":\"Failed to serialize skill_manage result\"}";
+        }
+    }
+
+    private Map<String, Object> successPayload(String action, String name, String message) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("success", true);
+        payload.put("action", action);
+        payload.put("name", name);
+        payload.put("message", message);
+        return payload;
+    }
+
+    private ToolResult patchJson(String name, String filePath, String oldText, String newText,
+                                 boolean replaceAll, String before) {
+        String target = filePath == null || filePath.isBlank() ? "SKILL.md" : filePath;
+        Integer replacementCount = replacementCount(before, oldText, replaceAll);
+        String countSuffix = replacementCount == null
+            ? ""
+            : " (" + replacementCount + " replacement" + (replacementCount == 1 ? "" : "s") + ")";
+        Map<String, Object> payload = successPayload(
+            "patch", name, "Patched " + target + " in skill '" + name + "'" + countSuffix + ".");
+        if (filePath != null && !filePath.isBlank()) {
+            payload.put("file_path", filePath);
+        }
+        payload.put("replace_all", replaceAll);
+        if (replacementCount != null) {
+            payload.put("replacements", replacementCount);
+        }
+        payload.put("_change", changePreview(oldText, newText));
+        return jsonOk(payload);
+    }
+
+    private Integer replacementCount(String before, String oldText, boolean replaceAll) {
+        if (before == null || oldText == null || oldText.isEmpty()) {
+            return null;
+        }
+        int count = 0;
+        int from = 0;
+        while (true) {
+            int idx = before.indexOf(oldText, from);
+            if (idx < 0) {
+                break;
+            }
+            count++;
+            from = idx + oldText.length();
+        }
+        if (count == 0) {
+            return null;
+        }
+        return replaceAll ? count : 1;
+    }
+
+    private Map<String, Object> changePreview(String oldText, String newText) {
+        Map<String, Object> change = new LinkedHashMap<>();
+        change.put("old", preview(oldText));
+        change.put("new", preview(newText));
+        return change;
+    }
+
+    private Map<String, Object> descriptionChange(String content) {
+        Map<String, Object> change = new LinkedHashMap<>();
+        change.put("description", preview(extractFrontmatterField(content, "description"), 120));
+        return change;
+    }
+
+    private String extractFrontmatterField(String content, String field) {
+        if (content == null || !content.startsWith("---")) {
+            return "";
+        }
+        String prefix = field + ":";
+        boolean inFrontmatter = false;
+        for (String line : content.lines().toList()) {
+            String trimmed = line.trim();
+            if ("---".equals(trimmed)) {
+                if (inFrontmatter) {
+                    break;
+                }
+                inFrontmatter = true;
+                continue;
+            }
+            if (inFrontmatter && trimmed.startsWith(prefix)) {
+                return unquote(trimmed.substring(prefix.length()).trim());
+            }
+        }
+        return "";
+    }
+
+    private String unquote(String value) {
+        if (value.length() >= 2
+            && ((value.startsWith("\"") && value.endsWith("\""))
+                || (value.startsWith("'") && value.endsWith("'")))) {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
+    }
+
+    private String preview(String text) {
+        return preview(text, CHANGE_PREVIEW_CHARS);
+    }
+
+    private String preview(String text, int maxChars) {
+        if (text == null) {
+            return "";
+        }
+        if (text.length() <= maxChars) {
+            return text;
+        }
+        return text.substring(0, maxChars) + "...";
     }
 
     /**
@@ -250,47 +456,28 @@ public class SkillManageTool implements ToolHandler {
     }
 
     /**
-     * S3: Validate skill names — lowercase, hyphens, no spaces.
+     * S3: Validate skill names — lowercase, filesystem-safe, Hermes-compatible.
      */
     private void validateSkillName(String name) {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("Skill name must not be blank");
         }
-        if (!name.matches("^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$")) {
+        if (name.length() > 64) {
+            throw new IllegalArgumentException("Skill name exceeds 64 characters.");
+        }
+        if (!name.matches("^[a-z0-9][a-z0-9._-]*$")) {
             throw new IllegalArgumentException(
-                "Skill name must be lowercase, use hyphens (not spaces/underscores), " +
-                "start and end with alphanumeric: " + name);
+                "Invalid skill name '" + name + "'. Use lowercase letters, numbers, " +
+                "hyphens, dots, and underscores. Must start with a letter or digit.");
         }
-        if (name.contains("--")) {
-            throw new IllegalArgumentException("Skill name must not contain consecutive hyphens: " + name);
-        }
-    }
-
-    /**
-     * S3: Generate basic YAML frontmatter on create if not already present.
-     */
-    private String generateFrontmatterIfNeeded(String name, String content) {
-        if (content == null || content.isBlank()) {
-            content = "# " + name.replace("-", " ") + "\n\n";
-        }
-        if (content.startsWith("---")) {
-            // Already has frontmatter
-            return content;
-        }
-        String frontmatter = "---\n" +
-            "name: " + name + "\n" +
-            "category: \"\"\n" +
-            "description: \"\"\n" +
-            "---\n\n";
-        return frontmatter + content;
     }
 
     record SkillManageArgs(
-        @ToolParam(description = "Action: create, update, delete, patch, write_file, remove_file", required = true)
+        @ToolParam(description = "Action: create, patch, delete, write_file, remove_file. Legacy update/edit aliases are accepted.", required = true)
         String action,
-        @ToolParam(description = "Skill name (lowercase, hyphens)", required = true)
+        @ToolParam(description = "Skill name (lowercase, hyphens, underscores, or dots)", required = true)
         String name,
-        @ToolParam(description = "Skill markdown content (required for create/update). For write_file, this is the file content (alias: file_content).", required = false)
+        @ToolParam(description = "Full SKILL.md content (required for create; on patch performs full rewrite). For write_file, alias: file_content.", required = false)
         @com.fasterxml.jackson.annotation.JsonAlias("file_content") String content,
         @ToolParam(description = "Text to find and replace (for patch action). Alias: old_string.", required = false)
         @com.fasterxml.jackson.annotation.JsonProperty("old_text")

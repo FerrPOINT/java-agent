@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.memory;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.skill.SkillManager.LinkedFiles;
 import com.azhukov.agent.core.skill.SkillManager.SkillInfo;
@@ -14,10 +15,13 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -50,11 +54,13 @@ import java.util.Map;
 @AgentTool(
     name = "skill_view",
     description = "Skills allow for loading information about specific tasks and workflows, as well as scripts and templates. Load a skill's full content or access its linked files (references, templates, scripts). First call returns SKILL.md content plus a 'linked_files' dict showing available references/templates/scripts. To access those, call again with file_path parameter.",
-    toolset = "core"
+    toolset = "skills"
 )
 @Component
 @Slf4j
 public class SkillViewTool implements ToolHandler {
+
+    private static final ObjectMapper JSON = SharedObjectMapper.get();
 
     private final SkillManager skillManager;
     private SkillPreprocessor skillPreprocessor;
@@ -84,13 +90,25 @@ public class SkillViewTool implements ToolHandler {
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        SkillArgs args = ToolHandler.parseJson(arguments, SkillArgs.class);
+        try {
+            SkillArgs args = ToolHandler.parseJson(arguments, SkillArgs.class);
+            return executeParsed(args, session);
+        } catch (Exception e) {
+            log.error("SkillViewTool error — args: [{}], error: {}", arguments, e.toString(), e);
+            return jsonFail("Skill view error: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+    }
+
+    private ToolResult executeParsed(SkillArgs args, Session session) {
+        if (args.name() == null || args.name().isBlank()) {
+            return jsonFail("name is required");
+        }
 
         // S: If file_path is specified, read and return that specific support file
         if (args.file_path() != null && !args.file_path().isBlank()) {
             String fileContent = skillManager.readSupportFile(args.name(), args.file_path());
             if (fileContent == null) {
-                return ToolResult.fail("File not found: " + args.file_path() + " in skill " + args.name());
+                return jsonFail("File not found: " + args.file_path() + " in skill " + args.name());
             }
             // P0-8: Apply preprocessing to support files too (template vars only, no inline shell)
             if (skillPreprocessor != null && skillPreprocessor.isEnabled()) {
@@ -102,7 +120,13 @@ public class SkillViewTool implements ToolHandler {
                     log.warn("Failed to preprocess support file '{}': {}", args.file_path(), e.getMessage());
                 }
             }
-            return ToolResult.ok(fileContent);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", true);
+            result.put("name", args.name());
+            result.put("file", args.file_path());
+            result.put("content", fileContent);
+            result.put("file_type", fileType(args.file_path()));
+            return jsonOk(result);
         }
 
         // Fix 6: Multi-strategy lookup — DB, filesystem by dir name, frontmatter name match, legacy flat .md
@@ -115,17 +139,27 @@ public class SkillViewTool implements ToolHandler {
                 errMsg.append("\nMatches: ");
                 errMsg.append(String.join(", ", lookupResult.collisionPaths()));
             }
-            return ToolResult.fail(errMsg.toString());
+            Map<String, Object> error = new LinkedHashMap<>();
+            error.put("success", false);
+            error.put("error", errMsg.toString());
+            if (!lookupResult.collisionPaths().isEmpty()) {
+                error.put("matches", lookupResult.collisionPaths());
+            }
+            return jsonFail(error);
         }
 
         SkillInfo info = lookupResult.info();
         if (info == null) {
-            return ToolResult.fail("Skill not found: " + args.name());
+            Map<String, Object> error = new LinkedHashMap<>();
+            error.put("success", false);
+            error.put("error", "Skill not found: " + args.name());
+            error.put("hint", "Use skills_list to see all available skills");
+            return jsonFail(error);
         }
 
         // Fix 3: Disabled skill check — refuse to view disabled skills
         if (info.disabled()) {
-            return ToolResult.fail("Skill '" + info.name() + "' is disabled. Enable it in config to use.");
+            return jsonFail("Skill '" + info.name() + "' is disabled. Enable it in config to use.");
         }
 
         // S7: Increment view count for telemetry
@@ -133,27 +167,39 @@ public class SkillViewTool implements ToolHandler {
 
         // S9: Build progressive disclosure output
         StringBuilder sb = new StringBuilder();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("name", info.name());
 
         // Metadata header
         sb.append("=== Skill: ").append(info.name()).append(" ===\n");
+        result.put("description", descriptionOf(info));
         if (info.category() != null && !info.category().isBlank()) {
             sb.append("Category: ").append(info.category()).append("\n");
+            result.put("category", info.category());
         }
         sb.append("Trust: ").append(info.trustLevel() != null ? info.trustLevel() : "AGENT_CREATED").append("\n");
+        result.put("trust_level", info.trustLevel() != null ? info.trustLevel() : "AGENT_CREATED");
         sb.append("Views: ").append(info.viewCount()).append(" | Edits: ").append(info.manageCount()).append("\n");
+        result.put("view_count", info.viewCount());
+        result.put("manage_count", info.manageCount());
         if (info.updatedAt() != null) {
             sb.append("Updated: ").append(info.updatedAt()).append("\n");
+            result.put("updated_at", info.updatedAt().toString());
         }
         if (info.archived()) {
             sb.append("Status: ARCHIVED\n");
+            result.put("archived", true);
         }
 
         // Fix 4: Tags and related_skills
         if (info.tags() != null && !info.tags().isEmpty()) {
             sb.append("Tags: ").append(String.join(", ", info.tags())).append("\n");
+            result.put("tags", info.tags());
         }
         if (info.relatedSkills() != null && !info.relatedSkills().isEmpty()) {
             sb.append("Related: ").append(String.join(", ", info.relatedSkills())).append("\n");
+            result.put("related_skills", info.relatedSkills());
         }
 
         sb.append("\n");
@@ -218,6 +264,8 @@ public class SkillViewTool implements ToolHandler {
                 }
             }
             sb.append("\n  Usage: To view linked files, call skill_view(name, file_path) where file_path is e.g. 'references/api.md' or 'assets/config.yaml'\n");
+            result.put("linked_files", linkedFilesToMap(linkedFiles));
+            result.put("usage_hint", "To view linked files, call skill_view(name, file_path) where file_path is e.g. 'references/api.md' or 'assets/config.yaml'");
         }
 
         // Fix 1: Required environment variable checks
@@ -230,6 +278,10 @@ public class SkillViewTool implements ToolHandler {
             if (!requiredEnvVars.isEmpty()) {
                 List<String> missing = SkillUtils.findMissingEnvironmentVariables(requiredEnvVars);
                 String readinessStatus = missing.isEmpty() ? "ready" : "incomplete";
+                result.put("required_environment_variables", requiredEnvVars);
+                result.put("missing_required_environment_variables", missing);
+                result.put("setup_needed", !missing.isEmpty());
+                result.put("readiness_status", missing.isEmpty() ? "available" : "setup_needed");
                 sb.append("\n--- Environment Setup ---\n");
                 sb.append("Readiness: ").append(readinessStatus).append("\n");
 
@@ -237,11 +289,15 @@ public class SkillViewTool implements ToolHandler {
                     sb.append("Setup needed: true\n");
                     sb.append("Missing env vars: ").append(String.join(", ", missing)).append("\n");
                     sb.append("Setup help: Set the following env vars: ");
+                    StringBuilder setupHelp = new StringBuilder("Set the following env vars: ");
                     for (int i = 0; i < missing.size(); i++) {
                         if (i > 0) sb.append(", ");
                         sb.append(missing.get(i));
+                        if (i > 0) setupHelp.append(", ");
+                        setupHelp.append(missing.get(i));
                     }
                     sb.append("\n");
+                    result.put("setup_help", setupHelp.toString());
 
                     // Include help text if available
                     for (Map<String, Object> entry : requiredEnvVars) {
@@ -256,7 +312,8 @@ public class SkillViewTool implements ToolHandler {
             }
         }
 
-        return ToolResult.ok(sb.toString());
+        result.put("content", sb.toString());
+        return jsonOk(result);
     }
 
     public record SkillArgs(
@@ -284,6 +341,79 @@ public class SkillViewTool implements ToolHandler {
             }
         } catch (Exception e) {
             log.debug("Could not resolve skill dir for '{}': {}", skillName, e.getMessage());
+        }
+        return null;
+    }
+
+    private static String descriptionOf(SkillInfo info) {
+        String description = info.description();
+        if (description != null && !description.isBlank()) {
+            return description;
+        }
+        if (info.content() != null && info.content().startsWith("---")) {
+            SkillUtils.FrontmatterResult fr = SkillUtils.parseFrontmatter(info.content());
+            Object frontmatterDescription = fr.frontmatter().get("description");
+            if (frontmatterDescription != null) {
+                return String.valueOf(frontmatterDescription);
+            }
+        }
+        return "";
+    }
+
+    private static Map<String, Object> linkedFilesToMap(LinkedFiles linkedFiles) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        if (!linkedFiles.references().isEmpty()) {
+            result.put("references", linkedFiles.references());
+        }
+        if (!linkedFiles.templates().isEmpty()) {
+            result.put("templates", linkedFiles.templates());
+        }
+        if (!linkedFiles.assets().isEmpty()) {
+            result.put("assets", linkedFiles.assets());
+        }
+        if (!linkedFiles.scripts().isEmpty()) {
+            result.put("scripts", linkedFiles.scripts());
+        }
+        return result;
+    }
+
+    private static String fileType(String filePath) {
+        if (filePath == null) {
+            return "";
+        }
+        int slash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+        String filename = slash >= 0 ? filePath.substring(slash + 1) : filePath;
+        int dot = filename.lastIndexOf('.');
+        return dot >= 0 ? filename.substring(dot) : "";
+    }
+
+    private static ToolResult jsonOk(Map<String, Object> result) {
+        try {
+            return ToolResult.ok(JSON.writeValueAsString(result));
+        } catch (IOException e) {
+            return ToolResult.ok(String.valueOf(result));
+        }
+    }
+
+    private static ToolResult jsonFail(String message) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", false);
+        result.put("error", message);
+        return jsonFail(result);
+    }
+
+    private static ToolResult jsonFail(Map<String, Object> result) {
+        try {
+            return new ToolResult(false, JSON.writeValueAsString(result), errorFrom(result));
+        } catch (IOException e) {
+            return new ToolResult(false, "{\"success\":false,\"error\":\"Skill view failed\"}", "Skill view failed");
+        }
+    }
+
+    private static String errorFrom(Map<String, Object> result) {
+        Object error = result.get("error");
+        if (error instanceof String text && !text.isBlank()) {
+            return text;
         }
         return null;
     }

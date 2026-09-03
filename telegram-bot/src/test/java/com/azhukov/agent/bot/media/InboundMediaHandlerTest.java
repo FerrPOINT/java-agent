@@ -173,7 +173,7 @@ class InboundMediaHandlerTest {
 
         assertThat(result).isPresent();
         // B1: The description should include a file path for vision tools to analyze
-        assertThat(result.get()).contains("/tmp/agent-media/");
+        assertThat(result.get()).contains(AgentMediaPaths.mediaDir().toString());
     }
 
     @Test
@@ -191,7 +191,7 @@ class InboundMediaHandlerTest {
         assertThat(result).isPresent();
         assertThat(result.get()).contains("[Document:");
         // Should NOT contain a file path (was not saved)
-        assertThat(result.get()).doesNotContain("/tmp/agent-media/");
+        assertThat(result.get()).doesNotContain(AgentMediaPaths.mediaDir().toString());
     }
 
     // ─── Photo album: comma-separated file IDs ─────────────────────

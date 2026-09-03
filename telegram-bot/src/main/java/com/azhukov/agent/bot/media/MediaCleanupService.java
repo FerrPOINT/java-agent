@@ -7,13 +7,12 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.stream.Stream;
 
 /**
- * Scheduled cleanup for the {@code /tmp/agent-media/} directory.
+ * Scheduled cleanup for the agent media temp directory.
  *
  * <p>Runs every 30 minutes and deletes files older than 1 hour to prevent
  * the temporary media storage from growing unbounded. Downloaded media
@@ -25,7 +24,7 @@ import java.util.stream.Stream;
 @Slf4j
 public class MediaCleanupService {
 
-    private static final Path MEDIA_DIR = Paths.get("/tmp/agent-media/");
+    private static final Path MEDIA_DIR = AgentMediaPaths.mediaDir();
     private static final Duration MAX_AGE = Duration.ofHours(1);
 
     /**

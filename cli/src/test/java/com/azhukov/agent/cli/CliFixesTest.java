@@ -289,6 +289,14 @@ class CliFixesTest {
         assertThat(registry.resolveCommand("snap")).isEqualTo("checkpoint");
     }
 
+    @Test
+    void commandLookupIsCaseInsensitiveLikeHermes() {
+        assertThat(registry.resolveCommand("/HELP")).isEqualTo("help");
+        assertThat(registry.resolveCommand("Bg")).isEqualTo("background");
+        assertThat(registry.resolveCommand("RoL")).isEqualTo("rollback");
+        assertThat(registry.isSlashCommand("/VERS")).isTrue();
+    }
+
     // ── C7: Prefix matching ──
 
     @Test

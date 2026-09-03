@@ -77,7 +77,7 @@ class McpLifecycleManagerSchemaChangeTest {
         manager.refreshTools("srv");
 
         // Verify re-registration happened (registerDynamic called with new definition)
-        verify(toolRegistry).registerDynamic(eq("srv__tool1"), any(), any());
+        verify(toolRegistry).registerDynamic(eq("mcp__srv__tool1"), eq("mcp-srv"), any(), any());
     }
 
     @Test
@@ -113,6 +113,7 @@ class McpLifecycleManagerSchemaChangeTest {
 
         // Verify registerDynamic was NOT called
         verify(toolRegistry, never()).registerDynamic(any(), any(), any());
+        verify(toolRegistry, never()).registerDynamic(any(), any(), any(), any());
         verify(toolRegistry, never()).deregisterDynamic(any());
     }
 }

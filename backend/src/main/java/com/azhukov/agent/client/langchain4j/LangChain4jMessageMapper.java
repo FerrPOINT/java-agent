@@ -9,10 +9,8 @@ import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -36,10 +34,13 @@ public final class LangChain4jMessageMapper {
                         .map(c -> ToolExecutionRequest.builder()
                             .id(c.id())
                             .name(c.name())
-                            .arguments(c.arguments())
+                            .arguments(LangChain4jModelClient.canonicalizeArguments(c.arguments()))
                             .build())
                         .collect(Collectors.toList());
-                    yield AiMessage.from(requests);
+                    String content = message.content();
+                    yield content != null && !content.isBlank()
+                        ? AiMessage.from(content, requests)
+                        : AiMessage.from(requests);
                 }
                 yield AiMessage.from(message.content() != null ? message.content() : "");
             }
@@ -52,34 +53,7 @@ public final class LangChain4jMessageMapper {
         return ToolSpecification.builder()
             .name(definition.name())
             .description(definition.description())
-            .parameters(toJsonSchema(definition.parameters()))
+            .parameters(LangChain4jToolSchemaMapper.toJsonObjectSchema(definition.parameters()))
             .build();
-    }
-
-    @SuppressWarnings("unchecked")
-    private static JsonObjectSchema toJsonSchema(Map<String, Object> schema) {
-        if (schema == null) {
-            return JsonObjectSchema.builder().build();
-        }
-        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
-        List<String> required = (List<String>) schema.get("required");
-        JsonObjectSchema.Builder builder = JsonObjectSchema.builder();
-        if (props != null) {
-            for (Map.Entry<String, Object> e : props.entrySet()) {
-                builder.addStringProperty(e.getKey(), descriptionOf(e.getValue()));
-            }
-        }
-        if (required != null) {
-            builder.required(required);
-        }
-        return builder.build();
-    }
-
-    private static String descriptionOf(Object spec) {
-        if (spec instanceof Map m) {
-            Object desc = m.get("description");
-            return desc != null ? desc.toString() : "";
-        }
-        return "";
     }
 }

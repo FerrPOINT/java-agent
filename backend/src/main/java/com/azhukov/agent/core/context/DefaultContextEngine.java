@@ -10,6 +10,7 @@ import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.MessageEntity;
+import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +35,8 @@ public class DefaultContextEngine implements ContextEngine {
  // desynchronized triggers (context_compressor.py uses one consistent
  // threshold). The compressor fires at 75% so preflight must too.
  private static final double PREFLIGHT_THRESHOLD = 0.75;
+ private static final MessageMapper MESSAGE_MAPPER =
+     org.mapstruct.factory.Mappers.getMapper(MessageMapper.class);
 
  private final MemoryProvider memoryProvider;
  private final SkillManager skillManager;
@@ -94,6 +97,7 @@ public class DefaultContextEngine implements ContextEngine {
  private final AtomicInteger compressionCount = new AtomicInteger(0);
  private volatile int contextLength = 0;
  private volatile int thresholdTokens = 0;
+ private volatile String currentModelName;
 
  public DefaultContextEngine(MemoryProvider memoryProvider,
  SkillManager skillManager,
@@ -126,9 +130,10 @@ public class DefaultContextEngine implements ContextEngine {
  this.contextProps = properties.getContext();
  this.cacheTracker = cacheTracker;
  this.modelMetadataService = modelMetadataService;
+ this.currentModelName = properties.getModel().getModelName();
  // Initialize context length from model metadata if available
- if (modelMetadataService != null && properties.getModel().getModelName() != null) {
-     this.contextLength = modelMetadataService.detectContextLength(properties.getModel().getModelName());
+ if (modelMetadataService != null && currentModelName != null) {
+     this.contextLength = modelMetadataService.detectContextLength(currentModelName);
      this.thresholdTokens = (int) (contextLength * 0.75);
  }
  }
@@ -291,6 +296,7 @@ public class DefaultContextEngine implements ContextEngine {
  @Override
  public void updateModel(String model) {
      if (modelMetadataService != null && model != null && !model.isBlank()) {
+         this.currentModelName = model;
          this.contextLength = modelMetadataService.detectContextLength(model);
          this.thresholdTokens = (int) (contextLength * 0.75);
          log.debug("Updated model: {}, contextLength={}, threshold={}", model, contextLength, thresholdTokens);
@@ -331,11 +337,12 @@ public class DefaultContextEngine implements ContextEngine {
                      .count();
              }
          }
-         // Fallback: current session only (lineage unavailable/no ancestors)
-         List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-         return messages.stream()
-             .filter(m -> "user".equalsIgnoreCase(m.getRole()))
-             .count();
+          // Fallback: current session only (lineage unavailable/no ancestors)
+          List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+          return messages.stream()
+              .filter(DefaultContextEngine::isActive)
+              .filter(m -> "user".equalsIgnoreCase(m.getRole()))
+              .count();
      } catch (Exception e) {
          log.debug("Failed to count prior user messages for session {}: {}", sessionId, e.getMessage());
          return 0;
@@ -352,9 +359,7 @@ public class DefaultContextEngine implements ContextEngine {
 
  private int charsPerToken() {
  if (modelMetadataService != null) {
- return modelMetadataService.getMetadata(
- contextProps != null ? contextProps.toString() : ""
- ).charsPerToken();
+ return modelMetadataService.getMetadata(currentModelName).charsPerToken();
  }
  return 4;
  }
@@ -471,39 +476,27 @@ public class DefaultContextEngine implements ContextEngine {
          if (maxMessages <= 0) {
              maxMessages = 50;
          }
-         List<MessageEntity> descHistory = messageRepository.findBySessionIdOrderByCreatedAtDesc(
-             session.id(), org.springframework.data.domain.PageRequest.of(0, maxMessages));
-         // Reverse to get ascending order (defensive copy in case the list is immutable)
-         java.util.List<MessageEntity> ascHistory = new java.util.ArrayList<>(descHistory);
-         java.util.Collections.reverse(ascHistory);
-         for (MessageEntity e : ascHistory) {
-             String role = e.getRole();
-             String content = e.getContent() != null ? e.getContent() : "";
-             int turnIdx = e.getTurnIndex() != null ? e.getTurnIndex() : 0;
-             context.add(switch (role) {
-                 // Hermes parity: history loaded from the DB must carry the
-                 // assistant's tool_call (id/name/args) in toolCalls — the
-                 // sanitizer and the wire mapper match tool results against
-                 // that list. Mapping to a bare assistant() message left the
-                 // following TOOL result "orphaned" → dropped → strict
-                 // providers 400 → CONTEXT_OVERFLOW misclassification.
-                 case "assistant" -> {
-                     if (e.getToolCallId() != null || e.getToolCallName() != null) {
-                         yield Message.assistantWithToolCalls(content,
-                             List.of(new com.azhukov.agent.core.model.ToolCall(
-                                 e.getToolCallId(), e.getToolCallName(), e.getToolCallArguments())),
-                             turnIdx);
-                     }
-                     yield Message.assistant(content, turnIdx);
-                 }
-                 case "tool" -> Message.toolResult(e.getToolCallId(), content, turnIdx);
-                 default -> Message.user(content);
-             });
+          List<MessageEntity> descHistory = messageRepository.findBySessionIdOrderByCreatedAtDesc(
+              session.id(), org.springframework.data.domain.PageRequest.of(0, maxMessages));
+          // Reverse to get ascending order (defensive copy in case the list is immutable)
+          java.util.List<MessageEntity> ascHistory = descHistory.stream()
+              .filter(DefaultContextEngine::isActive)
+              .collect(java.util.stream.Collectors.toCollection(java.util.ArrayList::new));
+          java.util.Collections.reverse(ascHistory);
+          for (MessageEntity e : ascHistory) {
+             Message message = MESSAGE_MAPPER.toDomain(e);
+             if (message != null) {
+                 context.add(message);
+             }
          }
      } catch (Exception e) {
          log.debug("History load failed: {}", e.getMessage());
-     }
- }
+      }
+  }
+
+  private static boolean isActive(MessageEntity entity) {
+      return entity != null && !Boolean.FALSE.equals(entity.getActive());
+  }
 
     @Override
     public void evict(UUID sessionId) {

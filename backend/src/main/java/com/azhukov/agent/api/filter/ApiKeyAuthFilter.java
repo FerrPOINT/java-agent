@@ -19,17 +19,18 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
 /**
  * API key authentication filter.
  * <p>
- * Reads the {@code X-API-Key} header (or {@code ?api_key=} query param) and validates it
- * against {@code agent.security.api-key}. When the configured key is empty/null,
+ * Reads {@code Authorization: Bearer ...}, {@code X-API-Key}, or {@code ?api_key=}
+ * and validates it against {@code agent.security.api-key}. When the configured key is empty/null,
  * authentication is disabled (dev mode).
  * <p>
- * Health endpoints ({@code /actuator/health/**}) are always exempt.
+ * Simple health endpoints are always exempt; detailed health stays authenticated.
  */
 @Slf4j
 @Component
@@ -61,6 +62,12 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             return;
         }
 
+        if (isPlatformEventEndpoint(requestUri)) {
+            SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("platform-event"));
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String providedKey = extractApiKey(request);
 
         if (providedKey != null && constantTimeEquals(configuredKey, providedKey)) {
@@ -77,16 +84,24 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         response.setStatus(HttpStatus.UNAUTHORIZED.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
-        response.getWriter().write(errorJson("UNAUTHORIZED", "Invalid or missing API key"));
+        response.getWriter().write(errorJson(
+            "Invalid gateway API key (API_SERVER_KEY)",
+            "gateway_auth_error",
+            "gateway_auth_failed"));
     }
 
     private String extractApiKey(HttpServletRequest request) {
-        // Header takes precedence
+        String bearerToken = extractBearerToken(request.getHeader("Authorization"));
+        if (bearerToken != null && !bearerToken.isBlank()) {
+            return bearerToken;
+        }
+
+        // Legacy header takes precedence over the query param.
         String headerKey = request.getHeader("X-API-Key");
         if (headerKey != null && !headerKey.isBlank()) {
             return headerKey;
         }
-        // Fall back to query param
+
         String queryKey = request.getParameter("api_key");
         if (queryKey != null && !queryKey.isBlank()) {
             return queryKey;
@@ -94,17 +109,27 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         return null;
     }
 
+    private String extractBearerToken(String authorizationHeader) {
+        if (authorizationHeader == null || authorizationHeader.isBlank()) {
+            return null;
+        }
+        if (!authorizationHeader.startsWith("Bearer ")) {
+            return null;
+        }
+        return authorizationHeader.substring("Bearer ".length()).trim();
+    }
+
     /**
      * Constant-time string comparison to prevent timing attacks on API key validation.
-     * Always compares all characters regardless of early mismatch.
+     * Compares across the configured key length and folds the supplied key length into the result.
      */
     private static boolean constantTimeEquals(String configuredKey, String providedKey) {
-        if (configuredKey.length() != providedKey.length()) {
-            return false;
-        }
-        int result = 0;
-        for (int i = 0; i < configuredKey.length(); i++) {
-            result |= configuredKey.charAt(i) ^ providedKey.charAt(i);
+        byte[] expected = configuredKey.getBytes(StandardCharsets.UTF_8);
+        byte[] supplied = providedKey.getBytes(StandardCharsets.UTF_8);
+        int result = expected.length ^ supplied.length;
+        for (int i = 0; i < expected.length; i++) {
+            byte suppliedByte = i < supplied.length ? supplied[i] : 0;
+            result |= expected[i] ^ suppliedByte;
         }
         return result == 0;
     }
@@ -113,17 +138,30 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         if (uri == null) {
             return false;
         }
-        return uri.startsWith("/actuator/health");
+        return ("/actuator/health".equals(uri) || uri.startsWith("/actuator/health/"))
+            || "/health".equals(uri)
+            || "/v1/health".equals(uri)
+            || uri.matches("^/p/[^/]+/(?:health|v1/health)$");
     }
 
-    private String errorJson(String type, String message) {
+    private boolean isPlatformEventEndpoint(String uri) {
+        if (uri == null) {
+            return false;
+        }
+        return uri.matches("^/api/platforms/[^/]+/events$")
+            || uri.matches("^/p/[^/]+/api/platforms/[^/]+/events$");
+    }
+
+    private String errorJson(String message, String type, String code) {
         try {
-            return objectMapper.writeValueAsString(Map.of(
+            return objectMapper.writeValueAsString(Map.of("error", Map.of(
+                "message", message,
                 "type", type,
-                "message", message
-            ));
+                "code", code
+            )));
         } catch (JsonProcessingException e) {
-            return "{\"type\":\"" + type + "\",\"message\":\"" + message + "\"}";
+            return "{\"error\":{\"message\":\"" + message + "\",\"type\":\"" + type
+                + "\",\"code\":\"" + code + "\"}}";
         }
     }
 

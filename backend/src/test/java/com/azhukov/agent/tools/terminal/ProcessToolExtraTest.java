@@ -3,18 +3,40 @@ package com.azhukov.agent.tools.terminal;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ProcessToolExtraTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     ProcessTool tool = new ProcessTool();
 
     @Test
-    void unknownActionReturnsFailure() {
+    void unknownActionReturnsStructuredFailure() throws Exception {
         ToolResult r = tool.execute("{\"action\":\"dance\"}", Message.assistant("",0), Session.create("u","p","m"));
-        assertThat(r.success()).isFalse();
+        assertJsonError(r).contains("Unknown process action");
+    }
+
+    @Test
+    void invalidJsonReturnsStructuredFailure() throws Exception {
+        ToolResult r = tool.execute("not-json", Message.assistant("",0), Session.create("u","p","m"));
+        assertJsonError(r).contains("Invalid tool arguments");
+    }
+
+    @Test
+    void missingSessionIdReturnsStructuredFailure() throws Exception {
+        ToolResult r = tool.execute("{\"action\":\"poll\"}", Message.assistant("",0), Session.create("u","p","m"));
+        assertJsonError(r).contains("session_id is required for poll");
+    }
+
+    @Test
+    void invalidWaitTimeoutReturnsStructuredFailure() throws Exception {
+        ToolResult r = tool.execute("{\"action\":\"wait\",\"session_id\":\"bad\",\"timeout\":0}", Message.assistant("",0), Session.create("u","p","m"));
+        assertJsonError(r).contains("timeout must be positive");
     }
 
     @Test
@@ -26,42 +48,59 @@ class ProcessToolExtraTest {
     @Test
     void pollUnknownProcess() {
         ToolResult r = tool.execute("{\"action\":\"poll\",\"session_id\":\"bad\"}", Message.assistant("",0), Session.create("u","p","m"));
-        assertThat(r.success()).isFalse();
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test
     void logUnknownProcess() {
         ToolResult r = tool.execute("{\"action\":\"log\",\"session_id\":\"bad\"}", Message.assistant("",0), Session.create("u","p","m"));
-        assertThat(r.success()).isFalse();
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test
     void waitUnknownProcess() {
         ToolResult r = tool.execute("{\"action\":\"wait\",\"session_id\":\"bad\"}", Message.assistant("",0), Session.create("u","p","m"));
-        assertThat(r.success()).isFalse();
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test
     void killUnknownProcess() {
         ToolResult r = tool.execute("{\"action\":\"kill\",\"session_id\":\"bad\"}", Message.assistant("",0), Session.create("u","p","m"));
-        assertThat(r.success()).isFalse();
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test
     void writeUnknownProcess() {
         ToolResult r = tool.execute("{\"action\":\"write\",\"session_id\":\"bad\",\"data\":\"x\"}", Message.assistant("",0), Session.create("u","p","m"));
-        assertThat(r.success()).isFalse();
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test
     void submitUnknownProcess() {
         ToolResult r = tool.execute("{\"action\":\"submit\",\"session_id\":\"bad\",\"data\":\"x\"}", Message.assistant("",0), Session.create("u","p","m"));
-        assertThat(r.success()).isFalse();
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test
     void closeUnknownProcess() {
         ToolResult r = tool.execute("{\"action\":\"close\",\"session_id\":\"bad\"}", Message.assistant("",0), Session.create("u","p","m"));
-        assertThat(r.success()).isFalse();
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("\"status\":\"not_found\"");
+    }
+
+    private String assertJsonError(ToolResult result) throws Exception {
+        assertThat(result.success()).isFalse();
+        assertThat(result.content()).isNotBlank();
+        JsonNode json = JSON.readTree(result.content());
+        assertThat(json.has("error")).isTrue();
+        String error = json.get("error").asText();
+        assertThat(result.error()).isEqualTo(error);
+        return error;
     }
 }

@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.security;
 
+import com.azhukov.agent.core.context.HistorySanitizer;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.ToolCall;
@@ -32,8 +33,7 @@ public class MessageSanitizer {
             }
             result.add(sanitized);
         }
-        // Role-alternation repair: insert placeholder between consecutive same-role messages
-        return repairRoleAlternation(result);
+        return HistorySanitizer.sanitizeForModelRequest(result);
     }
 
     public Message sanitize(Message message) {
@@ -78,37 +78,6 @@ public class MessageSanitizer {
         // Check if content is only thinking tags with nothing outside
         String stripped = content.replaceAll("(?s)<think>.*?</think>", "").trim();
         return stripped.isEmpty();
-    }
-
-    /**
-     * Insert a placeholder message of the opposite role between consecutive same-role messages.
-     */
-    private List<Message> repairRoleAlternation(List<Message> messages) {
-        if (messages.size() < 2) return messages;
-        List<Message> result = new ArrayList<>();
-        for (int i = 0; i < messages.size(); i++) {
-            Message current = messages.get(i);
-            if (!result.isEmpty()) {
-                Message previous = result.get(result.size() - 1);
-                if (previous.role() == current.role()) {
-                    // Insert placeholder of opposite role
-                    Role oppositeRole = getOppositeRole(current.role());
-                    result.add(new Message(oppositeRole, "(context)", null, null, null, 0));
-                }
-            }
-            result.add(current);
-        }
-        return result;
-    }
-
-    private Role getOppositeRole(Role role) {
-        return switch (role) {
-            case USER -> Role.ASSISTANT;
-            case ASSISTANT -> Role.USER;
-            case SYSTEM -> Role.USER;
-            case DEVELOPER -> Role.USER;
-            case TOOL -> Role.ASSISTANT;
-        };
     }
 
     /**

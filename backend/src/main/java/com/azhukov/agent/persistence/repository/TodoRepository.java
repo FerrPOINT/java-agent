@@ -20,6 +20,8 @@ public interface TodoRepository extends JpaRepository<TodoEntity, UUID> {
 
     List<TodoEntity> findBySessionId(UUID sessionId);
 
+    List<TodoEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId);
+
     Page<TodoEntity> findByUserId(String userId, Pageable pageable);
 
     List<TodoEntity> findByUserIdAndStatus(String userId, String status);
@@ -33,4 +35,12 @@ public interface TodoRepository extends JpaRepository<TodoEntity, UUID> {
     @Modifying
     @Transactional
     void deleteByUserId(String userId);
+
+    @Modifying
+    @Transactional
+    void deleteBySessionId(UUID sessionId);
+
+    @Modifying
+    @Transactional
+    void deleteBySessionIdAndUserId(UUID sessionId, String userId);
 }

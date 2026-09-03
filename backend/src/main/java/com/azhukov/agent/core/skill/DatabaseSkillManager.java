@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -299,11 +300,11 @@ public class DatabaseSkillManager implements SkillManager {
          // BUG 6: Check frontmatter disabled: true for filesystem skills.
          // Previously isSkillDisabled() always returned false, ignoring the frontmatter field.
          // Now we parse the frontmatter directly, same as toSkillInfo() does for DB skills.
-         boolean disabled = false;
-         Object disabledObj = fm.get("disabled");
-         if (disabledObj != null) {
-             disabled = Boolean.TRUE.equals(disabledObj) || "true".equals(String.valueOf(disabledObj));
-         }
+     boolean disabled = isSkillDisabled(skillName);
+     Object disabledObj = fm.get("disabled");
+     if (disabledObj != null) {
+         disabled = disabled || Boolean.TRUE.equals(disabledObj) || "true".equals(String.valueOf(disabledObj));
+     }
 
          // List linked files from filesystem
          LinkedFiles linkedFiles = listLinkedFilesFromFilesystem(skillFile.getParent());
@@ -435,7 +436,13 @@ public class DatabaseSkillManager implements SkillManager {
      // Check frontmatter disabled: true — this is checked by the caller via SkillViewTool
      // Here we just check config-level disabled list
      // (the SkillUtils-based config check requires properties injection)
-     return false;
+     if (properties == null || properties.getSkills() == null || properties.getSkills().getDisabled() == null) {
+         return false;
+     }
+     return properties.getSkills().getDisabled().stream()
+         .filter(name -> name != null && !name.isBlank())
+         .map(String::trim)
+         .anyMatch(skillName::equals);
  }
 
  private SkillInfo toSkillInfo(SkillEntity e) {
@@ -443,7 +450,7 @@ public class DatabaseSkillManager implements SkillManager {
      // Parse frontmatter for tags and related_skills
      List<String> tags = List.of();
      List<String> relatedSkills = List.of();
-     boolean disabled = false;
+     boolean disabled = isSkillDisabled(e.getName());
      LinkedFiles linkedFiles = null;
      if (e.getContent() != null) {
          SkillUtils.FrontmatterResult fr = SkillUtils.parseFrontmatter(e.getContent());
@@ -452,7 +459,7 @@ public class DatabaseSkillManager implements SkillManager {
          relatedSkills = extractRelatedSkills(fm);
          // Check disabled: true in frontmatter
          Object disabledObj = fm.get("disabled");
-         disabled = disabledObj != null && (Boolean.TRUE.equals(disabledObj) || "true".equals(String.valueOf(disabledObj)));
+         disabled = disabled || disabledObj != null && (Boolean.TRUE.equals(disabledObj) || "true".equals(String.valueOf(disabledObj)));
      }
      // List linked files from filesystem
      Path skillDir = getSkillsDir().resolve(e.getName());
@@ -529,9 +536,12 @@ public class DatabaseSkillManager implements SkillManager {
  // S3: Write support file
  @Override
  public void writeSupportFile(String skillName, String filePath, String content) {
-     validateSupportFilePath(filePath);
+     Path target = resolveSupportFileTarget(skillName, filePath);
      // P1-9: Validate support file content size
-     if (content != null && content.getBytes().length > MAX_SUPPORT_FILE_BYTES) {
+     if (content == null) {
+         throw new IllegalArgumentException("Support file content cannot be null.");
+     }
+     if (content.getBytes(StandardCharsets.UTF_8).length > MAX_SUPPORT_FILE_BYTES) {
          throw new IllegalArgumentException(
              "Support file content exceeds " + MAX_SUPPORT_FILE_BYTES + " bytes (limit: 1 MiB)."
          );
@@ -543,8 +553,6 @@ public class DatabaseSkillManager implements SkillManager {
          log.warn("Security scan blocked support file save '{}/{}': {}", skillName, filePath, scanError);
          throw new SecurityException(scanError);
      }
-     Path dir = getSkillsDir().resolve(skillName);
-     Path target = dir.resolve(filePath);
      try {
          Files.createDirectories(target.getParent());
          Files.writeString(target, content);
@@ -557,8 +565,7 @@ public class DatabaseSkillManager implements SkillManager {
  // S3: Remove support file
  @Override
  public boolean removeSupportFile(String skillName, String filePath) {
- validateSupportFilePath(filePath);
- Path target = getSkillsDir().resolve(skillName).resolve(filePath);
+ Path target = resolveSupportFileTarget(skillName, filePath);
  try {
  return Files.deleteIfExists(target);
  } catch (IOException e) {
@@ -570,8 +577,7 @@ public class DatabaseSkillManager implements SkillManager {
  // S3: Read support file
  @Override
  public String readSupportFile(String skillName, String filePath) {
- validateSupportFilePath(filePath);
- Path target = getSkillsDir().resolve(skillName).resolve(filePath);
+ Path target = resolveSupportFileTarget(skillName, filePath);
  try {
  return Files.exists(target) ? Files.readString(target) : null;
  } catch (IOException e) {
@@ -582,7 +588,8 @@ public class DatabaseSkillManager implements SkillManager {
  // S3: List support files
  @Override
  public List<String> listSupportFiles(String skillName) {
- Path dir = getSkillsDir().resolve(skillName);
+ validateSkillNameForSupportPath(skillName);
+ Path dir = getSkillsDir().resolve(skillName).normalize();
  if (!Files.isDirectory(dir)) return List.of();
  List<String> result = new ArrayList<>();
  for (String subdir : ALLOWED_SUBDIRS) {
@@ -743,21 +750,50 @@ public class DatabaseSkillManager implements SkillManager {
  .orElse(TrustLevel.AGENT_CREATED);
  }
 
+ private Path resolveSupportFileTarget(String skillName, String filePath) {
+ validateSkillNameForSupportPath(skillName);
+ String normalized = validateSupportFilePath(filePath);
+ Path dir = getSkillsDir().resolve(skillName).normalize();
+ Path target = dir.resolve(normalized).normalize();
+ if (!target.startsWith(dir)) {
+ throw new IllegalArgumentException("Support file path escapes skill directory: " + filePath);
+ }
+ return target;
+ }
+
+ private void validateSkillNameForSupportPath(String skillName) {
+ String nameError = validateName(skillName);
+ if (nameError != null) {
+ throw new IllegalArgumentException(nameError);
+ }
+ }
+
  // S3: Validate file path — only references/, templates/, scripts/, assets/
- private void validateSupportFilePath(String filePath) {
+ private String validateSupportFilePath(String filePath) {
  if (filePath == null || filePath.isBlank()) {
  throw new IllegalArgumentException("File path must not be blank");
  }
  String normalized = filePath.replace('\\', '/');
- if (normalized.contains("..")) {
+ Path path = Path.of(normalized);
+ if (path.isAbsolute()) {
+ throw new IllegalArgumentException("Support file path must be relative: " + filePath);
+ }
+ for (Path part : path) {
+ if ("..".equals(part.toString())) {
  throw new IllegalArgumentException("Path traversal not allowed: " + filePath);
  }
- boolean valid = ALLOWED_SUBDIRS.stream().anyMatch(normalized::startsWith);
+ }
+ if (path.getNameCount() < 2) {
+ throw new IllegalArgumentException("Support file must include a filename under an allowed subdirectory: " + filePath);
+ }
+ String first = path.getName(0).toString();
+ boolean valid = ALLOWED_SUBDIRS.contains(first);
  if (!valid) {
  throw new IllegalArgumentException(
  "Support file must be under one of: " + String.join(", ", ALLOWED_SUBDIRS) +
  ". Got: '" + filePath + "'"
  );
  }
+ return normalized;
  }
 }

@@ -13,6 +13,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -152,6 +153,67 @@ class SessionSearchServiceTest {
         assertThat(result.readMessages.get(0).content()).isEqualTo("Hello");
         assertThat(result.readMessages.get(1).role()).isEqualTo("assistant");
         assertThat(result.readLink).isEqualTo("@session:default/" + sessionId);
+    }
+
+    @Test
+    void read_sessionIdOnlyHidesInactiveRowsLikeHermes() {
+        UUID sessionId = UUID.randomUUID();
+        SessionEntity session = newSessionEntity(sessionId, "Read Test", "cli");
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+
+        MessageEntity active = newMessageEntity(sessionId, "user", "live", 0);
+        MessageEntity compacted = newMessageEntity(sessionId, "assistant", "compacted archive", 1);
+        compacted.setActive(false);
+        compacted.setCompacted(true);
+        MessageEntity rewound = newMessageEntity(sessionId, "user", "rewound", 2);
+        rewound.setActive(false);
+        rewound.setCompacted(false);
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId))
+            .thenReturn(List.of(active, compacted, rewound));
+
+        SessionSearchService.SearchResult result = service.search(
+            null, null, null, sessionId.toString(), null, null, null, null, null, null
+        );
+
+        assertThat(result.success).isTrue();
+        assertThat(result.readTotal).isEqualTo(1);
+        assertThat(result.readMessages).extracting(SessionSearchService.ShapedMessage::content)
+            .containsExactly("live");
+    }
+
+    @Test
+    void read_preservesStoredAssistantToolCallsArray() {
+        UUID sessionId = UUID.randomUUID();
+        SessionEntity session = newSessionEntity(sessionId, "Read Test", "cli");
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+
+        MessageEntity assistant = newMessageEntity(sessionId, "assistant", "", 1);
+        assistant.setToolCallId("legacy-call");
+        assistant.setToolCallName("legacy");
+        assistant.setToolCallArguments("{}");
+        assistant.setToolCalls("""
+            [
+              {"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"java\\"}"}},
+              {"id":"call_2","type":"function","function":{"name":"read_file","arguments":"{\\"path\\":\\"README.md\\"}"}}
+            ]
+            """);
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of(assistant));
+
+        SessionSearchService.SearchResult result = service.search(
+            null, null, null, sessionId.toString(), null, null, null, null, null, null
+        );
+
+        assertThat(result.success).isTrue();
+        assertThat(result.readMessages).hasSize(1);
+        List<Map<String, Object>> toolCalls = result.readMessages.get(0).toolCalls();
+        assertThat(toolCalls).hasSize(2);
+        assertThat(toolCalls.get(0)).containsEntry("id", "call_1");
+        assertThat(toolCalls.get(1)).containsEntry("id", "call_2");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> function = (Map<String, Object>) toolCalls.get(1).get("function");
+        assertThat(function)
+            .containsEntry("name", "read_file")
+            .containsEntry("arguments", "{\"path\":\"README.md\"}");
     }
 
     @Test
@@ -415,6 +477,137 @@ class SessionSearchServiceTest {
     }
 
     @Test
+    void webSearchUsesHermesLimitAndSourceFilters() {
+        UUID cliSessionId = UUID.randomUUID();
+        UUID cronSessionId = UUID.randomUUID();
+        SessionEntity cliSession = newSessionEntity(cliSessionId, "Needle CLI", "cli");
+        SessionEntity cronSession = newSessionEntity(cronSessionId, "Needle Cron", "cron");
+        when(messageRepository.searchByContentFtsExcludingSources(eq("needle"), any()))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.searchByTitleFtsExcludingSources(eq("needle"), any()))
+            .thenReturn(List.of(cronSession, cliSession));
+        when(sessionRepository.findByTitleIgnoreCase("needle")).thenReturn(null);
+        when(sessionRepository.findById(cliSessionId)).thenReturn(Optional.of(cliSession));
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> results =
+            (List<Map<String, Object>>) service
+                .webSearch("needle", 500, null, "cli", null, "cron")
+                .get("results");
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0))
+            .containsEntry("id", cliSessionId.toString())
+            .containsEntry("session_id", cliSessionId.toString())
+            .containsEntry("lineage_root", cliSessionId.toString())
+            .containsEntry("source", "cli")
+            .containsEntry("model", "test-model")
+            .containsEntry("title", "Needle CLI")
+            .containsEntry("message_count", 5)
+            .containsEntry("tool_call_count", 0)
+            .containsEntry("input_tokens", 0)
+            .containsEntry("output_tokens", 0)
+            .containsEntry("preview", "Preview text")
+            .containsEntry("profile", "default")
+            .containsEntry("is_default_profile", true);
+        assertThat(results.get(0).get("started_at")).isInstanceOf(Long.class);
+        assertThat(results.get(0).get("last_active")).isInstanceOf(Long.class);
+        assertThat(results.get(0).get("session_started")).isEqualTo(results.get(0).get("started_at"));
+    }
+
+    @Test
+    void webSearchSurfacesDirectSessionIdMatchesFirstLikeHermes() {
+        UUID sessionId = UUID.randomUUID();
+        SessionEntity session = newSessionEntity(sessionId, "Direct hit", "cli");
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+        when(messageRepository.searchByContentFtsExcludingSources(eq(sessionId.toString()), any()))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.searchByTitleFtsExcludingSources(eq(sessionId.toString()), any()))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleIgnoreCase(sessionId.toString())).thenReturn(null);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> results =
+            (List<Map<String, Object>>) service
+                .webSearch(sessionId.toString(), 20, null, null, null, null)
+                .get("results");
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0))
+            .containsEntry("session_id", sessionId.toString())
+            .containsEntry("snippet", "Preview text")
+            .containsEntry("role", null);
+    }
+
+    @Test
+    void discovery_defaultsToUserAssistantRolesAndReportsMatchedRole() {
+        UUID toolSessionId = UUID.randomUUID();
+        UUID assistantSessionId = UUID.randomUUID();
+        MessageEntity toolMsg = newMessageEntity(toolSessionId, "tool", "searchterm in tool output", 0);
+        MessageEntity assistantMsg = newMessageEntity(assistantSessionId, "assistant", "searchterm in answer", 0);
+        SessionEntity assistantSession = newSessionEntity(assistantSessionId, "Assistant Hit", "cli");
+
+        when(messageRepository.searchByContentFtsExcludingSources(eq("searchterm"), any()))
+            .thenReturn(List.of(toolMsg, assistantMsg));
+        when(sessionRepository.searchByTitleFtsExcludingSources(eq("searchterm"), any()))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleContainingIgnoreCase("searchterm"))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleIgnoreCase("searchterm")).thenReturn(null);
+        when(sessionRepository.findAllById(any()))
+            .thenReturn(List.of(
+                newSessionEntity(toolSessionId, "Tool Hit", "cli"),
+                assistantSession));
+        when(sessionRepository.findById(assistantSessionId)).thenReturn(Optional.of(assistantSession));
+        when(messageRepository.findById(assistantMsg.getId())).thenReturn(Optional.of(assistantMsg));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(assistantSessionId))
+            .thenReturn(List.of(assistantMsg));
+
+        SessionSearchService.SearchResult result = service.search(
+            "searchterm", null, null, null, null, null, null, null, null, null
+        );
+
+        assertThat(result.success).isTrue();
+        assertThat(result.discoverResults).hasSize(1);
+        assertThat(result.discoverResults.get(0).sessionId()).isEqualTo(assistantSessionId);
+        assertThat(result.discoverResults.get(0).matchedRole()).isEqualTo("assistant");
+    }
+
+    @Test
+    void discovery_appliesExplicitRoleFilter() {
+        UUID userSessionId = UUID.randomUUID();
+        UUID toolSessionId = UUID.randomUUID();
+        MessageEntity userMsg = newMessageEntity(userSessionId, "user", "searchterm in user message", 0);
+        MessageEntity toolMsg = newMessageEntity(toolSessionId, "tool", "searchterm in tool output", 0);
+        SessionEntity toolSession = newSessionEntity(toolSessionId, "Tool Hit", "cli");
+
+        when(messageRepository.searchByContentFtsExcludingSources(eq("searchterm"), any()))
+            .thenReturn(List.of(userMsg, toolMsg));
+        when(sessionRepository.searchByTitleFtsExcludingSources(eq("searchterm"), any()))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleContainingIgnoreCase("searchterm"))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleIgnoreCase("searchterm")).thenReturn(null);
+        when(sessionRepository.findAllById(any()))
+            .thenReturn(List.of(
+                newSessionEntity(userSessionId, "User Hit", "cli"),
+                toolSession));
+        when(sessionRepository.findById(toolSessionId)).thenReturn(Optional.of(toolSession));
+        when(messageRepository.findById(toolMsg.getId())).thenReturn(Optional.of(toolMsg));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(toolSessionId))
+            .thenReturn(List.of(toolMsg));
+
+        SessionSearchService.SearchResult result = service.search(
+            "searchterm", "tool", null, null, null, null, null, null, null, null
+        );
+
+        assertThat(result.success).isTrue();
+        assertThat(result.discoverResults).hasSize(1);
+        assertThat(result.discoverResults.get(0).sessionId()).isEqualTo(toolSessionId);
+        assertThat(result.discoverResults.get(0).matchedRole()).isEqualTo("tool");
+    }
+
+    @Test
     void discovery_ftsFails_fallsBackToLikeSearch() {
         UUID sessionId = UUID.randomUUID();
         SessionEntity session = newSessionEntity(sessionId, "Session", "cli");
@@ -442,6 +635,84 @@ class SessionSearchServiceTest {
         assertThat(result.success).isTrue();
         assertThat(result.discoverResults).isNotEmpty();
         assertThat(result.discoverResults.get(0).snippet()).contains("fallback");
+    }
+
+    @Test
+    void discovery_ftsFails_fallsBackToLikeSearchAcrossStoredToolCalls() {
+        UUID sessionId = UUID.randomUUID();
+        SessionEntity session = newSessionEntity(sessionId, "Tool Calls Session", "cli");
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+
+        MessageEntity assistant = newMessageEntity(sessionId, "assistant", "", 0);
+        assistant.setToolCalls("""
+            [
+              {"id":"call_1","type":"function","function":{"name":"browser_snapshot","arguments":"{\\"label\\":\\"checkout-step\\"}"}}
+            ]
+            """);
+
+        when(messageRepository.searchByContentFtsExcludingSources(any(), any()))
+            .thenThrow(new RuntimeException("FTS not available"));
+        when(messageRepository.findByContentContainingIgnoreCase("checkout-step"))
+            .thenReturn(List.of(assistant));
+        when(sessionRepository.searchByTitleFtsExcludingSources(any(), any()))
+            .thenThrow(new RuntimeException("FTS not available"));
+        when(sessionRepository.findByTitleContainingIgnoreCase("checkout-step"))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleIgnoreCase("checkout-step"))
+            .thenReturn(null);
+        when(sessionRepository.findAllById(any())).thenReturn(List.of(session));
+        when(messageRepository.findById(assistant.getId())).thenReturn(Optional.of(assistant));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of(assistant));
+
+        SessionSearchService.SearchResult result = service.search(
+            "checkout-step", null, null, null, null, null, null, null, null, null
+        );
+
+        assertThat(result.success).isTrue();
+        assertThat(result.discoverResults).hasSize(1);
+        assertThat(result.discoverResults.get(0).matchedRole()).isEqualTo("assistant");
+        List<Map<String, Object>> toolCalls = result.discoverResults.get(0).messages().get(0).toolCalls();
+        assertThat(toolCalls).hasSize(1);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> function = (Map<String, Object>) toolCalls.get(0).get("function");
+        assertThat(function)
+            .containsEntry("name", "browser_snapshot")
+            .containsEntry("arguments", "{\"label\":\"checkout-step\"}");
+    }
+
+    @Test
+    void discovery_filtersRewoundRowsButKeepsCompactedArchives() {
+        UUID compactedSessionId = UUID.randomUUID();
+        UUID rewoundSessionId = UUID.randomUUID();
+        SessionEntity compactedSession = newSessionEntity(compactedSessionId, "Compacted", "cli");
+        SessionEntity rewoundSession = newSessionEntity(rewoundSessionId, "Rewound", "cli");
+        MessageEntity compacted = newMessageEntity(compactedSessionId, "user", "needle compacted", 1);
+        compacted.setActive(false);
+        compacted.setCompacted(true);
+        MessageEntity rewound = newMessageEntity(rewoundSessionId, "user", "needle rewound", 1);
+        rewound.setActive(false);
+        rewound.setCompacted(false);
+
+        when(messageRepository.searchByContentFtsExcludingSources(eq("needle"), any()))
+            .thenReturn(List.of(rewound, compacted));
+        when(sessionRepository.searchByTitleFtsExcludingSources(eq("needle"), any()))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleIgnoreCase("needle")).thenReturn(null);
+        when(sessionRepository.findAllById(any()))
+            .thenReturn(List.of(compactedSession, rewoundSession));
+        when(sessionRepository.findById(compactedSessionId)).thenReturn(Optional.of(compactedSession));
+        when(messageRepository.findById(compacted.getId())).thenReturn(Optional.of(compacted));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(compactedSessionId))
+            .thenReturn(List.of(compacted));
+
+        SessionSearchService.SearchResult result = service.search(
+            "needle", null, null, null, null, null, null, null, null, null
+        );
+
+        assertThat(result.success).isTrue();
+        assertThat(result.discoverResults).hasSize(1);
+        assertThat(result.discoverResults.get(0).sessionId()).isEqualTo(compactedSessionId);
+        assertThat(result.discoverResults.get(0).snippet()).contains("compacted");
     }
 
     // ── Error handling: invalid session_id ──

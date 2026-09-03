@@ -20,6 +20,14 @@ class SkillUtilsBranchTest {
 
     private AgentProperties properties;
 
+    private static String currentPlatformFrontmatterValue() {
+        return switch (SkillUtils.currentPlatformId()) {
+            case "win32" -> "windows";
+            case "darwin" -> "macos";
+            default -> SkillUtils.currentPlatformId();
+        };
+    }
+
     @BeforeEach
     void setUp() {
         properties = new AgentProperties();
@@ -139,15 +147,16 @@ class SkillUtilsBranchTest {
     @Test
     void skillMatchesPlatform_nonListValue_wrapsInList() {
         // Non-list value should be wrapped
-        assertThat(SkillUtils.skillMatchesPlatform(Map.of("platforms", "linux"))).isTrue();
+        assertThat(SkillUtils.skillMatchesPlatform(Map.of(
+            "platforms", currentPlatformFrontmatterValue()
+        ))).isTrue();
     }
 
     @Test
     void skillMatchesPlatform_matchingPlatform_returnsTrue() {
-        String os = System.getProperty("os.name", "").toLowerCase();
-        // Use the current OS
-        String platform = os.contains("linux") ? "linux" : os.contains("mac") ? "macos" : "windows";
-        assertThat(SkillUtils.skillMatchesPlatform(Map.of("platforms", List.of(platform)))).isTrue();
+        assertThat(SkillUtils.skillMatchesPlatform(Map.of(
+            "platforms", List.of(currentPlatformFrontmatterValue())
+        ))).isTrue();
     }
 
     @Test

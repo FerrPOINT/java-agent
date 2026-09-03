@@ -5,6 +5,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
+import com.azhukov.agent.core.model.ToolCall;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -165,5 +166,41 @@ class DefaultContextCompressorTest {
         assertThat(result).hasSize(5);
         assertThat(result.get(1).role()).isEqualTo(Role.SYSTEM);
         assertThat(result.get(1).content()).doesNotContain("[image:");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void compressionToolPairSanitizerMatchesCompositeAliases() throws Exception {
+        var compressor = new DefaultContextCompressor(new NoOpModelClient(), null, new AgentProperties());
+        var method = DefaultContextCompressor.class.getDeclaredMethod("sanitizeToolPairs", List.class);
+        method.setAccessible(true);
+        List<Message> history = List.of(
+            Message.assistantToolCalls(List.of(new ToolCall("call_1|fc_1", "lookup", "{}")), 1),
+            Message.toolResult("call_1", "ok", 1)
+        );
+
+        List<Message> out = (List<Message>) method.invoke(compressor, history);
+
+        assertThat(out).containsExactlyElementsOf(history);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void compressionToolPairSanitizerDropsDuplicateAssistantToolCallAliases() throws Exception {
+        var compressor = new DefaultContextCompressor(new NoOpModelClient(), null, new AgentProperties());
+        var method = DefaultContextCompressor.class.getDeclaredMethod("sanitizeToolPairs", List.class);
+        method.setAccessible(true);
+        List<Message> history = List.of(
+            Message.assistantToolCalls(List.of(
+                new ToolCall("call_1|fc_1", "lookup", "{}"),
+                new ToolCall("call_1", "lookup", "{}")), 1),
+            Message.toolResult("call_1", "ok", 1)
+        );
+
+        List<Message> out = (List<Message>) method.invoke(compressor, history);
+
+        assertThat(out).hasSize(2);
+        assertThat(out.get(0).toolCalls()).extracting(ToolCall::id)
+            .containsExactly("call_1|fc_1");
     }
 }

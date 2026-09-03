@@ -1,6 +1,11 @@
 package com.azhukov.agent.core.skill;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -8,6 +13,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * S2: Tests for SkillPreprocessor — template var names, CWD bug fix, inline shell.
  */
 class SkillPreprocessorTest {
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    private static String cwdCommand() {
+        return isWindows() ? "cd" : "pwd";
+    }
+
+    private static String readFileCommand(String fileName) {
+        return isWindows() ? "type " + fileName : "cat " + fileName;
+    }
 
     @Test
     void substituteHermesSessionId() {
@@ -84,22 +101,23 @@ class SkillPreprocessorTest {
     }
 
     @Test
-    void inlineShell_expandedWhenEnabled() {
+    void inlineShell_expandedWhenEnabled(@TempDir Path tempDir) {
         SkillPreprocessor p = new SkillPreprocessor();
         p.setInlineShellEnabled(true);
         String content = "Result: !`echo test`";
-        String result = p.preprocess(content, null, "/tmp");
+        String result = p.preprocess(content, null, tempDir.toString());
         assertThat(result).isEqualTo("Result: test");
     }
 
     @Test
-    void inlineShell_setsCwdToSkillDir() {
+    void inlineShell_setsCwdToSkillDir(@TempDir Path tempDir) throws IOException {
         SkillPreprocessor p = new SkillPreprocessor();
         p.setInlineShellEnabled(true);
         // Running pwd should return the skill directory
-        String content = "CWD: !`pwd`";
-        String result = p.preprocess(content, null, "/tmp");
-        assertThat(result).startsWith("CWD: /tmp");
+        String content = "CWD: !`" + cwdCommand() + "`";
+        String result = p.preprocess(content, null, tempDir.toString());
+        String cwd = result.substring("CWD: ".length()).trim();
+        assertThat(Files.isSameFile(Path.of(cwd), tempDir)).isTrue();
     }
 
     @Test
@@ -113,12 +131,12 @@ class SkillPreprocessorTest {
     }
 
     @Test
-    void inlineShell_relativePathWorks_usesSkillDirAsCwd() {
+    void inlineShell_relativePathWorks_usesSkillDirAsCwd(@TempDir Path tempDir) throws IOException {
         SkillPreprocessor p = new SkillPreprocessor();
         p.setInlineShellEnabled(true);
-        // This tests that CWD is set — echo works regardless, but relative commands need CWD
-        String content = "Echo: !`echo $PWD`";
-        String result = p.preprocess(content, null, "/tmp");
-        assertThat(result).contains("/tmp");
+        Files.writeString(tempDir.resolve("marker.txt"), "relative-ok");
+        String content = "Echo: !`" + readFileCommand("marker.txt") + "`";
+        String result = p.preprocess(content, null, tempDir.toString());
+        assertThat(result).contains("relative-ok");
     }
 }

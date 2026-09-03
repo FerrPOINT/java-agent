@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -111,9 +112,15 @@ public class BotLockManager {
         // making it look like the lock is free.
         lockChannel = FileChannel.open(lockPath,
             StandardOpenOption.CREATE, StandardOpenOption.WRITE);
-        fileLock = lockChannel.tryLock();
+        try {
+            fileLock = lockChannel.tryLock();
+        } catch (OverlappingFileLockException e) {
+            closeLockChannelQuietly();
+            throw new LockAcquisitionException(
+                "Another bot instance is running in this JVM. Use --replace to take over.");
+        }
         if (fileLock == null) {
-            lockChannel.close();
+            closeLockChannelQuietly();
             throw new LockAcquisitionException("Could not acquire file lock on " + lockPath);
         }
         // Truncate AFTER successful lock so we start with a clean file
@@ -159,6 +166,9 @@ public class BotLockManager {
      * @return true if another live process holds the lock
      */
     public boolean isLockHeld() {
+        if (fileLock != null && fileLock.isValid()) {
+            return true;
+        }
         Path lockPath = getLockFilePath();
         LockRecord record = readLockRecord(lockPath);
         if (record == null) {
@@ -261,6 +271,18 @@ public class BotLockManager {
             Files.deleteIfExists(lockPath);
         } catch (IOException e) {
             log.debug("Could not delete lock file {}: {}", lockPath, e.getMessage());
+        }
+    }
+
+    private void closeLockChannelQuietly() {
+        if (lockChannel != null) {
+            try {
+                lockChannel.close();
+            } catch (IOException closeError) {
+                log.debug("Could not close lock channel: {}", closeError.getMessage());
+            } finally {
+                lockChannel = null;
+            }
         }
     }
 

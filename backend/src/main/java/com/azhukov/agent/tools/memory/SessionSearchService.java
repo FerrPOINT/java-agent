@@ -5,6 +5,8 @@ import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -36,6 +38,9 @@ public class SessionSearchService {
     private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
     private final SessionLineageService sessionLineageService;
+
+    private static final ObjectMapper TOOL_CALLS_JSON = new ObjectMapper();
+    private static final TypeReference<List<Map<String, Object>>> TOOL_CALLS_TYPE = new TypeReference<>() {};
 
     static final List<String> HIDDEN_SESSION_SOURCES = List.of("kanban", "subagent", "tool");
     static final List<String> DEMOTED_SESSION_SOURCES = List.of("cron");
@@ -131,29 +136,117 @@ public class SessionSearchService {
         return discover(query.trim(), roleList, lim, sortNorm, detailNorm, currentSessionId, resolvedProfile);
     }
 
+    public Map<String, Object> webSearch(
+            String query,
+            Integer limit,
+            String profile,
+            String source,
+            String sources,
+            String excludeSources) {
+        if (query == null || query.isBlank()) {
+            return Map.of("results", List.of());
+        }
+        int safeLimit = limit != null ? clamp(limit, 1, 100) : 20;
+        List<String> includeSources = parseIncludeSources(source, sources);
+        List<String> explicitExcludeSources = parseCsv(excludeSources);
+        List<Map<String, Object>> webResults = new ArrayList<>();
+        LinkedHashSet<UUID> seenLineages = new LinkedHashSet<>();
+        UUID directSessionId = parseUuidOrNull(query.trim());
+        if (directSessionId != null) {
+            sessionRepository.findById(directSessionId)
+                .filter(session -> matchesSourceFilters(session, includeSources, explicitExcludeSources))
+                .ifPresent(session -> {
+                    webResults.add(buildWebSearchResult(
+                        new DiscoverResult(
+                            session.getId(),
+                            formatTimestamp(session.getCreatedAt()),
+                            session.getSource() != null ? session.getSource() : "unknown",
+                            session.getModelName() != null ? session.getModelName() : "unknown",
+                            session.getTitle(),
+                            null,
+                            null,
+                            session.getPreview() != null && !session.getPreview().isBlank()
+                                ? session.getPreview()
+                                : "Session ID: " + session.getId(),
+                            List.of(),
+                            List.of(),
+                            List.of(),
+                            0,
+                            0,
+                            "full",
+                            null,
+                            sessionLink(session.getId(), profile)),
+                        session));
+                    seenLineages.add(session.getId());
+                });
+        }
+        SearchResult result = discover(
+            query.trim(),
+            null,
+            safeLimit,
+            null,
+            "adaptive",
+            null,
+            profile,
+            includeSources,
+            explicitExcludeSources);
+        if (result.discoverResults != null) {
+            for (DiscoverResult discoverResult : result.discoverResults) {
+                if (webResults.size() >= safeLimit) {
+                    break;
+                }
+                UUID lineageRoot = discoverResult.parentSessionId() != null
+                    ? discoverResult.parentSessionId()
+                    : discoverResult.sessionId();
+                if (!seenLineages.add(lineageRoot)) {
+                    continue;
+                }
+                webResults.add(buildWebSearchResult(discoverResult, null));
+            }
+        }
+        return Map.of(
+            "results",
+            webResults);
+    }
+
     // ── DISCOVERY ──
 
     private SearchResult discover(String query, List<String> roleFilter, int limit, String sort,
                                    String detail, UUID currentSessionId, String linkProfile) {
+        return discover(query, roleFilter, limit, sort, detail, currentSessionId, linkProfile, List.of(), List.of());
+    }
+
+    private SearchResult discover(String query, List<String> roleFilter, int limit, String sort,
+                                   String detail, UUID currentSessionId, String linkProfile,
+                                   List<String> includeSources, List<String> excludeSources) {
         UUID currentLineageRoot = currentSessionId != null ? resolveLineageRoot(currentSessionId) : null;
+        List<String> effectiveRoleFilter = normalizeRoleFilter(roleFilter);
+        List<String> effectiveExcludedSources = mergeExcludedSources(excludeSources);
 
         // FTS content search (excluding hidden sources)
         List<MessageEntity> ftsMessages;
         try {
-            ftsMessages = messageRepository.searchByContentFtsExcludingSources(query, HIDDEN_SESSION_SOURCES);
+            ftsMessages = messageRepository.searchByContentFtsExcludingSources(query, effectiveExcludedSources);
         } catch (Exception e) {
             log.debug("FTS content search failed, falling back to LIKE: {}", e.getMessage());
             ftsMessages = messageRepository.findByContentContainingIgnoreCase(query);
         }
+        ftsMessages = filterByRole(ftsMessages, effectiveRoleFilter).stream()
+            .filter(SessionSearchService::isLiveOrCompacted)
+            .collect(Collectors.toList());
 
         // FTS title search
         List<SessionEntity> ftsSessions;
         try {
-            ftsSessions = sessionRepository.searchByTitleFtsExcludingSources(query, HIDDEN_SESSION_SOURCES);
+            ftsSessions = sessionRepository.searchByTitleFtsExcludingSources(query, effectiveExcludedSources);
         } catch (Exception e) {
             log.debug("FTS title search failed, falling back to LIKE: {}", e.getMessage());
             ftsSessions = sessionRepository.findByTitleContainingIgnoreCase(query);
         }
+        ftsSessions = ftsSessions.stream()
+            .filter(this::isVisibleSession)
+            .filter(s -> matchesSourceFilters(s, includeSources, excludeSources))
+            .toList();
 
         // Exact title match
         SessionEntity titleMatch = null;
@@ -167,10 +260,11 @@ public class SessionSearchService {
         List<DiscoverResult> results = new ArrayList<>();
 
         // Title match first
-        if (titleMatch != null) {
+        if (titleMatch != null && isVisibleSession(titleMatch)
+                && matchesSourceFilters(titleMatch, includeSources, excludeSources)) {
             UUID titleLineage = resolveLineageRoot(titleMatch.getId());
             if (currentLineageRoot == null || !titleLineage.equals(currentLineageRoot)) {
-                seen.put(titleLineage, new DiscoverMatch(titleMatch.getId(), titleMatch.getId(), null, "title"));
+                seen.put(titleLineage, new DiscoverMatch(titleMatch.getId(), titleMatch.getId(), null, "title", null));
                 results.add(buildTitleResult(titleMatch, linkProfile));
             }
         }
@@ -188,6 +282,14 @@ public class SessionSearchService {
             ? Map.of()
             : sessionRepository.findAllById(sessionIdsToLoad).stream()
                 .collect(Collectors.toMap(SessionEntity::getId, s -> s, (a, b) -> a));
+        sortedMessages.removeIf(m -> {
+            SessionEntity s = m.getSessionId() != null ? sessionById.get(m.getSessionId()) : null;
+            if (s == null) {
+                return hasExplicitSourceFilters(includeSources, excludeSources);
+            }
+            return !isVisibleSession(s)
+                || !matchesSourceFilters(s, includeSources, excludeSources);
+        });
         sortedMessages.sort((a, b) -> {
             SessionEntity sa = a.getSessionId() != null ? sessionById.get(a.getSessionId()) : null;
             SessionEntity sb = b.getSessionId() != null ? sessionById.get(b.getSessionId()) : null;
@@ -212,7 +314,7 @@ public class SessionSearchService {
                 if (!isCompacted) continue;
             }
             if (!seen.containsKey(resolvedSid)) {
-                seen.put(resolvedSid, new DiscoverMatch(rawSid, resolvedSid, msg.getId(), "content"));
+                seen.put(resolvedSid, new DiscoverMatch(rawSid, resolvedSid, msg.getId(), "content", msg.getRole()));
             }
         }
 
@@ -224,7 +326,7 @@ public class SessionSearchService {
                 if (!isSessionLeftLiveContext(s.getId())) continue;
             }
             if (!seen.containsKey(resolvedSid)) {
-                seen.put(resolvedSid, new DiscoverMatch(s.getId(), resolvedSid, null, "title_fts"));
+                seen.put(resolvedSid, new DiscoverMatch(s.getId(), resolvedSid, null, "title_fts", null));
             }
         }
 
@@ -263,7 +365,7 @@ public class SessionSearchService {
                 sessionMeta != null && sessionMeta.getSource() != null ? sessionMeta.getSource() : "unknown",
                 sessionMeta != null && sessionMeta.getModelName() != null ? sessionMeta.getModelName() : "unknown",
                 sessionMeta != null ? sessionMeta.getTitle() : null,
-                null,
+                match.matchedRole(),
                 msgId,
                 snippet,
                 "full".equals(resultDetail) && view != null ? filterCompaction(view.bookendStart()) : List.of(),
@@ -329,7 +431,9 @@ public class SessionSearchService {
         SessionEntity meta = sessionRepository.findById(sessionId).orElse(null);
         if (meta == null) return SearchResult.error("session_id not found: " + sessionId);
 
-        List<MessageEntity> rows = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        List<MessageEntity> rows = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+            .filter(SessionSearchService::isLive)
+            .collect(Collectors.toList());
         // H-SYNC: Limit content per message to prevent oversized tool output.
         // Hermes uses max_content_len=4000 for anchor, 1200 for bookends.
         // READ mode returns head+tail (30 messages) — use 2000 to keep total < 60KB.
@@ -432,8 +536,45 @@ public class SessionSearchService {
         return "compression".equals(endReason) || (endReason != null && FRESH_RESET_END_REASONS.contains(endReason));
     }
 
+    private boolean isVisibleSession(SessionEntity session) {
+        return session == null
+            || session.getSource() == null
+            || !HIDDEN_SESSION_SOURCES.contains(session.getSource());
+    }
+
     private boolean isCompressionEnded(SessionEntity s) {
         return s != null && "compression".equals(s.getEndReason());
+    }
+
+    private static boolean isLive(MessageEntity entity) {
+        return entity != null && !Boolean.FALSE.equals(entity.getActive());
+    }
+
+    private static boolean isLiveOrCompacted(MessageEntity entity) {
+        return isLive(entity) || entity != null && Boolean.TRUE.equals(entity.getCompacted());
+    }
+
+    private List<String> normalizeRoleFilter(List<String> roleFilter) {
+        if (roleFilter == null || roleFilter.isEmpty()) {
+            return List.of("user", "assistant");
+        }
+        List<String> roles = roleFilter.stream()
+            .filter(Objects::nonNull)
+            .map(s -> s.trim().toLowerCase(Locale.ROOT))
+            .filter(s -> !s.isEmpty())
+            .distinct()
+            .toList();
+        return roles.isEmpty() ? List.of("user", "assistant") : roles;
+    }
+
+    private List<MessageEntity> filterByRole(List<MessageEntity> messages, List<String> roleFilter) {
+        if (messages == null || messages.isEmpty()) {
+            return List.of();
+        }
+        Set<String> allowed = new LinkedHashSet<>(roleFilter);
+        return messages.stream()
+            .filter(m -> m.getRole() != null && allowed.contains(m.getRole().toLowerCase(Locale.ROOT)))
+            .collect(Collectors.toList());
     }
 
     private ShapedMessage shapeMessage(MessageEntity m, UUID anchorId, int maxContentLen) {
@@ -452,6 +593,7 @@ public class SessionSearchService {
         return new ShapedMessage(m.getId(), m.getRole(), content,
             m.getCreatedAt() != null ? m.getCreatedAt().toString() : null,
             m.getToolCallName(), m.getToolCallId(), m.getToolCallArguments(),
+            m.getToolCalls(),
             truncated, originalChars, isAnchor);
     }
 
@@ -484,7 +626,145 @@ public class SessionSearchService {
             .withZone(ZoneId.systemDefault()).format(instant);
     }
 
+    private Map<String, Object> buildWebSearchResult(DiscoverResult result, SessionEntity knownSession) {
+        UUID sessionId = result.sessionId();
+        UUID lineageRoot = result.parentSessionId() != null ? result.parentSessionId() : sessionId;
+        SessionEntity session = knownSession != null
+            ? knownSession
+            : sessionRepository.findById(sessionId)
+                .or(() -> sessionRepository.findById(lineageRoot))
+                .orElse(null);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("session_id", sessionId != null ? sessionId.toString() : null);
+        row.put("lineage_root", lineageRoot != null ? lineageRoot.toString() : null);
+        row.put("id", session != null && session.getId() != null
+            ? session.getId().toString()
+            : sessionId != null ? sessionId.toString() : null);
+        row.put("snippet", result.snippet() != null ? result.snippet() : "");
+        row.put("role", result.matchedRole());
+        if (session != null) {
+            putSessionInfo(row, session);
+        } else {
+            row.put("source", result.source());
+            row.put("model", result.model());
+            row.put("title", result.title());
+            row.put("started_at", null);
+            row.put("ended_at", null);
+            row.put("last_active", null);
+            row.put("is_active", false);
+            row.put("message_count", 0);
+            row.put("tool_call_count", 0);
+            row.put("input_tokens", 0);
+            row.put("output_tokens", 0);
+            row.put("preview", null);
+            row.put("archived", false);
+        }
+        row.put("session_started", row.get("started_at"));
+        return row;
+    }
+
+    private static void putSessionInfo(Map<String, Object> row, SessionEntity session) {
+        Instant startedAt = session.getCreatedAt();
+        Instant endedAt = endedAt(session);
+        Instant lastActive = session.getLastActive() != null ? session.getLastActive() : session.getUpdatedAt();
+        if (lastActive == null) {
+            lastActive = startedAt;
+        }
+        row.put("source", session.getSource());
+        row.put("model", session.getModelName());
+        row.put("title", session.getTitle());
+        row.put("started_at", startedAt != null ? startedAt.getEpochSecond() : null);
+        row.put("ended_at", endedAt != null ? endedAt.getEpochSecond() : null);
+        row.put("last_active", lastActive != null ? lastActive.getEpochSecond() : null);
+        row.put("is_active", endedAt == null && lastActive != null && lastActive.isAfter(Instant.now().minusSeconds(300)));
+        row.put("message_count", session.getMessageCount() != null ? session.getMessageCount() : 0);
+        row.put("tool_call_count", 0);
+        row.put("input_tokens", 0);
+        row.put("output_tokens", 0);
+        row.put("preview", session.getPreview());
+        row.put("parent_session_id", session.getParentSessionId() != null ? session.getParentSessionId().toString() : null);
+        row.put("archived", Boolean.TRUE.equals(session.getArchived()));
+        row.put("profile", "default");
+        row.put("is_default_profile", true);
+    }
+
+    private static Instant endedAt(SessionEntity session) {
+        if (session == null) {
+            return null;
+        }
+        boolean ended = session.getEndReason() != null && !session.getEndReason().isBlank();
+        String status = session.getSessionStatus();
+        ended = ended || status != null && !status.isBlank() && !"active".equalsIgnoreCase(status);
+        if (!ended) {
+            return null;
+        }
+        if (session.getUpdatedAt() != null) {
+            return session.getUpdatedAt();
+        }
+        if (session.getLastActive() != null) {
+            return session.getLastActive();
+        }
+        return session.getCreatedAt();
+    }
+
+    private static UUID parseUuidOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     private static int clamp(int v, int min, int max) { return Math.max(min, Math.min(max, v)); }
+
+    private static List<String> parseIncludeSources(String source, String sources) {
+        String single = source != null ? source.trim() : "";
+        if (!single.isEmpty()) {
+            return List.of(single);
+        }
+        return parseCsv(sources);
+    }
+
+    private static List<String> parseCsv(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(value.split(","))
+            .map(String::trim)
+            .filter(s -> !s.isEmpty())
+            .distinct()
+            .toList();
+    }
+
+    private static List<String> mergeExcludedSources(List<String> excludeSources) {
+        LinkedHashSet<String> sources = new LinkedHashSet<>(HIDDEN_SESSION_SOURCES);
+        if (excludeSources != null) {
+            sources.addAll(excludeSources);
+        }
+        return List.copyOf(sources);
+    }
+
+    private static boolean matchesSourceFilters(
+            SessionEntity session,
+            List<String> includeSources,
+            List<String> excludeSources) {
+        if (session == null) {
+            return false;
+        }
+        String source = session.getSource();
+        if (includeSources != null && !includeSources.isEmpty()) {
+            return source != null && includeSources.contains(source);
+        }
+        return excludeSources == null || source == null || !excludeSources.contains(source);
+    }
+
+    private static boolean hasExplicitSourceFilters(List<String> includeSources, List<String> excludeSources) {
+        return includeSources != null && !includeSources.isEmpty()
+            || excludeSources != null && !excludeSources.isEmpty();
+    }
 
     private static <T> List<T> concat(List<T> a, List<T> b) {
         List<T> r = new ArrayList<>(a.size() + b.size());
@@ -566,7 +846,7 @@ public class SessionSearchService {
         }
     }
 
-    record DiscoverMatch(UUID rawSessionId, UUID lineageRoot, UUID messageId, String matchType) {}
+    record DiscoverMatch(UUID rawSessionId, UUID lineageRoot, UUID messageId, String matchType, String matchedRole) {}
     public record AnchoredView(List<ShapedMessage> window, int messagesBefore, int messagesAfter,
                                 List<ShapedMessage> bookendStart, List<ShapedMessage> bookendEnd) {}
     public record ShapedMessage(
@@ -574,11 +854,16 @@ public class SessionSearchService {
         @com.fasterxml.jackson.annotation.JsonProperty("tool_name") String toolName,
         @com.fasterxml.jackson.annotation.JsonProperty("tool_call_id") String toolCallId,
         @com.fasterxml.jackson.annotation.JsonProperty("tool_call_arguments") String toolCallArguments,
+        @com.fasterxml.jackson.annotation.JsonIgnore String toolCallsJson,
         @com.fasterxml.jackson.annotation.JsonProperty("content_truncated") boolean contentTruncated,
         @com.fasterxml.jackson.annotation.JsonProperty("original_content_chars") Integer originalContentChars,
         @com.fasterxml.jackson.annotation.JsonProperty("anchor") boolean anchor) {
         @com.fasterxml.jackson.annotation.JsonGetter("tool_calls")
         public List<Map<String, Object>> toolCalls() {
+            List<Map<String, Object>> parsed = parseStoredToolCalls(toolCallsJson);
+            if (!parsed.isEmpty()) {
+                return parsed;
+            }
             if (toolName == null || toolCallId == null) return null;
             // Assistant tool-call rows carry the call in tool_call_arguments;
             // content is null for tool-call-only turns (633 such rows in the
@@ -589,8 +874,21 @@ public class SessionSearchService {
                 : content != null ? content : "";
             return List.of(Map.of(
                 "id", toolCallId,
+                "type", "function",
                 "function", Map.of("name", toolName, "arguments", args)
             ));
+        }
+
+        private static List<Map<String, Object>> parseStoredToolCalls(String toolCallsJson) {
+            if (toolCallsJson == null || toolCallsJson.isBlank()) {
+                return List.of();
+            }
+            try {
+                List<Map<String, Object>> parsed = TOOL_CALLS_JSON.readValue(toolCallsJson, TOOL_CALLS_TYPE);
+                return parsed != null ? parsed : List.of();
+            } catch (Exception e) {
+                return List.of();
+            }
         }
     }
     public record DiscoverResult(

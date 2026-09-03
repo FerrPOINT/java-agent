@@ -88,10 +88,11 @@ class PatchToolExtraTest {
         String patch = "*** Add File: " + goodFile + "\n+hello\n*** Add File: /root/.ssh/key\n+x";
         String json = "{\"mode\":\"patch\",\"patch\":\"" + patch.replace("\\", "\\\\").replace("\n", "\\n").replace("\"", "\\\"") + "\"}";
         ToolResult r = tool.execute(json, null, session);
-        // Should have both modified and errors
-        assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("added");
-        assertThat(r.content()).contains("Errors:");
+        // V4A operations are preflighted before any write, so a blocked
+        // operation must not leave earlier operations partially applied.
+        assertThat(r.success()).isFalse();
+        assertThat(r.error()).contains("not allowed");
+        assertThat(Files.exists(goodFile)).isFalse();
     }
 
     @Test

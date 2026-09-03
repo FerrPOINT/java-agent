@@ -2,6 +2,8 @@ package com.azhukov.agent.tools.file;
 
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -17,8 +19,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PatchToolUxTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private final PatchTool tool = new PatchTool();
     private final Session session = Session.create("u", "p", "m");
+
+    private static JsonNode jsonContent(ToolResult result) throws Exception {
+        return JSON.readTree(result.content());
+    }
 
     // ── p7: Already-applied no-op ──────────────────────────────────────
 
@@ -31,7 +39,10 @@ class PatchToolUxTest {
             "{\"path\":\"" + file + "\",\"old_string\":\"goodbye\",\"new_string\":\"hello world\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("[info: new_string already present, no changes needed]");
+        JsonNode json = jsonContent(r);
+        assertThat(json.path("success").asBoolean()).isTrue();
+        assertThat(json.path("no_change").asBoolean()).isTrue();
+        assertThat(json.path("note").asText()).contains("new_string already present");
     }
 
     @Test
@@ -67,7 +78,9 @@ class PatchToolUxTest {
             "{\"path\":\"" + file + "\",\"old_string\":\"original\",\"new_string\":\"replacement text\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("[info: new_string already present");
+        JsonNode json = jsonContent(r);
+        assertThat(json.path("no_change").asBoolean()).isTrue();
+        assertThat(json.path("note").asText()).contains("new_string already present");
     }
 
     @Test
@@ -81,7 +94,9 @@ class PatchToolUxTest {
             null, session);
         // "old" appears once, so it should be a normal patch
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("Patched");
+        JsonNode json = jsonContent(r);
+        assertThat(json.path("diff").asText()).contains("-old and new both here");
+        assertThat(json.path("diff").asText()).contains("+new and new both here");
     }
 
     // ── p11: Multi-match detection ─────────────────────────────────────

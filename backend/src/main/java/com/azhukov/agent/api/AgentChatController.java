@@ -17,6 +17,7 @@ import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.metrics.AgentMetrics;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
@@ -41,6 +42,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.UUID;
 
 @RestController
@@ -66,6 +68,7 @@ public class AgentChatController {
     private final ApprovalQueue approvalQueue;
     private final AgentProperties properties;
     private final AgentMetrics agentMetrics;
+    private final ToolRegistry toolRegistry;
 
     @Operation(summary = "Send a chat message and get a synchronous response")
     @PostMapping("/agent/chat")
@@ -102,12 +105,17 @@ public class AgentChatController {
             properties.getModel().getProvider(),
             properties.getCore().getMaxTurns(),
             properties.getBudget().getMaxModelCallsPerTurn(),
-            memoryProvider != null,
+            memoryProvider != null && isMemoryConfiguredEnabled(),
             ttsService != null,
             transcriptionService != null,
             skillManager.listSkillNames().size(),
             0L
         );
+    }
+
+    private boolean isMemoryConfiguredEnabled() {
+        AgentProperties.MemoryProperties memory = properties.getMemory();
+        return memory == null || memory.isMemoryEnabled() || memory.isUserProfileEnabled();
     }
 
     // ── Stop (interrupt active turn) ──
@@ -176,13 +184,18 @@ public class AgentChatController {
         }
         var session = sessionOpt.get();
         List<Message> history = this.messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId())
-            .stream().map(messageMapper::toDomain).toList();
+            .stream()
+            .filter(message -> !Boolean.FALSE.equals(message.getActive()))
+            .map(messageMapper::toDomain)
+            .toList();
         if (history.isEmpty()) {
             return Map.of("accepted", false, "reason", "nothing to refine — the conversation is empty");
         }
         // Hermes: review_skills iff "skill_manage" in agent.valid_tool_names —
-        // here: the skills toolset is enabled for the session's toolsets.
-        boolean reviewSkills = properties.getSkills().getDefaultToolsets().contains("skills");
+        // here: resolve the configured default toolsets and check the concrete tool.
+        boolean reviewSkills = toolRegistry.getDefinitions(new HashSet<>(properties.getSkills().getDefaultToolsets()))
+            .stream()
+            .anyMatch(tool -> "skill_manage".equals(tool.name()));
         backgroundReviewServiceProvider.getObject().reviewTurn(session.getId(), history, session.getUserId(),
             true, reviewSkills, request.focus());
         String focus = request.focus() == null ? "" : request.focus().strip();
@@ -267,7 +280,7 @@ public class AgentChatController {
     public java.util.Map<String, String> transcribe(@org.springframework.web.bind.annotation.RequestPart("file") org.springframework.web.multipart.MultipartFile file) {
         try {
             byte[] audio = file.getBytes();
-            String text = transcriptionService.transcribe(audio);
+            String text = transcriptionService.transcribe(audio, file.getOriginalFilename(), file.getContentType());
             return java.util.Map.of("text", text != null ? text : "");
         } catch (Exception e) {
             return java.util.Map.of("text", "", "error", e.getMessage());

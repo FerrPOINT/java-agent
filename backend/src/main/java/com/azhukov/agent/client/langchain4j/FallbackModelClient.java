@@ -31,11 +31,15 @@ public class FallbackModelClient implements ModelClient {
     private final ChatModel chatModel;
     private final String modelName;
     private final String provider;
+    private final String baseUrl;
+    private final double temperature;
 
     public FallbackModelClient(String provider, String model, String baseUrl, String apiKey,
                                 int timeoutSeconds, int maxRetries, double temperature) {
         this.provider = provider;
         this.modelName = model;
+        this.baseUrl = baseUrl;
+        this.temperature = temperature;
 
         this.chatModel = dev.langchain4j.model.openai.OpenAiChatModel.builder()
             .baseUrl(baseUrl)
@@ -43,7 +47,6 @@ public class FallbackModelClient implements ModelClient {
             .modelName(model)
             .timeout(java.time.Duration.ofSeconds(timeoutSeconds))
             .maxRetries(maxRetries)
-            .temperature(temperature)
             .build();
     }
 
@@ -59,13 +62,27 @@ public class FallbackModelClient implements ModelClient {
             ? tools.stream().map(LangChain4jMessageMapper::toToolSpec).collect(java.util.stream.Collectors.toList())
             : List.of();
 
+        var parameterBuilder = dev.langchain4j.model.openai.OpenAiChatRequestParameters.builder()
+            .modelName(modelName)
+            .toolSpecifications(specs);
+        Double requestTemperature = LangChain4jModelClient.temperatureForModel(modelName, temperature);
+        if (requestTemperature != null) {
+            parameterBuilder.temperature(requestTemperature);
+        }
+        int effectiveMaxTokens = resolveMaxTokens(options);
+        if (LangChain4jModelClient.requiresMaxCompletionTokens(modelName, baseUrl)) {
+            parameterBuilder.maxCompletionTokens(effectiveMaxTokens);
+        } else {
+            parameterBuilder.maxOutputTokens(effectiveMaxTokens);
+        }
+        String serviceTier = clean(options != null ? options.serviceTier() : null);
+        if (serviceTier != null) {
+            parameterBuilder.serviceTier(serviceTier);
+        }
+
         dev.langchain4j.model.chat.request.ChatRequest request = dev.langchain4j.model.chat.request.ChatRequest.builder()
             .messages(chatMessages)
-            .parameters(dev.langchain4j.model.openai.OpenAiChatRequestParameters.builder()
-                .modelName(modelName)
-                .toolSpecifications(specs)
-                .maxCompletionTokens(4096)
-                .build())
+            .parameters(parameterBuilder.build())
             .build();
 
         try {
@@ -94,6 +111,21 @@ public class FallbackModelClient implements ModelClient {
     @Override
     public String getModelName() {
         return modelName;
+    }
+
+    private int resolveMaxTokens(ModelRequestOptions options) {
+        if (options != null && options.maxCompletionTokens() != null && options.maxCompletionTokens() > 0) {
+            return options.maxCompletionTokens();
+        }
+        return 4096;
+    }
+
+    private static String clean(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /**

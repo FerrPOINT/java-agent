@@ -431,14 +431,15 @@ public class ShellHookManager {
  private SpawnResult spawn(ShellHookSpec spec, ObjectNode payload) {
  // Parse the command into argv — no shell, to avoid injection
  String[] argv;
- try {
- argv = parseShellArgs(spec.command());
- } catch (Exception e) {
- return new SpawnResult(null, "", "", false, "command '" + spec.command() + "' cannot be parsed: " + e.getMessage());
- }
- if (argv.length == 0) {
- return new SpawnResult(null, "", "", false, "empty command");
- }
+  try {
+  argv = parseShellArgs(spec.command());
+  } catch (Exception e) {
+  return new SpawnResult(null, "", "", false, "command '" + spec.command() + "' cannot be parsed: " + e.getMessage());
+  }
+  if (argv.length == 0) {
+  return new SpawnResult(null, "", "", false, "empty command");
+  }
+  argv = normalizeShellScriptArgv(argv);
 
  String stdinJson;
  try {
@@ -679,7 +680,7 @@ public class ShellHookManager {
  * Handles simple quoting (single and double) but does NOT expand variables,
  * globs, or other shell metacharacters.
  */
- private String[] parseShellArgs(String command) {
+  private String[] parseShellArgs(String command) {
  List<String> args = new ArrayList<>();
  StringBuilder current = new StringBuilder();
  boolean inSingleQuote = false;
@@ -730,8 +731,54 @@ public class ShellHookManager {
  args.add(current.toString());
  }
 
- return args.toArray(new String[0]);
- }
+  return args.toArray(new String[0]);
+  }
+
+  private String[] normalizeShellScriptArgv(String[] argv) {
+  String executable = argv[0];
+  if (!isShellScript(executable)) {
+  return argv;
+  }
+  String[] wrapped = new String[argv.length + 1];
+  wrapped[0] = "bash";
+  wrapped[1] = toBashScriptPath(argv[0]);
+  if (argv.length > 1) {
+  System.arraycopy(argv, 1, wrapped, 2, argv.length - 1);
+  }
+  return wrapped;
+  }
+
+  private boolean isShellScript(String executable) {
+  if (executable == null || executable.isBlank()) {
+  return false;
+  }
+  String fileName;
+  try {
+  Path path = Paths.get(executable);
+  Path name = path.getFileName();
+  fileName = name != null ? name.toString() : executable;
+  } catch (Exception e) {
+  fileName = executable;
+  }
+  String lower = fileName.toLowerCase();
+  return lower.endsWith(".sh") || lower.endsWith(".bash");
+  }
+
+  private String toBashScriptPath(String executable) {
+  if (!isWindows()) {
+  return executable;
+  }
+  String normalized = executable.replace('\\', '/');
+  if (normalized.length() >= 3 && normalized.charAt(1) == ':' && normalized.charAt(2) == '/') {
+  char drive = Character.toLowerCase(normalized.charAt(0));
+  return "/mnt/" + drive + "/" + normalized.substring(3);
+  }
+  return normalized;
+  }
+
+  private boolean isWindows() {
+  return System.getProperty("os.name", "").toLowerCase().contains("win");
+  }
 
  private static String truncate(String s, int maxLen) {
  if (s == null) return "";

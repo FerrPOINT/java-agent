@@ -34,6 +34,16 @@ import static org.mockito.Mockito.when;
 
 class DefaultPromptBuilderTest {
 
+    private static AgentProperties propertiesWithMissingSoul(String name) {
+        AgentProperties properties = new AgentProperties();
+        properties.setName(name);
+        properties.getCore().setSoulMdPath(Path.of(
+            System.getProperty("java.io.tmpdir"),
+            "missing-soul-" + UUID.randomUUID() + ".md"
+        ).toString());
+        return properties;
+    }
+
     @Test
     void usesConfiguredSystemPrompt() {
         AgentProperties properties = new AgentProperties();
@@ -106,8 +116,7 @@ class DefaultPromptBuilderTest {
 
     @Test
     void memoryPrefixIsPrependedToSystemPromptWhenMemoryProviderReturnsMemories() {
-        AgentProperties properties = new AgentProperties();
-        properties.setName("Agent");
+        AgentProperties properties = propertiesWithMissingSoul("Agent");
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of());
         when(registry.getDefinitions()).thenReturn(List.of());
@@ -145,8 +154,7 @@ class DefaultPromptBuilderTest {
 
     @Test
     void memoryPrefixIsEmptyWhenNoMemories() {
-        AgentProperties properties = new AgentProperties();
-        properties.setName("Agent");
+        AgentProperties properties = propertiesWithMissingSoul("Agent");
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of());
         when(registry.getDefinitions()).thenReturn(List.of());
@@ -168,8 +176,7 @@ class DefaultPromptBuilderTest {
 
     @Test
     void memoryPrefixIsEmptyWhenMemoryProviderIsNull() {
-        AgentProperties properties = new AgentProperties();
-        properties.setName("Agent");
+        AgentProperties properties = propertiesWithMissingSoul("Agent");
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of());
         when(registry.getDefinitions()).thenReturn(List.of());
@@ -239,8 +246,7 @@ class DefaultPromptBuilderTest {
 
     @Test
     void usesDeveloperRoleForGpt5Model() {
-        AgentProperties properties = new AgentProperties();
-        properties.setName("Agent");
+        AgentProperties properties = propertiesWithMissingSoul("Agent");
         properties.getModel().setModelName("gpt-5-2025");
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of());
@@ -437,6 +443,8 @@ class DefaultPromptBuilderTest {
         when(registry.getToolsets()).thenReturn(Set.of());
         when(registry.getDefinitions()).thenReturn(List.of(
             new ToolDefinition("test_tool", "Test tool", Map.of())));
+        when(registry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(
+            new ToolDefinition("test_tool", "Test tool", Map.of())));
         DefaultAgentConstants constants = new DefaultAgentConstants();
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, constants);
@@ -459,6 +467,8 @@ class DefaultPromptBuilderTest {
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of());
         when(registry.getDefinitions()).thenReturn(List.of(
+            new ToolDefinition("test_tool", "Test tool", Map.of())));
+        when(registry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(
             new ToolDefinition("test_tool", "Test tool", Map.of())));
         DefaultAgentConstants constants = new DefaultAgentConstants();
 
@@ -946,6 +956,9 @@ class DefaultPromptBuilderTest {
         when(registry.getDefinitions()).thenReturn(List.of(
             new ToolDefinition("memory", "Memory tool", Map.of("type", "object"))
         ));
+        when(registry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(
+            new ToolDefinition("memory", "Memory tool", Map.of("type", "object"))
+        ));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
             new DefaultAgentConstants());
@@ -964,6 +977,7 @@ class DefaultPromptBuilderTest {
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of());
         when(registry.getDefinitions()).thenReturn(List.of());
+        when(registry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of());
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
             new DefaultAgentConstants());
@@ -980,6 +994,9 @@ class DefaultPromptBuilderTest {
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of("memory"));
         when(registry.getDefinitions()).thenReturn(List.of(
+            new ToolDefinition("session_search", "Search past sessions", Map.of("type", "object"))
+        ));
+        when(registry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(
             new ToolDefinition("session_search", "Search past sessions", Map.of("type", "object"))
         ));
 
@@ -999,6 +1016,7 @@ class DefaultPromptBuilderTest {
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of());
         when(registry.getDefinitions()).thenReturn(List.of());
+        when(registry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of());
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
             new DefaultAgentConstants());
@@ -1015,6 +1033,9 @@ class DefaultPromptBuilderTest {
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of("memory"));
         when(registry.getDefinitions()).thenReturn(List.of(
+            new ToolDefinition("skill_view", "View a skill", Map.of("type", "object"))
+        ));
+        when(registry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(
             new ToolDefinition("skill_view", "View a skill", Map.of("type", "object"))
         ));
 
@@ -1036,6 +1057,9 @@ class DefaultPromptBuilderTest {
         when(registry.getDefinitions()).thenReturn(List.of(
             new ToolDefinition("skill_manage", "Manage skills", Map.of("type", "object"))
         ));
+        when(registry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(
+            new ToolDefinition("skill_manage", "Manage skills", Map.of("type", "object"))
+        ));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
             new DefaultAgentConstants());
@@ -1052,6 +1076,9 @@ class DefaultPromptBuilderTest {
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getToolsets()).thenReturn(Set.of());
         when(registry.getDefinitions()).thenReturn(List.of(
+            new ToolDefinition("memory", "Memory tool", Map.of("type", "object"))
+        ));
+        when(registry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(
             new ToolDefinition("memory", "Memory tool", Map.of("type", "object"))
         ));
 
@@ -1074,6 +1101,11 @@ class DefaultPromptBuilderTest {
             new ToolDefinition("session_search", "Search past sessions", Map.of("type", "object")),
             new ToolDefinition("skill_view", "View a skill", Map.of("type", "object"))
         ));
+        when(registry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(
+            new ToolDefinition("memory", "Memory tool", Map.of("type", "object")),
+            new ToolDefinition("session_search", "Search past sessions", Map.of("type", "object")),
+            new ToolDefinition("skill_view", "View a skill", Map.of("type", "object"))
+        ));
 
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
             new DefaultAgentConstants());
@@ -1082,6 +1114,82 @@ class DefaultPromptBuilderTest {
         assertThat(msg.content()).contains("Memory Guidance");
         assertThat(msg.content()).contains("Session Search Guidance");
         assertThat(msg.content()).contains("Skills Guidance");
+    }
+
+    @Test
+    void systemPromptGuidanceUsesSessionFilteredTools() {
+        AgentProperties properties = propertiesWithMissingSoul("Agent");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(
+            new ToolDefinition("memory", "Memory", Map.of("type", "object")),
+            new ToolDefinition("session_search", "Search sessions", Map.of("type", "object")),
+            new ToolDefinition("skills_list", "List skills", Map.of("type", "object")),
+            new ToolDefinition("skill_view", "View a skill", Map.of("type", "object")),
+            new ToolDefinition("skill_manage", "Manage skills", Map.of("type", "object")),
+            new ToolDefinition("terminal", "Terminal", Map.of("type", "object"))
+        ));
+        Session childSession = new Session(UUID.randomUUID(), "u", "p", "provider", "model", null,
+            Map.of(
+                "delegation_toolsets", "hermes-cli",
+                "delegation_disabled_tools", "memory,session_search,skills_list,skill_view,skill_manage"
+            ),
+            null);
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
+            new DefaultAgentConstants());
+        Message msg = builder.buildSystemMessage(childSession);
+
+        assertThat(msg.content()).doesNotContain("Memory Guidance");
+        assertThat(msg.content()).doesNotContain("Session Search Guidance");
+        assertThat(msg.content()).doesNotContain("Skills Guidance");
+        assertThat(msg.content()).doesNotContain("skill_view(name='hermes-agent')");
+        assertThat(msg.content()).contains("## Rules");
+    }
+
+    @Test
+    void cachedSystemPromptRebuildsWhenSessionToolMetadataOrOverrideChanges() {
+        AgentProperties properties = propertiesWithMissingSoul("Agent");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(
+            new ToolDefinition("skill_view", "View a skill", Map.of("type", "object"))
+        ));
+        PromptCacheTracker cacheTracker = new PromptCacheTracker(properties);
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
+            new DefaultAgentConstants(), cacheTracker);
+        UUID sessionId = UUID.randomUUID();
+        Session originalSession = new Session(sessionId, "u", "p", "provider", "model", null,
+            Map.of(), null);
+        Session filteredSession = new Session(sessionId, "u", "p", "provider", "model", null,
+            Map.of("delegation_disabled_tools", "skill_view"), null);
+
+        Message first = builder.buildSystemMessage(originalSession, "FIRST OVERRIDE");
+        Message second = builder.buildSystemMessage(filteredSession, "SECOND OVERRIDE");
+
+        assertThat(first.content()).contains("FIRST OVERRIDE");
+        assertThat(first.content()).contains("skill_view(name='hermes-agent')");
+        assertThat(second.content()).contains("SECOND OVERRIDE");
+        assertThat(second.content()).doesNotContain("FIRST OVERRIDE");
+        assertThat(second.content()).doesNotContain("skill_view(name='hermes-agent')");
+    }
+
+    @Test
+    void promptCacheInvalidationClearsAllVariantsForSession() {
+        AgentProperties properties = new AgentProperties();
+        PromptCacheTracker cacheTracker = new PromptCacheTracker(properties);
+        String sessionId = UUID.randomUUID().toString();
+        String otherSessionId = UUID.randomUUID().toString();
+        cacheTracker.getOrBuild(sessionId + "|a", () -> PromptCacheTracker.CachedSystemPrompt.of("A", "", ""));
+        cacheTracker.getOrBuild(sessionId + "|b", () -> PromptCacheTracker.CachedSystemPrompt.of("B", "", ""));
+        cacheTracker.getOrBuild(otherSessionId + "|a", () -> PromptCacheTracker.CachedSystemPrompt.of("OTHER", "", ""));
+
+        cacheTracker.invalidateSystemPrompt(sessionId);
+
+        assertThat(cacheTracker.getOrBuild(sessionId + "|a",
+            () -> PromptCacheTracker.CachedSystemPrompt.of("A2", "", "")).fullPrompt()).isEqualTo("A2");
+        assertThat(cacheTracker.getOrBuild(sessionId + "|b",
+            () -> PromptCacheTracker.CachedSystemPrompt.of("B2", "", "")).fullPrompt()).isEqualTo("B2");
+        assertThat(cacheTracker.getOrBuild(otherSessionId + "|a",
+            () -> PromptCacheTracker.CachedSystemPrompt.of("OTHER2", "", "")).fullPrompt()).isEqualTo("OTHER");
     }
 
     @Test
@@ -1664,6 +1772,34 @@ class DefaultPromptBuilderTest {
     }
 
     @Test
+    void namedProfileSessionLoadsProfileSoulInsteadOfDefaultSoul(@TempDir Path tempDir) throws Exception {
+        Path defaultSoul = tempDir.resolve("default-soul.md");
+        Files.writeString(defaultSoul, "Default persona should not leak.");
+        Path workSoul = tempDir.resolve("profiles").resolve("work").resolve("SOUL.md");
+        Files.createDirectories(workSoul.getParent());
+        Files.writeString(workSoul, "Work profile persona.");
+
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        properties.getCore().setSoulMdPath(defaultSoul.toString());
+        properties.getProfile().setBaseDir(tempDir.resolve("profiles").toString());
+        properties.getModel().setModelName("llama-3");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
+            new DefaultAgentConstants(), null, null, null, null, null);
+        Session workSession = new Session(UUID.randomUUID(), "u", null, "p", "m",
+            null, Map.of("profile", "work"), null);
+
+        Message msg = builder.buildSystemMessage(workSession);
+
+        assertThat(msg.content()).contains("Work profile persona.");
+        assertThat(msg.content()).doesNotContain("Default persona should not leak.");
+    }
+
+    @Test
     void soulMdConfiguredPathBlankFallsBackToDefault() {
         AgentProperties properties = new AgentProperties();
         properties.setName("Agent");
@@ -1673,13 +1809,26 @@ class DefaultPromptBuilderTest {
         when(registry.getToolsets()).thenReturn(Set.of());
         when(registry.getDefinitions()).thenReturn(List.of());
 
-        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry,
-            new DefaultAgentConstants(), null, null, null, null, null);
+        class CapturingPromptBuilder extends DefaultPromptBuilder {
+            String requestedSoulPath;
+
+            CapturingPromptBuilder() {
+                super(properties, registry, new DefaultAgentConstants(), null, null, null, null, null);
+            }
+
+            @Override
+            String loadSoulMd(String soulMdPath) {
+                requestedSoulPath = soulMdPath;
+                return null;
+            }
+        }
+        CapturingPromptBuilder builder = new CapturingPromptBuilder();
 
         // With blank path, loadSoulMd() should use DEFAULT_SOUL_MD_PATH
-        // which is ~/.hermes/soul.md — likely doesn't exist in test env, so returns null
-        // and falls back to the hardcoded identity
+        // which is ~/.hermes/soul.md. The test stubs the file read so it does
+        // not depend on the developer machine having a real default SOUL.md.
         Message msg = builder.buildSystemMessage(Session.create("u", "p", "m"));
+        assertThat(builder.requestedSoulPath).isEqualTo(DefaultPromptBuilder.DEFAULT_SOUL_MD_PATH);
         // Should use the default hardcoded identity
         assertThat(msg.content()).contains("You are Agent");
     }

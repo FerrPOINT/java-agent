@@ -1,19 +1,27 @@
 package com.azhukov.agent.tools.file;
 
+import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.security.FileSafety;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -28,41 +36,66 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public class PatchTool implements ToolHandler {
 
     private static final Pattern V4A_HEADER = Pattern.compile("^\\*\\*\\*\\s*(Update|Add|Delete|Move)\\s+File:\\s*(.+)\\s*$", Pattern.MULTILINE);
-    private static final List<String> BLOCKED_PATHS = List.of("/.env", "/etc/shadow", "/etc/passwd", "/root/.ssh");
+    private static final ObjectMapper JSON = SharedObjectMapper.get();
+
+    private final FileSafety fileSafety;
+
+    public PatchTool() {
+        this(new AgentProperties());
+    }
+
+    public PatchTool(AgentProperties properties) {
+        this(FileToolSafety.defaultSafety(properties));
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public PatchTool(FileSafety fileSafety) {
+        this.fileSafety = fileSafety;
+    }
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        PatchArgs args = ToolHandler.parseJson(arguments, PatchArgs.class);
+        PatchArgs args;
+        try {
+            args = ToolHandler.parseJson(arguments, PatchArgs.class);
+        } catch (IllegalArgumentException e) {
+            return jsonFail(e.getMessage());
+        }
         boolean hasPath = args.path() != null && !args.path().isBlank();
         if (!hasPath && !"patch".equals(args.mode())) {
-            return ToolResult.fail("path is required");
+            return jsonFail("path is required");
         }
         String mode = args.mode() == null ? "replace" : args.mode().toLowerCase();
-        Path path = hasPath ? Path.of(args.path()).toAbsolutePath().normalize() : null;
-        // M13 fix: check the NORMALIZED absolute path — the raw string check
-        // was bypassable via /x/../.env and /./.env forms.
-        if (path != null && isBlocked(path.toString())) {
-            return ToolResult.fail("Patching this path is not allowed: " + args.path());
+        Path path = hasPath ? FileToolSafety.resolvePath(args.path(), session) : null;
+        if (path != null) {
+            ToolResult safetyCheck = FileToolSafety.ensureWritable(fileSafety, path, args.path(), args.crossProfile());
+            if (safetyCheck != null) {
+                return jsonFail(safetyCheck.error());
+            }
         }
         try {
             if ("replace".equals(mode)) {
                 if (args.oldString() == null || args.newString() == null) {
-                    return ToolResult.fail("old_string and new_string are required for replace mode");
+                    return jsonFail("old_string and new_string are required for replace mode");
                 }
                 if (path == null || !Files.exists(path)) {
-                    return ToolResult.fail("File not found: " + args.path());
+                    return jsonFail("File not found: " + args.path());
+                }
+                ToolResult textWriteCheck = FileToolSafety.ensurePlainTextWriteAllowed(path, args.path());
+                if (textWriteCheck != null) {
+                    return jsonFail(textWriteCheck.error());
                 }
                 return replace(path, args.oldString(), args.newString(), args.replaceAll());
             }
             if ("patch".equals(mode)) {
                 if (args.patch() == null || args.patch().isBlank()) {
-                    return ToolResult.fail("patch content is required for patch mode");
+                    return jsonFail("patch content is required for patch mode");
                 }
-                return applyV4a(args.patch());
+                return applyV4a(args.patch(), args.crossProfile(), session);
             }
-            return ToolResult.fail("Unknown mode: " + args.mode());
+            return jsonFail("Unknown mode: " + args.mode());
         } catch (IOException e) {
-            return ToolResult.fail("Patch failed: " + e.getMessage());
+            return jsonFail("Patch failed: " + e.getMessage());
         }
     }
 
@@ -72,7 +105,10 @@ public class PatchTool implements ToolHandler {
         // p7: Check if new_string is already present in the file content.
         // If so, the patch was likely already applied — return success with info.
         if (!replaceAll && content.contains(newString) && !content.contains(oldString)) {
-            return ToolResult.ok("[info: new_string already present, no changes needed]");
+            Map<String, Object> result = patchResult(true);
+            result.put("no_change", true);
+            result.put("note", "new_string already present, no changes needed");
+            return jsonOk(result);
         }
 
         // p11: Multi-match detection — before applying patch, check if old_string
@@ -92,7 +128,7 @@ public class PatchTool implements ToolHandler {
                     while ((idx = content.indexOf(oldString, idx + 1)) >= 0) {
                         count++;
                     }
-                    return ToolResult.fail("[error: old_string matches " + count + " times — must be unique. Use replace_all=true to replace all occurrences]");
+                    return jsonFail("[error: old_string matches " + count + " times — must be unique. Use replace_all=true to replace all occurrences]");
                 }
             }
         }
@@ -105,8 +141,7 @@ public class PatchTool implements ToolHandler {
             String updated = replaceAll
                 ? content.replace(oldString, newString)
                 : content.replaceFirst(Pattern.quote(oldString), Matcher.quoteReplacement(newString));
-            Files.writeString(path, updated, StandardCharsets.UTF_8);
-            return ToolResult.ok("Patched " + path + " (replace " + (replaceAll ? "all" : "first") + ")");
+            return writePatched(path, updated, "replace " + (replaceAll ? "all" : "first"));
         }
         // Fuzzy matching strategies
         String[] strategies = {
@@ -120,8 +155,7 @@ public class PatchTool implements ToolHandler {
             String updated = replaceAll
                 ? content.replace(trimmed, newString)
                 : content.replaceFirst(Pattern.quote(trimmed), Matcher.quoteReplacement(newString));
-            Files.writeString(path, updated, StandardCharsets.UTF_8);
-            return ToolResult.ok("Patched " + path + " (fuzzy: trimmed whitespace)");
+            return writePatched(path, updated, "fuzzy: trimmed whitespace");
         }
         // Strategy 2: normalize line endings (CRLF → LF)
         String normalizedOld = oldString.replace("\r\n", "\n");
@@ -130,8 +164,7 @@ public class PatchTool implements ToolHandler {
             String updated = replaceAll
                 ? normalizedContent.replace(normalizedOld, newString)
                 : normalizedContent.replaceFirst(Pattern.quote(normalizedOld), Matcher.quoteReplacement(newString));
-            Files.writeString(path, updated, StandardCharsets.UTF_8);
-            return ToolResult.ok("Patched " + path + " (fuzzy: normalized line endings)");
+            return writePatched(path, updated, "fuzzy: normalized line endings");
         }
         // Strategy 3: collapse multiple whitespace runs to single space
         String collapsedOld = oldString.replaceAll("\\s+", " ");
@@ -143,8 +176,7 @@ public class PatchTool implements ToolHandler {
                 ? content.replaceFirst(Pattern.quote(findOriginalMatch(content, oldString, collapsedOld)), Matcher.quoteReplacement(newString))
                 : content.replaceFirst(Pattern.quote(findOriginalMatch(content, oldString, collapsedOld)), Matcher.quoteReplacement(newString));
             if (!updated.equals(content)) {
-                Files.writeString(path, updated, StandardCharsets.UTF_8);
-                return ToolResult.ok("Patched " + path + " (fuzzy: collapsed whitespace)");
+                return writePatched(path, updated, "fuzzy: collapsed whitespace");
             }
         }
         // Strategy 4: case-insensitive match
@@ -154,8 +186,7 @@ public class PatchTool implements ToolHandler {
             String updated = replaceAll
                 ? content.replace(actual, newString)
                 : content.replaceFirst(Pattern.quote(actual), Matcher.quoteReplacement(newString));
-            Files.writeString(path, updated, StandardCharsets.UTF_8);
-            return ToolResult.ok("Patched " + path + " (fuzzy: case-insensitive)");
+            return writePatched(path, updated, "fuzzy: case-insensitive");
         }
         // Strategy 5: ignore trailing whitespace per line
         String[] oldLines = oldString.split("\n");
@@ -176,8 +207,7 @@ public class PatchTool implements ToolHandler {
             if (actualMatch != null) {
                 String updated = content.replaceFirst(Pattern.quote(actualMatch), Matcher.quoteReplacement(newString));
                 if (!updated.equals(content)) {
-                    Files.writeString(path, updated, StandardCharsets.UTF_8);
-                    return ToolResult.ok("Patched " + path + " (fuzzy: trailing whitespace)");
+                    return writePatched(path, updated, "fuzzy: trailing whitespace");
                 }
             }
         }
@@ -188,8 +218,7 @@ public class PatchTool implements ToolHandler {
         }
         if (!bomStrippedContent.equals(content) && bomStrippedContent.contains(oldString)) {
             String updated = bomStrippedContent.replaceFirst(Pattern.quote(oldString), Matcher.quoteReplacement(newString));
-            Files.writeString(path, updated, StandardCharsets.UTF_8);
-            return ToolResult.ok("Patched " + path + " (fuzzy: BOM stripped)");
+            return writePatched(path, updated, "fuzzy: BOM stripped");
         }
         // Strategy 7: normalize tabs to spaces (4 spaces) in old_string
         String tabNormalizedOld = oldString.replace("\t", "    ");
@@ -197,24 +226,32 @@ public class PatchTool implements ToolHandler {
             String updated = replaceAll
                 ? content.replace(tabNormalizedOld, newString)
                 : content.replaceFirst(Pattern.quote(tabNormalizedOld), Matcher.quoteReplacement(newString));
-            Files.writeString(path, updated, StandardCharsets.UTF_8);
-            return ToolResult.ok("Patched " + path + " (fuzzy: tabs to spaces)");
+            return writePatched(path, updated, "fuzzy: tabs to spaces");
         }
         // Strategy 8: try matching with empty lines removed from old_string
         String noEmptyLinesOld = oldString.lines().filter(l -> !l.isBlank()).reduce((a, b) -> a + "\n" + b).orElse("");
         if (!noEmptyLinesOld.equals(oldString) && !noEmptyLinesOld.isEmpty() && content.contains(noEmptyLinesOld)) {
             String updated = content.replaceFirst(Pattern.quote(noEmptyLinesOld), Matcher.quoteReplacement(newString));
             if (!updated.equals(content)) {
-                Files.writeString(path, updated, StandardCharsets.UTF_8);
-                return ToolResult.ok("Patched " + path + " (fuzzy: empty lines removed)");
+                return writePatched(path, updated, "fuzzy: empty lines removed");
             }
         }
-        return ToolResult.fail("Could not find old_string in file. Tried fuzzy strategies: " + String.join(", ", strategies) + ". Use read_file to verify current content.");
+        return jsonFail("Could not find old_string in file. Tried fuzzy strategies: " + String.join(", ", strategies) + ". Use read_file to verify current content.");
+    }
+
+    private ToolResult writePatched(Path path, String updated, String label) throws IOException {
+        String before = Files.readString(path, StandardCharsets.UTF_8);
+        TextFileWriteSupport.WriteOutcome write = TextFileWriteSupport.write(path, updated);
+        Map<String, Object> result = patchResult(true);
+        result.put("diff", compactDiff(write.path(), before, write.content()));
+        result.put("files_modified", List.of(write.path().toString()));
+        result.put("resolved_path", write.path().toString());
+        result.put("note", label);
+        return jsonOk(result);
     }
 
     private String findOriginalMatch(String content, String oldString, String collapsedOld) {
         // Heuristic: find a substring of content that, when collapsed, matches collapsedOld
-        int approxLen = collapsedOld.length() + (oldString.length() - collapsedOld.length()) / 2;
         for (int i = 0; i <= content.length() - oldString.length(); i++) {
             String candidate = content.substring(i, Math.min(i + oldString.length() + 20, content.length()));
             if (candidate.replaceAll("\\s+", " ").startsWith(collapsedOld)) {
@@ -242,55 +279,289 @@ public class PatchTool implements ToolHandler {
         return null;
     }
 
-    private ToolResult applyV4a(String patchText) throws IOException {
-        Matcher m = V4A_HEADER.matcher(patchText);
-        List<String> modified = new ArrayList<>();
+    private ToolResult applyV4a(String patchText, Boolean crossProfile, Session session) throws IOException {
         List<String> errors = new ArrayList<>();
-        int lastEnd = 0;
+        List<V4aOperation> operations = parseV4aOperations(patchText, errors, session);
+        if (operations.isEmpty() && errors.isEmpty()) {
+            return jsonFail("No V4A file operations found");
+        }
+        errors.addAll(validateV4aOperations(patchText, operations, crossProfile));
+        if (!errors.isEmpty()) {
+            return jsonFail(String.join("\n", errors));
+        }
+
+        List<String> filesModified = new ArrayList<>();
+        List<String> filesCreated = new ArrayList<>();
+        List<String> filesDeleted = new ArrayList<>();
+        StringBuilder diff = new StringBuilder();
+        for (V4aOperation operation : operations) {
+            String op = operation.op();
+            String pathStr = operation.rawPath();
+            Path path = operation.path();
+            if ("Add".equals(op)) {
+                String content = extractContent(patchText, operation.contentStart());
+                TextFileWriteSupport.write(path, content);
+                filesCreated.add(pathStr);
+            } else if ("Delete".equals(op)) {
+                Files.delete(path);
+                filesDeleted.add(pathStr);
+            } else if ("Update".equals(op)) {
+                String content = Files.readString(path, StandardCharsets.UTF_8);
+                String updated = applyHunks(content, parseHunks(extractDiff(patchText, operation.contentStart())));
+                TextFileWriteSupport.WriteOutcome write = TextFileWriteSupport.write(path, updated);
+                appendDiff(diff, compactDiff(write.path(), content, write.content()));
+                filesModified.add(pathStr);
+            } else if ("Move".equals(op)) {
+                moveFile(path, operation.destination());
+                filesModified.add(pathStr + " -> " + operation.rawDestination());
+            }
+        }
+        Map<String, Object> result = patchResult(true);
+        if (!diff.isEmpty()) {
+            result.put("diff", diff.toString());
+        }
+        if (!filesModified.isEmpty()) {
+            result.put("files_modified", filesModified);
+        }
+        if (!filesCreated.isEmpty()) {
+            result.put("files_created", filesCreated);
+        }
+        if (!filesDeleted.isEmpty()) {
+            result.put("files_deleted", filesDeleted);
+        }
+        return jsonOk(result);
+    }
+
+    private static Map<String, Object> patchResult(boolean success) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", success);
+        return result;
+    }
+
+    private static ToolResult jsonOk(Map<String, Object> result) {
+        try {
+            return ToolResult.ok(JSON.writeValueAsString(result));
+        } catch (IOException e) {
+            return ToolResult.ok(String.valueOf(result));
+        }
+    }
+
+    private static ToolResult jsonFail(String error) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        String message = error == null ? "Patch failed" : error;
+        result.put("success", false);
+        result.put("error", message);
+        try {
+            return new ToolResult(false, JSON.writeValueAsString(result), message);
+        } catch (IOException e) {
+            return new ToolResult(false, "{\"success\":false,\"error\":\"Patch failed\"}", message);
+        }
+    }
+
+    private static void appendDiff(StringBuilder target, String diff) {
+        if (diff == null || diff.isBlank()) {
+            return;
+        }
+        if (!target.isEmpty()) {
+            target.append("\n");
+        }
+        target.append(diff);
+    }
+
+    private static String compactDiff(Path path, String before, String after) {
+        if (before.equals(after)) {
+            return "";
+        }
+        String[] beforeLines = before.split("\\R", -1);
+        String[] afterLines = after.split("\\R", -1);
+        int first = 0;
+        while (first < beforeLines.length && first < afterLines.length
+            && beforeLines[first].equals(afterLines[first])) {
+            first++;
+        }
+
+        int beforeLast = beforeLines.length - 1;
+        int afterLast = afterLines.length - 1;
+        while (beforeLast >= first && afterLast >= first
+            && beforeLines[beforeLast].equals(afterLines[afterLast])) {
+            beforeLast--;
+            afterLast--;
+        }
+
+        int context = 3;
+        int contextStart = Math.max(0, first - context);
+        int beforeEnd = Math.min(beforeLines.length, beforeLast + context + 2);
+        int afterEnd = Math.min(afterLines.length, afterLast + context + 2);
+
+        StringBuilder diff = new StringBuilder();
+        diff.append("--- ").append(path).append("\n");
+        diff.append("+++ ").append(path).append("\n");
+        diff.append("@@ -").append(contextStart + 1).append(" +").append(contextStart + 1).append(" @@\n");
+        for (int i = contextStart; i < first; i++) {
+            diff.append(" ").append(beforeLines[i]).append("\n");
+        }
+        for (int i = first; i < beforeEnd; i++) {
+            diff.append("-").append(beforeLines[i]).append("\n");
+        }
+        for (int i = first; i < afterEnd; i++) {
+            diff.append("+").append(afterLines[i]).append("\n");
+        }
+        return diff.toString().stripTrailing();
+    }
+
+    private List<V4aOperation> parseV4aOperations(String patchText, List<String> errors, Session session) {
+        Matcher m = V4A_HEADER.matcher(patchText);
+        List<V4aOperation> operations = new ArrayList<>();
         while (m.find()) {
             String op = m.group(1);
-            String pathStr = m.group(2).trim();
-            if (isBlocked(pathStr)) {
-                errors.add("Blocked path: " + pathStr);
+            String pathSpec = m.group(2).trim();
+            String rawPath = pathSpec;
+            String rawDestination = null;
+            if ("Move".equals(op)) {
+                String[] parts = pathSpec.split("\\s+->\\s+", 2);
+                if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) {
+                    errors.add("Invalid move header: " + pathSpec);
+                    continue;
+                }
+                rawPath = parts[0].trim();
+                rawDestination = parts[1].trim();
+            }
+            String traversalError = v4aTraversalError(rawPath);
+            if (traversalError != null) {
+                errors.add(traversalError);
                 continue;
             }
-            Path path = Path.of(pathStr).toAbsolutePath().normalize();
-            if ("Add".equals(op)) {
-                try {
-                    if (path.getParent() != null) Files.createDirectories(path.getParent());
-                    String content = extractContent(patchText, m.end());
-                    Files.writeString(path, content, StandardCharsets.UTF_8);
-                    modified.add("added " + pathStr);
-                } catch (Exception e) {
-                    errors.add("Failed to add " + pathStr + ": " + e.getMessage());
-                }
-            } else if ("Delete".equals(op)) {
-                if (Files.deleteIfExists(path)) {
-                    modified.add("deleted " + pathStr);
-                } else {
-                    errors.add("File not found for delete: " + pathStr);
-                }
-            } else if ("Update".equals(op)) {
-                try {
-                    if (!Files.exists(path)) {
-                        errors.add("File not found for update: " + pathStr);
-                        continue;
-                    }
-                    String content = Files.readString(path, StandardCharsets.UTF_8);
-                    String[] diff = parseDiff(extractDiff(patchText, m.end()));
-                    String updated = applyDiff(content, diff[0], diff[1]);
-                    Files.writeString(path, updated, StandardCharsets.UTF_8);
-                    modified.add("updated " + pathStr);
-                } catch (Exception e) {
-                    errors.add("Failed to update " + pathStr + ": " + e.getMessage());
+            if (rawDestination != null) {
+                traversalError = v4aTraversalError(rawDestination);
+                if (traversalError != null) {
+                    errors.add(traversalError);
+                    continue;
                 }
             }
-            lastEnd = m.end();
+
+            try {
+                Path path = toPatchPath(rawPath, session);
+                Path destination = rawDestination == null ? null : toPatchPath(rawDestination, session);
+                operations.add(new V4aOperation(op, rawPath, path, rawDestination, destination, m.end()));
+            } catch (IllegalArgumentException e) {
+                errors.add("Invalid path in " + op.toLowerCase() + " operation '" + pathSpec + "': " + e.getMessage());
+            }
         }
-        if (modified.isEmpty() && !errors.isEmpty()) {
-            return ToolResult.fail(String.join("\n", errors));
+        return operations;
+    }
+
+    private String v4aTraversalError(String rawPath) {
+        if (!hasTraversalComponent(rawPath)) {
+            return null;
         }
-        return ToolResult.ok(String.join("\n", modified) + (errors.isEmpty() ? "" : "\nErrors:\n" + String.join("\n", errors)));
+        return "V4A patch header contains '..' traversal: " + rawPath
+            + ". Use the agent cwd-relative path without '..' or an absolute path in V4A file headers.";
+    }
+
+    private boolean hasTraversalComponent(String rawPath) {
+        if (rawPath == null || rawPath.isBlank()) {
+            return false;
+        }
+        String normalized = rawPath.replace('\\', '/');
+        for (String part : normalized.split("/+")) {
+            if ("..".equals(part)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Path toPatchPath(String path, Session session) {
+        return FileToolSafety.resolvePath(path, session);
+    }
+
+    private List<String> validateV4aOperations(String patchText, List<V4aOperation> operations, Boolean crossProfile) {
+        List<String> errors = new ArrayList<>();
+        for (V4aOperation operation : operations) {
+            errors.addAll(validateWritableTarget(operation.path(), operation.rawPath(), crossProfile));
+            if ("Move".equals(operation.op()) && operation.destination() != null) {
+                errors.addAll(validateWritableTarget(operation.destination(), operation.rawDestination(), crossProfile));
+            }
+            if ("Add".equals(operation.op()) || "Update".equals(operation.op())) {
+                ToolResult textWriteCheck = FileToolSafety.ensurePlainTextWriteAllowed(operation.path(), operation.rawPath());
+                if (textWriteCheck != null) {
+                    errors.add(textWriteCheck.error());
+                }
+            }
+
+            if ("Add".equals(operation.op())) {
+                if (Files.exists(operation.path())) {
+                    errors.add("File already exists for add: " + operation.rawPath());
+                } else {
+                    validateAddOperation(patchText, operation, errors);
+                }
+            } else if ("Delete".equals(operation.op())) {
+                if (!Files.exists(operation.path())) {
+                    errors.add("File not found for delete: " + operation.rawPath());
+                }
+            } else if ("Update".equals(operation.op())) {
+                validateUpdateOperation(patchText, operation, errors);
+            } else if ("Move".equals(operation.op())) {
+                validateMoveOperation(operation, errors);
+            }
+        }
+        return errors;
+    }
+
+    private List<String> validateWritableTarget(Path path, String rawPath, Boolean crossProfile) {
+        ToolResult safetyCheck = FileToolSafety.ensureWritable(fileSafety, path, rawPath, crossProfile);
+        if (safetyCheck != null) {
+            return List.of(safetyCheck.error());
+        }
+        return List.of();
+    }
+
+    private void validateAddOperation(String patchText, V4aOperation operation, List<String> errors) {
+        try {
+            TextFileWriteSupport.validateCandidate(
+                operation.path(),
+                extractContent(patchText, operation.contentStart()));
+        } catch (IOException e) {
+            errors.add("Failed to add " + operation.rawPath() + ": " + e.getMessage());
+        }
+    }
+
+    private void validateUpdateOperation(String patchText, V4aOperation operation, List<String> errors) {
+        if (!Files.exists(operation.path())) {
+            errors.add("File not found for update: " + operation.rawPath());
+            return;
+        }
+        try {
+            String content = Files.readString(operation.path(), StandardCharsets.UTF_8);
+            String updated = applyHunks(content, parseHunks(extractDiff(patchText, operation.contentStart())));
+            TextFileWriteSupport.validateCandidate(operation.path(), updated);
+        } catch (Exception e) {
+            errors.add("Failed to update " + operation.rawPath() + ": " + e.getMessage());
+        }
+    }
+
+    private void validateMoveOperation(V4aOperation operation, List<String> errors) {
+        if (operation.destination() == null) {
+            errors.add("Missing destination for move: " + operation.rawPath());
+            return;
+        }
+        if (!Files.exists(operation.path())) {
+            errors.add("File not found for move: " + operation.rawPath());
+        }
+        if (Files.exists(operation.destination())) {
+            errors.add("Destination already exists for move: " + operation.rawDestination());
+        }
+    }
+
+    private void moveFile(Path source, Path destination) throws IOException {
+        if (destination.getParent() != null) {
+            Files.createDirectories(destination.getParent());
+        }
+        try {
+            Files.move(source, destination, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(source, destination);
+        }
     }
 
     private String extractContent(String patchText, int startOffset) {
@@ -342,6 +613,43 @@ public class PatchTool implements ToolHandler {
         return new String[]{oldBuilder.toString().trim(), newBuilder.toString().trim()};
     }
 
+    private List<String[]> parseHunks(String section) {
+        List<String[]> hunks = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (String line : section.split("\n", -1)) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("***")) {
+                continue;
+            }
+            if (line.startsWith("@@")) {
+                addParsedHunk(hunks, current);
+                continue;
+            }
+            current.append(line).append("\n");
+        }
+        addParsedHunk(hunks, current);
+        return hunks;
+    }
+
+    private void addParsedHunk(List<String[]> hunks, StringBuilder current) {
+        if (current.isEmpty()) {
+            return;
+        }
+        hunks.add(parseDiff(current.toString()));
+        current.setLength(0);
+    }
+
+    private String applyHunks(String content, List<String[]> hunks) {
+        if (hunks.isEmpty()) {
+            throw new IllegalArgumentException("No update hunks found");
+        }
+        String updated = content;
+        for (String[] hunk : hunks) {
+            updated = applyDiff(updated, hunk[0], hunk[1]);
+        }
+        return updated;
+    }
+
     private String applyDiff(String content, String oldSection, String newSection) {
         if (content.contains(oldSection)) {
             return content.replaceFirst(Pattern.quote(oldSection), Matcher.quoteReplacement(newSection));
@@ -349,9 +657,14 @@ public class PatchTool implements ToolHandler {
         throw new IllegalArgumentException("Could not match old section for update");
     }
 
-    private boolean isBlocked(String pathStr) {
-        return BLOCKED_PATHS.stream().anyMatch(pathStr::startsWith);
-    }
+    private record V4aOperation(
+        String op,
+        String rawPath,
+        Path path,
+        String rawDestination,
+        Path destination,
+        int contentStart
+    ) {}
 
     public record PatchArgs(
         @ToolParam(description = "replace or patch") String mode,

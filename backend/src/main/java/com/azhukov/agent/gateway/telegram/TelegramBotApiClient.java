@@ -7,6 +7,8 @@ import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -91,6 +93,18 @@ public class TelegramBotApiClient {
         return callApi("sendChatAction", Map.of("chat_id", chatId, "action", action)).isPresent();
     }
 
+    public boolean setMessageReaction(long chatId, long messageId, String emoji) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("chat_id", chatId);
+        params.put("message_id", messageId);
+        if (emoji == null || emoji.isBlank()) {
+            params.put("reaction", List.of());
+        } else {
+            params.put("reaction", List.of(Map.of("type", "emoji", "emoji", emoji)));
+        }
+        return callApiSuccess("setMessageReaction", params);
+    }
+
     @SuppressWarnings("unchecked")
     private Optional<String> callApi(String method, Map<String, Object> params) {
         if (botToken.isBlank()) {
@@ -108,6 +122,35 @@ public class TelegramBotApiClient {
         } catch (Exception e) {
             log.warn("Telegram {} failed: {}", method, e.getMessage());
             return Optional.empty();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean callApiSuccess(String method, Map<String, Object> params) {
+        if (botToken.isBlank()) {
+            log.warn("Telegram bot token is empty; cannot call {}", method);
+            return false;
+        }
+        try {
+            var response = restClient.post()
+                .uri("https://api.telegram.org/bot{token}/{method}", botToken, method)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(params)
+                .retrieve()
+                .toEntity(Map.class);
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                log.warn("Telegram {} returned HTTP {}", method, response.getStatusCode());
+                return false;
+            }
+            Boolean ok = (Boolean) response.getBody().get("ok");
+            if (!Boolean.TRUE.equals(ok)) {
+                log.warn("Telegram {} error: {}", method, response.getBody().get("description"));
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            log.warn("Telegram {} failed: {}", method, e.getMessage());
+            return false;
         }
     }
 

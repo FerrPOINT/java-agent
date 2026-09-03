@@ -3,6 +3,8 @@ package com.azhukov.agent.tools.file;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -18,6 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class WriteFileVerificationTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private WriteFileTool newTool() {
         AgentProperties props = new AgentProperties();
         props.getSecurity().setFileSafetyEnabled(false);
@@ -25,6 +29,10 @@ class WriteFileVerificationTest {
     }
 
     private final Session session = Session.create("u", "p", "m");
+
+    private static JsonNode jsonContent(ToolResult result) throws Exception {
+        return JSON.readTree(result.content());
+    }
 
     @Test
     void verificationEchoIncludesFirstAndLastLine(@TempDir Path dir) throws Exception {
@@ -34,9 +42,10 @@ class WriteFileVerificationTest {
             "{\"path\":\"" + file + "\",\"content\":\"" + content.replace("\n", "\\n").replace("\"", "\\\"") + "\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("[verified:");
-        assertThat(r.content()).contains("first line: \"first line\"");
-        assertThat(r.content()).contains("last line: \"last line\"");
+        JsonNode verification = jsonContent(r).path("verification");
+        assertThat(verification.path("first_line").asText()).isEqualTo("first line");
+        assertThat(verification.path("last_line").asText()).isEqualTo("last line");
+        assertThat(verification.path("line_count").asInt()).isEqualTo(3);
     }
 
     @Test
@@ -47,7 +56,9 @@ class WriteFileVerificationTest {
             "{\"path\":\"" + file + "\",\"content\":\"" + content + "\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("[verified: first line: \"only line\", last line: \"only line\"]");
+        JsonNode verification = jsonContent(r).path("verification");
+        assertThat(verification.path("first_line").asText()).isEqualTo("only line");
+        assertThat(verification.path("last_line").asText()).isEqualTo("only line");
     }
 
     @Test
@@ -58,8 +69,9 @@ class WriteFileVerificationTest {
             "{\"path\":\"" + file + "\",\"content\":\"" + content.replace("\n", "\\n") + "\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("first line: \"line1\"");
-        assertThat(r.content()).contains("last line: \"line5\"");
+        JsonNode verification = jsonContent(r).path("verification");
+        assertThat(verification.path("first_line").asText()).isEqualTo("line1");
+        assertThat(verification.path("last_line").asText()).isEqualTo("line5");
     }
 
     @Test
@@ -69,7 +81,10 @@ class WriteFileVerificationTest {
             "{\"path\":\"" + file + "\",\"content\":\"\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("[verified: first line: \"\", last line: \"\"]");
+        JsonNode verification = jsonContent(r).path("verification");
+        assertThat(verification.path("first_line").asText()).isEmpty();
+        assertThat(verification.path("last_line").asText()).isEmpty();
+        assertThat(verification.path("line_count").asInt()).isEqualTo(0);
     }
 
     @Test

@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 
 @AgentTool(
     name = "browser_snapshot",
-    description = "Return accessibility-style text snapshot of the current page (title + links + inputs).",
+    description = "Return an accessibility-style page snapshot with interactive element ref IDs for browser_click and browser_type.",
     toolset = "browser"
 )
 @Component
@@ -22,13 +22,18 @@ public class BrowserSnapshotTool implements ToolHandler {
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        SnapshotArgs args = ToolHandler.parseJson(arguments, SnapshotArgs.class);
+        SnapshotArgs args;
+        try {
+            args = ToolHandler.parseJson(arguments, SnapshotArgs.class);
+        } catch (IllegalArgumentException e) {
+            return BrowserToolResponses.failureResult(e.getMessage());
+        }
         try {
             boolean full = args.isFull();
             String result = browserService.accessibilitySnapshot(full);
             return ToolResult.ok(result);
         } catch (Exception e) {
-            return ToolResult.fail("Browser snapshot failed: " + e.getMessage());
+            return BrowserToolResponses.failureResult("Browser snapshot failed: " + e.getMessage());
         }
     }
 

@@ -979,51 +979,70 @@ public class DefaultContextCompressor implements ContextCompressor {
      * Prevents API 400 "No tool call found for function call output" errors.
      */
     private List<Message> sanitizeToolPairs(List<Message> messages) {
-        // Collect all surviving tool_call IDs from assistant messages
+        messages = deduplicateAssistantToolCalls(messages);
+
+        // Collect all surviving tool_call alias groups from assistant messages.
+        // Hermes treats "call_id|response_item_id" as one pairing group.
+        List<Set<String>> survivingCallGroups = new ArrayList<>();
         Set<String> survivingCallIds = new HashSet<>();
         for (Message msg : messages) {
             if (msg.toolCalls() != null) {
                 for (ToolCall tc : msg.toolCalls()) {
-                    if (tc.id() != null) {
-                        survivingCallIds.add(tc.id());
+                    Set<String> variants = ToolCall.idVariants(tc);
+                    if (!variants.isEmpty()) {
+                        survivingCallGroups.add(variants);
+                        survivingCallIds.addAll(variants);
                     }
                 }
             }
         }
 
-        // Collect all tool result call_ids
-        Set<String> resultCallIds = new HashSet<>();
+        // Collect all tool result call_id alias groups.
+        List<Set<String>> resultCallGroups = new ArrayList<>();
         for (Message msg : messages) {
             if (msg.role() == Role.TOOL && msg.toolCallId() != null) {
-                resultCallIds.add(msg.toolCallId());
+                Set<String> variants = ToolCall.idVariants(msg.toolCallId());
+                if (!variants.isEmpty()) {
+                    resultCallGroups.add(variants);
+                }
             }
         }
 
         // 1. Remove orphaned tool results (no matching assistant tool_call)
-        Set<String> orphanedResults = new HashSet<>(resultCallIds);
-        orphanedResults.removeAll(survivingCallIds);
-        if (!orphanedResults.isEmpty()) {
-            List<Message> filtered = new ArrayList<>();
-            for (Message msg : messages) {
-                if (msg.role() == Role.TOOL && orphanedResults.contains(msg.toolCallId())) {
+        int orphanedResults = 0;
+        List<Message> filtered = new ArrayList<>();
+        for (Message msg : messages) {
+            if (msg.role() == Role.TOOL && msg.toolCallId() != null) {
+                Set<String> variants = ToolCall.idVariants(msg.toolCallId());
+                if (!variants.isEmpty() && variants.stream().noneMatch(survivingCallIds::contains)) {
+                    orphanedResults++;
                     continue; // skip orphaned result
                 }
-                filtered.add(msg);
             }
+            filtered.add(msg);
+        }
+        if (orphanedResults > 0) {
             messages = filtered;
-            log.debug("Compression sanitizer: removed {} orphaned tool result(s)", orphanedResults.size());
+            log.debug("Compression sanitizer: removed {} orphaned tool result(s)", orphanedResults);
         }
 
         // 2. Add stub results for orphaned tool_calls (no matching tool result)
-        Set<String> missingResults = new HashSet<>(survivingCallIds);
-        missingResults.removeAll(resultCallIds);
+        Set<Set<String>> missingResults = new HashSet<>();
+        for (Set<String> callGroup : survivingCallGroups) {
+            boolean hasResult = resultCallGroups.stream()
+                .anyMatch(resultGroup -> resultGroup.stream().anyMatch(callGroup::contains));
+            if (!hasResult) {
+                missingResults.add(callGroup);
+            }
+        }
         if (!missingResults.isEmpty()) {
             List<Message> patched = new ArrayList<>();
             for (Message msg : messages) {
                 patched.add(msg);
                 if (msg.toolCalls() != null) {
                     for (ToolCall tc : msg.toolCalls()) {
-                        if (tc.id() != null && missingResults.contains(tc.id())) {
+                        if (!ToolCall.idVariants(tc).isEmpty()
+                            && missingResults.contains(ToolCall.idVariants(tc))) {
                             patched.add(Message.toolResult(tc.id(),
                                 "[Result from earlier conversation — see context summary above]",
                                 msg.turnIndex()));
@@ -1036,6 +1055,29 @@ public class DefaultContextCompressor implements ContextCompressor {
         }
 
         return messages;
+    }
+
+    private List<Message> deduplicateAssistantToolCalls(List<Message> messages) {
+        List<Message> dedupedMessages = new ArrayList<>(messages.size());
+        int removed = 0;
+        for (Message msg : messages) {
+            if (msg.role() == Role.ASSISTANT && msg.toolCalls() != null && !msg.toolCalls().isEmpty()) {
+                List<ToolCall> dedupedCalls = ToolCall.deduplicateByIdVariants(msg.toolCalls());
+                if (dedupedCalls != msg.toolCalls()) {
+                    removed += msg.toolCalls().size() - dedupedCalls.size();
+                    dedupedMessages.add(new Message(msg.role(), msg.content(), msg.toolCall(),
+                        dedupedCalls.isEmpty() ? null : dedupedCalls,
+                        msg.toolCallId(), msg.turnIndex(), msg.imageCount(), msg.createdAt()));
+                    continue;
+                }
+            }
+            dedupedMessages.add(msg);
+        }
+        if (removed == 0) {
+            return messages;
+        }
+        log.debug("Compression sanitizer: removed {} duplicate assistant tool_call(s)", removed);
+        return dedupedMessages;
     }
 
     /**

@@ -1,7 +1,9 @@
 package com.azhukov.agent.tools.terminal;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.core.agent.InterruptToken;
+import com.azhukov.agent.core.agent.RunControlScope;
 import com.azhukov.agent.service.CheckpointManager;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
@@ -12,17 +14,21 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.Redactor;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
 @AgentTool(
     name = "terminal",
@@ -44,6 +50,22 @@ public class TerminalTool implements ToolHandler {
     public static final String META_WORKDIR = "cron_workdir";
     /** Hermes parity: FOREGROUND_MAX_TIMEOUT = 600s. Foreground timeout above this is rejected. */
     private static final int FOREGROUND_MAX_TIMEOUT = 600;
+    private static final ObjectMapper JSON = SharedObjectMapper.get();
+    private static final Pattern SHELL_LEVEL_BACKGROUND_RE = Pattern.compile(
+        "(?:^|[;&|]\\s*|&&\\s*|\\|\\|\\s*|\\$\\(\\s*)(?:nohup|disown|setsid)\\b",
+        Pattern.CASE_INSENSITIVE | Pattern.MULTILINE);
+    private static final Pattern INLINE_BACKGROUND_AMP_RE = Pattern.compile("\\s&\\s");
+    private static final Pattern TRAILING_BACKGROUND_AMP_RE = Pattern.compile("\\s&\\s*(?:#.*)?$");
+    private static final List<Pattern> LONG_LIVED_FOREGROUND_PATTERNS = List.of(
+        Pattern.compile("\\b(?:npm|pnpm|yarn|bun)\\s+(?:run\\s+)?(?:dev|start|serve|watch)\\b", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("\\bdocker\\s+compose\\s+up\\b", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("\\bnext\\s+dev\\b", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("\\bvite(?:\\s|$)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("\\bnodemon\\b", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("\\buvicorn\\b", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("\\bgunicorn\\b", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("\\bpython(?:3)?\\s+-m\\s+http\\.server\\b", Pattern.CASE_INSENSITIVE)
+    );
 
     // Hermes parity (terminal_tool.py:1240-1276): track per-session cwd so that
     // `cd /opt/dev` in one call persists to the next. Without this, each
@@ -55,9 +77,23 @@ public class TerminalTool implements ToolHandler {
     // `export FOO=bar` in one call persists to the next.
     private static final java.util.concurrent.ConcurrentHashMap<UUID, java.util.Map<String, String>> SESSION_ENV = new java.util.concurrent.ConcurrentHashMap<>();
 
+    public static String trackedCwd(UUID sessionId) {
+        return sessionId == null ? null : SESSION_CWD.get(sessionId);
+    }
+
+    static java.util.Map<String, String> trackedEnv(UUID sessionId) {
+        java.util.Map<String, String> env = sessionId == null ? null : SESSION_ENV.get(sessionId);
+        return env == null ? java.util.Map.of() : env;
+    }
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        TerminalArgs args = ToolHandler.parseJson(arguments, TerminalArgs.class);
+        TerminalArgs args;
+        try {
+            args = ToolHandler.parseJson(arguments, TerminalArgs.class);
+        } catch (IllegalArgumentException e) {
+            return jsonFail(e.getMessage());
+        }
         // Hermes parity: models sometimes send execute_code's 'code' argument here.
         // Without this, the call falls through to command=None and fails with
         // "Command is required" — naming neither the stray argument nor the right tool.
@@ -66,15 +102,45 @@ public class TerminalTool implements ToolHandler {
             try {
                 var tree = new com.fasterxml.jackson.databind.ObjectMapper().readTree(arguments);
                 if (tree.has("code") && !tree.get("code").isNull() && !tree.get("code").asText().isBlank()) {
-                    return ToolResult.fail(
+                    return jsonFail(
                         "terminal received a 'code' parameter, but it requires a shell " +
                         "command in 'command'. Use execute_code(code=...) for Python; " +
                         "for shell, retry as terminal(command=...).");
                 }
             } catch (Exception ignored) { }
-            return ToolResult.fail("Command is required");
+            return jsonFail("Command is required");
         }
         String command = args.command();
+
+        if (!args.background()) {
+            if (hasForegroundNotificationModifier(args)) {
+                return jsonFail(
+                    "notify only applies to background commands (foreground results return directly). " +
+                    "Either drop notify, or run as terminal(command=..., background=true, notify=...).");
+            }
+            if (args.pty()) {
+                return jsonFail(
+                    "pty requires background=true (a PTY session is interacted with via " +
+                    "process(action='write'/'submit'), which needs a tracked background process). " +
+                    "Retry as terminal(command=..., background=true, pty=true).");
+            }
+        }
+
+        NotificationSettings notifications;
+        try {
+            notifications = resolveNotifications(args);
+        } catch (IllegalArgumentException e) {
+            return jsonFail(e.getMessage());
+        }
+        if (args.timeout() != null && args.timeout() <= 0) {
+            return jsonFail("timeout must be a positive number of seconds (got " + args.timeout() + ").");
+        }
+        if (!args.background()) {
+            String guidance = foregroundBackgroundGuidance(command);
+            if (guidance != null) {
+                return jsonFail(guidance);
+            }
+        }
 
         // Auto-checkpoint before dangerous commands
         if (properties.getCheckpoints().isEnabled() && checkpointManager.isDangerousCommand(command)) {
@@ -91,13 +157,13 @@ public class TerminalTool implements ToolHandler {
         CommandGuard guard = new CommandGuard(blockedPatterns, blockSudo);
         String blockReason = guard.check(command);
         if (blockReason != null) {
-            return ToolResult.fail(blockReason);
+            return jsonFail(blockReason);
         }
 
-        int timeout = args.timeout() > 0 ? args.timeout() : properties.getTerminal().getDefaultTimeoutSeconds();
+        int timeout = args.timeout() != null ? args.timeout() : properties.getTerminal().getDefaultTimeoutSeconds();
         // Hermes parity: reject foreground timeout > 600s — nudge toward background.
         if (!args.background() && timeout > FOREGROUND_MAX_TIMEOUT) {
-            return ToolResult.fail(
+            return jsonFail(
                 "Foreground timeout " + timeout + "s exceeds the maximum of "
                 + FOREGROUND_MAX_TIMEOUT + "s. Use background=true with "
                 + "notify_on_complete=true for long-running commands.");
@@ -107,11 +173,13 @@ public class TerminalTool implements ToolHandler {
         // Hermes parity (terminal_tool.py:2710-2740): if no explicit workdir is
         // given, use the session's tracked cwd (from a previous `cd` command).
         String workdir = args.workdir();
+        boolean explicitWorkdir = workdir != null && !workdir.isBlank();
         if ((workdir == null || workdir.isBlank()) && session != null) {
             workdir = session.getMetadata(META_WORKDIR);
         }
-        if ((workdir == null || workdir.isBlank()) && session != null) {
-            String trackedCwd = SESSION_CWD.get(session.id());
+        UUID controlSessionId = session != null ? RunControlScope.controlSessionId(session) : null;
+        if ((workdir == null || workdir.isBlank()) && controlSessionId != null) {
+            String trackedCwd = SESSION_CWD.get(controlSessionId);
             if (trackedCwd != null && !trackedCwd.isBlank()) {
                 workdir = trackedCwd;
             }
@@ -122,8 +190,8 @@ public class TerminalTool implements ToolHandler {
                 // Hermes parity (terminal_tool.py:3419-3427): mutual exclusion —
                 // if both notify_on_complete and watch_patterns are set, drop
                 // watch_patterns. The combination produces duplicate notifications.
-                boolean useNotify = args.notifyOnComplete();
-                var effectiveWatchPatterns = args.watchPatterns();
+                boolean useNotify = notifications.notifyOnComplete();
+                var effectiveWatchPatterns = notifications.watchPatterns();
                 if (useNotify && effectiveWatchPatterns != null && !effectiveWatchPatterns.isEmpty()) {
                     log.info("watch_patterns ignored because notify_on_complete=true (mutual exclusion)");
                     effectiveWatchPatterns = List.of();
@@ -137,7 +205,9 @@ public class TerminalTool implements ToolHandler {
                         log.info("Background process {} completed (notify_on_complete)", processId);
                     };
                 }
-                ProcessTool.ManagedProcess mp = processTool.spawn(command, timeout, args.pty(), notifyCallback, workdir);
+                ProcessTool.ManagedProcess mp = processTool.spawn(
+                    command, timeout, args.pty(), notifyCallback, workdir, savedEnvForSession(controlSessionId),
+                    controlSessionId, effectiveWatchPatterns);
                 String result = String.format(
                     "Background process started\nsession_id: %s\npid: %s",
                     mp.id, mp.pid
@@ -157,16 +227,130 @@ public class TerminalTool implements ToolHandler {
                 }
                 return ToolResult.ok(result);
             } catch (Exception e) {
-                return ToolResult.fail("Failed to start background process: " + e.getMessage());
+                return jsonFail("Failed to start background process: " + e.getMessage());
             }
         }
 
-        UUID sessionId = session != null ? session.id() : null;
-        return runCommand(command, timeout, sessionId, args.pty(), workdir, guard);
+        return runCommand(command, timeout, controlSessionId, args.pty(), workdir, !explicitWorkdir, guard);
+    }
+
+    private java.util.Map<String, String> savedEnvForSession(UUID sessionId) {
+        if (sessionId == null) {
+            return java.util.Map.of();
+        }
+        java.util.Map<String, String> savedEnv = SESSION_ENV.get(sessionId);
+        return savedEnv == null ? java.util.Map.of() : savedEnv;
+    }
+
+    private static String foregroundBackgroundGuidance(String command) {
+        if (looksLikeHelpOrVersionCommand(command)) {
+            return null;
+        }
+        String unquoted = stripQuotedContent(command);
+        if (SHELL_LEVEL_BACKGROUND_RE.matcher(unquoted).find()) {
+            return "Foreground command uses shell-level background wrappers (nohup/disown/setsid). "
+                + "Re-send WITHOUT the wrapper as terminal(command=\"<cmd>\", background=true, "
+                + "notify_on_complete=true) so Hermes tracks the process, then run readiness "
+                + "checks and tests in separate commands.";
+        }
+        if (INLINE_BACKGROUND_AMP_RE.matcher(unquoted).find()
+            || TRAILING_BACKGROUND_AMP_RE.matcher(unquoted).find()) {
+            return "Foreground command uses '&' backgrounding. Re-send WITHOUT the '&' as "
+                + "terminal(command=\"<cmd>\", background=true) - add notify_on_complete=true "
+                + "for bounded jobs - then run health checks and tests in follow-up terminal calls.";
+        }
+        for (Pattern pattern : LONG_LIVED_FOREGROUND_PATTERNS) {
+            if (pattern.matcher(unquoted).find()) {
+                return "This foreground command appears to start a long-lived server/watch process. "
+                    + "Run it with background=true, verify readiness (health endpoint/log signal), "
+                    + "then execute tests in a separate command.";
+            }
+        }
+        return null;
+    }
+
+    private static boolean looksLikeHelpOrVersionCommand(String command) {
+        String normalized = " " + (command == null ? "" : command.toLowerCase().replaceAll("\\s+", " ").trim());
+        return normalized.contains(" --help")
+            || normalized.endsWith(" -h")
+            || normalized.contains(" --version")
+            || normalized.endsWith(" -v");
+    }
+
+    private static String stripQuotedContent(String command) {
+        if (command == null || command.isEmpty()) {
+            return "";
+        }
+        StringBuilder result = new StringBuilder(command.length());
+        char quote = 0;
+        boolean escaped = false;
+        for (int i = 0; i < command.length(); i++) {
+            char ch = command.charAt(i);
+            if (quote != 0) {
+                if (quote == '"' && ch == '\\' && !escaped) {
+                    escaped = true;
+                    continue;
+                }
+                if (ch == quote && !escaped) {
+                    quote = 0;
+                    result.append("_QUOTE_");
+                }
+                escaped = false;
+                continue;
+            }
+            if (ch == '\'' || ch == '"' || ch == '`') {
+                quote = ch;
+                escaped = false;
+                continue;
+            }
+            result.append(ch);
+        }
+        if (quote != 0) {
+            result.append("_QUOTE_");
+        }
+        return result.toString();
+    }
+
+    private boolean hasForegroundNotificationModifier(TerminalArgs args) {
+        if (args.notifyOnComplete()) {
+            return true;
+        }
+        if (args.watchPatterns() != null && !args.watchPatterns().isEmpty()) {
+            return true;
+        }
+        Object notify = args.notifyValue();
+        if (notify instanceof Boolean b) {
+            return b;
+        }
+        if (notify instanceof List<?> list) {
+            return !list.isEmpty();
+        }
+        return notify != null;
+    }
+
+    private NotificationSettings resolveNotifications(TerminalArgs args) {
+        boolean notifyOnComplete = args.notifyOnComplete();
+        List<String> watchPatterns = args.watchPatterns();
+        Object notify = args.notifyValue();
+        if (notify == null) {
+            return new NotificationSettings(notifyOnComplete, watchPatterns);
+        }
+        if (notify instanceof Boolean b) {
+            return new NotificationSettings(b, List.of());
+        }
+        if (notify instanceof List<?> list) {
+            List<String> patterns = list.stream()
+                .map(item -> item == null ? "" : item.toString())
+                .filter(item -> !item.isBlank())
+                .toList();
+            return new NotificationSettings(false, patterns);
+        }
+        throw new IllegalArgumentException(
+            "notify must be true/false (notify on exit) or a list of strings (notify on output pattern match).");
     }
 
     private ToolResult runCommand(String command, int timeoutSeconds, UUID sessionId, boolean usePty, String workdir,
-                                  CommandGuard guard) {
+                                  boolean recordSessionCwd, CommandGuard guard) {
         Process process = null;
         AtomicBoolean interrupted = new AtomicBoolean(false);
         // Read output concurrently with waitFor() to avoid losing buffered data
@@ -175,22 +359,27 @@ public class TerminalTool implements ToolHandler {
         Thread outputReader = null;
         try {
             ProcessBuilder pb;
+            String shellScript = null;
             // Hermes parity (terminal_tool.py:3559): track session cwd by
             // appending a marker + pwd after the command. The marker lets us
             // extract the post-command cwd and persist it for the next call.
             // Also capture exported env vars by printing them after the command.
             // Only for foreground non-PTY commands (PTY output is messy).
             String cwdMarker = null;
-            if (!usePty && sessionId != null) {
-                cwdMarker = "\n__CWD_MARKER__:";
-                // Capture both cwd and exported env vars after the command runs.
-                // env_marker uses a unique format unlikely to appear in command output.
-                String envCapture = "; printf '" + cwdMarker + "' && pwd && printf '\\n__ENV_MARKER__\\n' && env -0";
-                pb = new ProcessBuilder("bash", "-c", command + envCapture);
-            } else if (usePty) {
+            if (usePty) {
                 pb = new ProcessBuilder("script", "-qec", command, "/dev/null");
             } else {
-                pb = new ProcessBuilder("bash", "-c", command);
+                if (sessionId != null) {
+                    cwdMarker = "\n__CWD_MARKER__:";
+                    // Capture both cwd and exported env vars after the command runs.
+                    // env_marker uses a unique format unlikely to appear in command output.
+                    String envCapture = "\nJAVA_AGENT_EXIT_CODE=$?; printf '" + cwdMarker
+                        + "'; pwd; printf '\\n__ENV_MARKER__\\n'; env -0; exit $JAVA_AGENT_EXIT_CODE";
+                    shellScript = shellExportPrologue(SESSION_ENV.get(sessionId)) + command + envCapture;
+                } else {
+                    shellScript = command;
+                }
+                pb = new ProcessBuilder(ShellExecutableResolver.bash(), "-s");
             }
             // Set working directory if provided
             // h49: If the configured workdir doesn't exist or isn't a directory,
@@ -223,6 +412,13 @@ public class TerminalTool implements ToolHandler {
             }
 
             process = pb.start();
+
+            if (shellScript != null) {
+                try (OutputStreamWriter writer = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8)) {
+                    writer.write(shellScript);
+                    writer.write('\n');
+                }
+            }
 
             // Start reading output in a separate thread concurrent with waitFor()
             // to avoid losing buffered data when the stream closes (Finding 1.4).
@@ -265,7 +461,7 @@ public class TerminalTool implements ToolHandler {
             }
 
             if (interrupted.get()) {
-                return ToolResult.fail("Interrupted by user");
+                return jsonFail("Interrupted by user");
             }
 
             if (!finished) {
@@ -277,7 +473,7 @@ public class TerminalTool implements ToolHandler {
                 String partialOutput = redact(AnsiStrip.strip(stripTrailingNewline(outputBuffer.toString(), usePty)));
                 String enhanced = TerminalOutputEnhancer.enhance(
                     partialOutput, -1, workdir, true, actualCwd);
-                return ToolResult.fail("Command timed out after " + timeoutSeconds + " seconds" + enhanced);
+                return jsonFail("Command timed out after " + timeoutSeconds + " seconds" + enhanced);
             }
 
             // Wait for the output reader thread to finish draining the stream
@@ -290,6 +486,7 @@ public class TerminalTool implements ToolHandler {
             // Hermes parity (tools/terminal_tool.py:3466): strip ANSI escapes from ALL
             // terminal output — full ECMA-48 coverage (CSI private-mode, OSC, DCS, 8-bit C1).
             output = AnsiStrip.strip(output);
+            int exitCode = process.exitValue();
 
             // Hermes parity (terminal_tool.py:3559): extract post-command cwd
             // and exported env vars from markers and persist for the next call.
@@ -319,7 +516,9 @@ public class TerminalTool implements ToolHandler {
                         output = output.substring(0, markerIdx).trim();
                     }
                     if (!postCwd.isEmpty() && new java.io.File(postCwd).isDirectory()) {
-                        SESSION_CWD.put(sessionId, postCwd);
+                        if (recordSessionCwd) {
+                            SESSION_CWD.put(sessionId, postCwd);
+                        }
                         actualCwd = postCwd;
                     }
                 }
@@ -328,7 +527,6 @@ public class TerminalTool implements ToolHandler {
             String redactedOutput = redact(output);
 
             // Finding 1.3: Call notifyPostExecution after process completes
-            int exitCode = process.exitValue();
             guard.notifyPostExecution(command, exitCode, redactedOutput);
 
             // p4/p5/h47/h48: Enhance output with CWD echo, error hints, signal info,
@@ -353,13 +551,21 @@ public class TerminalTool implements ToolHandler {
             if (interruptToken != null && sessionId != null) {
                 interruptToken.unregister(sessionId);
             }
-            return ToolResult.fail("Interrupted by user");
+            return jsonFail("Interrupted by user");
         } catch (Exception e) {
             if (interruptToken != null && sessionId != null) {
                 interruptToken.unregister(sessionId);
             }
-            return ToolResult.fail("Failed to execute command: " + e.getMessage());
+            return jsonFail("Failed to execute command: " + e.getMessage());
         }
+    }
+
+    private static ToolResult jsonFail(String error) {
+        String message = error == null || error.isBlank() ? "Terminal failed" : error;
+        ObjectNode response = JSON.createObjectNode();
+        response.put("success", false);
+        response.put("error", message);
+        return new ToolResult(false, response.toString(), message);
     }
 
     private String redact(String output) {
@@ -393,6 +599,30 @@ public class TerminalTool implements ToolHandler {
         }
     }
 
+    private static String shellExportPrologue(java.util.Map<String, String> env) {
+        if (env == null || env.isEmpty()) {
+            return "";
+        }
+        StringBuilder prologue = new StringBuilder();
+        for (java.util.Map.Entry<String, String> entry : env.entrySet()) {
+            String key = entry.getKey();
+            if (key == null || !key.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+                continue;
+            }
+            prologue.append("export ")
+                .append(key)
+                .append('=')
+                .append(shellQuote(entry.getValue()))
+                .append('\n');
+        }
+        return prologue.toString();
+    }
+
+    private static String shellQuote(String value) {
+        String text = value == null ? "" : value;
+        return "'" + text.replace("'", "'\"'\"'") + "'";
+    }
+
     /**
      * Strips the trailing newline added by the reader loop and normalises
      * PTY {@code \r\n} line endings to {@code \n}.
@@ -420,7 +650,7 @@ public class TerminalTool implements ToolHandler {
             long lastNotifyTime = 0;
             long startTime = System.currentTimeMillis();
             long maxDuration = 30 * 60 * 1000L; // 30 minutes max monitoring
-            while (mp.process.isAlive() && (System.currentTimeMillis() - startTime) < maxDuration) {
+            while (mp.isAlive() && (System.currentTimeMillis() - startTime) < maxDuration) {
                 try {
                     Thread.sleep(500); // Poll every 500ms
                 } catch (InterruptedException e) {
@@ -444,17 +674,20 @@ public class TerminalTool implements ToolHandler {
         monitor.start();
     }
 
+    private record NotificationSettings(boolean notifyOnComplete, List<String> watchPatterns) {
+    }
+
     record TerminalArgs(
         @ToolParam(description = "The command to execute on the VM") String command,
-        @ToolParam(description = "Max seconds to wait (default 180, foreground max 600).", required = false) int timeout,
+        @ToolParam(description = "Max seconds to wait (default 180, foreground max 600).", required = false) Integer timeout,
         @ToolParam(description = "Run in the background, returning a session_id.", required = false) boolean background,
-        @ToolParam(description = "Run in pseudo-terminal for interactive CLIs.", required = false) boolean pty,
+        @ToolParam(description = "With background=true: run in pseudo-terminal for interactive CLIs.", required = false) boolean pty,
         @ToolParam(description = "Working directory for this command.", required = false) String workdir,
+        @JsonProperty("notify") @ToolParam(description = "With background=true: true notifies on exit, or a list of strings notifies on output pattern match.", required = false) Object notifyValue,
         @JsonProperty("notify_on_complete") @JsonAlias("notify-on-complete") @ToolParam(description = "Get notified when the process exits.", required = false) boolean notifyOnComplete,
         @JsonProperty("watch_patterns") @JsonAlias("watch-patterns") @ToolParam(description = "Strings to watch for in background output.", required = false) List<String> watchPatterns) {
         TerminalArgs {
             if (command == null) command = "";
-            if (timeout < 0) timeout = 0;
             if (watchPatterns == null) watchPatterns = List.of();
         }
     }

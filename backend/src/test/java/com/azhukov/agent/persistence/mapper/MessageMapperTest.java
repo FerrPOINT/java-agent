@@ -33,6 +33,8 @@ class MessageMapperTest {
         assertThat(message.role()).isEqualTo(Role.ASSISTANT);
         assertThat(message.content()).isEqualTo("hello");
         assertThat(message.toolCall()).isEqualTo(new ToolCall("call-1", "weather", "{\"city\":\"Paris\"}"));
+        assertThat(message.toolCalls())
+            .containsExactly(new ToolCall("call-1", "weather", "{\"city\":\"Paris\"}"));
         assertThat(message.toolCallId()).isNull();
         assertThat(message.turnIndex()).isEqualTo(3);
     }
@@ -63,7 +65,52 @@ class MessageMapperTest {
         assertThat(entity.getToolCallId()).isEqualTo("call-1");
         assertThat(entity.getToolCallName()).isEqualTo("weather");
         assertThat(entity.getToolCallArguments()).isEqualTo("{\"city\":\"Paris\"}");
+        assertThat(entity.getToolCalls())
+            .contains("\"id\":\"call-1\"")
+            .contains("\"name\":\"weather\"")
+            .contains("\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"");
         assertThat(entity.getTurnIndex()).isEqualTo(1);
+    }
+
+    @Test
+    void toolCallsJsonRoundTripsAllAssistantCalls() {
+        List<ToolCall> calls = List.of(
+            new ToolCall("call-1", "read_file", "{\"path\":\"a\"}"),
+            new ToolCall("call-2", "web_search", "{\"query\":\"b\"}"));
+        Message source = Message.assistantWithToolCalls("checking", calls, 4);
+
+        MessageEntity entity = mapper.toEntity(source);
+        Message restored = mapper.toDomain(entity);
+
+        assertThat(entity.getToolCallId()).isEqualTo("call-1");
+        assertThat(entity.getToolCalls()).contains("\"id\":\"call-2\"");
+        assertThat(restored.content()).isEqualTo("checking");
+        assertThat(restored.toolCall()).isEqualTo(calls.get(0));
+        assertThat(restored.toolCalls()).containsExactlyElementsOf(calls);
+        assertThat(restored.turnIndex()).isEqualTo(4);
+    }
+
+    @Test
+    void toDomainPrefersStoredToolCallsJsonOverLegacyFirstCallColumns() {
+        MessageEntity entity = new MessageEntity();
+        entity.setRole("assistant");
+        entity.setContent("");
+        entity.setToolCallId("legacy-call");
+        entity.setToolCallName("legacy");
+        entity.setToolCallArguments("{}");
+        entity.setToolCalls("""
+            [
+              {"id":"call-1","type":"function","function":{"name":"read_file","arguments":"{\\"path\\":\\"a\\"}"}},
+              {"id":"call-2","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"b\\"}"}}
+            ]
+            """);
+
+        Message restored = mapper.toDomain(entity);
+
+        assertThat(restored.toolCalls()).containsExactly(
+            new ToolCall("call-1", "read_file", "{\"path\":\"a\"}"),
+            new ToolCall("call-2", "web_search", "{\"query\":\"b\"}"));
+        assertThat(restored.toolCall()).isEqualTo(restored.toolCalls().get(0));
     }
 
     @Test
@@ -76,6 +123,20 @@ class MessageMapperTest {
         assertThat(entity.getToolCallId()).isEqualTo("call-1");
         assertThat(entity.getContent()).isEqualTo("42");
         assertThat(entity.getTurnIndex()).isEqualTo(2);
+    }
+
+    @Test
+    void imageCountRoundTrips() {
+        Message source = Message.userWithImages("look", 2);
+
+        MessageEntity entity = mapper.toEntity(source);
+
+        assertThat(entity.getImageCount()).isEqualTo(2);
+
+        Message restored = mapper.toDomain(entity);
+
+        assertThat(restored.content()).isEqualTo("look");
+        assertThat(restored.imageCount()).isEqualTo(2);
     }
 
     @Test

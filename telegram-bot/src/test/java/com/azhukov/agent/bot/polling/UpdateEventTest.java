@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,6 +56,22 @@ class UpdateEventTest {
         UpdateEvent event = UpdateEvent.from(update);
 
         assertThat(event.commandName()).isEqualTo("help");
+    }
+
+    @Test
+    void fromCommandLowercasesWithRootLocaleLikeHermes() {
+        Locale original = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+            Map<String, Object> update = baseUpdate(109L);
+            update.put("message", messageWithText(123L, 456L, "jdoe", "/INIT"));
+
+            UpdateEvent event = UpdateEvent.from(update);
+
+            assertThat(event.commandName()).isEqualTo("init");
+        } finally {
+            Locale.setDefault(original);
+        }
     }
 
     @Test

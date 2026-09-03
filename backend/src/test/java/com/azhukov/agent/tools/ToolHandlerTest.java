@@ -50,4 +50,19 @@ class ToolHandlerTest {
         RecordArgs args = ToolHandler.parseJson("{\"value\":\"abc\"}", RecordArgs.class);
         assertThat(args.value()).isEqualTo("abc");
     }
+
+    static record PathArgs(
+        @ToolParam(description = "path") String path,
+        @ToolParam(description = "content") String content
+    ) {}
+
+    @Test
+    void repairsUnescapedWindowsPathBackslashesOnlyForPathFields() {
+        String json = "{\"path\":\"C:\\Users\\ferru\\file.txt\",\"content\":\"line1\\nline2\"}";
+
+        PathArgs args = ToolHandler.parseJson(json, PathArgs.class);
+
+        assertThat(args.path()).isEqualTo("C:\\Users\\ferru\\file.txt");
+        assertThat(args.content()).isEqualTo("line1\nline2");
+    }
 }

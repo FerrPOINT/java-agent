@@ -35,7 +35,13 @@ public class MessageEntity {
     @Column(columnDefinition = "TEXT")
     private String toolCallArguments;
 
+    @Column(name = "tool_calls", columnDefinition = "TEXT")
+    private String toolCalls;
+
     private Integer turnIndex;
+
+    @Column(name = "image_count")
+    private Integer imageCount = 0;
 
     /** Whether the message is in live context (false after compaction archive). */
     private Boolean active = true;

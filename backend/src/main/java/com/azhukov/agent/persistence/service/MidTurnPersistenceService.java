@@ -14,6 +14,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -53,16 +54,19 @@ public class MidTurnPersistenceService implements MidTurnPersistenceCallback {
             log.debug("Mid-turn persistence skipped: session {} no longer exists", sessionId);
             return true; // treat as flushed so the caller advances its cursor
         }
+        Map<String, String> toolNamesByCallId = ToolResultNameResolver.collect(messages);
         try {
             transactionTemplate.execute(status -> {
                 Instant now = Instant.now();
+                int sequence = 0;
                 for (int i = fromIndex; i < messages.size(); i++) {
                     Message m = messages.get(i);
                     // Skip system/developer messages — they are regenerated each turn
                     if (m.role() == Role.SYSTEM || m.role() == Role.DEVELOPER) continue;
                     MessageEntity e = messageMapper.toEntity(m);
+                    ToolResultNameResolver.apply(e, m, toolNamesByCallId);
                     e.setSessionId(sessionId);
-                    e.setCreatedAt(now);
+                    e.setCreatedAt(now.plusNanos(sequence++));
                     messageRepository.save(e);
                 }
                 return null;

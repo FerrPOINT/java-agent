@@ -3,16 +3,24 @@ package com.azhukov.agent.core.memory;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.PendingMemoryEntity;
 import com.azhukov.agent.persistence.repository.PendingMemoryRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.NoTransactionException;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
-import jakarta.annotation.PostConstruct;
 
 /**
  * Write-approval gate: if enabled, memory writes are staged to a pending queue
@@ -22,6 +30,8 @@ import jakarta.annotation.PostConstruct;
 @Component
 @RequiredArgsConstructor
 public class WriteApprovalGate {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final PendingMemoryRepository pendingRepository;
     private final MemoryProvider memoryProvider;
@@ -93,9 +103,29 @@ public class WriteApprovalGate {
         try {
             switch (action) {
                 case "add" -> memoryProvider.store(userId, target, "auto", e.getContent());
-                case "replace" -> memoryProvider.replace(userId, target, e.getOldText(), e.getContent());
-                case "remove" -> memoryProvider.remove(userId, target, e.getOldText());
-                default -> log.warn("Unknown pending action: {}", action);
+                case "replace" -> {
+                    String error = memoryProvider.replace(userId, target, e.getOldText(), e.getContent());
+                    if (error != null) {
+                        throw new IllegalStateException(error);
+                    }
+                }
+                case "remove" -> {
+                    String error = memoryProvider.remove(userId, target, e.getOldText());
+                    if (error != null) {
+                        throw new IllegalStateException(error);
+                    }
+                }
+                case "batch" -> {
+                    String error = memoryProvider.applyBatch(
+                        userId, target, parseBatchOperations(e.getContent()), approvalProvenance(e, id));
+                    if (error != null) {
+                        throw new IllegalStateException(error);
+                    }
+                }
+                default -> {
+                    log.warn("Unknown pending action: {}", action);
+                    return false;
+                }
             }
             e.setStatus("approved");
             e.setResolvedAt(Instant.now());
@@ -107,9 +137,62 @@ public class WriteApprovalGate {
             // the transaction for rollback so the pending status is NOT saved
             // as "approved" while the memory write failed (breaks atomicity).
             log.error("Failed to apply approved write {}: {}", id, ex.getMessage());
-            org.springframework.transaction.interceptor.TransactionAspectSupport
-                .currentTransactionStatus().setRollbackOnly();
+            markRollbackOnlyIfPossible();
             return false;
+        }
+    }
+
+    private static List<MemoryProvider.MemoryBatchOperation> parseBatchOperations(String content)
+        throws JsonProcessingException {
+        JsonNode root = MAPPER.readTree(content == null ? "" : content);
+        JsonNode operations = root.isObject() ? root.path("operations") : root;
+        if (!operations.isArray()) {
+            throw new IllegalArgumentException("Pending batch content must be a JSON operations array");
+        }
+
+        List<MemoryProvider.MemoryBatchOperation> parsed = new ArrayList<>(operations.size());
+        for (JsonNode operation : operations) {
+            if (!operation.isObject()) {
+                throw new IllegalArgumentException("Pending batch operation must be an object");
+            }
+            String contentText = textValue(operation, "content");
+            if (contentText == null || contentText.isBlank()) {
+                contentText = textValue(operation, "new_text");
+                if (contentText == null) {
+                    contentText = textValue(operation, "newText");
+                }
+            }
+            String oldText = textValue(operation, "old_text");
+            if (oldText == null) {
+                oldText = textValue(operation, "oldText");
+            }
+            parsed.add(new MemoryProvider.MemoryBatchOperation(
+                textValue(operation, "action"),
+                contentText,
+                oldText));
+        }
+        return parsed;
+    }
+
+    private static String textValue(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value != null && !value.isNull() ? value.asText() : null;
+    }
+
+    private static Map<String, String> approvalProvenance(PendingMemoryEntity entity, UUID id) {
+        Map<String, String> provenance = new LinkedHashMap<>();
+        provenance.put("approved_pending_id", id.toString());
+        if (entity.getOrigin() != null && !entity.getOrigin().isBlank()) {
+            provenance.put("origin", entity.getOrigin());
+        }
+        return Map.copyOf(provenance);
+    }
+
+    private static void markRollbackOnlyIfPossible() {
+        try {
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+        } catch (NoTransactionException ignored) {
+            // Unit tests may call approve() without a Spring transactional proxy.
         }
     }
 

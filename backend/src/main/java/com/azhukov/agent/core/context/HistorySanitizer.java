@@ -7,7 +7,9 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -116,29 +118,53 @@ public final class HistorySanitizer {
         }
 
         // ── Pass 1: drop stray TOOL messages ──────────────────────────────
-        // Rolling set of known tool-call ids refreshed on each ASSISTANT
-        // message; a user turn closes the tool-result run.
-        Set<String> knownToolIds = new HashSet<>();
+        // Rolling set of known tool-call id alias groups refreshed on each
+        // ASSISTANT message; a user turn closes the tool-result run.
+        Map<String, Integer> knownToolGroups = new LinkedHashMap<>();
+        Set<Integer> matchedToolGroups = new HashSet<>();
+        int nextToolGroup = 0;
         List<Message> filtered = new ArrayList<>(collapsed.size());
         for (Message msg : collapsed) {
             if (msg.role() == Role.ASSISTANT) {
-                knownToolIds = new HashSet<>();
+                List<ToolCall> originalCalls = msg.toolCalls();
+                List<ToolCall> dedupedCalls = ToolCall.deduplicateByIdVariants(originalCalls);
+                if (dedupedCalls != originalCalls) {
+                    repairs += originalCalls.size() - dedupedCalls.size();
+                    msg = new Message(msg.role(), msg.content(), msg.toolCall(),
+                        dedupedCalls.isEmpty() ? null : dedupedCalls,
+                        msg.toolCallId(), msg.turnIndex(), msg.imageCount(), msg.createdAt());
+                }
+                knownToolGroups = new LinkedHashMap<>();
+                matchedToolGroups = new HashSet<>();
                 if (msg.toolCalls() != null) {
                     for (ToolCall tc : msg.toolCalls()) {
-                        if (tc.id() != null) {
-                            knownToolIds.add(tc.id());
+                        Set<String> variants = ToolCall.idVariants(tc);
+                        if (!variants.isEmpty()) {
+                            int groupId = nextToolGroup++;
+                            for (String variant : variants) {
+                                knownToolGroups.putIfAbsent(variant, groupId);
+                            }
                         }
                     }
                 }
                 filtered.add(msg);
             } else if (msg.role() == Role.TOOL) {
                 String tcId = msg.toolCallId();
-                if (tcId != null && knownToolIds.contains(tcId)) {
+                Set<String> variants = ToolCall.idVariants(tcId);
+                Integer matchedGroup = null;
+                for (String variant : variants) {
+                    Integer group = knownToolGroups.get(variant);
+                    if (group != null && !matchedToolGroups.contains(group)) {
+                        matchedGroup = group;
+                        break;
+                    }
+                }
+                if (matchedGroup != null) {
                     filtered.add(msg);
-                    // Consume the id so a duplicate tool result for the same
-                    // tool_call_id is dropped (strict providers reject
-                    // duplicates with HTTP 400).
-                    knownToolIds.remove(tcId);
+                    // Consume the alias group so a duplicate result under a
+                    // sibling spelling (call_id vs response_item_id) is also
+                    // dropped; strict providers reject duplicate results.
+                    matchedToolGroups.add(matchedGroup);
                 } else {
                     repairs++;
                     log.debug("HistorySanitizer: dropped orphan tool result (toolCallId={}, contentLen={})",
@@ -146,7 +172,8 @@ public final class HistorySanitizer {
                 }
             } else {
                 if (msg.role() == Role.USER) {
-                    knownToolIds = new HashSet<>();
+                    knownToolGroups = new LinkedHashMap<>();
+                    matchedToolGroups = new HashSet<>();
                 }
                 filtered.add(msg);
             }

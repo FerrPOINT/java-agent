@@ -3,9 +3,15 @@ package com.azhukov.agent.core.security;
 import com.azhukov.agent.config.AgentProperties;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
@@ -63,7 +69,39 @@ public class DefaultFileSafety implements FileSafety {
  private static final Set<String> DENYLIST_ABSOLUTE = Set.of(
  "/etc/sudoers",
  "/etc/shadow",
- "/etc/passwd"
+ "/etc/passwd",
+ "/var/run/docker.sock",
+ "/run/docker.sock"
+ );
+
+ /** Absolute directory prefixes that are always denied for writes. */
+ private static final Set<String> DENYLIST_ABSOLUTE_PREFIXES = Set.of(
+ "/etc/sudoers.d",
+ "/etc/systemd",
+ "/boot",
+ "/usr/lib/systemd"
+ );
+
+ /** Hermes-owned directories that generic file tools must never mutate. */
+ private static final Set<String> HERMES_WRITE_DENIED_DIRS = Set.of(
+ "sessions",
+ "mcp-tokens",
+ "pairing"
+ );
+
+ /** Hermes-owned files that generic file tools must never mutate. */
+ private static final Set<String> HERMES_WRITE_DENIED_FILES = Set.of(
+ "state.db",
+ "cache/bws_cache.enc.json"
+ );
+
+ /** Project instruction files that require an explicit human path in Hermes. */
+ private static final Set<String> PROTECTED_INSTRUCTION_FILENAMES = Set.of(
+ "agents.md",
+ "agents.override.md",
+ "claude.md",
+ "soul.md",
+ ".cursorrules"
  );
 
  // ─── Read-block list: sensitive files that should never be read ───
@@ -90,7 +128,16 @@ public class DefaultFileSafety implements FileSafety {
  );
 
  private static final Set<String> READ_BLOCK_EXACT_SUFFIXES = Set.of(
- ".aws/credentials"
+ ".aws/credentials",
+ "auth/google_oauth.json",
+ "cache/bws_cache.json"
+ );
+
+ /** Hermes-owned directories that generic read/search tools must never expose. */
+ private static final Set<String> HERMES_READ_BLOCK_DIRS = Set.of(
+ "mcp-tokens",
+ "browser-profile",
+ "skills/.hub"
  );
 
  // ─── P1-10: Cross-profile write guard ───
@@ -116,7 +163,6 @@ public class DefaultFileSafety implements FileSafety {
 
  private boolean hasTraversalBeforeNormalize(Path path) {
  if (path == null) return false;
- String str = path.toString();
  // Check for ".." as a path component before normalization
  for (Path element : path) {
  if (element.toString().equals("..")) {
@@ -129,11 +175,22 @@ public class DefaultFileSafety implements FileSafety {
  private boolean matchesDenylist(Path normalized) {
  if (normalized == null) return false;
  String pathStr = normalized.toString();
+ String unixPathStr = pathStr.replace('\\', '/');
  String fileName = normalized.getFileName() != null ? normalized.getFileName().toString() : "";
+
+ if (matchesProtectedInstructionWrite(normalized)) {
+ return true;
+ }
 
  // Check absolute paths
  for (String abs : DENYLIST_ABSOLUTE) {
- if (pathStr.equals(abs)) {
+ if (matchesAbsolutePath(unixPathStr, abs)) {
+ return true;
+ }
+ }
+
+ for (String prefix : DENYLIST_ABSOLUTE_PREFIXES) {
+ if (matchesAbsolutePrefix(unixPathStr, prefix)) {
  return true;
  }
  }
@@ -145,7 +202,7 @@ public class DefaultFileSafety implements FileSafety {
 
  // Check exact suffix sub-paths
  for (String suffix : DENYLIST_EXACT_SUFFIXES) {
- if (pathStr.endsWith("/" + suffix) || pathStr.endsWith(suffix)) {
+ if (endsWithPath(normalized, suffix)) {
  return true;
  }
  }
@@ -158,6 +215,42 @@ public class DefaultFileSafety implements FileSafety {
  }
  }
 
+ return matchesHermesWriteDenylist(normalized);
+ }
+
+ private boolean matchesAbsolutePath(String unixPathStr, String absolutePath) {
+ return unixPathStr.equals(absolutePath)
+ || unixPathStr.equals(absolutePath.substring(1))
+ || unixPathStr.contains(":/" + absolutePath.substring(1));
+ }
+
+ private boolean matchesAbsolutePrefix(String unixPathStr, String absolutePrefix) {
+ String trimmed = absolutePrefix.endsWith("/") ? absolutePrefix.substring(0, absolutePrefix.length() - 1) : absolutePrefix;
+ String withoutSlash = trimmed.substring(1);
+ return unixPathStr.equals(trimmed)
+ || unixPathStr.startsWith(trimmed + "/")
+ || unixPathStr.equals(withoutSlash)
+ || unixPathStr.startsWith(withoutSlash + "/")
+ || unixPathStr.contains(":/" + withoutSlash + "/")
+ || unixPathStr.endsWith(":/" + withoutSlash);
+ }
+
+ private boolean matchesProtectedInstructionWrite(Path path) {
+ if (path == null || isUnderHermesBase(path)) {
+ return false;
+ }
+ String fileName = path.getFileName() != null ? path.getFileName().toString().toLowerCase(Locale.ROOT) : "";
+ if (PROTECTED_INSTRUCTION_FILENAMES.contains(fileName)) {
+ return true;
+ }
+ if (".hermes".equals(fileName)) {
+ return true;
+ }
+ for (Path element : path) {
+ if (".hermes".equals(element.toString().toLowerCase(Locale.ROOT))) {
+ return true;
+ }
+ }
  return false;
  }
 
@@ -166,6 +259,15 @@ public class DefaultFileSafety implements FileSafety {
  if (path == null) {
  return false;
  }
+
+ Path normalized = path.toAbsolutePath().normalize();
+ Path safetyPath = resolveExistingForSafety(path);
+
+ // Denylist check — even when broad file safety checks are disabled.
+ if (matchesDenylist(normalized) || matchesDenylist(safetyPath)) {
+ return false;
+ }
+
  if (!properties.getSecurity().isFileSafetyEnabled()) {
  return true;
  }
@@ -176,27 +278,16 @@ public class DefaultFileSafety implements FileSafety {
  // because traversal attempts are suspicious by default.
  // However, internal ".." that stays within bounds should be allowed.
  // We normalize and check if it's still within allowed base.
- Path normalized = path.toAbsolutePath().normalize();
- if (matchesDenylist(normalized)) {
- return false;
- }
  List<String> allowed = properties.getSecurity().getAllowedPaths();
  if (allowed == null || allowed.isEmpty()) {
  return true;
  }
  for (String allowedPath : allowed) {
- Path base = Paths.get(allowedPath).toAbsolutePath().normalize();
- if (normalized.startsWith(base)) {
+ Path base = resolveExistingForSafety(Paths.get(allowedPath));
+ if (safetyPath.startsWith(base)) {
  return true;
  }
  }
- return false;
- }
-
- Path normalized = path.toAbsolutePath().normalize();
-
- // Denylist check — even inside allowed paths
- if (matchesDenylist(normalized)) {
  return false;
  }
 
@@ -205,8 +296,8 @@ public class DefaultFileSafety implements FileSafety {
  return true;
  }
  for (String allowedPath : allowed) {
- Path base = Paths.get(allowedPath).toAbsolutePath().normalize();
- if (normalized.startsWith(base)) {
+ Path base = resolveExistingForSafety(Paths.get(allowedPath));
+ if (safetyPath.startsWith(base)) {
  return true;
  }
  }
@@ -218,35 +309,128 @@ public class DefaultFileSafety implements FileSafety {
  if (path == null) {
  return false;
  }
- if (!properties.getSecurity().isFileSafetyEnabled()) {
- return false;
- }
 
  Path normalized = path.toAbsolutePath().normalize();
- String pathStr = normalized.toString();
+ Path safetyPath = resolveExistingForSafety(path);
  String fileName = normalized.getFileName() != null ? normalized.getFileName().toString() : "";
+ String safetyFileName = safetyPath.getFileName() != null ? safetyPath.getFileName().toString() : "";
 
  // Check filenames
- if (READ_BLOCK_FILENAMES.contains(fileName)) {
+ if (READ_BLOCK_FILENAMES.contains(fileName) || READ_BLOCK_FILENAMES.contains(safetyFileName)) {
  return true;
  }
 
  // Check exact suffix sub-paths
  for (String suffix : READ_BLOCK_EXACT_SUFFIXES) {
- if (pathStr.endsWith("/" + suffix)) {
+ if (endsWithPath(normalized, suffix) || endsWithPath(safetyPath, suffix)) {
  return true;
  }
  }
 
  // Check path segments (directories)
- for (Path element : normalized) {
+ for (Path element : safetyPath) {
  String seg = element.toString();
  if (READ_BLOCK_SEGMENTS.contains(seg)) {
  return true;
  }
  }
 
+ return matchesHermesReadBlock(safetyPath);
+ }
+
+ private boolean endsWithPath(Path normalized, String suffix) {
+ if (normalized == null || suffix == null || suffix.isBlank()) {
  return false;
+ }
+ return normalized.endsWith(Paths.get(suffix));
+ }
+
+ private boolean matchesHermesWriteDenylist(Path path) {
+ if (path == null) {
+ return false;
+ }
+ for (Path base : hermesBasePaths()) {
+ for (String file : HERMES_WRITE_DENIED_FILES) {
+ if (path.equals(base.resolve(file).normalize())) {
+ return true;
+ }
+ }
+ for (String dir : HERMES_WRITE_DENIED_DIRS) {
+ if (isSameOrChild(path, base.resolve(dir).normalize())) {
+ return true;
+ }
+ }
+ }
+ return false;
+ }
+
+ private boolean matchesHermesReadBlock(Path path) {
+ if (path == null) {
+ return false;
+ }
+ for (Path base : hermesBasePaths()) {
+ for (String dir : HERMES_READ_BLOCK_DIRS) {
+ if (isSameOrChild(path, base.resolve(dir).normalize())) {
+ return true;
+ }
+ }
+ }
+ return false;
+ }
+
+ private boolean isUnderHermesBase(Path path) {
+ for (Path base : hermesBasePaths()) {
+ if (isSameOrChild(path, base)) {
+ return true;
+ }
+ }
+ return false;
+ }
+
+ private List<Path> hermesBasePaths() {
+ Set<Path> bases = new LinkedHashSet<>();
+ addHermesBase(bases, resolveHermesHome());
+ addHermesBase(bases, resolveHermesRoot());
+ return new ArrayList<>(bases);
+ }
+
+ private void addHermesBase(Set<Path> bases, String rawPath) {
+ if (rawPath == null || rawPath.isBlank()) {
+ return;
+ }
+ bases.add(Paths.get(rawPath).toAbsolutePath().normalize());
+ }
+
+ private boolean isSameOrChild(Path path, Path base) {
+ return path.equals(base) || path.startsWith(base);
+ }
+
+ private Path resolveExistingForSafety(Path path) {
+ Path absolute = path.toAbsolutePath().normalize();
+ try {
+ if (Files.exists(absolute, LinkOption.NOFOLLOW_LINKS)) {
+ return absolute.toRealPath().normalize();
+ }
+ Path current = absolute;
+ List<Path> missing = new ArrayList<>();
+ while (current != null && !Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
+ Path fileName = current.getFileName();
+ if (fileName != null) {
+ missing.add(fileName);
+ }
+ current = current.getParent();
+ }
+ if (current == null) {
+ return absolute;
+ }
+ Path resolved = current.toRealPath().normalize();
+ for (int i = missing.size() - 1; i >= 0; i--) {
+ resolved = resolved.resolve(missing.get(i).toString());
+ }
+ return resolved.normalize();
+ } catch (IOException | SecurityException e) {
+ return absolute;
+ }
  }
 
  @Override

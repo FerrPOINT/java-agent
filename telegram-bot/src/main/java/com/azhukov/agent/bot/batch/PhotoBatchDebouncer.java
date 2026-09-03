@@ -77,12 +77,12 @@ public class PhotoBatchDebouncer {
             .filter(Objects::nonNull)
             .toList();
 
-        // Merge captions
-        String mergedCaption = group.events.stream()
-            .map(UpdateEvent::caption)
-            .filter(c -> c != null && !c.isBlank())
-            .reduce((a, b) -> a + "\n" + b)
-            .orElse(null);
+        // Merge captions like Hermes: exact duplicate captions are collapsed,
+        // while substring matches remain distinct user input.
+        String mergedCaption = null;
+        for (UpdateEvent event : group.events) {
+            mergedCaption = mergeCaption(mergedCaption, event.caption());
+        }
 
         // Create merged event with first file_id (or join them)
         String primaryFileId = fileIds.isEmpty() ? first.fileId() : fileIds.getFirst();
@@ -122,6 +122,23 @@ public class PhotoBatchDebouncer {
     int pendingCount(String mediaGroupId) {
         PhotoGroup group = groups.get(mediaGroupId);
         return group != null ? group.events.size() : 0;
+    }
+
+    static String mergeCaption(String existingText, String newText) {
+        if (newText == null || newText.isBlank()) {
+            return existingText;
+        }
+        if (existingText == null || existingText.isBlank()) {
+            return newText;
+        }
+
+        String normalizedNew = newText.strip();
+        for (String existingCaption : existingText.split("\n\n")) {
+            if (existingCaption.strip().equals(normalizedNew)) {
+                return existingText;
+            }
+        }
+        return (existingText + "\n\n" + newText).strip();
     }
 
     // ─── Internal ──────────────────────────────────────────────────

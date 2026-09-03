@@ -3,12 +3,14 @@ package com.azhukov.agent.core.prompt;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.context.CodingContextDetector;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.memory.MemoryScope;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.skill.SkillManager.SkillInfo;
 import com.azhukov.agent.core.state.AgentConstants;
 import com.azhukov.agent.core.state.DefaultAgentConstants;
+import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,7 +20,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -448,10 +452,11 @@ public class DefaultPromptBuilder implements PromptBuilder {
      */
     public Message buildSystemMessage(Session session, String systemMessageOverride) {
         String sessionId = session != null && session.id() != null ? String.valueOf(session.id()) : "default";
+        String cacheKey = buildSystemPromptCacheKey(sessionId, session, systemMessageOverride);
 
         PromptCacheTracker.CachedSystemPrompt cached = null;
         if (cacheTracker != null) {
-            cached = cacheTracker.getOrBuild(sessionId, () -> buildThreeTierPrompt(session, systemMessageOverride));
+            cached = cacheTracker.getOrBuild(cacheKey, () -> buildThreeTierPrompt(session, systemMessageOverride));
         } else {
             cached = buildThreeTierPrompt(session, systemMessageOverride);
         }
@@ -471,16 +476,29 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // Track system prompt hash for cache validation
         if (cacheTracker != null && session != null && session.id() != null) {
             String prefixHash = PromptCacheTracker.hashPrefix(text);
-            if (cacheTracker.isCacheValid(String.valueOf(session.id()), prefixHash)) {
+            if (cacheTracker.isCacheValid(cacheKey, prefixHash)) {
                 // Cache is valid — system prompt unchanged from previous turn
             } else {
-                cacheTracker.markCached(String.valueOf(session.id()), prefixHash);
+                cacheTracker.markCached(cacheKey, prefixHash);
             }
         }
 
         return usesDeveloperRole()
             ? Message.developer(text)
             : Message.system(text);
+    }
+
+    private String buildSystemPromptCacheKey(String sessionId, Session session, String systemMessageOverride) {
+        List<String> parts = new ArrayList<>();
+        parts.add("override=" + PromptCacheTracker.hashPrefix(systemMessageOverride));
+        if (session != null) {
+            parts.add("toolsets=" + PromptCacheTracker.hashPrefix(session.getMetadata("delegation_toolsets")));
+            parts.add("disabled=" + PromptCacheTracker.hashPrefix(session.getMetadata("delegation_disabled_tools")));
+            parts.add("platform=" + PromptCacheTracker.hashPrefix(session.getMetadata("platform")));
+            parts.add("display=" + PromptCacheTracker.hashPrefix(session.getMetadata("userDisplayName")));
+            parts.add("chatType=" + PromptCacheTracker.hashPrefix(session.getMetadata("chatType")));
+        }
+        return sessionId + "|" + String.join("|", parts);
     }
 
     /**
@@ -585,6 +603,34 @@ public class DefaultPromptBuilder implements PromptBuilder {
         return loadSoulMd(DEFAULT_SOUL_MD_PATH);
     }
 
+    String loadSoulMd(Session session) {
+        String profile = profileForSession(session);
+        if (!"default".equals(profile)) {
+            return loadSoulMd(resolveProfileHome(profile).resolve("SOUL.md").toString());
+        }
+        return loadSoulMd();
+    }
+
+    private String profileForSession(Session session) {
+        String profile = session != null ? session.getMetadata("profile") : null;
+        if ((profile == null || profile.isBlank()) && properties.getProfile() != null) {
+            profile = properties.getProfile().getName();
+        }
+        return MemoryScope.normalizeProfile(profile);
+    }
+
+    private Path resolveProfileHome(String profile) {
+        String configuredBase = properties.getProfile() != null ? properties.getProfile().getBaseDir() : null;
+        if (configuredBase != null && !configuredBase.isBlank()) {
+            return Path.of(configuredBase).toAbsolutePath().normalize().resolve(profile);
+        }
+        String home = System.getenv("HERMES_HOME");
+        Path hermesHome = home != null && !home.isBlank()
+            ? Path.of(home).toAbsolutePath().normalize()
+            : Path.of(System.getProperty("user.home", "."), ".hermes").toAbsolutePath().normalize();
+        return hermesHome.resolve("profiles").resolve(profile);
+    }
+
     /**
      * Load SOUL.md from a specific path.
      * Strips YAML frontmatter, scans for injection patterns, truncates to {@value #SOUL_MD_MAX_CHARS} chars.
@@ -674,8 +720,11 @@ public class DefaultPromptBuilder implements PromptBuilder {
      * @return a list of guidance text blocks, or empty list if no matching tools
      */
     List<String> buildToolGuidanceBlocks() {
+        return buildToolGuidanceBlocks(getAvailableToolNames());
+    }
+
+    private List<String> buildToolGuidanceBlocks(Set<String> toolNames) {
         List<String> blocks = new ArrayList<>();
-        Set<String> toolNames = getAvailableToolNames();
 
         if (toolNames.contains("memory")) {
             blocks.add(MEMORY_GUIDANCE);
@@ -695,7 +744,30 @@ public class DefaultPromptBuilder implements PromptBuilder {
      * @return a set of tool name strings, or empty set if no tools
      */
     Set<String> getAvailableToolNames() {
-        var definitions = toolRegistry.getDefinitions();
+        var definitions = toolRegistry != null ? toolRegistry.getDefinitions() : List.<ToolDefinition>of();
+        return toolNamesFromDefinitions(definitions);
+    }
+
+    Set<String> getAvailableToolNames(Session session) {
+        if (toolRegistry == null) {
+            return Set.of();
+        }
+        Set<String> toolsets = resolveToolsetsForSession(session);
+        List<ToolDefinition> definitions = toolsets.isEmpty()
+            ? toolRegistry.getDefinitions()
+            : toolRegistry.getDefinitions(toolsets);
+        Set<String> disabledTools = parseCsvMetadata(session != null
+            ? session.getMetadata("delegation_disabled_tools")
+            : null);
+        if (!disabledTools.isEmpty()) {
+            definitions = definitions.stream()
+                .filter(tool -> !disabledTools.contains(tool.name()))
+                .toList();
+        }
+        return toolNamesFromDefinitions(definitions);
+    }
+
+    private Set<String> toolNamesFromDefinitions(List<ToolDefinition> definitions) {
         if (definitions == null || definitions.isEmpty()) {
             return Set.of();
         }
@@ -706,6 +778,33 @@ public class DefaultPromptBuilder implements PromptBuilder {
             }
         }
         return names;
+    }
+
+    private Set<String> resolveToolsetsForSession(Session session) {
+        Set<String> inherited = parseCsvMetadata(session != null
+            ? session.getMetadata("delegation_toolsets")
+            : null);
+        if (!inherited.isEmpty()) {
+            return inherited;
+        }
+        List<String> configured = properties.getSkills() != null
+            ? properties.getSkills().getDefaultToolsets()
+            : List.of();
+        return configured != null ? new HashSet<>(configured) : Set.of();
+    }
+
+    private Set<String> parseCsvMetadata(String value) {
+        if (value == null || value.isBlank()) {
+            return Set.of();
+        }
+        Set<String> result = new LinkedHashSet<>();
+        for (String part : value.split(",")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                result.add(trimmed);
+            }
+        }
+        return result;
     }
 
     // ── Fix 3: Environment hints ──
@@ -1130,8 +1229,9 @@ public class DefaultPromptBuilder implements PromptBuilder {
      */
     private String buildMemoryPrefixInternal(Session session) {
         try {
-            String userBlock = renderMemoryBlock(session.userId(), "user");
-            String memoryBlock = renderMemoryBlock(session.userId(), "memory");
+            String memoryUserId = MemoryScope.userId(session, properties);
+            String userBlock = renderMemoryBlock(memoryUserId, "user");
+            String memoryBlock = renderMemoryBlock(memoryUserId, "memory");
             if (userBlock.isEmpty() && memoryBlock.isEmpty()) {
                 return "";
             }
@@ -1201,7 +1301,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         StringBuilder stable = new StringBuilder();
 
         // Fix 1: SOUL.md custom persona support
-        String soulContent = loadSoulMd();
+        String soulContent = loadSoulMd(session);
         if (soulContent != null && !soulContent.isBlank()) {
             stable.append(soulContent).append("\n\n");
         } else {
@@ -1217,7 +1317,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
 
         // HERMES_AGENT_HELP_GUIDANCE — tells the model where to find docs and self-help
         // Hermes parity: use NO_SKILLS variant when skill_view is not available
-        Set<String> availableTools = getAvailableToolNames();
+        Set<String> availableTools = getAvailableToolNames(session);
         boolean hasSkillTools = availableTools.contains("skill_view")
             || availableTools.contains("skills_list")
             || availableTools.contains("skill_manage");
@@ -1252,7 +1352,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         stable.append("\n").append(STEER_CHANNEL_NOTE);
 
         // ── Fix 2: Tool-specific guidance blocks ──
-        List<String> toolGuidanceBlocks = buildToolGuidanceBlocks();
+        List<String> toolGuidanceBlocks = buildToolGuidanceBlocks(availableTools);
         for (String block : toolGuidanceBlocks) {
             stable.append("\n").append(block);
         }
@@ -1261,7 +1361,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // Hermes injects model guidance only when tools are available (if agent.valid_tool_names:).
         // Without tools, the execution-discipline guidance is wasteful and confusing.
         String modelGuidance = getModelGuidance();
-        boolean hasTools = !toolRegistry.getDefinitions().isEmpty();
+        boolean hasTools = !availableTools.isEmpty();
         if (!modelGuidance.isEmpty() && hasTools) {
             stable.append("\n").append(modelGuidance);
         }

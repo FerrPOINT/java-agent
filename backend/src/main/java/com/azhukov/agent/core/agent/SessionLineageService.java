@@ -145,6 +145,9 @@ public class SessionLineageService implements SessionLineagePort {
         }
         List<Message> messages = new ArrayList<>(entities.size());
         for (MessageEntity entity : entities) {
+            if (Boolean.FALSE.equals(entity.getActive())) {
+                continue;
+            }
             Message msg = messageMapper.toDomain(entity);
             if (msg != null) {
                 messages.add(msg);

@@ -40,6 +40,9 @@ public class OpenAiImageGenProvider implements ImageGenProvider {
     public byte[] generate(String prompt, String aspectRatio) {
         try {
             String apiKey = properties.getImageGen().getApiKey();
+            if (apiKey == null || apiKey.isBlank()) {
+                throw new IllegalStateException("OpenAI image generation requires agent.image-gen.api-key to be set");
+            }
             String model = properties.getImageGen().getModel();
             if (model == null || model.isBlank()) {
                 model = "dall-e-3";
@@ -84,6 +87,8 @@ public class OpenAiImageGenProvider implements ImageGenProvider {
             }
 
             return Base64.getDecoder().decode(b64);
+        } catch (IllegalStateException e) {
+            throw e;
         } catch (Exception e) {
             log.error("OpenAI image generation error: {}", e.getMessage(), e);
             throw new RuntimeException("Image generation failed: " + e.getMessage(), e);
@@ -95,6 +100,7 @@ public class OpenAiImageGenProvider implements ImageGenProvider {
         return switch (aspectRatio.trim()) {
             case "16:9", "landscape" -> "1792x1024";
             case "9:16", "portrait" -> "1024x1792";
+            case "1:1", "square" -> "1024x1024";
             default -> "1024x1024";
         };
     }

@@ -2,8 +2,13 @@ package com.azhukov.agent.tools.terminal;
 
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -12,6 +17,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Covers all action types, error paths, edge cases.
  */
 class ProcessToolBranchTest {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private ProcessTool processTool;
 
@@ -62,6 +69,27 @@ class ProcessToolBranchTest {
         assertThat(result.content()).contains("proc_");
     }
 
+    @Test
+    void list_includesBackgroundProcessMetadataLikeHermes(@TempDir Path dir) throws Exception {
+        processTool = new ProcessTool();
+        ProcessTool.ManagedProcess mp = processTool.spawn(
+            "echo ready", 5, false, ignored -> { }, dir.toString(),
+            null, null, java.util.List.of("ready"));
+        mp.process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+        mp.awaitOutputDrain(1000);
+
+        ToolResult result = processTool.execute(
+            "{\"action\":\"list\"}", null, Session.create("u", "noop", ""));
+
+        assertThat(result.success()).isTrue();
+        JsonNode entry = MAPPER.readTree(result.content()).path("processes").get(0);
+        assertThat(entry.path("session_id").asText()).isEqualTo(mp.id);
+        assertThat(entry.path("cwd").asText()).isEqualTo(dir.toAbsolutePath().normalize().toString());
+        assertThat(entry.path("notify_on_complete").asBoolean()).isTrue();
+        assertThat(entry.path("watch_patterns").get(0).asText()).isEqualTo("ready");
+        assertThat(entry.path("watch_hit").asBoolean()).isFalse();
+    }
+
     // ── poll ──
 
     @Test
@@ -69,8 +97,18 @@ class ProcessToolBranchTest {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
             "{\"action\":\"poll\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
+        assertThat(result.content()).contains("No process with ID nonexistent");
+    }
+
+    @Test
+    void poll_missingSessionId_returnsActionableError() {
+        processTool = new ProcessTool();
+        ToolResult result = processTool.execute(
+            "{\"action\":\"poll\"}", null, Session.create("u", "noop", ""));
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.error()).contains("session_id is required for poll");
     }
 
     @Test
@@ -82,7 +120,7 @@ class ProcessToolBranchTest {
         ToolResult result = processTool.execute(
             "{\"action\":\"poll\",\"session_id\":\"" + mp.id + "\"}", null, Session.create("u", "noop", ""));
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("session_id:");
+        assertThat(result.content()).contains("\"session_id\":\"");
     }
 
     // ── log ──
@@ -92,8 +130,9 @@ class ProcessToolBranchTest {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
             "{\"action\":\"log\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
+        assertThat(result.content()).contains("No process with ID nonexistent");
     }
 
     @Test
@@ -118,6 +157,22 @@ class ProcessToolBranchTest {
         assertThat(result.success()).isTrue();
     }
 
+    @Test
+    void log_withoutOffset_returnsTailByDefault() throws Exception {
+        processTool = new ProcessTool();
+        ProcessTool.ManagedProcess mp = processTool.spawn("seq 1 250", 5);
+        mp.process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+        mp.awaitOutputDrain(1000);
+        ToolResult result = processTool.execute(
+            "{\"action\":\"log\",\"session_id\":\"" + mp.id + "\"}",
+            null, Session.create("u", "noop", ""));
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"total_lines\":250");
+        assertThat(result.content()).contains("\"showing\":\"200 lines\"");
+        assertThat(result.content()).doesNotContain("\"output\":\"1\\n2\\n3");
+        assertThat(result.content()).contains("250");
+    }
+
     // ── wait ──
 
     @Test
@@ -125,8 +180,9 @@ class ProcessToolBranchTest {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
             "{\"action\":\"wait\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
+        assertThat(result.content()).contains("No process with ID nonexistent");
     }
 
     @Test
@@ -148,7 +204,30 @@ class ProcessToolBranchTest {
             "{\"action\":\"wait\",\"session_id\":\"" + mp.id + "\",\"timeout\":1}",
             null, Session.create("u", "noop", ""));
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("wait timed out");
+        assertThat(result.content()).contains("\"status\":\"timeout\"");
+        assertThat(result.content()).contains("\"process_running\":true");
+    }
+
+    @Test
+    void wait_explicitZeroTimeout_returnsError() throws Exception {
+        processTool = new ProcessTool();
+        ProcessTool.ManagedProcess mp = processTool.spawn("sleep 30", 60);
+        ToolResult result = processTool.execute(
+            "{\"action\":\"wait\",\"session_id\":\"" + mp.id + "\",\"timeout\":0}",
+            null, Session.create("u", "noop", ""));
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("timeout must be positive (got 0)");
+    }
+
+    @Test
+    void wait_negativeTimeout_returnsError() throws Exception {
+        processTool = new ProcessTool();
+        ProcessTool.ManagedProcess mp = processTool.spawn("sleep 30", 60);
+        ToolResult result = processTool.execute(
+            "{\"action\":\"wait\",\"session_id\":\"" + mp.id + "\",\"timeout\":-1}",
+            null, Session.create("u", "noop", ""));
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("timeout must be positive (got -1)");
     }
 
     @Test
@@ -169,8 +248,9 @@ class ProcessToolBranchTest {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
             "{\"action\":\"kill\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
+        assertThat(result.content()).contains("No process with ID nonexistent");
     }
 
     @Test
@@ -180,7 +260,7 @@ class ProcessToolBranchTest {
         ToolResult result = processTool.execute(
             "{\"action\":\"kill\",\"session_id\":\"" + mp.id + "\"}", null, Session.create("u", "noop", ""));
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("Killed process");
+        assertThat(result.content()).contains("\"status\":\"killed\"");
     }
 
     // ── write ──
@@ -191,8 +271,9 @@ class ProcessToolBranchTest {
         ToolResult result = processTool.execute(
             "{\"action\":\"write\",\"session_id\":\"nonexistent\",\"data\":\"hello\"}",
             null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
+        assertThat(result.content()).contains("No process with ID nonexistent");
     }
 
     @Test
@@ -213,8 +294,9 @@ class ProcessToolBranchTest {
         ToolResult result = processTool.execute(
             "{\"action\":\"submit\",\"session_id\":\"nonexistent\",\"data\":\"hello\"}",
             null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
+        assertThat(result.content()).contains("No process with ID nonexistent");
     }
 
     @Test
@@ -234,8 +316,9 @@ class ProcessToolBranchTest {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
             "{\"action\":\"close\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Process not found");
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("\"status\":\"not_found\"");
+        assertThat(result.content()).contains("No process with ID nonexistent");
     }
 
     @Test
@@ -253,7 +336,8 @@ class ProcessToolBranchTest {
     void managedProcess_getOutput_returnsAllOutput() throws Exception {
         processTool = new ProcessTool();
         ProcessTool.ManagedProcess mp = processTool.spawn("echo hello", 5);
-        Thread.sleep(500);
+        assertThat(mp.process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        mp.awaitOutputDrain(1000);
         assertThat(mp.getOutput()).contains("hello");
     }
 

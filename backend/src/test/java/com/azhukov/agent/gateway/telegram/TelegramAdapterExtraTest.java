@@ -122,6 +122,46 @@ class TelegramAdapterExtraTest {
     }
 
     @Test
+    @DisplayName("addReaction returns success when bot API accepts reaction")
+    void addReactionReturnsSuccess() throws Exception {
+        adapter.connect(new PlatformConfig(Platform.TELEGRAM, true, Map.of(), Map.of())).get();
+        when(botApiClient.setMessageReaction(12345L, 99L, "👍")).thenReturn(true);
+
+        SendResult result = adapter.addReaction(source, "👍", "99").get();
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.messageId()).isEqualTo("99");
+        verify(botApiClient).setMessageReaction(12345L, 99L, "👍");
+    }
+
+    @Test
+    @DisplayName("removeReaction clears Telegram reaction")
+    void removeReactionClearsReaction() throws Exception {
+        adapter.connect(new PlatformConfig(Platform.TELEGRAM, true, Map.of(), Map.of())).get();
+        when(botApiClient.setMessageReaction(12345L, 99L, "")).thenReturn(true);
+
+        SendResult result = adapter.removeReaction(source, "99").get();
+
+        assertThat(result.success()).isTrue();
+        verify(botApiClient).setMessageReaction(12345L, 99L, "");
+    }
+
+    @Test
+    @DisplayName("addReaction fails closed for invalid target ids")
+    void addReactionFailsClosedForInvalidTargetIds() throws Exception {
+        adapter.connect(new PlatformConfig(Platform.TELEGRAM, true, Map.of(), Map.of())).get();
+
+        SendResult badChat = adapter.addReaction(new SessionSource(Platform.TELEGRAM, "bad", "u", "u", "U"), "👍", "99").get();
+        SendResult badMessage = adapter.addReaction(source, "👍", "bad").get();
+
+        assertThat(badChat.success()).isFalse();
+        assertThat(badChat.error()).contains("No chat_id");
+        assertThat(badMessage.success()).isFalse();
+        assertThat(badMessage.error()).contains("No message_id");
+        verify(botApiClient, never()).setMessageReaction(anyLong(), anyLong(), anyString());
+    }
+
+    @Test
     @DisplayName("buildSource returns input")
     void buildSourceReturnsInput() {
         assertThat(adapter.buildSource(Map.of("x", 1))).hasValue(Map.of("x", 1));

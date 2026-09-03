@@ -177,7 +177,11 @@ class SessionLineageServiceTest {
         SessionEntity session = newSessionEntity(sessionId, null);
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
 
+        MessageEntity archived = newMessageEntity(sessionId, "user", "Archived", 0);
+        archived.setActive(false);
+        archived.setCompacted(true);
         List<MessageEntity> messages = List.of(
+            archived,
             newMessageEntity(sessionId, "user", "Hello", 0),
             newMessageEntity(sessionId, "assistant", "Hi there", 1)
         );

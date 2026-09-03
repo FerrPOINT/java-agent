@@ -332,6 +332,28 @@ class DefaultFileSafetyTest {
     }
 
     @Test
+    void readBlock_appliesEvenWhenBroadFileSafetyDisabled() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(false);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isReadBlocked(Paths.get("/tmp/agent-work/.env"))).isTrue();
+    }
+
+    @Test
+    void readBlock_hermesMcpTokensAndBrowserProfile_areBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+
+        assertThat(safety.isReadBlocked(Paths.get(hermesRoot, "mcp-tokens", "server.json"))).isTrue();
+        assertThat(safety.isReadBlocked(Paths.get(hermesRoot, "browser-profile", "Default", "Cookies"))).isTrue();
+        assertThat(safety.isReadBlocked(Paths.get(hermesRoot, "skills", ".hub", "index-cache", "catalog.json"))).isTrue();
+    }
+
+    @Test
     void readBlock_sshDirectory_isBlocked() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
@@ -377,10 +399,10 @@ class DefaultFileSafetyTest {
         assertThat(safety.isReadBlocked(null)).isFalse();
     }
 
-    // ─── Symlink escape tests (GAP: uses normalize() not toRealPath()) ───
+    // ─── Symlink escape tests ───
 
     @Test
-    void symlinkEscape_currentlyNotResolved_usesNormalizeNotRealPath(@TempDir Path tempDir) throws Exception {
+    void symlinkEscape_resolvesRealPathAndBlocksEscape(@TempDir Path tempDir) throws Exception {
         // Only run if symlinks are supported
         org.junit.jupiter.api.Assumptions.assumeTrue(
                 !System.getProperty("os.name").toLowerCase().contains("win"),
@@ -403,11 +425,9 @@ class DefaultFileSafetyTest {
         properties.getSecurity().setAllowedPaths(List.of(allowedBase.toString()));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        // normalize() does NOT resolve symlinks, so the path still appears under allowed base
-        // GAP: should use toRealPath() to detect symlink escape, but currently uses normalize()
         assertThat(safety.isPathAllowed(symlink))
-                .as("Symlink inside allowed base pointing outside is currently ALLOWED — uses normalize() not toRealPath()")
-                .isTrue();
+                .as("Symlink inside allowed base pointing outside must be denied after realpath resolution")
+                .isFalse();
     }
 
     // ─── Null and edge case tests ───
@@ -558,6 +578,46 @@ class DefaultFileSafetyTest {
 
         // Empty list → returns true for all non-denylisted paths
         assertThat(safety.isPathAllowed(Paths.get("/etc/hostname"))).isTrue();
+    }
+
+    @Test
+    void writeBlock_hermesStateAndTokenDirs_areDeniedEvenWhenBroadFileSafetyDisabled() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(false);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+
+        assertThat(safety.isPathAllowed(Paths.get(hermesRoot, "state.db"))).isFalse();
+        assertThat(safety.isPathAllowed(Paths.get(hermesRoot, "sessions", "abc.json"))).isFalse();
+        assertThat(safety.isPathAllowed(Paths.get(hermesRoot, "mcp-tokens", "server.json"))).isFalse();
+        assertThat(safety.isPathAllowed(Paths.get(hermesRoot, "pairing", "codes.json"))).isFalse();
+        assertThat(safety.isPathAllowed(Paths.get(hermesRoot, "cache", "bws_cache.enc.json"))).isFalse();
+    }
+
+    @Test
+    void writeBlock_projectInstructionFiles_areDeniedEvenWhenBroadFileSafetyDisabled() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(false);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/project/AGENTS.md"))).isFalse();
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/project/CLAUDE.md"))).isFalse();
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/project/SOUL.md"))).isFalse();
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/project/.cursorrules"))).isFalse();
+        assertThat(safety.isPathAllowed(Paths.get("/tmp/project/.hermes/config.yaml"))).isFalse();
+    }
+
+    @Test
+    void writeBlock_doesNotTreatHermesHomeInstructionFilesAsProjectLocal() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(false);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+
+        String hermesRoot = System.getProperty("user.home", "/root") + "/.hermes";
+
+        assertThat(safety.isPathAllowed(Paths.get(hermesRoot, "SOUL.md"))).isTrue();
+        assertThat(safety.isPathAllowed(Paths.get(hermesRoot, "AGENTS.md"))).isTrue();
     }
 
     // ─── P1-10: Cross-profile write guard tests ───

@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.memory;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.agent.ToolResultFormatter;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
@@ -54,6 +55,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class BackgroundReviewService {
 
  private static final int DEFAULT_MAX_REVIEW_TURNS = 8;
+ private static final ToolResultFormatter TOOL_RESULT_FORMATTER = new ToolResultFormatter();
 
  // S1: Tool whitelist — only memory and skill tools are allowed
  private static final Set<String> REVIEW_TOOL_WHITELIST = Set.of(
@@ -295,8 +297,9 @@ public class BackgroundReviewService {
  // Add denied result to conversation
  reviewMessages.add(Message.assistantToolCalls(
  List.of(new ToolCall(call.id(), call.name(), call.arguments())), turn));
- reviewMessages.add(Message.toolResult(call.id(),
- "{\"error\":\"Tool not allowed in background review\"}", turn));
+ String deniedContent = TOOL_RESULT_FORMATTER.formatResult(
+ call.name(), ToolResult.fail("Tool not allowed in background review"));
+ reviewMessages.add(Message.toolResult(call.id(), deniedContent, turn));
  continue;
  }
 
@@ -305,7 +308,8 @@ public class BackgroundReviewService {
  anyToolExecuted = true;
 
  // S7: Build a tool-result message for stale-action filtering
- Message toolResultMsg = Message.toolResult(call.id(), result.content(), turn);
+ String toolResultContent = TOOL_RESULT_FORMATTER.formatResult(call.name(), result);
+ Message toolResultMsg = Message.toolResult(call.id(), toolResultContent, turn);
 
  // S7: Skip stale actions — tool results already in prior conversation
  if (StaleActionFilter.isStale(toolResultMsg, priorResults)) {
@@ -325,7 +329,7 @@ public class BackgroundReviewService {
  // Add assistant tool call and tool result to conversation
  reviewMessages.add(Message.assistantToolCalls(
  List.of(new ToolCall(call.id(), call.name(), call.arguments())), turn));
- reviewMessages.add(Message.toolResult(call.id(), result.content(), turn));
+ reviewMessages.add(Message.toolResult(call.id(), toolResultContent, turn));
  }
 
  if (!anyToolExecuted) {

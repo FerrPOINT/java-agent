@@ -22,6 +22,10 @@ public class CronJobEntity {
     /** Multi-user: owner of this cron job. */
     private String userId;
 
+    /** Hermes profile scope that owns this cron job. */
+    @Column(name = "profile", nullable = false)
+    private String profile = "default";
+
     private String name;
 
     private String schedule;
@@ -41,6 +45,27 @@ public class CronJobEntity {
     /** P1-45: Comma-separated upstream cron job IDs whose output should be injected as context. */
     @Column(name = "context_from")
     private String contextFrom;
+
+    /** Hermes monitor source: http(s) URL or script path under ~/.hermes/scripts/. */
+    @Column(name = "monitor")
+    private String monitor;
+
+    @Column(name = "monitor_last_hash")
+    private String monitorLastHash;
+
+    @Column(name = "monitor_last_output", columnDefinition = "TEXT")
+    private String monitorLastOutput;
+
+    @Column(name = "monitor_last_changed_at")
+    private Instant monitorLastChangedAt;
+
+    /** Hermes continuity flag; also mirrored into context_from=self for model-facing parity. */
+    @Column(name = "continuity_enabled")
+    private boolean continuityEnabled = false;
+
+    /** Session explicitly attached via cronjob(attach_to_session=true). */
+    @Column(name = "attached_session_id")
+    private UUID attachedSessionId;
 
     // ── V26: Full Hermes parity fields ──
 
@@ -79,6 +104,14 @@ public class CronJobEntity {
     /** Per-job base URL override. */
     @Column(name = "base_url")
     private String baseUrl;
+
+    /** Global provider captured for unpinned agent jobs at create/update time. */
+    @Column(name = "provider_snapshot")
+    private String providerSnapshot;
+
+    /** Global model captured for unpinned agent jobs at create/update time. */
+    @Column(name = "model_snapshot")
+    private String modelSnapshot;
 
     @Column(name = "created_at")
     private Instant createdAt;

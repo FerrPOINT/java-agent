@@ -1,34 +1,35 @@
 package com.azhukov.agent.tools.memory;
 
-import com.azhukov.agent.tools.AgentTool;
-import com.azhukov.agent.tools.ToolHandler;
-import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.persistence.entity.TodoEntity;
 import com.azhukov.agent.persistence.repository.TodoRepository;
+import com.azhukov.agent.tools.AgentTool;
+import com.azhukov.agent.tools.ToolHandler;
+import com.azhukov.agent.tools.ToolParam;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 
 /**
- * Hermes parity: todo tool with exact same schema as Hermes' todo_tool.py.
- * <p>
- * Schema: {@code todos} (array of {id, content, status}) + {@code merge} (boolean).
- * Calling with no parameters reads the current list.
- * merge=false (default): replace the entire list.
- * merge=true: update existing items by id, add new ones.
- * <p>
- * The description is byte-identical to Hermes' TODO_SCHEMA.description so the
- * model sees the same guidance regardless of which agent it talks to.
+ * Hermes parity: todo tool with the same model-facing schema as Hermes'
+ * todo_tool.py. The Java backend persists state in Postgres, but the tool
+ * surface remains session-scoped and JSON-shaped.
  */
 @AgentTool(
     name = "todo",
@@ -58,157 +59,307 @@ public class TodoTool implements ToolHandler {
 
     static final int MAX_CONTENT_CHARS = 4000;
     static final int MAX_ITEMS = 256;
+    static final String TRUNCATION_MARKER = "\u2026 [truncated]";
 
     static final Set<String> ALLOWED_STATUSES = Set.of(
         "pending", "in_progress", "completed", "cancelled"
     );
 
+    private static final ObjectMapper MAPPER = ToolHandler.TOOL_ARGS_MAPPER.copy();
+
     private final TodoRepository todoRepository;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        TodoArgs args = ToolHandler.parseJson(arguments, TodoArgs.class);
+        JsonNode root;
+        try {
+            root = MAPPER.readTree(arguments == null || arguments.isBlank() ? "{}" : arguments);
+        } catch (JsonProcessingException e) {
+            return jsonError("Invalid tool arguments: " + e.getOriginalMessage());
+        }
+        if (root == null || !root.isObject()) {
+            return jsonError("Invalid tool arguments: expected an object");
+        }
 
-        // No todos provided → read current list (Hermes parity)
-        if (args.todos() == null) {
+        JsonNode todosNode = root.get("todos");
+        if (todosNode == null || todosNode.isNull()) {
             return readList(session);
         }
 
-        // Guard: LLM sometimes sends todos as a JSON string instead of a list
-        // (Hermes parity: same guard in todo_tool.py)
-        List<TodoItem> items = args.todos();
-        if (items == null) {
-            items = List.of();
-        }
-        if (items.size() > MAX_ITEMS) {
-            return ToolResult.fail("Exceeded maximum of " + MAX_ITEMS + " items (got " + items.size() + ").");
+        ParsedTodos parsed = parseTodos(todosNode);
+        if (parsed.error() != null) {
+            return jsonError(parsed.error());
         }
 
-        // Validate each item
-        for (TodoItem item : items) {
-            if (item.content() == null || item.content().isBlank()) {
-                return ToolResult.fail("Each todo item must have 'content'.");
-            }
-            if (item.content().length() > MAX_CONTENT_CHARS) {
-                return ToolResult.fail("Content exceeds " + MAX_CONTENT_CHARS + " characters: '" + item.content() + "'.");
-            }
-            // null/blank status defaults to "pending" (Hermes parity)
-            String status = validateStatus(item.status(), "pending");
-            if (status == null) {
-                return ToolResult.fail("Invalid status: " + item.status() + ". Allowed: " + ALLOWED_STATUSES);
-            }
+        boolean merge = root.path("merge").asBoolean(false);
+        if (merge) {
+            mergeTodos(parsed.items(), session);
+        } else {
+            replaceTodos(parsed.items(), session);
         }
-
-        boolean merge = args.merge() != null && args.merge();
-
-        if (!merge) {
-            // Replace entire list (Hermes: merge=false default)
-            todoRepository.deleteByUserId(session.userId());
-        }
-
-        int created = 0;
-        int updated = 0;
-        for (TodoItem item : items) {
-            TodoEntity entity = null;
-            if (merge && item.id() != null && !item.id().isBlank()) {
-                UUID itemId = resolveTodoId(item.id(), session);
-                if (itemId != null) {
-                    entity = todoRepository.findById(itemId).orElse(null);
-                }
-                if (entity == null || !entity.getUserId().equals(session.userId())) {
-                    entity = null;
-                }
-            }
-            if (entity == null) {
-                entity = new TodoEntity();
-                entity.setSessionId(session.id());
-                entity.setUserId(session.userId());
-                entity.setCreatedAt(Instant.now());
-                entity.setUpdatedAt(Instant.now());
-                created++;
-            } else {
-                entity.setUpdatedAt(Instant.now());
-                updated++;
-            }
-            entity.setTitle(item.content());
-            entity.setStatus(validateStatus(item.status(), "pending"));
-            // Priority not in Hermes schema — keep "medium" for DB compatibility
-            if (entity.getPriority() == null) {
-                entity.setPriority("medium");
-            }
-            todoRepository.save(entity);
-        }
-
-        // Return the full current list (Hermes parity: always returns full list)
         return readList(session);
     }
 
-    /**
-     * Read the current todo list and return as formatted text.
-     * Hermes returns JSON with {todos, summary}. We return the same format.
-     */
-    private ToolResult readList(Session session) {
-        var todos = todoRepository.findByUserIdOrderByCreatedAtAsc(session.userId());
-        StringBuilder sb = new StringBuilder();
-        int pending = 0, inProgress = 0, completed = 0, cancelled = 0;
-        for (TodoEntity t : todos) {
-            String status = t.getStatus() != null ? t.getStatus() : "pending";
-            sb.append("- [").append(status).append("] ");
-            if (t.getId() != null) {
-                // 1-based position for model readability (Hermes uses string ids)
-                int pos = todos.indexOf(t) + 1;
-                sb.append(pos).append(". ");
-            }
-            sb.append(t.getTitle());
-            if (status.equals("pending")) pending++;
-            else if (status.equals("in_progress")) inProgress++;
-            else if (status.equals("completed")) completed++;
-            else if (status.equals("cancelled")) cancelled++;
-            sb.append("\n");
-        }
-        if (todos.isEmpty()) {
-            sb.append("No todos.\n");
-        }
-        sb.append("\nSummary: total=").append(todos.size())
-          .append(", pending=").append(pending)
-          .append(", in_progress=").append(inProgress)
-          .append(", completed=").append(completed)
-          .append(", cancelled=").append(cancelled);
-        return ToolResult.ok(sb.toString());
-    }
-
-    /**
-     * Resolve a todo id string to UUID. Accepts:
-     * - Full UUID string (e.g. "550e8400-e29b-41d4-a716-446655440000")
-     * - 1-based position number (e.g. "1", "2") — resolves to the Nth todo
-     *   in list order (oldest first)
-     * Returns null if not found or invalid.
-     */
-    private UUID resolveTodoId(String idStr, Session session) {
-        if (idStr == null || idStr.isBlank()) return null;
-        idStr = idStr.trim();
-        // Try UUID parse first
-        try {
-            return UUID.fromString(idStr);
-        } catch (IllegalArgumentException notUuid) {
-            // Try numeric position (1-based)
+    private ParsedTodos parseTodos(JsonNode todosNode) {
+        JsonNode arrayNode = todosNode;
+        if (todosNode.isTextual()) {
             try {
-                int pos = Integer.parseInt(idStr);
-                if (pos < 1) return null;
-                var todos = todoRepository.findByUserIdOrderByCreatedAtAsc(session.userId());
-                if (pos > todos.size()) return null;
-                return todos.get(pos - 1).getId();
-            } catch (NumberFormatException notNumber) {
-                return null;
+                arrayNode = MAPPER.readTree(todosNode.asText());
+            } catch (JsonProcessingException e) {
+                return ParsedTodos.error("todos must be a list of objects, got unparseable string");
             }
+        }
+        if (arrayNode == null || !arrayNode.isArray()) {
+            return ParsedTodos.error("todos must be a list, got " + jsonTypeName(arrayNode));
+        }
+
+        List<ParsedTodo> items = new ArrayList<>();
+        int index = 0;
+        for (JsonNode node : arrayNode) {
+            items.add(parseTodoItem(node, index++));
+        }
+        return ParsedTodos.ok(dedupeById(items));
+    }
+
+    private ParsedTodo parseTodoItem(JsonNode node, int index) {
+        if (node == null || !node.isObject()) {
+            return new ParsedTodo(
+                "__invalid_" + index,
+                "?",
+                "(invalid item)",
+                "pending",
+                false,
+                true,
+                true
+            );
+        }
+
+        String rawId = stringValue(node.get("id"));
+        boolean hasMergeId = rawId != null && !rawId.isBlank();
+        String id = hasMergeId ? rawId.trim() : "?";
+
+        JsonNode contentNode = node.get("content");
+        boolean hasContentUpdate = contentNode != null && !contentNode.isNull()
+            && !contentNode.asText().isBlank();
+        String content = hasContentUpdate
+            ? capContent(contentNode.asText().trim())
+            : "(no description)";
+
+        JsonNode statusNode = node.get("status");
+        String rawStatus = stringValue(statusNode);
+        String normalizedStatus = validateStatus(rawStatus, "pending");
+        boolean hasStatusUpdate = rawStatus != null && !rawStatus.isBlank()
+            && normalizedStatus != null
+            && ALLOWED_STATUSES.contains(normalizedStatus);
+        if (normalizedStatus == null) {
+            normalizedStatus = "pending";
+        }
+
+        return new ParsedTodo(
+            id,
+            id,
+            content,
+            normalizedStatus,
+            hasMergeId,
+            hasContentUpdate,
+            hasStatusUpdate
+        );
+    }
+
+    private List<ParsedTodo> dedupeById(List<ParsedTodo> todos) {
+        Map<String, Integer> lastIndex = new LinkedHashMap<>();
+        for (int i = 0; i < todos.size(); i++) {
+            lastIndex.put(todos.get(i).dedupeKey(), i);
+        }
+        return lastIndex.values().stream()
+            .sorted()
+            .map(todos::get)
+            .toList();
+    }
+
+    private void replaceTodos(List<ParsedTodo> items, Session session) {
+        todoRepository.deleteBySessionIdAndUserId(session.id(), session.userId());
+        List<ParsedTodo> ordered = normalizeOrder(items, ParsedTodo::status);
+        int count = Math.min(ordered.size(), MAX_ITEMS);
+        Instant now = Instant.now();
+        for (int i = 0; i < count; i++) {
+            ParsedTodo item = ordered.get(i);
+            TodoEntity entity = new TodoEntity();
+            entity.setSessionId(session.id());
+            entity.setUserId(session.userId());
+            entity.setTitle(item.content());
+            entity.setStatus(item.status());
+            entity.setPriority("medium");
+            entity.setCreatedAt(now.plusMillis(i));
+            entity.setUpdatedAt(now.plusMillis(i));
+            todoRepository.save(entity);
         }
     }
 
-    /**
-     * Validate status against the allowed set. Returns the normalized (lowercase)
-     * status, or {@code fallback} when {@code status} is null/blank, or {@code null}
-     * when invalid.
-     */
+    private void mergeTodos(List<ParsedTodo> items, Session session) {
+        List<TodoEntity> current = currentTodos(session);
+        for (ParsedTodo item : items) {
+            if (!item.hasMergeId()) {
+                continue;
+            }
+
+            TodoEntity entity = resolveTodo(item.id(), session, current);
+            boolean existing = entity != null;
+            if (!existing) {
+                entity = new TodoEntity();
+                entity.setSessionId(session.id());
+                entity.setUserId(session.userId());
+                entity.setTitle(item.content());
+                entity.setStatus(item.status());
+                entity.setPriority("medium");
+                entity.setCreatedAt(Instant.now());
+            } else {
+                if (item.hasContentUpdate()) {
+                    entity.setTitle(item.content());
+                }
+                if (item.hasStatusUpdate()) {
+                    entity.setStatus(item.status());
+                }
+                if (entity.getPriority() == null) {
+                    entity.setPriority("medium");
+                }
+            }
+            entity.setUpdatedAt(Instant.now());
+            TodoEntity saved = todoRepository.save(entity);
+            if (!existing) {
+                current = new ArrayList<>(current);
+                current.add(saved);
+            }
+        }
+        capSessionTodos(session);
+    }
+
+    private ToolResult readList(Session session) {
+        List<TodoEntity> todos = currentTodos(session);
+        List<Map<String, String>> items = new ArrayList<>();
+        int pending = 0;
+        int inProgress = 0;
+        int completed = 0;
+        int cancelled = 0;
+
+        for (int i = 0; i < todos.size(); i++) {
+            TodoEntity todo = todos.get(i);
+            String status = validateStatus(todo.getStatus(), "pending");
+            if (status == null) {
+                status = "pending";
+            }
+
+            Map<String, String> item = new LinkedHashMap<>();
+            item.put("id", String.valueOf(i + 1));
+            item.put("content", normalizedContent(todo.getTitle()));
+            item.put("status", status);
+            items.add(item);
+
+            if ("pending".equals(status)) {
+                pending++;
+            } else if ("in_progress".equals(status)) {
+                inProgress++;
+            } else if ("completed".equals(status)) {
+                completed++;
+            } else if ("cancelled".equals(status)) {
+                cancelled++;
+            }
+        }
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("total", items.size());
+        summary.put("pending", pending);
+        summary.put("in_progress", inProgress);
+        summary.put("completed", completed);
+        summary.put("cancelled", cancelled);
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("todos", items);
+        response.put("summary", summary);
+        return ToolResult.ok(toJson(response));
+    }
+
+    private List<TodoEntity> currentTodos(Session session) {
+        List<TodoEntity> rows = todoRepository.findBySessionIdOrderByCreatedAtAsc(session.id());
+        if (rows == null) {
+            rows = List.of();
+        }
+        List<TodoEntity> todos = rows.stream()
+            .filter(todo -> session.userId().equals(todo.getUserId()))
+            .sorted(Comparator.comparing(TodoEntity::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+            .toList();
+        return normalizeOrder(todos, todo -> {
+            String status = validateStatus(todo.getStatus(), "pending");
+            return status == null ? "pending" : status;
+        });
+    }
+
+    private TodoEntity resolveTodo(String idStr, Session session, List<TodoEntity> current) {
+        if (idStr == null || idStr.isBlank()) {
+            return null;
+        }
+        String id = idStr.trim();
+        try {
+            int pos = Integer.parseInt(id);
+            if (pos >= 1 && pos <= current.size()) {
+                return current.get(pos - 1);
+            }
+        } catch (NumberFormatException ignored) {
+            // Not a numeric display id; try UUID below.
+        }
+
+        try {
+            UUID uuid = UUID.fromString(id);
+            for (TodoEntity todo : current) {
+                if (uuid.equals(todo.getId())) {
+                    return todo;
+                }
+            }
+            return todoRepository.findById(uuid)
+                .filter(todo -> session.id().equals(todo.getSessionId()))
+                .filter(todo -> session.userId().equals(todo.getUserId()))
+                .orElse(null);
+        } catch (IllegalArgumentException notUuid) {
+            return null;
+        }
+    }
+
+    private void capSessionTodos(Session session) {
+        List<TodoEntity> todos = currentTodos(session);
+        for (int i = MAX_ITEMS; i < todos.size(); i++) {
+            todoRepository.delete(todos.get(i));
+        }
+    }
+
+    private static <T> List<T> normalizeOrder(List<T> items, Function<T, String> statusReader) {
+        int activeIndex = -1;
+        for (int i = 0; i < items.size(); i++) {
+            if ("in_progress".equals(statusReader.apply(items.get(i)))) {
+                activeIndex = i;
+                break;
+            }
+        }
+        if (activeIndex < 0) {
+            return items;
+        }
+
+        int pendingIndex = -1;
+        for (int i = 0; i < activeIndex; i++) {
+            if ("pending".equals(statusReader.apply(items.get(i)))) {
+                pendingIndex = i;
+                break;
+            }
+        }
+        if (pendingIndex < 0) {
+            return items;
+        }
+
+        List<T> normalized = new ArrayList<>(items);
+        T active = normalized.remove(activeIndex);
+        normalized.add(pendingIndex, active);
+        return normalized;
+    }
+
     static String validateStatus(String status, String fallback) {
         if (status == null || status.isBlank()) {
             return fallback;
@@ -220,51 +371,112 @@ public class TodoTool implements ToolHandler {
         return normalized;
     }
 
-    // ─── Hermes-parity schema ──────────────────────────────────────
+    private static String normalizedContent(String content) {
+        if (content == null || content.isBlank()) {
+            return "(no description)";
+        }
+        return capContent(content.strip());
+    }
 
-    public static class TodoArgs {
+    private static String capContent(String content) {
+        if (content.length() > MAX_CONTENT_CHARS) {
+            int keep = MAX_CONTENT_CHARS - TRUNCATION_MARKER.length();
+            return content.substring(0, keep) + TRUNCATION_MARKER;
+        }
+        return content;
+    }
+
+    private static String stringValue(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        return node.asText();
+    }
+
+    private static String jsonTypeName(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return "NoneType";
+        }
+        if (node.isObject()) {
+            return "dict";
+        }
+        if (node.isArray()) {
+            return "list";
+        }
+        if (node.isTextual()) {
+            return "str";
+        }
+        if (node.isBoolean()) {
+            return "bool";
+        }
+        if (node.isIntegralNumber()) {
+            return "int";
+        }
+        if (node.isNumber()) {
+            return "float";
+        }
+        return node.getNodeType().name().toLowerCase();
+    }
+
+    private static String toJson(Object value) {
+        try {
+            return MAPPER.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize todo response", e);
+        }
+    }
+
+    private static ToolResult jsonError(String error) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("error", error);
+        return new ToolResult(false, toJson(response), error);
+    }
+
+    // Schema carrier for SpringToolRegistry. execute() parses raw JSON manually
+    // so it can accept Hermes' recoverable string-encoded todos guard.
+    public record TodoArgs(
         @JsonProperty("todos")
         @ToolParam(description = "Task items to write. Omit to read current list.", required = false)
-        private List<TodoItem> todos;
-
+        List<TodoItem> todos,
         @JsonProperty("merge")
         @ToolParam(description = """
             true: update existing items by id, add new ones. \
             false (default): replace the entire list.""", required = false)
-        private Boolean merge;
+        Boolean merge
+    ) {}
 
-        // Jackson needs either setters or public fields
-        public List<TodoItem> getTodos() { return todos; }
-        public Boolean getMerge() { return merge; }
-        public void setTodos(List<TodoItem> todos) { this.todos = todos; }
-        public void setMerge(Boolean merge) { this.merge = merge; }
-
-        // Hermes-parity accessors
-        public List<TodoItem> todos() { return todos; }
-        public Boolean merge() { return merge; }
-    }
-
-    /**
-     * Hermes-parity todo item: {id, content, status}.
-     * Note: Hermes uses 'content' (not 'title'), and 'id' is a string
-     * (not UUID) — the model sends "1", "2", etc.
-     */
-    public static class TodoItem {
+    public record TodoItem(
         @JsonProperty("id")
-        private String id;
+        @ToolParam(description = "Unique item identifier")
+        String id,
         @JsonProperty("content")
-        private String content;
+        @ToolParam(description = "Task description")
+        String content,
         @JsonProperty("status")
-        private String status;
+        @ToolParam(
+            description = "Current status",
+            enumValues = {"pending", "in_progress", "completed", "cancelled"}
+        )
+        String status
+    ) {}
 
-        public TodoItem() {}
+    private record ParsedTodos(List<ParsedTodo> items, String error) {
+        static ParsedTodos ok(List<ParsedTodo> items) {
+            return new ParsedTodos(items, null);
+        }
 
-        public String id() { return id; }
-        public String content() { return content; }
-        public String status() { return status; }
-
-        public void setId(String id) { this.id = id; }
-        public void setContent(String content) { this.content = content; }
-        public void setStatus(String status) { this.status = status; }
+        static ParsedTodos error(String error) {
+            return new ParsedTodos(List.of(), error);
+        }
     }
+
+    private record ParsedTodo(
+        String dedupeKey,
+        String id,
+        String content,
+        String status,
+        boolean hasMergeId,
+        boolean hasContentUpdate,
+        boolean hasStatusUpdate
+    ) {}
 }

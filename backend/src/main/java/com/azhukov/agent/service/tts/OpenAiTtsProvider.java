@@ -1,6 +1,7 @@
 package com.azhukov.agent.service.tts;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -11,6 +12,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * OpenAI TTS provider using the OpenAI Audio API (tts-1 / tts-1-hd models).
@@ -24,6 +27,8 @@ import java.time.Duration;
 @ConditionalOnProperty(name = "agent.tts.enabled", havingValue = "true")
 public class OpenAiTtsProvider implements TtsProvider {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     private final HttpClient httpClient;
     private final String apiKey;
     private final String baseUrl;
@@ -34,7 +39,9 @@ public class OpenAiTtsProvider implements TtsProvider {
         AgentProperties.TtsProperties tts = properties.getTts();
         this.apiKey = tts.getApiKey();
         this.baseUrl = properties.getModel().getBaseUrl();
-        this.model = "tts-1";
+        this.model = tts.getModel() != null && !tts.getModel().isBlank()
+            ? tts.getModel()
+            : "gpt-4o-mini-tts";
         this.defaultVoice = tts.getVoice() != null && !tts.getVoice().isBlank() ? tts.getVoice() : "alloy";
         this.httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -59,10 +66,16 @@ public class OpenAiTtsProvider implements TtsProvider {
         String usedVoice = (voice != null && !voice.isBlank()) ? voice : defaultVoice;
         double usedSpeed = speed == null ? 1.0 : Math.clamp(speed, 0.25, 4.0);
         try {
-            String body = String.format(
-                "{\"model\":\"%s\",\"input\":\"%s\",\"voice\":\"%s\",\"speed\":%s,\"format\":\"mp3\"}",
-                model, escapeJson(text), escapeJson(usedVoice), usedSpeed
-            );
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("model", model);
+            body.put("input", text);
+            body.put("voice", usedVoice);
+            body.put("speed", usedSpeed);
+            body.put("response_format", "mp3");
+            if (instructions != null && !instructions.isBlank()) {
+                body.put("instructions", instructions);
+            }
+            String jsonBody = MAPPER.writeValueAsString(body);
 
             String endpoint = baseUrl.endsWith("/")
                 ? baseUrl + "audio/speech"
@@ -72,7 +85,7 @@ public class OpenAiTtsProvider implements TtsProvider {
                 .uri(URI.create(endpoint))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + apiKey)
-                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8))
                 .timeout(Duration.ofSeconds(60))
                 .build();
 
@@ -96,14 +109,5 @@ public class OpenAiTtsProvider implements TtsProvider {
             log.error("OpenAI TTS error: {}", e.getMessage(), e);
             throw new RuntimeException("OpenAI TTS failed: " + e.getMessage(), e);
         }
-    }
-
-    private String escapeJson(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t");
     }
 }

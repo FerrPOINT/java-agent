@@ -7,6 +7,8 @@ import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.skill.SkillManager.LinkedFiles;
 import com.azhukov.agent.core.skill.SkillManager.SkillInfo;
 import com.azhukov.agent.core.skill.SkillManager.SkillLookupResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,6 +32,8 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class SkillViewToolTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     @Mock private SkillManager skillManager;
 
     private SkillViewTool tool;
@@ -45,6 +49,13 @@ class SkillViewToolTest {
 
     private Message assistant() {
         return Message.assistant("test", 0);
+    }
+
+    private JsonNode errorJson(ToolResult result) throws Exception {
+        JsonNode json = JSON.readTree(result.content());
+        assertThat(json.path("success").asBoolean()).isFalse();
+        assertThat(result.error()).isEqualTo(json.path("error").asText());
+        return json;
     }
 
     private SkillInfo skillInfo(String name) {
@@ -74,13 +85,18 @@ class SkillViewToolTest {
     }
 
     @Test
-    void viewSkillShowsContentAndMetadata() {
+    void viewSkillShowsContentAndMetadata() throws Exception {
         when(skillManager.getSkillInfoMultiStrategy("my-skill")).thenReturn(lookupResult(skillInfo("my-skill")));
 
         String args = "{\"name\":\"my-skill\"}";
         ToolResult result = tool.execute(args, assistant(), session());
 
         assertThat(result.success()).isTrue();
+        JsonNode json = JSON.readTree(result.content());
+        assertThat(json.path("success").asBoolean()).isTrue();
+        assertThat(json.path("name").asText()).isEqualTo("my-skill");
+        assertThat(json.path("description").asText()).isEqualTo("test");
+        assertThat(json.path("content").asText()).contains("=== Skill: my-skill ===");
         assertThat(result.content()).contains("=== Skill: my-skill ===");
         assertThat(result.content()).contains("my-skill");
         verify(skillManager).incrementViewCount("my-skill");
@@ -111,14 +127,16 @@ class SkillViewToolTest {
     }
 
     @Test
-    void viewSkillFailsWhenNotFound() {
+    void viewSkillFailsWhenNotFound() throws Exception {
         when(skillManager.getSkillInfoMultiStrategy("missing")).thenReturn(notFound());
 
         String args = "{\"name\":\"missing\"}";
         ToolResult result = tool.execute(args, assistant(), session());
 
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("not found");
+        JsonNode json = errorJson(result);
+        assertThat(json.path("error").asText()).contains("not found");
+        assertThat(json.path("hint").asText()).contains("skills_list");
         verify(skillManager, never()).incrementViewCount(any());
     }
 
@@ -186,7 +204,7 @@ class SkillViewToolTest {
     // ─── Fix 3: Disabled skill check ───
 
     @Test
-    void viewSkillFailsWhenDisabled() {
+    void viewSkillFailsWhenDisabled() throws Exception {
         SkillInfo info = new SkillInfo(
             "disabled-skill",
             "---\nname: disabled-skill\ndescription: test\ndisabled: true\n---\nbody",
@@ -199,7 +217,8 @@ class SkillViewToolTest {
         ToolResult result = tool.execute(args, assistant(), session());
 
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("disabled");
+        JsonNode json = errorJson(result);
+        assertThat(json.path("error").asText()).contains("disabled");
         verify(skillManager, never()).incrementViewCount(any());
     }
 
@@ -262,7 +281,7 @@ class SkillViewToolTest {
     // ─── Fix 6: Multi-strategy lookup collision ───
 
     @Test
-    void viewSkillFailsOnCollision() {
+    void viewSkillFailsOnCollision() throws Exception {
         when(skillManager.getSkillInfoMultiStrategy("ambig")).thenReturn(new SkillLookupResult(
             null,
             List.of("db:ambig", "/skills/ambig/SKILL.md"),
@@ -273,7 +292,9 @@ class SkillViewToolTest {
         ToolResult result = tool.execute(args, assistant(), session());
 
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("Ambiguous");
+        JsonNode json = errorJson(result);
+        assertThat(json.path("error").asText()).contains("Ambiguous");
+        assertThat(json.path("matches")).hasSize(2);
         verify(skillManager, never()).incrementViewCount(any());
     }
 
@@ -294,15 +315,25 @@ class SkillViewToolTest {
     }
 
     @Test
-    void viewWithFilePathFailsWhenFileNotFound() {
+    void viewWithFilePathFailsWhenFileNotFound() throws Exception {
         when(skillManager.readSupportFile("my-skill", "references/missing.md")).thenReturn(null);
 
         String args = "{\"name\":\"my-skill\",\"file_path\":\"references/missing.md\"}";
         ToolResult result = tool.execute(args, assistant(), session());
 
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("File not found");
-        assertThat(result.error()).contains("references/missing.md");
+        JsonNode json = errorJson(result);
+        assertThat(json.path("error").asText()).contains("File not found");
+        assertThat(json.path("error").asText()).contains("references/missing.md");
+    }
+
+    @Test
+    void viewWithMissingNameReturnsJsonError() throws Exception {
+        ToolResult result = tool.execute("{}", assistant(), session());
+
+        assertThat(result.success()).isFalse();
+        JsonNode json = errorJson(result);
+        assertThat(json.path("error").asText()).contains("name is required");
     }
 
     @Test

@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.List;
+import java.util.Locale;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -107,7 +108,7 @@ public class UrlSafetyHandler {
         if (uri.getUserInfo() != null && !uri.getUserInfo().isBlank()) {
             return "cdpUrl with embedded credentials is not allowed: " + uri.getHost();
         }
-        String lowerHost = uri.getHost().toLowerCase();
+        String lowerHost = normalizeHost(uri.getHost());
 
         // CDP is a local debugging protocol — localhost and loopback are always allowed
         if (isLocalDebugHost(lowerHost)) {
@@ -122,7 +123,10 @@ public class UrlSafetyHandler {
         }
 
         // Block cloud metadata endpoints (SSRF risk even for CDP)
-        if (lowerHost.equals("metadata.google.internal") || lowerHost.endsWith(".metadata.google.internal")) {
+        if (lowerHost.equals("metadata.google.internal")
+                || lowerHost.equals("metadata.goog")
+                || lowerHost.endsWith(".metadata.google.internal")
+                || lowerHost.endsWith(".metadata.goog")) {
             return "cdpUrl pointing to metadata endpoint is blocked";
         }
 
@@ -133,8 +137,30 @@ public class UrlSafetyHandler {
         if (properties.getWeb().getBlockedDomains().contains(uri.getHost())) {
             return "cdpUrl domain is blocked: " + uri.getHost();
         }
+        if (!isCdpTargetAllowed(uri)) {
+            return "cdpUrl blocked by safety policy: " + uri.getHost();
+        }
 
         return null;
+    }
+
+    private boolean isCdpTargetAllowed(URI uri) {
+        String scheme = uri.getScheme();
+        String normalizedScheme = "wss".equalsIgnoreCase(scheme) ? "https"
+                : "ws".equalsIgnoreCase(scheme) ? "http" : scheme;
+        try {
+            URI safetyUri = new URI(
+                    normalizedScheme,
+                    uri.getUserInfo(),
+                    uri.getHost(),
+                    uri.getPort(),
+                    uri.getPath(),
+                    uri.getQuery(),
+                    uri.getFragment());
+            return urlSafety.isUrlAllowed(safetyUri.toString());
+        } catch (URISyntaxException e) {
+            return false;
+        }
     }
 
     /**
@@ -162,5 +188,13 @@ public class UrlSafetyHandler {
             return true;
         }
         return false;
+    }
+
+    private String normalizeHost(String host) {
+        String normalized = host.toLowerCase(Locale.ROOT);
+        while (normalized.endsWith(".")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
     }
 }

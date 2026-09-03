@@ -2,6 +2,8 @@ package com.azhukov.agent.core.tool;
 
 import com.azhukov.agent.core.model.ToolCall;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -32,6 +34,8 @@ import java.util.Set;
 public final class ToolCallValidator {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper CANONICAL_MAPPER = new ObjectMapper()
+        .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
 
     /** Max Levenshtein distance for fuzzy tool-name repair. */
     private static final int MAX_LEVENSHTEIN = 2;
@@ -40,6 +44,18 @@ public final class ToolCallValidator {
     private static final int DEFAULT_MAX_DELEGATE_TASKS = 1;
 
     private ToolCallValidator() {
+    }
+
+    public static String failurePayload(String error) {
+        String message = error == null || error.isBlank() ? "Tool call failed" : error;
+        ObjectNode payload = MAPPER.createObjectNode();
+        payload.put("success", false);
+        payload.put("error", message);
+        try {
+            return MAPPER.writeValueAsString(payload);
+        } catch (Exception e) {
+            return payload.toString();
+        }
     }
 
     // ── Tool name validation & repair ──────────────────────────────────────
@@ -297,7 +313,7 @@ public final class ToolCallValidator {
         Set<String> seen = new HashSet<>();
         List<ToolCall> unique = new ArrayList<>();
         for (ToolCall tc : toolCalls) {
-            String key = tc.name() + "\0" + tc.arguments();
+            String key = tc.name() + "\0" + canonicalizeArguments(tc.arguments());
             if (seen.add(key)) {
                 unique.add(tc);
             } else {
@@ -305,6 +321,18 @@ public final class ToolCallValidator {
             }
         }
         return unique.size() < toolCalls.size() ? unique : toolCalls;
+    }
+
+    private static String canonicalizeArguments(String arguments) {
+        if (arguments == null) {
+            return null;
+        }
+        try {
+            Object parsed = MAPPER.readValue(arguments, Object.class);
+            return CANONICAL_MAPPER.writeValueAsString(parsed);
+        } catch (Exception ignored) {
+            return arguments;
+        }
     }
 
     // ── Delegate task capping ──────────────────────────────────────────────

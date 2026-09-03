@@ -34,8 +34,8 @@ spring:
 
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 50MB
+      max-file-size: 100MB
+      max-request-size: 100MB
 
 springdoc:
   api-docs:
@@ -124,9 +124,12 @@ agent:
     search-results: ${AGENT_WEB_SEARCH_RESULTS:5}
     extract-timeout-seconds: ${AGENT_WEB_EXTRACT_TIMEOUT_SECONDS:120}
     extract-max-chars: ${AGENT_WEB_EXTRACT_MAX_CHARS:100000}
+    extract-cache-dir: ${AGENT_WEB_EXTRACT_CACHE_DIR:}
     search-provider: ${AGENT_WEB_SEARCH_PROVIDER:ddg}
     # Feature 1: SearXNG instance URL — if set, web_search uses SearXNG instead of DuckDuckGo
     searxng-url: ${AGENT_WEB_SEARXNG_URL:}
+    allowed-domains: ${AGENT_WEB_ALLOWED_DOMAINS:}
+    blocked-domains: ${AGENT_WEB_BLOCKED_DOMAINS:}
   
   # ─── Terminal ───
   terminal:
@@ -165,17 +168,7 @@ agent:
     inline-shell-timeout: ${AGENT_SKILLS_INLINE_SHELL_TIMEOUT:30}
     creation-nudge-interval: ${AGENT_SKILLS_CREATION_NUDGE_INTERVAL:10}
     default-toolsets:
-      - web
-      - file
-      - browser
-      - terminal
-      - coding
-      - memory
-      - core
-      - delegation
-      - gateway
-      - todo
-      - skills
+      - hermes-cli
   
   # ─── Session search ───
   session-search:
@@ -221,7 +214,7 @@ agent:
     default-timeout-seconds: ${AGENT_DELEGATION_DEFAULT_TIMEOUT_SECONDS:300}
     child-timeout-seconds: ${AGENT_DELEGATION_CHILD_TIMEOUT_SECONDS:0}
     orchestrator-enabled: ${AGENT_DELEGATION_ORCHESTRATOR_ENABLED:true}
-    blocked-tools: ${AGENT_DELEGATION_BLOCKED_TOOLS:}
+    blocked-tools: ${AGENT_DELEGATION_BLOCKED_TOOLS:delegate_task,clarify,memory,send_message,cronjob,delete_file}
   
   # ─── MCP ───
   mcp:
@@ -264,7 +257,7 @@ agent:
   
   # ─── Security ───
   security:
-    api-key: ${AGENT_API_KEY:}
+    api-key: ${AGENT_SECURITY_API_KEY:${AGENT_API_KEY:}}
     approvals-enabled: ${AGENT_SECURITY_APPROVALS_ENABLED:true}
     file-safety-enabled: ${AGENT_SECURITY_FILE_SAFETY_ENABLED:true}
     url-safety-enabled: ${AGENT_SECURITY_URL_SAFETY_ENABLED:true}
@@ -273,7 +266,25 @@ agent:
     redact-pii: ${AGENT_SECURITY_REDACT_PII:false}
     # Additional regex patterns for blocked terminal commands (built-in defaults always apply)
     blocked-commands: ${AGENT_SECURITY_BLOCKED_COMMANDS:}
-  
+
+  # ─── OpenAI-compatible API ───
+  api:
+    # Stable virtual model alias advertised on /v1/models; clients echo it back to mean "use the configured agent".
+    model-name: ${AGENT_API_MODEL_NAME:hermes-agent}
+    # Hermes-compatible default: ignore bare OpenAI client model names unless they match model-routes below.
+    direct-model-requests: ${AGENT_API_DIRECT_MODEL_REQUESTS:false}
+    # Maximum concurrent API-server agent runs across sessions/chat/completions/responses/runs; 0 disables the cap.
+    max-concurrent-runs: ${AGENT_API_MAX_CONCURRENT_RUNS:10}
+    # Optional per-client aliases:
+    # model-routes:
+    #   fast-agent:
+    #     model: openrouter/fast-model
+    # Hermes API server platform default: full HTTP agent surface, but no interactive gateway send/clarify.
+    chat-completion-toolsets:
+      - ${AGENT_API_CHAT_COMPLETION_TOOLSET:hermes-api-server}
+    # Comma-separated browser origins allowed to call the API server. Empty disables browser CORS.
+    cors-origins: ${AGENT_API_CORS_ORIGINS:}
+
   # ─── Core ───
   core:
     max-turns: ${AGENT_CORE_MAX_TURNS:25}
@@ -331,6 +342,7 @@ agent:
     enabled: ${AGENT_TTS_ENABLED:false}
     provider: ${AGENT_TTS_PROVIDER:edge}
     api-key: ${AGENT_TTS_API_KEY:}
+    model: ${AGENT_TTS_MODEL:gpt-4o-mini-tts}
     voice: ${AGENT_TTS_VOICE:alloy}
     auto-tts: ${AGENT_TTS_AUTO_TTS:false}
   
@@ -394,13 +406,13 @@ management:
       show-details: when_authorized
       groups:
         # readiness/liveness stay FAST — browser/chromium checks (30s+ with a
-        # cold browser) live only in the explicit infrastructure group.
+        # cold browser) and live model checks belong to explicit groups.
         readiness:
-          include: db,model
+          include: db
         liveness:
           include: livenessState,ping
         infrastructure:
-          include: mcp,browser,chromium
+          include: mcp,browser,chromium,model
 
 resilience4j:
   retry:

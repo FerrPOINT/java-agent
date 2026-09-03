@@ -2,6 +2,8 @@ package com.azhukov.agent.tools.file;
 
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -16,8 +18,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PatchToolSameStringTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private final PatchTool tool = new PatchTool();
     private final Session session = Session.create("u", "p", "m");
+
+    private static JsonNode jsonContent(ToolResult result) throws Exception {
+        return JSON.readTree(result.content());
+    }
 
     @Test
     void replaceWithSameStringReportsSuccess(@TempDir Path dir) throws Exception {
@@ -29,7 +37,9 @@ class PatchToolSameStringTest {
             "{\"path\":\"" + file + "\",\"old_string\":\"hello\",\"new_string\":\"hello\"}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("Patched");
+        JsonNode json = jsonContent(r);
+        assertThat(json.path("success").asBoolean()).isTrue();
+        assertThat(json.path("note").asText()).contains("replace");
     }
 
     @Test
@@ -40,7 +50,9 @@ class PatchToolSameStringTest {
             "{\"path\":\"" + file + "\",\"old_string\":\"foo\",\"new_string\":\"foo\",\"replace_all\":true}",
             null, session);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("Patched");
+        JsonNode json = jsonContent(r);
+        assertThat(json.path("success").asBoolean()).isTrue();
+        assertThat(json.path("note").asText()).contains("replace all");
     }
 
     @Test

@@ -28,7 +28,7 @@ public class TodoService {
     }
 
     public List<TodoDto> listBySessionId(UUID sessionId) {
-        return todoRepository.findBySessionId(sessionId).stream()
+        return todoRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
             .map(TodoService::toDto)
             .toList();
     }
@@ -50,7 +50,17 @@ public class TodoService {
     public Optional<TodoDto> markDone(UUID id) {
         return todoRepository.findById(id)
             .map(todo -> {
-                todo.setStatus("done");
+                todo.setStatus("completed");
+                todo.setUpdatedAt(Instant.now());
+                return toDto(todoRepository.save(todo));
+            });
+    }
+
+    public Optional<TodoDto> markDoneForUser(UUID id, String userId) {
+        return todoRepository.findById(id)
+            .filter(todo -> userId != null && userId.equals(todo.getUserId()))
+            .map(todo -> {
+                todo.setStatus("completed");
                 todo.setUpdatedAt(Instant.now());
                 return toDto(todoRepository.save(todo));
             });

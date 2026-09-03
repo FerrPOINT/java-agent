@@ -3,6 +3,8 @@ package com.azhukov.agent.core.security;
 import com.azhukov.agent.config.AgentProperties;
 import org.junit.jupiter.api.Test;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -233,6 +235,16 @@ class DefaultUrlSafetyTest {
         assertThat(safety.isUrlAllowed("http://metadata.google.internal/computeMetadata/v1/")).isFalse();
     }
 
+    @Test
+    void ssrf_gcpMetadataGoog_nowBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setUrlSafetyEnabled(true);
+        DefaultUrlSafety safety = new DefaultUrlSafety(properties);
+
+        assertThat(safety.isUrlAllowed("http://metadata.goog/computeMetadata/v1/")).isFalse();
+        assertThat(safety.isUrlAllowed("http://metadata.goog./computeMetadata/v1/")).isFalse();
+    }
+
     // ─── SSRF: Link-local addresses (now blocked) ───
 
     @Test
@@ -326,7 +338,7 @@ class DefaultUrlSafetyTest {
     void idnHomograph_lookalikeDomain_currentlyAllowed_noIdnCheck() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
-        DefaultUrlSafety safety = new DefaultUrlSafety(properties);
+        DefaultUrlSafety safety = safetyResolvingToPublicAddress(properties);
 
         // Homograph: "examp1e.com" (with digit 1 instead of letter l)
         // No IDN/punycode normalization or homograph detection — but this is not an SSRF risk
@@ -337,7 +349,7 @@ class DefaultUrlSafetyTest {
     void idnHomograph_punycodeDomain_currentlyAllowed() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setUrlSafetyEnabled(true);
-        DefaultUrlSafety safety = new DefaultUrlSafety(properties);
+        DefaultUrlSafety safety = safetyResolvingToPublicAddress(properties);
 
         // Punycode domain (IDN) — could be used for homograph attacks
         // No punycode normalization — but this is not an SSRF risk
@@ -626,6 +638,73 @@ class DefaultUrlSafetyTest {
         assertThat(safety.isUrlAllowed("http://0.0.0.0/")).isFalse();
     }
 
+    @Test
+    void ssrf_cgnatAndCloudMetadataRanges_nowBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setUrlSafetyEnabled(true);
+        DefaultUrlSafety safety = new DefaultUrlSafety(properties);
+
+        assertThat(safety.isUrlAllowed("http://100.64.0.1/")).isFalse();
+        assertThat(safety.isUrlAllowed("http://100.100.100.200/")).isFalse();
+        assertThat(safety.isUrlAllowed("http://198.18.0.1/")).isFalse();
+    }
+
+    @Test
+    void ssrf_dnsResolutionBlocksWhenAnyAnswerIsUnsafe() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setUrlSafetyEnabled(true);
+        DefaultUrlSafety safety = new DefaultUrlSafety(properties) {
+            @Override
+            InetAddress[] resolveAll(String host) throws UnknownHostException {
+                assertThat(host).isEqualTo("mixed.example");
+                return new InetAddress[] {
+                        InetAddress.getByName("93.184.216.34"),
+                        InetAddress.getByName("127.0.0.1")
+                };
+            }
+        };
+
+        assertThat(safety.isUrlAllowed("https://mixed.example/resource")).isFalse();
+    }
+
+    @Test
+    void ssrf_dnsResolutionFailureBlocksWhenNoProxyIsConfigured() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setUrlSafetyEnabled(true);
+        DefaultUrlSafety safety = new DefaultUrlSafety(properties) {
+            @Override
+            InetAddress[] resolveAll(String host) throws UnknownHostException {
+                throw new UnknownHostException(host);
+            }
+
+            @Override
+            boolean isProxyConfigured() {
+                return false;
+            }
+        };
+
+        assertThat(safety.isUrlAllowed("https://does-not-resolve.example/resource")).isFalse();
+    }
+
+    @Test
+    void ssrf_dnsResolutionFailureCanDelegateHostnameToConfiguredProxy() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setUrlSafetyEnabled(true);
+        DefaultUrlSafety safety = new DefaultUrlSafety(properties) {
+            @Override
+            InetAddress[] resolveAll(String host) throws UnknownHostException {
+                throw new UnknownHostException(host);
+            }
+
+            @Override
+            boolean isProxyConfigured() {
+                return true;
+            }
+        };
+
+        assertThat(safety.isUrlAllowed("https://proxy-resolved.example/resource")).isTrue();
+    }
+
     // ─── Real-world SSRF scenario — now blocked ───
 
     @Test
@@ -663,5 +742,14 @@ class DefaultUrlSafetyTest {
         assertThat(safety.checkUrl("http://127.0.0.1/")).isNotNull();
         assertThat(safety.checkUrl("")).isEqualTo("URL is empty");
         assertThat(safety.checkUrl(null)).isEqualTo("URL is empty");
+    }
+
+    private DefaultUrlSafety safetyResolvingToPublicAddress(AgentProperties properties) {
+        return new DefaultUrlSafety(properties) {
+            @Override
+            InetAddress[] resolveAll(String host) throws UnknownHostException {
+                return new InetAddress[] { InetAddress.getByName("93.184.216.34") };
+            }
+        };
     }
 }

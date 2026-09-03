@@ -6,7 +6,6 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -20,18 +19,26 @@ import org.springframework.stereotype.Component;
 public class BrowserPressTool implements ToolHandler {
 
     private final BrowserService browserService;
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        PressArgs args = ToolHandler.parseJson(arguments, PressArgs.class);
+        PressArgs args;
         try {
-            // Safely escape key using JSON.stringify to prevent JS injection
-            String safeKey = MAPPER.writeValueAsString(args.key());
-            String script = "document.dispatchEvent(new KeyboardEvent('keydown', { key: " + safeKey + ", bubbles: true }));";
-            return ToolResult.ok(browserService.evaluate(script));
+            args = ToolHandler.parseJson(arguments, PressArgs.class);
+        } catch (IllegalArgumentException e) {
+            return BrowserToolResponses.failureResult(e.getMessage());
+        }
+        if (args.key() == null || args.key().isBlank()) {
+            return BrowserToolResponses.failureResult("key is required");
+        }
+        try {
+            String result = browserService.press(args.key());
+            if (BrowserToolResponses.looksLikeFailure(result)) {
+                return BrowserToolResponses.failureResult(result);
+            }
+            return ToolResult.ok(BrowserToolResponses.success("pressed", args.key()));
         } catch (Exception e) {
-            return ToolResult.fail("Browser press failed: " + e.getMessage());
+            return BrowserToolResponses.failureResult("Browser press failed: " + e.getMessage());
         }
     }
 

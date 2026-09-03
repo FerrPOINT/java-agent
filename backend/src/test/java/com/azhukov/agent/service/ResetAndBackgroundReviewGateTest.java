@@ -96,7 +96,7 @@ class ResetAndBackgroundReviewGateTest {
         service.resetSession(id);
         verify(memoryNudgeManager).clearSession(id);
         verify(promptBuilder).invalidateMemoryPrefix(String.valueOf(id));
-        verify(messageRepository).deleteAll(any());
+        verify(messageRepository).deleteBySessionId(id);
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.azhukov.agent.persistence.repository;
 
 import com.azhukov.agent.persistence.entity.SessionEntity;
+import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.PostgresTestContainer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,9 @@ class SessionRepositoryTest extends PostgresTestContainer {
 
     @Autowired
     private SessionRepository sessionRepository;
+
+    @Autowired
+    private MessageRepository messageRepository;
 
     @Test
     void saveAndFindById() {
@@ -110,6 +114,80 @@ class SessionRepositoryTest extends PostgresTestContainer {
         assertThat(user1Sessions)
             .extracting(SessionEntity::getTitle)
             .containsExactlyInAnyOrder("Session A", "Session B");
+    }
+
+    @Test
+    void visiblePageQueriesSupportHermesArchivedOnlyFilter() {
+        SessionEntity active = newSession(USER_ID_1, "Active");
+        active.setArchived(false);
+        active.setLastActive(Instant.parse("2026-01-01T00:00:02Z"));
+        SessionEntity archived = newSession(USER_ID_1, "Archived");
+        archived.setArchived(true);
+        archived.setLastActive(Instant.parse("2026-01-01T00:00:01Z"));
+        sessionRepository.saveAllAndFlush(List.of(active, archived, newSession(USER_ID_2, "Other user")));
+
+        List<SessionEntity> defaultRows = sessionRepository.findPageByUserIdOrderByRecent(
+            USER_ID_1, 20, 0, false, false, false, null, null, false, false);
+        List<SessionEntity> includeRows = sessionRepository.findPageByUserIdOrderByRecent(
+            USER_ID_1, 20, 0, true, false, false, null, null, false, false);
+        List<SessionEntity> onlyRows = sessionRepository.findPageByUserIdOrderByRecent(
+            USER_ID_1, 20, 0, true, true, false, null, null, false, false);
+        List<SessionEntity> createdRows = sessionRepository.findPageByUserIdOrderByCreated(
+            USER_ID_1, 20, 0, true, true, false, null, null, false, false);
+
+        assertThat(defaultRows).extracting(SessionEntity::getTitle).containsExactly("Active");
+        assertThat(includeRows).extracting(SessionEntity::getTitle).containsExactly("Active", "Archived");
+        assertThat(onlyRows).extracting(SessionEntity::getTitle).containsExactly("Archived");
+        assertThat(createdRows).extracting(SessionEntity::getTitle).containsExactly("Archived");
+        assertThat(sessionRepository.countVisibleByUserId(
+            USER_ID_1, true, true, false, null, null, false, false)).isEqualTo(1);
+    }
+
+    @Test
+    void emptySelectorRequiresEndedUnarchivedAndNoMessageRowsLikeHermes() {
+        SessionEntity emptyEnded = newSession(USER_ID_1, "Empty ended");
+        emptyEnded.setEndReason("idle_timeout");
+        emptyEnded.setMessageCount(0);
+        SessionEntity liveEmpty = newSession(USER_ID_1, "Live empty");
+        liveEmpty.setMessageCount(0);
+        SessionEntity archivedEmpty = newSession(USER_ID_1, "Archived empty");
+        archivedEmpty.setEndReason("idle_timeout");
+        archivedEmpty.setArchived(true);
+        archivedEmpty.setMessageCount(0);
+        SessionEntity rewoundWithRows = newSession(USER_ID_1, "Rewound with rows");
+        rewoundWithRows.setEndReason("idle_timeout");
+        rewoundWithRows.setMessageCount(0);
+        sessionRepository.saveAllAndFlush(List.of(emptyEnded, liveEmpty, archivedEmpty, rewoundWithRows));
+        messageRepository.saveAndFlush(newMessage(rewoundWithRows.getId(), "recoverable archived row"));
+
+        assertThat(sessionRepository.countEmptyEndedUnarchived()).isEqualTo(1);
+        assertThat(sessionRepository.findEmptyEndedUnarchivedIds()).containsExactly(emptyEnded.getId());
+    }
+
+    @Test
+    void bulkDeleteHelpersFindExistingIdsAndOrphanChildrenLikeHermes() {
+        SessionEntity parent = sessionRepository.saveAndFlush(newSession(USER_ID_1, "Parent"));
+        SessionEntity child = newSession(USER_ID_1, "Child");
+        child.setParentSessionId(parent.getId());
+        child = sessionRepository.saveAndFlush(child);
+        UUID missing = UUID.randomUUID();
+
+        assertThat(sessionRepository.findExistingIds(List.of(parent.getId(), missing)))
+            .containsExactly(parent.getId());
+
+        assertThat(sessionRepository.orphanChildrenOf(List.of(parent.getId()))).isEqualTo(1);
+        sessionRepository.flush();
+
+        assertThat(sessionRepository.findById(child.getId()).orElseThrow().getParentSessionId()).isNull();
+    }
+
+    private MessageEntity newMessage(UUID sessionId, String content) {
+        MessageEntity message = new MessageEntity();
+        message.setSessionId(sessionId);
+        message.setRole("user");
+        message.setContent(content);
+        message.setCreatedAt(Instant.parse("2026-01-01T00:00:00Z"));
+        return message;
     }
 
     private SessionEntity newSession(String userId, String title) {

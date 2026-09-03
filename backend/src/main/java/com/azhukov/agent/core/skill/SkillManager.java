@@ -74,9 +74,9 @@ public interface SkillManager {
         return new SkillLookupResult(null, List.of(), null);
     }
 
-    // S3: Patch skill content (find-and-replace, all occurrences)
+    // S3: Patch skill content (find-and-replace, unique match by default)
     default boolean patchSkill(String name, String oldText, String newText) {
-        return patchSkill(name, oldText, newText, true);
+        return patchSkill(name, oldText, newText, false);
     }
 
     // S: Patch skill content with replaceAll flag.
@@ -85,15 +85,7 @@ public interface SkillManager {
     default boolean patchSkill(String name, String oldText, String newText, boolean replaceAll) {
         String content = getSkill(name);
         if (content == null) return false;
-        String patched;
-        if (replaceAll) {
-            patched = content.replace(oldText, newText);
-        } else {
-            patched = content.replaceFirst(
-                java.util.regex.Pattern.quote(oldText),
-                java.util.regex.Matcher.quoteReplacement(newText)
-            );
-        }
+        String patched = patchedContent(content, oldText, newText, replaceAll);
         if (patched.equals(content)) return false;
         saveSkill(name, patched);
         return true;
@@ -101,25 +93,51 @@ public interface SkillManager {
 
     // S: Patch a support file (references/, templates/, scripts/) — find-and-replace
     default boolean patchSupportFile(String skillName, String filePath, String oldText, String newText) {
-        return patchSupportFile(skillName, filePath, oldText, newText, true);
+        return patchSupportFile(skillName, filePath, oldText, newText, false);
     }
 
     // S: Patch a support file with replaceAll flag
     default boolean patchSupportFile(String skillName, String filePath, String oldText, String newText, boolean replaceAll) {
         String content = readSupportFile(skillName, filePath);
         if (content == null) return false;
-        String patched;
-        if (replaceAll) {
-            patched = content.replace(oldText, newText);
-        } else {
-            patched = content.replaceFirst(
-                java.util.regex.Pattern.quote(oldText),
-                java.util.regex.Matcher.quoteReplacement(newText)
-            );
-        }
+        String patched = patchedContent(content, oldText, newText, replaceAll);
         if (patched.equals(content)) return false;
         writeSupportFile(skillName, filePath, patched);
         return true;
+    }
+
+    private static String patchedContent(String content, String oldText, String newText, boolean replaceAll) {
+        if (oldText == null || oldText.isEmpty() || newText == null) {
+            return content;
+        }
+        int matchCount = countOccurrences(content, oldText);
+        if (matchCount == 0) {
+            return content;
+        }
+        if (!replaceAll && matchCount > 1) {
+            throw new IllegalArgumentException(
+                "old_text matches " + matchCount + " times; use replace_all=true to replace all occurrences");
+        }
+        if (replaceAll) {
+            return content.replace(oldText, newText);
+        }
+        return content.replaceFirst(
+            java.util.regex.Pattern.quote(oldText),
+            java.util.regex.Matcher.quoteReplacement(newText)
+        );
+    }
+
+    private static int countOccurrences(String content, String needle) {
+        int count = 0;
+        int from = 0;
+        while (true) {
+            int idx = content.indexOf(needle, from);
+            if (idx < 0) {
+                return count;
+            }
+            count++;
+            from = idx + needle.length();
+        }
     }
 
     // S3: Write support file (references/, templates/, scripts/)

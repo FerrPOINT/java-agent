@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.web;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.Redactor;
 import com.azhukov.agent.core.security.UrlSafety;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -44,6 +45,13 @@ class WebSearchToolTest {
         return p;
     }
 
+    private Map<String, Object> errorPayload(ToolResult result) throws Exception {
+        Map<String, Object> payload = objectMapper.readValue(result.content(), new TypeReference<>() {});
+        assertThat(payload).containsEntry("success", false);
+        assertThat(result.error()).isEqualTo(payload.get("error"));
+        return payload;
+    }
+
     @Test
     void searchReturnsParsedResults() throws Exception {
         AgentProperties properties = properties();
@@ -82,7 +90,42 @@ class WebSearchToolTest {
             assertThat(items.get(0).path("title").asText()).isEqualTo("OpenAI - Wikipedia");
             assertThat(items.get(0).path("url").asText()).isEqualTo("https://en.wikipedia.org/wiki/OpenAI");
             assertThat(items.get(0).path("description").asText()).isEqualTo("OpenAI is an AI research and deployment company.");
-            assertThat(items.get(1).path("url").asText()).isEqualTo("https://duckduckgo.com/l/?rut=abc&uddg=https://openai.com");
+            assertThat(items.get(0).path("position").asInt()).isEqualTo(1);
+            assertThat(items.get(1).path("url").asText()).isEqualTo("https://openai.com");
+            assertThat(items.get(1).path("position").asInt()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void searchRedactsSerializedResults() throws Exception {
+        AgentProperties properties = properties();
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        when(redactor.redact(anyString())).thenAnswer(inv ->
+            ((String) inv.getArgument(0)).replace("sk-abcdefghijklmnopqrst", "[REDACTED]"));
+
+        Document doc = Jsoup.parse("""
+            <html><body>
+            <div class="result">
+              <a class="result__a" href="https://example.com">Example</a>
+              <span class="result__snippet">token sk-abcdefghijklmnopqrst leaked</span>
+            </div>
+            </body></html>
+            """, "https://html.duckduckgo.com/html/");
+        Connection connection = mock(Connection.class);
+        when(connection.userAgent(anyString())).thenReturn(connection);
+        when(connection.timeout(anyInt())).thenReturn(connection);
+        when(connection.get()).thenReturn(doc);
+
+        try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
+            jsoup.when(() -> Jsoup.connect(contains("q=secret"))).thenReturn(connection);
+
+            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor);
+            tool.init();
+            var result = tool.execute("{\"query\":\"secret\",\"limit\":1}", null, null);
+
+            assertThat(result.success()).isTrue();
+            assertThat(result.content()).contains("[REDACTED]");
+            assertThat(result.content()).doesNotContain("sk-abcdefghijklmnopqrst");
         }
     }
 
@@ -141,7 +184,7 @@ class WebSearchToolTest {
     }
 
     @Test
-    void searchBlocksDisallowedUrl() {
+    void searchBlocksDisallowedUrl() throws Exception {
         AgentProperties properties = properties();
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(false);
 
@@ -149,8 +192,7 @@ class WebSearchToolTest {
         var result = tool.execute("{\"query\":\"blocked\",\"limit\":5}", null, null);
 
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("URL is not allowed");
-        assertThat(result.content()).isEqualTo("");
+        assertThat(errorPayload(result).get("error").toString()).contains("URL is not allowed");
     }
 
     @Test
@@ -170,18 +212,18 @@ class WebSearchToolTest {
             var result = tool.execute("{\"query\":\"timeout\",\"limit\":5}", null, null);
 
             assertThat(result.success()).isFalse();
-            assertThat(result.error()).contains("Web search failed").contains("timeout");
+            assertThat(errorPayload(result).get("error").toString()).contains("Web search failed").contains("timeout");
         }
     }
 
     @Test
-    void searchRequiresNonBlankQuery() {
+    void searchRequiresNonBlankQuery() throws Exception {
         AgentProperties properties = properties();
         WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor); tool.init();
 
-        assertThat(tool.execute("{\"query\":\"\"}", null, null).success()).isFalse();
-        assertThat(tool.execute("{\"query\":\"   \"}", null, null).success()).isFalse();
-        assertThat(tool.execute("{\"limit\":5}", null, null).success()).isFalse();
+        assertThat(errorPayload(tool.execute("{\"query\":\"\"}", null, null)).get("error").toString()).contains("Query is required");
+        assertThat(errorPayload(tool.execute("{\"query\":\"   \"}", null, null)).get("error").toString()).contains("Query is required");
+        assertThat(errorPayload(tool.execute("{\"limit\":5}", null, null)).get("error").toString()).contains("Query is required");
     }
 
     @Test

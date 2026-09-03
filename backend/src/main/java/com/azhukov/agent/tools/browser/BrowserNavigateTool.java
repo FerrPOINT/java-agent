@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 
 @AgentTool(
     name = "browser_navigate",
-    description = "Navigate browser to a URL and wait for load.",
+    description = "Navigate browser to a URL, wait for load, and return a compact snapshot with element refs.",
     toolset = "browser"
 )
 @Component
@@ -24,13 +24,39 @@ public class BrowserNavigateTool implements ToolHandler {
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        NavigateArgs args = ToolHandler.parseJson(arguments, NavigateArgs.class);
+        NavigateArgs args;
+        try {
+            args = ToolHandler.parseJson(arguments, NavigateArgs.class);
+        } catch (IllegalArgumentException e) {
+            return BrowserToolResponses.failureResult(e.getMessage());
+        }
+        if (args.url() == null || args.url().isBlank()) {
+            return BrowserToolResponses.failureResult("url is required");
+        }
         try {
             int waitSeconds = args.waitSeconds() > 0 ? args.waitSeconds() : 30;
             String result = browserService.navigate(args.url(), waitSeconds);
-            return ToolResult.ok(result);
+            if (BrowserToolResponses.looksLikeFailure(result)) {
+                return BrowserToolResponses.failureResult(result);
+            }
+            return ToolResult.ok(appendCompactSnapshot(result));
         } catch (Exception e) {
-            return ToolResult.fail("Browser navigate failed: " + e.getMessage());
+            return BrowserToolResponses.failureResult("Browser navigate failed: " + e.getMessage());
+        }
+    }
+
+    private String appendCompactSnapshot(String navigationResult) {
+        if (navigationResult == null || !navigationResult.startsWith("Navigated to ")) {
+            return navigationResult;
+        }
+        try {
+            String snapshot = browserService.accessibilitySnapshot(false);
+            if (snapshot == null || snapshot.isBlank()) {
+                return navigationResult;
+            }
+            return navigationResult + "\n\nSnapshot:\n" + snapshot;
+        } catch (Exception ignored) {
+            return navigationResult;
         }
     }
 

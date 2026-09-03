@@ -10,9 +10,12 @@ import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -38,6 +41,8 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     private static final String DELIMITER = "\n§\n";
     private static final int DEFAULT_MEMORY_CHAR_LIMIT = 2200;
     private static final int DEFAULT_USER_CHAR_LIMIT = 1375;
+
+    private record WorkingMemoryEntry(MemoryEntity entity, String fact) {}
 
     /**
      * Creates a provider with configurable char limits and threat scanning.
@@ -260,16 +265,18 @@ public class DatabaseMemoryProvider implements MemoryProvider {
             return "operations list is empty.";
         }
         String effectiveTarget = target != null ? target : "memory";
-        List<MemoryEntity> working = new java.util.ArrayList<>(
-            memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, effectiveTarget));
+        List<MemoryEntity> original = memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, effectiveTarget);
+        List<WorkingMemoryEntry> working = new ArrayList<>(original.stream()
+            .map(entity -> new WorkingMemoryEntry(entity, entity.getFact()))
+            .toList());
         int limit = charLimitFor(effectiveTarget);
 
-        // Validate and apply to an in-memory working copy first. No database
-        // mutation happens until EVERY operation and the final char budget pass.
+        // Validate and apply to immutable snapshots first. Do not mutate managed
+        // JPA entities until EVERY operation and the final char budget pass.
         for (int i = 0; i < operations.size(); i++) {
             MemoryBatchOperation operation = operations.get(i);
             String action = operation == null || operation.action() == null
-                ? "" : operation.action().trim().toLowerCase();
+                ? "" : operation.action().trim().toLowerCase(Locale.ROOT);
             String content = operation == null || operation.content() == null
                 ? "" : operation.content().trim();
             String oldText = operation == null || operation.oldText() == null
@@ -281,41 +288,37 @@ public class DatabaseMemoryProvider implements MemoryProvider {
                     if (content.isBlank()) return position + ": content is required.";
                     String threat = scanForThreats(content);
                     if (threat != null) return position + ": Blocked: " + threat;
-                    if (working.stream().anyMatch(e -> e.getFact() != null && e.getFact().trim().equals(content))) {
+                    String sizeError = checkFactSize(effectiveTarget, content);
+                    if (sizeError != null) return position + ": " + sizeError;
+                    if (working.stream().anyMatch(e -> e.fact() != null && e.fact().trim().equals(content))) {
                         continue; // Hermes idempotent duplicate add
                     }
-                    MemoryEntity entity = new MemoryEntity();
-                    entity.setUserId(userId);
-                    entity.setTarget(effectiveTarget);
-                    entity.setCategory("auto");
-                    entity.setFact(content);
-                    entity.setCreatedAt(Instant.now());
-                    entity.setUpdatedAt(Instant.now());
-                    working.add(entity);
+                    working.add(new WorkingMemoryEntry(null, content));
                 }
                 case "replace" -> {
                     if (oldText.isBlank()) return position + ": old_text is required.";
                     if (content.isBlank()) return position + ": content is required (use action='remove' to delete).";
                     String threat = scanForThreats(content);
                     if (threat != null) return position + ": Blocked: " + threat;
-                    List<MemoryEntity> matches = working.stream()
-                        .filter(e -> e.getFact() != null && e.getFact().contains(oldText)).toList();
+                    String sizeError = checkFactSize(effectiveTarget, content);
+                    if (sizeError != null) return position + ": " + sizeError;
+                    List<Integer> matches = matchingIndexes(working, oldText);
                     if (matches.isEmpty()) return position + ": no entry matched '" + oldText + "'.";
-                    if (matches.stream().map(MemoryEntity::getFact).distinct().count() > 1) {
+                    if (matches.stream().map(index -> working.get(index).fact()).distinct().count() > 1) {
                         return position + ": '" + oldText + "' matched multiple distinct entries -- be more specific.";
                     }
-                    matches.getFirst().setFact(content);
-                    matches.getFirst().setUpdatedAt(Instant.now());
+                    int firstMatch = matches.getFirst();
+                    WorkingMemoryEntry entry = working.get(firstMatch);
+                    working.set(firstMatch, new WorkingMemoryEntry(entry.entity(), content));
                 }
                 case "remove" -> {
                     if (oldText.isBlank()) return position + ": old_text is required.";
-                    List<MemoryEntity> matches = working.stream()
-                        .filter(e -> e.getFact() != null && e.getFact().contains(oldText)).toList();
+                    List<Integer> matches = matchingIndexes(working, oldText);
                     if (matches.isEmpty()) return position + ": no entry matched '" + oldText + "'.";
-                    if (matches.stream().map(MemoryEntity::getFact).distinct().count() > 1) {
+                    if (matches.stream().map(index -> working.get(index).fact()).distinct().count() > 1) {
                         return position + ": '" + oldText + "' matched multiple distinct entries -- be more specific.";
                     }
-                    working.remove(matches.getFirst());
+                    working.remove((int) matches.getFirst());
                 }
                 default -> { return position + ": unknown action. Use add, replace, or remove."; }
             }
@@ -326,24 +329,57 @@ public class DatabaseMemoryProvider implements MemoryProvider {
                 + maxFactsPerUser() + " facts per user.";
         }
         int finalChars = working.isEmpty() ? 0 : String.join(DELIMITER,
-            working.stream().map(MemoryEntity::getFact).toList()).length();
+            working.stream().map(WorkingMemoryEntry::fact).toList()).length();
         if (finalChars > limit) {
             return "After applying all " + operations.size() + " operations, memory would be at "
                 + finalChars + "/" + limit + " chars.";
         }
 
-        List<MemoryEntity> original = memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, effectiveTarget);
         try {
-            // Delete only rows absent from the validated final state, then save all
-            // remaining/created rows. Transaction rolls back on an optimistic-lock error.
+            // Delete only rows absent from the validated final state, then save
+            // new/changed rows. Transaction rolls back on optimistic-lock errors.
             for (MemoryEntity entity : original) {
-                if (!working.contains(entity)) memoryRepository.delete(entity);
+                boolean retained = working.stream().anyMatch(entry -> entry.entity() == entity);
+                if (!retained) memoryRepository.delete(entity);
             }
-            for (MemoryEntity entity : working) memoryRepository.save(entity);
+            Instant now = Instant.now();
+            for (WorkingMemoryEntry entry : working) {
+                MemoryEntity entity = entry.entity();
+                boolean isNew = entity == null;
+                if (isNew) {
+                    entity = new MemoryEntity();
+                    entity.setUserId(userId);
+                    entity.setTarget(effectiveTarget);
+                    entity.setCategory("auto");
+                    entity.setCreatedAt(now);
+                }
+                boolean changed = !Objects.equals(entity.getFact(), entry.fact());
+                if (changed) {
+                    entity.setFact(entry.fact());
+                    entity.setUpdatedAt(now);
+                }
+                if (entity.getUpdatedAt() == null) {
+                    entity.setUpdatedAt(now);
+                }
+                if (isNew || changed) {
+                    memoryRepository.save(entity);
+                }
+            }
         } catch (ObjectOptimisticLockingFailureException ex) {
             throw new IllegalStateException(driftErrorFromLock(effectiveTarget), ex);
         }
         return null;
+    }
+
+    private static List<Integer> matchingIndexes(List<WorkingMemoryEntry> entries, String oldText) {
+        List<Integer> indexes = new ArrayList<>();
+        for (int i = 0; i < entries.size(); i++) {
+            String fact = entries.get(i).fact();
+            if (fact != null && fact.contains(oldText)) {
+                indexes.add(i);
+            }
+        }
+        return indexes;
     }
 
     @Override
@@ -457,6 +493,22 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     }
 
     @Override
+    @Transactional
+    public int clear(String userId, String target) {
+        String effectiveTarget = target != null ? target : "memory";
+        List<MemoryEntity> entries = memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, effectiveTarget);
+        if (entries.isEmpty()) {
+            return 0;
+        }
+        try {
+            memoryRepository.deleteAll(entries);
+        } catch (ObjectOptimisticLockingFailureException ex) {
+            throw new IllegalStateException(driftErrorFromLock(effectiveTarget), ex);
+        }
+        return entries.size();
+    }
+
+    @Override
     public List<String> getRawEntries(String userId, String target) {
         return memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, target).stream()
             .map(MemoryEntity::getFact)
@@ -475,6 +527,11 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     @Override
     public int getEntryCount(String userId, String target) {
         return getRawEntries(userId, target).size();
+    }
+
+    @Override
+    public int getCharLimit(String target) {
+        return charLimitFor(target);
     }
 
     /**

@@ -137,9 +137,9 @@ class SkillsSyncServiceTest {
         // e.g., skills/software-development/plan/SKILL.md
         List<Path> skillFiles = SkillUtils.iterSkillIndexFiles(skillsDir, "SKILL.md");
         for (Path skillFile : skillFiles) {
-            String relative = skillsDir.relativize(skillFile).toString();
+            Path relative = skillsDir.relativize(skillFile);
             // Should contain at least one directory separator (category/name/SKILL.md)
-            assertThat(relative).contains("/");
+            assertThat(relative.getNameCount()).isGreaterThan(1);
             assertThat(skillFile.getFileName().toString()).isEqualTo("SKILL.md");
         }
     }

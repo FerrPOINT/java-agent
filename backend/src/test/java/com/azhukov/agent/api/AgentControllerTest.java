@@ -59,6 +59,7 @@ class AgentControllerTest {
     @Mock private AgentProperties.ModelProperties modelProperties;
     @Mock private AgentProperties.CoreProperties coreProperties;
     @Mock private AgentProperties.BudgetProperties budgetProperties;
+    @Mock private AgentProperties.MemoryProperties memoryProperties;
     @Mock private DomainDtoMapper domainDtoMapper;
     @Mock private com.azhukov.agent.core.skill.CuratorService curatorService;
     @Mock private com.azhukov.agent.service.CliRuntimeSettingsService cliRuntimeSettingsService;
@@ -85,7 +86,8 @@ class AgentControllerTest {
             null, null, null,
             new com.azhukov.agent.core.security.ApprovalQueue(),
             agentProperties,
-            null
+            null,
+            org.mockito.Mockito.mock(com.azhukov.agent.core.tool.ToolRegistry.class)
         );
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
@@ -172,6 +174,27 @@ class AgentControllerTest {
             .andExpect(jsonPath("$.maxTurns").value(100))
             .andExpect(jsonPath("$.maxModelCallsPerTurn").value(100))
             .andExpect(jsonPath("$.skillCount").value(2));
+    }
+
+    @Test
+    void doctorReportsMemoryDisabledWhenBothBuiltInStoresAreDisabled() throws Exception {
+        mockMvc = chatMockMvc();
+        when(agentProperties.getModel()).thenReturn(modelProperties);
+        when(agentProperties.getCore()).thenReturn(coreProperties);
+        when(agentProperties.getBudget()).thenReturn(budgetProperties);
+        when(agentProperties.getMemory()).thenReturn(memoryProperties);
+        when(agentProperties.getName()).thenReturn("Test Agent");
+        when(modelProperties.getModelName()).thenReturn("test-model");
+        when(modelProperties.getProvider()).thenReturn("test-provider");
+        when(coreProperties.getMaxTurns()).thenReturn(100);
+        when(budgetProperties.getMaxModelCallsPerTurn()).thenReturn(100);
+        when(memoryProperties.isMemoryEnabled()).thenReturn(false);
+        when(memoryProperties.isUserProfileEnabled()).thenReturn(false);
+        when(skillManager.listSkillNames()).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/agent/doctor"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.memoryEnabled").value(false));
     }
 
     @Test
@@ -543,7 +566,9 @@ class AgentControllerTest {
             .andExpect(jsonPath("$.provider").value("test-provider"))
             .andExpect(jsonPath("$.baseUrl").value("http://localhost:9999"))
             .andExpect(jsonPath("$.maxTurns").value(100))
-            .andExpect(jsonPath("$.maxModelCallsPerTurn").value(100));
+            .andExpect(jsonPath("$.maxModelCallsPerTurn").value(100))
+            .andExpect(jsonPath("$.features.tts").value(false))
+            .andExpect(jsonPath("$.features.transcription").value(false));
     }
 
     @Test
@@ -807,7 +832,7 @@ class AgentControllerTest {
     @Test
     void kanbanDoneTaskNotFoundReturns404() throws Exception {
         mockMvc = kanbanMockMvc();
-        when(todoService.markDone(SESSION_ID)).thenReturn(Optional.empty());
+        when(todoService.markDoneForUser(SESSION_ID, "default")).thenReturn(Optional.empty());
 
         mockMvc.perform(post("/api/v1/agent/kanban/done/" + SESSION_ID))
             .andExpect(status().isNotFound());

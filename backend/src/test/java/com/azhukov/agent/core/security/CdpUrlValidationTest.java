@@ -201,6 +201,27 @@ class CdpUrlValidationTest {
     }
 
     @Test
+    void rejectsMetadataGoogEndpoint() {
+        UrlSafetyHandler h = handler(props());
+        String error = h.validate("ws://metadata.goog:9222");
+        assertThat(error).contains("metadata").contains("blocked");
+    }
+
+    @Test
+    void rejectsMetadataIpEndpoint() {
+        UrlSafetyHandler h = handler(props());
+        String error = h.validate("ws://169.254.169.254:9222");
+        assertThat(error).contains("blocked");
+    }
+
+    @Test
+    void rejectsPrivateNonLocalCdpEndpoint() {
+        UrlSafetyHandler h = handler(props());
+        String error = h.validate("ws://192.168.1.50:9222");
+        assertThat(error).contains("blocked");
+    }
+
+    @Test
     void rejectsConfiguredBlockedHost() {
         AgentProperties p = props();
         p.getSecurity().setBlockedUrlHosts(List.of("evil.com"));

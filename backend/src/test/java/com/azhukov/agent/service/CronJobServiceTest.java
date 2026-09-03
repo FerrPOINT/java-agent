@@ -7,11 +7,18 @@ import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -28,6 +35,9 @@ class CronJobServiceTest {
     @Mock private org.springframework.beans.factory.ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider;
     @Mock private AgentRuntimeService agentRuntimeService;
     @Mock private com.azhukov.agent.core.skill.SkillManager skillManager;
+
+    @TempDir
+    private Path tempDir;
 
     private AgentProperties properties;
     private CronJobService service;
@@ -49,9 +59,25 @@ class CronJobServiceTest {
         });
         CronJobEntity job = service.create("test-job", "0 * * * *", "Run task", null);
         assertThat(job.getName()).isEqualTo("test-job");
+        assertThat(job.getProfile()).isEqualTo("default");
         assertThat(job.getSchedule()).isEqualTo("0 * * * *");
         assertThat(job.getPrompt()).isEqualTo("Run task");
         assertThat(job.isEnabled()).isTrue();
+        verify(cronJobRepository).save(any());
+    }
+
+    @Test
+    void createInProfilePersistsHermesProfileScope() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+
+        CronJobEntity job = service.createInProfile("Work", "test-job", "0 * * * *", "Run task", null, "research");
+
+        assertThat(job.getProfile()).isEqualTo("work");
+        assertThat(job.getSkills()).isEqualTo("research");
         verify(cronJobRepository).save(any());
     }
 
@@ -64,6 +90,21 @@ class CronJobServiceTest {
         List<CronJobEntity> jobs = service.list();
         assertThat(jobs).hasSize(1);
         assertThat(jobs.get(0).getName()).isEqualTo("job1");
+    }
+
+    @Test
+    void listForProfileUsesProfileAwareRepositoryMethods() {
+        CronJobEntity job = new CronJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setName("job1");
+        job.setProfile("work");
+        when(cronJobRepository.findByProfileAndEnabledTrue(eq("work"), any(org.springframework.data.domain.Sort.class)))
+            .thenReturn(List.of(job));
+
+        List<CronJobEntity> jobs = service.listForProfile("Work", false);
+
+        assertThat(jobs).containsExactly(job);
+        verify(cronJobRepository).findByProfileAndEnabledTrue(eq("work"), any(org.springframework.data.domain.Sort.class));
     }
 
     @Test
@@ -111,6 +152,23 @@ class CronJobServiceTest {
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         service.runNow(id);
         verify(agentRuntimeService).runBackground("Do something", null, true);
+    }
+
+    @Test
+    void runNowWithExtraPromptAppendsTransientContextWithoutPersistingIt() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("test-job");
+        job.setPrompt("Do something");
+        job.setEnabled(true);
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.runNow(id, "Use fresh context");
+
+        verify(agentRuntimeService).runBackground("Do something\n\n---\n\nUse fresh context", null, true);
+        assertThat(job.getPrompt()).isEqualTo("Do something");
     }
 
     @Test
@@ -192,6 +250,29 @@ class CronJobServiceTest {
         verifyNoInteractions(skillManager);
     }
 
+    @Test
+    void runNowForNamedProfilePassesProfileMetadataToRuntime() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("profile-cron");
+        job.setProfile("work");
+        job.setPrompt("Do something plain");
+        job.setEnabled(true);
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        EventService eventService = new EventService(10);
+        service.setEventService(eventService);
+
+        service.runNow(id);
+
+        verify(agentRuntimeService).runBackground("Do something plain", null, true, Map.of("profile", "work"));
+        assertThat(eventService.replay("work", 0L, 10))
+            .extracting(EventService.EventEnvelope::type)
+            .containsExactly("cron.started", "cron.success");
+        assertThat(eventService.replay("default", 0L, 10)).isEmpty();
+    }
+
     // ── Human-readable interval tests ──
 
     @Test
@@ -245,6 +326,278 @@ class CronJobServiceTest {
             service.create("bad-job", "not-a-schedule", "Run task", null))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("Invalid");
+    }
+
+    @Test
+    void createUnpinnedAgentJobCapturesCurrentProviderAndModelSnapshots() {
+        properties.getModel().setProvider("OpenRouter");
+        properties.getModel().setModelName("old/model");
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+
+        CronJobEntity job = service.create(
+            "agent-job", "every 5m", "Run task", null, null, null,
+            null, null, false, null, null, null, null, null);
+
+        assertThat(job.getProviderSnapshot()).isEqualTo("openrouter");
+        assertThat(job.getModelSnapshot()).isEqualTo("old/model");
+        assertThat(job.getModelProvider()).isNull();
+        assertThat(job.getModelName()).isNull();
+    }
+
+    @Test
+    void createPinnedAgentJobOnlySnapshotsUnpinnedAxes() {
+        properties.getModel().setProvider("openrouter");
+        properties.getModel().setModelName("old/model");
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+
+        CronJobEntity job = service.create(
+            "agent-job", "every 5m", "Run task", null, null, null,
+            null, null, false, null, null, "nous", null, null);
+
+        assertThat(job.getProviderSnapshot()).isNull();
+        assertThat(job.getModelSnapshot()).isEqualTo("old/model");
+    }
+
+    @Test
+    void createInProfileCapturesProfileLocalModelSnapshots() throws Exception {
+        AgentProperties profileProperties = new AgentProperties();
+        profileProperties.getProfile().setBaseDir(tempDir.resolve("profiles").toString());
+        ProfileService profileService = new ProfileService(profileProperties, new RuntimeConfigService());
+        profileService.createProfile(new ProfileService.CreateProfileRequest(
+            "worker", null, false, false, true, null, null, null, null));
+        profileService.writeModel("worker", "nous", "worker/model", null);
+        service.setProfileService(profileService);
+        properties.getModel().setProvider("global-provider");
+        properties.getModel().setModelName("global/model");
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+
+        CronJobEntity job = service.createInProfile(
+            "worker", "agent-job", "every 5m", "Run task", null, null, null,
+            null, null, false, null, null, null, null, null);
+
+        assertThat(job.getProviderSnapshot()).isEqualTo("nous");
+        assertThat(job.getModelSnapshot()).isEqualTo("worker/model");
+    }
+
+    @Test
+    void createRejectsAbsoluteScriptPath() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.create(
+                "bad-script", "every 5m", "Run task", null, null, null,
+                null, "/tmp/run.sh", false, null, null, null, null, null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("relative to ~/.hermes/scripts");
+
+        verify(cronJobRepository, never()).save(any());
+    }
+
+    @Test
+    void createRejectsTraversalScriptPath() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.create(
+                "bad-script", "every 5m", "Run task", null, null, null,
+                null, "../run.sh", false, null, null, null, null, null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("traversal");
+
+        verify(cronJobRepository, never()).save(any());
+    }
+
+    @Test
+    void createNormalizesRelativeScriptPath() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+
+        CronJobEntity job = service.create(
+            "script-job", "every 5m", "Run task", null, null, null,
+            null, " scripts\\daily.py ", false, null, null, null, null, null);
+
+        assertThat(job.getScript()).isEqualTo("scripts/daily.py");
+    }
+
+    @Test
+    void createAllowsSkillsOnlyPayload() {
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+
+        CronJobEntity job = service.create(
+            "skills-job", "every 5m", null, null, "coding", null,
+            null, null, false, null, null, null, null, null);
+
+        assertThat(job.getPrompt()).isNull();
+        assertThat(job.getSkills()).isEqualTo("coding");
+    }
+
+    @Test
+    void createWithMonitorContinuityAndAttachStoresHermesFields() {
+        UUID attachedSessionId = UUID.fromString("33333333-4444-5555-6666-777777777777");
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
+            CronJobEntity e = inv.getArgument(0);
+            e.setId(UUID.randomUUID());
+            return e;
+        });
+
+        CronJobEntity job = service.create(
+            "watch", "every 5m", "Summarize changes", null, null, "upstream",
+            null, null, false, null, null, null, null, null,
+            "checks/state.py", true, attachedSessionId);
+
+        assertThat(job.getMonitor()).isEqualTo("checks/state.py");
+        assertThat(job.isContinuityEnabled()).isTrue();
+        assertThat(job.getContextFrom()).isEqualTo("self,upstream");
+        assertThat(job.getAttachedSessionId()).isEqualTo(attachedSessionId);
+    }
+
+    @Test
+    void createRejectsMonitorWithNoAgent() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.create(
+                "watch", "every 5m", "Summarize changes", null, null, null,
+                null, "job.py", true, null, null, null, null, null,
+                "checks/state.py", false, null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("monitor jobs cannot use no_agent");
+
+        verify(cronJobRepository, never()).save(any());
+    }
+
+    @Test
+    void updateContinuityAddsAndRemovesSelfContext() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("watch");
+        job.setSchedule("every 5m");
+        job.setPrompt("Run task");
+        job.setContextFrom("upstream");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CronJobEntity enabled = service.update(
+            id, null, null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
+            null, true, null, null);
+        assertThat(enabled.isContinuityEnabled()).isTrue();
+        assertThat(enabled.getContextFrom()).isEqualTo("self,upstream");
+
+        CronJobEntity disabled = service.update(
+            id, null, null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
+            null, false, null, null);
+        assertThat(disabled.isContinuityEnabled()).isFalse();
+        assertThat(disabled.getContextFrom()).isEqualTo("upstream");
+    }
+
+    @Test
+    void runNowWithUnchangedMonitorSkipsAgentRuntime() throws Exception {
+        properties.getSecurity().setUrlSafetyEnabled(false);
+        com.sun.net.httpserver.HttpServer server = monitorServer("version=1\n");
+        try {
+            UUID id = UUID.randomUUID();
+            CronJobEntity job = new CronJobEntity();
+            job.setId(id);
+            job.setName("watch");
+            job.setPrompt("Summarize changes");
+            job.setEnabled(true);
+            job.setMonitor(monitorUrl(server));
+            job.setMonitorLastHash(sha256("version=1\n"));
+            job.setMonitorLastOutput("version=1\n");
+            when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+            when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.runNow(id);
+
+            verify(agentRuntimeService, never()).runBackground(any(), any(), anyBoolean());
+            assertThat(job.getLastStatus()).isEqualTo("no_change");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void runNowWithChangedMonitorInjectsContextAndStoresHash() throws Exception {
+        properties.getSecurity().setUrlSafetyEnabled(false);
+        com.sun.net.httpserver.HttpServer server = monitorServer("version=2\n");
+        try {
+            UUID id = UUID.randomUUID();
+            CronJobEntity job = new CronJobEntity();
+            job.setId(id);
+            job.setName("watch");
+            job.setPrompt("Summarize changes");
+            job.setEnabled(true);
+            job.setMonitor(monitorUrl(server));
+            job.setMonitorLastHash(sha256("version=1\n"));
+            job.setMonitorLastOutput("version=1\n");
+            when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+            when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.runNow(id);
+
+            verify(agentRuntimeService).runBackground(
+                org.mockito.ArgumentMatchers.contains("Cron monitor changed"), eq(null), eq(true));
+            assertThat(job.getMonitorLastHash()).isEqualTo(sha256("version=2\n"));
+            assertThat(job.getMonitorLastOutput()).isEqualTo("version=2\n");
+            assertThat(job.getMonitorLastChangedAt()).isNotNull();
+            assertThat(job.getLastStatus()).isEqualTo("success");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void scheduledFailureDoesNotConsumeRepeatOrDeleteJob() throws Exception {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("repeat-watch");
+        job.setSchedule("every 1h");
+        job.setPrompt("Run task");
+        job.setEnabled(true);
+        job.setRepeatCount(1);
+        job.setRepeatCompleted(0);
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(agentRuntimeService.runBackground(any(), any(), anyBoolean()))
+            .thenThrow(new RuntimeException("backend exploded"));
+
+        java.lang.reflect.Method method = CronJobService.class.getDeclaredMethod("executeAndReschedule", UUID.class);
+        method.setAccessible(true);
+        method.invoke(service, id);
+
+        assertThat(job.getLastStatus()).isEqualTo("error");
+        assertThat(job.getLastError()).contains("backend exploded");
+        assertThat(job.getConsecutiveFailures()).isEqualTo(1);
+        assertThat(job.getRepeatCompleted()).isZero();
+        verify(cronJobRepository, never()).deleteById(id);
+    }
+
+    @Test
+    void createRejectsEmptyRunnablePayload() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.create(
+                "empty-job", "every 5m", " ", null, " ", null,
+                null, null, false, null, null, null, null, null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("nothing to run");
+
+        verify(cronJobRepository, never()).save(any());
     }
 
     @Test
@@ -334,6 +687,8 @@ class CronJobServiceTest {
         job.setId(id);
         job.setName("test-job");
         job.setSchedule("0 * * * *");
+        job.setProviderSnapshot("openrouter");
+        job.setModelSnapshot("old/model");
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -344,6 +699,94 @@ class CronJobServiceTest {
 
         assertThat(updated.isNoAgent()).isTrue();
         assertThat(updated.getScript()).isEqualTo("monitor.sh");
+        assertThat(updated.getProviderSnapshot()).isNull();
+        assertThat(updated.getModelSnapshot()).isNull();
+    }
+
+    @Test
+    void updateWithUnchangedNoAgentAndNameKeepsExistingSnapshots() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("test-job");
+        job.setSchedule("0 * * * *");
+        job.setPrompt("Run task");
+        job.setNoAgent(false);
+        job.setProviderSnapshot("initial-provider");
+        job.setModelSnapshot("old/model");
+        properties.getModel().setProvider("changed-provider");
+        properties.getModel().setModelName("new/model");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CronJobEntity updated = service.update(
+            id, "renamed", null, null, null, null,
+            null, null, null, null, false,
+            null, null, null, null, null);
+
+        assertThat(updated.getName()).isEqualTo("renamed");
+        assertThat(updated.getProviderSnapshot()).isEqualTo("initial-provider");
+        assertThat(updated.getModelSnapshot()).isEqualTo("old/model");
+    }
+
+    @Test
+    void updateRejectsAbsoluteScriptPath() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("test-job");
+        job.setSchedule("0 * * * *");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.update(
+                id, null, null, null, null, null,
+                null, null, null, "/tmp/run.sh", null,
+                null, null, null, null, null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("relative to ~/.hermes/scripts");
+
+        verify(cronJobRepository, never()).save(any());
+    }
+
+    @Test
+    void updateRejectsTraversalScriptPath() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("test-job");
+        job.setSchedule("0 * * * *");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.update(
+                id, null, null, null, null, null,
+                null, null, null, "../run.sh", null,
+                null, null, null, null, null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("traversal");
+
+        verify(cronJobRepository, never()).save(any());
+    }
+
+    @Test
+    void updateNoAgentWithBlankScriptStillFails() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("test-job");
+        job.setSchedule("0 * * * *");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.update(
+                id, null, null, null, null, null,
+                null, null, null, " ", true,
+                null, null, null, null, null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("script");
+
+        verify(cronJobRepository, never()).save(any());
     }
 
     @Test
@@ -353,6 +796,7 @@ class CronJobServiceTest {
         job.setId(id);
         job.setName("test-job");
         job.setSchedule("0 * * * *");
+        job.setPrompt("Run task");
         job.setScript("old.sh");
         job.setEnabledToolsets("web,terminal");
         job.setWorkdir("/tmp/old");
@@ -373,6 +817,27 @@ class CronJobServiceTest {
         assertThat(updated.getModelProvider()).isNull();
         assertThat(updated.getModelName()).isNull();
         assertThat(updated.getBaseUrl()).isNull();
+    }
+
+    @Test
+    void updateRejectsClearingLastRunnablePayload() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("test-job");
+        job.setSchedule("0 * * * *");
+        job.setPrompt("Run task");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.update(
+                id, null, null, " ", null, null,
+                "", null, null, null, null,
+                null, null, null, null, null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("nothing to run");
+
+        verify(cronJobRepository, never()).save(any());
     }
 
     // ── Fix 2: Repeat count tests ──
@@ -557,9 +1022,8 @@ class CronJobServiceTest {
         job.setName("watchdog");
         job.setEnabled(true);
         job.setNoAgent(true);
-        // Use a script that exists on the system — echo via bash
-        job.setScript("echo hello");
-        // This won't find the file, but it exercises the no_agent path and doesn't call LLM
+        // Legacy missing script exercises the no_agent path and must not call the LLM.
+        job.setScript("missing.py");
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -567,6 +1031,27 @@ class CronJobServiceTest {
 
         // Verify LLM was NOT called
         verify(agentRuntimeService, never()).runBackground(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        assertThat(job.getLastStatus()).isEqualTo("error");
+        assertThat(job.getLastError()).contains("Script not found");
+    }
+
+    @Test
+    void runNoAgentJob_blocksLegacyAbsoluteScriptPathAsFailure() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("watchdog");
+        job.setEnabled(true);
+        job.setNoAgent(true);
+        job.setScript("/tmp/run.sh");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.runNow(id);
+
+        verify(agentRuntimeService, never()).runBackground(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        assertThat(job.getLastStatus()).isEqualTo("error");
+        assertThat(job.getLastError()).contains("relative to ~/.hermes/scripts");
     }
 
     // ── Fix 5/6/7: Override field tests ──
@@ -632,5 +1117,79 @@ class CronJobServiceTest {
 
         verify(agentRuntimeService).runBackground(eq("Do something"), eq(null), eq(true),
             eq(java.util.Map.of("delegation_toolsets", "web,terminal", "cron_workdir", "/opt/dev")));
+    }
+
+    @Test
+    void runNowSkipsUnpinnedAgentJobWhenModelSnapshotDrifts() {
+        properties.getModel().setProvider("nous");
+        properties.getModel().setModelName("new/model");
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("drift-cron");
+        job.setPrompt("Do something");
+        job.setEnabled(true);
+        job.setProviderSnapshot("openrouter");
+        job.setModelSnapshot("old/model");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CronJobEntity updated = service.runNow(id);
+
+        assertThat(updated.getLastStatus()).isEqualTo("error");
+        assertThat(updated.getLastError())
+            .contains("Skipped to prevent unintended spend")
+            .contains("provider 'openrouter' -> 'nous'")
+            .contains("model 'old/model' -> 'new/model'");
+        verifyNoInteractions(agentRuntimeService);
+    }
+
+    @Test
+    void runNowAllowsDriftWhenCronModelDriftGuardIsExplicitlyFalse() throws Exception {
+        AgentProperties profileProperties = new AgentProperties();
+        profileProperties.getProfile().setBaseDir(tempDir.resolve("profiles").toString());
+        ProfileService profileService = new ProfileService(profileProperties, new RuntimeConfigService());
+        profileService.writeConfig("default", Map.of("cron", Map.of("model_drift_guard", false)));
+        service.setProfileService(profileService);
+        properties.getModel().setProvider("nous");
+        properties.getModel().setModelName("new/model");
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("drift-cron");
+        job.setPrompt("Do something");
+        job.setEnabled(true);
+        job.setProviderSnapshot("openrouter");
+        job.setModelSnapshot("old/model");
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.runNow(id);
+
+        verify(agentRuntimeService).runBackground("Do something", null, true);
+        assertThat(job.getLastStatus()).isEqualTo("success");
+    }
+
+    private static com.sun.net.httpserver.HttpServer monitorServer(String body) throws Exception {
+        com.sun.net.httpserver.HttpServer server =
+            com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/state", exchange -> {
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var response = exchange.getResponseBody()) {
+                response.write(bytes);
+            }
+        });
+        server.start();
+        return server;
+    }
+
+    private static String monitorUrl(com.sun.net.httpserver.HttpServer server) {
+        return "http://127.0.0.1:" + server.getAddress().getPort() + "/state";
+    }
+
+    private static String sha256(String value) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
     }
 }

@@ -20,6 +20,7 @@ class TelegramBotApiClientTest {
     private static final String BOT_TOKEN = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11";
     private static final String SEND_MESSAGE_URL = "https://api.telegram.org/bot123456%3AABC-DEF1234ghIkl-zyx57W2v1u123ew11/sendMessage";
     private static final String SEND_CHAT_ACTION_URL = "https://api.telegram.org/bot123456%3AABC-DEF1234ghIkl-zyx57W2v1u123ew11/sendChatAction";
+    private static final String SET_MESSAGE_REACTION_URL = "https://api.telegram.org/bot123456%3AABC-DEF1234ghIkl-zyx57W2v1u123ew11/setMessageReaction";
     private static final String CHAT_ID = "12345";
     private static final String TEXT = "hello world";
 
@@ -114,5 +115,56 @@ class TelegramBotApiClientTest {
 
         assertThat(client.sendChatAction(12345L, "typing")).isFalse();
         server.verify();
+    }
+
+    @Test
+    void setMessageReactionSendsEmojiReactionAndClearPayloads() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        RestClient restClient = builder.build();
+
+        server.expect(requestTo(SET_MESSAGE_REACTION_URL))
+            .andExpect(method(POST))
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(content().json("""
+                {"chat_id":12345,"message_id":99,"reaction":[{"type":"emoji","emoji":"👍"}]}
+                """))
+            .andRespond(withSuccess("""
+                {"ok":true,"result":true}
+                """, MediaType.APPLICATION_JSON));
+
+        TelegramBotApiClient client = new TelegramBotApiClient(BOT_TOKEN, restClient);
+        assertThat(client.setMessageReaction(12345L, 99L, "👍")).isTrue();
+
+        server.reset();
+        server.expect(requestTo(SET_MESSAGE_REACTION_URL))
+            .andExpect(method(POST))
+            .andExpect(content().json("""
+                {"chat_id":12345,"message_id":99,"reaction":[]}
+                """))
+            .andRespond(withSuccess("""
+                {"ok":true,"result":true}
+                """, MediaType.APPLICATION_JSON));
+
+        assertThat(client.setMessageReaction(12345L, 99L, "")).isTrue();
+        server.verify();
+    }
+
+    @Test
+    void setMessageReactionReturnsFalseOnTelegramFailureOrBlankToken() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        RestClient restClient = builder.build();
+
+        server.expect(requestTo(SET_MESSAGE_REACTION_URL))
+            .andRespond(withSuccess("""
+                {"ok":false,"description":"Bad Request: message not found"}
+                """, MediaType.APPLICATION_JSON));
+
+        TelegramBotApiClient client = new TelegramBotApiClient(BOT_TOKEN, restClient);
+        assertThat(client.setMessageReaction(12345L, 99L, "👍")).isFalse();
+        server.verify();
+
+        assertThat(new TelegramBotApiClient("", RestClient.create()).setMessageReaction(12345L, 99L, "👍")).isFalse();
     }
 }

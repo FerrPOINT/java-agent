@@ -19,6 +19,24 @@ class ChromiumLauncherExtraTest {
     @TempDir
     Path tempDir;
 
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    private static Path javaExecutable() {
+        if (isWindows()) {
+            Path javaw = Path.of(System.getProperty("java.home"), "bin", "javaw.exe");
+            if (Files.exists(javaw)) {
+                return javaw;
+            }
+        }
+        return Path.of(
+            System.getProperty("java.home"),
+            "bin",
+            isWindows() ? "java.exe" : "java"
+        );
+    }
+
     @Test
     @DisplayName("findExecutable() returns configured path when it exists and is executable")
     void findExecutableReturnsConfiguredPathWhenExistsAndExecutable() throws Exception {
@@ -111,15 +129,8 @@ class ChromiumLauncherExtraTest {
         properties.getChromium().setUserDataDir(customUserDataDir.toString());
         properties.getChromium().setHeadless(true);
 
-        // Create a fake executable (e.g., /bin/true or echo)
-        Path fakeExe = Files.createTempFile("fake-chrome", "");
-        fakeExe.toFile().setExecutable(true);
-        // Write a simple script that just exits
-        Files.writeString(fakeExe, "#!/bin/sh\nexit 0\n");
-        fakeExe.toFile().setExecutable(true);
-
         ChromiumLauncher launcher = new ChromiumLauncher(properties);
-        Process process = launcher.launch(fakeExe);
+        Process process = launcher.launch(javaExecutable());
         process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
         process.destroy();
 
@@ -127,7 +138,6 @@ class ChromiumLauncherExtraTest {
         assertThat(Files.exists(customUserDataDir)).isTrue();
 
         // Clean up
-        Files.deleteIfExists(fakeExe);
         Files.walk(customUserDataDir)
             .sorted(java.util.Comparator.reverseOrder())
             .forEach(p -> {

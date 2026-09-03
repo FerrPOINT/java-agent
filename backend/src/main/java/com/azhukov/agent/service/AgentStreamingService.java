@@ -9,6 +9,7 @@ import com.azhukov.agent.core.agent.ThinkingTimeoutGuidance;
 import com.azhukov.agent.core.agent.ResponseRecoveryPolicy;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.context.HistorySanitizer;
@@ -46,6 +47,7 @@ import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.azhukov.agent.persistence.service.ToolResultNameResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -57,6 +59,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.Optional;
 import java.util.UUID;
@@ -278,6 +281,9 @@ public class AgentStreamingService {
         if (request.chatType() != null && !request.chatType().isBlank()) {
             session = session.withMetadata("chatType", request.chatType());
         }
+        ModelRequestOptions streamOptions = RuntimeModelOptionsResolver.resolve(
+            properties, request, session, runtimeConfigService);
+        session = RuntimeModelOptionsResolver.applyEffectiveRuntime(session, properties, streamOptions);
 
         // Set the ThreadLocal session ID so LangChain4jModelClient can check cancellation
         InterruptToken.setCurrentSessionId(session.id());
@@ -299,7 +305,10 @@ public class AgentStreamingService {
         // History is loaded by contextEngine.prepareContext() via appendRecentHistory().
         // Do NOT load history here — that would duplicate it in the context.
         List<Message> turnMessages = new ArrayList<>();
-        turnMessages.add(promptBuilder.buildSystemMessage(session));
+        String systemPromptOverride = request.systemPromptOverride();
+        turnMessages.add(systemPromptOverride != null && !systemPromptOverride.isBlank()
+            ? promptBuilder.buildSystemMessage(session, systemPromptOverride)
+            : promptBuilder.buildSystemMessage(session));
 
         // Add user message
         turnMessages.add(Message.user(request.message()));
@@ -313,7 +322,7 @@ public class AgentStreamingService {
         // This is what arms the background self-improvement review: without
         // this increment the review thresholds are never reached and the
         // review NEVER fires for streaming (bot) turns.
-        if (memoryNudgeManager != null && toolsetsIncludeMemory(request)) {
+        if (memoryNudgeManager != null && containsTool(tools, "memory")) {
             try {
                 int memNudge = properties.getMemory().getNudgeInterval();
                 if (memNudge > 0) {
@@ -333,6 +342,7 @@ public class AgentStreamingService {
         final long turnStartMillis = System.currentTimeMillis();
         boolean runBudgetWrapupInjected = false;
         turnStateManager.clear(session.id());
+        int invalidJsonRetries = 0;
 
         // P1-5: Initialize persistence cursor. The user message is persisted
         // IMMEDIATELY (Hermes parity: _persist_user_message_idx crash persist)
@@ -355,25 +365,7 @@ public class AgentStreamingService {
         // model call so the bot can render the footer model even when the call fails
         // immediately (e.g. billing/usage-limit errors emit no tokens at all).
         // The final metadata event after a successful turn overwrites the token estimate.
-
-        // Per-request model override (/model command or API "model" field):
-        // thread it through options so the model client uses it for every call
-        // in this turn, and record it in session metadata so resolveModelUsed
-        // reports the ACTUAL model in the footer/metadata events.
-        String requestModel = request.model() != null && !request.model().isBlank() ? request.model() : null;
-        if (requestModel != null) {
-            session = session.withMetadata("modelOverride", requestModel);
-        }
         sendMetadataEvent(emitter, session, streamCtx);
-        com.azhukov.agent.core.client.ModelRequestOptions streamOptions =
-            new com.azhukov.agent.core.client.ModelRequestOptions(
-                requestModel,
-                request.reasoningEffort(),
-                request.fastMode(),
-                request.voiceMode(),
-                request.personality(),
-                request.subgoal(),
-                null);
 
         for (int i = 0; i < maxTurns; i++) {
             // Check for interrupt at the top of each agentic-loop iteration
@@ -755,7 +747,8 @@ public class AgentStreamingService {
                         streamOptions.modelName(), streamOptions.reasoningEffort(),
                         streamOptions.fastMode(), streamOptions.voiceMode(),
                         streamOptions.personality(), streamOptions.subgoal(),
-                        boostedMax);
+                        boostedMax,
+                        streamOptions.provider(), streamOptions.baseUrl(), streamOptions.apiKey());
                     context = contextEngine.prepareContext(session, turnMessages);
                     session = resolveRotatedSession(session);
                     // Re-issue the stream call with boosted max_tokens
@@ -1038,6 +1031,7 @@ public class AgentStreamingService {
                 // When the model finishes (STOP) after editing code without fresh
                 // verification evidence, inject a nudge requesting tests/build.
                 if (properties.getVerifyOnStop().isEnabled()
+                    && verifyOnStopGuard != null
                     && toolExecutionService.getFileMutationTracker() != null) {
                     var tracker = toolExecutionService.getFileMutationTracker();
                     var changedPaths = tracker.getTurnMutationPaths();
@@ -1097,19 +1091,106 @@ public class AgentStreamingService {
                 return;
             }
 
-            // Tool calls → execute each, emit tool_result events
-            // ── Uniquify duplicate tool-call ids BEFORE any downstream consumer ──
-            // (Hermes conversation_loop.py:6827 — duplicate ids lose the later call's
-            // result; strict providers reject duplicates outright.) ChatResponse
-            // carries an immutable list, so rebuild the response with the fixed copy.
-            if (response.toolCalls() != null && response.toolCalls().size() > 1) {
-                List<ToolCall> fixed = new ArrayList<>(response.toolCalls());
-                if (ToolCallValidator.uniquifyToolCallIds(fixed) > 0) {
-                    response = response.hasContent()
-                        ? ChatResponse.textAndToolCalls(response.content(), fixed)
-                        : ChatResponse.toolCalls(fixed);
-                }
+            // Tool calls → validate, persist the canonical assistant message,
+            // then execute each valid call and emit tool_result events.
+            List<ToolCall> toolCalls = new ArrayList<>(response.toolCalls());
+            ToolCallValidator.uniquifyToolCallIds(toolCalls);
+
+            Set<String> registeredToolNames = new HashSet<>();
+            for (ToolDefinition tool : tools) {
+                registeredToolNames.add(tool.name());
             }
+            List<String> nameErrors = ToolCallValidator.validateToolNames(toolCalls, registeredToolNames);
+            List<ToolCall> canonicalToolCalls = new ArrayList<>(toolCalls);
+            List<ToolCall> invalidNameCalls = new ArrayList<>();
+            List<ToolCall> validCalls = new ArrayList<>();
+            List<Message> invalidNameResults = new ArrayList<>();
+            if (!nameErrors.isEmpty()) {
+                log.warn("Invalid streaming tool calls detected for session {}: {}", session.id(), nameErrors);
+                for (ToolCall tc : toolCalls) {
+                    if (registeredToolNames.contains(tc.name())) {
+                        validCalls.add(tc);
+                    } else {
+                        invalidNameCalls.add(tc);
+                        String message = "Tool '" + tc.name() + "' does not exist. Available tools: "
+                            + String.join(", ", new java.util.TreeSet<>(registeredToolNames));
+                        String content = ToolCallValidator.failurePayload(message);
+                        invalidNameResults.add(Message.toolResult(tc.id(), content, turnIndex));
+                        send(emitter, new StreamEvent("tool_result", null, null, null,
+                            null, null, null, tc.name(), truncateResultPreview(content)), streamCtx);
+                    }
+                }
+            } else {
+                validCalls.addAll(toolCalls);
+            }
+
+            ToolCallValidator.JsonValidationResult jsonResult = ToolCallValidator.validateJsonArgs(validCalls);
+            if (!jsonResult.isValid()) {
+                if (jsonResult.truncated()) {
+                    log.warn("Truncated streaming tool call arguments detected for session {} — refusing to execute", session.id());
+                    send(emitter, new StreamEvent("error", null, null,
+                        "Response truncated due to output length limit"), streamCtx);
+                    send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                    emitter.complete();
+                    if (persisted.compareAndSet(false, true)) {
+                        persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                    }
+                    return;
+                }
+                invalidJsonRetries++;
+                log.warn("Invalid JSON in streaming tool call arguments for session {}: {}",
+                    session.id(), jsonResult.errors());
+                if (invalidJsonRetries < 3) {
+                    send(emitter, new StreamEvent("retry", null, null,
+                        "Invalid JSON in tool call arguments — retrying ("
+                            + invalidJsonRetries + "/3)"), streamCtx);
+                    continue;
+                }
+                invalidJsonRetries = 0;
+                List<ToolCall> recoveryToolCalls =
+                    mergeCanonicalToolCalls(canonicalToolCalls, validCalls, invalidNameCalls);
+                List<Message> recoveryResults = new ArrayList<>();
+                Set<String> invalidNameIds = toolCallIds(invalidNameCalls);
+                for (ToolCall tc : recoveryToolCalls) {
+                    boolean hasInvalidJson = jsonResult.errors().stream()
+                        .anyMatch(e -> e.contains("'" + tc.name() + "'"));
+                    String content;
+                    if (invalidNameIds.contains(tc.id())) {
+                        content = ToolCallValidator.failurePayload(
+                            "Tool '" + tc.name() + "' does not exist. Available tools: "
+                                + String.join(", ", new java.util.TreeSet<>(registeredToolNames)));
+                    } else if (hasInvalidJson) {
+                        content = ToolCallValidator.failurePayload(
+                            "Invalid JSON arguments. Please retry with valid JSON. "
+                                + "For tools with no required parameters, use an empty object: {}.");
+                    } else {
+                        content = ToolCallValidator.failurePayload(
+                            "Skipped: other tool call in this response had invalid JSON.");
+                    }
+                    recoveryResults.add(Message.toolResult(tc.id(), content, turnIndex));
+                }
+                turnMessages.add(Message.assistantWithToolCalls(response.content(), recoveryToolCalls, turnIndex));
+                if (midTurnPersistenceCallback != null
+                    && midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
+                    persistedUpTo = turnMessages.size();
+                }
+                turnMessages.addAll(recoveryResults);
+                if (midTurnPersistenceCallback != null
+                    && midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
+                    persistedUpTo = turnMessages.size();
+                }
+                turnIndex++;
+                continue;
+            }
+            invalidJsonRetries = 0;
+            canonicalToolCalls = mergeCanonicalToolCalls(canonicalToolCalls, validCalls, invalidNameCalls);
+            toolCalls = ToolCallValidator.capDelegateTaskCalls(validCalls);
+            toolCalls = ToolCallValidator.deduplicateToolCalls(toolCalls);
+            Set<String> executableIds = toolCallIds(toolCalls);
+            Set<String> invalidNameIds = toolCallIds(invalidNameCalls);
+            List<ToolCall> historyToolCalls = canonicalToolCalls.stream()
+                .filter(tc -> executableIds.contains(tc.id()) || invalidNameIds.contains(tc.id()))
+                .toList();
 
             // ── Commentary emission (parity with Hermes _emit_interim_assistant_message) ──
             // When the LLM returns BOTH text AND tool calls, the text is "commentary" —
@@ -1117,13 +1198,13 @@ public class AgentStreamingService {
             // In the streaming path, the text was already shown via onToken callbacks,
             // so we emit a "commentary" event with alreadyStreamed=true to signal the
             // gateway to issue a segment break (visual separator), not a duplicate message.
-            if (properties.isCommentaryEnabled() && response.hasContent() && response.hasToolCalls()) {
+            if (properties.isCommentaryEnabled() && response.hasContent() && !historyToolCalls.isEmpty()) {
                 send(emitter, new StreamEvent("commentary", response.content(), null, null), streamCtx);
                 log.debug("Emitted commentary for session {} (alreadyStreamed=true): {} chars",
                     session.id(), response.content().length());
             }
 
-            turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex));
+            turnMessages.add(Message.assistantWithToolCalls(response.content(), historyToolCalls, turnIndex));
 
             // P1-5: Persist the assistant message (with tool calls) immediately.
             if (midTurnPersistenceCallback != null) {
@@ -1131,6 +1212,19 @@ public class AgentStreamingService {
                 if (midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
                     persistedUpTo = turnMessages.size();
                 }
+            }
+
+            if (!invalidNameResults.isEmpty()) {
+                turnMessages.addAll(invalidNameResults);
+            }
+            if (toolCalls.isEmpty()) {
+                if (midTurnPersistenceCallback != null
+                    && midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
+                    persistedUpTo = turnMessages.size();
+                }
+                lastResponseHadToolCalls = true;
+                turnIndex++;
+                continue;
             }
 
             // Check interrupt before executing tools
@@ -1145,7 +1239,7 @@ public class AgentStreamingService {
 
             TurnState turnState = turnStateManager.getOrStart(session.id(), 1);
             int toolBatchStart = turnMessages.size();
-            for (ToolCall call : response.toolCalls()) {
+            for (ToolCall call : toolCalls) {
                 // Skill-creation nudge (Hermes parity: conversation_loop.py:1977-1980):
                 // each tool-calling iteration counts toward the skill review threshold;
                 // skill_manage itself resets it (handled in resetNudgeCounters).
@@ -1180,7 +1274,7 @@ public class AgentStreamingService {
                 // tool(s) called in this iteration were execute_code, the tool
                 // executions are refunded — programmatic calls are cheap RPCs
                 // and must not starve the per-turn budget.
-                boolean onlyExecuteCodeThisIteration = response.toolCalls().stream()
+                boolean onlyExecuteCodeThisIteration = toolCalls.stream()
                     .allMatch(tc -> "execute_code".equals(tc.name()));
                 if (onlyExecuteCodeThisIteration && "execute_code".equals(call.name())) {
                     budget = iterationBudget.refundToolExecution(budget);
@@ -1190,7 +1284,7 @@ public class AgentStreamingService {
                 send(emitter, new StreamEvent("tool_result", null, null, null,
                     null, null, null, call.name(), resultPreview), streamCtx);
 
-                String toolResultContent = toolResultFormatter.formatResult(result);
+                String toolResultContent = toolResultFormatter.formatResult(call.name(), result);
                 turnMessages.add(Message.toolResult(call.id(), toolResultContent, turnIndex));
             }
 
@@ -1291,6 +1385,10 @@ public class AgentStreamingService {
 
     private String formatResultPreview(ToolResult result) {
         String content = toolResultFormatter.formatResult(result);
+        return truncateResultPreview(content);
+    }
+
+    private String truncateResultPreview(String content) {
         int maxLen = 500;
         if (content.length() <= maxLen) return content;
         return content.substring(0, maxLen) + "...";
@@ -1338,33 +1436,45 @@ public class AgentStreamingService {
      * disabled via request). Subagents and memory-disabled sessions never
      * accumulate review counters.
      */
-    private boolean toolsetsIncludeMemory(ChatRequest request) {
-        if (request != null && request.disabledTools() != null
-                && request.disabledTools().contains("memory")) {
-            return false;
+    private boolean containsTool(List<ToolDefinition> tools, String toolName) {
+        return tools.stream().anyMatch(tool -> toolName.equals(tool.name()));
+    }
+
+    private static Set<String> toolCallIds(List<ToolCall> toolCalls) {
+        if (toolCalls == null || toolCalls.isEmpty()) {
+            return Set.of();
         }
-        return properties.getSkills().getDefaultToolsets().contains("memory");
+        Set<String> ids = new HashSet<>();
+        for (ToolCall call : toolCalls) {
+            ids.add(call.id());
+        }
+        return ids;
+    }
+
+    private static List<ToolCall> mergeCanonicalToolCalls(List<ToolCall> originalOrder,
+                                                          List<ToolCall> validCalls,
+                                                          List<ToolCall> invalidNameCalls) {
+        if (originalOrder == null || originalOrder.isEmpty()) {
+            return List.of();
+        }
+        java.util.Map<String, ToolCall> byId = new java.util.HashMap<>();
+        for (ToolCall call : invalidNameCalls) {
+            byId.put(call.id(), call);
+        }
+        for (ToolCall call : validCalls) {
+            byId.put(call.id(), call);
+        }
+        return originalOrder.stream()
+            .map(call -> byId.getOrDefault(call.id(), call))
+            .toList();
     }
 
     private String resolveModelUsed(Session session) {
-        // Per-request override (from /model command or API model field) wins
-        String requestOverride = session.getMetadata("modelOverride");
-        if (requestOverride != null && !requestOverride.isBlank()) {
-            return requestOverride;
-        }
-        if (session.modelName() != null && !session.modelName().isBlank()) {
-            return session.modelName();
-        }
-        String override = runtimeConfigService.getModelOverride();
-        if (override != null && !override.isBlank()) {
-            return override;
-        }
-        if (properties.getModel() != null
-            && properties.getModel().getModelName() != null
-            && !properties.getModel().getModelName().isBlank()) {
-            return properties.getModel().getModelName();
-        }
-        return "unknown";
+        return RuntimeModelOptionsResolver.modelUsed(
+            properties,
+            runtimeConfigService,
+            session,
+            "unknown");
     }
 
     private int estimateContextTokens(UUID sessionId) {
@@ -1399,14 +1509,17 @@ public class AgentStreamingService {
         try {
             transactionTemplate.execute(status -> {
                 Instant now = Instant.now();
+                int sequence = 0;
+                Map<String, String> toolNamesByCallId = ToolResultNameResolver.collect(turnMessages);
                 for (int idx = fromIndex; idx < turnMessages.size(); idx++) {
                     Message m = turnMessages.get(idx);
                     // Skip system/developer message — it's regenerated each turn
                     if (m.role() == com.azhukov.agent.core.model.Role.SYSTEM
                             || m.role() == com.azhukov.agent.core.model.Role.DEVELOPER) continue;
                     var e = messageMapper.toEntity(m);
+                    ToolResultNameResolver.apply(e, m, toolNamesByCallId);
                     e.setSessionId(session.id());
-                    e.setCreatedAt(now);
+                    e.setCreatedAt(now.plusNanos(sequence++));
                     messageRepository.save(e);
                 }
                 // Touch session updated_at

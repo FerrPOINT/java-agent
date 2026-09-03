@@ -29,16 +29,21 @@ import java.util.Map;
 public class SearXngSearchProvider {
 
     private final String baseUrl;
-    private final UrlSafety urlSafety;
     private final HttpClient httpClient;
 
     public SearXngSearchProvider(String baseUrl, UrlSafety urlSafety) {
-        this.baseUrl = baseUrl == null ? "" : baseUrl.replaceAll("/+$", "");
-        this.urlSafety = urlSafety;
-        this.httpClient = HttpClient.newBuilder()
+        this(baseUrl, urlSafety, HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
             .followRedirects(HttpClient.Redirect.NEVER)
-            .build();
+            .build());
+    }
+
+    SearXngSearchProvider(String baseUrl, UrlSafety urlSafety, HttpClient httpClient) {
+        // Intentionally do not apply generic UrlSafety to the configured
+        // backend URL: Hermes treats local SearXNG as an operator-trusted
+        // service, and localhost is the documented default setup.
+        this.baseUrl = baseUrl == null ? "" : baseUrl.replaceAll("/+$", "");
+        this.httpClient = httpClient;
     }
 
     public boolean isAvailable() {
@@ -59,10 +64,6 @@ public class SearXngSearchProvider {
 
         String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
         String url = baseUrl + "/search?q=" + encodedQuery + "&format=json&pageno=1";
-
-        if (urlSafety != null && !urlSafety.isUrlAllowed(url)) {
-            throw new IOException("URL is not allowed by safety policy: " + url);
-        }
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(url))

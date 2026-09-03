@@ -137,8 +137,11 @@ public final class ReplayCleanup {
 
     private static String findToolName(List<ToolCall> toolCalls, String toolCallId) {
         if (toolCalls == null || toolCallId == null) return "";
+        Set<String> resultVariants = ToolCall.idVariants(toolCallId);
         for (ToolCall tc : toolCalls) {
-            if (toolCallId.equals(tc.id())) {
+            Set<String> callVariants = ToolCall.idVariants(tc);
+            if (!resultVariants.isEmpty()
+                && callVariants.stream().anyMatch(resultVariants::contains)) {
                 return tc.name();
             }
         }

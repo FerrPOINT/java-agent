@@ -20,8 +20,8 @@ import java.util.*;
  * <p>
  * Four calling shapes inferred from arguments:
  * <ol>
- *   <li>DISCOVERY — pass query: FTS + lineage dedup + adaptive detail + bookends</li>
- *   <li>SCROLL — pass session_id + around_message_id: ±N window around anchor</li>
+ *   <li>DISCOVERY — pass query: search + lineage dedup + adaptive detail + bookends</li>
+ *   <li>SCROLL — pass session_id + around_message_id: +/-N window around anchor</li>
  *   <li>READ — pass session_id only: dump whole session (head 20 + tail 10)</li>
  *   <li>BROWSE — no args: recent sessions chronologically</li>
  * </ol>
@@ -30,7 +30,8 @@ import java.util.*;
 @AgentTool(
     name = "session_search",
     description = "Search past sessions stored in the local session DB, or scroll inside one. " +
-        "FTS5-backed retrieval over the SQLite message store. No LLM calls — every " +
+        "Database-backed retrieval over the Java agent message store (PostgreSQL " +
+        "tsvector when available, case-insensitive fallback otherwise). No LLM calls — every " +
         "shape returns actual messages from the DB.\n\n" +
         "SOURCE-FIRST LIMIT\n\n" +
         "  This tool searches Hermes conversation history only. It is not evidence " +
@@ -46,12 +47,12 @@ import java.util.*;
         "FOUR CALLING SHAPES\n\n" +
         "  1) DISCOVERY — pass `query`:\n" +
         "     session_search(query=\"auth refactor\", limit=3)\n" +
-        "     Runs FTS5, dedupes hits by session lineage, and returns the top N " +
+        "     Runs database search, dedupes hits by session lineage, and returns the top N " +
         "sessions. Adaptive detail is the default: the top-ranked result carries " +
         "full context, while lower-ranked results stay compact. Pass `detail=\"full\"` " +
         "to fully hydrate every result. Every result carries:\n" +
         "       - session_id, title, when, source\n" +
-        "       - snippet: FTS5-highlighted match excerpt\n" +
+        "       - snippet: match excerpt\n" +
         "       - detail: `full` or `compact`\n" +
         "       - bookend_start/bookend_end: the first/last 3 user+assistant messages " +
         "for full results; empty lists for compact results\n" +
@@ -63,7 +64,7 @@ import java.util.*;
         "more promising.\n\n" +
         "  2) SCROLL — pass `session_id` + `around_message_id`:\n" +
         "     session_search(session_id=\"...\", around_message_id=12345, window=10)\n" +
-        "     Returns a window of ±`window` messages centered on the anchor. No FTS5, " +
+        "     Returns a window of +/-`window` messages centered on the anchor. No search, " +
         "no bookends — just the slice. Use after a discovery call when you need more " +
         "context than the ±5 default window.\n" +
         "       - To scroll FORWARD: pass messages[-1].id back as around_message_id.\n" +
@@ -91,11 +92,11 @@ import java.util.*;
         "to pick it up?\"), never alone on its own line, and never alongside the " +
         "title, id, or date spelled out — that shows the user the same session " +
         "twice.\n\n" +
-        "FTS5 SYNTAX\n\n" +
-        "  AND is the default — multi-word queries require all terms. Use OR explicitly " +
-        "for broader recall (`alpha OR beta OR gamma`), quoted phrases for exact match " +
-        "(`\"docker networking\"`), boolean (`python NOT java`), or prefix wildcards " +
-        "(`deploy*`).\n\n" +
+        "QUERY SYNTAX\n\n" +
+        "  Keep queries plain text. Multi-word queries are handled by the configured " +
+        "database search backend when available; in lightweight/test profiles the tool " +
+        "falls back to case-insensitive substring search. For broader recall, make " +
+        "separate searches for the alternative terms and then scroll the best match.\n\n" +
         "WHEN TO USE\n\n" +
         "  Reach for this on questions about Hermes conversation history itself, such " +
         "as \"what did we do about X\", \"where did we leave Y\", or \"find the " +
@@ -103,7 +104,7 @@ import java.util.*;
         "that source first when accessible; session_search can then supply historical " +
         "context. The session DB carries what was said when; external tools show " +
         "current source/world state.",
-    toolset = "memory"
+    toolset = "session_search"
 )
 @Component
 @RequiredArgsConstructor
@@ -127,14 +128,25 @@ public class SessionSearchTool implements ToolHandler {
             );
 
             if (!result.success) {
-                return ToolResult.fail(result.error != null ? result.error : "Session search failed");
+                return failJson(result.error != null ? result.error : "Session search failed");
             }
 
             String json = buildJsonResponse(result, args);
             return ToolResult.ok(json);
         } catch (Exception e) {
             log.error("SessionSearchTool error — args: [{}], error: {}", arguments, e.toString(), e);
-            return ToolResult.fail("Session search error: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            return failJson("Session search error: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+    }
+
+    private ToolResult failJson(String message) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("success", false);
+        response.put("error", message);
+        try {
+            return new ToolResult(false, objectMapper.writeValueAsString(response), message);
+        } catch (JsonProcessingException e) {
+            return new ToolResult(false, "{\"success\":false,\"error\":\"Session search failed\"}", "Session search failed");
         }
     }
 

@@ -79,7 +79,11 @@ class AgentRuntimeServiceRestartTest {
             transactionTemplate,
             new AgentSessionResolver(sessionRepository, Mappers.getMapper(SessionEntityMapper.class), transactionTemplate, messageRepository, mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
             new CliStateApplier(),
-            new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class), mock(ConversationCompressor.class)),
+            new SessionCompressionHelper(
+                messageRepository,
+                Mappers.getMapper(MessageMapper.class),
+                mock(ConversationCompressor.class),
+                sessionRepository),
             mock(com.azhukov.agent.core.context.ContextCompressor.class),
             mock(com.azhukov.agent.core.metadata.ModelMetadataService.class), null,
             null, null

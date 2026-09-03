@@ -8,7 +8,10 @@ import com.azhukov.agent.core.security.DefaultToolCallGuardrail;
 import com.azhukov.agent.core.security.SecretRedactor;
 import org.junit.jupiter.api.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -116,6 +119,39 @@ class ToolExecutionServiceFullTest {
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("timed out");
         assertThat(calls.get()).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    void timeoutCancelsRunningToolTask() throws Exception {
+        AgentProperties props = new AgentProperties();
+        props.getToolOutput().setTimeoutSeconds(1);
+        props.getToolOutput().setMaxChars(1000);
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch interrupted = new CountDownLatch(1);
+        AtomicBoolean wasInterrupted = new AtomicBoolean(false);
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.execute(eq("slow"), any(), any(), any(), any())).thenAnswer(inv -> {
+            started.countDown();
+            try {
+                Thread.sleep(30_000);
+                return ToolResult.ok("late");
+            } catch (InterruptedException e) {
+                wasInterrupted.set(true);
+                interrupted.countDown();
+                Thread.currentThread().interrupt();
+                return ToolResult.fail("interrupted");
+            }
+        });
+        ToolExecutionService service = buildService(registry, props);
+
+        ToolResult result = service.execute("slow", "c1", "{}", null, null);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("timed out");
+        assertThat(started.await(100, TimeUnit.MILLISECONDS)).isTrue();
+        assertThat(interrupted.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(wasInterrupted.get()).isTrue();
+        service.shutdown();
     }
 
     @Test

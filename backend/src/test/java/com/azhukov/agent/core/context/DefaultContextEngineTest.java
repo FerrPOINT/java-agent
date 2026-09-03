@@ -5,6 +5,7 @@ import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -100,6 +101,60 @@ class DefaultContextEngineTest {
         assertThat(result.get(2).content()).isEqualTo("previous assistant answer");
         assertThat(result.get(3).role()).isEqualTo(Role.USER);
         assertThat(result.get(3).content()).isEqualTo("Current question");
+    }
+
+    @Test
+    void prepareContextSkipsInactiveArchivedHistoryRows() {
+        MessageEntity archivedUser = entity("user", "archived user question", 1);
+        archivedUser.setActive(false);
+        archivedUser.setCompacted(true);
+        MessageEntity liveAssistant = entity("assistant", "live assistant answer", 2);
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(List.of(liveAssistant, archivedUser));
+
+        List<Message> result = contextEngine.prepareContext(
+            session,
+            List.of(Message.system("System prompt"), Message.user("Current question")));
+
+        assertThat(result).extracting(Message::content)
+            .containsExactly("System prompt", "live assistant answer", "Current question");
+    }
+
+    @Test
+    void prepareContextHydratesStoredAssistantToolCallsArrayFromRepository() {
+        MessageEntity assistantMsg = entity("assistant", "", 1);
+        assistantMsg.setToolCallId("call-1");
+        assistantMsg.setToolCallName("read_file");
+        assistantMsg.setToolCallArguments("{\"path\":\"a.txt\"}");
+        assistantMsg.setToolCalls("""
+            [
+              {"id":"call-1","type":"function","function":{"name":"read_file","arguments":"{\\"path\\":\\"a.txt\\"}"}},
+              {"id":"call-2","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"java\\"}"}}
+            ]
+            """);
+        MessageEntity toolResult1 = entity("tool", "file content", 1);
+        toolResult1.setToolCallId("call-1");
+        MessageEntity toolResult2 = entity("tool", "search result", 1);
+        toolResult2.setToolCallId("call-2");
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(
+                eq(session.id()), any(org.springframework.data.domain.Pageable.class)))
+            .thenReturn(List.of(toolResult2, toolResult1, assistantMsg));
+
+        List<Message> result = contextEngine.prepareContext(
+            session,
+            List.of(Message.system("System prompt"), Message.user("Current question")));
+
+        Message assistant = result.stream()
+            .filter(message -> message.role() == Role.ASSISTANT && message.toolCalls() != null)
+            .findFirst()
+            .orElseThrow();
+        assertThat(assistant.toolCalls())
+            .extracting(ToolCall::id)
+            .containsExactly("call-1", "call-2");
+        assertThat(result.stream()
+            .filter(message -> message.role() == Role.TOOL)
+            .map(Message::toolCallId)
+            .toList()).containsExactly("call-1", "call-2");
     }
 
     @Test

@@ -5,6 +5,7 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.persistence.entity.MessageEntity;
+import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -28,6 +30,7 @@ public class MessagePersistenceService {
 
     private final MessageRepository messageRepository;
     private final SessionRepository sessionRepository;
+    private final MessageMapper messageMapper;
 
     /**
      * P1-5: Persist only the user message before a turn starts.
@@ -47,25 +50,15 @@ public class MessagePersistenceService {
 
         // Save assistant messages from the turn (only final text + tool interactions)
         if (turnResult != null && turnResult.messages() != null) {
+            Map<String, String> toolNamesByCallId = ToolResultNameResolver.collect(turnResult.messages());
             for (Message msg : turnResult.messages()) {
                 if (msg.role() == Role.ASSISTANT) {
-                    // Save assistant text (skip null-content tool-call-only messages)
-                    if (msg.content() != null && !msg.content().isBlank()) {
-                        saveMessage(session.id(), "assistant", msg.content(),
-                            null, null, null, msg.turnIndex() != null ? msg.turnIndex() : 0);
-                    }
-                    // Save tool calls if present
-                    if (msg.toolCalls() != null) {
-                        for (var tc : msg.toolCalls()) {
-                            saveMessage(session.id(), "assistant", msg.content() != null ? msg.content() : "",
-                                tc.id(), tc.name(), tc.arguments(),
-                                msg.turnIndex() != null ? msg.turnIndex() : 0);
-                        }
+                    if (msg.toolCalls() != null && !msg.toolCalls().isEmpty()
+                        || msg.content() != null && !msg.content().isBlank()) {
+                        saveMessage(session.id(), msg, toolNamesByCallId);
                     }
                 } else if (msg.role() == Role.TOOL) {
-                    saveMessage(session.id(), "tool", msg.content(),
-                        msg.toolCallId(), null, null,
-                        msg.turnIndex() != null ? msg.turnIndex() : 0);
+                    saveMessage(session.id(), msg, toolNamesByCallId);
                 }
             }
         }
@@ -97,6 +90,21 @@ public class MessagePersistenceService {
         // Update session stats (message_count, last_active, preview) so
         // session_search browse mode shows meaningful data instead of zeros.
         updateSessionStats(sessionId, role, content);
+    }
+
+    private void saveMessage(UUID sessionId, Message message, Map<String, String> toolNamesByCallId) {
+        if (!sessionRepository.existsById(sessionId)) {
+            log.debug("saveMessage skipped: session {} no longer exists", sessionId);
+            return;
+        }
+        MessageEntity entity = messageMapper.toEntity(message);
+        ToolResultNameResolver.apply(entity, message, toolNamesByCallId);
+        entity.setSessionId(sessionId);
+        entity.setCreatedAt(Instant.now());
+        entity.setActive(true);
+        entity.setCompacted(false);
+        messageRepository.save(entity);
+        updateSessionStats(sessionId, entity.getRole(), entity.getContent());
     }
 
     private void updateSessionStats(UUID sessionId, String role, String content) {

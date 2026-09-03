@@ -22,7 +22,15 @@ class AgentPropertiesTest {
             assertThat(properties.getModel().getProvider()).isEqualTo("openai-compatible");
             assertThat(properties.getCore().getMaxTurns()).isEqualTo(100);
             assertThat(properties.getSkills().getDefaultToolsets())
-                    .containsExactly("web", "file", "browser", "terminal", "coding", "memory", "core", "delegation", "gateway", "todo", "skills");
+                    .containsExactly("hermes-cli");
+            assertThat(properties.getApi().getChatCompletionToolsets())
+                    .containsExactly("hermes-api-server");
+            assertThat(properties.getApi().getModelName()).isEqualTo("hermes-agent");
+            assertThat(properties.getApi().getCorsOrigins()).isEmpty();
+            assertThat(properties.getApi().isDirectModelRequests()).isFalse();
+            assertThat(properties.getApi().getModelRoutes()).isEmpty();
+            assertThat(properties.getMemory().isMemoryEnabled()).isTrue();
+            assertThat(properties.getMemory().isUserProfileEnabled()).isTrue();
         });
     }
 
@@ -33,7 +41,17 @@ class AgentPropertiesTest {
                         "agent.name=Custom Agent",
                         "agent.model.provider=anthropic",
                         "agent.core.maxTurns=42",
-                        "agent.skills.defaultToolsets=web,file"
+                        "agent.skills.defaultToolsets=web,file",
+                        "agent.api.modelName=custom-agent",
+                        "agent.api.chatCompletionToolsets=web",
+                        "agent.api.corsOrigins=https://app.example,https://admin.example",
+                        "agent.api.directModelRequests=true",
+                        "agent.memory.memoryEnabled=false",
+                        "agent.memory.userProfileEnabled=false",
+                        "agent.api.modelRoutes.fast.model=fast-model",
+                        "agent.api.modelRoutes.fast.provider=openrouter",
+                        "agent.api.modelRoutes.fast.baseUrl=https://openrouter.example/v1",
+                        "agent.api.modelRoutes.fast.apiKey=route-secret"
                 )
                 .run(context -> {
                     AgentProperties properties = context.getBean(AgentProperties.class);
@@ -42,6 +60,20 @@ class AgentPropertiesTest {
                     assertThat(properties.getModel().getProvider()).isEqualTo("anthropic");
                     assertThat(properties.getCore().getMaxTurns()).isEqualTo(42);
                     assertThat(properties.getSkills().getDefaultToolsets()).containsExactly("web", "file");
+                    assertThat(properties.getApi().getModelName()).isEqualTo("custom-agent");
+                    assertThat(properties.getApi().getChatCompletionToolsets()).containsExactly("web");
+                    assertThat(properties.getApi().getCorsOrigins())
+                            .containsExactly("https://app.example", "https://admin.example");
+                    assertThat(properties.getApi().isDirectModelRequests()).isTrue();
+                    assertThat(properties.getMemory().isMemoryEnabled()).isFalse();
+                    assertThat(properties.getMemory().isUserProfileEnabled()).isFalse();
+                    assertThat(properties.getApi().getModelRoutes()).containsKey("fast");
+                    AgentProperties.ApiProperties.ModelRouteProperties route =
+                            properties.getApi().getModelRoutes().get("fast");
+                    assertThat(route.getModel()).isEqualTo("fast-model");
+                    assertThat(route.getProvider()).isEqualTo("openrouter");
+                    assertThat(route.getBaseUrl()).isEqualTo("https://openrouter.example/v1");
+                    assertThat(route.getApiKey()).isEqualTo("route-secret");
                 });
     }
 

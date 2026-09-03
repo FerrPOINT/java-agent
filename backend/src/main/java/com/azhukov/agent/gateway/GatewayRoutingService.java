@@ -53,6 +53,22 @@ public class GatewayRoutingService {
         return adapter.sendTyping(target);
     }
 
+    public CompletableFuture<SendResult> addReaction(Platform platform, SessionSource target, String emoji, String messageId) {
+        BasePlatformAdapter adapter = adapters.get(platform);
+        if (adapter == null) {
+            return CompletableFuture.completedFuture(new SendResult(false, null, "Platform not registered"));
+        }
+        return adapter.addReaction(target, emoji, messageId);
+    }
+
+    public CompletableFuture<SendResult> removeReaction(Platform platform, SessionSource target, String messageId) {
+        BasePlatformAdapter adapter = adapters.get(platform);
+        if (adapter == null) {
+            return CompletableFuture.completedFuture(new SendResult(false, null, "Platform not registered"));
+        }
+        return adapter.removeReaction(target, messageId);
+    }
+
     public void dispatchInbound(MessageEvent event) {
         messageHandler.accept(event);
     }

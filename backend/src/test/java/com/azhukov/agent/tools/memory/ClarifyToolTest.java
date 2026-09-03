@@ -3,6 +3,9 @@ package com.azhukov.agent.tools.memory;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.tools.AgentTool;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -13,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ClarifyToolTest {
 
     private final ClarifyTool tool = new ClarifyTool();
+    private final ObjectMapper mapper = new ObjectMapper();
 
     private Session dummySession() {
         return Session.create("test-user", "test-provider", "test-model");
@@ -20,6 +24,26 @@ class ClarifyToolTest {
 
     private Message dummyMessage() {
         return Message.assistant("test", 0);
+    }
+
+    private JsonNode errorJson(ToolResult result) throws Exception {
+        assertFalse(result.success());
+        assertFalse(result.content().isBlank());
+        JsonNode root = mapper.readTree(result.content());
+        assertFalse(root.path("success").asBoolean());
+        assertFalse(root.path("error").asText().isBlank());
+        assertEquals(root.path("error").asText(), result.error());
+        return root;
+    }
+
+    @Test
+    @DisplayName("Should register under the dedicated clarify toolset")
+    void shouldUseClarifyToolset() {
+        AgentTool annotation = ClarifyTool.class.getAnnotation(AgentTool.class);
+
+        assertEquals("clarify", annotation.toolset());
+        assertTrue(annotation.description().contains("does not block waiting for user input"));
+        assertFalse(annotation.description().contains("user_response will"));
     }
 
     @Test
@@ -34,21 +58,21 @@ class ClarifyToolTest {
 
     @Test
     @DisplayName("Should reject empty question")
-    void shouldRejectEmptyQuestion() {
+    void shouldRejectEmptyQuestion() throws Exception {
         String args = "{\"question\":\"\"}";
         ToolResult result = tool.execute(args, dummyMessage(), dummySession());
 
-        assertFalse(result.success());
-        assertTrue(result.error().contains("question is required"));
+        JsonNode root = errorJson(result);
+        assertTrue(root.path("error").asText().contains("No question provided"));
     }
 
     @Test
     @DisplayName("Should reject null question")
-    void shouldRejectNullQuestion() {
+    void shouldRejectNullQuestion() throws Exception {
         String args = "{\"question\":null}";
         ToolResult result = tool.execute(args, dummyMessage(), dummySession());
-        assertFalse(result.success());
-        assertTrue(result.error().contains("question is required"));
+        JsonNode root = errorJson(result);
+        assertTrue(root.path("error").asText().contains("No question provided"));
     }
 
     @Test
@@ -63,10 +87,10 @@ class ClarifyToolTest {
 
     @Test
     @DisplayName("Should reject a missing question")
-    void shouldRejectMissingQuestionField() {
+    void shouldRejectMissingQuestionField() throws Exception {
         ToolResult result = tool.execute("{}", dummyMessage(), dummySession());
-        assertFalse(result.success());
-        assertTrue(result.error().contains("question is required"));
+        JsonNode root = errorJson(result);
+        assertTrue(root.path("error").asText().contains("No question provided"));
     }
 
     @Test
@@ -195,6 +219,31 @@ class ClarifyToolTest {
     }
 
     @Test
+    @DisplayName("Should flatten dict-shaped choices like Hermes")
+    void shouldFlattenDictShapedChoices() {
+        String args = """
+            {
+              "question":"Which target?",
+              "choices":[
+                {"description":"Staging"},
+                {"label":"Production"},
+                {"name":"raw-id"}
+              ]
+            }
+            """;
+
+        ToolResult result = tool.execute(args, dummyMessage(), dummySession());
+
+        assertTrue(result.success());
+        String content = result.content();
+        assertTrue(content.contains("1. Staging (Recommended)"));
+        assertTrue(content.contains("2. Production"));
+        assertTrue(content.contains("3. Other (type answer)"));
+        assertFalse(content.contains("raw-id"));
+        assertFalse(content.contains("{description"));
+    }
+
+    @Test
     @DisplayName("Should include question text before numbered choices")
     void shouldIncludeQuestionBeforeChoices() {
         String args = "{\"question\":\"Which language?\",\"choices\":[\"Java\",\"Kotlin\"]}";
@@ -227,8 +276,30 @@ class ClarifyToolTest {
     }
 
     @Test
+    @DisplayName("Should accept bare-string batch questions and flatten nested choices")
+    void shouldAcceptBareStringBatchQuestionsAndFlattenChoices() {
+        String args = """
+            {"questions":[
+              "First question?",
+              {"question":"Second question?","choices":[{"text":"Alpha"},{"title":"Beta"}],"multi_select":true}
+            ]}
+            """;
+
+        ToolResult result = tool.execute(args, dummyMessage(), dummySession());
+
+        assertTrue(result.success());
+        String content = result.content();
+        assertTrue(content.contains("Question 1:"));
+        assertTrue(content.contains("First question?"));
+        assertTrue(content.contains("Question 2:"));
+        assertTrue(content.contains("1. Alpha (Recommended)"));
+        assertTrue(content.contains("2. Beta"));
+        assertTrue(content.contains("Select all that apply."));
+    }
+
+    @Test
     @DisplayName("Should reject more than five batch questions")
-    void shouldRejectOversizedBatch() {
+    void shouldRejectOversizedBatch() throws Exception {
         String args = """
             {"questions":[
               {"question":"1"},{"question":"2"},{"question":"3"},
@@ -238,8 +309,39 @@ class ClarifyToolTest {
 
         ToolResult result = tool.execute(args, dummyMessage(), dummySession());
 
-        assertFalse(result.success());
-        assertTrue(result.error().contains("at most 5"));
+        JsonNode root = errorJson(result);
+        assertTrue(root.path("error").asText().contains("at most 5"));
+    }
+
+    @Test
+    @DisplayName("Should reject invalid JSON with structured error")
+    void shouldRejectInvalidJsonWithStructuredError() throws Exception {
+        ToolResult result = tool.execute("not-json", dummyMessage(), dummySession());
+
+        JsonNode root = errorJson(result);
+        assertTrue(root.path("error").asText().contains("Invalid tool arguments"));
+    }
+
+    @Test
+    @DisplayName("Should reject non-array top-level choices like Hermes")
+    void shouldRejectNonArrayTopLevelChoices() throws Exception {
+        ToolResult result = tool.execute(
+            "{\"question\":\"Pick one\",\"choices\":\"yes\"}",
+            dummyMessage(), dummySession());
+
+        JsonNode root = errorJson(result);
+        assertTrue(root.path("error").asText().contains("choices must be a list"));
+    }
+
+    @Test
+    @DisplayName("Should reject non-array questions like Hermes")
+    void shouldRejectNonArrayQuestions() throws Exception {
+        ToolResult result = tool.execute(
+            "{\"questions\":{\"question\":\"Pick one\"}}",
+            dummyMessage(), dummySession());
+
+        JsonNode root = errorJson(result);
+        assertTrue(root.path("error").asText().contains("questions must be an array"));
     }
 
     @Test

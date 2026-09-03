@@ -1,6 +1,7 @@
 package com.azhukov.agent.bot.polling;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -165,7 +166,7 @@ public record UpdateEvent(
                 commandArgs = "";
             }
             // Audit L12: case-insensitive command name (Telegram autocapitalizes)
-            commandName = commandName.toLowerCase();
+            commandName = commandName.toLowerCase(Locale.ROOT);
         }
 
         // Message ID

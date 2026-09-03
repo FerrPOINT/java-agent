@@ -169,4 +169,32 @@ class HistorySanitizerTest {
         assertThat(out.get(1).content()).isEqualTo("частичный текст");
         assertThat(out.get(1).toolCalls()).extracting(ToolCall::id).containsExactly("call_x");
     }
+
+    @Test
+    void keepsToolResultMatchedByCompositeAliasAndDropsSiblingDuplicate() {
+        List<Message> history = List.of(
+            Message.assistantToolCalls(List.of(tc("call_1|fc_1")), 1),
+            Message.toolResult("call_1", "first", 1),
+            Message.toolResult("fc_1", "duplicate alias", 1)
+        );
+
+        List<Message> out = HistorySanitizer.sanitize(history);
+
+        assertThat(out).hasSize(2);
+        assertThat(out.get(1).content()).isEqualTo("first");
+    }
+
+    @Test
+    void dropsDuplicateAssistantToolCallsByAliasBeforeReplay() {
+        List<Message> history = List.of(
+            Message.assistantToolCalls(List.of(tc("call_1|fc_1"), tc("call_1")), 1),
+            Message.toolResult("call_1", "first", 1)
+        );
+
+        List<Message> out = HistorySanitizer.sanitize(history);
+
+        assertThat(out).hasSize(2);
+        assertThat(out.get(0).toolCalls()).extracting(ToolCall::id)
+            .containsExactly("call_1|fc_1");
+    }
 }

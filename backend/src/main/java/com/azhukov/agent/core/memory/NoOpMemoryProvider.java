@@ -35,6 +35,11 @@ public class NoOpMemoryProvider implements MemoryProvider {
     }
 
     @Override
+    public int clear(String userId, String target) {
+        return 0;
+    }
+
+    @Override
     public String read(String userId, String target) {
         return "";
     }

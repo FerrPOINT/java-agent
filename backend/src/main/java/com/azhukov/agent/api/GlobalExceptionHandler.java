@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.ApiErrorTextRedactor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
@@ -46,6 +48,92 @@ public class GlobalExceptionHandler {
         return false;
     }
 
+    private static boolean isHermesErrorEnvelopeRequest() {
+        String uri = unprofiledRequestUri(currentRequestUri());
+        return uri != null && (uri.startsWith("/v1/")
+            || uri.startsWith("/api/sessions")
+            || uri.startsWith("/api/v2/sessions")
+            || uri.startsWith("/api/model/"));
+    }
+
+    private static String currentRequestUri() {
+        try {
+            RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
+            if (attrs instanceof ServletRequestAttributes sra) {
+                return sra.getRequest().getRequestURI();
+            }
+        } catch (Exception e) {
+            log.debug("Failed to read current request path: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private static boolean isHermesSessionRequest() {
+        try {
+            RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
+            if (attrs instanceof ServletRequestAttributes sra) {
+                String uri = unprofiledRequestUri(sra.getRequest().getRequestURI());
+                return uri != null && (uri.startsWith("/api/sessions")
+                    || uri.startsWith("/api/v2/sessions"));
+            }
+        } catch (Exception e) {
+            log.debug("Failed to detect Hermes session request path: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    private static boolean isRunsHandlerWithInlineJsonParse() {
+        try {
+            RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
+            if (attrs instanceof ServletRequestAttributes sra) {
+                String method = sra.getRequest().getMethod();
+                String uri = unprofiledRequestUri(sra.getRequest().getRequestURI());
+                if (!"POST".equalsIgnoreCase(method) || uri == null) {
+                    return false;
+                }
+                return "/v1/runs".equals(uri)
+                    || (uri.startsWith("/v1/runs/") && uri.endsWith("/approval"));
+            }
+        } catch (Exception e) {
+            log.debug("Failed to detect runs JSON parse path: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    private static String unprofiledRequestUri(String uri) {
+        if (uri == null || !uri.startsWith("/p/")) {
+            return uri;
+        }
+        int nextSlash = uri.indexOf('/', 3);
+        if (nextSlash < 0) {
+            return uri;
+        }
+        return uri.substring(nextSlash);
+    }
+
+    private static ResponseEntity<Map<String, Object>> openAiError(HttpStatus status, String message) {
+        return openAiError(status, message, "invalid_request_error", null);
+    }
+
+    private static ResponseEntity<Map<String, Object>> openAiError(HttpStatus status, String message, String code) {
+        return openAiError(status, message, "invalid_request_error", code);
+    }
+
+    private static ResponseEntity<Map<String, Object>> openAiError(
+            HttpStatus status,
+            String message,
+            String type,
+            String code) {
+        Map<String, Object> error = new LinkedHashMap<>();
+        error.put("message", ApiErrorTextRedactor.redacted(message));
+        error.put("type", type);
+        error.put("param", null);
+        error.put("code", code);
+        return ResponseEntity.status(status)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(Map.of("error", error));
+    }
+
     /**
      * Build an SSE error response for streaming endpoints.
      * Returns an SseEmitter that immediately emits an error event and completes.
@@ -53,8 +141,12 @@ public class GlobalExceptionHandler {
     private static SseEmitter sseErrorEvent(HttpStatus status, String type, String message) {
         SseEmitter emitter = new SseEmitter(5_000L);
         try {
+            String safeMessage = ApiErrorTextRedactor.redacted(message);
+            if (safeMessage == null) {
+                safeMessage = "";
+            }
             String payload = "{\"type\":\"" + type + "\",\"error\":\"" +
-                message.replace("\"", "\\\"").replace("\n", "\\n") + "\"}";
+                safeMessage.replace("\"", "\\\"").replace("\n", "\\n") + "\"}";
             emitter.send(SseEmitter.event().name("error").data(payload));
             emitter.complete();
         } catch (Exception e) {
@@ -68,6 +160,9 @@ public class GlobalExceptionHandler {
         log.warn("Agent exception: {}", ex.getMessage());
         if (isSseRequest()) {
             return sseErrorEvent(ex.getStatus(), "agent", ex.getMessage());
+        }
+        if (isHermesErrorEnvelopeRequest()) {
+            return openAiError(ex.getStatus(), ex.getMessage());
         }
         return ResponseEntity.status(ex.getStatus()).body(Map.of(
             "type", "agent",
@@ -103,6 +198,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleBadJson(HttpMessageNotReadableException ex) {
         log.debug("Malformed JSON request body: {}", ex.getMessage());
+        if (isHermesErrorEnvelopeRequest()) {
+            String message = isRunsHandlerWithInlineJsonParse()
+                ? "Invalid JSON"
+                : "Invalid JSON in request body";
+            return openAiError(HttpStatus.BAD_REQUEST, message);
+        }
         return ResponseEntity.badRequest().body(Map.of(
             "type", "bad_request",
             "error", "Invalid JSON body: " + ex.getMessage()
@@ -112,6 +213,22 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
         log.debug("Illegal argument in request: {}", ex.getMessage());
+        if (isHermesErrorEnvelopeRequest()) {
+            return openAiError(HttpStatus.BAD_REQUEST, ex.getMessage());
+        }
+        return ResponseEntity.badRequest().body(Map.of(
+            "type", "bad_request",
+            "error", ex.getMessage()
+        ));
+    }
+
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleTypeMismatch(
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException ex) {
+        log.debug("Request argument type mismatch: {}", ex.getMessage());
+        if (isHermesSessionRequest() && ex.getRequiredType() == java.util.UUID.class) {
+            return openAiError(HttpStatus.BAD_REQUEST, "Invalid session ID", "invalid_session_id");
+        }
         return ResponseEntity.badRequest().body(Map.of(
             "type", "bad_request",
             "error", ex.getMessage()
@@ -155,6 +272,9 @@ public class GlobalExceptionHandler {
             // path is informational only
         }
         log.debug("No handler for path: {}", path);
+        if (isHermesErrorEnvelopeRequest()) {
+            return openAiError(HttpStatus.NOT_FOUND, "No such endpoint: " + path);
+        }
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
             "type", "not_found",
             "error", "No such endpoint: " + path
@@ -168,6 +288,9 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleMethodNotSupported(
             org.springframework.web.HttpRequestMethodNotSupportedException ex) {
         log.debug("Method not supported: {}", ex.getMessage());
+        if (isHermesErrorEnvelopeRequest()) {
+            return openAiError(HttpStatus.METHOD_NOT_ALLOWED, ex.getMessage(), "method_not_allowed");
+        }
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(Map.of(
             "type", "method_not_allowed",
             "error", ex.getMessage()
@@ -180,6 +303,13 @@ public class GlobalExceptionHandler {
         if (isSseRequest()) {
             return sseErrorEvent(HttpStatus.INTERNAL_SERVER_ERROR, "internal",
                 "Internal error: " + ex.getMessage());
+        }
+        if (isHermesErrorEnvelopeRequest()) {
+            return openAiError(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "Internal server error: " + ex.getMessage(),
+                "server_error",
+                null);
         }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
             "type", "internal",

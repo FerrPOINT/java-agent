@@ -10,16 +10,22 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.persistence.entity.DelegatedTaskRunEntity;
+import com.azhukov.agent.service.DelegatedTaskRunService;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -43,6 +49,8 @@ import java.util.concurrent.TimeoutException;
  * Spawns child agent turns with isolated context, restricted toolsets,
  * and configurable depth/timeout/concurrency limits. Supports single-task
  * and batch (parallel) modes. The parent blocks until all children complete.
+ * Hermes-style background mode is available explicitly via background/async/live
+ * arguments or action=create; that path returns a durable run id immediately.
  *
  * Each child gets:
  * - A fresh session (no parent history)
@@ -61,7 +69,7 @@ import java.util.concurrent.TimeoutException;
  * <p>Toolset inheritance (parity with Hermes delegate_tool.py lines 987-1029):
  * <ul>
  *   <li>When no toolsets specified → inherits the parent's enabled toolsets
- *       (from {@link ToolRegistry#getToolsets()}), with blocked toolsets stripped.</li>
+ *       with blocked toolsets stripped.</li>
  *   <li>When explicit toolsets specified → intersected with the parent's
  *       enabled toolsets (child can only use what parent has), with blocked
  *       toolsets stripped.</li>
@@ -72,7 +80,7 @@ import java.util.concurrent.TimeoutException;
  */
 @AgentTool(
     name = "delegate_task",
-    description = "Spawn subagents in isolated contexts; each gets its own conversation, terminal session, and toolset, and only its final summary returns to you. Provide 'goal' for a single task or 'tasks' for a parallel batch (limits and nesting rules are in the parameter descriptions).\n\nRuns in the background: dispatch returns immediately with live transcript paths, and the completed result (one consolidated message for a batch) re-enters the conversation on its own. Do NOT wait or poll; continue other work.\n\nLIVE ORCHESTRATION: while children run, this tool also controls them — action='list' (live children + ids), action='steer' (subagent_id + message, redirect without stopping), action='stop' (subagent_id, end early; partial result still returns). Steer when a live transcript shows a child drifting.\n\nUSE FOR: reasoning-heavy subtasks, work that would flood your context with intermediate data, or independent parallel workstreams.\nDO NOT USE FOR (use these instead):\n- Mechanical multi-step work with no reasoning needed -> execute_code\n- A single tool call -> call the tool directly\n- Tasks needing user interaction -> subagents cannot ask questions\n- Durable work that must survive this session -> cronjob or terminal(background=True, notify_on_complete=True); /stop, /new, or process exit discards running subagents.\n\nRULES:\n- Children know nothing of this conversation: pass everything needed via 'context', including any required output language, tone, or style (e.g. \"respond in Chinese\").\n- Child summaries are SELF-REPORTS, not verified facts: a child claiming \"uploaded successfully\" or \"file written\" may be wrong. For external side effects (uploads, remote writes, publishing), require a verifiable handle (URL, ID, absolute path) and verify it yourself — fetch the URL, stat the file, read back the content — before telling the user the operation succeeded.\n- Leaf children (the default) cannot call delegate_task, clarify, memory, send_message, or cronjob; orchestrators regain only delegate_task.\n- Children inherit the parent model and fallback chain unless pinned globally via delegation.provider / delegation.model in config.yaml. Results are returned as an array, one entry per task.",
+    description = "Spawn subagents in isolated contexts; each gets its own conversation, terminal session, and toolset, and only its final summary returns to you. Provide 'goal' for a single task or 'tasks' for a parallel batch (limits and nesting rules are in the parameter descriptions).\n\nJava background mode: background=true, async=true, live=true, or action='create' returns immediately with run_id/delegation_id and records durable status/read/cancel state. Completion is persisted and published to the event stream; until the full Hermes gateway reinjection loop lands in Java, inspect completion with action='status' or action='read'.\n\nLIVE ORCHESTRATION: while synchronous children run, this tool also controls them - action='list' (live children + ids), action='steer' (subagent_id + message, redirect without stopping), action='stop' (subagent_id, end early; partial result still returns). Steer when a live transcript shows a child drifting.\n\nUSE FOR: reasoning-heavy subtasks, work that would flood your context with intermediate data, or independent parallel workstreams.\nDO NOT USE FOR (use these instead):\n- Mechanical multi-step work with no reasoning needed -> execute_code\n- A single tool call -> call the tool directly\n- Tasks needing user interaction -> subagents cannot ask questions\n- Durable scheduled work -> cronjob or terminal(background=True, notify_on_complete=True).\n\nRULES:\n- Children know nothing of this conversation: pass everything needed via 'context', including any required output language, tone, or style (e.g. \"respond in Chinese\").\n- Child summaries are SELF-REPORTS, not verified facts: a child claiming \"uploaded successfully\" or \"file written\" may be wrong. For external side effects (uploads, remote writes, publishing), require a verifiable handle (URL, ID, absolute path) and verify it yourself - fetch the URL, stat the file, read back the content - before telling the user the operation succeeded.\n- Leaf children (the default) cannot call delegate_task, clarify, memory, send_message, or cronjob; orchestrators regain only delegate_task.\n- Children inherit the parent model and fallback chain unless pinned globally via delegation.provider / delegation.model in config.yaml. Results are returned as an array, one entry per task.",
     toolset = "delegation"
 )
 @Component
@@ -90,12 +98,14 @@ public class DelegateTaskTool implements ToolHandler {
         "delegation",    // no recursive delegation (leaf children)
         "memory",        // no writes to shared MEMORY.md
         "gateway",       // no cross-platform side effects (send_message)
-        "core",          // blocks clarify (subagents can't interact with users)
-        "code"           // blocks execute_code (children should reason, not write scripts)
+        "clarify",       // no user interaction
+        "cronjob"        // no scheduling more work in the parent's name
     );
 
     /** Session metadata key for effective child toolsets (comma-separated). */
     static final String META_TOOLSETS = "delegation_toolsets";
+    /** Session metadata key for child-only disabled tool names (comma-separated). */
+    static final String META_DISABLED_TOOLS = "delegation_disabled_tools";
     /** Session metadata key for max iterations override. */
     static final String META_MAX_TURNS = "delegation_max_turns";
     /** Session metadata key for ACP command override. */
@@ -108,6 +118,7 @@ public class DelegateTaskTool implements ToolHandler {
     final ObjectProvider<ToolRegistry> toolRegistryProvider;
     final ObjectProvider<InterruptToken> interruptTokenProvider;
     final ObjectProvider<SteerBuffer> steerBufferProvider;
+    final ObjectProvider<DelegatedTaskRunService> delegatedTaskRunServiceProvider;
 
     /** Virtual thread executor for parallel child runs. */
     private final ExecutorService childExecutor = Executors.newVirtualThreadPerTaskExecutor();
@@ -125,14 +136,25 @@ public class DelegateTaskTool implements ToolHandler {
                             ObjectProvider<AgentRuntime> agentRuntimeProvider,
                             ObjectProvider<ToolRegistry> toolRegistryProvider,
                             ObjectProvider<InterruptToken> interruptTokenProvider,
-                            ObjectProvider<SteerBuffer> steerBufferProvider) {
+                            ObjectProvider<SteerBuffer> steerBufferProvider,
+                            ObjectProvider<DelegatedTaskRunService> delegatedTaskRunServiceProvider) {
         this.properties = properties;
         this.agentRuntimeProvider = agentRuntimeProvider;
         this.toolRegistryProvider = toolRegistryProvider;
         this.interruptTokenProvider = interruptTokenProvider;
         this.steerBufferProvider = steerBufferProvider;
+        this.delegatedTaskRunServiceProvider = delegatedTaskRunServiceProvider;
         int maxChildren = Math.max(1, properties.getDelegation().getMaxConcurrentChildren());
         this.concurrencyLimit = new Semaphore(maxChildren, true);
+    }
+
+    DelegateTaskTool(AgentProperties properties,
+                     ObjectProvider<AgentRuntime> agentRuntimeProvider,
+                     ObjectProvider<ToolRegistry> toolRegistryProvider,
+                     ObjectProvider<InterruptToken> interruptTokenProvider,
+                     ObjectProvider<SteerBuffer> steerBufferProvider) {
+        this(properties, agentRuntimeProvider, toolRegistryProvider,
+            interruptTokenProvider, steerBufferProvider, null);
     }
 
     /**
@@ -147,6 +169,21 @@ public class DelegateTaskTool implements ToolHandler {
         this.toolRegistryProvider = toolRegistryProvider;
         this.interruptTokenProvider = null;
         this.steerBufferProvider = null;
+        this.delegatedTaskRunServiceProvider = null;
+        this.concurrencyLimit = new Semaphore(Math.max(1, maxConcurrentChildren), true);
+    }
+
+    DelegateTaskTool(AgentProperties properties,
+                     ObjectProvider<AgentRuntime> agentRuntimeProvider,
+                     ObjectProvider<ToolRegistry> toolRegistryProvider,
+                     ObjectProvider<DelegatedTaskRunService> delegatedTaskRunServiceProvider,
+                     int maxConcurrentChildren) {
+        this.properties = properties;
+        this.agentRuntimeProvider = agentRuntimeProvider;
+        this.toolRegistryProvider = toolRegistryProvider;
+        this.interruptTokenProvider = null;
+        this.steerBufferProvider = null;
+        this.delegatedTaskRunServiceProvider = delegatedTaskRunServiceProvider;
         this.concurrencyLimit = new Semaphore(Math.max(1, maxConcurrentChildren), true);
     }
 
@@ -154,18 +191,26 @@ public class DelegateTaskTool implements ToolHandler {
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         AgentProperties.DelegationProperties deleg = properties.getDelegation();
         if (!deleg.isEnabled()) {
-            return ToolResult.fail("Delegation is disabled (agent.delegation.enabled=false)");
+            return jsonError("Delegation is disabled (agent.delegation.enabled=false)");
         }
 
-        DelegateArgs args = ToolHandler.parseJson(arguments, DelegateArgs.class);
+        DelegateArgs args;
+        try {
+            args = ToolHandler.parseJson(arguments, DelegateArgs.class);
+        } catch (IllegalArgumentException e) {
+            return jsonError(e.getMessage());
+        }
 
         // ── Live orchestration control actions (Hermes parity) ──────────
         // action=list/steer/stop are synchronous control-plane operations
         // that do NOT spawn children.
         String action = args.action();
-        if (action != null && !action.isBlank() && !"spawn".equalsIgnoreCase(action)) {
-            return handleControlAction(action.trim().toLowerCase(),
-                args.subagentId(), args.message(), session);
+        String normalizedAction = action == null || action.isBlank()
+            ? "spawn"
+            : action.trim().toLowerCase();
+        if (!"spawn".equals(normalizedAction) && !"create".equals(normalizedAction)) {
+            return handleControlAction(normalizedAction,
+                args.subagentId(), args.runId(), args.message(), session);
         }
 
         // ── Normalize tasks to a list ──────────────────────────────────
@@ -176,7 +221,7 @@ public class DelegateTaskTool implements ToolHandler {
             for (int i = 0; i < taskList.size(); i++) {
                 TaskSpec t = taskList.get(i);
                 if (t.goal() == null || t.goal().isBlank()) {
-                    return ToolResult.fail("Task " + i + " is missing a 'goal'");
+                    return jsonError("Task " + i + " is missing a 'goal'.");
                 }
             }
         } else if (args.goal() != null && !args.goal().isBlank()) {
@@ -184,25 +229,30 @@ public class DelegateTaskTool implements ToolHandler {
             taskList = List.of(new TaskSpec(args.goal(), args.context(), args.toolsets(),
                 role, args.timeoutSeconds(), args.acpCommand(), args.acpArgs(), args.outputSchema()));
         } else {
-            return ToolResult.fail("Provide either 'goal' (single task) or 'tasks' (batch)");
+            return jsonError("No tasks provided. Pass tasks=[{goal: '...', context: '...'}, ...] - one entry per subagent, or provide 'goal' for single-task mode.");
         }
 
         if (taskList.isEmpty()) {
-            return ToolResult.fail("No tasks provided");
+            return jsonError("No tasks provided.");
+        }
+
+        ToolResult schemaFailure = validateTaskOutputSchemas(taskList);
+        if (schemaFailure != null) {
+            return schemaFailure;
         }
 
         // ── Depth check ────────────────────────────────────────────────
         int currentDepth = parseInt(session.metadata().get("delegation_depth"), 0);
         int maxSpawn = Math.max(1, deleg.getMaxSpawnDepth());
         if (currentDepth >= maxSpawn) {
-            return ToolResult.fail("Delegation depth limit reached (depth=" + currentDepth
+            return jsonError("Delegation depth limit reached (depth=" + currentDepth
                 + ", max_spawn_depth=" + maxSpawn + "). Raise agent.delegation.max-spawn-depth if deeper nesting is required.");
         }
 
         // ── Concurrent children check ──────────────────────────────────
         int maxChildren = Math.max(1, deleg.getMaxConcurrentChildren());
         if (taskList.size() > maxChildren) {
-            return ToolResult.fail("Too many tasks: " + taskList.size()
+            return jsonError("Too many tasks: " + taskList.size()
                 + " provided, but max_concurrent_children is " + maxChildren
                 + ". Reduce the task count or increase agent.delegation.max-concurrent-children.");
         }
@@ -211,10 +261,16 @@ public class DelegateTaskTool implements ToolHandler {
         int childTimeoutSeconds = resolveChildTimeout(deleg, args.timeoutSeconds());
 
         // ── Resolve parent's enabled toolsets (for inheritance/intersection) ──
-        Set<String> parentToolsets = resolveParentToolsets();
+        Set<String> parentToolsets = resolveParentToolsets(session);
 
         // ── Resolve effective max iterations ────────────────────────────
         int effectiveMaxIterations = resolveMaxIterations(deleg, args.maxIterations());
+
+        boolean asyncRequested = asyncRequested(args) || "create".equals(normalizedAction);
+        if (asyncRequested) {
+            return dispatchAsyncDelegation(taskList, session, currentDepth + 1, childTimeoutSeconds,
+                parentToolsets, effectiveMaxIterations, args.acpCommand(), args.acpArgs());
+        }
 
         // ── Run tasks ──────────────────────────────────────────────────
         try {
@@ -223,29 +279,9 @@ public class DelegateTaskTool implements ToolHandler {
                 // Single task — run directly (no thread pool overhead) but with a timeout
                 // to prevent blocking forever if the model hangs (BUG 3b).
                 final int childDepth = currentDepth + 1;
-                TaskResult entry;
-                if (childTimeoutSeconds > 0) {
-                    try {
-                        entry = CompletableFuture.supplyAsync(
-                            () -> runSingleChild(taskList.get(0), session, childDepth,
-                                childTimeoutSeconds, 0, parentToolsets, effectiveMaxIterations,
-                                args.acpCommand(), args.acpArgs(), taskList.get(0).outputSchema()),
-                            childExecutor
-                        ).get(childTimeoutSeconds, TimeUnit.SECONDS);
-                    } catch (TimeoutException e) {
-                        entry = TaskResult.timeout(0, taskList.get(0).goal(), childTimeoutSeconds);
-                    } catch (ExecutionException e) {
-                        Throwable cause = e.getCause() != null ? e.getCause() : e;
-                        entry = TaskResult.error(0, taskList.get(0).goal(), cause.getMessage());
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        entry = TaskResult.error(0, taskList.get(0).goal(), "Interrupted");
-                    }
-                } else {
-                    entry = runSingleChild(taskList.get(0), session, childDepth,
-                        childTimeoutSeconds, 0, parentToolsets, effectiveMaxIterations,
-                        args.acpCommand(), args.acpArgs(), taskList.get(0).outputSchema());
-                }
+                TaskResult entry = runSingleChildWithTimeout(taskList.get(0), session, childDepth,
+                    childTimeoutSeconds, 0, parentToolsets, effectiveMaxIterations,
+                    args.acpCommand(), args.acpArgs(), taskList.get(0).outputSchema(), null);
                 resultJson = formatResults(List.of(entry));
             } else {
                 // Batch — run in parallel with virtual threads
@@ -258,7 +294,123 @@ public class DelegateTaskTool implements ToolHandler {
             return ToolResult.ok(resultJson);
         } catch (Exception e) {
             log.warn("delegate_task failed: {}", e.getMessage(), e);
-            return ToolResult.fail("Delegation failed: " + e.getMessage());
+            return jsonError("Delegation failed: " + e.getMessage());
+        }
+    }
+
+    // ── Async execution ───────────────────────────────────────────────
+
+    private ToolResult dispatchAsyncDelegation(List<TaskSpec> taskList,
+                                               Session parentSession,
+                                               int childDepth,
+                                               int childTimeoutSeconds,
+                                               Set<String> parentToolsets,
+                                               int effectiveMaxIterations,
+                                               String topAcpCommand,
+                                               List<String> topAcpArgs) {
+        DelegatedTaskRunService runService = delegatedTaskRunService();
+        if (runService == null) {
+            return jsonError("Async delegate_task requires the delegated task run ledger service.");
+        }
+
+        int maxChildren = Math.max(1, properties.getDelegation().getMaxConcurrentChildren());
+        DelegatedTaskRunService.CreateAttempt attempt = runService.createIfCapacity(
+            parentSession.id(),
+            resolveProfile(parentSession),
+            summarizeDelegationGoal(taskList),
+            maxChildren);
+        if (!attempt.accepted()) {
+            return jsonRejected("Async delegation capacity reached for this session (active=" + attempt.activeCount()
+                + ", max_async_children=" + attempt.capacity() + ").");
+        }
+
+        DelegatedTaskRunEntity run = attempt.run();
+        UUID runId = run.getId();
+
+        try {
+            childExecutor.submit(() -> executeAsyncRun(runId, taskList, parentSession, childDepth,
+                childTimeoutSeconds, parentToolsets, effectiveMaxIterations, topAcpCommand, topAcpArgs));
+        } catch (RuntimeException e) {
+            runService.fail(runId, e.getMessage());
+            return jsonError("Failed to dispatch async delegation: " + e.getMessage());
+        }
+
+        ObjectNode response = MAPPER.createObjectNode();
+        response.put("success", true);
+        response.put("status", "dispatched");
+        response.put("mode", "background");
+        response.put("run_id", runId.toString());
+        response.put("delegation_id", delegationId(runId));
+        response.put("task_count", taskList.size());
+        response.put("parent_session_id", parentSession.id().toString());
+        response.put("profile", run.getProfile() == null ? "default" : run.getProfile());
+        response.put("message", "Delegated task run started in the background. Use action='status' or action='read' with run_id to inspect it.");
+        return jsonOk(response);
+    }
+
+    private void executeAsyncRun(UUID runId,
+                                 List<TaskSpec> taskList,
+                                 Session parentSession,
+                                 int childDepth,
+                                 int childTimeoutSeconds,
+                                 Set<String> parentToolsets,
+                                 int effectiveMaxIterations,
+                                 String topAcpCommand,
+                                 List<String> topAcpArgs) {
+        DelegatedTaskRunService runService = delegatedTaskRunService();
+        if (runService == null) {
+            return;
+        }
+        try {
+            List<TaskResult> results;
+            if (runService.isCancelRequested(runId)) {
+                results = List.of(TaskResult.interrupted(0, summarizeDelegationGoal(taskList), "cancelled before start"));
+            } else if (taskList.size() == 1) {
+                TaskSpec task = taskList.get(0);
+                results = List.of(runSingleChildWithTimeout(task, parentSession, childDepth,
+                    childTimeoutSeconds, 0, parentToolsets, effectiveMaxIterations,
+                    topAcpCommand, topAcpArgs, task.outputSchema(), runId));
+            } else {
+                results = runBatch(taskList, parentSession, childTimeoutSeconds,
+                    parentToolsets, effectiveMaxIterations, topAcpCommand, topAcpArgs,
+                    childDepth, runId);
+            }
+            String resultJson = formatResults(results);
+            runService.finish(runId, aggregateStatus(results), resultJson, firstError(results));
+        } catch (Exception e) {
+            log.warn("async delegate_task run {} failed: {}", runId, e.getMessage(), e);
+            runService.fail(runId, e.getMessage());
+        }
+    }
+
+    private TaskResult runSingleChildWithTimeout(TaskSpec task, Session parentSession,
+                                                 int childDepth, int childTimeoutSeconds, int taskIndex,
+                                                 Set<String> parentToolsets, int effectiveMaxIterations,
+                                                 String acpCommand, List<String> acpArgs,
+                                                 java.util.Map<String, Object> outputSchema,
+                                                 UUID delegatedRunId) {
+        if (childTimeoutSeconds <= 0) {
+            return runSingleChild(task, parentSession, childDepth, childTimeoutSeconds,
+                taskIndex, parentToolsets, effectiveMaxIterations, acpCommand, acpArgs,
+                outputSchema, delegatedRunId);
+        }
+        CompletableFuture<TaskResult> future = CompletableFuture.supplyAsync(
+            () -> runSingleChild(task, parentSession, childDepth, childTimeoutSeconds,
+                taskIndex, parentToolsets, effectiveMaxIterations, acpCommand, acpArgs,
+                outputSchema, delegatedRunId),
+            childExecutor
+        );
+        try {
+            return future.get(childTimeoutSeconds, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            return TaskResult.timeout(taskIndex, task.goal(), childTimeoutSeconds);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            return TaskResult.error(taskIndex, task.goal(), cause.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return TaskResult.interrupted(taskIndex, task.goal(), "Interrupted");
         }
     }
 
@@ -269,6 +421,16 @@ public class DelegateTaskTool implements ToolHandler {
                                       Set<String> parentToolsets, int effectiveMaxIterations,
                                       String topAcpCommand, List<String> topAcpArgs,
                                       int childDepth) {
+        return runBatch(tasks, parentSession, childTimeoutSeconds, parentToolsets,
+            effectiveMaxIterations, topAcpCommand, topAcpArgs, childDepth, null);
+    }
+
+    private List<TaskResult> runBatch(List<TaskSpec> tasks, Session parentSession,
+                                      int childTimeoutSeconds,
+                                      Set<String> parentToolsets, int effectiveMaxIterations,
+                                      String topAcpCommand, List<String> topAcpArgs,
+                                      int childDepth,
+                                      UUID delegatedRunId) {
         List<Future<TaskResult>> futures = new ArrayList<>(tasks.size());
         for (int i = 0; i < tasks.size(); i++) {
             final int index = i;
@@ -280,7 +442,8 @@ public class DelegateTaskTool implements ToolHandler {
             List<String> taskAcpArgs = task.acpArgs() != null ? task.acpArgs() : topAcpArgs;
             futures.add(childExecutor.submit(() ->
                 runSingleChild(task, parentSession, childDepth, taskTimeout, index,
-                    parentToolsets, effectiveMaxIterations, taskAcpCommand, taskAcpArgs, task.outputSchema())));
+                    parentToolsets, effectiveMaxIterations, taskAcpCommand, taskAcpArgs, task.outputSchema(),
+                    delegatedRunId)));
         }
 
         List<TaskResult> results = new ArrayList<>(tasks.size());
@@ -298,7 +461,7 @@ public class DelegateTaskTool implements ToolHandler {
                 results.add(TaskResult.timeout(i, task.goal(), taskTimeout));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                results.add(TaskResult.error(i, task.goal(), "Interrupted"));
+                results.add(TaskResult.interrupted(i, task.goal(), "Interrupted"));
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause() != null ? e.getCause() : e;
                 results.add(TaskResult.error(i, task.goal(), cause.getMessage()));
@@ -316,6 +479,17 @@ public class DelegateTaskTool implements ToolHandler {
                                       Set<String> parentToolsets, int effectiveMaxIterations,
                                       String acpCommand, List<String> acpArgs,
                                       java.util.Map<String, Object> outputSchema) {
+        return runSingleChild(task, parentSession, childDepth, childTimeoutSeconds,
+            taskIndex, parentToolsets, effectiveMaxIterations, acpCommand, acpArgs,
+            outputSchema, null);
+    }
+
+    private TaskResult runSingleChild(TaskSpec task, Session parentSession,
+                                      int childDepth, int childTimeoutSeconds, int taskIndex,
+                                      Set<String> parentToolsets, int effectiveMaxIterations,
+                                      String acpCommand, List<String> acpArgs,
+                                      java.util.Map<String, Object> outputSchema,
+                                      UUID delegatedRunId) {
         String subagentId = "sa-" + taskIndex + "-" + UUID.randomUUID().toString().substring(0, 8);
         long startTime = System.nanoTime();
         String goal = task.goal();
@@ -343,10 +517,12 @@ public class DelegateTaskTool implements ToolHandler {
 
             // Resolve effective toolsets for this child (Fix 1 + Fix 3)
             List<String> childToolsets = resolveChildToolsets(task.toolsets(), parentToolsets, effectiveRole);
+            List<String> childDisabledTools = resolveChildDisabledTools(effectiveRole);
 
             // Build child session with isolated context
             Session childSession = createChildSession(parentSession, childDepth, childToolsets,
-                effectiveMaxIterations, acpCommand, acpArgs);
+                childDisabledTools, effectiveMaxIterations, acpCommand, acpArgs);
+            markDelegatedRunStarted(delegatedRunId, childSession.id());
 
             // Build child system prompt
             String childPrompt = buildChildSystemPrompt(goal, task.context(), effectiveRole,
@@ -376,8 +552,9 @@ public class DelegateTaskTool implements ToolHandler {
 
             // A stop may have arrived between registration and the first child call.
             InterruptToken interruptToken = interruptTokenProvider != null ? interruptTokenProvider.getIfAvailable() : null;
-            if (interruptToken != null && interruptToken.isCancelled(childSession.id())) {
-                return TaskResult.error(taskIndex, goal, "Subagent interrupted before start");
+            if (isAsyncCancelRequested(delegatedRunId)
+                || (interruptToken != null && interruptToken.isCancelled(childSession.id()))) {
+                return TaskResult.interrupted(taskIndex, goal, "Subagent interrupted before start");
             }
 
             // Run the child agent turn
@@ -397,7 +574,10 @@ public class DelegateTaskTool implements ToolHandler {
 
             String status;
             String errorMsg = null;
-            if (!completed && turnResult.error() != null && !turnResult.error().isBlank()) {
+            if (isAsyncCancelRequested(delegatedRunId)) {
+                status = "interrupted";
+                errorMsg = "cancelled";
+            } else if (!completed && turnResult.error() != null && !turnResult.error().isBlank()) {
                 status = "error";
                 errorMsg = turnResult.error();
             } else if (summary != null && !summary.isBlank()) {
@@ -425,10 +605,20 @@ public class DelegateTaskTool implements ToolHandler {
     // ── Toolset resolution (Fix 1: inheritance + intersection) ──────────
 
     /**
-     * Resolve the parent's (current session's) enabled toolsets from the tool registry.
-     * This is the set of toolsets that are currently registered and available.
+     * Resolve the parent's enabled toolsets. If the parent is itself a child,
+     * inherit its narrowed metadata; otherwise use configured defaults.
      */
-    Set<String> resolveParentToolsets() {
+    Set<String> resolveParentToolsets(Session parentSession) {
+        Set<String> inherited = parseCsv(parentSession.getMetadata(META_TOOLSETS));
+        if (!inherited.isEmpty()) {
+            return inherited;
+        }
+        List<String> configured = properties.getSkills() != null
+            ? properties.getSkills().getDefaultToolsets()
+            : List.of();
+        if (configured != null && !configured.isEmpty()) {
+            return new LinkedHashSet<>(configured);
+        }
         ToolRegistry registry = toolRegistryProvider.getIfAvailable();
         if (registry != null) {
             Set<String> registered = registry.getToolsets();
@@ -436,8 +626,7 @@ public class DelegateTaskTool implements ToolHandler {
                 return new LinkedHashSet<>(registered);
             }
         }
-        // Fallback: use the configured default toolsets
-        return new LinkedHashSet<>(properties.getSkills().getDefaultToolsets());
+        return new LinkedHashSet<>(List.of("web", "file", "terminal"));
     }
 
     /**
@@ -458,9 +647,10 @@ public class DelegateTaskTool implements ToolHandler {
             childToolsets = stripBlockedToolsets(new ArrayList<>(parentToolsets));
         } else {
             // Intersect with parent — subagent must not gain tools the parent lacks
+            Set<String> expandedParent = expandParentToolsets(parentToolsets, effectiveRole);
             List<String> intersection = new ArrayList<>();
             for (String ts : requestedToolsets) {
-                if (parentToolsets.contains(ts)) {
+                if (expandedParent.contains(ts)) {
                     intersection.add(ts);
                 }
             }
@@ -481,12 +671,75 @@ public class DelegateTaskTool implements ToolHandler {
      * Remove toolsets that contain only blocked tools (parity with Hermes
      * {@code _strip_blocked_tools}).
      * <p>
-     * Strips: delegation, memory, gateway (which contain delegate_task, memory,
-     * send_message respectively).
+     * Strips exact one-tool/composite-deny sets. Mixed bundles such as
+     * hermes-cli are preserved and filtered later with META_DISABLED_TOOLS.
      */
     List<String> stripBlockedToolsets(List<String> toolsets) {
         toolsets.removeAll(BLOCKED_TOOLSET_NAMES);
         return toolsets;
+    }
+
+    private Set<String> expandParentToolsets(Set<String> parentToolsets, String effectiveRole) {
+        ToolRegistry registry = toolRegistryProvider.getIfAvailable();
+        if (registry == null || parentToolsets == null || parentToolsets.isEmpty()) {
+            return parentToolsets != null ? new LinkedHashSet<>(parentToolsets) : Set.of();
+        }
+
+        Set<String> blockedNames = new LinkedHashSet<>(resolveChildDisabledTools(effectiveRole));
+        Set<String> parentToolNames = new LinkedHashSet<>();
+        for (var definition : registry.getDefinitions(parentToolsets)) {
+            parentToolNames.add(definition.name());
+        }
+        if (parentToolNames.isEmpty()) {
+            return new LinkedHashSet<>(parentToolsets);
+        }
+
+        Set<String> expanded = new LinkedHashSet<>(parentToolsets);
+        for (String candidate : registry.getToolsets()) {
+            if (expanded.contains(candidate)) {
+                continue;
+            }
+            Set<String> candidateToolNames = new LinkedHashSet<>();
+            for (var definition : registry.getDefinitions(Set.of(candidate))) {
+                if (!blockedNames.contains(definition.name())) {
+                    candidateToolNames.add(definition.name());
+                }
+            }
+            if (!candidateToolNames.isEmpty() && parentToolNames.containsAll(candidateToolNames)) {
+                expanded.add(candidate);
+            }
+        }
+        return expanded;
+    }
+
+    List<String> resolveChildDisabledTools(String effectiveRole) {
+        List<String> configured = properties.getDelegation().getBlockedTools();
+        LinkedHashSet<String> disabled = new LinkedHashSet<>();
+        if (configured != null) {
+            for (String tool : configured) {
+                if (tool != null && !tool.isBlank()) {
+                    disabled.add(tool.trim());
+                }
+            }
+        }
+        if ("orchestrator".equals(effectiveRole)) {
+            disabled.remove("delegate_task");
+        }
+        return new ArrayList<>(disabled);
+    }
+
+    private Set<String> parseCsv(String value) {
+        if (value == null || value.isBlank()) {
+            return Set.of();
+        }
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        for (String part : value.split(",")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                result.add(trimmed);
+            }
+        }
+        return result;
     }
 
     // ── Max iterations resolution (Fix 5) ────────────────────────────────
@@ -495,19 +748,15 @@ public class DelegateTaskTool implements ToolHandler {
      * Resolve effective max iterations for child subagents.
      * <p>
      * Mirrors Hermes: the config value (delegation.max_iterations) is authoritative.
-     * Caller-supplied max_iterations is accepted if it differs from config
-     * (Hermes logs and ignores it, but we allow it for flexibility).
-     * When 0 or negative, falls back to core.max-turns.
+     * Model-supplied max_iterations is ignored so callers cannot unexpectedly shrink
+     * or expand the child budget mid-run.
      */
     int resolveMaxIterations(AgentProperties.DelegationProperties deleg, Integer callerMaxIterations) {
         int configMax = deleg.getMaxIterations();
-        if (callerMaxIterations != null && callerMaxIterations > 0) {
-            return callerMaxIterations;
-        }
         if (configMax > 0) {
             return configMax;
         }
-        // Fallback: 0 means "use global max-turns" (signal to DefaultAgentRuntime)
+        // Fallback: 0 means "use global max-turns" (signal to DefaultAgentRuntime).
         return 0;
     }
 
@@ -547,7 +796,8 @@ public class DelegateTaskTool implements ToolHandler {
     // ── Child session creation ─────────────────────────────────────────
 
     private Session createChildSession(Session parentSession, int childDepth,
-                                        List<String> childToolsets, int maxIterations,
+                                        List<String> childToolsets, List<String> childDisabledTools,
+                                        int maxIterations,
                                         String acpCommand, List<String> acpArgs) {
         String userId = parentSession.userId() != null ? parentSession.userId() : "delegate";
         String provider = parentSession.modelProvider();
@@ -570,6 +820,9 @@ public class DelegateTaskTool implements ToolHandler {
         // Pass effective toolsets to child via metadata (Fix 1)
         if (childToolsets != null && !childToolsets.isEmpty()) {
             metadata.put(META_TOOLSETS, String.join(",", childToolsets));
+        }
+        if (childDisabledTools != null && !childDisabledTools.isEmpty()) {
+            metadata.put(META_DISABLED_TOOLS, String.join(",", childDisabledTools));
         }
 
         // Pass max iterations override to child via metadata (Fix 5)
@@ -665,14 +918,18 @@ public class DelegateTaskTool implements ToolHandler {
 
     int resolveChildTimeout(AgentProperties.DelegationProperties deleg, int callerTimeout) {
         // Caller-specified timeout takes priority, then config child_timeout_seconds,
-        // then config default_timeout_seconds
+        // then legacy config default_timeout_seconds. A non-positive resolved value
+        // means no hard wall-clock cap, matching Hermes child_timeout_seconds=0.
         if (callerTimeout > 0) {
             return Math.max(30, callerTimeout);
         }
         if (deleg.getChildTimeoutSeconds() > 0) {
             return Math.max(30, deleg.getChildTimeoutSeconds());
         }
-        return Math.max(30, deleg.getDefaultTimeoutSeconds());
+        if (deleg.getDefaultTimeoutSeconds() > 0) {
+            return Math.max(30, deleg.getDefaultTimeoutSeconds());
+        }
+        return 0;
     }
 
     // ── Result formatting ──────────────────────────────────────────────
@@ -697,6 +954,37 @@ public class DelegateTaskTool implements ToolHandler {
             }
             return sb.toString().trim();
         }
+    }
+
+    private ToolResult validateTaskOutputSchemas(List<TaskSpec> taskList) {
+        for (int i = 0; i < taskList.size(); i++) {
+            String schemaError = validateOutputSchemaDefinition(taskList.get(i).outputSchema());
+            if (schemaError != null) {
+                return jsonError("Task " + i + " output_schema invalid: " + schemaError);
+            }
+        }
+        return null;
+    }
+
+    private ToolResult jsonError(String error) {
+        String message = error == null || error.isBlank() ? "Delegation failed" : error;
+        ObjectNode response = MAPPER.createObjectNode();
+        response.put("success", false);
+        response.put("error", message);
+        return new ToolResult(false, response.toString(), message);
+    }
+
+    private ToolResult jsonRejected(String error) {
+        String message = error == null || error.isBlank() ? "Delegation rejected" : error;
+        ObjectNode response = MAPPER.createObjectNode();
+        response.put("success", false);
+        response.put("status", "rejected");
+        response.put("error", message);
+        return new ToolResult(false, response.toString(), message);
+    }
+
+    private ToolResult jsonOk(ObjectNode response) {
+        return ToolResult.ok(response.toString());
     }
 
     // ── Observability ──────────────────────────────────────────────────
@@ -756,55 +1044,324 @@ public class DelegateTaskTool implements ToolHandler {
      * Hermes parity (delegate_tool.py:466-579): these run synchronously
      * in-turn and operate on this conversation's active subagents.
      */
-    private ToolResult handleControlAction(String action, String subagentId, String message, Session session) {
+    private ToolResult handleControlAction(String action, String subagentId, String runId, String message, Session session) {
         switch (action) {
             case "list" -> {
-                var entries = activeSubagents.entrySet().stream()
+                ObjectNode response = MAPPER.createObjectNode();
+                response.put("action", "list");
+                ArrayNode subagents = response.putArray("subagents");
+                activeSubagents.entrySet().stream()
                     .filter(e -> session.id().toString().equals(e.getValue().parentSessionId()))
-                    .map(e -> "{subagent_id:" + e.getKey() + ",goal:" + e.getValue().goal() + "}")
-                    .toList();
-                if (entries.isEmpty()) {
-                    return ToolResult.ok("No active subagents. Use action='spawn' (or omit action) to delegate a task.");
+                    .forEach(e -> {
+                        SubagentRecord record = e.getValue();
+                        ObjectNode child = subagents.addObject();
+                        child.put("subagent_id", e.getKey());
+                        child.put("goal", record.goal());
+                        child.put("status", "running");
+                        child.put("running_seconds", Math.round((System.currentTimeMillis() - record.startedAtMs()) / 100.0) / 10.0);
+                        child.put("accepting_steer", true);
+                        child.put("parent_session_id", record.parentSessionId());
+                        child.put("child_session_id", record.childSessionId().toString());
+                    });
+                response.put("count", subagents.size());
+                if (subagents.isEmpty()) {
+                    response.put("note", "No live subagents right now. Children that already finished have delivered their results; there is nothing to steer or stop.");
                 }
-                return ToolResult.ok("Active subagents: " + entries);
+                appendDurableRuns(response, session);
+                return jsonOk(response);
             }
             case "stop" -> {
                 if (subagentId == null || subagentId.isBlank()) {
-                    return ToolResult.fail("action='stop' requires subagent_id (from the spawn dispatch response or action='list').");
+                    return jsonError("action='stop' requires subagent_id (from the spawn dispatch response or action='list').");
                 }
                 var record = activeSubagents.get(subagentId);
                 if (record == null || !session.id().toString().equals(record.parentSessionId())) {
-                    return ToolResult.fail("Subagent '" + subagentId + "' not found or already finished. Use action='list' to see live children.");
+                    return jsonError("No live subagent '" + subagentId + "' in this conversation's spawn tree. It may have already finished. Use action='list' to see live children.");
                 }
                 InterruptToken interruptToken = interruptTokenProvider != null ? interruptTokenProvider.getIfAvailable() : null;
                 if (interruptToken == null) {
-                    return ToolResult.fail("Subagent interruption service is unavailable.");
+                    return jsonError("Subagent interruption service is unavailable.");
                 }
                 interruptToken.cancel(record.childSessionId());
-                return ToolResult.ok("Subagent stops at its next iteration boundary — its partial result still returns as a completion message.");
+                ObjectNode response = MAPPER.createObjectNode();
+                response.put("action", "stop");
+                response.put("subagent_id", subagentId);
+                response.put("status", "interrupt_requested");
+                response.put("note", "The subagent stops at its next iteration boundary. Its partial result still returns as a completion message.");
+                return jsonOk(response);
             }
             case "steer" -> {
                 if (subagentId == null || subagentId.isBlank()) {
-                    return ToolResult.fail("action='steer' requires subagent_id (from the spawn dispatch response or action='list').");
+                    return jsonError("action='steer' requires subagent_id (from the spawn dispatch response or action='list').");
                 }
                 if (message == null || message.isBlank()) {
-                    return ToolResult.fail("action='steer' requires a non-empty 'message' describing the course correction.");
+                    return jsonError("action='steer' requires a non-empty 'message' describing the course correction.");
                 }
                 var record = activeSubagents.get(subagentId);
                 if (record == null || !session.id().toString().equals(record.parentSessionId())) {
-                    return ToolResult.fail("Subagent '" + subagentId + "' is no longer accepting steering (finishing or not found). Use action='list' to see live children.");
+                    return jsonError("Subagent '" + subagentId + "' is no longer accepting steering (finishing or not found). Use action='list' to see live children.");
                 }
                 SteerBuffer steerBuffer = steerBufferProvider != null ? steerBufferProvider.getIfAvailable() : null;
                 if (steerBuffer != null) {
                     steerBuffer.steer(record.childSessionId(), message);
-                    return ToolResult.ok("Steer text queued — the child sees it appended to its next tool result mid-run.");
+                    ObjectNode response = MAPPER.createObjectNode();
+                    response.put("action", "steer");
+                    response.put("subagent_id", subagentId);
+                    response.put("status", "queued");
+                    response.put("note", "Steering text queued. The subagent sees it appended to its next tool result.");
+                    return jsonOk(response);
                 }
-                return ToolResult.fail("Subagent steering service is unavailable.");
+                return jsonError("Subagent steering service is unavailable.");
+            }
+            case "status", "read" -> {
+                return readDelegatedRun(action, runId, session);
+            }
+            case "cancel" -> {
+                return cancelDelegatedRun(runId, session);
             }
             default -> {
-                return ToolResult.fail("Unknown action '" + action + "'. Use spawn, list, steer, or stop.");
+                return jsonError("Unknown action '" + action + "'. Use spawn, create, list, status, read, cancel, steer, or stop.");
             }
         }
+    }
+
+    private ToolResult readDelegatedRun(String action, String runId, Session session) {
+        DelegatedTaskRunService runService = delegatedTaskRunService();
+        if (runService == null) {
+            return jsonError("Async delegate_task run ledger is unavailable.");
+        }
+        UUID id;
+        try {
+            id = parseRunId(runId);
+        } catch (IllegalArgumentException e) {
+            return jsonError(e.getMessage());
+        }
+        return runService.findForParent(id, session.id())
+            .map(entity -> {
+                ObjectNode response = MAPPER.createObjectNode();
+                response.put("success", true);
+                response.put("action", action);
+                response.set("run", delegatedRunJson(entity, "read".equals(action)));
+                return jsonOk(response);
+            })
+            .orElseGet(() -> jsonError("Delegated run '" + runId + "' was not found for this session."));
+    }
+
+    private ToolResult cancelDelegatedRun(String runId, Session session) {
+        DelegatedTaskRunService runService = delegatedTaskRunService();
+        if (runService == null) {
+            return jsonError("Async delegate_task run ledger is unavailable.");
+        }
+        UUID id;
+        try {
+            id = parseRunId(runId);
+        } catch (IllegalArgumentException e) {
+            return jsonError(e.getMessage());
+        }
+        try {
+            DelegatedTaskRunEntity entity = runService.requestCancel(id, session.id());
+            if (entity.getChildSessionId() != null) {
+                InterruptToken interruptToken = interruptTokenProvider != null ? interruptTokenProvider.getIfAvailable() : null;
+                if (interruptToken != null) {
+                    interruptToken.cancel(entity.getChildSessionId());
+                }
+            }
+            ObjectNode response = MAPPER.createObjectNode();
+            response.put("success", true);
+            response.put("action", "cancel");
+            response.put("status", entity.getStatus());
+            response.set("run", delegatedRunJson(entity, true));
+            return jsonOk(response);
+        } catch (IllegalArgumentException e) {
+            return jsonError(e.getMessage());
+        }
+    }
+
+    private void appendDurableRuns(ObjectNode response, Session session) {
+        ArrayNode runs = response.putArray("runs");
+        DelegatedTaskRunService runService = delegatedTaskRunService();
+        if (runService == null) {
+            response.put("run_count", 0);
+            return;
+        }
+        try {
+            for (DelegatedTaskRunEntity entity : runService.listForParent(session.id(), 25)) {
+                runs.add(delegatedRunJson(entity, false));
+            }
+        } catch (RuntimeException e) {
+            response.put("runs_error", e.getMessage());
+        }
+        response.put("run_count", runs.size());
+    }
+
+    private ObjectNode delegatedRunJson(DelegatedTaskRunEntity entity, boolean includeResult) {
+        ObjectNode node = MAPPER.createObjectNode();
+        node.put("run_id", entity.getId().toString());
+        node.put("delegation_id", delegationId(entity.getId()));
+        node.put("parent_session_id", entity.getParentSessionId().toString());
+        if (entity.getChildSessionId() != null) {
+            node.put("child_session_id", entity.getChildSessionId().toString());
+        }
+        node.put("profile", entity.getProfile() == null ? "default" : entity.getProfile());
+        node.put("goal", entity.getGoal());
+        node.put("status", entity.getStatus());
+        putInstant(node, "created_at", entity.getCreatedAt());
+        putInstant(node, "started_at", entity.getStartedAt());
+        putInstant(node, "completed_at", entity.getCompletedAt());
+        putInstant(node, "cancel_requested_at", entity.getCancelRequestedAt());
+        putInstant(node, "delivered_at", entity.getDeliveredAt());
+        putInstant(node, "delivery_dropped_at", entity.getDeliveryDroppedAt());
+        putInstant(node, "delivery_claimed_at", entity.getDeliveryClaimedAt());
+        node.put("delivery_state", deliveryState(entity));
+        node.put("delivery_pending", entity.getCompletedAt() != null
+            && entity.getDeliveredAt() == null
+            && entity.getDeliveryDroppedAt() == null);
+        node.put("delivery_attempts", entity.getDeliveryAttempts());
+        if (entity.getDeliveryTarget() != null && !entity.getDeliveryTarget().isBlank()) {
+            node.put("delivery_target", entity.getDeliveryTarget());
+        }
+        if (entity.getDeliveryError() != null && !entity.getDeliveryError().isBlank()) {
+            node.put("delivery_error", entity.getDeliveryError());
+        }
+        if (entity.getDeliveryIdempotencyKey() != null && !entity.getDeliveryIdempotencyKey().isBlank()) {
+            node.put("delivery_idempotency_key", entity.getDeliveryIdempotencyKey());
+        }
+        if (entity.getError() != null && !entity.getError().isBlank()) {
+            node.put("error", entity.getError());
+        }
+        if (includeResult && entity.getResultJson() != null && !entity.getResultJson().isBlank()) {
+            node.put("result_json", entity.getResultJson());
+            node.set("result", parseResultJson(entity.getResultJson()));
+        }
+        return node;
+    }
+
+    private JsonNode parseResultJson(String resultJson) {
+        try {
+            return MAPPER.readTree(resultJson);
+        } catch (Exception e) {
+            return MAPPER.getNodeFactory().textNode(resultJson);
+        }
+    }
+
+    private void putInstant(ObjectNode node, String field, Instant instant) {
+        if (instant != null) {
+            node.put(field, instant.toString());
+        }
+    }
+
+    private UUID parseRunId(String runId) {
+        if (runId == null || runId.isBlank()) {
+            throw new IllegalArgumentException("run_id is required for this delegate_task action.");
+        }
+        String normalized = runId.trim();
+        if (normalized.startsWith("deleg_")) {
+            normalized = normalized.substring("deleg_".length());
+        }
+        try {
+            return UUID.fromString(normalized);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("run_id must be a UUID or delegation_id of the form deleg_<uuid>.");
+        }
+    }
+
+    private void markDelegatedRunStarted(UUID delegatedRunId, UUID childSessionId) {
+        if (delegatedRunId == null) {
+            return;
+        }
+        DelegatedTaskRunService runService = delegatedTaskRunService();
+        if (runService != null) {
+            runService.markStarted(delegatedRunId, childSessionId);
+        }
+    }
+
+    private boolean isAsyncCancelRequested(UUID delegatedRunId) {
+        if (delegatedRunId == null) {
+            return false;
+        }
+        DelegatedTaskRunService runService = delegatedTaskRunService();
+        return runService != null && runService.isCancelRequested(delegatedRunId);
+    }
+
+    private DelegatedTaskRunService delegatedTaskRunService() {
+        return delegatedTaskRunServiceProvider != null
+            ? delegatedTaskRunServiceProvider.getIfAvailable()
+            : null;
+    }
+
+    private boolean asyncRequested(DelegateArgs args) {
+        return Boolean.TRUE.equals(args.background())
+            || Boolean.TRUE.equals(args.async())
+            || Boolean.TRUE.equals(args.live());
+    }
+
+    private String resolveProfile(Session session) {
+        String profile = session.getMetadata("profile");
+        if (profile == null || profile.isBlank()) {
+            profile = session.getMetadata("hermes_profile");
+        }
+        return profile == null || profile.isBlank() ? "default" : profile.trim();
+    }
+
+    private String summarizeDelegationGoal(List<TaskSpec> tasks) {
+        if (tasks == null || tasks.isEmpty()) {
+            return "Delegated task";
+        }
+        if (tasks.size() == 1) {
+            return tasks.get(0).goal();
+        }
+        String first = tasks.get(0).goal() == null ? "task" : truncate(tasks.get(0).goal(), 80);
+        return "Batch delegation (" + tasks.size() + " tasks): " + first;
+    }
+
+    private String aggregateStatus(List<TaskResult> results) {
+        if (results == null || results.isEmpty()) {
+            return DelegatedTaskRunService.STATUS_FAILED;
+        }
+        if (results.stream().anyMatch(r -> DelegatedTaskRunService.STATUS_TIMEOUT.equals(r.status()))) {
+            return DelegatedTaskRunService.STATUS_TIMEOUT;
+        }
+        if (results.stream().anyMatch(r -> DelegatedTaskRunService.STATUS_INTERRUPTED.equals(r.status()))) {
+            return DelegatedTaskRunService.STATUS_INTERRUPTED;
+        }
+        if (results.stream().anyMatch(r -> DelegatedTaskRunService.STATUS_ERROR.equals(r.status()))) {
+            return DelegatedTaskRunService.STATUS_ERROR;
+        }
+        if (results.stream().anyMatch(r -> DelegatedTaskRunService.STATUS_FAILED.equals(r.status()))) {
+            return DelegatedTaskRunService.STATUS_FAILED;
+        }
+        return DelegatedTaskRunService.STATUS_COMPLETED;
+    }
+
+    private String firstError(List<TaskResult> results) {
+        if (results == null) {
+            return null;
+        }
+        return results.stream()
+            .map(TaskResult::error)
+            .filter(error -> error != null && !error.isBlank())
+            .findFirst()
+            .orElse(null);
+    }
+
+    private String delegationId(UUID runId) {
+        return "deleg_" + runId;
+    }
+
+    private String deliveryState(DelegatedTaskRunEntity entity) {
+        if (entity.getDeliveredAt() != null) {
+            return "delivered";
+        }
+        if (entity.getDeliveryDroppedAt() != null) {
+            return "dropped";
+        }
+        if (entity.getCompletedAt() == null) {
+            return "not_ready";
+        }
+        if (entity.getDeliveryClaim() != null && !entity.getDeliveryClaim().isBlank()) {
+            return "claimed";
+        }
+        return "pending";
     }
 
     /** Validate that the provided object is a syntactically valid JSON Schema object.
@@ -881,14 +1438,22 @@ public class DelegateTaskTool implements ToolHandler {
             required = false) @JsonProperty("acp_command") @JsonAlias("acpCommand") String acpCommand,
         @ToolParam(description = "Arguments for the ACP command (default: ['--acp', '--stdio']). Only used when acpCommand is set.",
             required = false) @JsonProperty("acp_args") @JsonAlias("acpArgs") List<String> acpArgs,
-        @ToolParam(description = "Default 'spawn' (omit for normal delegation). Live orchestration of running subagents: 'list' shows live children (ids, goals, status, transcript paths); 'steer' queues course-correction text into one child (requires subagent_id + message) without stopping it; 'stop' ends one child early (requires subagent_id) — its partial result still returns. Control actions return immediately; goal/tasks are ignored when action is not 'spawn'.",
+        @ToolParam(description = "Default 'spawn' (omit for normal delegation). Use 'create' for durable async/background dispatch. Control actions: 'list' shows live children and recent durable runs; 'status'/'read' inspect a durable run by run_id; 'cancel' requests cancellation by run_id; 'steer' queues course-correction text into one live child (requires subagent_id + message); 'stop' ends one live child early (requires subagent_id).",
             required = false) String action,
         @ToolParam(description = "Target for action='steer'/'stop'. Ids are returned in the spawn dispatch response (subagent_ids) and by action='list'.",
             required = false) @JsonProperty("subagent_id") @JsonAlias("subagentId") String subagentId,
+        @ToolParam(description = "Target durable async run for action='status', action='read', or action='cancel'. Accepts either run_id UUID or Hermes-style delegation_id (deleg_<uuid>).",
+            required = false) @JsonProperty("run_id") @JsonAlias({"runId", "delegation_id", "delegationId"}) String runId,
         @ToolParam(description = "For action='steer': the course correction. Be directive and specific — the child sees it appended to its next tool result mid-run.",
             required = false) String message,
         @ToolParam(description = "Optional JSON Schema the child's final answer must validate against. When set, the child is told the contract and its output is validated; a malformed result triggers one bounded correction retry.",
-            required = false) @JsonProperty("output_schema") @JsonAlias("outputSchema") java.util.Map<String, Object> outputSchema
+            required = false) @JsonProperty("output_schema") @JsonAlias("outputSchema") java.util.Map<String, Object> outputSchema,
+        @ToolParam(description = "Hermes background mode. When true, dispatch returns immediately with a durable run_id/delegation_id; inspect completion with action='status' or action='read'.",
+            required = false) Boolean background,
+        @ToolParam(description = "Alias for background mode.",
+            required = false) @JsonProperty("async") @JsonAlias("asyncMode") Boolean async,
+        @ToolParam(description = "Alias for Hermes live/background delegation mode. This Java parity layer records durable status/read/cancel, while full gateway reinjection remains a separate runtime feature.",
+            required = false) Boolean live
     ) {}
 
     /**
@@ -927,6 +1492,10 @@ public class DelegateTaskTool implements ToolHandler {
         static TaskResult timeout(int index, String goal, int timeoutSeconds) {
             return new TaskResult(index, "timeout", null,
                 "Subagent timed out after " + timeoutSeconds + "s", 0, "leaf");
+        }
+
+        static TaskResult interrupted(int index, String goal, String errorMsg) {
+            return new TaskResult(index, "interrupted", null, errorMsg, 0, "leaf");
         }
     }
 

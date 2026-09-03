@@ -1,20 +1,26 @@
 package com.azhukov.agent.core.tool;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.config.SharedObjectMapper;
+import com.azhukov.agent.core.agent.InterruptToken;
+import com.azhukov.agent.core.agent.RunControlScope;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
-import com.azhukov.agent.metrics.AgentMetrics;
 import com.azhukov.agent.core.security.SecretRedactor;
 import com.azhukov.agent.core.security.ToolCallGuardrail;
 import com.azhukov.agent.core.state.TurnState;
+import com.azhukov.agent.metrics.AgentMetrics;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -29,6 +35,8 @@ import java.util.function.Supplier;
 @Slf4j
 @RequiredArgsConstructor
 public class ToolExecutionService {
+
+    private static final ObjectMapper JSON = SharedObjectMapper.get();
 
     private final ToolRegistry toolRegistry;
     private final AgentProperties properties;
@@ -63,10 +71,30 @@ public class ToolExecutionService {
             .build());
 
     public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session, TurnState turnState) {
+        UUID previousSessionId = InterruptToken.currentSessionId();
+        UUID scopedSessionId = RunControlScope.controlSessionId(session);
+        boolean pushedSessionContext = scopedSessionId != null && !scopedSessionId.equals(previousSessionId);
+        if (pushedSessionContext) {
+            InterruptToken.setCurrentSessionId(scopedSessionId);
+        }
+        try {
+            return doExecute(toolName, toolCallId, arguments, lastAssistant, session, turnState);
+        } finally {
+            if (pushedSessionContext) {
+                if (previousSessionId == null) {
+                    InterruptToken.clearCurrentSessionId();
+                } else {
+                    InterruptToken.setCurrentSessionId(previousSessionId);
+                }
+            }
+        }
+    }
+
+    private ToolResult doExecute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session, TurnState turnState) {
         var before = turnState == null ? guardrail.beforeCall(toolName, arguments) : guardrail.beforeCall(toolName, arguments, turnState);
         if (before.isBlockOrHalt()) {
             log.warn("Guardrail {} tool {}: {}", before.action(), toolName, before.message());
-            return ToolResult.fail(before.message());
+            return failureResult(before.message());
         }
 
         // Tool loop guardrail (Hermes parity: tool_guardrails.py before_call)
@@ -77,7 +105,7 @@ public class ToolExecutionService {
                 // Runaway caps (web_search/delegate_task) are hard blocks;
                 // repeat warnings are advisory (append to result, don't block).
                 if (loopWarning.startsWith("Blocked ")) {
-                    return ToolResult.fail(loopWarning);
+                    return toolLoopGuardrail.blockedResult(toolName, arguments, loopWarning);
                 }
             }
         }
@@ -90,15 +118,17 @@ public class ToolExecutionService {
         long start = System.currentTimeMillis();
         Callable<ToolResult> callable = () -> toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session);
         Supplier<ToolResult> decorated = Retry.decorateSupplier(retry, () -> {
+            Future<ToolResult> future = executor.submit(callable);
             try {
-                return executor.submit(callable).get(
+                return future.get(
                     properties.getToolOutput().getTimeoutSecondsOrDefault(120), TimeUnit.SECONDS);
             } catch (TimeoutException e) {
+                future.cancel(true);
                 log.warn("Tool {} timed out after {}s", toolName, properties.getToolOutput().getTimeoutSecondsOrDefault(120));
-                return ToolResult.fail("Tool timed out: " + toolName);
+                return failureResult("Tool timed out: " + toolName);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return ToolResult.fail("Interrupted: " + toolName);
+                return failureResult("Interrupted: " + toolName);
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause();
                 if (cause instanceof RuntimeException r) {
@@ -115,7 +145,7 @@ public class ToolExecutionService {
             failed = !result.success();
         } catch (Exception e) {
             log.warn("Tool {} execution failed after retries: {}", toolName, e.getMessage());
-            result = ToolResult.fail("Tool execution failed: " + toolName + " - " + e.getMessage());
+            result = failureResult("Tool execution failed: " + toolName + " - " + e.getMessage());
             failed = true;
         }
         long duration = System.currentTimeMillis() - start;
@@ -136,10 +166,12 @@ public class ToolExecutionService {
             : guardrail.afterCall(toolName, arguments, result, failed, turnState);
         if (after.isBlockOrHalt()) {
             log.warn("Guardrail {} after tool {}: {}", after.action(), toolName, after.message());
-            result = ToolResult.fail((result.error() != null ? result.error() + "\n" : "") + "Guardrail: " + after.message());
+            String blockedError = (result.error() != null ? result.error() + "\n" : "") + "Guardrail: " + after.message();
+            result = failureWithContent(result.content(), blockedError);
         }
 
-        String safeContent = result.success() ? redactor.redact(result.content()) : redactor.redact(result.error());
+        String safeContent = redactNullable(result.content());
+        String safeError = redactNullable(result.error());
         // Subdirectory hints (Hermes tool_executor.py:1768): on first visit to a
         // directory via a path/command argument, append AGENTS.md/CLAUDE.md/
         // .cursorrules content to the tool result. Only successful results get
@@ -178,7 +210,9 @@ public class ToolExecutionService {
                 log.debug("security guidance skipped for {}: {}", toolName, sgEx.getMessage());
             }
         }
-        ToolResult safeResult = result.success() ? ToolResult.ok(safeContent) : ToolResult.fail(safeContent);
+        ToolResult safeResult = result.success()
+            ? ToolResult.ok(safeContent)
+            : failureWithContent(safeContent, safeError);
         // Tool loop guardrail (Hermes parity: tool_guardrails.py after_call)
         if (toolLoopGuardrail != null) {
             String loopWarning = toolLoopGuardrail.afterCall(toolName, arguments,
@@ -187,7 +221,9 @@ public class ToolExecutionService {
                 log.debug("Tool loop guardrail after {}: {}", toolName, loopWarning);
                 safeResult = safeResult.success()
                     ? ToolResult.ok(ToolLoopGuardrail.appendWarning(safeResult.content(), loopWarning))
-                    : ToolResult.fail(ToolLoopGuardrail.appendWarning(safeResult.content(), loopWarning));
+                    : new ToolResult(false,
+                        ToolLoopGuardrail.appendWarning(safeResult.content(), loopWarning),
+                        safeResult.error());
             }
         }
         // Preserve oversized successful output before the in-context limiter
@@ -214,26 +250,66 @@ public class ToolExecutionService {
         return truncateIfNeeded(safeResult, toolName);
     }
 
+    private String redactNullable(String value) {
+        return value == null || value.isEmpty() ? value : redactor.redact(value);
+    }
+
     public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session) {
         return execute(toolName, toolCallId, arguments, lastAssistant, session, null);
     }
 
     private ToolResult truncateIfNeeded(ToolResult result, String toolName) {
         int max = properties.getToolOutput().getMaxChars();
-        if (result.content() == null || result.content().length() <= max) {
+        if (result.success()) {
+            String truncated = truncateText(result.content(), max, toolName);
+            return truncated == result.content() ? result : ToolResult.ok(truncated);
+        }
+        if (result.content() != null && !result.content().isEmpty()) {
+            String truncatedContent = truncateText(result.content(), max, toolName);
+            String truncatedError = truncateText(result.error(), max, toolName);
+            if (truncatedContent == result.content() && truncatedError == result.error()) {
+                return result;
+            }
+            return new ToolResult(false, truncatedContent, truncatedError);
+        }
+        String truncatedError = truncateText(result.error(), max, toolName);
+        if (truncatedError == result.error()) {
             return result;
+        }
+        return failureResult(truncatedError);
+    }
+
+    private static ToolResult failureWithContent(String content, String error) {
+        String message = error == null || error.isBlank() ? "Tool failed" : error;
+        if (content == null || content.isBlank()) {
+            return failureResult(message);
+        }
+        return new ToolResult(false, content, message);
+    }
+
+    private static ToolResult failureResult(String error) {
+        String message = error == null || error.isBlank() ? "Tool failed" : error;
+        ObjectNode payload = JSON.createObjectNode();
+        payload.put("success", false);
+        payload.put("error", message);
+        return new ToolResult(false, payload.toString(), message);
+    }
+
+    private String truncateText(String text, int max, String toolName) {
+        if (text == null || text.length() <= max) {
+            return text;
         }
         // Hermes parity: head+tail truncation so the model sees both how
         // the output started and how it ended (error messages, exit codes,
         // summaries are typically at the end). Head-only truncation loses
         // the tail entirely.
         int half = max / 2;
-        int omitted = result.content().length() - 2 * half;
-        String truncated = result.content().substring(0, half)
+        int omitted = text.length() - 2 * half;
+        String truncated = text.substring(0, half)
             + "\n[... " + omitted + " chars omitted ...]\n"
-            + result.content().substring(result.content().length() - half);
-        log.warn("Tool {} output truncated from {} to {} chars (head+tail)", toolName, result.content().length(), max);
-        return ToolResult.ok(truncated);
+            + text.substring(text.length() - half);
+        log.warn("Tool {} output truncated from {} to {} chars (head+tail)", toolName, text.length(), max);
+        return truncated;
     }
 
     /**

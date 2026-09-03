@@ -4,10 +4,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * h69: Tests for parallel-batch path canonicalisation.
@@ -17,6 +19,15 @@ class ToolParallelSafetyCanonicalisationTest {
 
     @TempDir
     Path tempDir;
+
+    private Path createSymlinkOrSkip(Path link, Path target) throws IOException {
+        try {
+            return Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | FileSystemException | SecurityException e) {
+            assumeTrue(false, "Symbolic links are not available in this test environment: " + e.getMessage());
+            return link;
+        }
+    }
 
     @Test
     void canonicalise_existingFile_resolvesToRealPath() throws IOException {
@@ -49,7 +60,7 @@ class ToolParallelSafetyCanonicalisationTest {
         Path realFile = tempDir.resolve("real.txt");
         Files.writeString(realFile, "content");
         Path symlink = tempDir.resolve("link.txt");
-        Files.createSymbolicLink(symlink, realFile);
+        createSymlinkOrSkip(symlink, realFile);
 
         Path canonicalReal = ToolParallelSafety.canonicalise(realFile);
         Path canonicalSymlink = ToolParallelSafety.canonicalise(symlink);
@@ -64,7 +75,7 @@ class ToolParallelSafetyCanonicalisationTest {
         Path realFile = tempDir.resolve("config.json");
         Files.writeString(realFile, "{}");
         Path symlink = tempDir.resolve("link-to-config.json");
-        Files.createSymbolicLink(symlink, realFile);
+        createSymlinkOrSkip(symlink, realFile);
 
         // Canonicalise both — they should resolve to the same path
         Path canonicalReal = ToolParallelSafety.canonicalise(realFile);

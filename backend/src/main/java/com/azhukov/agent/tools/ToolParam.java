@@ -13,7 +13,7 @@ public @interface ToolParam {
 
     boolean required() default true;
 
-    String type() default "string";
+    String type() default "";
 
     /** Optional enum values — restricts the parameter to one of these strings. */
     String[] enumValues() default {};

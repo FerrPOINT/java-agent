@@ -10,6 +10,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SkillPreprocessorBranchTest {
 
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    private static String slowCommand() {
+        return isWindows() ? "ping -n 10 127.0.0.1 >NUL" : "sleep 10";
+    }
+
     @Test
     void preprocess_nullContent_returnsNull() {
         SkillPreprocessor sp = new SkillPreprocessor();
@@ -210,10 +218,10 @@ class SkillPreprocessorBranchTest {
     @Test
     void setInlineShellTimeout_updatesTimeout() {
         SkillPreprocessor sp = new SkillPreprocessor();
-        sp.setInlineShellTimeout(5);
+        sp.setInlineShellTimeout(1);
         // Timeout is used internally — verify it was set by checking that a slow command times out
         sp.setInlineShellEnabled(true);
-        String result = sp.runInlineShell("sleep 10", "/tmp");
+        String result = sp.runInlineShell(slowCommand(), null);
         assertThat(result).contains("timeout");
     }
 }

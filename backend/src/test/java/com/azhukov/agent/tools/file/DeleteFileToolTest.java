@@ -4,6 +4,9 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.tools.terminal.TerminalTool;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,6 +18,8 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DeleteFileToolTest {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private DeleteFileTool tool;
     private AgentProperties properties;
@@ -36,13 +41,29 @@ class DeleteFileToolTest {
         return Message.assistant("test", 0);
     }
 
+    private static String jsonPath(Path path) {
+        return path.toString().replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    @Test
+    @DisplayName("Should return structured error for malformed arguments")
+    void shouldReturnStructuredErrorForMalformedArguments() throws Exception {
+        ToolResult result = tool.execute("{", dummyMessage(), dummySession());
+
+        assertFalse(result.success());
+        JsonNode json = JSON.readTree(result.content());
+        assertFalse(json.path("success").asBoolean());
+        assertTrue(json.path("error").asText().contains("Invalid tool arguments"));
+        assertEquals(json.path("error").asText(), result.error());
+    }
+
     @Test
     @DisplayName("Should delete existing file")
     void shouldDeleteExistingFile() throws Exception {
         Path file = tempDir.resolve("test.txt");
         Files.writeString(file, "hello world");
 
-        String args = "{\"path\":\"" + file + "\"}";
+        String args = "{\"path\":\"" + jsonPath(file) + "\"}";
         ToolResult result = tool.execute(args, dummyMessage(), dummySession());
 
         assertTrue(result.success());
@@ -51,9 +72,22 @@ class DeleteFileToolTest {
     }
 
     @Test
+    @DisplayName("Should delete relative file inside session workdir")
+    void shouldDeleteRelativeFileInsideSessionWorkdir() throws Exception {
+        Path file = tempDir.resolve("test.txt");
+        Files.writeString(file, "hello world");
+        Session cwdSession = dummySession().withMetadata(TerminalTool.META_WORKDIR, tempDir.toString());
+
+        ToolResult result = tool.execute("{\"path\":\"test.txt\"}", dummyMessage(), cwdSession);
+
+        assertTrue(result.success());
+        assertFalse(Files.exists(file));
+    }
+
+    @Test
     @DisplayName("Should fail when file not found")
     void shouldFailWhenFileNotFound() {
-        String args = "{\"path\":\"" + tempDir.resolve("nonexistent.txt") + "\"}";
+        String args = "{\"path\":\"" + jsonPath(tempDir.resolve("nonexistent.txt")) + "\"}";
         ToolResult result = tool.execute(args, dummyMessage(), dummySession());
 
         assertFalse(result.success());
@@ -86,7 +120,7 @@ class DeleteFileToolTest {
     @Test
     @DisplayName("Should refuse to delete directory")
     void shouldRefuseToDeleteDirectory() {
-        String args = "{\"path\":\"" + tempDir + "\"}";
+        String args = "{\"path\":\"" + jsonPath(tempDir) + "\"}";
         ToolResult result = tool.execute(args, dummyMessage(), dummySession());
 
         assertFalse(result.success());
@@ -136,7 +170,7 @@ class DeleteFileToolTest {
         Path file = tempDir.resolve("allowed.txt");
         Files.writeString(file, "test");
 
-        String args = "{\"path\":\"" + file + "\"}";
+        String args = "{\"path\":\"" + jsonPath(file) + "\"}";
         ToolResult result = tool.execute(args, dummyMessage(), dummySession());
 
         assertTrue(result.success());
@@ -155,7 +189,7 @@ class DeleteFileToolTest {
         }
         Files.writeString(outside, "test");
 
-        String args = "{\"path\":\"" + outside + "\"}";
+        String args = "{\"path\":\"" + jsonPath(outside) + "\"}";
         ToolResult result = tool.execute(args, dummyMessage(), dummySession());
 
         assertFalse(result.success());

@@ -1,5 +1,8 @@
 package com.azhukov.agent.core.tool;
 
+import com.azhukov.agent.core.model.ToolResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -9,6 +12,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Verifies repeated tool calls trigger warnings at the right thresholds.
  */
 class ToolLoopGuardrailTest {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Test
     void noWarningOnFirstCall() {
@@ -30,6 +35,17 @@ class ToolLoopGuardrailTest {
         String warning = guardrail.afterCall("terminal", args, true);
         assertThat(warning).isNotNull();
         assertThat(warning).contains("terminal");
+        assertThat(warning).contains("identical arguments");
+    }
+
+    @Test
+    void exactRepeatUsesCanonicalJsonArguments() {
+        ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 10);
+
+        guardrail.afterCall("terminal", "{\"command\":\"ls\",\"timeout\":10}", true);
+        String warning = guardrail.afterCall("terminal", "{\"timeout\":10,\"command\":\"ls\"}", true);
+
+        assertThat(warning).isNotNull();
         assertThat(warning).contains("identical arguments");
     }
 
@@ -156,6 +172,39 @@ class ToolLoopGuardrailTest {
     }
 
     @Test
+    void idempotentNoProgressUsesCanonicalJsonArguments() {
+        ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 50, 50);
+
+        assertThat(guardrail.afterCall(
+            "read_file",
+            "{\"path\":\"README.md\",\"limit\":100}",
+            "same content",
+            false
+        )).isNull();
+        String warning = guardrail.afterCall(
+            "read_file",
+            "{\"limit\":100,\"path\":\"README.md\"}",
+            "same content",
+            false
+        );
+
+        assertThat(warning).isNotNull();
+        assertThat(warning).contains("same result 2 times");
+    }
+
+    @Test
+    void idempotentNoProgressUsesCanonicalJsonResult() {
+        ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 50, 50);
+        String args = "{\"path\":\"README.md\"}";
+
+        assertThat(guardrail.afterCall("read_file", args, "{\"a\":1,\"b\":2}", false)).isNull();
+        String warning = guardrail.afterCall("read_file", args, "{\"b\":2,\"a\":1}", false);
+
+        assertThat(warning).isNotNull();
+        assertThat(warning).contains("same result 2 times");
+    }
+
+    @Test
     void idempotentChangedResultResetsNoProgressCount() {
         ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 50, 50);
         String args = "{\"path\":\"README.md\"}";
@@ -199,6 +248,40 @@ class ToolLoopGuardrailTest {
     }
 
     @Test
+    void delegateTaskBatchCountsEverySpawnedSubagent() {
+        ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 50, 3);
+
+        assertThat(guardrail.beforeCall(
+            "delegate_task",
+            "{\"tasks\":[{\"goal\":\"one\"},{\"goal\":\"two\"}]}"
+        )).isNull();
+        assertThat(guardrail.beforeCall("delegate_task", "{\"goal\":\"three\"}")).isNull();
+        String blocked = guardrail.beforeCall("delegate_task", "{\"goal\":\"four\"}");
+
+        assertThat(blocked).startsWith("Blocked delegate_task");
+        assertThat(blocked).contains("3 subagents");
+        assertThat(blocked).contains("limit 3");
+    }
+
+    @Test
+    void delegateTaskControlActionsDoNotConsumeOrBlockSubagentCap() {
+        ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 50, 1);
+
+        assertThat(guardrail.beforeCall("delegate_task", "{\"goal\":\"one\"}")).isNull();
+        assertThat(guardrail.beforeCall("delegate_task", "{\"action\":\"list\"}")).isNull();
+        assertThat(guardrail.beforeCall(
+            "delegate_task",
+            "{\"action\":\"steer\",\"subagent_id\":\"s1\",\"message\":\"focus\"}"
+        )).isNull();
+        assertThat(guardrail.beforeCall("delegate_task", "{\"action\":\"stop\",\"subagent_id\":\"s1\"}")).isNull();
+        String blocked = guardrail.beforeCall("delegate_task", "{\"goal\":\"two\"}");
+
+        assertThat(blocked).startsWith("Blocked delegate_task");
+        assertThat(blocked).contains("1 subagents");
+        assertThat(blocked).contains("limit 1");
+    }
+
+    @Test
     void resetForTurnResetsRunawayCaps() {
         ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 1, 1);
         guardrail.beforeCall("web_search", "{\"query\":\"one\"}");
@@ -207,6 +290,22 @@ class ToolLoopGuardrailTest {
         guardrail.resetForTurn();
 
         assertThat(guardrail.beforeCall("web_search", "{\"query\":\"three\"}")).isNull();
+    }
+
+    @Test
+    void blockedResultCarriesStructuredFailureAndErrorMetadata() throws Exception {
+        ToolLoopGuardrail guardrail = new ToolLoopGuardrail(true, 2, 3, 2, 1, 1);
+        String message = "Blocked web_search after 1 web searches";
+
+        ToolResult result = guardrail.blockedResult("web_search", "{\"query\":\"two\"}", message);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).isEqualTo(message);
+        JsonNode payload = MAPPER.readTree(result.content());
+        assertThat(payload.path("success").asBoolean()).isFalse();
+        assertThat(payload.path("error").asText()).isEqualTo(message);
+        assertThat(payload.path("guardrail").path("action").asText()).isEqualTo("block");
+        assertThat(payload.path("guardrail").path("code").asText()).isEqualTo("loop_web_search_cap");
     }
 
 }

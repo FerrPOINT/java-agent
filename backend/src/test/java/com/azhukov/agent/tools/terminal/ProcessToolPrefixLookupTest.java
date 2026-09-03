@@ -43,9 +43,18 @@ class ProcessToolPrefixLookupTest {
         assertThat(fullResult.content()).contains("proc_abcdef123456");
 
         // Prefix works (unique)
-        ToolResult prefixResult = tool.execute("{\"action\":\"poll\",\"sessionId\":\"proc_abc\"}", null, null);
+        ToolResult prefixResult = tool.execute("{\"action\":\"poll\",\"sessionId\":\"proc_abcd\"}", null, null);
         assertThat(prefixResult.success()).isTrue();
         assertThat(prefixResult.content()).contains("proc_abcdef123456");
+
+        ToolResult bareSuffixResult = tool.execute("{\"action\":\"poll\",\"sessionId\":\"abcd\"}", null, null);
+        assertThat(bareSuffixResult.success()).isTrue();
+        assertThat(bareSuffixResult.content()).contains("proc_abcdef123456");
+
+        ToolResult tooShortResult = tool.execute("{\"action\":\"poll\",\"sessionId\":\"proc_abc\"}", null, null);
+        assertThat(tooShortResult.success()).isTrue();
+        assertThat(tooShortResult.content()).contains("\"status\":\"not_found\"");
+        assertThat(tooShortResult.content()).contains("No process with ID proc_abc");
     }
 
     @Test
@@ -68,7 +77,7 @@ class ProcessToolPrefixLookupTest {
         // The ManagedProcess reader thread reads the mocked stream asynchronously —
         // wait for it to drain before asserting (same pattern as ProcessToolTest).
         Thread.sleep(500);
-        ToolResult r = tool.execute("{\"action\":\"log\",\"sessionId\":\"proc_xyz\"}", null, null);
+        ToolResult r = tool.execute("{\"action\":\"log\",\"sessionId\":\"proc_xyz7\"}", null, null);
         assertThat(r.success()).isTrue();
         assertThat(r.content()).contains("line1");
         assertThat(r.content()).contains("line2");
@@ -93,7 +102,7 @@ class ProcessToolPrefixLookupTest {
         // Prefix lookup for kill action
         ToolResult r = tool.execute("{\"action\":\"kill\",\"sessionId\":\"proc_kill\"}", null, null);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("Killed process proc_killme123");
+        assertThat(r.content()).contains("\"status\":\"already_exited\"");
     }
 
     @Test
@@ -121,16 +130,18 @@ class ProcessToolPrefixLookupTest {
 
         // "proc_same" is ambiguous — matches both
         ToolResult r = tool.execute("{\"action\":\"poll\",\"sessionId\":\"proc_same\"}", null, null);
-        assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Process not found");
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("\"status\":\"not_found\"");
+        assertThat(r.content()).contains("No process with ID proc_same");
     }
 
     @Test
     void nonExistentPrefixReturnsNotFound() {
         ProcessTool tool = new ProcessTool();
         ToolResult r = tool.execute("{\"action\":\"poll\",\"sessionId\":\"nonexistent\"}", null, null);
-        assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Process not found");
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("\"status\":\"not_found\"");
+        assertThat(r.content()).contains("No process with ID nonexistent");
     }
 
     @Test
@@ -159,7 +170,7 @@ class ProcessToolPrefixLookupTest {
         // Prefix lookup for write action
         ToolResult r = tool.execute("{\"action\":\"write\",\"sessionId\":\"proc_write\",\"data\":\"hello\"}", null, null);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("Data written to stdin");
+        assertThat(r.content()).contains("\"bytes_written\":5");
     }
 
     @Test
@@ -181,7 +192,7 @@ class ProcessToolPrefixLookupTest {
         // Prefix lookup for close action
         ToolResult r = tool.execute("{\"action\":\"close\",\"sessionId\":\"proc_close\"}", null, null);
         assertThat(r.success()).isTrue();
-        assertThat(r.content()).contains("Stdin closed");
+        assertThat(r.content()).contains("\"message\":\"stdin closed\"");
     }
 
     @SuppressWarnings("unchecked")

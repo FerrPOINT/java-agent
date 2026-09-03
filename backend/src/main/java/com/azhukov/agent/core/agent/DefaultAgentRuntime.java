@@ -59,6 +59,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -190,15 +191,108 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools) {
+        return run(messages, tools, ModelRequestOptions.empty());
+    }
+
+    @Override
+    public ChatResponse run(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
+        return toChatResponse(runMessages(messages, tools, options));
+    }
+
+    @Override
+    public TurnResult runMessages(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
+        ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
+        Session session = Session.create("openai-user", "openai-compatible",
+                effectiveOptions.modelName() != null ? effectiveOptions.modelName() : "")
+            .withMetadata("skip_background_review", "true");
+        UUID controlSessionId = RunControlScope.controlSessionId(session);
+
+        guardrail.reset(controlSessionId);
+        if (interruptToken != null) {
+            interruptToken.reset(controlSessionId);
+        }
+        toolExecutionService.resetLoopGuardrailForTurn();
+        turnStateManager.clear(controlSessionId);
+        if (steerBuffer != null) {
+            steerBuffer.clear(controlSessionId);
+        }
+
+        TurnSnapshot budget = iterationBudget.startTurn(controlSessionId);
+        if (budget == null) {
+            budget = new TurnSnapshot(controlSessionId, java.time.Instant.now(), 1,
+                0, 0, 0, 0, 0L, false, null);
+        }
+        if (fallbackManager != null) {
+            fallbackManager.restorePrimary();
+        }
+        fallbackManager = new FallbackManager(
+            properties.getFallbackChain(),
+            properties.getModel().getProvider(),
+            properties.getModel().getModelName(),
+            properties.getModel().getBaseUrl(),
+            properties.getModel().getApiKey()
+        );
+        activeModelClient = modelClient;
+
         List<Message> sanitized = messageSanitizer.sanitize(messages);
-        List<Message> context = contextEngine.prepareContext(
-            Session.create("openai-user", "openai-compatible", ""), sanitized);
-        ModelClient client = activeModelClient != null ? activeModelClient : modelClient;
-        return client.complete(context, tools);
+        List<Message> turnMessages = new ArrayList<>(sanitized != null
+            ? sanitized
+            : messages != null ? messages : List.of());
+        List<ToolDefinition> effectiveTools = tools != null ? tools : List.of();
+        TurnState turnState = turnStateManager.getOrStart(controlSessionId, 1);
+
+        try {
+            return runTurnLoop(session, turnMessages, effectiveTools,
+                properties.getCore().getMaxTurns(), 1, budget, turnState,
+                session.id().toString(), controlSessionId, effectiveOptions, Set.of());
+        } finally {
+            guardrail.reset(controlSessionId);
+            turnStateManager.clear(controlSessionId);
+            if (steerBuffer != null) {
+                steerBuffer.clear(controlSessionId);
+            }
+            if (fallbackManager != null && fallbackManager.isFallbackActivated()) {
+                fallbackManager.restorePrimary();
+            }
+            activeModelClient = modelClient;
+        }
+    }
+
+    private ChatResponse toChatResponse(TurnResult result) {
+        if (result == null) {
+            return ChatResponse.text("");
+        }
+        if (result.error() != null && !result.error().isBlank()) {
+            return ChatResponse.text(result.error());
+        }
+        for (int i = result.messages().size() - 1; i >= 0; i--) {
+            Message message = result.messages().get(i);
+            if (message.role() == Role.ASSISTANT
+                && (message.toolCalls() == null || message.toolCalls().isEmpty())) {
+                return ChatResponse.text(message.content());
+            }
+        }
+        return ChatResponse.text(result.finalText());
+    }
+
+    private Set<String> parseCsvMetadata(String value) {
+        if (value == null || value.isBlank()) {
+            return Set.of();
+        }
+        return Arrays.stream(value.split(","))
+            .map(String::trim)
+            .filter(s -> !s.isEmpty())
+            .collect(java.util.stream.Collectors.toSet());
     }
 
     @Override
     public TurnResult runTurn(Session session, String userInput, List<String> references,
+                              ModelRequestOptions options) {
+        return runTurn(session, Message.user(userInput), references, options);
+    }
+
+    @Override
+    public TurnResult runTurn(Session session, Message userInput, List<String> references,
                               ModelRequestOptions options) {
         ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
         // Acquire per-session lock to prevent concurrent turns on the same session.
@@ -226,24 +320,32 @@ public class DefaultAgentRuntime implements AgentRuntime {
         }
     }
 
-    private TurnResult runTurnInternal(Session session, String userInput, List<String> references,
+    private TurnResult runTurnInternal(Session session, Message userInputMessage, List<String> references,
                                        ModelRequestOptions options) {
         UUID sessionIdUuid = session.id();
+        UUID controlSessionId = RunControlScope.controlSessionId(session);
         String sessionId = sessionIdUuid.toString();
-        guardrail.reset(sessionIdUuid);
+        guardrail.reset(controlSessionId);
         // Clear stale cancellation from an earlier child turn before this new turn starts.
         if (interruptToken != null) {
-            interruptToken.reset(sessionIdUuid);
+            boolean preserveApiRunStop = RunControlScope.hasControlSessionId(session)
+                && interruptToken.isCancelled(controlSessionId);
+            if (!preserveApiRunStop) {
+                interruptToken.reset(controlSessionId);
+            }
         }
         toolExecutionService.resetLoopGuardrailForTurn();
-        turnStateManager.clear(sessionIdUuid);
+        turnStateManager.clear(controlSessionId);
         // Clear any pending steer from a previous turn (parity with Hermes
         // _drain_pending_steer clearing on turn start).
         if (steerBuffer != null) {
-            steerBuffer.clear(sessionIdUuid);
+            steerBuffer.clear(controlSessionId);
         }
-        TurnSnapshot budget = iterationBudget.startTurn(sessionIdUuid);
-        String safeInput = inputSanitizer.sanitize(userInput);
+        TurnSnapshot budget = iterationBudget.startTurn(controlSessionId);
+        String rawInput = userInputMessage != null && userInputMessage.content() != null
+            ? userInputMessage.content()
+            : "";
+        String safeInput = inputSanitizer.sanitize(rawInput);
 
         // ── Fallback chain initialization (parity with Hermes turn_context.py) ──
         // At the start of each turn, restore the primary model if a fallback was
@@ -260,16 +362,30 @@ public class DefaultAgentRuntime implements AgentRuntime {
             properties.getModel().getApiKey()
         );
         activeModelClient = modelClient;
+        int inputImageCount = userInputMessage != null && userInputMessage.imageCount() != null
+            ? userInputMessage.imageCount()
+            : 0;
+        Message safeUserMessage = inputImageCount > 0
+            ? Message.userWithImages(safeInput, inputImageCount)
+            : Message.user(safeInput);
 
         // Resolve effective toolsets: session metadata override (from DelegateTaskTool)
         // takes priority, then the configured default toolsets.
         Set<String> effectiveToolsets;
         String toolsetsMeta = session.getMetadata("delegation_toolsets");
         if (toolsetsMeta != null && !toolsetsMeta.isBlank()) {
-            effectiveToolsets = new HashSet<>(Arrays.asList(toolsetsMeta.split(",")));
+            effectiveToolsets = parseCsvMetadata(toolsetsMeta);
         } else {
             effectiveToolsets = new HashSet<>(properties.getSkills().getDefaultToolsets());
         }
+        List<ToolDefinition> tools = toolRegistry.getDefinitions(effectiveToolsets);
+        Set<String> disabledToolNames = parseCsvMetadata(session.getMetadata("delegation_disabled_tools"));
+        if (!disabledToolNames.isEmpty()) {
+            tools = tools.stream()
+                .filter(tool -> !disabledToolNames.contains(tool.name()))
+                .toList();
+        }
+        boolean memoryToolAvailable = tools.stream().anyMatch(tool -> "memory".equals(tool.name()));
 
         // Nudge: increment per-session memory turn counter
         // H6: Only increment if the memory toolset is actually available to the session.
@@ -277,7 +393,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         // user turns in the conversation history so the nudge interval is preserved
         // across restarts. Mirrors Hermes which initializes _turns_since_memory from
         // the persisted conversation length on session load.
-        if (effectiveToolsets.contains("memory")) {
+        if (memoryToolAvailable) {
             int memNudge = properties.getMemory().getNudgeInterval();
             AtomicInteger memCounter = turnsSinceMemory.computeIfAbsent(sessionIdUuid, k -> {
                 // M8: Hydrate from history — count prior user turns and initialize
@@ -311,10 +427,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }
         }
 
-        TurnState turnState = turnStateManager.getOrStart(sessionIdUuid, 1);
+        TurnState turnState = turnStateManager.getOrStart(controlSessionId, 1);
         List<Message> turnMessages = new ArrayList<>();
         // Pass system prompt override from session metadata (set by DelegateTaskTool)
+        // or from the persisted session resource (Hermes /api/sessions).
         String systemPromptOverride = session.getMetadata("system_prompt_override");
+        if ((systemPromptOverride == null || systemPromptOverride.isBlank())
+                && session.systemPrompt() != null && !session.systemPrompt().isBlank()) {
+            systemPromptOverride = session.systemPrompt();
+        }
         if (systemPromptOverride != null && !systemPromptOverride.isBlank()
                 && promptBuilder instanceof DefaultPromptBuilder dpb) {
             turnMessages.add(dpb.buildSystemMessage(session, systemPromptOverride));
@@ -336,16 +457,18 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 refContent = sb.length() > 0 ? Optional.of(sb.toString().trim()) : Optional.empty();
             }
             if (refContent.isPresent()) {
-                turnMessages.add(Message.user(safeInput + "\n\n--- References ---\n\n" + refContent.get()));
+                String referencedInput = safeInput + "\n\n--- References ---\n\n" + refContent.get();
+                turnMessages.add(inputImageCount > 0
+                    ? Message.userWithImages(referencedInput, inputImageCount)
+                    : Message.user(referencedInput));
             } else {
-                turnMessages.add(Message.user(safeInput));
+                turnMessages.add(safeUserMessage);
             }
         } else {
-            turnMessages.add(Message.user(safeInput));
+            turnMessages.add(safeUserMessage);
         }
 
         // Toolsets already resolved above (before memory nudge counter).
-        List<ToolDefinition> tools = toolRegistry.getDefinitions(effectiveToolsets);
 
         // Resolve effective max turns: session metadata override (from DelegateTaskTool)
         // takes priority when positive, then the configured core.max-turns.
@@ -372,14 +495,16 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
         TurnResult result = null;
         try {
-        result = runTurnLoop(session, turnMessages, tools, maxTurns, turnIndex, budget, turnState, sessionId, sessionIdUuid, options, effectiveToolsets);
+            result = runTurnLoop(session, turnMessages, tools, maxTurns, turnIndex, budget, turnState,
+                sessionId, controlSessionId, options, effectiveToolsets);
         } finally {
             // Clean up per-session guardrail state to prevent memory leaks (REM-2)
-            guardrail.reset(sessionIdUuid);
+            guardrail.reset(controlSessionId);
+            turnStateManager.clear(controlSessionId);
             // Clear any pending steer that wasn't consumed (e.g. turn was
             // interrupted before the next tool batch could drain it).
-            if (steerBuffer != null) {
-                steerBuffer.clear(sessionIdUuid);
+            if (steerBuffer != null && !RunControlScope.hasControlSessionId(session)) {
+                steerBuffer.clear(controlSessionId);
             }
             // S14: MemoryManager — sync turn data + queue prefetch for next turn
             if (memoryManager != null && memoryManager.hasProviders()) {
@@ -417,10 +542,52 @@ public class DefaultAgentRuntime implements AgentRuntime {
         return result;
     }
 
+    private void emitCommentary(Session session, ChatResponse response) {
+        if (commentaryCallback != null) {
+            try {
+                commentaryCallback.onCommentary(session.id(), response.content(), false);
+            } catch (Exception e) {
+                log.warn("Commentary callback failed for session {}: {}", session.id(), e.getMessage());
+            }
+        }
+        log.debug("Emitted commentary for session {} (alreadyStreamed=false): {} chars",
+            session.id(), response.content().length());
+    }
+
+    private static Set<String> toolCallIds(List<ToolCall> toolCalls) {
+        if (toolCalls == null || toolCalls.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> ids = new HashSet<>();
+        for (ToolCall call : toolCalls) {
+            ids.add(call.id());
+        }
+        return ids;
+    }
+
+    private static List<ToolCall> mergeCanonicalToolCalls(List<ToolCall> originalOrder,
+                                                          List<ToolCall> validCalls,
+                                                          List<ToolCall> invalidNameCalls) {
+        if (originalOrder == null || originalOrder.isEmpty()) {
+            return List.of();
+        }
+        Map<String, ToolCall> byId = new java.util.HashMap<>();
+        for (ToolCall call : invalidNameCalls) {
+            byId.put(call.id(), call);
+        }
+        for (ToolCall call : validCalls) {
+            byId.put(call.id(), call);
+        }
+        return originalOrder.stream()
+            .map(call -> byId.getOrDefault(call.id(), call))
+            .toList();
+    }
+
     private TurnResult runTurnLoop(Session session, List<Message> turnMessages, List<ToolDefinition> tools,
                                    int maxTurns, int turnIndex, TurnSnapshot budget, TurnState turnState,
-                                   String sessionId, UUID sessionIdUuid, ModelRequestOptions options,
+                                   String sessionId, UUID controlSessionId, ModelRequestOptions options,
                                    Set<String> effectiveToolsets) {
+        boolean skillManageToolAvailable = tools.stream().anyMatch(tool -> "skill_manage".equals(tool.name()));
         // Thinking-specific retry counters — reset per turn (parity with Hermes
         // _thinking_prefill_retries / _incomplete_scratchpad_retries).
         // These track recovery attempts across loop iterations within a single turn.
@@ -430,6 +597,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         int lengthContinueRetries = 0;
         int droppedToolcallRetries = 0;
         int truncatedToolCallRetries = 0;
+        int invalidJsonRetries = 0;
         StringBuilder truncatedParts = new StringBuilder();
         // Empty response retry counter (parity with Hermes _empty_content_retries: max 3)
         int retryStateEmptyResponse = 0;
@@ -456,11 +624,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // tool-calling iterations. Mirrors Hermes _iters_since_skill which
             // is incremented at the start of each loop iteration.
             // H6: Only increment if the skills toolset is actually available.
-            if (effectiveToolsets.contains("skills")) {
+            if (skillManageToolAvailable) {
                 itersSinceSkill.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).incrementAndGet();
             }
 
-            if (guardrail.isHalted(session.id())) {
+            if (guardrail.isHalted(controlSessionId)) {
                 turnMessages.add(Message.assistant("Turn halted by guardrails.", turnIndex));
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.GUARDRAIL_HALTED);
@@ -480,7 +648,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
                 turnMessages.add(Message.assistant(budgetMsg, turnIndex));
                 // H7: Fire background review on budget-exhausted path too.
-                boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
+                boolean interrupted = interruptToken != null && interruptToken.isCancelled(controlSessionId);
                 triggerNudgedBackgroundReview(session, turnMessages, interrupted);
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, true, TurnExitReason.BUDGET_EXHAUSTED);
@@ -489,9 +657,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }
 
             List<Message> context = contextEngine.prepareContext(session, turnMessages);
+            session = resolveRotatedSession(session);
             // Hermes parity: pre-API-call /steer drain (conversation_loop.py:2104-2153).
             if (steerBuffer != null) {
-                String preApiSteer = steerBuffer.consume(session.id());
+                String preApiSteer = steerBuffer.consume(controlSessionId);
                 if (preApiSteer != null) {
                     String sanitizedSteer = preApiSteer
                         .replace(DefaultPromptBuilder.STEER_MARKER_OPEN, "")
@@ -510,7 +679,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         }
                     }
                     if (!injected) {
-                        steerBuffer.steer(session.id(), preApiSteer);
+                        steerBuffer.steer(controlSessionId, preApiSteer);
                     }
                 }
             }
@@ -621,7 +790,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     options.modelName(), options.reasoningEffort(),
                     options.fastMode(), options.voiceMode(),
                     options.personality(), options.subgoal(),
-                    boostedMax);
+                    boostedMax,
+                    options.provider(), options.baseUrl(), options.apiKey(),
+                    options.serviceTier());
                 context = contextEngine.prepareContext(session, turnMessages);
                 session = resolveRotatedSession(session);
                 response = callModelWithRetry(context, tools, session, boostedOptions);
@@ -842,24 +1013,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     return new TurnResult(turnMessages, true, "(empty)");
                 }
                 lastResponseHadToolCalls = false; // clean text round — plain backoff next time
-                turnMessages.add(Message.assistant(visibleContent, turnIndex));
-                // P1-5: Persist the final assistant message immediately
-                if (midTurnPersistenceCallback != null) {
-                    // M6: Only advance cursor if persistence succeeded
-                    if (midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
-                        persistedUpTo = turnMessages.size();
-                    }
-                }
-                log.debug("Turn {} completed without tool calls", i);
-                // Nudge-gated background review — only fire when counters hit thresholds.
-                // Mirrors Hermes: memory review every N user turns, skill review every M tool iterations.
-                boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
-                triggerNudgedBackgroundReview(session, turnMessages, interrupted);
 
                 // ── Verify-on-stop guard (Hermes parity: verification_stop.py) ──
                 // When the model finishes (STOP) after editing code without fresh
                 // verification evidence, inject a nudge requesting tests/build.
-                if (properties.getVerifyOnStop().isEnabled() && toolExecutionService != null
+                if (properties.getVerifyOnStop().isEnabled() && verifyOnStopGuard != null && toolExecutionService != null
                     && toolExecutionService.getFileMutationTracker() != null) {
                     var tracker = toolExecutionService.getFileMutationTracker();
                     var changedPaths = tracker.getTurnMutationPaths();
@@ -875,11 +1033,30 @@ public class DefaultAgentRuntime implements AgentRuntime {
                                 session.id(), tracker.getVerificationStopNudges(), changedPaths.size());
                             turnMessages.add(Message.assistant(visibleContent, turnIndex));
                             turnMessages.add(Message.user(nudge));
+                            if (midTurnPersistenceCallback != null) {
+                                if (midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
+                                    persistedUpTo = turnMessages.size();
+                                }
+                            }
                             // Continue the loop — model gets another turn to verify
                             continue;
                         }
                     }
                 }
+
+                turnMessages.add(Message.assistant(visibleContent, turnIndex));
+                // P1-5: Persist the final assistant message immediately
+                if (midTurnPersistenceCallback != null) {
+                    // M6: Only advance cursor if persistence succeeded
+                    if (midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
+                        persistedUpTo = turnMessages.size();
+                    }
+                }
+                log.debug("Turn {} completed without tool calls", i);
+                // Nudge-gated background review — only fire when counters hit thresholds.
+                // Mirrors Hermes: memory review every N user turns, skill review every M tool iterations.
+                boolean interrupted = interruptToken != null && interruptToken.isCancelled(controlSessionId);
+                triggerNudgedBackgroundReview(session, turnMessages, interrupted);
 
                 TurnExitReason reason = (visibleContent == null || visibleContent.isBlank())
                     ? TurnExitReason.EMPTY_RESPONSE : TurnExitReason.COMPLETED;
@@ -894,29 +1071,135 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // a prefill recovery (conversation_loop.py:3885)
             thinkingPrefillRetries = 0;
 
+            int currentTurnIndex = turnIndex;
+            List<ToolCall> toolCalls = new ArrayList<>(response.toolCalls());
+
+            // ── Tool call validation pipeline (parity with Hermes conversation_loop.py) ──
+            // 0. Uniquify duplicate tool-call ids BEFORE any downstream consumer
+            //    (Hermes conversation_loop.py:6827 — models reusing one id in a batch
+            //    lose the later call's result; strict providers reject duplicates).
+            ToolCallValidator.uniquifyToolCallIds(toolCalls);
+
+            // 1. Validate tool names — repair fuzzy mismatches, collect errors
+            Set<String> registeredToolNames = new HashSet<>();
+            for (ToolDefinition td : tools) {
+                registeredToolNames.add(td.name());
+            }
+            List<String> nameErrors = ToolCallValidator.validateToolNames(toolCalls, registeredToolNames);
+            List<ToolCall> canonicalToolCalls = new ArrayList<>(toolCalls);
+            List<ToolCall> invalidNameCalls = new ArrayList<>();
+            List<ToolCall> validCalls = new ArrayList<>();
+            List<Message> invalidNameResults = new ArrayList<>();
+            if (!nameErrors.isEmpty()) {
+                log.warn("Invalid tool calls detected: {}", nameErrors);
+                // h53: When the LLM returns a batch of tool calls where some have valid names
+                // and some have invalid (non-existent) names, execute the valid ones and return
+                // errors for the invalid ones, instead of failing the entire batch.
+                for (ToolCall tc : toolCalls) {
+                    if (registeredToolNames.contains(tc.name())) {
+                        validCalls.add(tc);
+                    } else {
+                        invalidNameCalls.add(tc);
+                        // Invalid tool name — return error for this specific call
+                        String message = "Tool '" + tc.name() + "' does not exist. Available tools: "
+                            + String.join(", ", new java.util.TreeSet<>(registeredToolNames));
+                        invalidNameResults.add(Message.toolResult(tc.id(),
+                            ToolCallValidator.failurePayload(message), currentTurnIndex));
+                    }
+                }
+            } else {
+                validCalls.addAll(toolCalls);
+            }
+
+            // 2. Validate JSON arguments — detect truncation and invalid JSON
+            ToolCallValidator.JsonValidationResult jsonResult = ToolCallValidator.validateJsonArgs(validCalls);
+            if (!jsonResult.isValid()) {
+                if (jsonResult.truncated()) {
+                    log.warn("Truncated tool call arguments detected — refusing to execute.");
+                    // On truncation, stop as partial without appending the broken
+                    // assistant/tool_calls message; otherwise the next replay has
+                    // an unmatched tool-call tail.
+                    if (turnFinalizer != null) {
+                        turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.MAX_TURNS_REACHED);
+                    }
+                    return new TurnResult(turnMessages, false, "Response truncated due to output length limit");
+                }
+                invalidJsonRetries++;
+                log.warn("Invalid JSON in tool call arguments: {}", jsonResult.errors());
+                if (invalidJsonRetries < 3) {
+                    log.warn("Retrying API call after invalid JSON arguments ({}/3)", invalidJsonRetries);
+                    context = contextEngine.prepareContext(session, turnMessages);
+                    session = resolveRotatedSession(session);
+                    continue;
+                }
+                invalidJsonRetries = 0;
+                // Inject recovery tool results (preserves role alternation)
+                List<ToolCall> recoveryToolCalls = mergeCanonicalToolCalls(canonicalToolCalls, validCalls, invalidNameCalls);
+                List<Message> errorResults = new ArrayList<>();
+                Set<String> invalidNameIds = toolCallIds(invalidNameCalls);
+                for (ToolCall tc : recoveryToolCalls) {
+                    boolean hasInvalidJson = jsonResult.errors().stream()
+                        .anyMatch(e -> e.contains("'" + tc.name() + "'"));
+                    String content;
+                    if (invalidNameIds.contains(tc.id())) {
+                        content = ToolCallValidator.failurePayload(
+                            "Tool '" + tc.name() + "' does not exist. Available tools: "
+                                + String.join(", ", new java.util.TreeSet<>(registeredToolNames)));
+                    } else if (hasInvalidJson) {
+                        content = ToolCallValidator.failurePayload(
+                            "Invalid JSON arguments. Please retry with valid JSON. "
+                                + "For tools with no required parameters, use an empty object: {}.");
+                    } else {
+                        content = ToolCallValidator.failurePayload(
+                            "Skipped: other tool call in this response had invalid JSON.");
+                    }
+                    errorResults.add(Message.toolResult(tc.id(), content, currentTurnIndex));
+                }
+                if (properties.isCommentaryEnabled() && response.hasContent()) {
+                    emitCommentary(session, response);
+                }
+                turnMessages.add(response.hasContent()
+                    ? Message.assistantWithToolCalls(response.content(), recoveryToolCalls, turnIndex)
+                    : Message.assistantToolCalls(recoveryToolCalls, turnIndex));
+                if (midTurnPersistenceCallback != null
+                    && midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
+                    persistedUpTo = turnMessages.size();
+                }
+                turnMessages.addAll(errorResults);
+                if (midTurnPersistenceCallback != null
+                    && midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
+                    persistedUpTo = turnMessages.size();
+                }
+                turnIndex++;
+                continue;
+            }
+            invalidJsonRetries = 0;
+            canonicalToolCalls = mergeCanonicalToolCalls(canonicalToolCalls, validCalls, invalidNameCalls);
+
+            // 3. Post-call guardrails: cap delegate_task calls, deduplicate
+            toolCalls = ToolCallValidator.capDelegateTaskCalls(validCalls);
+            toolCalls = ToolCallValidator.deduplicateToolCalls(toolCalls);
+            Set<String> executableIds = toolCallIds(toolCalls);
+            Set<String> invalidNameIds = toolCallIds(invalidNameCalls);
+            List<ToolCall> historyToolCalls = canonicalToolCalls.stream()
+                .filter(tc -> executableIds.contains(tc.id()) || invalidNameIds.contains(tc.id()))
+                .toList();
+
             // ── Commentary emission (parity with Hermes _emit_interim_assistant_message) ──
             // When the LLM returns BOTH text AND tool calls, the text is "commentary" —
             // an interim assistant message shown to the user before tool execution.
             // In the non-streaming path, the text was NOT already shown, so
             // alreadyStreamed=false — the callback should send it as a new message.
-            if (properties.isCommentaryEnabled() && response.hasContent() && response.hasToolCalls()) {
-                if (commentaryCallback != null) {
-                    try {
-                        commentaryCallback.onCommentary(session.id(), response.content(), false);
-                    } catch (Exception e) {
-                        log.warn("Commentary callback failed for session {}: {}", session.id(), e.getMessage());
-                    }
-                }
-                log.debug("Emitted commentary for session {} (alreadyStreamed=false): {} chars",
-                    session.id(), response.content().length());
+            if (properties.isCommentaryEnabled() && response.hasContent() && !historyToolCalls.isEmpty()) {
+                emitCommentary(session, response);
             }
 
-            // Preserve commentary text in the assistant message alongside tool calls
-            if (response.hasContent() && response.hasToolCalls()) {
-                turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex));
-            } else {
-                turnMessages.add(Message.assistantToolCalls(response.toolCalls(), turnIndex));
-            }
+            // Preserve the exact canonical tool-call block that will receive
+            // tool results. This must happen after id uniquification,
+            // JSON-normalisation, delegate caps and de-duplication.
+            turnMessages.add(response.hasContent()
+                ? Message.assistantWithToolCalls(response.content(), historyToolCalls, turnIndex)
+                : Message.assistantToolCalls(historyToolCalls, turnIndex));
 
             // P1-5: Persist the assistant message (with tool calls) immediately.
             // Mirrors Hermes _persist_session after appending assistant_msg.
@@ -927,86 +1210,18 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 }
             }
 
-            int currentTurnIndex = turnIndex;
-            List<ToolCall> toolCalls = response.toolCalls();
-
-            // ── Tool call validation pipeline (parity with Hermes conversation_loop.py) ──
-            // 0. Uniquify duplicate tool-call ids BEFORE any downstream consumer
-            //    (Hermes conversation_loop.py:6827 — models reusing one id in a batch
-            //    lose the later call's result; strict providers reject duplicates).
-            if (toolCalls != null) {
-                toolCalls = new ArrayList<>(toolCalls);
-                ToolCallValidator.uniquifyToolCallIds(toolCalls);
+            if (!invalidNameResults.isEmpty()) {
+                turnMessages.addAll(invalidNameResults);
             }
-
-            // 1. Validate tool names — repair fuzzy mismatches, collect errors
-            Set<String> registeredToolNames = new HashSet<>();
-            for (ToolDefinition td : tools) {
-                registeredToolNames.add(td.name());
-            }
-            List<String> nameErrors = ToolCallValidator.validateToolNames(toolCalls, registeredToolNames);
-            if (!nameErrors.isEmpty()) {
-                log.warn("Invalid tool calls detected: {}", nameErrors);
-                // h53: When the LLM returns a batch of tool calls where some have valid names
-                // and some have invalid (non-existent) names, execute the valid ones and return
-                // errors for the invalid ones, instead of failing the entire batch.
-                List<ToolCall> validCalls = new ArrayList<>();
-                List<Message> errorResults = new ArrayList<>();
-                for (ToolCall tc : toolCalls) {
-                    if (registeredToolNames.contains(tc.name())) {
-                        validCalls.add(tc);
-                    } else {
-                        // Invalid tool name — return error for this specific call
-                        errorResults.add(Message.toolResult(tc.id(),
-                            "Tool '" + tc.name() + "' does not exist. Available tools: "
-                            + String.join(", ", new java.util.TreeSet<>(registeredToolNames)),
-                            currentTurnIndex));
-                    }
+            if (toolCalls.isEmpty()) {
+                if (midTurnPersistenceCallback != null
+                    && midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
+                    persistedUpTo = turnMessages.size();
                 }
-                // If there are valid calls, execute them
-                if (!validCalls.isEmpty()) {
-                    toolCalls = validCalls;
-                    // Continue to normal execution path below, but add error results after
-                } else {
-                    // All calls are invalid — return all errors and continue
-                    turnMessages.addAll(errorResults);
-                    turnIndex++;
-                    continue;
-                }
-                // Add error results for invalid calls before proceeding with valid ones
-                turnMessages.addAll(errorResults);
-            }
-
-            // 2. Validate JSON arguments — detect truncation and invalid JSON
-            ToolCallValidator.JsonValidationResult jsonResult = ToolCallValidator.validateJsonArgs(toolCalls);
-            if (!jsonResult.isValid()) {
-                if (jsonResult.truncated()) {
-                    log.warn("Truncated tool call arguments detected — refusing to execute.");
-                    // On truncation, stop as partial (like Hermes)
-                    if (turnFinalizer != null) {
-                        turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.MAX_TURNS_REACHED);
-                    }
-                    return TurnResult.error("Response truncated due to output length limit");
-                }
-                log.warn("Invalid JSON in tool call arguments: {}", jsonResult.errors());
-                // Inject recovery tool results (preserves role alternation)
-                List<Message> errorResults = new ArrayList<>();
-                for (ToolCall tc : toolCalls) {
-                    boolean hasError = jsonResult.errors().stream()
-                        .anyMatch(e -> e.contains("'" + tc.name() + "'"));
-                    String content = hasError
-                        ? "Error: Invalid JSON arguments. Please retry with valid JSON. For tools with no required parameters, use an empty object: {}."
-                        : "Skipped: other tool call in this response had invalid JSON.";
-                    errorResults.add(Message.toolResult(tc.id(), content, currentTurnIndex));
-                }
-                turnMessages.addAll(errorResults);
+                lastResponseHadToolCalls = true;
                 turnIndex++;
                 continue;
             }
-
-            // 3. Post-call guardrails: cap delegate_task calls, deduplicate
-            toolCalls = ToolCallValidator.capDelegateTaskCalls(toolCalls);
-            toolCalls = ToolCallValidator.deduplicateToolCalls(toolCalls);
 
             List<Message> toolResults;
 
@@ -1019,7 +1234,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // Sequential path for single tool call or non-parallel-safe batches
                 toolResults = new ArrayList<>();
                 for (ToolCall call : toolCalls) {
-                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                if (interruptToken != null && interruptToken.isCancelled(controlSessionId)) {
                     log.info("Turn cancelled by interrupt for session {}", session.id());
                     turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
                     if (turnFinalizer != null) {
@@ -1035,14 +1250,14 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // F16 fix: create the request when the guardrail flags the tool — the
                 // queue never had a producer, so isPending alone was always false.
                 boolean approvalRequired = !skipApproval && approvalQueue != null
-                    && (approvalQueue.isPending(session.id())
+                    && (approvalQueue.isPending(controlSessionId)
                         || (toolGuardrails != null && toolGuardrails.requiresApproval(call)
-                            && approvalQueue.getPending(session.id()) == null
-                            && toolGuardrails.requestApproval(session.id(), call) != null));
+                            && approvalQueue.getPending(controlSessionId) == null
+                            && toolGuardrails.requestApproval(controlSessionId, call) != null));
                 if (approvalRequired) {
                     log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
                     long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
-                    boolean decided = approvalQueue.awaitDecision(session.id(), approvalTimeoutMs);
+                    boolean decided = approvalQueue.awaitDecision(controlSessionId, approvalTimeoutMs);
                     if (!decided) {
                         log.warn("Approval wait timed out for session {} after {} ms", session.id(), approvalTimeoutMs);
                     }
@@ -1050,17 +1265,17 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     if (Thread.currentThread().isInterrupted()) {
                         log.info("Session {} interrupted while waiting for approval", session.id());
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
-                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
-                        approvalQueue.clear(session.id());
+                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(call.name(), deniedResult), currentTurnIndex));
+                        approvalQueue.clear(controlSessionId);
                         turnMessages.addAll(toolResults);
                         turnIndex++;
                         continue;
                     }
-                    if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                    if (interruptToken != null && interruptToken.isCancelled(controlSessionId)) {
                         log.info("Session {} interrupted while waiting for approval", session.id());
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
-                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
-                        approvalQueue.clear(session.id());
+                        toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(call.name(), deniedResult), currentTurnIndex));
+                        approvalQueue.clear(controlSessionId);
                         turnMessages.addAll(toolResults);
                         turnIndex++;
                         continue;
@@ -1068,8 +1283,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 }
                 // HERMES-SYNC (tools/approval.py:2984): fail-closed post-wait re-validation —
                 // execute ONLY on explicit approval; timeout-without-response blocks too.
-                if (approvalRequired && !approvalQueue.isApproved(session.id())) {
-                    boolean denied = approvalQueue.isDenied(session.id());
+                if (approvalRequired && !approvalQueue.isApproved(controlSessionId)) {
+                    boolean denied = approvalQueue.isDenied(controlSessionId);
                     String why = denied
                         ? "Tool execution denied by user approval"
                         : "Approval wait timed out without a user decision — tool blocked (fail-closed). "
@@ -1077,8 +1292,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     log.info("Tool {} {} for session {}, skipping", call.name(),
                         denied ? "denied" : "unapproved after timeout", session.id());
                     ToolResult deniedResult = ToolResult.fail(why);
-                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
-                    approvalQueue.clear(session.id());
+                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(call.name(), deniedResult), currentTurnIndex));
+                    approvalQueue.clear(controlSessionId);
                 } else {
                     long toolStart = System.currentTimeMillis();
                     // L6: Reset skill counter BEFORE execution (parity with Hermes
@@ -1097,12 +1312,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     log.debug("Tool {} executed in {} ms: success={}, content length={}, error={}",
                         call.name(), duration, result.success(),
                         result.content() != null ? result.content().length() : 0, result.error());
-                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(result), currentTurnIndex));
+                    toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(call.name(), result), currentTurnIndex));
                 }
                 }
             } else {
                 // Parallel path for multiple parallel-safe tool calls
-                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                if (interruptToken != null && interruptToken.isCancelled(controlSessionId)) {
                     log.info("Turn cancelled by interrupt for session {}", session.id());
                     turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
                     if (turnFinalizer != null) {
@@ -1125,7 +1340,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 for (ToolCall call : toolCalls) {
                     budget = iterationBudget.recordToolExecution(budget, call.name(), 0);
                 }
-                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                if (interruptToken != null && interruptToken.isCancelled(controlSessionId)) {
                     log.info("Turn cancelled by interrupt after parallel tool execution for session {}", session.id());
                     turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
                     if (turnFinalizer != null) {
@@ -1135,7 +1350,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 }
             }
             // Inject pending steer note into the last tool result
-            String steerText = steerBuffer.consume(session.id());
+            String steerText = steerBuffer.consume(controlSessionId);
             if (steerText != null && !toolResults.isEmpty()) {
                 // M8: Sanitize steer text — strip any steer marker strings to prevent injection
                 String sanitizedSteer = steerText
@@ -1201,7 +1416,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         }
 
         // H7: Fire background review on max-turns-reached path too.
-        boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
+        boolean interrupted = interruptToken != null && interruptToken.isCancelled(controlSessionId);
         triggerNudgedBackgroundReview(session, turnMessages, interrupted);
 
         if (turnFinalizer != null) {
@@ -1489,7 +1704,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             log.debug("Parallel tool {} result: success={}, content length={}, error={}",
                 call.name(), result.success(),
                 result.content() != null ? result.content().length() : 0, result.error());
-            toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(result), currentTurnIndex));
+            toolResults.add(Message.toolResult(call.id(), toolResultFormatter.formatResult(call.name(), result), currentTurnIndex));
         }
         return toolResults;
     }
