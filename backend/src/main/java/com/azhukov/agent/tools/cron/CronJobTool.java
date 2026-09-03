@@ -37,7 +37,7 @@ public class CronJobTool implements ToolHandler {
         String action = args.action() == null ? "" : args.action().toLowerCase();
 
         return switch (action) {
-            case "create" -> createJob(args);
+            case "create" -> createJob(args, session);
             case "list" -> listJobs();
             case "pause" -> pauseJob(args);
             case "resume" -> resumeJob(args);
@@ -48,7 +48,7 @@ public class CronJobTool implements ToolHandler {
         };
     }
 
-    private ToolResult createJob(CronJobArgs args) {
+    private ToolResult createJob(CronJobArgs args, Session session) {
         if (args.name() == null || args.name().isBlank()) return ToolResult.fail("name is required");
         if (args.schedule() == null || args.schedule().isBlank()) return ToolResult.fail("schedule is required");
         // prompt is optional when no_agent=true (script is the job)
@@ -56,7 +56,11 @@ public class CronJobTool implements ToolHandler {
             return ToolResult.fail("prompt is required (or set no_agent=true with script)");
         }
         try {
+            // rev-89: pass the session's userId for job ownership — required for
+            // multi-user cron scoping (list/update/delete check requireOwnership).
+            String userId = session != null ? session.userId() : null;
             CronJobEntity entity = cronJobService.create(
+                userId,
                 args.name(), args.schedule(), args.prompt(), args.deliver(),
                 args.skills(), args.contextFrom(),
                 args.repeat(),

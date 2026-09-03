@@ -117,7 +117,7 @@ class CronJobToolBranchTest {
 
     @Test
     void createJob_serviceThrows_returnsFail() {
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any()))
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("DB error"));
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute(
@@ -337,12 +337,12 @@ class CronJobToolBranchTest {
 
     @Test
     void createJob_withDeliverToAndSkills() {
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
             CronJobEntity e = new CronJobEntity();
             e.setId(UUID.randomUUID());
-            e.setName(inv.getArgument(0));
-            e.setSchedule(inv.getArgument(1));
-            e.setPrompt(inv.getArgument(2));
+            e.setName(inv.getArgument(1));
+            e.setSchedule(inv.getArgument(2));
+            e.setPrompt(inv.getArgument(3));
             e.setEnabled(true);
             return e;
         });
@@ -352,7 +352,7 @@ class CronJobToolBranchTest {
             assistant(), session());
         assertThat(result.success()).isTrue();
         org.mockito.Mockito.verify(cronJobService).create(
-            "daily-report", "0 9 * * *", "Generate report", "telegram", "coding",
+            "user-1", "daily-report", "0 9 * * *", "Generate report", "telegram", "coding",
             null, null, null, false, null, null, null, null, null);
     }
 
