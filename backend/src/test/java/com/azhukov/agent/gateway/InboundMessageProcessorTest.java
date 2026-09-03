@@ -63,7 +63,7 @@ class InboundMessageProcessorTest {
         routingServiceProvider = provider;
         when(routingServiceProvider.getIfAvailable()).thenReturn(routingService);
 
-        processor = new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider, messagePersistenceService, null, agentProperties, new com.azhukov.agent.core.agent.SteerBuffer());
+        processor = new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider, messagePersistenceService, null, agentProperties, new com.azhukov.agent.core.agent.SteerBuffer(), null);
     }
 
     @Test

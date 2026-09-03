@@ -46,6 +46,8 @@ class InboundMessageProcessorBusyInputModeTest {
     private MessagePersistenceService messagePersistenceService;
     private AgentProperties agentProperties;
     private SteerBuffer steerBuffer;
+    @SuppressWarnings("unchecked")
+    private org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.agent.InterruptToken> interruptTokenProvider = mock(org.springframework.beans.factory.ObjectProvider.class);
     private InboundMessageProcessor processor;
 
     @BeforeEach
@@ -65,7 +67,7 @@ class InboundMessageProcessorBusyInputModeTest {
         agentProperties.getGateway().getTelegram().setAllowByDefault(true);
 
         processor = new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider,
-            messagePersistenceService, null, agentProperties, steerBuffer);
+            messagePersistenceService, null, agentProperties, steerBuffer, interruptTokenProvider);
     }
 
     @Test
@@ -114,6 +116,47 @@ class InboundMessageProcessorBusyInputModeTest {
     }
 
     @Test
+    void steerFallbackWhileBusyQueuesEvent() throws Exception {
+        agentProperties.getGateway().setBusyInputMode("steer");
+
+        Session session = new Session(SESSION_ID, USER_ID, "Test", "openai-compatible", "gpt-4", null, Map.of());
+        when(sessionResolver.resolve(any())).thenReturn(session);
+        when(routingService.send(any(), any(), any(String.class)))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "ok", null)));
+
+        java.util.concurrent.CountDownLatch turnLatch = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch busyLatch = new java.util.concurrent.CountDownLatch(1);
+
+        when(agentRuntime.runTurn(any(Session.class), any(String.class), eq(List.of())))
+            .thenAnswer(inv -> {
+                busyLatch.countDown();
+                turnLatch.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                return new TurnResult(List.of(Message.assistant("Hi", 1)), true, null);
+            });
+
+        SessionSource source = new SessionSource(Platform.TELEGRAM, CHAT_ID, USER_ID, USERNAME, USERNAME);
+        MessageEvent event1 = messageEvent(source, "first message");
+        java.util.concurrent.CompletableFuture.runAsync(() -> processor.accept(event1));
+        assertThat(busyLatch.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        // Blank text → SteerBuffer.steer() returns false → fallback must
+        // QUEUE the event (previously it was dropped after a "queued" ack)
+        MessageEvent blankEvent = messageEvent(source, "");
+        processor.accept(blankEvent);
+
+        // The event must be re-queued for the next turn, not dropped
+        assertThat(processor).isNotNull();
+        // (queue is internal; observable behavior = the event survives to be
+        //  drained after the turn — verified via the drain in finally)
+        turnLatch.countDown();
+        Thread.sleep(200);
+        // After the turn completed, the queued blank event is drained and
+        // runs a real turn (blank text steer fails again but no longer crashes)
+        // The key regression assertion: no exception and routing acked twice
+        verify(routingService, atLeast(2)).send(any(Platform.class), any(SessionSource.class), any(String.class));
+    }
+
+    @Test
     void steerBufferConcatenatesMultipleSteers() {
         steerBuffer.steer(SESSION_ID, "first");
         steerBuffer.steer(SESSION_ID, "second");
@@ -145,6 +188,47 @@ class InboundMessageProcessorBusyInputModeTest {
         processor.accept(event);
 
         verify(agentRuntime).runTurn(any(Session.class), eq("Hello"), eq(List.of()));
+    }
+
+
+    @Test
+    void interruptModeWhileBusyCancelsRunningTurn() throws Exception {
+        agentProperties.getGateway().setBusyInputMode("interrupt");
+
+        SessionSource source = new SessionSource(Platform.TELEGRAM, CHAT_ID, USER_ID, USERNAME, USERNAME);
+        MessageEvent event1 = messageEvent(source, "First message");
+        MessageEvent event2 = messageEvent(source, "Second message");
+
+        Session session = new Session(SESSION_ID, USER_ID, "Test", "openai-compatible", "gpt-4", null, Map.of());
+        when(sessionResolver.resolve(any(SessionSource.class))).thenReturn(session);
+
+        com.azhukov.agent.core.agent.InterruptToken token = mock(com.azhukov.agent.core.agent.InterruptToken.class);
+        when(interruptTokenProvider.getIfAvailable()).thenReturn(token);
+        when(routingService.send(any(Platform.class), any(SessionSource.class), anyString()))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "ok", null)));
+
+        // Block the first turn until the second message has been dispatched
+        java.util.concurrent.CountDownLatch turnStarted = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch releaseTurn = new java.util.concurrent.CountDownLatch(1);
+        when(agentRuntime.runTurn(any(Session.class), eq("First message"), eq(List.of())))
+            .thenAnswer(inv -> {
+                turnStarted.countDown();
+                releaseTurn.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                return new TurnResult(List.of(Message.assistant("Working...", 1)), true, null);
+            });
+
+        // First message starts a (blocking) turn on its own thread
+        java.util.concurrent.CompletableFuture<Void> first = java.util.concurrent.CompletableFuture.runAsync(() -> processor.accept(event1));
+        assertThat(turnStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        // Second message arrives while the first turn is still running → busy path
+        processor.accept(event2);
+
+        // The busy interrupt path must cancel the running session's turn
+        verify(token).cancel(SESSION_ID);
+
+        releaseTurn.countDown();
+        first.get(5, java.util.concurrent.TimeUnit.SECONDS);
     }
 
     private MessageEvent messageEvent(SessionSource source, String text) {

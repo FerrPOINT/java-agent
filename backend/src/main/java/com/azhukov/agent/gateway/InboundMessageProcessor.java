@@ -30,6 +30,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     private final MidTurnPersistenceCallback midTurnPersistenceCallback;
     private final AgentProperties agentProperties;
     private final SteerBuffer steerBuffer;
+    private final ObjectProvider<com.azhukov.agent.core.agent.InterruptToken> interruptTokenProvider;
 
     /** Tracks active sessions per chat to detect busy state. */
     private final ConcurrentHashMap<String, Boolean> activeSessions = new ConcurrentHashMap<>();
@@ -71,20 +72,31 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                         return;
                     }
                 }
-                // Fall back to queue if steer failed
+                // Fall back to queue if steer failed — actually enqueue the
+                // event so it is processed after the current turn, instead of
+                // telling the user "queued" and then dropping the message.
                 log.debug("Steer failed, falling back to queue for session {}", session.id());
+                pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(event);
                 routingServiceProvider.getIfAvailable().send(source.platform(), source,
                     "⏳ Queued for the next turn. I'll respond once the current task finishes.");
                 return;
             } else if (isBusy && "interrupt".equalsIgnoreCase(busyInputMode)) {
-                // L1: Interrupt mode — cancel the current turn and queue the message
+                // Interrupt mode — cancel the current turn (Hermes parity:
+                // request_hard_interrupt) and queue the message for immediate
+                // processing after the turn is interrupted.
                 log.debug("Interrupt mode for busy session {} — queuing and cancelling", session.id());
                 pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(event);
+                // Actually cancel the running turn so it stops at the next
+                // tool boundary instead of running to completion.
+                if (interruptTokenProvider != null && session.id() != null) {
+                    com.azhukov.agent.core.agent.InterruptToken token = interruptTokenProvider.getIfAvailable();
+                    if (token != null) {
+                        token.cancel(session.id());
+                        log.info("Interrupted running turn for session {}", session.id());
+                    }
+                }
                 routingServiceProvider.getIfAvailable().send(source.platform(), source,
                     "⚡ Interrupting current task. I'll respond to your message shortly.");
-                // The runtime checks interruptToken.isCancelled() between tool calls.
-                // The queued message will be processed after the current turn is interrupted
-                // and drained via the finally block below.
                 return;
             } else if (isBusy && "queue".equalsIgnoreCase(busyInputMode)) {
                 // Queue mode: store the message for processing after the current turn completes
