@@ -58,10 +58,18 @@ public class ToolExecutionService {
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     /** P10 parity (tool_executor.py:708,726): mutating tools are dispatched once —
      *  no automatic retry. A RuntimeException after the side effect (file written,
-     *  command executed) must surface as a tool error, not silently re-run. */
+     *  command executed) must surface as a tool error, not silently re-run.
+     *  rev-109: extended from the original 7 to every mutating tool — delete_file,
+     *  execute_code, process, skill_manage, send_message, image_generate, todo,
+     *  mcp_tool and the browser interaction tools (click/type/press/dialog) all
+     *  mutate external state; a 500ms retry after a slow-but-successful call
+     *  double-executed them (Hermes has NO tool-level auto-retry at all). */
     private static final Set<String> NO_RETRY_TOOLS = Set.of(
         "write_file", "patch", "terminal", "text_to_speech",
-        "delegate_task", "cronjob", "memory");
+        "delegate_task", "cronjob", "memory",
+        "delete_file", "execute_code", "process", "skill_manage",
+        "send_message", "image_generate", "todo", "mcp_tool",
+        "browser_click", "browser_type", "browser_press", "browser_dialog");
     private final Retry retry = Retry.of("tool", RetryConfig.custom()
             .maxAttempts(3)
             .waitDuration(Duration.ofMillis(500))

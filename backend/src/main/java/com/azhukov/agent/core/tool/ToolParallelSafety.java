@@ -51,8 +51,16 @@ public final class ToolParallelSafety {
         "web_search"
     );
 
-    /** File tools that can run concurrently when targeting independent paths. */
-    public static final Set<String> PATH_SCOPED_TOOLS = Set.of("read_file", "write_file", "patch");
+    /**
+     * File tools that can run concurrently when targeting independent paths.
+     * rev-109 Hermes parity: search_files is a PATH-SCOPED READER
+     * (tool_dispatch_helpers.py: _PATH_SCOPED_READERS = {read_file, search_files}).
+     * Its search root is reserved as a reader reservation so a search batched
+     * with a patch/write_file into the searched subtree is ordered BEHIND the
+     * write instead of racing it (classic write→read race). When search_files
+     * omits path=, the search root defaults to the cwd — reserve that.
+     */
+    public static final Set<String> PATH_SCOPED_TOOLS = Set.of("read_file", "write_file", "patch", "search_files");
 
     private ToolParallelSafety() {
     }
@@ -166,7 +174,7 @@ public final class ToolParallelSafety {
         if (!PATH_SCOPED_TOOLS.contains(toolName)) {
             return null;
         }
-        return extractPathFromArgs(args);
+        return extractPathFromArgs(toolName, args);
     }
 
     private static Path extractPathFromCall(ToolCall tc) {
@@ -175,19 +183,30 @@ public final class ToolParallelSafety {
         }
         try {
             JsonNode args = MAPPER.readTree(tc.arguments());
-            return extractPathFromArgs(args);
+            return extractPathFromArgs(tc.name(), args);
         } catch (Exception e) {
             return null;
         }
     }
 
-    private static Path extractPathFromArgs(JsonNode args) {
+    private static Path extractPathFromArgs(String toolName, JsonNode args) {
         JsonNode pathNode = args.get("path");
         if (pathNode == null || !pathNode.isTextual()) {
+            // rev-109 Hermes parity: search_files defaults its search root to
+            // the cwd when path= is omitted — reserve that root instead of
+            // falling back to a sequential barrier.
+            if ("search_files".equals(toolName)) {
+                Path cwd = Path.of(System.getProperty("user.dir"));
+                return canonicalise(cwd.toAbsolutePath());
+            }
             return null;
         }
         String rawPath = pathNode.asText();
         if (rawPath == null || rawPath.isBlank()) {
+            if ("search_files".equals(toolName)) {
+                Path cwd = Path.of(System.getProperty("user.dir"));
+                return canonicalise(cwd.toAbsolutePath());
+            }
             return null;
         }
 
