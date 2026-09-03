@@ -97,6 +97,19 @@ public class TurnExecutor {
         java.util.concurrent.Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("tool-parallel-", 0).factory());
 
+    @jakarta.annotation.PreDestroy
+    void shutdown() {
+        parallelToolExecutor.shutdown();
+        try {
+            if (!parallelToolExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                parallelToolExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            parallelToolExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
     public TurnExecutor(ErrorClassifier errorClassifier,
                          AgentProperties properties,
                          ContextCompressor contextCompressor,

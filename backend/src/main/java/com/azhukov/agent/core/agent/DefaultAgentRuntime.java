@@ -233,6 +233,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
             return runTurnInternal(session, userInput, references, effectiveOptions);
         } finally {
             lock.unlock();
+            // rev-81: clear the ThreadLocal turn-history snapshot — virtual threads
+            // are reused, and a stale snapshot leaks memory (full lineage history
+            // retained on the thread).
+            if (contextEngine instanceof com.azhukov.agent.core.context.DefaultContextEngine dce) {
+                dce.evictTurnCache(sid);
+            }
         }
     }
 

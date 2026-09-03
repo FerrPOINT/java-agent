@@ -1569,6 +1569,13 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
             // Clean up interrupt token map entry and ThreadLocal after stream completion
             interruptToken.remove(session.id());
             InterruptToken.clearCurrentSessionId();
+            // rev-81: clear the ThreadLocal turn-history snapshot — virtual threads
+            // are reused by the pool, and a stale snapshot leaks memory (full lineage
+            // history retained on the thread) and could match a future turn's
+            // turnMessages by identity on the reused thread.
+            if (contextEngine instanceof com.azhukov.agent.core.context.DefaultContextEngine dce) {
+                dce.evictTurnCache(session.id());
+            }
         }
     }
 
