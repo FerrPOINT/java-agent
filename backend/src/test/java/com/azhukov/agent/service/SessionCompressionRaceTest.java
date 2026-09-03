@@ -44,7 +44,7 @@ class SessionCompressionRaceTest {
     @BeforeEach
     void setUp() {
         MessageMapper mapper = new MessageMapper() {};
-        helper = new SessionCompressionHelper(messageRepository, mapper, conversationCompressor, self);
+        helper = new SessionCompressionHelper(messageRepository, mapper, conversationCompressor, self, org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
     }
 
     private static List<Message> messages(int n) {

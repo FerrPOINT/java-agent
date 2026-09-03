@@ -63,6 +63,24 @@ public class MemoryManager {
  private volatile ExecutorService syncExecutor;
  private final Object syncExecutorLock = new Object();
 
+ /**
+  * rev-103: wire the MemoryProvider bean (DatabaseMemoryProvider or
+  * NoOpMemoryProvider from MemoryConfig) into the manager so the lifecycle
+  * hooks (onTurnStart/syncAll/onPreCompress/...) actually reach a provider.
+  * Before this, providers was ALWAYS empty — every MemoryManager call was a
+  * silent no-op (dead wiring, the exact class the 2026-08-22 lesson warns
+  * about). Hermes parity: AIAgent registers its providers at startup.
+  */
+ @org.springframework.beans.factory.annotation.Autowired
+ public void registerDefaultProvider(org.springframework.beans.factory.ObjectProvider<MemoryProvider> memoryProvider) {
+     MemoryProvider provider = memoryProvider.getIfAvailable();
+     if (provider != null) {
+         boolean noop = provider instanceof NoOpMemoryProvider;
+         addProvider(provider, noop ? BUILTIN_PROVIDER_NAME : "database");
+         log.info("MemoryManager wired to {} provider", noop ? "no-op" : "database");
+     }
+ }
+
  // ── S1: Context fencing ─────────────────────────────────────────────
 
  /**

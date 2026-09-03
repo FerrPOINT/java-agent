@@ -1,5 +1,6 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.memory.MemoryContextFence;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
@@ -39,6 +40,10 @@ public class SessionCompressionHelper {
     private final MessageMapper messageMapper;
     private final ConversationCompressor conversationCompressor;
     private final ObjectProvider<SessionCompressionHelper> self;
+    // rev-103: Hermes parity (conversation_compression.py:2961) — on_pre_compress
+    // lets the memory provider surface insights INTO the compression summary
+    // before context is discarded. Optional: absent manager → no memory context.
+    private final ObjectProvider<com.azhukov.agent.core.memory.MemoryManager> memoryManagerProvider;
 
     /**
      * Main entry point — no @Transactional here so the LLM call runs without
@@ -60,11 +65,19 @@ public class SessionCompressionHelper {
         if (messages.size() <= 4) return;
 
         // 2. Compress OUTSIDE any transaction (LLM call may take 10-60+ seconds)
+        // rev-103: Hermes parity (conversation_compression.py:2954-2961) —
+        // notify the memory provider before context is discarded; if it
+        // returns insight text, prepend it to the summary so memory survives
+        // compression.
+        String memoryContext = collectMemoryContext(sessionId, messages);
         List<Message> compressed;
         if (keepLastN != null && keepLastN > 0) {
             compressed = conversationCompressor.compressPartial(messages, keepLastN);
         } else {
             compressed = conversationCompressor.compress(messages, focusTopic);
+        }
+        if (!memoryContext.isBlank()) {
+            compressed = injectMemoryContext(compressed, memoryContext);
         }
 
         // 3. Persist results in a short write transaction (race-safe)
@@ -80,6 +93,55 @@ public class SessionCompressionHelper {
         return messageEntities.stream()
             .map(messageMapper::toDomain)
             .toList();
+    }
+
+    /**
+     * rev-103: Hermes parity — collect the memory provider's pre-compress
+     * insights. Failure-tolerant (Hermes wraps in try/except too).
+     */
+    private String collectMemoryContext(UUID sessionId, List<Message> messages) {
+        try {
+            var manager = memoryManagerProvider.getIfAvailable();
+            if (manager != null && manager.hasProviders()) {
+                String ctx = manager.onPreCompress(String.valueOf(sessionId), messages);
+                if (ctx != null) {
+                    // Fence the injected text (Hermes sanitize_memory_context)
+                    return MemoryContextFence.sanitizeContext(ctx);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("onPreCompress failed (ignored): {}", e.getMessage());
+        }
+        return "";
+    }
+
+    /**
+     * rev-103: prepend the memory insights to the compression summary message
+     * (the system message carrying the summary). Hermes forwards
+     * memory_context into compress_kwargs; the summary keeps it at the top.
+     */
+    private List<Message> injectMemoryContext(List<Message> compressed, String memoryContext) {
+        List<Message> result = new java.util.ArrayList<>(compressed.size());
+        boolean injected = false;
+        for (Message m : compressed) {
+            if (!injected
+                    && m.role() == com.azhukov.agent.core.model.Role.SYSTEM
+                    && m.content() != null
+                    && (m.content().contains("[Earlier conversation")
+                        || m.content().contains("[Conversation Summary]"))) {
+                result.add(Message.system(
+                    "[Memory insights]\n" + memoryContext + "\n\n" + m.content()));
+                injected = true;
+            } else {
+                result.add(m);
+            }
+        }
+        if (!injected && !result.isEmpty()) {
+            // No summary marker found — insert after the first system message.
+            int insertAt = result.get(0).role() == com.azhukov.agent.core.model.Role.SYSTEM ? 1 : 0;
+            result.add(insertAt, Message.system("[Memory insights]\n" + memoryContext));
+        }
+        return result;
     }
 
     /**

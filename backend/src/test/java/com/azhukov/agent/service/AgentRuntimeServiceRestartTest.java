@@ -79,7 +79,7 @@ class AgentRuntimeServiceRestartTest {
             transactionTemplate,
             new AgentSessionResolver(sessionRepository, Mappers.getMapper(SessionEntityMapper.class), transactionTemplate, messageRepository, mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
             new CliStateApplier(),
-            new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class), mock(ConversationCompressor.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class, org.mockito.Mockito.RETURNS_SELF)),
+            new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class), mock(ConversationCompressor.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class, org.mockito.Mockito.RETURNS_SELF), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class)),
             mock(com.azhukov.agent.core.context.ContextCompressor.class),
             mock(com.azhukov.agent.core.metadata.ModelMetadataService.class), null,
             null, null, new com.azhukov.agent.core.agent.SessionTurnLockManager()
