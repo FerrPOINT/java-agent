@@ -17,6 +17,7 @@ import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
@@ -111,6 +112,20 @@ public class DelegateTaskTool implements ToolHandler {
 
     /** Virtual thread executor for parallel child runs. */
     private final ExecutorService childExecutor = Executors.newVirtualThreadPerTaskExecutor();
+
+    /** Graceful shutdown — children get a chance to finish; zombie threads die at JVM exit. */
+    @PreDestroy
+    void shutdownExecutor() {
+        childExecutor.shutdown();
+        try {
+            if (!childExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                childExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            childExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
 
     /** Semaphore to enforce maxConcurrentChildren across all active delegations. */
     private Semaphore concurrencyLimit;
@@ -225,14 +240,21 @@ public class DelegateTaskTool implements ToolHandler {
                 final int childDepth = currentDepth + 1;
                 TaskResult entry;
                 if (childTimeoutSeconds > 0) {
+                    CompletableFuture<TaskResult> singleTaskFuture = CompletableFuture.supplyAsync(
+                        () -> runSingleChild(taskList.get(0), session, childDepth,
+                            childTimeoutSeconds, 0, parentToolsets, effectiveMaxIterations,
+                            args.acpCommand(), args.acpArgs(), taskList.get(0).outputSchema()),
+                        childExecutor
+                    );
                     try {
-                        entry = CompletableFuture.supplyAsync(
-                            () -> runSingleChild(taskList.get(0), session, childDepth,
-                                childTimeoutSeconds, 0, parentToolsets, effectiveMaxIterations,
-                                args.acpCommand(), args.acpArgs(), taskList.get(0).outputSchema()),
-                            childExecutor
-                        ).get(childTimeoutSeconds, TimeUnit.SECONDS);
+                        entry = singleTaskFuture.get(childTimeoutSeconds, TimeUnit.SECONDS);
                     } catch (TimeoutException e) {
+                        // Cancel the running child — parity with the batch path
+                        // (futures.get(i).cancel(true)). Without this the single-task
+                        // timeout left a zombie child running in the background,
+                        // burning tokens/tools after the parent already reported
+                        // a timeout result.
+                        singleTaskFuture.cancel(true);
                         entry = TaskResult.timeout(0, taskList.get(0).goal(), childTimeoutSeconds);
                     } catch (ExecutionException e) {
                         Throwable cause = e.getCause() != null ? e.getCause() : e;
