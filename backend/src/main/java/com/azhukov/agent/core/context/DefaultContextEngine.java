@@ -43,6 +43,11 @@ public class DefaultContextEngine implements ContextEngine {
      return contextCompressor;
  }
  private final AgentProperties.ContextProperties contextProps;
+ // rev-129: full properties + current model name — the preflight threshold
+ // must resolve per-model overrides and the small-context floor exactly like
+ // the compressor does (CompressionPolicy.computeThresholdTokens).
+ private final AgentProperties properties;
+ private volatile String currentModel;
  // P-09: master switch — when agent.compression.enabled=false the engine must
  // never invoke the compressor (preflight/proactive callers are gated on this too).
  private final boolean compressionEnabled;
@@ -135,13 +140,18 @@ public class DefaultContextEngine implements ContextEngine {
  this.messageRepository = messageRepository;
  this.contextCompressor = contextCompressor;
  this.contextProps = properties.getContext();
+ this.properties = properties;
+ this.currentModel = properties.getModel().getModelName();
  this.compressionEnabled = properties.getCompression().isEnabled();
  this.cacheTracker = cacheTracker;
  this.modelMetadataService = modelMetadataService;
  // Initialize context length from model metadata if available
  if (modelMetadataService != null && properties.getModel().getModelName() != null) {
      this.contextLength = modelMetadataService.detectContextLength(properties.getModel().getModelName());
-     this.thresholdTokens = (int) (contextLength * 0.75);
+     // rev-129: same resolution pipeline as preflight/updateModel (was raw 0.75).
+     this.thresholdTokens = CompressionPolicy.computeThresholdTokens(
+         contextLength, contextProps.getThresholdPercent(),
+         currentModel, contextProps.getModelThresholds(), maxOutputTokens());
  }
  }
 
@@ -324,9 +334,22 @@ public class DefaultContextEngine implements ContextEngine {
  if (messages == null || messages.isEmpty()) return false;
  int estimatedTokens = estimateTokens(messages);
  int maxTokens = contextLength > 0 ? contextLength : contextProps.getMaxTokens();
- // P7 parity: one consistent configured threshold (agent.context.threshold-percent,
- // default 0.50 — context_compressor.py:3104) for preflight and the compressor.
- return estimatedTokens > maxTokens * contextProps.getThresholdPercent();
+ // rev-129 Hermes parity: preflight must fire at the SAME threshold the
+ // compressor computes (context_compressor.py:3062 _compute_threshold_tokens):
+ // per-model overrides → small-ctx floor (window <512K → ≥0.75) → effective
+ // input budget (window − reserved output) → 64K floor → degenerate 85% rule.
+ // Was raw window*thresholdPercent — on a 128K model preflight fired at 64K
+ // while the compressor's own threshold was 96K (small-ctx floor), burning
+ // summarizer calls a third of the window early.
+ int threshold = CompressionPolicy.computeThresholdTokens(
+     maxTokens, contextProps.getThresholdPercent(),
+     currentModel, contextProps.getModelThresholds(), maxOutputTokens());
+ return estimatedTokens > threshold;
+ }
+
+ /** rev-129: the model's reserved output budget (agent.model.max-tokens). */
+ private int maxOutputTokens() {
+     return Math.max(0, properties.getModel().getMaxTokens());
  }
 
  /**
@@ -382,7 +405,10 @@ public class DefaultContextEngine implements ContextEngine {
          // P7 parity (context_compressor.py __init__): the configured threshold
          // percent (default 0.50) drives both preflight and the compressor —
          // no hard-coded 75%.
-         this.thresholdTokens = (int) (contextLength * contextProps.getThresholdPercent());
+         this.currentModel = model;
+ this.thresholdTokens = CompressionPolicy.computeThresholdTokens(
+     contextLength, contextProps.getThresholdPercent(),
+     model, contextProps.getModelThresholds(), maxOutputTokens());
          log.debug("Updated model: {}, contextLength={}, threshold={}", model, contextLength, thresholdTokens);
          // Wire recalculateThreshold in the compressor so it stays calibrated
          // after a model switch (e.g., 200K → 32K). Mirrors Hermes update_model():

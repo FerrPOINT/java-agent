@@ -374,7 +374,11 @@ class DefaultContextEngineBranchCoverageTest {
 
         Map<String, Object> status = engine.getStatus();
         assertThat(status.get("contextLength")).isEqualTo(8192);
-        assertThat(status.get("thresholdTokens")).isEqualTo((int)(8192 * 0.75));
+        // rev-129: full pipeline resolution — reserved output (4096) leaves an
+        // effective budget of 4096; the 64K floor degenerates and the 85% rule
+        // applies inside that budget: min(4096*0.85, 4095).
+        int effectiveBudget2 = 8192 - properties.getModel().getMaxTokens();
+        assertThat(status.get("thresholdTokens")).isEqualTo(Math.min((int)(effectiveBudget2 * 0.85), effectiveBudget2 - 1));
         assertThat(status.get("usagePercent")).asString().contains("50").contains("%");
     }
 
@@ -431,8 +435,14 @@ class DefaultContextEngineBranchCoverageTest {
         engine.updateModel("new-model");
         Map<String, Object> status = engine.getStatus();
         assertThat(status.get("contextLength")).isEqualTo(16384);
+        // rev-129: threshold now resolves through the full Hermes pipeline
+        // (CompressionPolicy.computeThresholdTokens): the model's reserved
+        // output budget (agent.model.max-tokens, default 4096) is subtracted
+        // first (#43547), then the 64K floor degenerates (>= effective window
+        // 12288) and the 85% trigger rule applies: min(12288*0.85, 12287).
+        int effectiveBudget = 16384 - properties.getModel().getMaxTokens();
         assertThat(status.get("thresholdTokens"))
-            .isEqualTo((int) (16384 * contextProps.getThresholdPercent()));
+            .isEqualTo(Math.min((int) (effectiveBudget * 0.85), effectiveBudget - 1));
     }
 
     @Test

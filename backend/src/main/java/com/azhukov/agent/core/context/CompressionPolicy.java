@@ -108,16 +108,69 @@ class CompressionPolicy {
         if (modelThresholds == null || modelThresholds.isEmpty() || model == null || model.isBlank()) {
             return defaultThreshold;
         }
-        String bestKey = "";
+        String bestKey = null;
         for (String key : modelThresholds.keySet()) {
-            if (model.contains(key) && key.length() > bestKey.length()) {
+            if (model.contains(key) && (bestKey == null || key.length() > bestKey.length())) {
                 bestKey = key;
             }
         }
-        if (!bestKey.isEmpty()) {
+        if (bestKey != null) {
             return modelThresholds.get(bestKey);
         }
         return defaultThreshold;
+    }
+
+    /**
+     * rev-129 Hermes parity (context_compressor.py:3044 _effective_threshold_percent):
+     * small-context threshold floor, raise-only. Models with a window under
+     * {@link #SMALL_CTX_WINDOW_LIMIT} (512K) trigger at no less than
+     * {@link #SMALL_CTX_THRESHOLD_PERCENT} (75%); an explicitly higher
+     * configured threshold always wins.
+     */
+    static double effectiveThresholdPercent(int contextWindow, double thresholdPercent) {
+        if (contextWindow > 0 && contextWindow < SMALL_CTX_WINDOW_LIMIT) {
+            return Math.max(thresholdPercent, SMALL_CTX_THRESHOLD_PERCENT);
+        }
+        return thresholdPercent;
+    }
+
+    /**
+     * rev-129 Hermes parity (context_compressor.py:3062 _compute_threshold_tokens):
+     * the single source of truth for the compaction trigger in tokens.
+     * 1. effective input budget = window − reserved output tokens
+     *    (nonsensical reservation falls back to the full window);
+     * 2. threshold = budget × effective percent (per-model overrides already
+     *    resolved by the caller, small-ctx floor via {@link #effectiveThresholdPercent});
+     * 3. floored at {@link #MINIMUM_CONTEXT_LENGTH};
+     * 4. degenerate-window rule: when the floor meets/exceeds the budget the
+     *    trigger can never fire — clamp to {@link #MIN_CTX_TRIGGER_RATIO} (85%)
+     *    of the budget so a minimum-context model still compacts before the
+     *    provider rejects the request (#14690).
+     *
+     * @param contextWindow the model context window in tokens (>0)
+     * @param thresholdPercent configured threshold fraction (e.g. 0.50)
+     * @param model the model name for per-model overrides, or null
+     * @param modelThresholds substring→fraction overrides, or null
+     * @param maxOutputTokens reserved output budget, or 0 for none
+     * @return the effective trigger threshold in tokens
+     */
+    static int computeThresholdTokens(int contextWindow, double thresholdPercent,
+                                      String model, java.util.Map<String, Double> modelThresholds,
+                                      int maxOutputTokens) {
+        if (contextWindow <= 0) {
+            return 0;
+        }
+        double resolved = resolveModelThreshold(model, modelThresholds, thresholdPercent);
+        double effective = effectiveThresholdPercent(contextWindow, resolved);
+        int effectiveWindow = contextWindow - Math.max(0, maxOutputTokens);
+        if (effectiveWindow <= 0) {
+            effectiveWindow = contextWindow;
+        }
+        int floored = Math.max((int) (effectiveWindow * effective), MINIMUM_CONTEXT_LENGTH);
+        if (floored >= effectiveWindow) {
+            return Math.max(1, Math.min((int) (effectiveWindow * MIN_CTX_TRIGGER_RATIO), effectiveWindow - 1));
+        }
+        return floored;
     }
 
     // ── State fields ──
