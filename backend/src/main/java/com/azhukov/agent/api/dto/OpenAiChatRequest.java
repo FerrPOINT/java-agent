@@ -1,14 +1,15 @@
 package com.azhukov.agent.api.dto;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 import java.util.Map;
 
 public record OpenAiChatRequest(
-    @NotBlank(message = "model is required") String model,
+    // model is OPTIONAL: when omitted, the configured advertised model is used
+    // (Hermes parity: body.get('model', self._model_name)).
+    String model,
     String provider,
     @NotEmpty(message = "messages must contain at least one message") List<OpenAiMessage> messages,
     List<OpenAiTool> tools,

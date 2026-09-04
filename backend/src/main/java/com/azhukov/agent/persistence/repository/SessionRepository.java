@@ -642,6 +642,12 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
 
     @Modifying
     @Transactional
+    @Query(value = "INSERT INTO sessions (id, user_id, title, model_provider, model_name, created_at, updated_at, session_status, source, last_active, message_count) "
+        + "VALUES (:id, :userId, :title, :provider, :modelName, :now, :now, 'active', :source, :now, 0)", nativeQuery = true)
+    void insertSessionRow(UUID id, String userId, String title, String provider, String modelName, String source, Instant now);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
     @Query("UPDATE SessionEntity s SET s.lastActive = :lastActive, s.messageCount = :messageCount WHERE s.id = :id")
     void updateLastActiveAndMessageCount(UUID id, Instant lastActive, int messageCount);
 

@@ -4,6 +4,7 @@ import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
+import com.azhukov.agent.bot.session.BackendSessionResolver;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
@@ -44,7 +45,9 @@ public class StatusCommand implements CommandHandler {
         }
 
         String contextFill = "unknown";
-        JsonNode ctx = backendClient.getContext(session.getId().toString());
+        String sid = BackendSessionResolver.resolveString(session);
+        if (sid == null) return "No backend session yet — send a message first.";
+        JsonNode ctx = backendClient.getContext(sid);
         if (ctx != null) {
             int tokenEstimate = ctx.path("tokenEstimate").asInt(0);
             int messageCount = ctx.path("messageCount").asInt(0);

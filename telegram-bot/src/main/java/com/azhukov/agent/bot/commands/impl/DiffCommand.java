@@ -3,6 +3,7 @@ package com.azhukov.agent.bot.commands.impl;
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
+import com.azhukov.agent.bot.session.BackendSessionResolver;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,7 +29,7 @@ public class DiffCommand implements CommandHandler {
             else if (args.contains("stat")) gitCmd = "git diff --stat";
         }
         try {
-            String sessionId = session.getId() != null ? session.getId().toString() : null;
+            String sessionId = BackendSessionResolver.resolveString(session);
             AgentBackendClient.ChatResult result = backendClient.chat("Run: " + gitCmd + " and show me the output", sessionId);
             return result.content();
         } catch (Exception e) {

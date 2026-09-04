@@ -3,7 +3,9 @@ package com.azhukov.agent.bot.commands.impl;
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
+import com.azhukov.agent.bot.session.BackendSessionResolver;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import com.azhukov.agent.bot.session.BotSessionStore;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -23,6 +25,7 @@ public class SubgoalCommand implements CommandHandler {
     private static final String SUBGOALS_KEY = "_subgoals";
 
     private final AgentBackendClient backendClient;
+    private final BotSessionStore store;
 
     @Override
     public String name() {
@@ -53,7 +56,7 @@ public class SubgoalCommand implements CommandHandler {
         String[] parts = args.trim().split("\\s+", 2);
         String sub = parts[0].toLowerCase();
 
-        String sessionId = session.getId() != null ? session.getId().toString() : null;
+        String sessionId = BackendSessionResolver.resolveString(session);
 
         return switch (sub) {
             case "list" -> listSubgoals(session);
@@ -69,7 +72,7 @@ public class SubgoalCommand implements CommandHandler {
                 }
             }
             case "clear" -> {
-                session.setMetadata(SUBGOALS_KEY, null);
+                persistSubgoals(session, null);
                 if (sessionId != null) backendClient.clearSubgoals(sessionId);
                 yield "All subgoals cleared.";
             }
@@ -82,7 +85,7 @@ public class SubgoalCommand implements CommandHandler {
                 String updated = existing == null || existing.isBlank()
                     ? subgoalText
                     : existing + "\n" + subgoalText;
-                session.setMetadata(SUBGOALS_KEY, updated);
+                persistSubgoals(session, updated);
                 if (sessionId != null) backendClient.appendSubgoal(sessionId, subgoalText);
                 yield "Subgoal added: " + subgoalText;
             }
@@ -125,7 +128,14 @@ public class SubgoalCommand implements CommandHandler {
             }
         }
 
-        session.setMetadata(SUBGOALS_KEY, updated.length() > 0 ? updated.toString() : null);
+        persistSubgoals(session, updated.length() > 0 ? updated.toString() : null);
         return "Subgoal " + n + " removed.";
+    }
+
+    private void persistSubgoals(BotSessionEntity session, String value) {
+        session.setMetadata(SUBGOALS_KEY, value);
+        if (session.getId() != null) {
+            store.persistMetadata(session.getId(), SUBGOALS_KEY, value);
+        }
     }
 }

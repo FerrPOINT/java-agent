@@ -5,6 +5,7 @@ import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotMessageEntity;
 import com.azhukov.agent.bot.session.BotMessageRepository;
+import com.azhukov.agent.bot.session.BackendSessionResolver;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import org.springframework.stereotype.Component;
 
@@ -32,7 +33,8 @@ public class RetryCommand implements CommandHandler {
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
         if (session == null || session.getId() == null) return "No active session.";
-        String sessionId = session.getId().toString();
+        String sessionId = BackendSessionResolver.resolveString(session);
+        if (sessionId == null) return "No backend session yet — send a message first.";
         List<BotMessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtDesc(session.getId());
         for (BotMessageEntity msg : messages) {
             if ("user".equalsIgnoreCase(msg.getRole()) && msg.getContent() != null && !msg.getContent().isBlank()) {

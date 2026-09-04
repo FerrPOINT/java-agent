@@ -3,6 +3,7 @@ package com.azhukov.agent.bot.commands.impl;
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
+import com.azhukov.agent.bot.session.BackendSessionResolver;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import org.springframework.stereotype.Component;
 
@@ -40,6 +41,8 @@ public class UndoCommand implements CommandHandler {
             if (turns < 1) turns = 1;
             if (turns > 50) turns = 50;
         }
-        return backendClient.undoTurns(session.getId().toString(), turns);
+        String sid = BackendSessionResolver.resolveString(session);
+        if (sid == null) return "No backend session yet — send a message first.";
+        return backendClient.undoTurns(sid, turns);
     }
 }

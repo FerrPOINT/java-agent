@@ -44,6 +44,7 @@ class SessionExpiryWatcherBackendCleanupTest {
         UUID sessionId = UUID.randomUUID();
         BotSessionEntity session = new BotSessionEntity();
         session.setId(sessionId);
+        session.setBackendSessionId(sessionId);
         session.setUserId("user-1");
         session.setActive(true);
         session.setCreatedAt(Instant.now().minusSeconds(3600));

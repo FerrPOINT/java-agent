@@ -46,6 +46,7 @@ class SteerCommandTest {
     void acceptedReturnsConfirmation() {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
+        session.setBackendSessionId(session.getId());
         when(backendClient.steer(anyString(), anyString())).thenReturn(true);
 
         String result = cmd.handle(textEvent("/steer", "focus on auth"), session);
@@ -58,6 +59,7 @@ class SteerCommandTest {
     void rejectedReturnsError() {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
+        session.setBackendSessionId(session.getId());
         when(backendClient.steer(anyString(), anyString())).thenReturn(false);
 
         String result = cmd.handle(textEvent("/steer", "focus on auth"), session);

@@ -31,7 +31,21 @@ public class NewSessionCommand implements CommandHandler {
         if (session == null || session.getId() == null) {
             return "No active session.";
         }
-        backendClient.resetSession(session.getId().toString());
+        // Reset the BACKEND conversation when one exists, then deactivate this
+        // bot session so the next message binds to a brand-new backend session.
+        // Previously this reset the local bot row id (a nonexistent backend id),
+        // so the old backendSessionId stayed bound and history leaked across /new.
+        String backendId = session.getBackendSessionId() != null
+            ? session.getBackendSessionId().toString() : null;
+        if (backendId != null) {
+            try {
+                backendClient.resetSession(backendId);
+            } catch (Exception e) {
+                // Backend cleanup is best-effort; the local rotation below still
+                // guarantees a fresh session on the next turn.
+            }
+        }
+        store.deactivateAll(session.getUserId());
         return "Session context cleared. Send a message to continue.";
     }
 }

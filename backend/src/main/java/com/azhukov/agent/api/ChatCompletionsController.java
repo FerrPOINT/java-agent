@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.springframework.http.ResponseEntity;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,9 +54,22 @@ public class ChatCompletionsController {
     private final ModelClient modelClient;
     private final ObjectMapper objectMapper;
     private final OpenAiMapper openAiMapper;
+    private final com.azhukov.agent.service.OpenAiSessionService openAiSessionService;
+    private final com.azhukov.agent.core.tool.ToolExecutionService toolExecutionService;
     private final ExecutorService streamingExecutor =
         java.util.concurrent.Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("openai-sse-", 0).factory());
+
+    /**
+     * Hermes parity: an omitted model defaults to the configured advertised
+     * model instead of failing validation.
+     */
+    private String effectiveModel(OpenAiChatRequest request) {
+        if (request.model() != null && !request.model().isBlank()) {
+            return request.model().trim();
+        }
+        return OpenAiModelRouting.advertisedModel(properties);
+    }
 
     @jakarta.annotation.PreDestroy
     void shutdown() {
@@ -71,30 +85,106 @@ public class ChatCompletionsController {
     }
 
     @PostMapping
-    public Object completions(@Valid @RequestBody OpenAiChatRequest request) {
+    public ResponseEntity<Object> completions(
+            @Valid @RequestBody OpenAiChatRequest request,
+            @org.springframework.web.bind.annotation.RequestHeader(
+                value = com.azhukov.agent.service.OpenAiSessionService.SESSION_ID_HEADER,
+                required = false) String sessionIdHeader,
+            @org.springframework.web.bind.annotation.RequestHeader(
+                value = com.azhukov.agent.service.OpenAiSessionService.SESSION_KEY_HEADER,
+                required = false) String sessionKeyHeader) {
         if (Boolean.TRUE.equals(request.stream())) {
-            return streamCompletions(request);
+            return ResponseEntity.ok(streamCompletions(request, sessionIdHeader, sessionKeyHeader));
         }
-        return syncCompletion(request);
+        return syncCompletion(request, sessionIdHeader, sessionKeyHeader);
     }
 
-    private OpenAiChatResponse syncCompletion(OpenAiChatRequest request) {
-        Session session = Session.create("openai-user", "openai-compatible", request.model());
+    private ResponseEntity<Object> syncCompletion(OpenAiChatRequest request,
+                                                    String sessionIdHeader,
+                                                    String sessionKeyHeader) {
+        String model = effectiveModel(request);
+        var sessionContext = openAiSessionService.resolveChatCompletions(
+            sessionIdHeader, sessionKeyHeader, model, null);
+        Session session = sessionContext.session() != null
+            ? sessionContext.session()
+            : Session.create("openai-user", "openai-compatible", model);
         List<Message> messages = buildMessages(session, request);
+        // Session continuity (Hermes parity): prior turns from the SAME
+        // continued session are replayed before this request's messages.
+        messages.addAll(messages.size() - countRequestMessages(request),
+            openAiSessionService.historyFor(sessionContext));
         List<ToolDefinition> tools = buildTools(request);
-        ChatResponse response = agentRuntime.run(messages, tools, requestOptions(request));
-        return openAiMapper.toOpenAiResponse(request.model(), response);
+        ChatResponse response = runWithToolLoop(session, messages, tools, requestOptions(request));
+        openAiSessionService.persistTurn(sessionContext,
+            request.messages().stream().map(openAiMapper::toMessage).toList(), response);
+        var body = openAiMapper.toOpenAiResponse(model, response);
+        return ResponseEntity.ok()
+            .header(com.azhukov.agent.service.OpenAiSessionService.SESSION_ID_HEADER,
+                sessionContext.responseSessionId())
+            .body(body);
     }
 
-    private SseEmitter streamCompletions(OpenAiChatRequest request) {
+    /** Max model→tool round-trips per request (Hermes agent loop bound). */
+    private static final int MAX_TOOL_ITERATIONS = 8;
+
+    /**
+     * Hermes parity: /v1/chat/completions runs a server-side agent loop —
+     * when the model emits tool calls, the server executes them (via
+     * {@code ToolExecutionService}), appends results, and calls the model
+     * again until a final textual answer or the iteration bound.
+     */
+    private ChatResponse runWithToolLoop(Session session, List<Message> messages,
+                                         List<ToolDefinition> tools,
+                                         ModelRequestOptions options) {
+        ChatResponse response = agentRuntime.run(messages, tools, options);
+        for (int i = 0; i < MAX_TOOL_ITERATIONS
+                && response != null && response.hasToolCalls(); i++) {
+            Message assistantWithCalls = com.azhukov.agent.core.model.Message
+                .assistantWithToolCalls(response.content(), response.toolCalls(), 1);
+            messages.add(assistantWithCalls);
+            for (com.azhukov.agent.core.model.ToolCall call : response.toolCalls()) {
+                com.azhukov.agent.core.model.ToolResult result = toolExecutionService.execute(
+                    call.name(), call.pairingId(), call.arguments(), assistantWithCalls, session);
+                messages.add(com.azhukov.agent.core.model.Message.toolResult(
+                    call.pairingId(), result.content(), 1));
+            }
+            response = agentRuntime.run(messages, tools, options);
+        }
+        return response;
+    }
+
+    private int countRequestMessages(OpenAiChatRequest request) {
+        return request.messages() != null ? request.messages().size() : 0;
+    }
+
+    private SseEmitter streamCompletions(OpenAiChatRequest request,
+                                         String sessionIdHeader,
+                                         String sessionKeyHeader) {
         SseEmitter emitter = new SseEmitter(600_000L);
         String id = "chatcmpl-" + UUID.randomUUID().toString().replace("-", "");
-        String model = request.model();
+        String model = effectiveModel(request);
+        var sessionContext = openAiSessionService.resolveChatCompletions(
+            sessionIdHeader, sessionKeyHeader, model, null);
+
+        // Session continuity header on the SSE channel (Hermes returns it on
+        // the response headers of the stream too).
+        try {
+            // SSE comment line (ignored by OpenAI SDK parsers by spec) carrying
+            // the session id for continuity-aware clients.
+            emitter.send(SseEmitter.event()
+                .comment("session-id: " + sessionContext.responseSessionId()));
+        } catch (Exception ignored) {
+            // continuity hint is best-effort; do not break the stream
+        }
 
         CompletableFuture.runAsync(() -> {
             try {
-                Session session = Session.create("openai-user", "openai-compatible", model);
+                Session session = sessionContext.session() != null
+                    ? sessionContext.session()
+                    : Session.create("openai-user", "openai-compatible", model);
                 List<Message> messages = buildMessages(session, request);
+                messages.addAll(messages.size() - countRequestMessages(request),
+                    openAiSessionService.historyFor(sessionContext));
                 List<ToolDefinition> tools = buildTools(request);
 
                 modelClient.stream(HistorySanitizer.sanitizeForModelRequest(messages), tools,
@@ -149,7 +239,7 @@ public class ChatCompletionsController {
         // Hermes api_server parity: the advertised alias ("hermes-agent") or a
         // configured model-route alias must resolve to the runtime target model
         // before hitting the provider — the alias itself is not a model name.
-        String runtimeModel = OpenAiModelRouting.runtimeModelName(properties, request.model());
+        String runtimeModel = OpenAiModelRouting.runtimeModelName(properties, effectiveModel(request));
         return new ModelRequestOptions(runtimeModel, null, null, null, null, null, request.maxTokens());
     }
 

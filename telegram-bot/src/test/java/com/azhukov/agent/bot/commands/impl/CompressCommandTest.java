@@ -67,6 +67,7 @@ class CompressCommandTest {
     private BotSessionEntity newSession(UUID id) {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(id);
+        session.setBackendSessionId(id);
         return session;
     }
 

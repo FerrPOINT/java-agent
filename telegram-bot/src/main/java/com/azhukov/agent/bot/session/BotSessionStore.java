@@ -160,6 +160,21 @@ public class BotSessionStore {
         });
     }
 
+    /**
+     * Persist a metadata mutation made on a detached command-level entity.
+     * Bot commands receive the session outside this store's transaction and
+     * mutate {@code setMetadata(...)} in memory; without this call the change
+     * is silently lost (the /goal false-success defect).
+     */
+    @Transactional
+    public void persistMetadata(UUID id, String key, String value) {
+        repository.findById(id).ifPresent(session -> {
+            session.setMetadata(key, value);
+            session.setUpdatedAt(Instant.now());
+            repository.save(session);
+        });
+    }
+
     @Transactional
     public void setModelOverride(UUID id, String model) {
         repository.findById(id).ifPresent(session -> {

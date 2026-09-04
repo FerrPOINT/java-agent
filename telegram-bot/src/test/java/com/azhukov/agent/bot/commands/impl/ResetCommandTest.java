@@ -46,6 +46,7 @@ class ResetCommandTest {
         BotSessionEntity session = new BotSessionEntity();
         session.setUserId("100");
         session.setId(sessionId);
+        session.setBackendSessionId(sessionId);
         String result = cmd.handle(makeEvent(""), session);
         assertThat(result).contains("3");
         assertThat(result).contains("deactivated");
@@ -63,6 +64,7 @@ class ResetCommandTest {
         BotSessionEntity session = new BotSessionEntity();
         session.setUserId("100");
         session.setId(sessionId);
+        session.setBackendSessionId(sessionId);
         cmd.handle(makeEvent(""), session);
         // Verify backend context was reset before sessions were deactivated
         verify(backendClient).resetSession(sessionId.toString());
