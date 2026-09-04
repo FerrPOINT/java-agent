@@ -15,6 +15,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.List;
 import java.util.UUID;
 
 /** Creates users/API keys and resolves a presented API key to an owned identity. */
@@ -81,6 +82,28 @@ public class UserAccessService {
 
     public AgentUserEntity getUser(String userId) {
         return userRepository.findById(userId).orElse(null);
+    }
+
+    /** Lists all users (admin surface). */
+    public List<AgentUserEntity> listUsers() {
+        return userRepository.findAll();
+    }
+
+    /** Deletes an API key by id — revokes access immediately (hash is gone). */
+    @Transactional
+    public boolean revokeApiKey(UUID keyId) {
+        if (apiKeyRepository.existsById(keyId)) {
+            apiKeyRepository.deleteById(keyId);
+            return true;
+        }
+        return false;
+    }
+
+    /** Lists API keys of a user; hashes are never exposed. */
+    public List<UserApiKeyEntity> listApiKeys(String userId) {
+        return apiKeyRepository.findAll().stream()
+            .filter(k -> userId.equals(k.getUserId()))
+            .toList();
     }
 
     static String sha256(String value) {

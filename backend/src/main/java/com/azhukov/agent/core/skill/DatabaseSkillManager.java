@@ -61,9 +61,24 @@ public class DatabaseSkillManager implements SkillManager {
 
  @Override
  public String getSkill(String name) {
- return skillRepository.findByName(name)
- .map(SkillEntity::getContent)
- .orElse(null);
+     return getSkill(name, null);
+ }
+
+ /**
+  * mu14: userId-scoped read — a non-admin caller sees only own skills and
+  * shared (userId IS NULL) skills; admin (null scope) sees everything.
+  */
+ @Override
+ public String getSkill(String name, String userId) {
+     if (userId == null) {
+         return skillRepository.findByName(name)
+             .map(SkillEntity::getContent)
+             .orElse(null);
+     }
+     return skillRepository.findVisibleSkills(userId).stream()
+         .filter(s -> name.equals(s.getName()))
+         .map(SkillEntity::getContent)
+         .findFirst().orElse(null);
  }
 
  @Override

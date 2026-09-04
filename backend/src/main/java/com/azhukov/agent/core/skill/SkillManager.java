@@ -17,6 +17,14 @@ public interface SkillManager {
 
     String getSkill(String name);
 
+    /**
+     * mu14: userId-scoped read — non-admin callers see only own + shared
+     * skills; {@code null} userId means admin/global access.
+     */
+    default String getSkill(String name, String userId) {
+        return getSkill(name);
+    }
+
     void saveSkill(String name, String content);
 
     boolean deleteSkill(String name);
