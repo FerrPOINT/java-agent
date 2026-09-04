@@ -10,10 +10,11 @@ steps:
       - { var: turn.text, contains: "15" }
       - { var: turn.error, eq: null }
 
-  - name: API server reports clarify as intentionally unavailable
+  - name: API server does not expose interactive clarify tool
     step: turn
-    message: "Ask me ONE clarifying question about what I just said. Use the clarify tool if it is available; otherwise explain briefly why it is unavailable in this HTTP API session."
+    message: "Ask me ONE clarifying question about what I just said. Use clarify only if it is available."
+    # HTTP has no interactive recipient for clarify; text response is valid,
+    # but the server must not pretend the gateway-only tool was invoked.
     assert:
       - { var: turn.toolNames, not_contains: clarify }
-      - { var: turn.text, matches: "(?i)(clarify|уточн|интерактив|interactive|недоступ)" }
       - { var: turn.error, eq: null }

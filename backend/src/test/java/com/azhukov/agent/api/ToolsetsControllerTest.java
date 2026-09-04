@@ -98,7 +98,8 @@ class ToolsetsControllerTest {
             .andExpect(jsonPath("$.data[?(@.name=='web')].tools[0]").value("web_extract"))
             .andExpect(jsonPath("$.data[?(@.name=='web')].tools[1]").value("web_search"))
             .andExpect(jsonPath("$.data[?(@.name=='terminal')].tools[0]").value("process"))
-            .andExpect(jsonPath("$.data[?(@.name=='terminal')].tools[1]").value("terminal"));
+            .andExpect(jsonPath("$.data[?(@.name=='terminal')].tools[1]").value("terminal"))
+            .andExpect(jsonPath("$.data[?(@.name=='file')].tools[0]").value("delete_file"));
     }
 
     @Test
