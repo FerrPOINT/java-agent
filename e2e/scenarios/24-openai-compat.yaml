@@ -26,7 +26,7 @@ steps:
     assert:
       - { var: completion_text, matches: "(?i)ок|Ок|ОК" }
 
-  - name: unknown model returns error (proxy rejects invalid model)
+  - name: unknown bare model falls back to configured agent (Hermes parity)
     method: POST
     path: /v1/chat/completions
     body:
@@ -34,4 +34,7 @@ steps:
       messages:
         - { role: user, content: "Скажи: готово" }
     assert:
-      - { status: 500 }
+      # Hermes _request_agent_overrides(allow_bare_model=direct_model_requests=false):
+      # generic clients hardcode model names; unknown bare names fall back to the
+      # gateway default instead of leaking to the provider (alias-leak bug).
+      - { status: 200 }
