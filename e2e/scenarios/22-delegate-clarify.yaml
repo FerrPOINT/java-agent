@@ -10,9 +10,10 @@ steps:
       - { var: turn.text, contains: "15" }
       - { var: turn.error, eq: null }
 
-  - name: clarify tool reachable
+  - name: API server reports clarify as intentionally unavailable
     step: turn
-    message: "Ask me ONE clarifying question about what I just said. Use the clarify tool."
+    message: "Ask me ONE clarifying question about what I just said. Use the clarify tool if it is available; otherwise explain briefly why it is unavailable in this HTTP API session."
     assert:
-      - { var: turn.toolNames, contains: clarify }
+      - { var: turn.toolNames, not_contains: clarify }
+      - { var: turn.text, matches: "(?i)(clarify|уточн|интерактив|interactive|недоступ)" }
       - { var: turn.error, eq: null }

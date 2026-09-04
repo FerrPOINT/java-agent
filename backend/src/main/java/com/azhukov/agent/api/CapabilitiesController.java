@@ -148,8 +148,8 @@ public class CapabilitiesController {
                 + "tools execute on the API-server host unless a future explicit split-runtime mode is enabled.");
 
         return Map.of(
-            "object", "hermes.api_server.capabilities",
-            "platform", "hermes-agent",
+            "object", "java-agent.api_server.capabilities",
+            "platform", "java-agent",
             "model", model,
             "auth", auth,
             "runtime", runtime,

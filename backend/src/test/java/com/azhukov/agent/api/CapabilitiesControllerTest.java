@@ -60,8 +60,8 @@ class CapabilitiesControllerTest {
     void capabilitiesReturnsCorrectStructure() throws Exception {
         mockMvc.perform(get("/v1/capabilities"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.object").value("hermes.api_server.capabilities"))
-            .andExpect(jsonPath("$.platform").value("hermes-agent"))
+            .andExpect(jsonPath("$.object").value("java-agent.api_server.capabilities"))
+            .andExpect(jsonPath("$.platform").value("java-agent"))
             .andExpect(jsonPath("$.model").value("hermes-agent"))
             .andExpect(jsonPath("$.auth.type").value("bearer"))
             .andExpect(jsonPath("$.auth.required").value(false))
@@ -138,7 +138,7 @@ class CapabilitiesControllerTest {
     void profilePrefixedCapabilitiesRouteMirrorsHermesMultiplexAlias() throws Exception {
         mockMvc.perform(get("/p/work/v1/capabilities"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.object").value("hermes.api_server.capabilities"))
+            .andExpect(jsonPath("$.object").value("java-agent.api_server.capabilities"))
             .andExpect(jsonPath("$.endpoints.models.path").value("/v1/models"))
             .andExpect(jsonPath("$.endpoints.responses.path").value("/v1/responses"))
             .andExpect(jsonPath("$.endpoints.runs.path").value("/v1/runs"));
@@ -196,7 +196,7 @@ class CapabilitiesControllerTest {
         var controller = new CapabilitiesController(
             properties, toolRegistry, skillManager, runtimeConfigService);
         var result = controller.capabilities();
-        assertThat(result).containsEntry("platform", "hermes-agent");
+        assertThat(result).containsEntry("platform", "java-agent");
         assertThat(result).containsKey("features");
         assertThat(result).containsKey("endpoints");
         @SuppressWarnings("unchecked")
