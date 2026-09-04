@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.OpenAiChatRequest;
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.api.dto.OpenAiChatResponse;
 import com.azhukov.agent.api.dto.OpenAiStreamChunk;
 import com.azhukov.agent.api.dto.OpenAiStreamError;
@@ -48,6 +49,7 @@ public class ChatCompletionsController {
     private final AgentRuntime agentRuntime;
     private final ToolRegistry toolRegistry;
     private final PromptBuilder promptBuilder;
+    private final AgentProperties properties;
     private final ModelClient modelClient;
     private final ObjectMapper objectMapper;
     private final OpenAiMapper openAiMapper;
@@ -144,7 +146,11 @@ public class ChatCompletionsController {
     }
 
     private ModelRequestOptions requestOptions(OpenAiChatRequest request) {
-        return new ModelRequestOptions(request.model(), null, null, null, null, null, request.maxTokens());
+        // Hermes api_server parity: the advertised alias ("hermes-agent") or a
+        // configured model-route alias must resolve to the runtime target model
+        // before hitting the provider — the alias itself is not a model name.
+        String runtimeModel = OpenAiModelRouting.runtimeModelName(properties, request.model());
+        return new ModelRequestOptions(runtimeModel, null, null, null, null, null, request.maxTokens());
     }
 
     private List<Message> buildMessages(Session session, OpenAiChatRequest request) {

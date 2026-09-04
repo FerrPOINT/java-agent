@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.OpenAiChatRequest;
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.ModelRequestOptions;
@@ -74,7 +75,7 @@ class ChatCompletionsControllerTest {
         ChatCompletionsController controller = new ChatCompletionsController(
             agentRuntime,
             toolRegistry,
-            promptBuilder,
+            promptBuilder, directProps(),
             modelClient,
             objectMapper,
             openAiMapper
@@ -393,5 +394,11 @@ class ChatCompletionsControllerTest {
         } catch (Exception e) {
             throw new AssertionError("Failed to parse SSE data line: " + raw, e);
         }
+    }
+
+    private static AgentProperties directProps() {
+        AgentProperties props = new AgentProperties();
+        props.getApi().setDirectModelRequests(true); // test: external model names pass through
+        return props;
     }
 }
