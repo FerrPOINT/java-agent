@@ -49,7 +49,7 @@ dependencies {
     implementation 'dev.langchain4j:langchain4j-http-client-jdk:1.18.0'
 
     // MCP (GA 2.0, not in Spring Boot BOM)
-    implementation 'io.modelcontextprotocol.sdk:mcp:2.0.0'
+    implementation 'io.modelcontextprotocol.sdk:mcp:2.0.1'
 
     // DB / migrations — versions managed by Spring Boot 4.1 BOM
     implementation 'org.flywaydb:flyway-core'
