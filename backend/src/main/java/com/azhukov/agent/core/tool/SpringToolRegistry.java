@@ -53,7 +53,7 @@ public class SpringToolRegistry implements ToolRegistry {
         "browser_type", "browser_scroll", "browser_back",
         "browser_press", "browser_get_images",
         "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-        "browser_exec", "web_search"
+        "web_search"
     );
     private static final List<String> BROWSER_CDP_TOOLS = List.of("browser_cdp", "browser_dialog");
     private static final List<String> FILE_TOOLS = List.of("read_file", "write_file", "patch", "search_files");
@@ -69,15 +69,13 @@ public class SpringToolRegistry implements ToolRegistry {
         "browser_type", "browser_scroll", "browser_back",
         "browser_press", "browser_get_images",
         "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-        "browser_exec",
-        "text_to_speech",
+                "text_to_speech",
         "todo", "memory",
         "session_search",
         "clarify",
         "execute_code", "delegate_task",
         "cronjob",
-        "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
-        "computer_use"
+        "mcp_tool"
     );
     private static final List<String> CODING_TOOLS = List.of(
         "web_search", "web_extract",
@@ -89,8 +87,7 @@ public class SpringToolRegistry implements ToolRegistry {
         "browser_type", "browser_scroll", "browser_back",
         "browser_press", "browser_get_images",
         "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-        "browser_exec",
-        "todo", "memory",
+                "todo", "memory",
         "session_search", "clarify",
         "execute_code", "delegate_task"
     );
@@ -104,8 +101,7 @@ public class SpringToolRegistry implements ToolRegistry {
         "browser_type", "browser_scroll", "browser_back",
         "browser_press", "browser_get_images",
         "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-        "browser_exec",
-        "todo", "memory",
+                "todo", "memory",
         "session_search",
         "execute_code", "delegate_task"
     );
@@ -120,12 +116,10 @@ public class SpringToolRegistry implements ToolRegistry {
         "browser_type", "browser_scroll", "browser_back",
         "browser_press", "browser_get_images",
         "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-        "browser_exec",
         "todo", "memory",
         "session_search",
         "execute_code", "delegate_task",
-        "cronjob",
-        "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service"
+        "cronjob"
     );
     private static final List<String> HERMES_WEBHOOK_SAFE_TOOLS =
         List.of("web_search", "web_extract", "vision_analyze", "clarify");
@@ -155,8 +149,8 @@ public class SpringToolRegistry implements ToolRegistry {
         Map.entry("clarify", spec(List.of("clarify"))),
         Map.entry("code_execution", spec(List.of("execute_code"))),
         Map.entry("delegation", spec(List.of("delegate_task"))),
-        Map.entry("homeassistant", spec(List.of("ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service"))),
-        Map.entry("computer_use", spec(List.of("computer_use"))),
+        Map.entry("homeassistant", spec(List.of())),
+        Map.entry("computer_use", spec(List.of())),
         Map.entry("debugging", spec(List.of("terminal", "process"), "web", "file")),
         Map.entry("safe", spec(List.of(), "web", "vision", "image_gen")),
         Map.entry("coding", spec(CODING_TOOLS)),

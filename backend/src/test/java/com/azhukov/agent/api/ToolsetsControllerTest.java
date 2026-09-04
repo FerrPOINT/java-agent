@@ -384,15 +384,20 @@ class ToolsetsControllerTest {
     }
 
     @Test
-    void configurableToolsetsExposeHermesStaticToolNamesEvenWhenRegistryDoesNotHaveImplementations() throws Exception {
+    void unimplementedToolsetsAdvertiseNoPhantomToolNames() throws Exception {
+        // Toolsets whose upstream tools are not implemented in this agent must
+        // not promise tool names: an empty list is the honest contract.
         mockMvc.perform(get("/v1/toolsets"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data[?(@.name=='x_search')].tools[0]").value("x_search"))
-            .andExpect(jsonPath("$.data[?(@.name=='video')].tools[0]").value("video_analyze"))
-            .andExpect(jsonPath("$.data[?(@.name=='video_gen')].tools[0]").value("video_generate"))
-            .andExpect(jsonPath("$.data[?(@.name=='video_gen')].tools[1]").value("xai_video_edit"))
-            .andExpect(jsonPath("$.data[?(@.name=='video_gen')].tools[2]").value("xai_video_extend"))
-            .andExpect(jsonPath("$.data[?(@.name=='spotify')].tools.length()").value(7))
+            .andExpect(jsonPath("$.data[?(@.name=='x_search')].tools.length()").value(0))
+            .andExpect(jsonPath("$.data[?(@.name=='video')].tools.length()").value(0))
+            .andExpect(jsonPath("$.data[?(@.name=='video_gen')].tools.length()").value(0))
+            .andExpect(jsonPath("$.data[?(@.name=='spotify')].tools.length()").value(0))
+            .andExpect(jsonPath("$.data[?(@.name=='homeassistant')].tools.length()").value(0))
+            .andExpect(jsonPath("$.data[?(@.name=='discord')].tools.length()").value(0))
+            .andExpect(jsonPath("$.data[?(@.name=='yuanbao')].tools.length()").value(0))
+            .andExpect(jsonPath("$.data[?(@.name=='computer_use')].tools.length()").value(0))
+            .andExpect(jsonPath("$.data[?(@.name=='browser')].tools.length()").value(13))
             .andExpect(jsonPath("$.data[?(@.name=='context_engine')].tools.length()").value(0))
             .andExpect(jsonPath("$.data[?(@.name=='stt')].tools.length()").value(0));
     }
