@@ -30,6 +30,9 @@ services:
       DB_USER: project_workflow
       DB_PASSWORD: project_workflow
       AGENT_SERVER_PORT: "18090"
+      # The compose smoke deliberately uses prod hardening; this is a synthetic
+      # non-secret key solely for its isolated disposable stack.
+      AGENT_SECURITY_API_KEY: "e2e-only-api-key-not-a-secret"
       AGENT_MODEL_PROVIDER: noop
       AGENT_CHROMIUM_AUTO_START: "false"
       AGENT_CHROMIUM_AUTO_INSTALL: "false"
