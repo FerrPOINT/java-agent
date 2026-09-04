@@ -67,7 +67,7 @@ public class HealthController {
     public Map<String, Object> hermesHealth() {
         return Map.of(
             "status", "ok",
-            "platform", "hermes-agent",
+            "platform", "java-agent",
             "version", implementationVersion()
         );
     }
@@ -81,7 +81,7 @@ public class HealthController {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("status", readiness.get("status"));
         payload.put("readiness", readiness);
-        payload.put("platform", "hermes-agent");
+        payload.put("platform", "java-agent");
         payload.put("version", implementationVersion());
         payload.put("gateway_state", gatewayState);
         payload.put("platforms", Map.of());

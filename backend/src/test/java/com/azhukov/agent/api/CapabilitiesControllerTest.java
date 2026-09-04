@@ -62,7 +62,7 @@ class CapabilitiesControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.object").value("java-agent.api_server.capabilities"))
             .andExpect(jsonPath("$.platform").value("java-agent"))
-            .andExpect(jsonPath("$.model").value("hermes-agent"))
+            .andExpect(jsonPath("$.model").value("java-agent"))
             .andExpect(jsonPath("$.auth.type").value("bearer"))
             .andExpect(jsonPath("$.auth.required").value(false))
             .andExpect(jsonPath("$.runtime.description").value(org.hamcrest.Matchers.containsString("API-server host")))
@@ -181,7 +181,7 @@ class CapabilitiesControllerTest {
 
         mockMvc.perform(get("/v1/capabilities"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.model").value("hermes-agent"));
+            .andExpect(jsonPath("$.model").value("java-agent"));
     }
 
     @Test

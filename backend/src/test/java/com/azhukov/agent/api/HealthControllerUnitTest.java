@@ -55,7 +55,7 @@ class HealthControllerUnitTest {
         mockMvc.perform(get("/health"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("ok"))
-            .andExpect(jsonPath("$.platform").value("hermes-agent"))
+            .andExpect(jsonPath("$.platform").value("java-agent"))
             .andExpect(jsonPath("$.name").doesNotExist());
 
         mockMvc.perform(get("/v1/health"))
@@ -69,12 +69,12 @@ class HealthControllerUnitTest {
         mockMvc.perform(get("/p/work/health"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("ok"))
-            .andExpect(jsonPath("$.platform").value("hermes-agent"));
+            .andExpect(jsonPath("$.platform").value("java-agent"));
 
         mockMvc.perform(get("/p/work/v1/health"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("ok"))
-            .andExpect(jsonPath("$.platform").value("hermes-agent"));
+            .andExpect(jsonPath("$.platform").value("java-agent"));
     }
 
     @Test
@@ -93,7 +93,7 @@ class HealthControllerUnitTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value(org.hamcrest.Matchers.isOneOf("ok", "degraded")))
             .andExpect(jsonPath("$.readiness.status").value(org.hamcrest.Matchers.isOneOf("ok", "degraded")))
-            .andExpect(jsonPath("$.platform").value("hermes-agent"))
+            .andExpect(jsonPath("$.platform").value("java-agent"))
             .andExpect(jsonPath("$.name").doesNotExist())
             .andExpect(jsonPath("$.readiness.checks.state_db.status").value("ok"))
             .andExpect(jsonPath("$.readiness.checks.session_store.status").value("ok"))
@@ -114,7 +114,7 @@ class HealthControllerUnitTest {
         mockMvc.perform(get("/p/work/health/detailed"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value(org.hamcrest.Matchers.isOneOf("ok", "degraded")))
-            .andExpect(jsonPath("$.platform").value("hermes-agent"));
+            .andExpect(jsonPath("$.platform").value("java-agent"));
     }
 
     @Test

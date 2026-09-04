@@ -6,7 +6,7 @@ import java.util.regex.Pattern;
 
 final class OpenAiModelRouting {
 
-    private static final String DEFAULT_ADVERTISED_MODEL = "hermes-agent";
+    private static final String DEFAULT_ADVERTISED_MODEL = "java-agent";
     private static final Pattern PROVIDER_PREFIX = Pattern.compile("^[a-zA-Z0-9_.-]{2,64}$");
 
     private OpenAiModelRouting() {

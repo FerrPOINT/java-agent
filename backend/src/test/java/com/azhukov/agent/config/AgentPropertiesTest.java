@@ -25,7 +25,7 @@ class AgentPropertiesTest {
                     .containsExactly("hermes-cli");
             assertThat(properties.getApi().getChatCompletionToolsets())
                     .containsExactly("hermes-api-server");
-            assertThat(properties.getApi().getModelName()).isEqualTo("hermes-agent");
+            assertThat(properties.getApi().getModelName()).isEqualTo("java-agent");
             assertThat(properties.getApi().getCorsOrigins()).isEmpty();
             assertThat(properties.getApi().isDirectModelRequests()).isFalse();
             assertThat(properties.getApi().getModelRoutes()).isEmpty();

@@ -126,7 +126,7 @@ class OpenAiRequestModelOptionsTest {
 
         ModelRequestOptions options = OpenAiRequestModelOptions.from(
             properties,
-            "hermes-agent",
+            "java-agent",
             null,
             Map.of(),
             null,

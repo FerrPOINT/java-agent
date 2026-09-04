@@ -285,7 +285,7 @@ class OpenAiResponsesControllerTest {
                     }
                     """))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.model").value("hermes-agent"))
+            .andExpect(jsonPath("$.model").value("java-agent"))
             .andExpect(jsonPath("$.output[0].content[0].text").value("pong"));
 
         assertThat(optionsCaptor.getValue().modelName()).isEqualTo(MODEL);
@@ -527,7 +527,7 @@ class OpenAiResponsesControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
-                      "model": "hermes-agent",
+                      "model": "java-agent",
                       "input": "ping",
                       "model_options": {
                         "reasoning_effort": "ultra",
@@ -563,7 +563,7 @@ class OpenAiResponsesControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
-                      "model": "hermes-agent",
+                      "model": "java-agent",
                       "input": "ping",
                       "model_options": "ignored"
                     }
@@ -597,7 +597,7 @@ class OpenAiResponsesControllerTest {
                     }
                     """))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.model").value("hermes-agent"))
+            .andExpect(jsonPath("$.model").value("java-agent"))
             .andExpect(jsonPath("$.output[0].content[0].text").value("pong"));
 
         ModelRequestOptions options = optionsCaptor.getValue();

@@ -468,7 +468,7 @@ public class AgentProperties {
     @Getter @Setter
     public static class ApiProperties {
         /** Stable virtual model advertised by OpenAI-compatible discovery endpoints. */
-        private String modelName = "hermes-agent";
+        private String modelName = "java-agent";
         /** Toolsets exposed by the OpenAI-compatible /v1/chat/completions endpoint when the request omits tools. */
         private final List<String> chatCompletionToolsets = new ArrayList<>(List.of("hermes-api-server"));
         /** Browser origins allowed to call the API server. Empty means browser CORS is disabled. */

@@ -242,7 +242,7 @@ class ModelOptionsControllerTest {
 
         var result = new ModelOptionsController(properties, runtimeConfigService).options();
 
-        assertThat(result).containsEntry("model", "hermes-agent");
+        assertThat(result).containsEntry("model", "java-agent");
         assertThat(result).containsEntry("provider", "openai-compatible");
     }
 
