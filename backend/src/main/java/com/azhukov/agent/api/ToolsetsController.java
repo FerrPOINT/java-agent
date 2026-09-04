@@ -111,7 +111,6 @@ public class ToolsetsController {
         "desktop_ui",
         "feishu_doc",
         "feishu_drive",
-        "kanban",
         "debugging",
         "safe",
         "coding",

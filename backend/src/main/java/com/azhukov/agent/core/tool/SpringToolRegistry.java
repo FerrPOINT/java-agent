@@ -76,10 +76,6 @@ public class SpringToolRegistry implements ToolRegistry {
         "execute_code", "delegate_task",
         "cronjob",
         "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
-        "kanban_show", "kanban_list", "kanban_complete", "kanban_block",
-        "kanban_request_review", "kanban_request_changes", "kanban_heartbeat",
-        "kanban_comment", "kanban_create", "kanban_link", "kanban_unblock",
-        "kanban_attach", "kanban_attach_url", "kanban_attachments",
         "computer_use"
     );
     private static final List<String> CODING_TOOLS = List.of(
@@ -158,12 +154,6 @@ public class SpringToolRegistry implements ToolRegistry {
         Map.entry("code_execution", spec(List.of("execute_code"))),
         Map.entry("delegation", spec(List.of("delegate_task"))),
         Map.entry("homeassistant", spec(List.of("ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service"))),
-        Map.entry("kanban", spec(List.of(
-            "kanban_show", "kanban_list", "kanban_complete", "kanban_block",
-            "kanban_request_review", "kanban_request_changes", "kanban_heartbeat",
-            "kanban_comment", "kanban_create", "kanban_link", "kanban_unblock",
-            "kanban_attach", "kanban_attach_url", "kanban_attachments"
-        ))),
         Map.entry("computer_use", spec(List.of("computer_use"))),
         Map.entry("debugging", spec(List.of("terminal", "process"), "web", "file")),
         Map.entry("safe", spec(List.of(), "web", "vision", "image_gen")),
