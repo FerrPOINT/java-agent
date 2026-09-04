@@ -28,6 +28,7 @@ Migrate to **PostgreSQL 16** as the sole production database.
 ## Consequences
 
 **Positive:**
+
 - Full `JSONB` support — used in `context_references.metadata`, `approvals.request`.
 - `gen_random_uuid()` native — all primary keys are UUID.
 - Concurrent read/write without locking issues.
@@ -37,11 +38,13 @@ Migrate to **PostgreSQL 16** as the sole production database.
 - Docker-friendly: official `postgres:16` image in `docker-compose.yml`.
 
 **Negative:**
+
 - Requires an external service (PostgreSQL container) — more complex than embedded SQLite.
 - `noop` profile uses H2 in-memory for offline development/testing (not PostgreSQL — minor compatibility risk).
 - Connection pool management needed (Spring Boot default HikariCP).
 
 **Mitigations:**
+
 - `noop` profile uses H2 in PostgreSQL compatibility mode to minimise drift.
 - Integration tests use Testcontainers with real PostgreSQL 16.
 - HikariCP connection pooling with sensible defaults.

@@ -105,12 +105,14 @@ END;
 ### 2.3 Recall / search algorithm
 
 #### Built-in `MemoryStore.search(query)`
+
 - Loads all chunks for the target file.
 - Tokenizes query and chunks into lowercase words (splits on whitespace/punctuation).
 - Computes per-chunk score: `sum of query term frequency in chunk / total words in chunk`.
 - Returns top N chunks. This is a simple keyword density ranking, not semantic/embedding.
 
 #### `ContextEngine`
+
 - Combines:
   1. `MemoryStore` results for `MEMORY.md` and `USER.md`.
   2. `session_search` / message anchoring (recent messages + matches).
@@ -118,6 +120,7 @@ END;
 - Produces a single text block injected into the system prompt or user context.
 
 #### Session search (`session_state.py` / `session_search_tool.py`)
+
 - Searches `messages_fts` for query terms.
 - Supports:
   - `query` (required)
@@ -127,6 +130,7 @@ END;
 - CJK handling: the code probes whether SQLite supports `fts5` tokenizers for CJK and falls back to a custom tokenizer/migration.
 
 #### Memory provider plugins
+
 - Plugins implement semantic/long-term recall via external APIs (Honcho dialectic, RetainDB, Supermemory, etc.).
 - `MemoryManager.prefetch_all(query)` collects each provider’s prefetched context.
 - External prefetches run in background threads with timeouts; failures are logged, not fatal.
@@ -190,6 +194,7 @@ metadata:
 ```
 
 Validation constraints (from `skill_manager_tool.py`):
+
 - `name`: lowercase letters, digits, hyphens, underscores, dots; max 64 chars; must start with letter or digit.
 - `description`: required; max 1024 chars; first ~57 chars shown in system prompt skill index (self-contained trigger recommended).
 - Body must be non-empty after frontmatter.
@@ -238,6 +243,7 @@ Validation constraints (from `skill_manager_tool.py`):
 | `remove_file` | Delete supporting file. | Allowed-subdir path check; read-before-write guard. |
 
 Important autonomous-curation policy (must preserve in Java):
+
 - Background review/origin may **not** write to:
   - Pinned skills
   - External-dir skills

@@ -121,17 +121,20 @@ java-agent CLI — это REPL со slash-командами, а не POSIX-по
 ## 5. Ключевые провалы / приоритеты
 
 ### P0 — без этого java-agent не заменит Hermes в повседневной работе
+
 1. **Telegram fast mode wiring** — `ChatRequest` из telegram-bot не передаёт `fastMode`/`reasoningEffort`/`voiceMode` в backend. CLI работает, бот — нет.
 2. **Goal auto-continuation** — `/goal` в telegram-bot — stub; нет judge model и loop продолжения.
 3. **`SendMessageTool` не зарегистрирован** — класс есть, но не `@AgentTool`.
 
 ### P1 — большое расхождение с Hermes
+
 4. **Top-level CLI commands** — `setup`, `config`, `doctor`, `update`, `uninstall`, `backup`, `import`, `logs`, `debug`, `dump`, `profile`, `security`, `prompt-size`.
 5. **Other platforms** — WhatsApp, Slack, Discord, generic webhook.
 6. **Kanban subsystem** — отсутствует полностью.
 7. **Computer-use / desktop automation** — отсутствует.
 
 ### P2 — нишевые инструменты
+
 8. `read_terminal`, `x_search`, `video_analyze`, transcription/voice mode tool, MOA, Feishu, HomeAssistant.
 9. **ACP** — запланирован в docs, не реализован.
 

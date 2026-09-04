@@ -36,12 +36,14 @@ Prometheus endpoint exposed at `/actuator/prometheus`. Metrics are auto-register
 ## Consequences
 
 **Positive:**
+
 - Standard Prometheus scraping — works with existing Grafana dashboards.
 - Low overhead (Micrometer is optimized for minimal allocation).
 - Counters/timers are composable and taggable.
 - Spring Boot Actuator integration is automatic.
 
 **Negative:**
+
 - Additional dependency (~500KB).
 - Metrics naming conventions must be followed consistently.
 - Cardinality risk if too many tag combinations are used (e.g., per-session tags).

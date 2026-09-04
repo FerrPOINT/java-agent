@@ -119,17 +119,20 @@ persistence (JPA entities + repositories)
 ### 2. Lombok
 
 **Mandatory:**
+
 - `@RequiredArgsConstructor` + `@Slf4j` на всех Spring beans с final-зависимостями и чистыми конструкторами.
 - `@Data` на JPA entities (`@Entity` + `@Data`).
 - `record` для DTO и immutable core models.
 
 **Forbidden:**
+
 - Конструкторы с логикой (`HttpClient.new`, `Executors.new`, factory methods).
 - Null-checks в конструкторе (`x == null ? "" : x`).
 - `@Qualifier` на параметр (Lombok не поддерживает → manual constructor).
 - Множественные конструкторы.
 
 **`@PostConstruct` для derived fields:**
+
 ```java
 @RequiredArgsConstructor
 public class WebSearchTool {
@@ -142,9 +145,11 @@ public class WebSearchTool {
     }
 }
 ```
+
 В unit-тестах: `new WebSearchTool(...); tool.init();`
 
 **Inline init для runtime state:**
+
 ```java
 private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
     Thread t = new Thread(r, "background-review");
@@ -158,18 +163,21 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 ### 3. MapStruct
 
 **Mandatory:**
+
 - `@Mapper(config = MapStructConfig.class)` — `componentModel = "spring"`, `unmappedTargetPolicy = ERROR`.
 - Мапперы в `persistence.mapper` (entity ↔ domain) или `api.mapper` (domain ↔ DTO).
 - Unit-тесты: `Mappers.getMapper(X.class)` (не mock, не `@SpringBootTest`).
 - В service-тестах: real mappers через `Mappers.getMapper(...)`.
 
 **Conversion rules:**
+
 - `roleToString(Role)` → `role.name().toLowerCase()` (e.g., "user", "assistant")
 - `stringToRole(String)` → `Role.valueOf(role.toUpperCase())`, null → `Role.USER`
 - `@Named` helper methods для non-trivial conversion
 - `default` methods для conditional logic (switch, null checks, factory)
 
 **Forbidden:**
+
 - Mock мапперов в unit-тестах.
 - Маппинг в bot layer (entities = domain models).
 - `buildResponse` в сервисах, где DTO собирается из множества источников — ручная сборка.

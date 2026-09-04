@@ -40,6 +40,7 @@
 ## Toolsets по умолчанию
 
 В `application.yml`:
+
 ```yaml
 agent:
   skills:

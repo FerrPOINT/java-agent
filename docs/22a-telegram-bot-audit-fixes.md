@@ -27,10 +27,12 @@ submit each update to the pool instead of calling `accept()` inline. The
 polling thread only fetches and dispatches.
 
 **Files:**
+
 - `LongPollingService.java` — add `ExecutorService processPool`, submit events
 - `LongPollingService.java` — shutdown pool in `stop()`
 
 **Tests:**
+
 - `LongPollingServiceTest`: verify update processed on separate thread
 - `LongPollingServiceTest`: verify slow processing doesn't block next poll cycle
 - `LongPollingServiceTest`: verify pool shutdown on stop
@@ -50,9 +52,11 @@ unboundedly → `StackOverflowError` with many queued messages.
 (100 messages) to prevent infinite loops.
 
 **Files:**
+
 - `BotMessageProcessor.java` — rewrite `drainQueue` method
 
 **Tests:**
+
 - `BotMessageProcessorTest`: verify 50 queued messages processed without StackOverflow
 - `BotMessageProcessorTest`: verify queue order preserved (FIFO)
 - `BotMessageProcessorTest`: verify max-queue-depth guard drops excess messages
@@ -73,9 +77,11 @@ re-processing after interrupt completes.
 turn stops.
 
 **Files:**
+
 - `BotMessageProcessor.java` — interrupt branch: add `queueMessage` after `interrupt`
 
 **Tests:**
+
 - `BotMessageProcessorTest`: verify interrupt message queued for re-processing
 - `BotMessageProcessorTest`: verify interrupt message is first in drain order
 
@@ -97,11 +103,13 @@ The `editStream` calls during tool execution show the combined view, but
 `finalizeStream` shows only the clean text.
 
 **Files:**
+
 - `BotMessageProcessor.java` — split `accumulated` into `cleanText` + `toolProgress`
 - `BotMessageProcessor.java` — `editStream` shows `cleanText + toolProgress`
 - `BotMessageProcessor.java` — `finalizeStream` shows `cleanText + footer` only
 
 **Tests:**
+
 - `BotMessageProcessorTest`: verify finalized text has no 🔧/✅ lines
 - `BotMessageProcessorTest`: verify tool progress shown during streaming (editStream calls)
 - `BotMessageProcessorTest`: verify footer appended to clean text only
@@ -118,9 +126,11 @@ and passes it as `Map.of("commands", commandsJson)`. Telegram expects
 Jackson will serialize it as a JSON array.
 
 **Files:**
+
 - `TelegramClient.java` — `setMyCommands` / `setMyCommandsForChat`: pass list of maps
 
 **Tests:**
+
 - `TelegramClientTest`: verify `commands` param is a list (array in JSON), not a string
 - `TelegramClientTest`: verify command structure: `[{command, description}]`
 
@@ -136,11 +146,13 @@ data race on the list.
 to poll from the queue (thread-safe).
 
 **Files:**
+
 - `BusySessionHandler.java` — `ConcurrentLinkedQueue` instead of `ArrayList`
 - `BusySessionHandler.java` — `queueMessage`: `computeIfAbsent` with queue
 - `BusySessionHandler.java` — `drainQueue`: `poll()` in loop
 
 **Tests:**
+
 - `BusySessionHandlerTest`: verify concurrent queue + drain (100 messages, 2 threads)
 - `BusySessionHandlerTest`: verify FIFO order under concurrency
 
@@ -156,9 +168,11 @@ doesn't call `MarkdownConverter.convert()`. Error messages containing `.`,
 `telegramClient.sendMessage()`.
 
 **Files:**
+
 - `BotMessageProcessor.java` — `sendError`: add `MarkdownConverter.convert()`
 
 **Tests:**
+
 - `BotMessageProcessorTest`: verify error with path `C:\Users\test` doesn't throw
 - `BotMessageProcessorTest`: verify error text properly escaped (dots, underscores)
 
@@ -179,9 +193,11 @@ gap where neither typing nor the final text is visible.
 `finally`, only `markFree` + `drainQueue`.
 
 **Files:**
+
 - `BotMessageProcessor.java` — relocate `stopTyping` calls
 
 **Tests:**
+
 - `BotMessageProcessorTest`: verify order: finalizeStream → stopTyping
 - `BotMessageProcessorTest`: verify order: sendError → stopTyping
 - `BotMessageProcessorTest`: verify stopTyping always called (even on exception)
@@ -198,9 +214,11 @@ the `StreamInterruptedException` is caught in `onError` callback, which sets
 `reactionManager.onCancel()` instead of `onProcessingComplete(true)`.
 
 **Files:**
+
 - `BotMessageProcessor.java` — track `interrupted` flag, call `onCancel` if true
 
 **Tests:**
+
 - `BotMessageProcessorTest`: verify interrupted → `onCancel` called
 - `BotMessageProcessorTest`: verify normal completion → `onProcessingComplete(true)`
 - `BotMessageProcessorTest`: verify error → `onProcessingComplete(false)`
@@ -220,10 +238,12 @@ When streaming includes footer in the final edit, no separate send needed.
 Add `streamFinalized` guard.
 
 **Files:**
+
 - `BotMessageProcessor.java` — verify footer path in `onComplete`
 - `BotMessageProcessor.java` — remove redundant `sendFormatted` for `streamFinalized=true`
 
 **Tests:**
+
 - `BotMessageProcessorTest`: verify single message sent (no duplicate)
 - `BotMessageProcessorTest`: verify footer in finalized stream text
 - `BotMessageProcessorTest`: verify `sendFormatted` not called when `streamFinalized=true`
@@ -232,7 +252,7 @@ Add `streamFinalized` guard.
 
 ### Task 11: MessageSplitter — don't break code blocks
 
-**Problem:** Split on paragraph boundaries (`\n\n`) can split inside a ``` ```
+**Problem:** Split on paragraph boundaries (`\n\n`) can split inside a ``````
 code block, breaking the fence. Each chunk has unbalanced fences.
 
 **Fix:** Track code block state during splitting. If inside a code block, skip
@@ -240,10 +260,12 @@ paragraph boundaries — only split on fence boundaries or fall through to
 line/hard split.
 
 **Files:**
+
 - `MessageSplitter.java` — add `insideCodeBlock` tracking
 - `MessageSplitter.java` — skip `\n\n` split if inside code block
 
 **Tests:**
+
 - `MessageSplitterTest`: verify code block spanning 5000 chars → 2 chunks with balanced fences
 - `MessageSplitterTest`: verify normal text split on paragraph boundary still works
 - `MessageSplitterTest`: verify mixed code + text → split on text boundary, not inside code
@@ -259,9 +281,11 @@ indicator. User thinks the response was cut off.
 second, etc. Only when N > 1.
 
 **Files:**
+
 - `MessageSplitter.java` — add index prefix when size > 1
 
 **Tests:**
+
 - `MessageSplitterTest`: verify 2-chunk message → "(1/2)" + "(2/2)" prefixes
 - `MessageSplitterTest`: verify 1-chunk message → no prefix
 - `MessageSplitterTest`: verify prefix doesn't break MarkdownV2 (escaped dots)
@@ -280,9 +304,11 @@ If any text is >320 chars, join with `\n` (preserve current behavior for long
 multi-paragraph input).
 
 **Files:**
+
 - `TextBatchDebouncer.java` — adaptive join: space for short, newline for long
 
 **Tests:**
+
 - `TextBatchDebouncerTest`: verify "what is" + "API" → "what is API" (space)
 - `TextBatchDebouncerTest`: verify long paragraph + long paragraph → joined with `\n`
 - `TextBatchDebouncerTest`: verify mixed short + long → joined with `\n` (conservative)
@@ -302,9 +328,11 @@ notification is needed, send it as a separate ephemeral message or make it
 configurable.
 
 **Files:**
+
 - `AgentBackendClient.java` — remove `memoryUpdated` append to response
 
 **Tests:**
+
 - `AgentBackendClientTest`: verify response content doesn't contain `💾`
 - `AgentBackendClientTest`: verify response content is clean LLM output
 
@@ -322,9 +350,11 @@ If API call takes 0.1s, effective rate is ~10/s (not configured 1/s).
 acquire, not in `finally` block.
 
 **Files:**
+
 - `TelegramClient.java` — move `releaseRateLimit` to right after `acquireRateLimit`
 
 **Tests:**
+
 - `TelegramClientTest`: verify 2 calls 0.5s apart → second blocks until 1s elapsed
 - `TelegramClientTest`: verify rate accuracy within ±100ms
 
@@ -336,12 +366,15 @@ acquire, not in `finally` block.
 logs warning, returns empty.
 
 **Fix:** Parse `retry_after` from 429 error response. `Thread.sleep(retry_after
-* 1000)`. Retry the call once. Max 1 retry.
+
+- 1000)`. Retry the call once. Max 1 retry.
 
 **Files:**
+
 - `TelegramClient.java` — `callApi`: detect 429, parse retry_after, sleep, retry
 
 **Tests:**
+
 - `TelegramClientTest`: verify 429 → sleep `retry_after` seconds → retry succeeds
 - `TelegramClientTest`: verify no infinite retry (max 1)
 - `TelegramClientTest`: verify non-429 error → no retry
@@ -356,9 +389,11 @@ never called.
 **Fix:** Add `@PreDestroy` method calling `stopAll()`.
 
 **Files:**
+
 - `TypingManager.java` — add `@PreDestroy` method
 
 **Tests:**
+
 - `TypingManagerTest`: verify `stopAll` called on bean destruction
 - `TypingManagerTest`: verify no tasks running after shutdown
 
@@ -373,9 +408,11 @@ chatId could create two scheduled tasks, one orphaned.
 `ScheduledFuture` is stored atomically.
 
 **Files:**
+
 - `TypingManager.java` — replace `containsKey` + `put` with `putIfAbsent`
 
 **Tests:**
+
 - `TypingManagerTest`: verify concurrent `startTyping` for same chat → 1 task
 - `TypingManagerTest`: verify `stopTyping` + immediate `startTyping` → new task
 
@@ -389,10 +426,12 @@ is ignored.
 **Fix:** Pass `maxMessageLength` as a constructor parameter or method argument.
 
 **Files:**
+
 - `MessageSplitter.java` — accept `maxMessageLength` parameter
 - `BotMessageProcessor.java` — pass `properties.getMaxMessageLength()` to splitter
 
 **Tests:**
+
 - `MessageSplitterTest`: verify custom max length (e.g., 2000) respected
 - `MessageSplitterTest`: verify default 4096 still works
 
@@ -407,9 +446,11 @@ is ignored.
 it. Telegram MarkdownV2 supports `>` for blockquotes.
 
 **Files:**
+
 - `MarkdownConverter.java` — add blockquote detection before `escapePlain`
 
 **Tests:**
+
 - `MarkdownConverterTest`: verify `> quote` → `> quote` (not `\> quote`)
 - `MarkdownConverterTest`: verify `text > text` → `text \> text` (mid-line still escaped)
 - `MarkdownConverterTest`: verify `> quote\n> more` → both lines unescaped
@@ -425,10 +466,12 @@ rate limit — all fail at runtime only.
 `@Positive` on `typingRefreshInterval`, `@Min(1)` on `rateLimitPerSecond`.
 
 **Files:**
+
 - `BotProperties.java` — add validation annotations
 - `BotApplication.java` — ensure `@EnableConfigurationProperties` with validation
 
 **Tests:**
+
 - `BotPropertiesTest`: verify empty token → validation error
 - `BotPropertiesTest`: verify negative interval → validation error
 - `BotPropertiesTest`: verify valid config → no errors

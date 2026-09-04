@@ -52,6 +52,7 @@ The project is an active product line. `AGENTS.md` is the canonical development 
 | License | FerrPOINT Proprietary Source-Available Evaluation License v1.0 |
 
 <a name="features"></a>
+
 ## ✨ Features
 
 | Feature | Описание |
@@ -67,6 +68,7 @@ The project is an active product line. `AGENTS.md` is the canonical development 
 | Deployment/test matrix | Production, local and E2E compose files, Flyway migrations and a large regression suite. |
 
 <a name="stack"></a>
+
 ## 🔧 Core Stack
 
 | Layer | Stack |
@@ -79,6 +81,7 @@ The project is an active product line. `AGENTS.md` is the canonical development 
 | Codegen/helpers | Lombok, MapStruct, Jackson 3, Pebble templates, Resilience4j |
 
 <a name="api"></a>
+
 ## 🔌 API
 
 | Endpoint | Назначение |
@@ -94,6 +97,7 @@ The project is an active product line. `AGENTS.md` is the canonical development 
 | `GET /actuator/health` | Health check |
 
 <a name="boundaries"></a>
+
 ## 🧱 Boundaries
 
 - Production deployment must provide real model credentials, DB credentials, API keys and secret redaction settings.
@@ -102,6 +106,7 @@ The project is an active product line. `AGENTS.md` is the canonical development 
 - Java/Gradle artifacts are packaged with proprietary license metadata; third-party dependencies remain under their own licenses.
 
 <a name="cli"></a>
+
 ## 🖥️ CLI
 
 Build jars:
@@ -154,6 +159,7 @@ curl -s -X POST http://localhost:8090/v1/chat/completions \
 ```
 
 <a name="architecture"></a>
+
 ## 🏗️ Architecture
 
 ```mermaid
@@ -224,6 +230,7 @@ java-agent/
 - [backend/docs/conventions.md](backend/docs/conventions.md) — Lombok, records and MapStruct conventions.
 
 <a name="license"></a>
+
 ## 🔒 License
 
 Proprietary source-available. Not open source.

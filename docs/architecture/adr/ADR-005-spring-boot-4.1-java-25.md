@@ -20,7 +20,7 @@ The project started on Spring Boot 3.x + Java 21. As the feature set grew, sever
 
 Adopt **Spring Boot 4.1.0** on **Java 25 LTS** as the development and production platform.
 
-### Version matrix:
+### Version matrix
 
 | Component | Version | Notes |
 |-----------|---------|-------|
@@ -38,6 +38,7 @@ Adopt **Spring Boot 4.1.0** on **Java 25 LTS** as the development and production
 ## Consequences
 
 **Positive:**
+
 - **Virtual threads** as first-class concurrency primitive — no reactive complexity (ADR-001).
 - **Records and pattern matching** — domain models are immutable records with sealed hierarchies where applicable.
 - **Spring Boot 4.1 improvements** — better SSE handling, native virtual thread support in `Tomcat`/`Jetty`, improved Testcontainers integration.
@@ -45,18 +46,20 @@ Adopt **Spring Boot 4.1.0** on **Java 25 LTS** as the development and production
 - **LTS** — Java 25 LTS ensures long-term support through 2030+.
 
 **Negative:**
+
 - **Spring Boot 4.1.0 bug** — graceful shutdown doesn't work correctly; workaround: `server.shutdown: immediate`.
 - **Ecosystem maturity** — some libraries may not fully support Java 25 / Spring Boot 4.1 yet.
 - **Lombok compatibility** — requires latest Lombok version (1.18.38) for Java 25 annotation processing.
 - **Gradle version** — requires Gradle 9.6+ for Java 25 support.
 
 **Mitigations:**
+
 - `server.shutdown: immediate` in `application.yml` — documented workaround.
 - All dependencies verified compatible before upgrade.
 - `noop` profile with H2 in-memory for offline development/testing.
 - `maxHeapSize = 2g` in Gradle build for `bootRun` to prevent OOM with large LLM payloads.
 
-### Profile strategy:
+### Profile strategy
 
 | Profile | DB | LLM | Port | Purpose |
 |---------|-----|-----|------|---------|

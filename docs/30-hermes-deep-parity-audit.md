@@ -25,7 +25,7 @@ The previous audit (docs/28-hermes-parity-audit.md) claimed 94% parity (101/107)
 
 ## 1. Tools — Registry Comparison
 
-### Hermes tool registry (70 tools via `registry.register()`):
+### Hermes tool registry (70 tools via `registry.register()`)
 
 ```
 browser_back, browser_cdp, browser_click, browser_console, browser_dialog,
@@ -44,9 +44,10 @@ vision_analyze, web_extract, web_search, write_file, x_search,
 yb_query_group_info, yb_query_group_members, yb_search_sticker,
 yb_send_dm, yb_send_sticker
 ```
+
 Plus MCP tools (dynamically registered at runtime).
 
-### Java-agent tools (37 `@AgentTool` annotated):
+### Java-agent tools (37 `@AgentTool` annotated)
 
 ```
 browser_back, browser_cdp, browser_click, browser_console, browser_dialog,
@@ -170,7 +171,8 @@ text_to_speech, todo, vision_analyze, web_extract, web_search, write_file
 
 ## 3. Bot Commands (Telegram/Gateway)
 
-### Hermes gateway slash commands (48):
+### Hermes gateway slash commands (48)
+
 ```
 agents, approve, background, blueprint, branch, bundles, codex_runtime,
 commands, compress, credits, debug, deny, fast, footer, goal, help,
@@ -180,7 +182,8 @@ set_home, skills, status, stop, subgoal, suggestions, title, topic, undo,
 update, usage, verbose, version, voice, whoami, yolo
 ```
 
-### Java-agent telegram-bot commands (57):
+### Java-agent telegram-bot commands (57)
+
 ```
 agents, approve, background, branch, bundles, codex_runtime, commands,
 compress, context, credits, cron, curator, debug, deny, diff, fast,
@@ -209,7 +212,8 @@ title, topic, undo, update, usage, verbose, version, voice, whoami, yolo
 
 ## 4. CLI Commands
 
-### Hermes CLI subcommands (40+):
+### Hermes CLI subcommands (40+)
+
 ```
 acp, auth, backup, bitwarden, browse, bundles, checkpoints, clear,
 claw, completion, computer-use, config, cron, curator, dashboard,
@@ -220,9 +224,11 @@ prune, remove, rename, repair, secrets, security, sessions, setup,
 skills, slack, status, tools, uninstall, update, version, webhook,
 whatsapp, whatsapp-cloud, xai
 ```
+
 Plus `chat` (default mode).
 
-### Java-agent CLI slash commands (94):
+### Java-agent CLI slash commands (94)
+
 All 94 commands listed in §1 (register calls in SlashCommandRegistry).
 
 | Feature | Hermes | Java Agent | Gap Level | Notes |
@@ -593,11 +599,13 @@ All 94 commands listed in §1 (register calls in SlashCommandRegistry).
 ## Gap Summary by Severity
 
 ### CRITICAL (3)
+
 1. **Goal auto-continuation** — /goal stores goal but no judge model or auto-continue loop. This is a core workflow feature.
 2. **Kanban tools (9 tools)** — Completely absent. No multi-agent task coordination surface.
 3. **Plugin system** — No plugin architecture. All capability must be hard-coded as Spring beans. This blocks extensibility.
 
 ### HIGH (7)
+
 4. **ACP/editor integration** — No ACP server. Cannot integrate with VS Code, Zed, JetBrains.
 5. **CLI subcommands missing** — setup, dashboard, gui/desktop, plugins, hooks — significant UX gaps.
 6. **Multi-platform gateway** — Only Telegram. WhatsApp, Slack, Signal, Email, generic webhook all missing.
@@ -607,6 +615,7 @@ All 94 commands listed in §1 (register calls in SlashCommandRegistry).
 10. **Goal auto-continue loop** — (counted under CRITICAL #1)
 
 ### MEDIUM (7)
+
 11. **Session rotation** — Config flag exists but full rotation logic not verified.
 12. **Profile isolation** — /profile command exists but no full profile lifecycle (create/delete/switch with isolated skills/plugins/cron/memories).
 13. **MCP tool UX** — Single wrapper vs per-server-per-tool. Functionally equivalent but different model UX.
@@ -616,6 +625,7 @@ All 94 commands listed in §1 (register calls in SlashCommandRegistry).
 17. **Desktop app** — No Electron/native desktop app.
 
 ### LOW (5)
+
 18. **i18n** — No internationalization for user-facing messages.
 19. **read_terminal tool** — Desktop-only, N/A.
 20. **Shell completion generation** — JLine only, no shell script generation.
@@ -623,6 +633,7 @@ All 94 commands listed in §1 (register calls in SlashCommandRegistry).
 22. **MCP dynamic tool list refresh** — notifications/tools/list_changed handling not verified.
 
 ### CONSCIOUSLY_ABSENT (19)
+
 - computer_use, video_analyze, video_generate, x_search, mixture_of_agents (5)
 - discord, discord_admin (2)
 - feishu_doc_read, feishu_drive_* (5)
@@ -636,6 +647,7 @@ All 94 commands listed in §1 (register calls in SlashCommandRegistry).
 ## What's at Full Parity (124 items)
 
 The following areas are at **complete functional parity**:
+
 - **Streaming** (12/12 items) — heartbeat, draft, commentary, think-block, split, edit_interval, fresh_final, cursor, adaptive backoff
 - **Memory** (11/11 items) — tool, provider lifecycle, prefetch, snapshot, char counting, drift detection, approval, review, threat scanner, context fence
 - **Skills** (14/14 items) — loading, view, manage, list, bundles, hub, provenance, curator, backup, security scanner, command service, sync, inline shell, template preprocessing

@@ -36,12 +36,14 @@ All controllers share the `/api/v1` base path. `@Tag` annotations group them in 
 ## Consequences
 
 **Positive:**
+
 - Each controller is 50–200 lines, easy to navigate.
 - Clear domain boundaries — developers know where to add endpoints.
 - Swagger UI groups endpoints by domain tag.
 - Fewer merge conflicts.
 
 **Negative:**
+
 - More files to navigate (8 instead of 1).
 - Shared `/api/v1` prefix means controllers must coordinate path naming to avoid collisions.
 - Some cross-domain endpoints (e.g., session snapshot in SessionController) blur boundaries.

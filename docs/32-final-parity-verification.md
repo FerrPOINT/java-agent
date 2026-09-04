@@ -130,18 +130,23 @@
 ## Verification of Specific Task Questions
 
 ### Does the PTY mode work correctly with workdir?
+
 **YES.** TerminalTool validates workdir exists and is a directory before passing to `ProcessBuilder.directory()`. PTY mode uses `script -qec` which respects the ProcessBuilder's working directory. The `workdir` parameter is separate from `pty` — they work independently and together.
 
 ### Does the concurrent turn lock handle delegate_task subagents correctly?
+
 **YES.** The per-session `ReentrantLock` in `DefaultAgentRuntime` is keyed by `session.id()`. Subagents get fresh sessions (`UUID.randomUUID()` in `DelegateTaskTool.createChildSession()`), so they acquire different locks. No deadlock risk — parent holds its session lock, child acquires its own. The parent blocks waiting for the child's `runTurn` to complete, which acquires the child's lock independently.
 
 ### Does the BrowserDialogTool CDP method work when no dialog is pending?
+
 **Functionally yes, but not gracefully.** The CDP `Page.handleJavaScriptDialog` command returns an error when no dialog is pending. The tool catches the exception and returns `"Dialog error: ..."`. See NEW-3 above.
 
 ### Does the accessibility snapshot handle pages without ARIA attributes?
+
 **YES.** `BrowserService.accessibilitySnapshot()` calls `Accessibility.getFullAXTree` which returns the full accessibility tree regardless of ARIA. The browser constructs the tree from native semantics too (role, name from tag/attributes). Pages without explicit ARIA still produce nodes (e.g., `[button] Submit`, `[link] Home`). In compact mode, generic/None roles are filtered out, but meaningful roles remain. If the tree is empty or missing, it returns `"Snapshot failed: no accessibility tree"`.
 
 ### Does the provenance Map get passed through the full chain to DatabaseMemoryProvider?
+
 **PARTIALLY.** The Map is passed from MemoryTool → MemoryProvider interface (5-arg overload). However, DatabaseMemoryProvider does not override the 5-arg provenance-aware methods — it only overrides the 4-arg versions. The interface defaults discard provenance and delegate to the 4-arg store. So the Map reaches the interface but is silently dropped before hitting the DB. See NEW-2 above. This is at parity with Hermes, which also doesn't persist memory-level provenance in a data store.
 
 ---
@@ -151,6 +156,7 @@
 The 32 code quality fixes from docs/31 are verified as complete in the source code. The one partial fix (4.1 provenance) is at functional parity with Hermes since neither system persists memory-level provenance — it's an interface-level capability for future providers.
 
 Of the 22 gaps from docs/30:
+
 - **3 were already implemented** (session rotation, MCP dynamic refresh, and one other)
 - **1 was fixed** (PTY mode — Gap #14)
 - **18 are correctly dismissed** as out-of-scope (plugin system, ACP, kanban, multi-platform, goal auto-continuation, etc.)

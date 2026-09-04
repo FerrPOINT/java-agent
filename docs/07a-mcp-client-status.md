@@ -43,6 +43,7 @@ curl -s http://localhost:8090/api/v1/mcp/servers
 ```
 
 Ответ:
+
 ```json
 [
   {"name":"stdio-test","baseUrl":"","transport":"stdio","toolCount":1,"toolNames":["multiply"]}

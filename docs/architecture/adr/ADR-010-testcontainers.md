@@ -33,12 +33,14 @@ Default tests (the `test` task) still use H2 for speed. The `slowTest` Gradle ta
 ## Consequences
 
 **Positive:**
+
 - Real PostgreSQL behavior — catches dialect-specific bugs.
 - Fully isolated — each test class gets a fresh database.
 - No local PostgreSQL installation required (just Docker).
 - Flyway migrations run against real PostgreSQL, catching migration issues.
 
 **Negative:**
+
 - Requires Docker in CI (Docker-in-Docker or Docker socket).
 - Slower startup (~5–10s per container).
 - Must be tagged `@Tag("slow")` — not run in the default `test` task.

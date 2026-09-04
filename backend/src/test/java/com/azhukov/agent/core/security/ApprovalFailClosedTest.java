@@ -82,15 +82,16 @@ class ApprovalFailClosedTest {
         // A waiter already blocked on request #1's latch — supersede releases IT.
         AtomicReference<Boolean> released = new AtomicReference<>(null);
         CountDownLatch waiterDone = new CountDownLatch(1);
-        CountDownLatch waiterStarted = new CountDownLatch(1);
         Thread waiter = new Thread(() -> {
-            waiterStarted.countDown();
             released.set(queue.awaitDecision(session, 5000));
             waiterDone.countDown();
         });
         waiter.start();
-        // Wait until the waiter has entered awaitDecision
-        waiterStarted.await();
+        // Deterministic sync: spin until the waiter is actually inside
+        // awaitDecision's latch.await (waiterStarted alone races — the thread may
+        // not have reached the latch yet when request() supersedes, and the old
+        // latch is then counted down before anyone waits on it).
+        awaitBlocked(waiter);
 
         // A newer request supersedes the old one
         queue.request(session, new ToolCall("call_2", "terminal", "{}"), "newer destructive");
@@ -137,5 +138,28 @@ class ApprovalFailClosedTest {
         queue.request(session, new ToolCall("c2", "terminal", "{}"), "another destructive", Duration.ofMinutes(5));
         assertTrue(queue.isPending(session), "fresh dangerous call must re-prompt");
         assertFalse(queue.isApproved(session), "re-prompt starts undecided");
+    }
+
+    /**
+     * Spins until the waiter thread is parked inside CountDownLatch.await
+     * (TIMED_WAITING on the latch) — the only state from which a supersede
+     * countDown() is guaranteed to release it.
+     */
+    private static void awaitBlocked(Thread waiter) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            StackTraceElement[] stack = waiter.getStackTrace();
+            for (StackTraceElement frame : stack) {
+                if (frame.getClassName().equals("java.util.concurrent.CountDownLatch")
+                        && frame.getMethodName().equals("await")) {
+                    return;
+                }
+            }
+            if (!waiter.isAlive()) {
+                return; // finished early (e.g. released) — assertions below still hold
+            }
+            Thread.sleep(5);
+        }
+        throw new AssertionError("waiter never reached CountDownLatch.await");
     }
 }

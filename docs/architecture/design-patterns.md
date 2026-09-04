@@ -154,6 +154,7 @@ try (ExecutorService parallelExecutor = Executors.newVirtualThreadPerTaskExecuto
 ```
 
 **Where:**
+
 - `DefaultAgentRuntime.executeToolsInParallel()` — parallel tool execution
 - `DefaultAgentRuntime.runTurnInternal()` — async memory sync via virtual thread
 - `ToolExecutionService` — dedicated virtual thread executor for tools

@@ -99,10 +99,12 @@ java --enable-native-access=ALL-UNNAMED \
 ```
 
 Health endpoints:
+
 - `GET http://localhost:8090/actuator/health`
 - `GET http://localhost:8090/api/v1/health`
 
 Chat endpoint:
+
 ```bash
 curl -s -X POST -H 'Content-Type: application/json' \
   -d '{"message":"echo OK"}' \
@@ -110,6 +112,7 @@ curl -s -X POST -H 'Content-Type: application/json' \
 ```
 
 Telegram gateway:
+
 - Webhook: `POST /api/v1/telegram/webhook`
 - Long-polling: enabled via `AGENT_GATEWAY_TELEGRAM_LONG_POLLING_ENABLED=true`
 
@@ -128,4 +131,4 @@ Telegram gateway:
 
 ## Source
 
-- This project: https://github.com/FerrPOINT/java-agent
+- This project: <https://github.com/FerrPOINT/java-agent>

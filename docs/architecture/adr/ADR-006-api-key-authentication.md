@@ -29,12 +29,14 @@ Implement API key authentication via `ApiKeyAuthFilter` (Spring Security filter)
 ## Consequences
 
 **Positive:**
+
 - Stateless, no session management overhead.
 - One key per deployment; clients (bot, CLI) pass the key in the `X-API-Key` header.
 - Easy to rotate — change the config value and restart.
 - No external dependencies (no OAuth provider, no JWT library).
 
 **Negative:**
+
 - Single shared key — no per-client identity or revocation.
 - Key is stored in config; must be managed via secrets management.
 - No fine-grained authorization (all-or-nothing access).

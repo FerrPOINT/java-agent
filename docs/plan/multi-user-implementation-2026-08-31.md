@@ -3,6 +3,7 @@
 ## Current State
 
 ### Entities WITH userId (already migrated in V29)
+
 | Entity | userId column | Used in queries? |
 |--------|--------------|-----------------|
 | SessionEntity | ✅ | ✅ findByUserId, findAllByUserId |
@@ -17,6 +18,7 @@
 | SkillAuditLogEntity | ✅ (hardcoded "curator") | ❌ findBySkillName — no userId filtering |
 
 ### Entities WITHOUT userId (global by design)
+
 | Entity | Why global |
 |--------|-----------|
 | MessageEntity | Messages belong to sessions; isolation via session.userId |
@@ -27,6 +29,7 @@
 | McpOAuthEntity | System-level integration |
 
 ### Auth: single global API key
+
 - `ApiKeyAuthFilter` validates against `agent.security.api-key` (one key)
 - No UserEntity, no per-user API keys
 - Bot: `AuthorizationService` uses flat allowlist (userIds, usernames, chatIds)
@@ -41,6 +44,7 @@
 **Why**: `audit_log` currently records session_id but not user_id. For multi-user audit trails, we need to know which user triggered each audit event.
 
 **Migration**:
+
 ```sql
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);
@@ -53,6 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);
 **What**: Add userId-scoped methods to repositories and services that currently bypass ownership.
 
 **Files to change**:
+
 - `CronJobRepository`: add `findByUserId(String userId)`, `findByIdAndUserId(UUID id, String userId)`
 - `CronJobService.list()`: accept optional userId parameter
 - `CronJobController`: extract userId from auth context, pass to service
@@ -69,12 +74,14 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);
 **What**: Extract userId from the authenticated principal in API requests and propagate it through the service layer.
 
 **Files to change**:
+
 - `ApiKeyAuthFilter`: when auth disabled (dev), use `AgentProperties.DEFAULT_USER_ID` as principal
 - New `UserContext` holder (ThreadLocal or SecurityContext principal) carrying userId
 - Controllers extract userId from `UserContext`, pass to service methods
 - `ChatRequest.userId` already exists — wire it to the same context
 
 **Bot side**:
+
 - `BotMessageProcessor` already extracts `event.userId()` and passes to backend
 - `AgentBackendClient` already sends `userId` in chat request body
 - No bot changes needed — it already propagates userId
@@ -84,6 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);
 **What**: `UserEntity` + `UserApiKeyEntity` for per-user authentication.
 
 **Migration V37**:
+
 ```sql
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -104,6 +112,7 @@ CREATE TABLE IF NOT EXISTS user_api_keys (
 ```
 
 **Auth flow**:
+
 1. `ApiKeyAuthFilter` checks `user_api_keys` table by hash
 2. If found, sets `UserContext` with the key's userId
 3. If not found, falls back to global key (admin)
@@ -116,6 +125,7 @@ CREATE TABLE IF NOT EXISTS user_api_keys (
 **What**: Enforce that users can only access their own resources.
 
 **Rules**:
+
 - Sessions: user sees only own sessions (already works via `findAllByUserId`)
 - Memory: user sees only own memory (already works)
 - Cron jobs: user sees only own jobs (needs Phase 2)
@@ -128,6 +138,7 @@ CREATE TABLE IF NOT EXISTS user_api_keys (
 ### Phase 6: Tests, migration verification, deployment
 
 **Tests**:
+
 - Migration test: V36+V37 apply cleanly on existing DB
 - Isolation test: two users, verify no cross-access
 - Auth test: per-user API key works, wrong key = 401

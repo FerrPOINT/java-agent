@@ -42,7 +42,15 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
      */
     long countBySessionIdAndActiveTrue(UUID sessionId);
 
-    List<MessageEntity> findByContentContainingIgnoreCase(String content);
+    /**
+     * Hermes-parity search: covers the visible text plus serialized tool-call
+     * metadata (tool_calls_json), so tool names/arguments are findable even when
+     * the assistant carrier message has empty content.
+     */
+    @Query("SELECT m FROM MessageEntity m " +
+           "WHERE lower(m.content) LIKE lower(concat('%', :content, '%')) " +
+           "   OR lower(m.toolCallsJson) LIKE lower(concat('%', :content, '%'))")
+    List<MessageEntity> findByContentContainingIgnoreCase(@Param("content") String content);
 
     /**
      * Loads the last N messages for a session in descending order (newest first).

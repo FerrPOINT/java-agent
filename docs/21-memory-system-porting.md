@@ -162,7 +162,7 @@ PostgreSQL
 
 | # | Задача | Файлы | Тесты |
 |---|--------|-------|-------|
-| 7.1 | Rewrite `MemoryCommand.java`: subcommands — `/memory` (list all), `/memory pending` (pending writes), `/memory approve <id>`, `/memory reject <id>`, `/memory approval on|off`, `/memory add <text>`, `/memory remove <text>` | `commands/impl/MemoryCommand.java` (rewrite) | `MemoryCommandTest` (8) |
+| 7.1 | Rewrite `MemoryCommand.java`: subcommands — `/memory` (list all), `/memory pending` (pending writes), `/memory approve <id>`, `/memory reject <id>`, `/memory approval on|off`,`/memory add <text>`,`/memory remove <text>` | `commands/impl/MemoryCommand.java` (rewrite) | `MemoryCommandTest` (8) |
 | 7.2 | Add `AgentBackendClient` methods: `listPendingMemory(userId)`, `approvePendingMemory(userId, id)`, `rejectPendingMemory(userId, id)`, `setMemoryApproval(enabled)`, `listAllMemory(userId)`, `deleteMemory(userId, entryId)` | `core/AgentBackendClient.java` (patch) | — |
 | 7.3 | Wire "💾 Memory updated" notification: after backend turn, if background review produced writes → backend includes `memoryUpdated: true` in response. Bot sends "💾 Self-improvement review: Memory updated" message | `core/BotMessageProcessor.java` (patch) | — |
 | 7.4 | Update `BotLifecycleManager.registerCommands()`: update /memory description | `lifecycle/BotLifecycleManager.java` (patch) | — |
@@ -219,6 +219,7 @@ PostgreSQL
 | **Итого** | **18** | **~44** | **13** | **20** |
 
 **Финальное состояние:**
+
 - Two-store memory (memory + user) с char limits
 - Memory tool: add/replace/remove с write-approval gate
 - Frozen snapshot в system prompt (prefix cache stable)

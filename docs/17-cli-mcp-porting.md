@@ -8,6 +8,7 @@ files, entry points, commands, the configuration lifecycle, and a per-area
 **port / skip / defer** recommendation.
 
 **Source trees analyzed:**
+
 - `/opt/dev/java-agent/prototype/python-agent` (canonical Python target)
 - `/opt/dev/python-agent` (local working copy, used for exact CLI/bootstrap behavior)
 
@@ -325,6 +326,7 @@ reuses the same `AgentRuntime` and `SessionDatabase`.
 - Idempotent; imported at the top of every entry point.
 
 **Java equivalent:**
+
 - No direct code-page issue, but document that packaged launchers set
   `-Dfile.encoding=UTF-8` and `sun.stdout.encoding=UTF-8` on Windows.
 - A `Bootstrap` class can set these system properties before `main` continues.
@@ -336,6 +338,7 @@ reuses the same `AgentRuntime` and `SessionDatabase`.
   seeds `.env`, symlinks `agent` into `~/.local/bin` / `$PREFIX/bin`, runs setup wizard.
 
 **Java equivalent:**
+
 - Keep a cross-platform `setup-agent.sh` / `setup-agent.ps1` wrapper that:
   1. Checks for a JRE (download `jlink` runtime if missing).
   2. Downloads the the original Java fat JAR (or uses a local build).

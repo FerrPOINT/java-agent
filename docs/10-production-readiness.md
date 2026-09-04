@@ -24,6 +24,7 @@ sudo systemctl enable --now java-agent
 ## Health
 
 Actuator endpoints (Spring Boot 4.1 health API):
+
 - `/actuator/health` — aggregate
 - `/actuator/health/browser` — CDP connection
 - `/actuator/health/model` — LLM ping

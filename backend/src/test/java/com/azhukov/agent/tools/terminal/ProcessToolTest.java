@@ -49,17 +49,17 @@ class ProcessToolTest {
         assertThat(listResult.success()).isTrue();
         assertThat(listResult.content()).contains("exited");
         assertThat(listResult.content()).contains("proc_test");
-        assertThat(listResult.content()).contains("\"pid\":12345");
+        assertThat(listResult.content()).contains("pid=12345");
 
         ToolResult logResult = tool.execute("{\"action\":\"log\",\"sessionId\":\"proc_test\"}", null, null);
         assertThat(logResult.success()).isTrue();
-        assertThat(logResult.content()).contains("\"output\":\"line1\\nline2\"");
+        assertThat(logResult.content()).contains("line1\nline2");
 
         ToolResult pollResult = tool.execute("{\"action\":\"poll\",\"sessionId\":\"proc_test\"}", null, null);
         assertThat(pollResult.success()).isTrue();
-        assertThat(pollResult.content()).contains("\"session_id\":\"proc_test\"");
-        assertThat(pollResult.content()).contains("\"status\":\"exited\"");
-        assertThat(pollResult.content()).contains("\"exit_code\":0");
+        assertThat(pollResult.content()).contains("session_id: proc_test");
+        assertThat(pollResult.content()).contains("status: exited");
+        assertThat(pollResult.content()).contains("exit_code: 0");
     }
 
     @Test
@@ -105,7 +105,7 @@ class ProcessToolTest {
 
         ToolResult result = tool.execute("{\"action\":\"poll\",\"session_id\":\"proc_prompt\"}", null, null);
         assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("\"status\":\"running\"");
+        assertThat(result.content()).contains("status: running");
         assertThat(result.content()).contains("Password:");
     }
 

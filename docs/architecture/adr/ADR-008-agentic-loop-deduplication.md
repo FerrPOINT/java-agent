@@ -30,12 +30,14 @@ The two services differ only in how they deliver results: sync returns a `ChatRe
 ## Consequences
 
 **Positive:**
+
 - Single source of truth for agent loop logic — no behavioral drift.
 - Bug fixes apply to both paths automatically.
 - Easier to reason about the agent's behavior.
 - New features (e.g., metrics) added once, apply to both paths.
 
 **Negative:**
+
 - The `TurnExecutor` is a critical shared component — changes affect both paths.
 - Slightly more indirection (service → executor → tools).
 - Streaming-specific concerns (cursor, heartbeat) must be handled outside the executor, in the streaming service.

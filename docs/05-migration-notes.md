@@ -15,6 +15,7 @@ This document captures non-obvious translation issues and current design decisio
 **Python:** The original has `_tool_loop`, `_worker_thread_local`, and `asyncio.run()` bridges because many tools are sync but the loop is async.
 
 **Java:** We use **Spring MVC + virtual threads** (`spring.threads.virtual.enabled=true`) instead of WebFlux because:
+
 - Agent tools are mostly blocking I/O (JDBC, CDP, shell).
 - Imperative code is easier to debug and test.
 - LangChain4j, JDBC, CDP clients are blocking by default.
@@ -33,6 +34,7 @@ The original builds JSON schemas for tools and sends them in the OpenAI `tools` 
 ## 4. Tool Args Deserialization
 
 Tool args are POJOs/records. `ToolHandler.parseJson()` uses a single `ObjectMapper` with:
+
 - `FAIL_ON_UNKNOWN_PROPERTIES = false`
 - `ACCEPT_SINGLE_VALUE_AS_ARRAY = true`
 - field visibility `ANY` (so private record fields are populated without getters).
@@ -52,6 +54,7 @@ OpenAI format forbids consecutive messages with the same role. `DefaultAgentRunt
 **Python:** Uses `ptyprocess` / `pywinpty` for pseudo-terminal semantics.
 
 **Java:** `ProcessBuilder` gives a plain process. We implement:
+
 - `terminal` → runs command with `ProcessBuilder`, streams stdout/stderr.
 - `process` → waits for an existing process.
 
@@ -94,6 +97,7 @@ Uses `io.modelcontextprotocol.sdk:mcp:2.0.0`. MCP servers are configured under `
 ## 15. Timeout Strategy
 
 All timeouts increased by an order of magnitude to avoid stalls under real LLM/CDP/browser load:
+
 - model/auxiliary/vision HTTP: 600 s
 - `TerminalTool`: 300 s
 - `ProcessTool` wait: 1800 s

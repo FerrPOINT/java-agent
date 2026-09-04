@@ -2,6 +2,7 @@
 
 Цель: у каждого production-класса в `backend/src/main/java` есть автоматизированный тест, который ломается при регрессии.
 Разделение:
+
 - **Unit** — без Spring-контекста, моки/стабы.
 - **Integration** — `@SpringBootTest` / `@DataJpaTest` / `@WebMvcTest` / Testcontainers.
 - **Live** — требуют внешнего сервиса (Ollama, Telegram, Chromium, интернет); помечены `@Tag("live")` и не гоняются в CI по умолчанию.
@@ -35,6 +36,7 @@
 | `ShutdownConfigTest` | `server.shutdown=immediate` подхватывается | Integration | P0 | ✅ есть |
 
 ### Рекомендуемые тестовые файлы
+
 - `config/AgentPropertiesTest.java` — unit, `@EnableConfigurationProperties` + `ApplicationContextRunner`.
 - `config/AgentConfigProfilesTest.java` — `@SpringBootTest` с профилями `noop`, `cli`, `dev`; проверяет, что нужные бины создаются/отсутствуют.
 - `config/FlywayMigrationTest.java` — `@DataJpaTest` + `@AutoConfigureTestDatabase(replace=NONE)`, проверяет схему и seed-данные.
@@ -56,6 +58,7 @@
 | `api/health/*` | health indicators (`db`, `model`, `browser`) возвращают UP/DOWN | Integration | P1 | ❌ нет |
 
 ### Рекомендуемые тестовые файлы
+
 - `api/AgentControllerUnitTest.java`
 - `api/ChatCompletionsControllerTest.java`
 - `api/VisionControllerTest.java`
@@ -78,6 +81,7 @@
 | `DefaultIterationBudget` | startTurn, recordModelCall, recordToolExecution, isExhausted, лимиты по умолчанию | Unit | P0 | ✅ есть |
 
 ### Рекомендуемые тестовые файлы
+
 - `core/agent/AgentRuntimeFullScenariosTest.java`
 - `core/prompt/DefaultPromptBuilderTest.java`
 - `core/context/DefaultContextEngineTest.java`
@@ -96,6 +100,7 @@
 | `AgentTool` / `ToolParam` / `ToolHandler` | аннотации корректно читаются рефлексией | Unit | P1 | ❌ нет |
 
 ### Рекомендуемые тестовые файлы
+
 - `core/tool/SpringToolRegistryTest.java`
 - `core/tool/ToolExecutionServiceTimeoutTest.java`
 - `core/tool/ToolExecutionServiceTruncateTest.java`
@@ -188,6 +193,7 @@
 | `InboundMessageProcessor` | resolve/create session, runTurn, send response, transactional isolation | Unit + Integration | P0 | ❌ нет |
 
 ### Рекомендуемые тестовые файлы
+
 - `gateway/telegram/TelegramBotApiClientTest.java`
 - `gateway/telegram/TelegramRestClientFactoryTest.java`
 - `gateway/telegram/TelegramLongPollingLoopTest.java`
@@ -276,6 +282,7 @@
 ## Приоритетная очерёдность
 
 ### Sprint 1 — P0 core (без внешних сервисов)
+
 1. `AgentPropertiesTest`, `AgentConfigProfilesTest`
 2. `SpringToolRegistryTest`, `ToolExecutionServiceTimeoutTest`, `ToolExecutionServiceTruncateTest`
 3. `AgentRuntimeFullScenariosTest`
@@ -285,12 +292,14 @@
 7. `SessionRepositoryTest`, `MessageRepositoryTest`
 
 ### Sprint 2 — P0 security + API + services
+
 1. `ApprovalGateTest`, `ApprovalQueueTest`
 2. `AgentControllerUnitTest`, `ChatCompletionsControllerTest`, `VisionControllerTest`
 3. `AgentRuntimeServiceTest`, `AgentStreamingServiceTest`
 4. `NoOpModelClientTest`, `LangChain4jModelClientUnitTest`
 
 ### Sprint 3 — P1 tools + persistence
+
 1. `PatchToolTest`, `Browser*Tool` unit-агрегат
 2. `MemoryToolTest`, `TodoToolTest`, `Skill*ToolTest`
 3. `WebSearch/WebExtract` mock unit-тесты
@@ -298,6 +307,7 @@
 5. `CompressionLockRepositoryTest`, `AuditLogRepositoryTest`
 
 ### Sprint 4 — P2 live + infra
+
 1. `AgentCliRunnerTest`
 2. `BrowserVisionToolTest`
 3. Актуализация live-тестов при изменении API инструментов
@@ -324,6 +334,7 @@
 ```
 
 Целевые метрики:
+
 - line coverage ≥ 75%
 - branch coverage ≥ 60%
 - все P0-классы покрыты хотя бы одним тестом

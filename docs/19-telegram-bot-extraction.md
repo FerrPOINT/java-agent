@@ -137,6 +137,7 @@ PostgreSQL (shared)
 ```
 
 **Два режима связи:**
+
 1. **HTTP API** (по умолчанию): `telegram-bot` → `POST backend:8090/api/v1/agent/chat`
 2. **Shared DB + in-process** (опционально): прямой доступ к `AgentRuntime` через shared библиотеку
 

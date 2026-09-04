@@ -30,7 +30,7 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     @Query(value = "SELECT id FROM sessions WHERE id IN (:ids)", nativeQuery = true)
     List<UUID> findExistingIds(@Param("ids") Collection<UUID> ids);
 
-    @Modifying
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE SessionEntity s SET s.parentSessionId = null WHERE s.parentSessionId IN :ids")
     int orphanChildrenOf(@Param("ids") Collection<UUID> ids);
 

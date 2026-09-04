@@ -340,7 +340,7 @@ public class ProcessTool implements ToolHandler {
             "session_id: %s\npid: %s\nstatus: %s\nexit_code: %s\nuptime_seconds: %d\noutput:\n%s",
             p.id, p.pid, alive ? "running" : "exited", exitCode,
             java.time.Duration.between(p.startedAt, Instant.now()).getSeconds(),
-            redactor.redact(output)
+            redactor.redact(AnsiStrip.strip(output))
         );
     }
 

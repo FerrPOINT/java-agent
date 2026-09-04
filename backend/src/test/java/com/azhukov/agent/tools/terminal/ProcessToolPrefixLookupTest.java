@@ -117,18 +117,20 @@ class ProcessToolPrefixLookupTest {
         injectProcess(tool, mp1);
         injectProcess(tool, mp2);
 
-        // "proc_same" is ambiguous — matches both
+        // "proc_same" is ambiguous — matches both; soft not_found contract (PR-3
+        // parity): unknown/ambiguous ids return a queryable JSON state, not a hard fail.
         ToolResult r = tool.execute("{\"action\":\"poll\",\"sessionId\":\"proc_same\"}", null, null);
-        assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Process not found");
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("\"status\":\"not_found\"");
+        assertThat(r.content()).contains("No process with ID proc_same");
     }
 
     @Test
     void nonExistentPrefixReturnsNotFound() {
         ProcessTool tool = new ProcessTool();
         ToolResult r = tool.execute("{\"action\":\"poll\",\"sessionId\":\"nonexistent\"}", null, null);
-        assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Process not found");
+        assertThat(r.success()).isTrue();
+        assertThat(r.content()).contains("\"status\":\"not_found\"");
     }
 
     @Test

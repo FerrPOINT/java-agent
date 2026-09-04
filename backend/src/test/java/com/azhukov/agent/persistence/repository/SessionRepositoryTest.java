@@ -186,6 +186,7 @@ class SessionRepositoryTest extends PostgresTestContainer {
         message.setSessionId(sessionId);
         message.setRole("user");
         message.setContent(content);
+        message.setTurnIndex(0); // turn_index is NOT NULL in the schema
         message.setCreatedAt(Instant.parse("2026-01-01T00:00:00Z"));
         return message;
     }

@@ -10,12 +10,14 @@
 ## Context
 
 The agent needs to call LLM providers for:
+
 1. Chat completions (with tool-calling support).
 2. Streaming responses (token-by-token via SSE).
 3. Multiple providers (OpenAI, Ollama, compatible endpoints).
 4. Error handling (rate limits, context overflow, billing errors).
 
 Options considered:
+
 - **Direct HTTP client** (OkHttp / Java HttpClient): Full control but requires building all request/response models, tool-call schemas, and streaming handlers manually.
 - **Spring AI**: Spring's native AI framework — good Spring integration but was still maturing.
 - **LangChain4j**: Java port of LangChain. Mature, supports OpenAI-compatible endpoints, streaming, tool-calling, and has a clean `ChatLanguageModel` / `StreamingChatLanguageModel` API.
@@ -38,17 +40,20 @@ public interface ModelClient {
 ## Consequences
 
 **Positive:**
+
 - Provider-agnostic: swap OpenAI ↔ Ollama by changing config, not code.
 - Built-in streaming support with callback-based `StreamingResponseHandler`.
 - Tool-calling schema generation handled by the library.
 - `ErrorClassifier` and `RateLimitTracker` add custom error handling on top.
 
 **Negative:**
+
 - Dependency on LangChain4j's API stability — library version upgrades may require adapter changes.
 - LangChain4j's internal models differ from the project's domain models — `OpenAiMapper` (MapStruct) converts between them.
 - Some provider-specific features (e.g., OpenAI's `reasoning_effort`, `cache_read_tokens`) need custom headers and parsing beyond the library's API.
 
 **Mitigations:**
+
 - `ModelClient` interface isolates the core runtime — only `LangChain4jModelClient` needs updating on library upgrades.
 - `OpenAiMapper` centralises all domain ↔ library model conversion.
 - Custom `AgentProperties.ModelProperties` expose provider-specific settings (reasoningEffort, headers map) that LangChain4j doesn't natively support.

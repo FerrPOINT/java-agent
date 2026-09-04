@@ -484,6 +484,7 @@ backend/src/main/java/com/azhukov/agent/api/
 ```
 
 Controllers only:
+
 - Validate input (`@Valid`).
 - Convert DTO → service command.
 - Call service method.
@@ -551,6 +552,7 @@ backend/src/main/java/com/azhukov/agent/repository/
 ```
 
 Repositories:
+
 - Extend `JpaRepository` or use `JdbcClient` for complex queries.
 - Map entities to/from domain models in service layer (not in repository).
 - No `@Transactional` on repositories (handled by service).
@@ -577,6 +579,7 @@ backend/src/main/java/com/azhukov/agent/core/
 ```
 
 Domain layer:
+
 - Has no Spring annotations.
 - Receives primitives and domain models only.
 - Can be unit-tested without Spring context.
@@ -737,7 +740,6 @@ public interface ToolRegistry {
 
 Toolset aliases mirror the Python original: `cli` → `cli`, `web`, `file`, `browser`, `cli`.
 
-
 ### Progressive disclosure
 
 When MCP servers or plugins add many tools, the registry may replace non-core tools with meta tools:
@@ -815,7 +817,6 @@ REST controllers in `api/`. First version implements:
 | GET | `/api/v1/skills/{name}` | `SkillController` |
 
 Scope note: MVP implements only OpenAI-compatible `chat_completions` and session management. The original Python agent also exposes `/v1/responses`, `/v1/runs`, `/api/jobs`, `/api/cron/fire`, and platform webhook ingress — these are explicitly **out of scope** for the first Java version.
-
 
 ## 15. CLI / REPL
 
@@ -959,7 +960,6 @@ These features are intentionally deferred to keep the first Java version deliver
 | Secrets managers (Bitwarden, 1Password) | External vault integrations |
 | Desktop/TUI/Electron UI | Web + CLI only |
 
-
 ## 21. Definition of Ready
 
 Project is ready for development when:
@@ -1026,8 +1026,6 @@ Implemented with Picocli subcommands.
 5. Agent answers with file content.
 6. Output contains only actionable text.
 
-
-
 ## 26. Decisions Log
 
 | # | Question | Decision | Rationale |
@@ -1060,6 +1058,7 @@ Run dev server:
 ## 28. Phase 0 Status
 
 Completed:
+
 - `AgentProperties.java` expanded with all config sections.
 - `application.yml` with environment-variable bindings and dev/prod profiles.
 - `build.gradle` with CDP, HTML/markdown, commons, cron, imaging dependencies.

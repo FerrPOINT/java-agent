@@ -5,9 +5,11 @@
 ## 1. Аудит MapStruct
 
 ### 1.1. Где используется сейчас
+
 **MapStruct в проекте не используется.** Поиск по `mapstruct`, `MapStruct`, `@Mapper`, `@Mapping`, `Mappers.getMapper` во всём репозитории не дал результатов.
 
 ### 1.2. Где MapStruct нужен
+
 Преобразования между слоями выполняются вручную (`toDto`, `toEntity`, inline mapping). Постоянные пары источник→цель:
 
 | Source | Target | Где сейчас |
@@ -28,9 +30,11 @@
 | Bot entities (`BotMessageEntity`, `BotSessionEntity`) | domain | `BotSessionStore`, `BotMessageProcessor` |
 
 ### 1.3. Критичность
+
 - **Medium-High.** Ручной mapping размножён по сервисам, легко расходится при изменении полей. MapStruct уберёт boilerplate и сделает mapping централизованным.
 
 ### 1.4. Блокеры внедрения
+
 - Java 25 + Spring Boot 4.1: нужна MapStruct 1.6.x (поддержка Java 25).
 - Annotation processor должен идти после Lombok processor (order: `lombok`, `mapstruct-processor`).
 - Некоторые преобразования не pure 1:1 — есть flattening/nested logic. Их оставить вручную или в `@Mapper(uses = ...)`.
@@ -48,6 +52,7 @@
 | **Итого** | **343** | **143** | **41%** |
 
 ### 2.2. Где Lombok уже используется корректно
+
 - Entity-классы JPA (`@Entity` + `@Data`) — `SessionEntity`, `MessageEntity` и др.
 - Сервисы с зависимостями (`@RequiredArgsConstructor` + `@Slf4j`) — `AgentRuntimeService`, `CronJobService`, `UsageTracker` и др.
 - Конфигурационные properties (`@Getter` + `@Setter`) — `AgentProperties`, `GuardrailConfig`.
@@ -85,6 +90,7 @@
 | Webhook/health | 2 | `WebhookSecretValidator`, `BotHealthController` | **Medium** |
 
 ### 2.4. Что делать с records
+
 - **DTO в `api/dto/`** (`ChatRequest`, `ChatResponseDto`, `UsageDto` и 21 другой) — это идеальные кандидаты на `record`. Переписать на records с backward-compatible constructors.
 - **Core model** (`Message`, `ToolCall`, `ToolResult`, `ChatResponse`) — большинство уже могут быть records. Нужно проверить мутабельность и Jackson/JSON-сериализацию.
 - **Gateway model** (`SendResult`, `MessageEvent`, `PlatformConfig`, `SessionSource`) — переписать на records, кроме `MessageEvent`, который может содержать builder/factory методы.
@@ -94,7 +100,9 @@
 ## 3. README
 
 ### 3.1. Чего не хватает
+
 README не упоминает:
+
 - **Lombok** (хотя это стековая зависимость и миграционный приоритет).
 - **MapStruct** (отсутствует, но при планируемом внедрении должен быть описан).
 - **E2E-тестирование** (`slowTest`, Docker Compose E2E) — добавлено в CI, но не документировано для разработчика.
@@ -102,6 +110,7 @@ README не упоминает:
 - **Coverage** данные устарели: в README `725 тестов`, фактически `1414 unit + 60 slow`.
 
 ### 3.2. Рекомендуемые изменения README
+
 1. Добавить Lombok 1.18.38 в таблицу стека.
 2. Добавить раздел «Code style / Lombok convention».
 3. Добавить MapStruct в стек после внедрения.
@@ -114,12 +123,14 @@ README не упоминает:
 ## 4. Полный план доработок
 
 ### Phase 0. Подготовка (1 день)
+
 - [ ] MAP-0.1: Добавить MapStruct 1.6.x в `backend/build.gradle` и `telegram-bot/build.gradle`.
 - [ ] MAP-0.2: Настроить annotation processor order: `lombok` → `mapstruct-processor`.
 - [ ] MAP-0.3: Создать базовый `MapStructConfig` с общими константами (`componentModel = "spring"`, `unmappedTargetPolicy = ERROR/WARN`).
 - [ ] LOM-0.1: Обновить README: добавить Lombok в стек, coverage, E2E раздел.
 
 ### Phase 1. Lombok миграция — backend (2–3 дня)
+
 - [ ] LOM-1.1: Перевести 23 DTO в `api/dto/` на `record` (или `@Data`/`@Value`, если требуется мутируемость).
 - [ ] LOM-1.2: Перевести core model (`Message`, `ToolCall`, `ToolResult`, `ChatResponse`, `TurnResult`, `ToolDefinition`, `ToolContext`, `ContextReference`, `Session`, `Role`) на records/`@Value`.
 - [ ] LOM-1.3: Перевести gateway model (`SendResult`, `PlatformConfig`, `SessionSource`) на records.
@@ -128,11 +139,13 @@ README не упоминает:
 - [ ] LOM-1.6: Проверить и обновить unit-тесты после каждой миграции (особенно для `@Value`/record — equals/hashCode меняются).
 
 ### Phase 2. Lombok миграция — telegram-bot (1–2 дня)
+
 - [ ] LOM-2.1: Добавить `@RequiredArgsConstructor` + `@Slf4j` в command handlers без Lombok (~48 файлов), где есть зависимости.
 - [ ] LOM-2.2: Перевести DTO/model (`TelegramResponse`, `UpdateEvent`, `KeyboardButton`) на records/`@Value`.
 - [ ] LOM-2.3: Добавить Lombok в keyboard builders (`ModelKeyboardBuilder`, `ProviderKeyboardBuilder`) и `WebhookSecretValidator`, `BotHealthController`.
 
 ### Phase 3. MapStruct внедрение — backend (3–4 дня)
+
 - [ ] MAP-1.1: Создать mappers пакет `com.azhukov.agent.api.mapper` и `com.azhukov.agent.persistence.mapper`.
 - [ ] MAP-1.2: Entity → Domain mappers: `MessageMapper`, `SessionMapper`, `UsageMapper`, `MemoryMapper`, `PendingMemoryMapper`, `SkillMapper`, `AuditLogMapper`, `CheckpointMapper`, `TodoMapper`, `CronJobMapper`, `McpOAuthMapper`, `CompressionLockMapper`.
 - [ ] MAP-1.3: Domain → DTO mappers: `ChatResponseMapper`, `MemoryDtoMapper`, `UsageDtoMapper`, `SessionSummaryMapper`, `ContextInfoMapper`.
@@ -141,10 +154,12 @@ README не упоминает:
 - [ ] MAP-1.6: Добавить unit-тесты для мапперов (MapStruct + `unmappedTargetPolicy = ERROR` ловит regressions).
 
 ### Phase 4. MapStruct внедрение — telegram-bot (1 день)
+
 - [ ] MAP-2.1: Mappers для bot entities → domain (`BotMessageMapper`, `BotSessionMapper`, `PairingCodeMapper`).
 - [ ] MAP-2.2: Заменить ручной mapping в `BotSessionStore`, `BotMessageProcessor`.
 
 ### Phase 5. Документация и CI (1 день)
+
 - [ ] DOC-1: Обновить README:
   - добавить Lombok и MapStruct в стек;
   - обновить coverage/test counts (1414 + 60 slow);
@@ -157,6 +172,7 @@ README не упоминает:
 - [ ] CI-1: Убедиться, что CI выполняет `./gradlew slowTest` и `./scripts/e2e-docker-compose-test.sh` (уже добавлено, проверить после MapStruct/Lombok).
 
 ### Phase 6. Валидация (1 день)
+
 - [ ] VAL-1: `./gradlew test` — 1414+ tests green.
 - [ ] VAL-2: `./gradlew :backend:slowTest` — 60+ slow tests green.
 - [ ] VAL-3: `./scripts/e2e-docker-compose-test.sh` green.

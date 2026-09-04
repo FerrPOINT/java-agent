@@ -3,6 +3,7 @@
 ## Session 5 — General Audit Fixup (2026-08-26, 0.1.140)
 
 ### Critical
+
 - CI now runs telegram-bot and cli tests (previously only backend)
 - JaCoCo coverage verification gate added (LINE ≥ 75%)
 - ToolResultStorage: ArrayList → synchronizedList (race condition fix)
@@ -13,6 +14,7 @@
 - SessionCompressionHelper: LLM call extracted from @Transactional (pool starvation fix)
 
 ### High — Concurrency
+
 - CronJobService: cancel old ScheduledFuture before put (leak fix)
 - HeartbeatService: AtomicBoolean.compareAndSet (check-then-act fix)
 - MemoryStore: synchronized → ReentrantLock (virtual thread pinning)
@@ -28,6 +30,7 @@
 - ChromiumDownloader: InputStream leak on non-200 fixed (try-with-resources)
 
 ### High — Cleanup
+
 - 8 dead Gradle deps removed (pebble, commons-lang3, commons-io, commons-imaging, langchain4j-ollama, resilience4j-circuitbreaker, resilience4j-spring6, flexmark from bot)
 - TestRunner.class removed from git
 - LOGGING_AUDIT_REPORT.md, review-findings.md → docs/audit/
@@ -38,6 +41,7 @@
 - 8 @SpringBootTest files: @Tag("slow") added
 
 ### Medium
+
 - BackgroundJobEntity: @Data added (was only entity without it)
 - StreamSession: volatile++ → AtomicInteger (floodStrikes, draftFailures)
 - ShellHookManager: ArrayList in CHM → synchronizedList
@@ -50,6 +54,7 @@
 - docs/TODO.md: consolidated to summary
 
 ### Low
+
 - Markdown lint CI: continue-on-error removed
 - Makefile: parity-dashboard, skill-update targets documented in help
 - repomix.config.json, __pycache__/, *.pyc added to .gitignore
@@ -59,11 +64,13 @@
 ## Session 4 — Architecture, Security, and Documentation Overhaul
 
 ### API Key Authentication
+
 - Added `ApiKeyAuthFilter` for stateless API key authentication
 - API key configured via `agent.security.api-key` property, validated on all non-public endpoints
 - Health, actuator, webhook, and swagger-ui endpoints exempt from auth
 
 ### Controller Split (8 controllers)
+
 - Split monolithic `AgentController` (~100 endpoints) into 8 focused controllers:
   - `AgentChatController` — chat, streaming, steer, stop, approvals, TTS, transcription
   - `SessionController` — session lifecycle, compression, undo, model switching, snapshots

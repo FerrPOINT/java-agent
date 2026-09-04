@@ -10,12 +10,14 @@
 ## Context
 
 The agent runtime needs to:
+
 1. Execute multiple tool calls in parallel within a single turn.
 2. Sync memory asynchronously after each turn without blocking the response.
 3. Handle concurrent sessions (REST + streaming) efficiently.
 4. Run background tasks (curator, review, reconnect watcher) on daemon threads.
 
 The classic approaches are:
+
 - **Reactive** (Project Reactor / WebFlux): Non-blocking event loop, `Mono`/`Flux` chains.
 - **Platform thread pools**: `ExecutorService` with fixed/cached threads.
 - **Virtual threads** (Java 21+, stable in Java 25): Lightweight threads managed by the JVM.
@@ -31,6 +33,7 @@ Platform thread pools were rejected — they don't scale for I/O-heavy workloads
 ## Consequences
 
 **Positive:**
+
 - Simple blocking code model — write `Thread.sleep`, `.join()`, `.get()` without worrying about pinning.
 - Millions of concurrent virtual threads possible (JVM-managed, ~few KB per thread).
 - No reactive paradigm — easier onboarding, debugging, and maintenance.
@@ -38,11 +41,13 @@ Platform thread pools were rejected — they don't scale for I/O-heavy workloads
 - Fits naturally with Spring Boot 4.1 (which supports virtual threads for request handling).
 
 **Negative:**
+
 - `synchronized` blocks can pin carrier threads — use `ReentrantLock` in hot paths if needed.
 - Stack traces are deep (virtual thread + carrier thread) — debugging needs `-Djdk.tracePinnedThreads`.
 - Not all libraries are virtual-thread-safe (e.g., legacy `synchronized` JDBC drivers).
 
 **Mitigations:**
+
 - Use `ReentrantLock` instead of `synchronized` in concurrent hot paths.
 - Verify JDBC driver (PostgreSQL) supports virtual threads — it does in recent versions.
 - Daemon `ScheduledExecutorService` for background tasks to prevent JVM hang on shutdown.

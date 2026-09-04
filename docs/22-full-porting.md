@@ -9,6 +9,7 @@
 ### 0.1 Добавить Lombok в build.gradle
 
 **backend/build.gradle:**
+
 ```groovy
 dependencies {
     // Lombok
@@ -587,6 +588,7 @@ Phase E: Final wiring + tests
 | **Итого** | **21** | **34** | **~80** | **34** | **4** |
 
 **Финальное состояние:**
+
 - Lombok во всех классах (@Data, @Slf4j, @RequiredArgsConstructor)
 - Все настройки в application.yml с env var overrides
 - Cron jobs, prompt caching, compression, checkpoints

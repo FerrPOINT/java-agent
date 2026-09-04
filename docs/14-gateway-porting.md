@@ -138,6 +138,7 @@ com.azhukov.agent.gateway
 4. **For each `platform` in `config.getConnectedPlatforms()`**
    - `adapter = adapterFactory.create(platform, platformConfig);`
    - Wire handlers:
+
      ```java
      adapter.setMessageHandler(this::handleMessage);
      adapter.setFatalErrorHandler(this::handleAdapterFatalError);
@@ -146,6 +147,7 @@ com.azhukov.agent.gateway
      adapter.setTopicRecoveryFn(this::recoverTelegramTopicThreadId);
      adapter.setAuthorizationCheck(makeAdapterAuthCheck(platform));
      ```
+
    - `connect()` with timeout.
    - On success: `adapters.put(platform, adapter)`.
    - On failure: queue in `_failedPlatforms` for reconnect watcher.
