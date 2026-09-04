@@ -439,8 +439,8 @@ class SpringToolRegistryTest {
 
         assertThat(defs).extracting(ToolDefinition::name)
             .contains("web_search", "terminal", "read_file", "skill_view",
-                "skill_manage", "image_generate", "text_to_speech", "cronjob")
-            .doesNotContain("send_message", "delete_file");
+                "skill_manage", "image_generate", "text_to_speech", "cronjob", "delete_file")
+            .doesNotContain("send_message");
     }
 
     @Test

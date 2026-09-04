@@ -61,9 +61,10 @@ public class SpringToolRegistry implements ToolRegistry {
     private static final List<String> HERMES_CORE_TOOLS = List.of(
         "web_search", "web_extract",
         "terminal", "process",
-        "read_file", "write_file", "patch", "search_files",
+        "read_file", "write_file", "patch", "search_files", "delete_file",
         "vision_analyze", "image_generate",
         "skills_list", "skill_view", "skill_manage",
+        "mcp_tool",
         "browser_navigate", "browser_snapshot", "browser_click",
         "browser_type", "browser_scroll", "browser_back",
         "browser_press", "browser_get_images",
