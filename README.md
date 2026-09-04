@@ -91,7 +91,17 @@ The project is an active product line. `AGENTS.md` is the canonical development 
 | `GET /v1/capabilities` | Machine-readable capabilities |
 | `GET /v1/toolsets` | Toolsets and tools |
 | `GET/POST /api/v2/sessions` | Session list/create |
+| `GET/POST /api/v1/admin/users` | Multi-user admin: create/list users |
+| `POST /api/v1/admin/users/{id}/keys` | Issue per-user API key (raw key returned once) |
+| `DELETE /api/v1/admin/users/keys/{keyId}` | Revoke an API key |
 | `GET /actuator/health` | Health check |
+
+### Multi-user и аутентификация
+
+- **Global key** (`agent.security.api-key`, env `API_SERVER_KEY`) — админ-доступ; когда пуст — auth выключен (dev-режим).
+- **Per-user ключи** (`agk_…`) выдаются админом через `/api/v1/admin/users/{id}/keys`, хранится только SHA-256. Держатель ключа получает свою userId-область: сессии, память, cron, чекпойнты, usage; приватные скиллы других юзеров недоступны (`GET /agent/skills/{name}` скоплен через `UserContext.scopeUserId()`).
+- **CLI**: ключ задаётся env `AGENT_API_KEY` (или `CLI_API_KEY`) и уходит заголовком `X-API-Key` на каждый запрос.
+- Порядок включения: задать `API_SERVER_KEY` → создать админа/юзеров через REST (глобальным ключом) → выдать per-user ключи → раздать юзерам.
 
 <a name="boundaries"></a>
 ## 🧱 Boundaries
