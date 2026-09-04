@@ -43,7 +43,7 @@ dependencies {
     implementation 'io.github.resilience4j:resilience4j-circuitbreaker:2.4.0'
 
     // HTML / markdown parsing
-    implementation 'org.jsoup:jsoup:1.18.3'
+    implementation 'org.jsoup:jsoup:1.23.2'
     implementation 'com.vladsch.flexmark:flexmark:0.64.8'
 
     // Commons
