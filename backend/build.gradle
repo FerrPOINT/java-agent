@@ -99,7 +99,7 @@ dependencies {
     // (commons-imaging removed — was unused)
 
     // Logging
-    implementation 'org.slf4j:slf4j-api:2.0.17'
+    implementation 'org.slf4j:slf4j-api:2.0.18'
     implementation 'net.logstash.logback:logstash-logback-encoder:8.0'
 
     // Test / local in-memory DB
