@@ -3,6 +3,14 @@
 Branch: `review/full-audit`
 Baseline: 6075 tests, 0 failures
 
+> **Status update 2026-09-05 (0.1.233):** most findings from this audit and the
+> 2026-08-20 TODO list have been closed across the audit rounds of 2026-09-04/05
+> (registry honesty, delegation leak, parity rounds 1–3) plus the post-audit
+> cleanup (M32 fallback usage, L9 OSV status check + gate wiring). Spot-checked
+> closed in code: C1, H1–H10, L1, L2, L4, L5, L6, L10, M20. Remaining large
+> parity gaps are tracked in `docs/34-hermes-parity-audit-2026-09-01.md`
+> ("Large Backlog Gaps Not Faked").
+
 ## Severity Summary
 
 - **CRITICAL: 5** (3 CORE + 1 PERSISTENCE + 1 TOOLS)
@@ -208,7 +216,7 @@ No docker-compose sets AGENT_SECURITY_API_KEY.
 - M29. MCP: closeAll without awaitTermination
 - M30. MCP: pagination doesn't pass cursor
 - M31. Streaming: unclosed stream on timeout
-- M32. FallbackModelClient: token usage not accounted
+- ~~M32. FallbackModelClient: token usage not accounted~~ ✅ CLOSED 2026-09-05 (0.1.233): usage sink wired from DefaultAgentRuntime + AgentStreamingService; FallbackModelClientUsageTest
 - M33. ErrorClassifier: substring match HTTP codes
 - M34. toJsonSchema: all properties as string
 - M35. CredentialPool: raw error message in lastErrorReason
@@ -226,7 +234,7 @@ No docker-compose sets AGENT_SECURITY_API_KEY.
 - L6. MessageMapper: toDomain loses toolCalls list
 - L7. SkillEntity: missing description field vs V2 migration
 - L8. Dead test exclusions in build.gradle (8 valid tests hidden)
-- L9. OsvCheckService: no HTTP status check
+- ~~L9. OsvCheckService: no HTTP status check~~ ✅ CLOSED 2026-09-05 (0.1.233): non-2xx throws; service also wired into McpLifecycleManager stdio launch (was dead code) — OSV MAL-* advisories refuse launch
 - L10. MCP: stale tools not deregistered on reconnect
 - L11. McpLifecycleManager: TokenUsage.of() dead code
 - L12. Telegram: @botname suffix not trimmed, case-sensitive lookup, lock hash collisions, PID recycling

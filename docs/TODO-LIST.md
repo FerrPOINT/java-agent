@@ -1,6 +1,6 @@
 # Java-Agent TODO List — Architecture + Port + Hermes Sync + Multi-User
 
-**Updated:** 2026-08-20 (post parity-audit round 2)
+**Updated:** 2026-09-05 (0.1.233 — see review-findings.md status update; multi-user Phase 4 landed in the PR#3 merge)
 **Total active:** 60 items
 
 ---

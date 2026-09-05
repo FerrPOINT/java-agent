@@ -1,5 +1,22 @@
 # Changelog
 
+## Session 2026-09-05 — 0.1.233 (post-audit cleanup)
+
+### Fixed
+
+- **M32**: fallback-model token usage is now reported to the turn usage collector (`FallbackModelClient` usage sink wired from `DefaultAgentRuntime` and `AgentStreamingService`) — fallback completions were previously invisible to `/usage`, `/credits` and `usage_log`.
+- **L9**: `OsvCheckService` now checks the HTTP status before parsing the OSV response — a 429/5xx JSON error body can no longer be silently read as a "clean" verdict (fail-open semantics preserved, but explicit).
+- **Dead code revived**: `OsvCheckService` was never instantiated despite config plumbing (`agent.mcp.osv-check-enabled`) — now wired into `McpLifecycleManager` stdio launch; MCP stdio packages with OSV `MAL-*` malware advisories are refused (Hermes `osv_check.py` parity).
+- **Test flake**: ported the lost 2026-09-01 audit suite stabilization (`maxParallelForks=1`, `forkEvery=750`, heap 4g) that was dropped in the PR#3 merge — fixes the `OpenAiRunsControllerTest` strict-stubs flake.
+
+### Dependencies
+
+- Dependabot fleet merged: lombok 1.18.48 (backend/bot/cli), springdoc 3.1.0, commons-compress 1.28.0, commons-lang3 3.20.0, groovy 5.1.1 (json/test), gradle-wrapper 9.7.1, slf4j 2.0.18.
+
+### Tests
+
+- backend 6487/0 (+8: OsvCheckServiceHttpResponseTest 3, McpLifecycleManagerOsvGateTest 2, FallbackModelClientUsageTest 3), telegram-bot 1716/0, cli 333/0.
+
 ## Session 5 — General Audit Fixup (2026-08-26, 0.1.140)
 
 ### Critical
