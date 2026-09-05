@@ -4,6 +4,7 @@ import com.azhukov.agent.persistence.entity.MessageEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -34,6 +35,23 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
     List<MessageEntity> findBySessionIdAndTurnIndexOrderByCreatedAtAsc(UUID sessionId, Integer turnIndex);
 
     long countBySessionId(UUID sessionId);
+
+    /** M19: aggregate char sum without loading the transcript. */
+    @Query("SELECT COALESCE(SUM(LENGTH(m.content)), 0) FROM MessageEntity m WHERE m.sessionId = :sessionId")
+    long sumContentLengthBySessionId(@Param("sessionId") UUID sessionId);
+
+    /** M19: distinct tool names used in a session without loading the transcript. */
+    @Query("SELECT DISTINCT m.toolCallName FROM MessageEntity m WHERE m.sessionId = :sessionId AND m.toolCallName IS NOT NULL")
+    List<String> findDistinctToolCallNamesBySessionId(@Param("sessionId") UUID sessionId);
+
+    /** M18: only the distinct turn indices of a session, newest first — no transcript load. */
+    @Query("SELECT DISTINCT m.turnIndex FROM MessageEntity m WHERE m.sessionId = :sessionId ORDER BY m.turnIndex DESC")
+    List<Integer> findTurnIndicesBySessionIdDesc(@Param("sessionId") UUID sessionId);
+
+    /** M18: bulk delete of all messages with turnIndex >= cutoff (modifying query). */
+    @Modifying
+    @Query("DELETE FROM MessageEntity m WHERE m.sessionId = :sessionId AND m.turnIndex IS NOT NULL AND m.turnIndex >= :cutoff")
+    int deleteBySessionIdAndTurnIndexGreaterThanEqual(@Param("sessionId") UUID sessionId, @Param("cutoff") int cutoff);
 
     /**
      * Counts only active (non-archived) messages. Rotation deactivates ancestor

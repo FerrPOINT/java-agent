@@ -102,6 +102,16 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     }
 
     /**
+     * M7: hard upper bound for any single store() read. When maxFactsPerUser is
+     * configured (> 0) use it as the bound; otherwise fall back to a hard cap so a
+     * disabled quota can never materialize an unbounded result set into memory.
+     */
+    private int maxFactsBounded() {
+        int maxFacts = maxFactsPerUser();
+        return maxFacts > 0 ? Math.min(maxFacts, 10_000) : 10_000;
+    }
+
+    /**
      * Drift error message — equivalent to Hermes _drift_error().
      * Triggered when @Version optimistic lock detects a concurrent modification,
      * OR when a fact exceeds the store's char limit (external writer appended
@@ -214,7 +224,11 @@ public class DatabaseMemoryProvider implements MemoryProvider {
         // Overflow check: total store chars must not exceed limit after adding
         // Parity with Hermes add() lines 328-341
         int limit = charLimitFor(effectiveTarget);
-        List<String> existingFacts = memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, effectiveTarget)
+        // M7 fix: bounded read — pagination size guards against unbounded memory
+        // materialization when maxFactsPerUser is disabled or misconfigured.
+        List<String> existingFacts = memoryRepository
+            .findByUserIdAndTargetOrderByCreatedAtDesc(userId, effectiveTarget,
+                org.springframework.data.domain.PageRequest.of(0, maxFactsBounded()))
             .stream().map(MemoryEntity::getFact).toList();
 
         // M6: Trim before dedup check

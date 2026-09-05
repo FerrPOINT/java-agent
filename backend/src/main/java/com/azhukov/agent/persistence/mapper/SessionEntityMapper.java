@@ -13,8 +13,22 @@ import org.mapstruct.Mapping;
 public interface SessionEntityMapper {
 
     @Mapping(target = "systemPrompt", source = "systemPrompt")
-    @Mapping(target = "metadata", ignore = true)
+    // M16 fix: carry entity timestamps into the domain record so DTO mapping can
+    // surface real createdAt/updatedAt instead of nulls.
+    @Mapping(target = "metadata", expression = "java(timestampMetadata(entity))")
     Session toDomain(SessionEntity entity);
+
+    /** M16: snapshot createdAt/updatedAt into metadata (Instant.toString round-trips). */
+    default java.util.Map<String, String> timestampMetadata(SessionEntity entity) {
+        java.util.Map<String, String> meta = new java.util.HashMap<>();
+        if (entity.getCreatedAt() != null) {
+            meta.put("created_at", entity.getCreatedAt().toString());
+        }
+        if (entity.getUpdatedAt() != null) {
+            meta.put("updated_at", entity.getUpdatedAt().toString());
+        }
+        return java.util.Map.copyOf(meta);
+    }
 
     @Mapping(target = "id", source = "id")
     @Mapping(target = "userId", source = "userId")

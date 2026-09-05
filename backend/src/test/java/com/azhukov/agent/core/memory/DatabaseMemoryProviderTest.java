@@ -10,6 +10,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.util.List;
+import org.springframework.data.domain.PageImpl;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -21,6 +22,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void recallFormatsResults() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity e = new MemoryEntity();
         e.setCategory("c");
         e.setFact("fact");
@@ -32,6 +36,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void recallWithEmptyListReturnsEmptyList() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         when(repo.searchByUserId("u", "q", 3)).thenReturn(List.of());
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         assertThat(p.recall("u", "q", 3)).isEmpty();
@@ -40,6 +47,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void recallWithNullCategoryRendersNullInFormattedOutput() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity e = new MemoryEntity();
         e.setCategory(null);
         e.setFact("fact text");
@@ -52,6 +62,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void storeTrimsContentBeforeSaving() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         // H2: Content should be trimmed before saving
         p.store("user-1", "cat", "  fact with spaces  ");
@@ -63,6 +76,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void storeWithSpecialCharactersSavesEntityCorrectly() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String specialFact = "He said \"hello\" & <script>alert('xss')</script> — café ☕";
         String specialCategory = "cät-egorÿ/with;special";
@@ -78,6 +94,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void storeWithNullUserIdStillSavesEntity() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         p.store(null, "cat", "fact");
         verify(repo).save(argThat(e ->
@@ -90,6 +109,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void storeWithTargetSetsTargetField() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         p.store("u", "custom-target", "cat", "fact");
         verify(repo).save(argThat(e ->
@@ -102,6 +124,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void storeWithNullTargetDefaultsToMemory() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         p.store("u", null, "cat", "fact");
         verify(repo).save(argThat(e -> e.getTarget().equals("memory")));
@@ -110,6 +135,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void storeSavesEntityWithAllFieldMappingsAndCreatedAtSet() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         Instant before = Instant.now();
         p.store("u", "cat", "fact");
@@ -129,6 +157,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void replaceReturnsMessageWhenNoMatches() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem")).thenReturn(List.of());
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String result = p.replace("u", "mem", "old", "new");
@@ -139,6 +170,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void replaceWithMultipleUniqueMatchesReturnsError() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity e1 = new MemoryEntity();
         e1.setFact("old text version 1");
         MemoryEntity e2 = new MemoryEntity();
@@ -158,6 +192,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void replaceWithSingleMatchUpdatesAndReturnsNull() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity e1 = new MemoryEntity();
         e1.setFact("old text");
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem"))
@@ -172,6 +209,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void replaceMatchesSubstringEntries() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         // Substring match: entry contains "old text" as part of a larger fact
         MemoryEntity e1 = new MemoryEntity();
         e1.setFact("the old text is here");
@@ -187,6 +227,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void removeReturnsMessageWhenNoMatches() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem")).thenReturn(List.of());
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String result = p.remove("u", "mem", "old");
@@ -197,6 +240,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void removeWithMultipleUniqueMatchesReturnsError() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity e1 = new MemoryEntity();
         e1.setFact("old text version 1");
         MemoryEntity e2 = new MemoryEntity();
@@ -214,6 +260,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void removeWithSingleMatchDeletesAndReturnsNull() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity e1 = new MemoryEntity();
         e1.setFact("old text");
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem"))
@@ -227,6 +276,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void clearDeletesAllEntriesForOneTarget() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity e1 = memoryEntity("u", "memory", "first");
         MemoryEntity e2 = memoryEntity("u", "memory", "second");
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "memory"))
@@ -242,6 +294,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void readReturnsEmptyStringWhenNoEntries() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem")).thenReturn(List.of());
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         assertThat(p.read("u", "mem")).isEmpty();
@@ -250,6 +305,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void readReturnsPlainEntriesJoinedByDelimiter() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity e1 = new MemoryEntity();
         e1.setCategory("auto");
         e1.setFact("Fact one");
@@ -271,6 +329,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void getSnapshotReturnsMemoryAndUserBlocks() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity memEntity = new MemoryEntity();
         memEntity.setCategory("cat");
         memEntity.setFact("mem fact");
@@ -293,6 +354,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void syncTurn_doesNotWriteMemoryFacts() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         p.syncTurn("session-1", List.of(Message.user("hello"), Message.assistant("hi", 0)));
         // S4: Should NOT save any memory entities — just log
@@ -302,6 +366,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void syncTurn_emptyMessages_doesNothing() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         p.syncTurn("session-1", List.of());
         verifyNoInteractions(repo);
@@ -310,6 +377,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void syncTurn_nullMessages_doesNothing() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         p.syncTurn("session-1", null);
         verifyNoInteractions(repo);
@@ -318,6 +388,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void applyBatchValidationFailureDoesNotMutateExistingEntity() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity existing = memoryEntity("u", "memory", "old stable fact");
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "memory"))
             .thenReturn(List.of(existing));
@@ -337,6 +410,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void applyBatchReplaceCommitsOnlyAfterValidation() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity existing = memoryEntity("u", "memory", "old stable fact");
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "memory"))
             .thenReturn(List.of(existing));
@@ -355,6 +431,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void getCharLimitUsesConfiguredTargetLimits() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         AgentProperties properties = new AgentProperties();
         properties.getMemory().setMemoryCharLimit(333);
         properties.getMemory().setUserCharLimit(222);
@@ -370,6 +449,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void store_withOversizedFact_throwsDriftError() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String oversized = "x".repeat(2201); // exceeds MEMORY_CHAR_LIMIT (2200)
         assertThatThrownBy(() -> p.store("u", "memory", "cat", oversized))
@@ -382,6 +464,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void store_withOversizedUserFact_throwsDriftError() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String oversized = "x".repeat(1376); // exceeds USER_CHAR_LIMIT (1375)
         assertThatThrownBy(() -> p.store("u", "user", "cat", oversized))
@@ -393,6 +478,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void store_withExactLimit_succeeds() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String exactLimit = "x".repeat(2200); // exactly MEMORY_CHAR_LIMIT
         p.store("u", "memory", "cat", exactLimit);
@@ -402,6 +490,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void store_withOptimisticLockFailure_throwsDriftError() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         when(repo.save(any(MemoryEntity.class)))
             .thenThrow(new org.springframework.orm.ObjectOptimisticLockingFailureException(
                 MemoryEntity.class, "fake-id", null));
@@ -415,6 +506,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void replace_withOversizedNewText_returnsDriftError() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity existing = new MemoryEntity();
         existing.setUserId("u");
         existing.setTarget("memory");
@@ -432,6 +526,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void replace_withOptimisticLockFailure_returnsDriftError() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity existing = new MemoryEntity();
         existing.setUserId("u");
         existing.setTarget("memory");
@@ -450,6 +547,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void remove_withOptimisticLockFailure_returnsDriftError() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         MemoryEntity existing = new MemoryEntity();
         existing.setUserId("u");
         existing.setTarget("memory");
@@ -468,6 +568,9 @@ class DatabaseMemoryProviderTest {
     @Test
     void driftErrorMessageContainsRemediationGuidance() {
         MemoryRepository repo = mock(MemoryRepository.class);
+        org.mockito.Mockito.lenient().when(repo.findByUserIdAndTargetOrderByCreatedAtDesc(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         DatabaseMemoryProvider p = new DatabaseMemoryProvider(repo);
         String oversized = "x".repeat(2201);
         assertThatThrownBy(() -> p.store("u", "memory", "cat", oversized))

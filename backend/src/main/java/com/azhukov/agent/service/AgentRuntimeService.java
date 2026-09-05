@@ -250,15 +250,12 @@ public class AgentRuntimeService {
     @Transactional(readOnly = true)
     public ContextInfoDto getContext(UUID sessionId) {
         requireSessionOwnership(sessionId);
-        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        int messageCount = messages.size();
-        int tokenEstimate = messages.stream()
-            .mapToInt(m -> m.getContent() != null ? m.getContent().length() : 0)
-            .sum() / 4;
-        List<String> toolsUsed = messages.stream()
-            .map(MessageEntity::getToolCallName)
+        // M19 fix: aggregate metadata in SQL — no transcript materialization.
+        long messageCount = messageRepository.countBySessionId(sessionId);
+        long charSum = messageRepository.sumContentLengthBySessionId(sessionId);
+        int tokenEstimate = (int) Math.min(Integer.MAX_VALUE, charSum / 4);
+        List<String> toolsUsed = messageRepository.findDistinctToolCallNamesBySessionId(sessionId).stream()
             .filter(name -> name != null && !name.isBlank())
-            .distinct()
             .collect(Collectors.toList());
 
         // Populate goal-related fields from session cliState
@@ -272,7 +269,7 @@ public class AgentRuntimeService {
             goalPaused = pausedStr != null ? Boolean.valueOf(pausedStr) : null;
             subgoals = session.getCliStateValue("subgoals");
         }
-        return new ContextInfoDto(sessionId, messageCount, tokenEstimate, toolsUsed, goal, goalPaused, subgoals);
+        return new ContextInfoDto(sessionId, (int) Math.min(Integer.MAX_VALUE, messageCount), tokenEstimate, toolsUsed, goal, goalPaused, subgoals);
     }
 
     @Transactional
@@ -345,21 +342,14 @@ public class AgentRuntimeService {
     @Transactional
     public int undoTurns(UUID sessionId, int turns) {
         requireSessionOwnership(sessionId);
-        List<MessageEntity> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        if (messages.isEmpty()) return 0;
-        List<Integer> turnIndices = messages.stream()
-            .map(MessageEntity::getTurnIndex)
-            .distinct()
-            .sorted(Comparator.reverseOrder())
-            .toList();
+        // M18 fix: load only distinct turn indices (newest first), not the whole transcript.
+        List<Integer> turnIndices = messageRepository.findTurnIndicesBySessionIdDesc(sessionId);
+        if (turnIndices.isEmpty()) return 0;
         int turnsToDelete = Math.min(turns, turnIndices.size());
         if (turnsToDelete == 0) return 0;
         int cutoffTurnIndex = turnIndices.get(turnsToDelete - 1);
-        List<MessageEntity> toDelete = messages.stream()
-            .filter(m -> m.getTurnIndex() != null && m.getTurnIndex() >= cutoffTurnIndex)
-            .toList();
-        messageRepository.deleteAll(toDelete);
-        return toDelete.size();
+        int deleted = messageRepository.deleteBySessionIdAndTurnIndexGreaterThanEqual(sessionId, cutoffTurnIndex);
+        return deleted;
     }
 
     @Transactional(readOnly = true)

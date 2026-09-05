@@ -21,15 +21,30 @@ public interface DomainDtoMapper {
         if (session == null) {
             return null;
         }
+        // M16 fix: source timestamps from the session metadata snapshot when present
+        // (set on load from the entity) instead of always returning null.
+        java.time.Instant createdAt = parseInstant(session.getMetadata("created_at"));
+        java.time.Instant updatedAt = parseInstant(session.getMetadata("updated_at"));
         return new SessionSummaryDto(
             session.id(),
             session.userId(),
             session.title(),
             session.modelProvider(),
             session.modelName(),
-            null,
-            null
+            createdAt,
+            updatedAt
         );
+    }
+
+    private static java.time.Instant parseInstant(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return java.time.Instant.parse(value);
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     /**

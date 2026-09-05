@@ -112,9 +112,16 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final MidTurnPersistenceCallback midTurnPersistenceCallback;
     private final CommentaryCallback commentaryCallback;
 
-    // Fallback manager — created per-turn, manages mid-turn model switching.
-    // Mirrors Hermes _fallback_chain / _fallback_index / _fallback_activated.
-    private FallbackManager fallbackManager;
+    /** Per-turn fallback state. A runtime is a singleton, so this must never be shared across sessions. */
+    private static final class TurnModelState {
+        private final FallbackManager fallbackManager;
+        private ModelClient activeClient;
+
+        private TurnModelState(FallbackManager fallbackManager, ModelClient primaryClient) {
+            this.fallbackManager = fallbackManager;
+            this.activeClient = primaryClient;
+        }
+    }
 
     /** c1: extracted retry+fallback loop owner (lazy — plain fields, no ctor churn). */
     private volatile FallbackModelCaller fallbackModelCaller;
@@ -135,6 +142,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
         return usage -> turnUsageCollector.record(usage.promptTokens(), usage.completionTokens());
     }
 
+    /** M2 fix: per-thread turn state; DefaultAgentRuntime is a singleton and different sessions run concurrently. */
+    private final ThreadLocal<TurnModelState> turnModelState = new ThreadLocal<>();
+
     private FallbackModelCaller fallbackModelCaller() {
         FallbackModelCaller fmc = fallbackModelCaller;
         if (fmc == null) {
@@ -152,9 +162,6 @@ public class DefaultAgentRuntime implements AgentRuntime {
         }
         return fmc;
     }
-
-    // Active model client — may be swapped to a fallback client mid-turn.
-    private ModelClient activeModelClient;
 
     // Shared daemon executor for memory sync — avoids creating a new executor every turn
     // Virtual threads are daemon by default in Java 25
@@ -221,7 +228,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
         List<Message> sanitized = messageSanitizer.sanitize(messages);
         List<Message> context = contextEngine.prepareContext(
             Session.create("openai-user", "openai-compatible", ""), sanitized);
-        ModelClient client = activeModelClient != null ? activeModelClient : modelClient;
+        TurnModelState modelState = turnModelState.get();
+        ModelClient client = modelState != null && modelState.activeClient != null
+            ? modelState.activeClient : modelClient;
         return client.complete(HistorySanitizer.sanitizeForModelRequest(context), tools,
             options != null ? options : ModelRequestOptions.empty());
     }
@@ -253,6 +262,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // rev-81: clear the ThreadLocal turn-history snapshot — virtual threads
             // are reused, and a stale snapshot leaks memory (full lineage history
             // retained on the thread).
+            turnModelState.remove();
             if (contextEngine instanceof com.azhukov.agent.core.context.DefaultContextEngine dce) {
                 dce.evictTurnCache(sid);
             }
@@ -287,17 +297,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
         // At the start of each turn, restore the primary model if a fallback was
         // activated during the previous turn. Then initialize the fallback manager
         // with the current primary config and the configured fallback chain.
-        if (fallbackManager != null) {
-            fallbackManager.restorePrimary();
-        }
-        fallbackManager = new FallbackManager(
-            properties.getFallbackChain(),
-            properties.getModel().getProvider(),
-            properties.getModel().getModelName(),
-            properties.getModel().getBaseUrl(),
-            properties.getModel().getApiKey()
-        );
-        activeModelClient = modelClient;
+        // M2 fix: this state is per-turn and never shared across sessions.
+        turnModelState.set(new TurnModelState(
+            new FallbackManager(
+                properties.getFallbackChain(),
+                properties.getModel().getProvider(),
+                properties.getModel().getModelName(),
+                properties.getModel().getBaseUrl(),
+                properties.getModel().getApiKey()),
+            modelClient));
 
         // Resolve effective toolsets: session metadata override (from DelegateTaskTool)
         // takes priority, then the configured default toolsets.
@@ -466,9 +474,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
         // If fallback was activated during the turn, restore the primary model so the
         // next turn starts fresh. The restorePrimary() call is also made at the start
         // of the next turn as a safety net.
-        if (fallbackManager != null && fallbackManager.isFallbackActivated()) {
-            fallbackManager.restorePrimary();
-            activeModelClient = modelClient;
+        TurnModelState modelState = turnModelState.get();
+        if (modelState != null && modelState.fallbackManager.isFallbackActivated()) {
+            modelState.fallbackManager.restorePrimary();
+            modelState.activeClient = modelClient;
         }
         // Preserve a late steer as a first-class handoff to the caller. The
         // gateway turns this into the next queued user event after this turn exits.
@@ -896,14 +905,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         continue;
                     }
                     // ── Exhausted (Hermes 7728-7760): fallback attempt BEFORE terminal ──
-                    if (fallbackManager != null && fallbackManager.hasPendingFallback()) {
+                    TurnModelState modelState = turnModelState.get();
+                    if (modelState != null && modelState.fallbackManager.hasPendingFallback()) {
                         log.warn("Empty response after {} retries — attempting fallback provider",
                             retryStateEmptyResponse);
                         FallbackModelCaller.ModelCallContext fmc = new FallbackModelCaller.ModelCallContext(
-                            modelClient, fallbackManager);
-                        fmc.activeClient = activeModelClient;
+                            modelClient, modelState.fallbackManager);
+                        fmc.activeClient = modelState.activeClient;
                         if (fallbackModelCaller().tryActivateFallbackForEmpty(fmc)) {
-                            activeModelClient = fmc.activeClient;
+                            modelState.activeClient = fmc.activeClient;
                             retryStateEmptyResponse = 0; // Hermes: reset budget for the fallback model
                             emptyGuard.reset();           // ...and the deterministic-streak tracker
                             continue;
@@ -1398,13 +1408,16 @@ public class DefaultAgentRuntime implements AgentRuntime {
      */
     private ChatResponse callModelWithRetry(List<Message> context, List<ToolDefinition> tools, Session session,
                                              ModelRequestOptions options) {
+        TurnModelState modelState = turnModelState.get();
         FallbackModelCaller.ModelCallContext callCtx = new FallbackModelCaller.ModelCallContext(
-            modelClient, fallbackManager);
+            modelClient, modelState != null ? modelState.fallbackManager : null);
         // Adopt a previously-activated fallback client from an earlier turn iteration.
-        callCtx.activeClient = activeModelClient;
+        callCtx.activeClient = modelState != null ? modelState.activeClient : null;
         ChatResponse response = fallbackModelCaller().call(callCtx, context, tools, session, options);
         // Persist a fallback activated during this call for the rest of the turn.
-        activeModelClient = callCtx.activeClient;
+        if (modelState != null) {
+            modelState.activeClient = callCtx.activeClient;
+        }
         return response;
     }
 
@@ -1420,15 +1433,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
      * @throws InterruptedException if the thread was interrupted during sleep
      */
     static void interruptibleSleep(long delayMs) throws InterruptedException {
-        long remaining = delayMs;
-        while (remaining > 0) {
-            long chunk = Math.min(200, remaining);
-            Thread.sleep(chunk);
-            remaining -= chunk;
-            if (Thread.interrupted()) {
-                throw new InterruptedException();
-            }
-        }
+        // M3 fix: delegate to the single corrected implementation in TurnExecutorUtils.
+        TurnExecutorUtils.interruptibleSleep(delayMs);
     }
 
     // c1: message/tool recovery helpers (extractRetryAfterMs, lowerMessageContains,
@@ -1458,7 +1464,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
         try {
             // Call model with NO tools — the model must produce a text summary, not tool calls
-            ModelClient client = activeModelClient != null ? activeModelClient : modelClient;
+            TurnModelState modelState = turnModelState.get();
+            ModelClient client = modelState != null && modelState.activeClient != null
+                ? modelState.activeClient : modelClient;
             ChatResponse response = client.complete(
                 HistorySanitizer.sanitizeForModelRequest(summaryMessages), List.of(), options);
             if (response != null && response.content() != null && !response.content().isBlank()) {

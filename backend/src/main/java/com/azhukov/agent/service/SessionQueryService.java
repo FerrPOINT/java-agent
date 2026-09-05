@@ -211,7 +211,8 @@ public class SessionQueryService {
             return false;
         }
         requireOwnership(entity);
-        messageRepository.deleteAll(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
+        // M17 fix: bulk delete — no transcript materialization into memory.
+        messageRepository.deleteBySessionId(sessionId);
         sessionRepository.delete(entity);
         eventPublisher.publishEvent(new SessionDeletedEvent(sessionId));
         return true;

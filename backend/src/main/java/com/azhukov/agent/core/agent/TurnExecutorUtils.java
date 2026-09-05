@@ -71,14 +71,14 @@ public final class TurnExecutorUtils {
      * @throws InterruptedException if the thread was interrupted during sleep
      */
     public static void interruptibleSleep(long delayMs) throws InterruptedException {
+        // M3 fix: Thread.sleep already throws InterruptedException when the flag is set,
+        // and re-checking with Thread.interrupted() would CLEAR the flag and swallow
+        // the interrupt. Sleep in bounded chunks and let sleep() itself propagate.
         long remaining = delayMs;
         while (remaining > 0) {
             long chunk = Math.min(200, remaining);
             Thread.sleep(chunk);
             remaining -= chunk;
-            if (Thread.interrupted()) {
-                throw new InterruptedException();
-            }
         }
     }
 

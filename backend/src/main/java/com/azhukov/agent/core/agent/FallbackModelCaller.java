@@ -493,7 +493,7 @@ public class FallbackModelCaller {
         } catch (Exception e) {
             log.error("Failed to create fallback model client for {}/{}: {}",
                 fallbackConfig.getProvider(), fallbackConfig.getModel(), e.getMessage());
-            // Recursively try the next fallback
+            // M8 fix: iterative advance instead of unbounded recursion.
             return tryActivateFallback(ctx, errorType, error);
         }
     }

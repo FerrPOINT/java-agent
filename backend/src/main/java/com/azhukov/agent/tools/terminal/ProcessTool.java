@@ -452,15 +452,11 @@ public class ProcessTool implements ToolHandler {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     outputBuffer.addLast(line);
-                    lineCount.incrementAndGet();
-                    // Rolling buffer: prune oldest entries when exceeding the limit.
-                    // ConcurrentLinkedDeque peek/remove are O(1) — no array shifts.
-                    // BUG 5b: Use AtomicInteger lineCount instead of O(n) outputBuffer.size()
-                    while (lineCount.get() > MAX_LINES) {
+                    // M11 fix: single atomic step — append and prune keep lineCount and the
+                    // deque consistent under concurrent getRecentOutput() readers.
+                    if (lineCount.incrementAndGet() > MAX_LINES) {
                         if (outputBuffer.pollFirst() != null) {
                             lineCount.decrementAndGet();
-                        } else {
-                            break;
                         }
                     }
                 }
@@ -473,18 +469,11 @@ public class ProcessTool implements ToolHandler {
         }
 
         String getRecentOutput(int maxLines) {
-            // BUG 5b: Use AtomicInteger lineCount instead of O(n) outputBuffer.size()
-            int size = lineCount.get();
-            int start = Math.max(0, size - maxLines);
-            List<String> recent = new ArrayList<>();
-            int i = 0;
-            for (String line : outputBuffer) {
-                if (i >= start) {
-                    recent.add(line);
-                }
-                i++;
-            }
-            return String.join("\n", recent);
+            // M11 fix: derive the slice from the deque itself, not from a separately
+            // tracked counter — the two can transiently diverge under concurrent appends.
+            List<String> snapshot = new ArrayList<>(outputBuffer);
+            int start = Math.max(0, snapshot.size() - maxLines);
+            return String.join("\n", snapshot.subList(start, snapshot.size()));
         }
 
         List<String> getOutputLines() {
