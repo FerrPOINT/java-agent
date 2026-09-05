@@ -51,7 +51,7 @@
 - 8 dead Gradle deps removed (pebble, commons-lang3, commons-io, commons-imaging, langchain4j-ollama, resilience4j-circuitbreaker, resilience4j-spring6, flexmark from bot)
 - TestRunner.class removed from git
 - LOGGING_AUDIT_REPORT.md, review-findings.md → docs/audit/
-- __pycache__ added to .gitignore, git rm --cached
+- `__pycache__` added to .gitignore, git rm --cached
 - docker-compose.yml duplicate deleted
 - AgentLoopExecutor → TurnExecutor in docs
 - 3 test files: @Mock DomainDtoMapper → Mappers.getMapper()
@@ -74,7 +74,7 @@
 
 - Markdown lint CI: continue-on-error removed
 - Makefile: parity-dashboard, skill-update targets documented in help
-- repomix.config.json, __pycache__/, *.pyc added to .gitignore
+- repomix.config.json, `__pycache__`/, *.pyc added to .gitignore
 - jar.enabled = false (plain jar artifact elimination)
 - Coverage gate set to 0.75 (to be raised to 0.80 after test coverage improvements)
 
