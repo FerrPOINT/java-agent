@@ -131,6 +131,31 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     @Override
     public void handleCommand(UpdateEvent event) {
+        // M26 fix: commands mutate session state (/new, /model, /checkpoint …) —
+        // serialize per chat like handleTextOrMedia so a command can't interleave
+        // with an in-flight turn or another command on the same chat.
+        long chatId = event.chatId();
+        ReentrantLock lock = locks.computeIfAbsent(chatId, k -> new ReentrantLock());
+        boolean acquired;
+        try {
+            acquired = lock.tryLock(300, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            sendError(chatId, "Interrupted while waiting to process your command. Please try again.");
+            return;
+        }
+        if (!acquired) {
+            sendError(chatId, "⏳ This chat is busy — another message is still being processed. Please try again shortly.");
+            return;
+        }
+        try {
+            handleCommandLocked(event);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void handleCommandLocked(UpdateEvent event) {
         String commandName = event.commandName();
         CommandHandler handler = commandRegistry.get(commandName);
         if (handler == null) {

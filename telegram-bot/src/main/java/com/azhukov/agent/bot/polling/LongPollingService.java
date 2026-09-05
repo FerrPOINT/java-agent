@@ -164,10 +164,6 @@ public class LongPollingService {
         try {
             var result = telegramClient.getUpdates(offset, limit, timeout);
             if (result.isEmpty()) {
-                // Check if this was a 409 conflict
-                if (telegramClient.isLastCallConflict()) {
-                    return handleConflict();
-                }
                 log.debug("getUpdates returned empty (no new updates)");
                 return null;
             }
@@ -183,6 +179,16 @@ public class LongPollingService {
             // Check for 409 conflict via direct cast (no reflection)
             if (e instanceof TelegramApiException tae && tae.getErrorCode() == 409) {
                 return handleConflict();
+            }
+            // M23 fix: 401/404 from Telegram mean the bot token is revoked or
+            // the bot was deleted — reconnect-with-backoff can never recover.
+            // Stop polling and surface the error instead of retrying forever.
+            if (e instanceof TelegramApiException tae
+                && (tae.getErrorCode() == 401 || tae.getErrorCode() == 404)) {
+                log.error("Telegram API returned {} — bot token is invalid/revoked. Stopping polling "
+                    + "(fix the token and restart the service).", tae.getErrorCode());
+                running.set(false);
+                return null;
             }
             log.warn("getUpdates failed: {}", e.getMessage());
             return null;

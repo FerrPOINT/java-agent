@@ -180,7 +180,20 @@ public class BotLockManager {
     // ─── Internal helpers ──────────────────────────────────────────
 
     static String scopeHash(String token) {
-        return Integer.toHexString(token.hashCode() & 0xFFFFFF);
+        // L12 fix: full SHA-256 scope hash — the previous 24-bit truncation of
+        // hashCode() made distinct bot tokens collide on the lock file far too
+        // easily (birthday bound ≈ 2^12 tokens).
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(token.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < 8; i++) { // 64 bits — collision-free in practice
+                sb.append(String.format("%02x", digest[i]));
+            }
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 
     LockRecord readLockRecord(Path lockPath) {

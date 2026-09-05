@@ -986,16 +986,19 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // an interim assistant message shown to the user before tool execution.
             // In the non-streaming path, the text was NOT already shown, so
             // alreadyStreamed=false — the callback should send it as a new message.
+            // M21 fix: scrub think blocks from commentary before it reaches the user
+            // (the streaming path already strips them at emission).
             if (properties.isCommentaryEnabled() && response.hasContent() && response.hasToolCalls()) {
-                if (commentaryCallback != null) {
+                String commentary = stripThinkBlocksFromString(response.content());
+                if (commentary != null && !commentary.isBlank() && commentaryCallback != null) {
                     try {
-                        commentaryCallback.onCommentary(session.id(), response.content(), false);
+                        commentaryCallback.onCommentary(session.id(), commentary.strip(), false);
                     } catch (Exception e) {
                         log.warn("Commentary callback failed for session {}: {}", session.id(), e.getMessage());
                     }
+                    log.debug("Emitted commentary for session {} (alreadyStreamed=false): {} chars",
+                        session.id(), commentary.length());
                 }
-                log.debug("Emitted commentary for session {} (alreadyStreamed=false): {} chars",
-                    session.id(), response.content().length());
             }
 
             // ── Tool call validation pipeline (parity with Hermes conversation_loop.py) ──

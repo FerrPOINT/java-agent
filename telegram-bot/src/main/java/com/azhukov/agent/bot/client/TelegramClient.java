@@ -647,7 +647,12 @@ public class TelegramClient {
                 return List.<Map<String, Object>>of();
             });
         } catch (TelegramApiException e) {
-            // 409 conflict is already recorded via lastCallConflict
+            // M24 fix: 401/404/409 are terminal/conflict outcomes the poll loop must
+            // see — rethrow them instead of flattening everything into Optional.empty()
+            // behind a racy global side-channel flag.
+            if (e.getErrorCode() == 409 || e.getErrorCode() == 401 || e.getErrorCode() == 404) {
+                throw e;
+            }
             log.warn("getUpdates failed: {}", e.getMessage());
             return Optional.empty();
         }

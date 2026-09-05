@@ -6,10 +6,12 @@ import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.retry.annotation.EnableRetry;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication(proxyBeanMethods = false, excludeName = "org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration")
 @EnableConfigurationProperties(AgentProperties.class)
 @EnableRetry
+@EnableScheduling
 public class JavaAgentApplication {
 
     public static void main(String[] args) {
