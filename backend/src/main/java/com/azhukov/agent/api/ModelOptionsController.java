@@ -294,7 +294,7 @@ public class ModelOptionsController {
         if (api != null && !isBlank(api.getModelName())) {
             return api.getModelName();
         }
-        return "hermes-agent";
+        return "java-agent";
     }
 
     private CurrentModelSelection currentModelSelection(String profile) {

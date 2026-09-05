@@ -21,4 +21,13 @@ public class CliProperties {
     private String sessionId;
     private String model;
     private boolean newSession = false;
+
+    /**
+     * API key for the backend auth filter ({@code agent.security.api-key} on
+     * the server, or a per-user key issued via /api/v1/admin/users). When the
+     * backend runs with auth disabled (dev), this stays empty.
+     * Env override: CLI_API_KEY or AGENT_API_KEY.
+     */
+    private String apiKey = System.getenv().getOrDefault("AGENT_API_KEY",
+        System.getenv().getOrDefault("CLI_API_KEY", ""));
 }

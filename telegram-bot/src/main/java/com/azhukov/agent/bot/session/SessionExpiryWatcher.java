@@ -107,7 +107,9 @@ public class SessionExpiryWatcher {
                     // sessions leak backend state forever — the bot deactivates
                     // its own row but the backend never knows.
                     try {
-                        backendClient.resetSession(session.getId().toString());
+                        if (session.getBackendSessionId() != null) {
+                            backendClient.resetSession(session.getBackendSessionId().toString());
+                        }
                     } catch (Exception e) {
                         log.debug("Backend cleanup for expired session {} failed: {}",
                             session.getId(), e.getMessage());

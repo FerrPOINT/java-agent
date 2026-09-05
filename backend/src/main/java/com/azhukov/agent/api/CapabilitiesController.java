@@ -83,7 +83,9 @@ public class CapabilitiesController {
         features.put("run_steer", true);
         features.put("run_approval_response", true);
         features.put("tool_progress_events", true);
-        features.put("approval_events", true);
+        // Real configured state — /approvals in clients (e.g. Telegram bot)
+        // derives manual/off from this flag (agent.security.approvals-enabled).
+        features.put("approval_events", properties.getSecurity().isApprovalsEnabled());
         features.put("session_resources", true);
         features.put("model_options", true);
         features.put("session_chat", true);
@@ -148,8 +150,8 @@ public class CapabilitiesController {
                 + "tools execute on the API-server host unless a future explicit split-runtime mode is enabled.");
 
         return Map.of(
-            "object", "hermes.api_server.capabilities",
-            "platform", "hermes-agent",
+            "object", "java-agent.api_server.capabilities",
+            "platform", "java-agent",
             "model", model,
             "auth", auth,
             "runtime", runtime,

@@ -108,7 +108,8 @@ public class SkillController {
 
     @GetMapping("/agent/skills/{name}")
     public Map<String, Object> getSkillContent(@PathVariable String name) {
-        String content = skillManager.getSkill(name);
+        // mu14: scoped read — non-admin callers cannot read other users' skills
+        String content = skillManager.getSkill(name, UserContext.scopeUserId());
         if (content == null) {
             return Map.of("ok", false, "error", "Skill not found: " + name);
         }

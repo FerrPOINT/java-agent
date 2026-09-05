@@ -76,11 +76,27 @@ def check_condition(value, cond: str, expected):
         assert value != expected, f"expected != {expected!r}, got {value!r}"
     elif cond == "contains":
         if isinstance(value, list):
-            assert expected in value, f"{expected!r} not in list ({len(value)} items)"
+            # Wildcard JSON paths such as data[*].tools yield nested lists.
+            # A tool contract should match any nested tool list, not its outer
+            # list object.
+            def contains_nested(items):
+                return any(
+                    expected in item if isinstance(item, list) else item == expected
+                    for item in items
+                )
+            assert contains_nested(value), f"{expected!r} not in list ({len(value)} items)"
         else:
             assert expected in str(value), f"{expected!r} not in {str(value)[:200]!r}"
     elif cond == "not_contains":
-        assert expected not in str(value), f"{expected!r} unexpectedly in {str(value)[:200]!r}"
+        if isinstance(value, list):
+            def contains_nested(items):
+                return any(
+                    expected in item if isinstance(item, list) else item == expected
+                    for item in items
+                )
+            assert not contains_nested(value), f"{expected!r} unexpectedly in list ({len(value)} items)"
+        else:
+            assert expected not in str(value), f"{expected!r} unexpectedly in {str(value)[:200]!r}"
     elif cond == "gt":
         assert value > expected, f"expected > {expected}, got {value}"
     elif cond == "gte":

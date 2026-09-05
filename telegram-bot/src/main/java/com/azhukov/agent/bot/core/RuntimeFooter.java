@@ -44,7 +44,17 @@ public class RuntimeFooter {
      * @return formatted footer string, or empty string if disabled or no fields
      */
     public String format(String model, int contextTokens, int contextLength, String cwd, long turnSeconds) {
-        if (!properties.getFooter().isEnabled()) {
+        return format(model, contextTokens, contextLength, cwd, turnSeconds, true);
+    }
+
+    /**
+     * Per-session aware footer: the global footer config must be enabled AND the
+     * session-level /footer toggle must be on (Hermes parity — /footer on|off
+     * controls the delivered runtime footer for that chat).
+     */
+    public String format(String model, int contextTokens, int contextLength, String cwd,
+                         long turnSeconds, boolean sessionFooterEnabled) {
+        if (!properties.getFooter().isEnabled() || !sessionFooterEnabled) {
             return "";
         }
         List<String> fields = properties.getFooter().getFields();

@@ -21,7 +21,9 @@ public record ModelRequestOptions(
     String provider,
     String baseUrl,
     String apiKey,
-    String serviceTier
+    String serviceTier,
+    Boolean yoloMode,
+    Boolean verboseMode
 ) {
     public ModelRequestOptions(String modelName,
                                String reasoningEffort,
@@ -31,7 +33,7 @@ public record ModelRequestOptions(
                                String subgoal,
                                Integer maxCompletionTokens) {
         this(modelName, reasoningEffort, fastMode, voiceMode, personality, subgoal,
-            maxCompletionTokens, null, null, null);
+            maxCompletionTokens, null, null, null, null, null, null);
     }
 
     public ModelRequestOptions(String modelName,
@@ -45,7 +47,22 @@ public record ModelRequestOptions(
                                String baseUrl,
                                String apiKey) {
         this(modelName, reasoningEffort, fastMode, voiceMode, personality, subgoal,
-            maxCompletionTokens, provider, baseUrl, apiKey, null);
+            maxCompletionTokens, provider, baseUrl, apiKey, null, null, null);
+    }
+
+    public ModelRequestOptions(String modelName,
+                               String reasoningEffort,
+                               Boolean fastMode,
+                               Boolean voiceMode,
+                               String personality,
+                               String subgoal,
+                               Integer maxCompletionTokens,
+                               String provider,
+                               String baseUrl,
+                               String apiKey,
+                               String serviceTier) {
+        this(modelName, reasoningEffort, fastMode, voiceMode, personality, subgoal,
+            maxCompletionTokens, provider, baseUrl, apiKey, serviceTier, null, null);
     }
 
     public static ModelRequestOptions empty() {
@@ -70,6 +87,8 @@ public record ModelRequestOptions(
             ", baseUrl=" + baseUrl +
             ", apiKey=" + (hasText(apiKey) ? "<redacted>" : apiKey) +
             ", serviceTier=" + serviceTier +
+            ", yoloMode=" + yoloMode +
+            ", verboseMode=" + verboseMode +
             ']';
     }
 

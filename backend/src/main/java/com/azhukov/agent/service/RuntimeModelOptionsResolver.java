@@ -60,7 +60,9 @@ final class RuntimeModelOptionsResolver {
             selection.provider(),
             selection.baseUrl(),
             selection.apiKey(),
-            clean(request.serviceTier()));
+            clean(request.serviceTier()),
+            request.yoloMode(),
+            request.verboseMode());
     }
 
     static Session applyEffectiveRuntime(Session session,

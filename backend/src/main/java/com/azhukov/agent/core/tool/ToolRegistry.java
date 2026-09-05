@@ -19,6 +19,18 @@ public interface ToolRegistry {
 
     Set<String> getToolsets();
 
+    /**
+     * Expand toolset names (static specs + composites) into the concrete tool
+     * names they grant. Unknown names are skipped. Needed by delegation to
+     * subtract blocked TOOL names after composite expansion (Hermes parity —
+     * {@code model_tools} subtracts blocked names post-expansion, so mixed
+     * bundles like hermes-cli keep their allowed tools while blocked ones are
+     * removed; stripping whole toolsets leaks blocked tools through composites).
+     */
+    default Set<String> expandToolsetNames(Set<String> toolsets) {
+        return Set.of();
+    }
+
     void registerDynamic(String toolName, ToolDefinition definition, ToolHandler handler);
 
     default void registerDynamic(String toolName, String toolset, ToolDefinition definition, ToolHandler handler) {

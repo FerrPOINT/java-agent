@@ -1,13 +1,14 @@
 package com.azhukov.agent.api.filter;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
+import com.azhukov.agent.service.UserAccessService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -34,21 +35,35 @@ import java.util.Map;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
     private final AgentProperties agentProperties;
+    private final UserAccessService userAccessService;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ApiKeyAuthFilter(AgentProperties agentProperties, UserAccessService userAccessService) {
+        this.agentProperties = agentProperties;
+        this.userAccessService = userAccessService;
+    }
+
+    /** Test-only compatibility constructor without per-user auth. */
+    public ApiKeyAuthFilter(AgentProperties agentProperties) {
+        this.agentProperties = agentProperties;
+        this.userAccessService = null;
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                      HttpServletResponse response,
                                      FilterChain filterChain) throws ServletException, IOException {
+        try {
         String configuredKey = agentProperties.getSecurity().getApiKey();
 
         // Auth disabled — dev mode: set a default authenticated principal
         if (configuredKey == null || configuredKey.isBlank()) {
             SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("dev"));
+            UserContext.set(AgentProperties.DEFAULT_USER_ID, UserContext.ROLE_ADMIN);
             filterChain.doFilter(request, response);
             return;
         }
@@ -58,6 +73,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         // Health endpoints are always exempt: set a default authenticated principal
         if (isHealthEndpoint(requestUri)) {
             SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("health"));
+            UserContext.set("health", UserContext.ROLE_ADMIN);
             filterChain.doFilter(request, response);
             return;
         }
@@ -70,11 +86,22 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
         String providedKey = extractApiKey(request);
 
+        // Per-user API keys take precedence over the legacy global admin key.
+        UserAccessService.AuthenticatedUser user = userAccessService != null && providedKey != null
+            ? userAccessService.authenticate(providedKey) : null;
+        if (user != null) {
+            SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication(providedKey));
+            UserContext.set(user.userId(), user.role());
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         if (providedKey != null && constantTimeEquals(configuredKey, providedKey)) {
             // Set authentication in SecurityContext so Spring Security's
-            // anyRequest().authenticated() check passes.
+            // anyRequest().authenticated() check passes. Global key = admin.
             Authentication auth = new ApiKeyAuthentication(providedKey);
             SecurityContextHolder.getContext().setAuthentication(auth);
+            UserContext.set(AgentProperties.DEFAULT_USER_ID, UserContext.ROLE_ADMIN);
             filterChain.doFilter(request, response);
             return;
         }
@@ -88,6 +115,10 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             "Invalid gateway API key (API_SERVER_KEY)",
             "gateway_auth_error",
             "gateway_auth_failed"));
+        } finally {
+            // Always clear ThreadLocal to prevent leakage across virtual threads
+            UserContext.clear();
+        }
     }
 
     private String extractApiKey(HttpServletRequest request) {

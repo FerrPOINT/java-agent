@@ -693,7 +693,9 @@ class AgentControllerBranchCoverageTest {
     @Test
     void getSkillContentFoundReturnsContent() throws Exception {
         mockMvc = skillMockMvc();
-        when(skillManager.getSkill("coding")).thenReturn("Write clean code");
+        // mu14: controller reads through the userId-scoped overload
+        when(skillManager.getSkill(org.mockito.ArgumentMatchers.eq("coding"),
+            org.mockito.ArgumentMatchers.isNull())).thenReturn("Write clean code");
 
         mockMvc.perform(get("/api/v1/agent/skills/coding"))
             .andExpect(status().isOk())
@@ -705,7 +707,9 @@ class AgentControllerBranchCoverageTest {
     @Test
     void getSkillContentNotFoundReturnsError() throws Exception {
         mockMvc = skillMockMvc();
-        when(skillManager.getSkill("unknown")).thenReturn(null);
+        // mu14: controller reads through the userId-scoped overload
+        when(skillManager.getSkill(org.mockito.ArgumentMatchers.eq("unknown"),
+            org.mockito.ArgumentMatchers.isNull())).thenReturn(null);
 
         mockMvc.perform(get("/api/v1/agent/skills/unknown"))
             .andExpect(status().isOk())

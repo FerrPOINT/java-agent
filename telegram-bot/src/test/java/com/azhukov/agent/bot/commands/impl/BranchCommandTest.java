@@ -23,6 +23,7 @@ class BranchCommandTest {
 
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
+        session.setBackendSessionId(session.getId());
 
         String result = cmd.handle(event, session);
 

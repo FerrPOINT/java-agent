@@ -252,6 +252,9 @@ public class CliReplRunner implements CommandLineRunner {
                     System.out.println();
                 }
             );
+            // /queue semantics: the queued prompt applies to exactly one turn
+            // (cleared only on success — on failure it stays queued).
+            cliState.setQueuedPrompt(null);
         } catch (BackendUnavailableException e) {
             System.out.println("\nBackend unavailable. Is the backend running on " +
                 backendClient.getBackendUrl() + "?");
@@ -262,6 +265,8 @@ public class CliReplRunner implements CommandLineRunner {
     private void handleChatNonStream(String message, String sessionId, CliState cliState) {
         try {
             String response = backendClient.chat(message, sessionId, cliState);
+            // /queue semantics: the queued prompt applies to exactly one turn.
+            cliState.setQueuedPrompt(null);
             System.out.println(markdownRenderer.render(response));
         } catch (BackendUnavailableException e) {
             System.out.println("\nBackend unavailable. Is the backend running on " +

@@ -219,7 +219,9 @@ class SkillControllerTest {
 
     @Test
     void getSkillContentReturnsContentWhenFound() throws Exception {
-        when(skillManager.getSkill("python-dev")).thenReturn("# Python Development\nSkill content");
+        // mu14: controller reads through the userId-scoped overload (null = admin scope in tests)
+        when(skillManager.getSkill(org.mockito.ArgumentMatchers.eq("python-dev"),
+            org.mockito.ArgumentMatchers.isNull())).thenReturn("# Python Development\nSkill content");
 
         mockMvc.perform(get("/api/v1/agent/skills/{name}", "python-dev"))
             .andExpect(status().isOk())
@@ -230,7 +232,9 @@ class SkillControllerTest {
 
     @Test
     void getSkillContentReturnsErrorWhenNotFound() throws Exception {
-        when(skillManager.getSkill("nonexistent")).thenReturn(null);
+        // mu14: controller reads through the userId-scoped overload
+        when(skillManager.getSkill(org.mockito.ArgumentMatchers.eq("nonexistent"),
+            org.mockito.ArgumentMatchers.isNull())).thenReturn(null);
 
         mockMvc.perform(get("/api/v1/agent/skills/{name}", "nonexistent"))
             .andExpect(status().isOk())

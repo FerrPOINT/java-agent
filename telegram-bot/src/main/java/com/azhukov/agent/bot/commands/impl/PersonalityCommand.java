@@ -18,6 +18,9 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class PersonalityCommand implements CommandHandler {
 
+    private final com.azhukov.agent.bot.session.BotSessionStore store;
+
+
     private static final String DEFAULT_PERSONALITY = "Джава агент";
 
     private final BotProperties properties;
@@ -45,6 +48,9 @@ public class PersonalityCommand implements CommandHandler {
 
         if (args.equalsIgnoreCase("reset")) {
             properties.setAgentName(DEFAULT_PERSONALITY);
+            if (session != null && session.getId() != null) {
+                store.persistMetadata(session.getId(), "personality", null);
+            }
             return "Personality reset to: " + DEFAULT_PERSONALITY;
         }
 
@@ -54,6 +60,11 @@ public class PersonalityCommand implements CommandHandler {
         }
 
         properties.setAgentName(name);
+        // Per-session personality reaches the backend chat request via session
+        // metadata (MessageApiClient forwards runtime.getMetadata("personality")).
+        if (session != null && session.getId() != null) {
+            store.persistMetadata(session.getId(), "personality", name);
+        }
         return "Personality set to: " + name;
     }
 }

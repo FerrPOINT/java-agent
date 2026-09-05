@@ -54,10 +54,10 @@ class ModelsControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.object").value("list"))
             .andExpect(jsonPath("$.data.length()").value(1))
-            .andExpect(jsonPath("$.data[0].id").value("hermes-agent"))
+            .andExpect(jsonPath("$.data[0].id").value("java-agent"))
             .andExpect(jsonPath("$.data[0].object").value("model"))
-            .andExpect(jsonPath("$.data[0].owned_by").value("hermes"))
-            .andExpect(jsonPath("$.data[0].root").value("hermes-agent"));
+            .andExpect(jsonPath("$.data[0].owned_by").value("java-agent"))
+            .andExpect(jsonPath("$.data[0].root").value("java-agent"));
     }
 
     @Test
@@ -117,7 +117,7 @@ class ModelsControllerTest {
             .andExpect(jsonPath("$.data.length()").value(2))
             .andExpect(jsonPath("$.data[1].id").value("fast-agent"))
             .andExpect(jsonPath("$.data[1].root").value("openrouter/fast-model"))
-            .andExpect(jsonPath("$.data[1].parent").value("hermes-agent"))
+            .andExpect(jsonPath("$.data[1].parent").value("java-agent"))
             .andExpect(jsonPath("$.data[1].apiKey").doesNotExist())
             .andExpect(jsonPath("$.data[1].api_key").doesNotExist())
             .andReturn();
@@ -134,8 +134,8 @@ class ModelsControllerTest {
         mockMvc.perform(get("/v1/models"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.length()").value(1))
-            .andExpect(jsonPath("$.data[0].id").value("hermes-agent"))
-            .andExpect(jsonPath("$.data[0].root").value("hermes-agent"));
+            .andExpect(jsonPath("$.data[0].id").value("java-agent"))
+            .andExpect(jsonPath("$.data[0].root").value("java-agent"));
     }
 
     @Test
@@ -144,7 +144,7 @@ class ModelsControllerTest {
         apiProps.setModelName(" ");
         when(properties.getApi()).thenReturn(apiProps);
 
-        assertThat(OpenAiModelRouting.runtimeModelName(properties, "hermes-agent"))
+        assertThat(OpenAiModelRouting.runtimeModelName(properties, "java-agent"))
             .isEqualTo("test-model");
     }
 

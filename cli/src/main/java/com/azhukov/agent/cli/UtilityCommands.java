@@ -85,8 +85,11 @@ public class UtilityCommands implements CommandGroup {
         registry.register("whoami", "Show your slash command access level", (args, client, sessionId) ->
             "User: default\nProfile: " + cliState.getUserProfile() + "\nAccess: user");
 
-        registry.register("statusbar", "Toggle the context/model status bar", (args, client, sessionId) ->
-            "Status bar: toggled (use /config to see current state)");
+        registry.register("statusbar", "Toggle the context/model status bar", (args, client, sessionId) -> {
+            boolean enabled = !cliState.isStatusBarEnabled();
+            cliState.setStatusBarEnabled(enabled);
+            return "Status bar: " + (enabled ? "enabled" : "disabled");
+        });
 
         // ── Editor / image ──
         registry.register("editor", "Open an external editor for multi-line input", (args, client, sessionId) -> {
@@ -106,8 +109,12 @@ public class UtilityCommands implements CommandGroup {
                 if (!java.nio.file.Files.exists(imgPath)) {
                     return "File not found: " + path;
                 }
-                return "Image attachment not yet supported in CLI. Use the Telegram bot to send images.\n"
-                    + "File verified: " + imgPath.toAbsolutePath();
+                if (!java.nio.file.Files.isReadable(imgPath)) {
+                    return "File not readable: " + path;
+                }
+                cliState.setPendingImage(imgPath);
+                return "Image attached for your next prompt: " + imgPath.toAbsolutePath()
+                    + "\n(Sent as a file reference, like Telegram media.)";
             } catch (Exception e) {
                 return "Error attaching image: " + e.getMessage();
             }

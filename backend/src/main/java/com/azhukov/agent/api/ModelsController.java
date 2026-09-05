@@ -34,7 +34,7 @@ import java.util.Map;
 @Tag(name = "OpenAI-compatible", description = "OpenAI-compatible model listing")
 public class ModelsController {
 
-    private static final String DEFAULT_ADVERTISED_MODEL = "hermes-agent";
+    private static final String DEFAULT_ADVERTISED_MODEL = "java-agent";
 
     private final AgentProperties properties;
     private final ProfileService profileService;
@@ -58,7 +58,7 @@ public class ModelsController {
         String advertisedModel = advertisedModel(profile);
         long created = Instant.now().getEpochSecond();
         List<Map<String, Object>> data = new ArrayList<>();
-        data.add(modelEntry(advertisedModel, created, "hermes", advertisedModel, null));
+        data.add(modelEntry(advertisedModel, created, "java-agent", advertisedModel, null));
 
         AgentProperties.ApiProperties api = properties.getApi();
         if (isDefaultProfile(profile) && api != null && api.getModelRoutes() != null) {
@@ -68,7 +68,7 @@ public class ModelsController {
                 if (alias.isBlank() || routedModel == null || alias.equals(advertisedModel)) {
                     continue;
                 }
-                data.add(modelEntry(alias, created, "hermes", routedModel, advertisedModel));
+                data.add(modelEntry(alias, created, "java-agent", routedModel, advertisedModel));
             }
         }
 

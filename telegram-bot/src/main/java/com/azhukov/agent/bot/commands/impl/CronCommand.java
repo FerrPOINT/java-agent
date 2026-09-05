@@ -3,6 +3,7 @@ package com.azhukov.agent.bot.commands.impl;
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
+import com.azhukov.agent.bot.session.BackendSessionResolver;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,7 +26,7 @@ public class CronCommand implements CommandHandler {
             return "Usage: /cron <action> [args]\nActions: list, add, pause <id>, resume <id>, remove <id>, run <id>";
         }
         try {
-            String sessionId = session.getId() != null ? session.getId().toString() : null;
+            String sessionId = BackendSessionResolver.resolveString(session);
             AgentBackendClient.ChatResult result = backendClient.chat(
                 "Manage cron jobs: " + args + ". Use the cronjob tool to perform the requested action.", sessionId);
             return result.content();

@@ -94,7 +94,7 @@ class SessionCrudControllerTest {
 
         mockMvc.perform(post("/api/v2/sessions"))
             .andExpect(status().isCreated())
-            .andExpect(header().string("Location", "/api/v2/sessions/" + SESSION_ID))
+            .andExpect(header().string("Location", "/api/sessions/" + SESSION_ID))
             .andExpect(jsonPath("$.id").value(SESSION_ID.toString()));
     }
 

@@ -373,6 +373,16 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
         // Toolsets already resolved above (before memory nudge counter).
         List<ToolDefinition> tools = toolRegistry.getDefinitions(effectiveToolsets);
+        // Delegation deny-list: subtract blocked TOOL names after composite
+        // expansion (Hermes parity — mixed bundles like hermes-cli must not leak
+        // delegate_task/clarify/memory/send_message/cronjob to child sessions).
+        String blockedMeta = session.getMetadata("delegation_blocked_tools");
+        if (blockedMeta != null && !blockedMeta.isBlank()) {
+            Set<String> denied = new HashSet<>(Arrays.asList(blockedMeta.split(",")));
+            tools = tools.stream()
+                .filter(td -> !denied.contains(td.name()))
+                .collect(java.util.stream.Collectors.toList());
+        }
 
         // Resolve effective max turns: session metadata override (from DelegateTaskTool)
         // takes priority when positive, then the configured core.max-turns.
@@ -1100,7 +1110,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // Skip the approval gate entirely when the session metadata has
                 // subagent_auto_approve=true (set by DelegateTaskTool when
                 // agent.delegation.subagent-auto-approve is enabled).
-                boolean skipApproval = "true".equals(session.getMetadata("subagent_auto_approve"));
+                boolean skipApproval = "true".equals(session.getMetadata("subagent_auto_approve"))
+                    // Hermes /yolo parity: per-session approval bypass requested via
+                    // the chat request (Telegram /yolo, CLI equivalents).
+                    || Boolean.TRUE.equals(options != null ? options.yoloMode() : null)
+                    || "true".equals(session.getMetadata("yoloMode"));
                 // rev-115 Hermes parity (delegate_tool.py:66-97): subagent child
                 // sessions auto-DENY dangerous calls immediately instead of
                 // blocking 5 minutes on an approval request no user will ever

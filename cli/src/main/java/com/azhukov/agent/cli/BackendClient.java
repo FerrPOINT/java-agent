@@ -430,6 +430,13 @@ public class BackendClient {
 
     private Map<String, Object> buildChatBody(String message, String sessionId, CliState state) {
         Map<String, Object> body = new LinkedHashMap<>();
+        // /image attachment: reference the saved file in the outbound message
+        // (same media-reference convention the Telegram gateway uses) and consume it.
+        if (state != null && state.getPendingImage() != null) {
+            java.nio.file.Path img = state.getPendingImage();
+            state.setPendingImage(null);
+            message = "[Photo: " + img.toAbsolutePath() + "]\n" + message;
+        }
         body.put("message", message);
         if (sessionId != null && !sessionId.isBlank()) {
             body.put("sessionId", sessionId);
@@ -1268,7 +1275,7 @@ public class BackendClient {
     public String queuePrompt(String sessionId, String prompt) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("sessionId", sessionId);
-        body.put("prompt", prompt);
+        body.put("queued", prompt);
         try {
             String json = restClient.post()
                 .uri("/api/v1/agent/queue")

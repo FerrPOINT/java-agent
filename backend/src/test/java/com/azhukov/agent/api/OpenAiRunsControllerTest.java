@@ -262,8 +262,8 @@ class OpenAiRunsControllerTest {
             .andReturn();
 
         JsonNode status = waitForStatus(readRunId(created), "completed");
-        assertThat(status.path("model").asText()).isEqualTo("hermes-agent");
-        verify(openAiSessionService).resolveRunSession(isNull(UUID.class), isNull(), eq("hermes-agent"));
+        assertThat(status.path("model").asText()).isEqualTo("java-agent");
+        verify(openAiSessionService).resolveRunSession(isNull(UUID.class), isNull(), eq("java-agent"));
 
         ArgumentCaptor<ModelRequestOptions> optionsCaptor = ArgumentCaptor.forClass(ModelRequestOptions.class);
         verify(agentRuntimeService).runApiTurn(any(Session.class), eq("do it"), optionsCaptor.capture());

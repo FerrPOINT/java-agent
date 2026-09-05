@@ -288,7 +288,7 @@ agent:
   # ─── OpenAI-compatible API ───
   api:
     # Stable virtual model alias advertised on /v1/models; clients echo it back to mean "use the configured agent".
-    model-name: ${AGENT_API_MODEL_NAME:hermes-agent}
+    model-name: ${AGENT_API_MODEL_NAME:java-agent}
     # Hermes-compatible default: ignore bare OpenAI client model names unless they match model-routes below.
     direct-model-requests: ${AGENT_API_DIRECT_MODEL_REQUESTS:false}
     # Maximum concurrent API-server agent runs across sessions/chat/completions/responses/runs; 0 disables the cap.

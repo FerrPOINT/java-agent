@@ -439,8 +439,8 @@ class SpringToolRegistryTest {
 
         assertThat(defs).extracting(ToolDefinition::name)
             .contains("web_search", "terminal", "read_file", "skill_view",
-                "skill_manage", "image_generate", "text_to_speech", "cronjob")
-            .doesNotContain("send_message", "delete_file");
+                "skill_manage", "image_generate", "text_to_speech", "cronjob", "delete_file")
+            .doesNotContain("send_message");
     }
 
     @Test
@@ -913,9 +913,11 @@ class SpringToolRegistryTest {
         Map<String, Object> props = (Map<String, Object>) send.parameters().get("properties");
         Map<String, Object> action = (Map<String, Object>) props.get("action");
 
-        assertThat(props).containsOnlyKeys("action", "target", "message");
-        assertThat(props).doesNotContainKeys("platform", "chat_id", "chatId", "text", "emoji", "message_id");
-        assertThat(action).containsEntry("enum", List.of("send", "list"));
+        // Schema parity with the handler (audit finding 3): react/unreact are
+        // implemented and must stay model-callable with their required fields.
+        assertThat(props).containsOnlyKeys("action", "target", "message", "emoji", "message_id");
+        assertThat(props).doesNotContainKeys("platform", "chat_id", "chatId", "text");
+        assertThat(action).containsEntry("enum", List.of("send", "list", "react", "unreact"));
         assertThat(send.parameters().get("required")).isEqualTo(List.of());
     }
 

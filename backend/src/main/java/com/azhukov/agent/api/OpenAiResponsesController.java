@@ -915,7 +915,7 @@ public class OpenAiResponsesController {
                                              String status,
                                              long createdAt,
                                              ChatResponse response) {
-        return responseBody(responseId, model, status, createdAt, outputItems(response));
+        return responseBody(responseId, model, status, createdAt, outputItems(response), usage(response.usage()));
     }
 
     private Map<String, Object> responseBody(String responseId,
@@ -924,7 +924,8 @@ public class OpenAiResponsesController {
                                              long createdAt,
                                              ChatResponse response,
                                              List<Message> generatedMessages) {
-        return responseBody(responseId, model, status, createdAt, outputItems(response, generatedMessages));
+        return responseBody(responseId, model, status, createdAt,
+            outputItems(response, generatedMessages), usage(response.usage()));
     }
 
     private Map<String, Object> responseBody(String responseId,
@@ -932,6 +933,15 @@ public class OpenAiResponsesController {
                                              String status,
                                              long createdAt,
                                              List<Map<String, Object>> output) {
+        return responseBody(responseId, model, status, createdAt, output, usage());
+    }
+
+    private Map<String, Object> responseBody(String responseId,
+                                             String model,
+                                             String status,
+                                             long createdAt,
+                                             List<Map<String, Object>> output,
+                                             Map<String, Object> usage) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("id", responseId);
         body.put("object", "response");
@@ -939,7 +949,7 @@ public class OpenAiResponsesController {
         body.put("created_at", createdAt);
         body.put("model", model);
         body.put("output", output);
-        body.put("usage", usage());
+        body.put("usage", usage);
         return body;
     }
 
@@ -1320,10 +1330,25 @@ public class OpenAiResponsesController {
     }
 
     private Map<String, Object> usage() {
+        return usage(null);
+    }
+
+    /** Real provider-reported usage (Hermes parity: usage is never fabricated). */
+    private Map<String, Object> usage(com.azhukov.agent.core.model.TokenUsage tokens) {
         Map<String, Object> usage = new LinkedHashMap<>();
-        usage.put("input_tokens", 0);
-        usage.put("output_tokens", 0);
-        usage.put("total_tokens", 0);
+        if (tokens != null) {
+            usage.put("input_tokens", tokens.promptTokens());
+            usage.put("output_tokens", tokens.completionTokens());
+            usage.put("total_tokens", tokens.totalTokens());
+            if (tokens.cacheReadTokens() > 0) {
+                usage.put("input_tokens_details",
+                    Map.of("cached_tokens", tokens.cacheReadTokens()));
+            }
+        } else {
+            usage.put("input_tokens", 0);
+            usage.put("output_tokens", 0);
+            usage.put("total_tokens", 0);
+        }
         return usage;
     }
 

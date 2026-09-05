@@ -263,13 +263,17 @@ class DelegateTaskToolTest {
         AgentProperties p = properties();
         DelegateTaskTool tool = newTool(p);
 
-        Set<String> parentToolsets = new java.util.LinkedHashSet<>(List.of("web", "file", "delegation", "memory", "gateway", "core", "code"));
+        // core/code were phantom names (never registered); real one-tool deny
+        // toolsets are delegation/memory/gateway/cronjob/clarify
+        Set<String> parentToolsets = new java.util.LinkedHashSet<>(List.of(
+            "web", "file", "delegation", "memory", "gateway", "cronjob", "clarify"));
 
         List<String> child = tool.resolveChildToolsets(null, parentToolsets, "leaf");
 
-        // Blocked toolsets (delegation, memory, gateway, core, code) should be stripped
+        // Fully-blocked toolsets stripped; mixed composites survive and their
+        // blocked TOOL names are denied via delegation_blocked_tools metadata.
         assertThat(child).contains("web", "file");
-        assertThat(child).doesNotContain("delegation", "memory", "gateway", "core", "code");
+        assertThat(child).doesNotContain("delegation", "memory", "gateway", "cronjob", "clarify");
     }
 
     // ── 10. resolveChildToolsets — orchestrator re-adds delegation ────────

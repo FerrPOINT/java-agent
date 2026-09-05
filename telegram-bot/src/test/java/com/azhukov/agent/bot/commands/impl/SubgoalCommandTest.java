@@ -3,6 +3,7 @@ package com.azhukov.agent.bot.commands.impl;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.UpdateEvent.Type;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import com.azhukov.agent.bot.session.BotSessionStore;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,12 +19,14 @@ class SubgoalCommandTest {
     private GoalCommand goalCmd;
     private BotSessionEntity session;
     private AgentBackendClient backendClient;
+    private BotSessionStore store;
 
     @BeforeEach
     void setUp() {
         backendClient = mock(AgentBackendClient.class);
-        cmd = new SubgoalCommand(backendClient);
-        goalCmd = new GoalCommand(backendClient);
+        store = mock(BotSessionStore.class);
+        cmd = new SubgoalCommand(backendClient, store);
+        goalCmd = new GoalCommand(backendClient, store);
         session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
     }

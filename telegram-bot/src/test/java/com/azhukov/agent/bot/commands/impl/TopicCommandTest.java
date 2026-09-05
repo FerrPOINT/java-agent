@@ -48,7 +48,7 @@ class TopicCommandTest {
         BotSettingsService settingsService = mock(BotSettingsService.class);
         BotSessionEntity newSession = new BotSessionEntity();
         newSession.setId(UUID.randomUUID());
-        when(sessionStore.resolveOrCreate("456", "123", "user")).thenReturn(newSession);
+        when(sessionStore.createFreshSession("456", "123", "user")).thenReturn(newSession);
         when(settingsService.getSetting("topic_session:123:test1", null)).thenReturn(null);
         Map<String, String> storedTopics = new LinkedHashMap<>();
         storedTopics.put("topic_session:123:test1", newSession.getId().toString());
@@ -81,22 +81,35 @@ class TopicCommandTest {
         String result = cmd.handle(event, null);
 
         assertThat(result).contains("already exists");
-        verify(sessionStore, never()).resolveOrCreate(any(), any(), any());
+        verify(sessionStore, never()).createFreshSession(any(), any(), any());
     }
 
     @Test
-    void handle_switch_existing_returnsMessage() {
+    void handle_switch_existing_routesActiveSession() {
         BotSessionStore sessionStore = mock(BotSessionStore.class);
         BotSettingsService settingsService = mock(BotSettingsService.class);
-        when(settingsService.getSetting("topic_session:123:mytopic", null)).thenReturn("session-abc");
+        UUID topicSession = UUID.randomUUID();
+        when(settingsService.getSetting("topic_session:123:mytopic", null)).thenReturn(topicSession.toString());
+        when(sessionStore.activateSessionById("456", topicSession)).thenReturn(true);
         var cmd = new TopicCommand(sessionStore, settingsService);
 
-        UpdateEvent event = makeEvent("switch mytopic");
-        String result = cmd.handle(event, null);
+        String result = cmd.handle(makeEvent("switch mytopic"), null);
 
-        assertThat(result).contains("Switched");
-        assertThat(result).contains("mytopic");
-        assertThat(result).contains("session-abc");
+        assertThat(result).contains("Switched").contains("mytopic").contains(topicSession.toString());
+        verify(sessionStore).activateSessionById("456", topicSession);
+    }
+
+    @Test
+    void handle_switch_deadSession_reportsGone() {
+        BotSessionStore sessionStore = mock(BotSessionStore.class);
+        BotSettingsService settingsService = mock(BotSettingsService.class);
+        UUID gone = UUID.randomUUID();
+        when(settingsService.getSetting("topic_session:123:dead", null)).thenReturn(gone.toString());
+        when(sessionStore.activateSessionById("456", gone)).thenReturn(false);
+        var cmd = new TopicCommand(sessionStore, settingsService);
+
+        String result = cmd.handle(makeEvent("switch dead"), null);
+        assertThat(result).contains("gone");
     }
 
     @Test

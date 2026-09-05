@@ -44,7 +44,7 @@ import java.util.UUID;
  * </ul>
  */
 @RestController
-@RequestMapping("/api/v2/sessions")
+@RequestMapping({"/api/v2/sessions", "/api/sessions"})
 @RequiredArgsConstructor
 @Slf4j
 @Tag(name = "Session CRUD", description = "Session lifecycle CRUD and session-scoped chat")
@@ -76,7 +76,7 @@ public class SessionCrudController {
         String title = body != null ? body.title() : null;
         Map<String, Object> response = sessionQueryService.createSession(userId, model, title);
         String sessionId = (String) response.get("id");
-        return ResponseEntity.created(URI.create("/api/v2/sessions/" + sessionId)).body(response);
+        return ResponseEntity.created(URI.create("/api/sessions/" + sessionId)).body(response);
     }
 
     public record CreateSessionBody(String userId, String model, String title) {}
@@ -132,6 +132,58 @@ public class SessionCrudController {
         return sessionQueryService.getSessionMessages(sessionId, limit, offset)
             .map(ResponseEntity::ok)
             .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    // ── Fork (branch) session — Hermes parity for POST /api/sessions/{id}/fork ──
+
+    @Operation(summary = "Fork a session (copies the transcript to a new session)")
+    @PostMapping("/{sessionId}/fork")
+    public ResponseEntity<Map<String, Object>> forkSession(
+            @PathVariable UUID sessionId,
+            @RequestBody(required = false) Map<String, Object> body) {
+        String name = body != null && body.get("title") instanceof String t ? t : null;
+        try {
+            var summary = agentRuntimeService.branchSession(sessionId, name);
+            Map<String, Object> response = new java.util.LinkedHashMap<>();
+            response.put("object", "session");
+            response.put("id", summary.id() != null ? summary.id().toString() : null);
+            response.put("title", summary.title());
+            response.put("created_at", summary.createdAt() != null ? summary.createdAt().toString() : null);
+            response.put("parent_session_id", sessionId.toString());
+            return ResponseEntity.status(201).body(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    // ── Session model lock — Hermes parity for POST /api/sessions/{id}/model ──
+
+    @Operation(summary = "Persist a per-session model lock")
+    @PostMapping("/{sessionId}/model")
+    public ResponseEntity<Map<String, Object>> sessionModelLock(
+            @PathVariable UUID sessionId,
+            @RequestBody Map<String, Object> body) {
+        Object modelObj = body != null ? body.get("model") : null;
+        Object providerObj = body != null ? body.get("provider") : null;
+        if (modelObj == null || modelObj.toString().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", Map.of("message", "model is required", "type", "invalid_request_error")));
+        }
+        try {
+            agentRuntimeService.switchModel(sessionId, modelObj.toString(),
+                providerObj != null ? providerObj.toString() : null);
+            return ResponseEntity.ok(Map.of(
+                "object", "session.model_lock",
+                "session_id", sessionId.toString(),
+                "model", modelObj.toString(),
+                "provider", providerObj != null ? providerObj.toString() : ""));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of(
+                "error", Map.of("message", "Could not persist the requested session model lock",
+                    "type", "server_error")));
+        }
     }
 
     // ── Session-scoped chat (synchronous) ──

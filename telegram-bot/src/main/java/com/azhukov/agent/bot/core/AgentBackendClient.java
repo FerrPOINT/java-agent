@@ -209,6 +209,15 @@ public class AgentBackendClient {
         return sessions.steer(sessionId, text);
     }
 
+    public boolean stop(String sessionId) {
+        return sessions.stop(sessionId);
+    }
+
+    /** Live transcript (backend /api/v2/sessions/{id}/messages), newest last. */
+    public com.fasterxml.jackson.databind.JsonNode getMessages(String sessionId, int limit) {
+        return sessions.getMessages(sessionId, limit);
+    }
+
     public boolean clearGoal(String sessionId) {
         return sessions.clearGoal(sessionId);
     }

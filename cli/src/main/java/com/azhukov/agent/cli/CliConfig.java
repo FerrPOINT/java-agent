@@ -42,12 +42,18 @@ public class CliConfig {
         supportedTypes.add(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM);
         jacksonConverter.setSupportedMediaTypes(supportedTypes);
 
-        return RestClient.builder()
+        RestClient.Builder builder = RestClient.builder()
             .baseUrl(properties.getBackendUrl())
             .requestFactory(new SimpleClientHttpRequestFactory() {{
                 setConnectTimeout((int) Duration.ofSeconds(10).toMillis());
                 setReadTimeout((int) Duration.ofMinutes(10).toMillis());
-            }})
+            }});
+        // Auth: send the API key when configured so the CLI works against a
+        // backend with agent.security.api-key set (or with per-user keys).
+        if (properties.getApiKey() != null && !properties.getApiKey().isBlank()) {
+            builder.defaultHeader("X-API-Key", properties.getApiKey());
+        }
+        return builder
             .messageConverters(converters -> {
                 converters.removeIf(c -> c instanceof MappingJackson2HttpMessageConverter);
                 converters.add(jacksonConverter);

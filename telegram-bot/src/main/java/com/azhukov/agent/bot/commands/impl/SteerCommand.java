@@ -3,6 +3,7 @@ package com.azhukov.agent.bot.commands.impl;
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
+import com.azhukov.agent.bot.session.BackendSessionResolver;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import org.springframework.stereotype.Component;
 
@@ -40,7 +41,9 @@ public class SteerCommand implements CommandHandler {
         if (session == null || session.getId() == null) {
             return "No active session to steer.";
         }
-        boolean accepted = backendClient.steer(session.getId().toString(), args.trim());
+        String sid = BackendSessionResolver.resolveString(session);
+        if (sid == null) return "No backend session yet — send a message first.";
+        boolean accepted = backendClient.steer(sid, args.trim());
         if (accepted) {
             return "Steer note injected: \"" + args.trim() + "\"\n"
                 + "It will be delivered after the next tool call completes.";

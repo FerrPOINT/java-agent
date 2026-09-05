@@ -60,6 +60,9 @@ class ChatCompletionsControllerStreamingTest {
     @Mock
     private ModelClient modelClient;
 
+    @Mock
+    private com.azhukov.agent.service.OpenAiSessionService sessionService;
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
@@ -71,13 +74,20 @@ class ChatCompletionsControllerStreamingTest {
             promptBuilder, directProps(),
             modelClient,
             objectMapper,
-            openAiMapper
+            openAiMapper,
+            sessionService,
+            org.mockito.Mockito.mock(com.azhukov.agent.core.tool.ToolExecutionService.class)
         );
 
         mockMvc = standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
 
+        lenient().when(sessionService.resolveChatCompletions(any(), any(), any(), any()))
+            .thenReturn(new com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext(
+                null, false, null));
+        lenient().when(sessionService.historyFor(any())).thenReturn(java.util.List.of());
+        lenient().doNothing().when(sessionService).persistTurn(any(), any(), any());
         lenient().when(promptBuilder.buildSystemMessage(any()))
             .thenReturn(Message.system(SYSTEM_PROMPT));
         lenient().when(toolRegistry.getDefinitions())

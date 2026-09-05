@@ -3,7 +3,9 @@ package com.azhukov.agent.bot.commands.impl;
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
+import com.azhukov.agent.bot.session.BackendSessionResolver;
 import com.azhukov.agent.bot.session.BotSessionEntity;
+import com.azhukov.agent.bot.session.BotSessionStore;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -35,6 +37,7 @@ public class GoalCommand implements CommandHandler {
     private static final String SUBGOALS_KEY = "_subgoals";
 
     private final AgentBackendClient backendClient;
+    private final BotSessionStore store;
 
     @Override
     public String name() {
@@ -60,24 +63,24 @@ public class GoalCommand implements CommandHandler {
         String[] parts = args.trim().split("\\s+", 2);
         String sub = parts[0].toLowerCase();
 
-        String sessionId = session.getId() != null ? session.getId().toString() : null;
+        String sessionId = BackendSessionResolver.resolveString(session);
 
         return switch (sub) {
             case "status" -> showStatus(session);
             case "pause" -> {
-                session.setMetadata(GOAL_PAUSED_KEY, "true");
+                persist(session, GOAL_PAUSED_KEY, "true");
                 if (sessionId != null) backendClient.pauseGoal(sessionId);
                 yield "Goal paused. Use /goal resume to continue.";
             }
             case "resume" -> {
-                session.setMetadata(GOAL_PAUSED_KEY, "false");
+                persist(session, GOAL_PAUSED_KEY, "false");
                 if (sessionId != null) backendClient.resumeGoal(sessionId);
                 yield "Goal resumed.";
             }
             case "clear" -> {
-                session.setMetadata(GOAL_KEY, null);
-                session.setMetadata(GOAL_PAUSED_KEY, null);
-                session.setMetadata(SUBGOALS_KEY, null);
+                persist(session, GOAL_KEY, null);
+                persist(session, GOAL_PAUSED_KEY, null);
+                persist(session, SUBGOALS_KEY, null);
                 if (sessionId != null) backendClient.clearGoal(sessionId);
                 yield "Goal and all subgoals cleared.";
             }
@@ -86,12 +89,22 @@ public class GoalCommand implements CommandHandler {
                 if (goalText.length() > 500) {
                     yield "Goal text too long (max 500 chars).";
                 }
-                session.setMetadata(GOAL_KEY, goalText);
-                session.setMetadata(GOAL_PAUSED_KEY, "false");
-                if (sessionId != null) backendClient.setGoal(sessionId, goalText);
+                persist(session, GOAL_KEY, goalText);
+                persist(session, GOAL_PAUSED_KEY, "false");
+                boolean backendOk = sessionId == null || backendClient.setGoal(sessionId, goalText);
+                if (!backendOk) {
+                    yield "Goal set locally, but the backend session did not accept it. Try again after a message.";
+                }
                 yield "Goal set: " + goalText + "\n\nUse /subgoal to add criteria. Use /goal clear to remove.";
             }
         };
+    }
+
+    private void persist(BotSessionEntity session, String key, String value) {
+        session.setMetadata(key, value);
+        if (session.getId() != null) {
+            store.persistMetadata(session.getId(), key, value);
+        }
     }
 
     private String showStatus(BotSessionEntity session) {

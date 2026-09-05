@@ -89,13 +89,13 @@ class OpenAiSessionServiceTest {
     }
 
     @Test
-    void resolveWithoutHeadersDoesNotPersistVirtualModelAliasLikeHermes() {
+    void resolveWithoutHeadersDoesNotPersistVirtualModelAlias() {
         Session aliaslessSession = new Session(SESSION_ID, AgentProperties.DEFAULT_USER_ID, "OpenAI",
             "openai-compatible", "", null, Map.of(), null);
         when(sessionResolver.createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "", "api_server"))
             .thenReturn(aliaslessSession);
 
-        OpenAiSessionService.OpenAiSessionContext context = service.resolve(null, null, "hermes-agent");
+        OpenAiSessionService.OpenAiSessionContext context = service.resolve(null, null, "java-agent");
 
         assertThat(context.session()).isEqualTo(aliaslessSession);
         verify(sessionResolver)
@@ -103,14 +103,14 @@ class OpenAiSessionServiceTest {
     }
 
     @Test
-    void resolveWithoutHeadersDoesNotPersistProviderPrefixedVirtualAliasLikeHermes() {
+    void resolveWithoutHeadersDoesNotPersistProviderPrefixedVirtualAlias() {
         Session aliaslessSession = new Session(SESSION_ID, AgentProperties.DEFAULT_USER_ID, "OpenAI",
             "openai-compatible", "", null, Map.of(), null);
         when(sessionResolver.createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "", "api_server"))
             .thenReturn(aliaslessSession);
 
         OpenAiSessionService.OpenAiSessionContext context =
-            service.resolve(null, null, "openrouter::hermes-agent");
+            service.resolve(null, null, "openrouter::java-agent");
 
         assertThat(context.session()).isEqualTo(aliaslessSession);
         verify(sessionResolver)

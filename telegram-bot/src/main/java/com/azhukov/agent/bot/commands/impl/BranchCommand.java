@@ -3,6 +3,7 @@ package com.azhukov.agent.bot.commands.impl;
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
+import com.azhukov.agent.bot.session.BackendSessionResolver;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import org.springframework.stereotype.Component;
 
@@ -35,7 +36,8 @@ public class BranchCommand implements CommandHandler {
             return "No active session to branch.";
         }
         String name = event.commandArgs();
-        String sessionId = session.getId().toString();
+        String sessionId = BackendSessionResolver.resolveString(session);
+        if (sessionId == null) return "No backend session yet — send a message first.";
         return backendClient.branchSession(sessionId, name);
     }
 }

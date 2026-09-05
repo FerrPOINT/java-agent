@@ -53,7 +53,7 @@ public class SpringToolRegistry implements ToolRegistry {
         "browser_type", "browser_scroll", "browser_back",
         "browser_press", "browser_get_images",
         "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-        "browser_exec", "web_search"
+        "web_search"
     );
     private static final List<String> BROWSER_CDP_TOOLS = List.of("browser_cdp", "browser_dialog");
     private static final List<String> FILE_TOOLS = List.of("read_file", "write_file", "patch", "search_files");
@@ -61,26 +61,21 @@ public class SpringToolRegistry implements ToolRegistry {
     private static final List<String> HERMES_CORE_TOOLS = List.of(
         "web_search", "web_extract",
         "terminal", "process",
-        "read_file", "write_file", "patch", "search_files",
+        "read_file", "write_file", "patch", "search_files", "delete_file",
         "vision_analyze", "image_generate",
         "skills_list", "skill_view", "skill_manage",
+        "mcp_tool",
         "browser_navigate", "browser_snapshot", "browser_click",
         "browser_type", "browser_scroll", "browser_back",
         "browser_press", "browser_get_images",
         "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-        "browser_exec",
-        "text_to_speech",
+                "text_to_speech",
         "todo", "memory",
         "session_search",
         "clarify",
         "execute_code", "delegate_task",
         "cronjob",
-        "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
-        "kanban_show", "kanban_list", "kanban_complete", "kanban_block",
-        "kanban_request_review", "kanban_request_changes", "kanban_heartbeat",
-        "kanban_comment", "kanban_create", "kanban_link", "kanban_unblock",
-        "kanban_attach", "kanban_attach_url", "kanban_attachments",
-        "computer_use"
+        "mcp_tool"
     );
     private static final List<String> CODING_TOOLS = List.of(
         "web_search", "web_extract",
@@ -92,8 +87,7 @@ public class SpringToolRegistry implements ToolRegistry {
         "browser_type", "browser_scroll", "browser_back",
         "browser_press", "browser_get_images",
         "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-        "browser_exec",
-        "todo", "memory",
+                "todo", "memory",
         "session_search", "clarify",
         "execute_code", "delegate_task"
     );
@@ -107,27 +101,25 @@ public class SpringToolRegistry implements ToolRegistry {
         "browser_type", "browser_scroll", "browser_back",
         "browser_press", "browser_get_images",
         "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-        "browser_exec",
-        "todo", "memory",
+                "todo", "memory",
         "session_search",
         "execute_code", "delegate_task"
     );
     private static final List<String> HERMES_API_SERVER_TOOLS = List.of(
         "web_search", "web_extract",
         "terminal", "process",
-        "read_file", "write_file", "patch", "search_files",
+        "read_file", "write_file", "patch", "search_files", "delete_file",
         "vision_analyze", "image_generate",
         "skills_list", "skill_view", "skill_manage",
+        "mcp_tool",
         "browser_navigate", "browser_snapshot", "browser_click",
         "browser_type", "browser_scroll", "browser_back",
         "browser_press", "browser_get_images",
         "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-        "browser_exec",
         "todo", "memory",
         "session_search",
         "execute_code", "delegate_task",
-        "cronjob",
-        "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service"
+        "cronjob"
     );
     private static final List<String> HERMES_WEBHOOK_SAFE_TOOLS =
         List.of("web_search", "web_extract", "vision_analyze", "clarify");
@@ -157,14 +149,8 @@ public class SpringToolRegistry implements ToolRegistry {
         Map.entry("clarify", spec(List.of("clarify"))),
         Map.entry("code_execution", spec(List.of("execute_code"))),
         Map.entry("delegation", spec(List.of("delegate_task"))),
-        Map.entry("homeassistant", spec(List.of("ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service"))),
-        Map.entry("kanban", spec(List.of(
-            "kanban_show", "kanban_list", "kanban_complete", "kanban_block",
-            "kanban_request_review", "kanban_request_changes", "kanban_heartbeat",
-            "kanban_comment", "kanban_create", "kanban_link", "kanban_unblock",
-            "kanban_attach", "kanban_attach_url", "kanban_attachments"
-        ))),
-        Map.entry("computer_use", spec(List.of("computer_use"))),
+        Map.entry("homeassistant", spec(List.of())),
+        Map.entry("computer_use", spec(List.of())),
         Map.entry("debugging", spec(List.of("terminal", "process"), "web", "file")),
         Map.entry("safe", spec(List.of(), "web", "vision", "image_gen")),
         Map.entry("coding", spec(CODING_TOOLS)),
@@ -762,14 +748,19 @@ public class SpringToolRegistry implements ToolRegistry {
     }
 
     private void applySendMessageSchemaOverride(Map<String, Object> properties, List<String> required) {
-        Map<String, Object> action = stringSchema("Action to perform. 'send' (default) sends a message. 'list' returns registered Java gateway platforms.");
-        action.put("enum", List.of("send", "list"));
+        Map<String, Object> action = stringSchema("Action to perform. 'send' (default) sends a message. 'list' returns registered Java gateway platforms. 'react'/'unreact' attach/remove a reaction (requires message_id and emoji).");
+        // Parity with the handler: SendMessageTool supports send/list/react/unreact
+        // (SendMessageTool.java execute switch). The schema previously advertised
+        // only send/list, making valid react/unreact calls impossible for the model.
+        action.put("enum", List.of("send", "list", "react", "unreact"));
 
         properties.clear();
         properties.put("action", action);
         properties.put("target", stringSchema(
             "Delivery target. Java supports explicit 'platform:chat_id' targets. Bare platform home-channel and thread/topic targets are not implemented yet."));
         properties.put("message", stringSchema("The message text to send."));
+        properties.put("emoji", stringSchema("For action='react': emoji to attach as a reaction."));
+        properties.put("message_id", stringSchema("For action='react'/'unreact': platform message id to update."));
         setRequired(required);
     }
 
@@ -1168,6 +1159,35 @@ public class SpringToolRegistry implements ToolRegistry {
         Set<String> result = new LinkedHashSet<>(spec.tools());
         for (String included : spec.includes()) {
             result.addAll(resolveStaticToolset(included, visited));
+        }
+        return result;
+    }
+
+    @Override
+    public Set<String> expandToolsetNames(Set<String> toolsets) {
+        if (toolsets == null) {
+            return Set.of();
+        }
+        Set<String> result = new LinkedHashSet<>();
+        for (String name : toolsets) {
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            String trimmed = name.trim();
+            if ("all".equals(trimmed) || "*".equals(trimmed)) {
+                // every registered tool
+                result.addAll(entries.keySet());
+                continue;
+            }
+            String dynamicToolset = resolveDynamicToolsetAlias(trimmed);
+            if (dynamicToolset != null) {
+                for (ToolEntry e : entries.values()) {
+                    if (trimmed.equals(e.dynamicToolset()) || dynamicToolset.equals(e.dynamicToolset())) {
+                        result.add(e.definition().name());
+                    }
+                }
+            }
+            result.addAll(resolveStaticToolset(trimmed, new HashSet<>()));
         }
         return result;
     }
