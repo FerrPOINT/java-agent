@@ -373,6 +373,16 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
         // Toolsets already resolved above (before memory nudge counter).
         List<ToolDefinition> tools = toolRegistry.getDefinitions(effectiveToolsets);
+        // Delegation deny-list: subtract blocked TOOL names after composite
+        // expansion (Hermes parity — mixed bundles like hermes-cli must not leak
+        // delegate_task/clarify/memory/send_message/cronjob to child sessions).
+        String blockedMeta = session.getMetadata("delegation_blocked_tools");
+        if (blockedMeta != null && !blockedMeta.isBlank()) {
+            Set<String> denied = new HashSet<>(Arrays.asList(blockedMeta.split(",")));
+            tools = tools.stream()
+                .filter(td -> !denied.contains(td.name()))
+                .collect(java.util.stream.Collectors.toList());
+        }
 
         // Resolve effective max turns: session metadata override (from DelegateTaskTool)
         // takes priority when positive, then the configured core.max-turns.

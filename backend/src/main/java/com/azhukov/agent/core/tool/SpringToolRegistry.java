@@ -748,14 +748,19 @@ public class SpringToolRegistry implements ToolRegistry {
     }
 
     private void applySendMessageSchemaOverride(Map<String, Object> properties, List<String> required) {
-        Map<String, Object> action = stringSchema("Action to perform. 'send' (default) sends a message. 'list' returns registered Java gateway platforms.");
-        action.put("enum", List.of("send", "list"));
+        Map<String, Object> action = stringSchema("Action to perform. 'send' (default) sends a message. 'list' returns registered Java gateway platforms. 'react'/'unreact' attach/remove a reaction (requires message_id and emoji).");
+        // Parity with the handler: SendMessageTool supports send/list/react/unreact
+        // (SendMessageTool.java execute switch). The schema previously advertised
+        // only send/list, making valid react/unreact calls impossible for the model.
+        action.put("enum", List.of("send", "list", "react", "unreact"));
 
         properties.clear();
         properties.put("action", action);
         properties.put("target", stringSchema(
             "Delivery target. Java supports explicit 'platform:chat_id' targets. Bare platform home-channel and thread/topic targets are not implemented yet."));
         properties.put("message", stringSchema("The message text to send."));
+        properties.put("emoji", stringSchema("For action='react': emoji to attach as a reaction."));
+        properties.put("message_id", stringSchema("For action='react'/'unreact': platform message id to update."));
         setRequired(required);
     }
 
@@ -1154,6 +1159,35 @@ public class SpringToolRegistry implements ToolRegistry {
         Set<String> result = new LinkedHashSet<>(spec.tools());
         for (String included : spec.includes()) {
             result.addAll(resolveStaticToolset(included, visited));
+        }
+        return result;
+    }
+
+    @Override
+    public Set<String> expandToolsetNames(Set<String> toolsets) {
+        if (toolsets == null) {
+            return Set.of();
+        }
+        Set<String> result = new LinkedHashSet<>();
+        for (String name : toolsets) {
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            String trimmed = name.trim();
+            if ("all".equals(trimmed) || "*".equals(trimmed)) {
+                // every registered tool
+                result.addAll(entries.keySet());
+                continue;
+            }
+            String dynamicToolset = resolveDynamicToolsetAlias(trimmed);
+            if (dynamicToolset != null) {
+                for (ToolEntry e : entries.values()) {
+                    if (trimmed.equals(e.dynamicToolset()) || dynamicToolset.equals(e.dynamicToolset())) {
+                        result.add(e.definition().name());
+                    }
+                }
+            }
+            result.addAll(resolveStaticToolset(trimmed, new HashSet<>()));
         }
         return result;
     }

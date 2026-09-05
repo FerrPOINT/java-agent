@@ -83,17 +83,37 @@ public class DelegateTaskTool implements ToolHandler {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /**
-     * Toolset names that are always stripped from child subagents (parity with
-     * Hermes {@code _strip_blocked_tools} / {@code DELEGATE_BLOCKED_TOOLS}).
-     * These map toolset names containing blocked tools.
+     * Tool NAMES always denied to child subagents (parity with Hermes
+     * {@code DELEGATE_BLOCKED_TOOLS}). Enforced by subtracting these names
+     * AFTER composite expansion — stripping whole toolset names leaks blocked
+     * tools through mixed bundles (e.g. {@code hermes-cli} expands to
+     * delegate_task + clarify + memory + cronjob).
+     */
+    static final Set<String> BLOCKED_TOOL_NAMES = Set.of(
+        "delegate_task", // no recursive delegation (leaf children)
+        "clarify",       // subagents cannot interact with users
+        "memory",        // no writes to shared MEMORY.md
+        "send_message",  // no cross-platform side effects
+        "cronjob"        // no scheduling work in the parent's name
+    );
+
+    /**
+     * Toolset names that are stripped entirely (parity with Hermes
+     * {@code _strip_blocked_tools}: toolsets whose tools are ALL blocked).
+     * Derived, not hardcoded — stays in lockstep with {@link #BLOCKED_TOOL_NAMES}.
      */
     static final Set<String> BLOCKED_TOOLSET_NAMES = Set.of(
-        "delegation",    // no recursive delegation (leaf children)
-        "memory",        // no writes to shared MEMORY.md
-        "gateway",       // no cross-platform side effects (send_message)
-        "core",          // blocks clarify (subagents can't interact with users)
-        "code"           // blocks execute_code (children should reason, not write scripts)
+        "delegation",    // delegate_task only
+        "memory",        // memory only
+        "gateway",       // send_message only (when spec'd)
+        "cronjob",       // cronjob only
+        "clarify"        // clarify only
     );
+
+    /** Session metadata key for the child's effective role (leaf/orchestrator). */
+    static final String META_ROLE = "delegation_role";
+    /** Session metadata key for the child's denied tool names (comma-separated). */
+    static final String META_BLOCKED_TOOLS = "delegation_blocked_tools";
 
     /** Session metadata key for effective child toolsets (comma-separated). */
     static final String META_TOOLSETS = "delegation_toolsets";
@@ -368,7 +388,7 @@ public class DelegateTaskTool implements ToolHandler {
 
             // Build child session with isolated context
             Session childSession = createChildSession(parentSession, childDepth, childToolsets,
-                effectiveMaxIterations, acpCommand, acpArgs);
+                effectiveMaxIterations, acpCommand, acpArgs, effectiveRole);
 
             // Build child system prompt
             String childPrompt = buildChildSystemPrompt(goal, task.context(), effectiveRole,
@@ -500,11 +520,26 @@ public class DelegateTaskTool implements ToolHandler {
     }
 
     /**
+     * The denied tool names for a child role: {@link #BLOCKED_TOOL_NAMES} minus
+     * {@code delegate_task} for orchestrators (parity with Hermes
+     * {@code _blocked_toolsets_for_role}: the deny set is applied to the child
+     * runtime AFTER composite expansion, so mixed bundles like hermes-cli keep
+     * their allowed tools while blocked names are subtracted).
+     */
+    static Set<String> blockedToolNamesForRole(String role) {
+        if ("orchestrator".equals(role)) {
+            Set<String> allowed = new LinkedHashSet<>(BLOCKED_TOOL_NAMES);
+            allowed.remove("delegate_task");
+            return allowed;
+        }
+        return BLOCKED_TOOL_NAMES;
+    }
+
+    /**
      * Remove toolsets that contain only blocked tools (parity with Hermes
      * {@code _strip_blocked_tools}).
      * <p>
-     * Strips: delegation, memory, gateway (which contain delegate_task, memory,
-     * send_message respectively).
+     * Strips toolsets whose every tool is in {@link #BLOCKED_TOOL_NAMES}.
      */
     List<String> stripBlockedToolsets(List<String> toolsets) {
         toolsets.removeAll(BLOCKED_TOOLSET_NAMES);
@@ -570,7 +605,7 @@ public class DelegateTaskTool implements ToolHandler {
 
     private Session createChildSession(Session parentSession, int childDepth,
                                         List<String> childToolsets, int maxIterations,
-                                        String acpCommand, List<String> acpArgs) {
+                                        String acpCommand, List<String> acpArgs, String effectiveRole) {
         String userId = parentSession.userId() != null ? parentSession.userId() : "delegate";
         String provider = parentSession.modelProvider();
         String modelName = parentSession.modelName();
@@ -588,6 +623,12 @@ public class DelegateTaskTool implements ToolHandler {
         Map<String, String> metadata = new HashMap<>();
         metadata.put("delegation_depth", String.valueOf(childDepth));
         metadata.put("delegation_parent_session", parentSession.id().toString());
+        metadata.put(META_ROLE, effectiveRole);
+        // Deny list applied by the child runtime AFTER composite expansion
+        // (Hermes parity: blocked toolsets pass into AIAgent which subtracts
+        // blocked names post-expansion; mixed bundles like hermes-cli keep
+        // their allowed tools while blocked names are removed).
+        metadata.put(META_BLOCKED_TOOLS, String.join(",", blockedToolNamesForRole(effectiveRole)));
 
         // Pass effective toolsets to child via metadata (Fix 1)
         if (childToolsets != null && !childToolsets.isEmpty()) {
