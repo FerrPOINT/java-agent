@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 public class StopCommand implements CommandHandler {
 
     private final BusySessionHandler busyHandler;
+    private final com.azhukov.agent.bot.core.AgentBackendClient backendClient;
 
     
 
@@ -29,6 +30,14 @@ public class StopCommand implements CommandHandler {
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
         busyHandler.interrupt(event.chatId());
-        return "Stopping current generation...";
+        // Hermes parity: /stop cancels the ACTIVE BACKEND TURN, not just the
+        // local stream rendering. Best-effort — a missing backend session
+        // still interrupts local delivery.
+        String backendSessionId = session != null && session.getBackendSessionId() != null
+            ? session.getBackendSessionId().toString() : null;
+        boolean backendStopped = backendSessionId != null && backendClient.stop(backendSessionId);
+        return backendStopped
+            ? "Stopping current generation..."
+            : "Stopped local stream (no active backend turn).";
     }
 }

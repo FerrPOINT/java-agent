@@ -66,6 +66,41 @@ public class BotSessionStore {
         }
     }
 
+    /**
+     * Create a brand-new ACTIVE session for the user (deactivating the current
+     * one). Used by /topic create so each topic owns a distinct conversation.
+     */
+    @Transactional
+    public BotSessionEntity createFreshSession(String userId, String chatId, String username) {
+        repository.deactivateAllForUser(userId);
+        BotSessionEntity session = new BotSessionEntity();
+        session.setUserId(userId);
+        session.setChatId(chatId);
+        session.setUsername(username);
+        session.setActive(true);
+        session.setCreatedAt(Instant.now());
+        session.setUpdatedAt(Instant.now());
+        return repository.save(session);
+    }
+
+    /**
+     * Route the user's ACTIVE session to the given stored topic session row:
+     * deactivate the current active row and re-activate the topic's row.
+     */
+    @Transactional
+    public boolean activateSessionById(String userId, UUID sessionId) {
+        Optional<BotSessionEntity> target = repository.findById(sessionId);
+        if (target.isEmpty() || !target.get().getUserId().equals(userId)) {
+            return false;
+        }
+        repository.deactivateAllForUser(userId);
+        BotSessionEntity entity = target.get();
+        entity.setActive(true);
+        entity.setUpdatedAt(Instant.now());
+        repository.save(entity);
+        return true;
+    }
+
     @Transactional
     public void updateTitle(UUID id, String title) {
         repository.findById(id).ifPresent(session -> {

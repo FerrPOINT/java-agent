@@ -55,6 +55,7 @@ class StreamingOrchestratorTest {
         busyHandler = new BusySessionHandler(properties);
         runtimeFooter = mock(RuntimeFooter.class);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("");
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn("");
         mediaDeliveryService = new MediaDeliveryService();
         orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
             runtimeFooter, properties, mediaDeliveryService,
@@ -149,6 +150,7 @@ class StreamingOrchestratorTest {
     @Test
     void streamChat_appendsFooterBeforeFinalize() {
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n[footer]");
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn("\n[footer]");
         stubChatStream(ctx -> {
             ctx.tokenConsumer.accept("answer");
             ctx.onComplete.accept(new AgentBackendClient.ChatResult("answer", "model", 5, 50, true));
@@ -378,7 +380,7 @@ class StreamingOrchestratorTest {
         orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
 
         // The footer's first arg (model) should come from hooks.resolveModelUsed
-        verify(runtimeFooter).format(eq("resolved-model"), anyInt(), anyInt(), anyString());
+        verify(runtimeFooter).format(eq("resolved-model"), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean());
     }
 
     @Test

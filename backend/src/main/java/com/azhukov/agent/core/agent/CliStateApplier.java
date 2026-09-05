@@ -15,6 +15,11 @@ import org.springframework.stereotype.Component;
 @Component
 public class CliStateApplier {
 
+    /** True when the last applyCliState merged a queued prompt that must be cleared. */
+    private final java.util.concurrent.atomic.AtomicBoolean consumedQueuedPrompt =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+
+
     /**
      * Apply CLI runtime settings from the session entity to the request.
      *
@@ -41,6 +46,9 @@ public class CliStateApplier {
         String subgoals = session.getCliStateValue("subgoals");
 
         String finalMessage = buildMergedMessage(request.message(), queuedPrompt, goal, subgoals, subgoal);
+        // Hermes /queue semantics: the queued prompt applies to the NEXT turn only.
+        // Mark it consumed so callers can clear the persisted value inside a write tx.
+        this.consumedQueuedPrompt.set(queuedPrompt != null && !queuedPrompt.isBlank());
         return new ChatRequest(
             request.sessionId(),
             finalMessage,
@@ -90,5 +98,10 @@ public class CliStateApplier {
         }
         sb.append(userMessage);
         return sb.toString();
+    }
+
+    /** Whether the last {@link #applyCliState} consumed a queued prompt (callers clear it in a write tx). */
+    public boolean consumeQueuedPromptFlag() {
+        return consumedQueuedPrompt.getAndSet(false);
     }
 }

@@ -453,6 +453,20 @@ public class MessageApiClient extends BaseBackendClient {
         if (runtime.getMetadata("subgoal") != null) {
             body.put("subgoal", runtime.getMetadata("subgoal"));
         }
+        // /yolo — per-session approval bypass (Hermes parity: it must reach the
+        // backend turn, not just flip a local flag).
+        if (runtime.isYoloMode()) {
+            body.put("yoloMode", true);
+            body.put("sessionYolo", true); // backend persists as session metadata fallback
+        }
+        // /verbose — richer tool-call rendering in the assistant's replies.
+        if (runtime.isVerboseMode()) {
+            body.put("verboseMode", true);
+        }
+        // /footer — per-session runtime footer toggle.
+        if (runtime.getMetadata("footerEnabled") != null) {
+            body.put("footerEnabled", Boolean.parseBoolean(runtime.getMetadata("footerEnabled")));
+        }
         return body;
     }
 

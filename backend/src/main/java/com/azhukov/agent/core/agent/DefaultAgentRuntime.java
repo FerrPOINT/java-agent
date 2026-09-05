@@ -1100,7 +1100,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // Skip the approval gate entirely when the session metadata has
                 // subagent_auto_approve=true (set by DelegateTaskTool when
                 // agent.delegation.subagent-auto-approve is enabled).
-                boolean skipApproval = "true".equals(session.getMetadata("subagent_auto_approve"));
+                boolean skipApproval = "true".equals(session.getMetadata("subagent_auto_approve"))
+                    // Hermes /yolo parity: per-session approval bypass requested via
+                    // the chat request (Telegram /yolo, CLI equivalents).
+                    || Boolean.TRUE.equals(options != null ? options.yoloMode() : null)
+                    || "true".equals(session.getMetadata("yoloMode"));
                 // rev-115 Hermes parity (delegate_tool.py:66-97): subagent child
                 // sessions auto-DENY dangerous calls immediately instead of
                 // blocking 5 minutes on an approval request no user will ever

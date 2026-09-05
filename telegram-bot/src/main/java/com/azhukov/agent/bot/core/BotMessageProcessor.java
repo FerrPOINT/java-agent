@@ -352,10 +352,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     resolveModelUsed(session, result),
                     result.contextTokens() != null ? result.contextTokens() : 0,
                     result.contextLength() != null ? result.contextLength() : 0,
-                    properties.getWorkingDirectory()
+                    properties.getWorkingDirectory(),
+                    -1,
+                    session == null || session.isFooterEnabled()
                 );
                 String backendResponse = result.content();
-                if (!footer.isEmpty()) {
+                if (footer != null && !footer.isEmpty()) {
                     backendResponse = backendResponse + footer;
                 }
 

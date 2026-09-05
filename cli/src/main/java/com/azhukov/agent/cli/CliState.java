@@ -37,6 +37,8 @@ public class CliState {
     private volatile String currentSessionId = null;
     private volatile boolean debugMode = false;
     private volatile String userProfile = "default";
+    private volatile boolean statusBarEnabled = false;
+    private volatile java.nio.file.Path pendingImage = null;
 
     public VerboseMode getVerboseMode() { return verboseMode; }
     public void setVerboseMode(VerboseMode verboseMode) { this.verboseMode = verboseMode; }
@@ -150,4 +152,11 @@ public class CliState {
 
     public String getUserProfile() { return userProfile; }
     public void setUserProfile(String userProfile) { this.userProfile = userProfile; }
+
+    public boolean isStatusBarEnabled() { return statusBarEnabled; }
+    public void setStatusBarEnabled(boolean enabled) { this.statusBarEnabled = enabled; }
+
+    /** Local image attached via /image; consumed by the next outbound chat request. */
+    public java.nio.file.Path getPendingImage() { return pendingImage; }
+    public void setPendingImage(java.nio.file.Path path) { this.pendingImage = path; }
 }

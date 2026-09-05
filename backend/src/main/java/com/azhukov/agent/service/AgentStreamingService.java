@@ -290,7 +290,15 @@ public class AgentStreamingService {
             }
             return e;
         });
-        return cliStateApplier.applyCliState(request, session);
+        ChatRequest applied = cliStateApplier.applyCliState(request, session);
+        // Hermes /queue semantics: the queued prompt is consumed by THIS turn —
+        // clear the persisted value so later turns don't replay stale context.
+        if (session != null && cliStateApplier.consumeQueuedPromptFlag()) {
+            transactionTemplate.executeWithoutResult(status ->
+                sessionRepository.findById(request.sessionId())
+                    .ifPresent(e -> e.removeCliStateValue("queuedPrompt")));
+        }
+        return applied;
     }
 
     SseEmitter streamTurn(ChatRequest request, SseEmitter emitter) {

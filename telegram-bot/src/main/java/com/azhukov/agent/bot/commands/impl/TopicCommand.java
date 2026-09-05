@@ -83,12 +83,14 @@ public class TopicCommand implements CommandHandler {
         if (existing != null) {
             return "Topic '" + topicName + "' already exists. Use /topic switch " + topicName + ".";
         }
-        // Create a new session for this topic
+        // Create a DISTINCT session for this topic (deactivates the current
+        // active row so the topic starts with clean backend context).
         String userId = String.valueOf(event.userId());
         String chatIdStr = String.valueOf(chatId);
-        BotSessionEntity newSession = sessionStore.resolveOrCreate(userId, chatIdStr, event.username());
+        BotSessionEntity newSession = sessionStore.createFreshSession(userId, chatIdStr, event.username());
         settingsService.setSetting(settingKey, newSession.getId().toString());
-        return "Topic '" + topicName + "' created with session " + newSession.getId() + ".";
+        return "Topic '" + topicName + "' created with session " + newSession.getId()
+            + ". You are now chatting in it.";
     }
 
     private String switchTopic(UpdateEvent event, String topicName) {
@@ -98,6 +100,16 @@ public class TopicCommand implements CommandHandler {
         String sessionId = settingsService.getSetting(settingKey(event.chatId(), topicName), null);
         if (sessionId == null) {
             return "Topic '" + topicName + "' not found. Use /topic create " + topicName + ".";
+        }
+        // Actually re-route the ACTIVE session to the topic's session row.
+        try {
+            boolean switched = sessionStore.activateSessionById(
+                String.valueOf(event.userId()), java.util.UUID.fromString(sessionId));
+            if (!switched) {
+                return "Topic '" + topicName + "' session is gone. Re-create it with /topic create " + topicName + ".";
+            }
+        } catch (IllegalArgumentException e) {
+            return "Topic '" + topicName + "' has an invalid session id.";
         }
         return "Switched to topic '" + topicName + "' (session " + sessionId + ").";
     }

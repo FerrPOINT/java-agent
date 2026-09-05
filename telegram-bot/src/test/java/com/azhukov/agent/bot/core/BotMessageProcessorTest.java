@@ -116,6 +116,7 @@ class BotMessageProcessorTest {
         when(groupMessageFilter.shouldProcess(any())).thenReturn(true);
         when(groupMessageFilter.shouldObserveUnmentioned()).thenReturn(false);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("");
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn("");
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.empty());
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(1L));
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.of(1L));
@@ -435,6 +436,7 @@ class BotMessageProcessorTest {
     void textMessageWithFooterAppendsFooter() {
         stubStreamingResult("Response", false);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n\nfooter");
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn("\n\nfooter");
         processor.accept(textEvent(1, 100L, "Hello"));
         verify(telegramClient).sendMessage(eq(100L), contains("footer"), anyString(), any(), any());
     }
@@ -899,8 +901,9 @@ class BotMessageProcessorTest {
     void resolveModelUsedPrefersResultModel() {
         stubStreamingResultWithMetadata("response", false, "result-model", 100, 1000, false);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n\nmodel: result-model");
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn("\n\nmodel: result-model");
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(runtimeFooter).format(eq("result-model"), anyInt(), anyInt(), anyString());
+        verify(runtimeFooter).format(eq("result-model"), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean());
     }
 
     @Test
@@ -912,16 +915,18 @@ class BotMessageProcessorTest {
 
         stubStreamingResultWithMetadata("response", false, null, 100, 1000, false);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n\nmodel: session-model");
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn("\n\nmodel: session-model");
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(runtimeFooter).format(eq("session-model"), anyInt(), anyInt(), anyString());
+        verify(runtimeFooter).format(eq("session-model"), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean());
     }
 
     @Test
     void resolveModelUsedFallsBackToDefaultModel() {
         stubStreamingResultWithMetadata("response", false, null, 100, 1000, false);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n\nmodel: test-model");
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn("\n\nmodel: test-model");
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(runtimeFooter).format(eq("test-model"), anyInt(), anyInt(), anyString());
+        verify(runtimeFooter).format(eq("test-model"), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean());
     }
 
     // ─── Voice mode ──────────────────────────────────────────────
@@ -1370,7 +1375,7 @@ class BotMessageProcessorTest {
                 return true;
             });
 
-        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString()))
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean()))
             .thenReturn("\n\nfooter");
 
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
@@ -1700,7 +1705,7 @@ class BotMessageProcessorTest {
         // Should prefer sync content but merge metadata
         verify(telegramClient).sendMessage(eq(100L), contains("sync content"), anyString(), any(), any());
         // Footer should use stream-model (since sync modelUsed is null, stream model is used)
-        verify(runtimeFooter).format(eq("stream-model"), eq(100), eq(1000), anyString());
+        verify(runtimeFooter).format(eq("stream-model"), eq(100), eq(1000), anyString(), anyLong(), anyBoolean());
     }
 
     @Test
@@ -1711,7 +1716,7 @@ class BotMessageProcessorTest {
             .thenReturn(new AgentBackendClient.ChatResult("sync content", "sync-model", 100, 1000, false, true));
 
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(runtimeFooter).format(eq("sync-model"), eq(100), eq(1000), anyString());
+        verify(runtimeFooter).format(eq("sync-model"), eq(100), eq(1000), anyString(), anyLong(), anyBoolean());
     }
 
     @Test

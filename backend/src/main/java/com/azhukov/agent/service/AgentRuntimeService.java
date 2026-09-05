@@ -150,6 +150,20 @@ public class AgentRuntimeService {
     }
 
     private ChatResponseDto runResolvedTurn(ChatRequest applied, Session session, boolean isNew) {
+        // Hermes /yolo parity: a yolo request marks the session so the approval
+        // gate stays bypassed for subsequent turns too (until toggled off).
+        if (applied.yoloMode() != null) {
+            String value = Boolean.TRUE.equals(applied.yoloMode()) ? "true" : null;
+            sessionRepository.findById(session.id())
+                .ifPresent(e -> {
+                    if (value != null) {
+                        e.setCliStateValue("yoloMode", value);
+                    } else {
+                        e.removeCliStateValue("yoloMode");
+                    }
+                });
+        }
+
 
         // P1-5: When mid-turn persistence is active, persist the user message before
         // the turn starts. The DefaultAgentRuntime will persist assistant messages
@@ -674,7 +688,15 @@ public class AgentRuntimeService {
             }
             return e;
         });
-        return cliStateApplier.applyCliState(request, session);
+        ChatRequest applied = cliStateApplier.applyCliState(request, session);
+        // Hermes /queue semantics: the queued prompt is consumed by THIS turn —
+        // clear the persisted value so later turns don't replay stale context.
+        if (session != null && cliStateApplier.consumeQueuedPromptFlag()) {
+            transactionTemplate.executeWithoutResult(status ->
+                sessionRepository.findById(request.sessionId())
+                    .ifPresent(e -> e.removeCliStateValue("queuedPrompt")));
+        }
+        return applied;
     }
 
     private ModelRequestOptions toModelOptions(ChatRequest request, Session session) {
@@ -695,7 +717,9 @@ public class AgentRuntimeService {
         return new ModelRequestOptions(
             request.model() != null && !request.model().isBlank() ? request.model() : null,
             reasoningEffort, fastMode, request.voiceMode(),
-            request.personality(), request.subgoal(), maxTokens);
+            request.personality(), request.subgoal(), maxTokens,
+            null, null, null, null,
+            request.yoloMode(), request.verboseMode());
     }
 
 public ChatResponseDto runApiTurn(Session session, String message, ModelRequestOptions options) {

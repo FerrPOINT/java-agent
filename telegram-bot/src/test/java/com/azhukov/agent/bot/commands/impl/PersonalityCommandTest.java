@@ -18,7 +18,7 @@ class PersonalityCommandTest {
     @BeforeEach
     void setUp() {
         properties = new BotProperties();
-        cmd = new PersonalityCommand(properties);
+        cmd = new PersonalityCommand(org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class), properties);
     }
 
     @Test

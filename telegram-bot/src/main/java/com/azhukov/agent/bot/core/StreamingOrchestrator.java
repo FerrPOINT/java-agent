@@ -223,7 +223,9 @@ public class StreamingOrchestrator {
                             hooks.resolveModelUsed(session, result),
                             result.contextTokens() != null ? result.contextTokens() : 0,
                             result.contextLength() != null ? result.contextLength() : 0,
-                            properties.getWorkingDirectory()
+                            properties.getWorkingDirectory(),
+                            -1,
+                            session == null || session.isFooterEnabled()
                         );
                         String finalText = accumulated.toString();
 
@@ -261,7 +263,7 @@ public class StreamingOrchestrator {
                             finalText = reasoningBlock + "\n" + finalText;
                         }
 
-                        if (!footer.isEmpty()) {
+                        if (footer != null && !footer.isEmpty()) {
                             finalText = finalText + footer;
                         }
                         // S-2: Extract MEDIA: tags before finalizing the stream message

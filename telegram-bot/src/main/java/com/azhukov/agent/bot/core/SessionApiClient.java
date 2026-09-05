@@ -53,6 +53,21 @@ public class SessionApiClient extends BaseBackendClient {
         }
     }
 
+    /** Live session transcript from the backend (oldest → newest). */
+    public JsonNode getMessages(String sessionId, int limit) {
+        try {
+            String json = restClient.get()
+                .uri("/api/v2/sessions/{sessionId}/messages?limit={limit}", sessionId, limit)
+                .retrieve()
+                .body(String.class);
+            JsonNode root = readTree(json);
+            return root.path("data");
+        } catch (Exception e) {
+            log.warn("getMessages failed for sessionId={}: {}", sessionId, e.getMessage());
+            return null;
+        }
+    }
+
     public JsonNode getUsage(String sessionId) {
         try {
             String json = restClient.get()
@@ -213,6 +228,31 @@ public class SessionApiClient extends BaseBackendClient {
         } catch (Exception e) {
             log.warn("branchSession failed: {}", e.getMessage());
             return "Error: " + e.getMessage();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Stop (cancel active backend turn)
+    // ------------------------------------------------------------------
+
+    /** Cancel the active backend turn for the session (Hermes /stop parity). */
+    public boolean stop(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return false;
+        }
+        try {
+            Map<String, Object> body = body();
+            body.put("sessionId", sessionId);
+            restClient.post()
+                .uri("/api/v1/agent/stop")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.warn("stop failed for sessionId={}: {}", sessionId, e.getMessage());
+            return false;
         }
     }
 

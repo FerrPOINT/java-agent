@@ -248,7 +248,8 @@ class P2MissingCommandsTest {
         java.nio.file.Path tempImg = java.nio.file.Files.createTempFile("test-img-", ".png");
         tempImg.toFile().deleteOnExit();
         String result = registry.execute("/image " + tempImg.toString(), client, "sid");
-        assertThat(result).contains("not yet supported");
+        // f10b: /image now really attaches the pending reference for the next prompt
+        assertThat(result).contains("Image attached");
     }
 
     // ── /whoami ──
