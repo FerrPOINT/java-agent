@@ -119,7 +119,12 @@ tasks.named('test') {
         excludeTags 'live', 'slow', 'e2e'
     }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
-    maxHeapSize = '3g'
+    maxHeapSize = '4g'
+    // DEBT-3: strict-stubs flakes (OpenAiRunsControllerTest) under parallel forks —
+    // async run tests race Mockito verification. Serialized forks + periodic
+    // fork recycling (audit 2026-09-01 stabilization, ported from 0b348696).
+    maxParallelForks = 1
+    forkEvery = 750
     // Workaround for Gradle 9.x EOFException in test result serialization
     reports {
         junitXml.required = true

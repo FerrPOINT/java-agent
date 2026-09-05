@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.agent;
 
 import com.azhukov.agent.client.langchain4j.ErrorClassifier;
+import com.azhukov.agent.client.langchain4j.LangChain4jModelClient;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.config.FallbackConfig;
 import com.azhukov.agent.core.client.ModelClient;
@@ -80,6 +81,14 @@ public class TurnExecutor {
     private final AgentProperties properties;
     private final ContextCompressor contextCompressor;
     private final ContextEngine contextEngine;
+
+    /** Optional usage sink injected by the runtime (Hermes parity: fallback tokens are billed). */
+    private volatile java.util.function.Consumer<LangChain4jModelClient.Usage> usageConsumer;
+
+    /** Runtime hook: register the turn usage sink so fallback completions are billed. */
+    public void setUsageConsumer(java.util.function.Consumer<LangChain4jModelClient.Usage> usageConsumer) {
+        this.usageConsumer = usageConsumer;
+    }
     private final ToolExecutionService toolExecutionService;
     private final ToolResultFormatter toolResultFormatter;
     private final TokenEstimator tokenEstimator;
@@ -1087,7 +1096,7 @@ public class TurnExecutor {
 
         try {
             com.azhukov.agent.client.langchain4j.FallbackModelClient fallbackClient =
-                com.azhukov.agent.client.langchain4j.FallbackModelClient.from(fallbackConfig, properties);
+                com.azhukov.agent.client.langchain4j.FallbackModelClient.from(fallbackConfig, properties, usageConsumer);
             fallbackCtx.setActiveModelClient(fallbackClient);
             log.info("🔄 Switched to fallback model: {} via {}",
                 fm.getCurrentModel(), fm.getCurrentProvider());

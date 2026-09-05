@@ -33,13 +33,22 @@ public class FallbackModelClient implements ModelClient {
     private final String provider;
     private final String baseUrl;
     private final double temperature;
+    /** Optional usage sink (Hermes parity: fallback tokens must be billed the same as primary). */
+    private final java.util.function.Consumer<LangChain4jModelClient.Usage> usageConsumer;
 
     public FallbackModelClient(String provider, String model, String baseUrl, String apiKey,
                                 int timeoutSeconds, int maxRetries, double temperature) {
+        this(provider, model, baseUrl, apiKey, timeoutSeconds, maxRetries, temperature, null);
+    }
+
+    public FallbackModelClient(String provider, String model, String baseUrl, String apiKey,
+                                int timeoutSeconds, int maxRetries, double temperature,
+                                java.util.function.Consumer<LangChain4jModelClient.Usage> usageConsumer) {
         this.provider = provider;
         this.modelName = model;
         this.baseUrl = baseUrl;
         this.temperature = temperature;
+        this.usageConsumer = usageConsumer;
 
         this.chatModel = dev.langchain4j.model.openai.OpenAiChatModel.builder()
             .baseUrl(baseUrl)
@@ -48,6 +57,17 @@ public class FallbackModelClient implements ModelClient {
             .timeout(java.time.Duration.ofSeconds(timeoutSeconds))
             .maxRetries(maxRetries)
             .build();
+    }
+
+    /** Test seam: inject a ready ChatModel (no network) plus the usage sink. */
+    FallbackModelClient(String provider, String model, ChatModel chatModel,
+                        java.util.function.Consumer<LangChain4jModelClient.Usage> usageConsumer) {
+        this.provider = provider;
+        this.modelName = model;
+        this.baseUrl = "http://test";
+        this.temperature = 0.0;
+        this.usageConsumer = usageConsumer;
+        this.chatModel = chatModel;
     }
 
     @Override
@@ -88,6 +108,7 @@ public class FallbackModelClient implements ModelClient {
         try {
             dev.langchain4j.model.chat.response.ChatResponse response = chatModel.chat(request);
             dev.langchain4j.data.message.AiMessage aiMessage = response.aiMessage();
+            persistUsage(response);
 
             if (aiMessage.hasToolExecutionRequests()) {
                 List<com.azhukov.agent.core.model.ToolCall> calls = aiMessage.toolExecutionRequests().stream()
@@ -120,6 +141,18 @@ public class FallbackModelClient implements ModelClient {
         return 4096;
     }
 
+    /** Mirror of LangChain4jModelClient.persistUsage: fallback tokens count toward turn usage. */
+    private void persistUsage(dev.langchain4j.model.chat.response.ChatResponse response) {
+        try {
+            if (response.tokenUsage() == null || usageConsumer == null) return;
+            int prompt = response.tokenUsage().inputTokenCount();
+            int completion = response.tokenUsage().outputTokenCount();
+            usageConsumer.accept(new LangChain4jModelClient.Usage(provider, modelName, prompt, completion));
+        } catch (Exception e) {
+            log.warn("Could not persist fallback model usage: {}", e.getMessage());
+        }
+    }
+
     private static String clean(String value) {
         if (value == null) {
             return null;
@@ -133,6 +166,13 @@ public class FallbackModelClient implements ModelClient {
      */
     public static FallbackModelClient from(com.azhukov.agent.config.FallbackConfig config,
                                             AgentProperties properties) {
+        return from(config, properties, null);
+    }
+
+    /** Factory with a usage sink (Hermes parity: fallback tokens are billed). */
+    public static FallbackModelClient from(com.azhukov.agent.config.FallbackConfig config,
+                                            AgentProperties properties,
+                                            java.util.function.Consumer<LangChain4jModelClient.Usage> usageConsumer) {
         return new FallbackModelClient(
             config.getProvider(),
             config.getModel(),
@@ -140,7 +180,8 @@ public class FallbackModelClient implements ModelClient {
             config.getApiKey(),
             properties.getModel().getTimeoutSeconds(),
             properties.getModel().getMaxRetries(),
-            properties.getModel().getTemperature()
+            properties.getModel().getTemperature(),
+            usageConsumer
         );
     }
 }

@@ -29,6 +29,7 @@ public class OsvCheckService {
 
     private static final String OSV_ENDPOINT = "https://api.osv.io/v1/query";
     private static final int TIMEOUT_SECONDS = 10;
+    private final String endpoint;
 
     private static final Pattern NPM_PACKAGE_PATTERN = Pattern.compile("^(@[^/]+/[^@]+|[^@]+)(?:@(.+))?$");
     private static final Pattern PYPI_PACKAGE_PATTERN = Pattern.compile("^([a-zA-Z0-9._-]+)(?:\\[[^\\]]*\\])?(?:==(.+))?$");
@@ -37,8 +38,16 @@ public class OsvCheckService {
     private final HttpClient httpClient;
     private final boolean enabled;
 
+    /** Test seam: inject a stub HttpClient and endpoint URL (real ones are used by the plain constructor). */
+    OsvCheckService(boolean enabled, HttpClient httpClient, String endpoint) {
+        this.enabled = enabled;
+        this.httpClient = httpClient;
+        this.endpoint = endpoint;
+    }
+
     public OsvCheckService(boolean enabled) {
         this.enabled = enabled;
+        this.endpoint = OSV_ENDPOINT;
         this.httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(TIMEOUT_SECONDS))
             .build();
@@ -170,7 +179,7 @@ public class OsvCheckService {
         }
 
         HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(OSV_ENDPOINT))
+            .uri(URI.create(endpoint))
             .header("Content-Type", "application/json")
             .header("User-Agent", "java-agent-osv-check/1.0")
             .timeout(Duration.ofSeconds(TIMEOUT_SECONDS))
@@ -178,6 +187,13 @@ public class OsvCheckService {
             .build();
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        // Non-2xx means the API did not answer the query: treat as unknown, not "clean".
+        // Throwing keeps fail-open semantics in the caller (network-error → allow), but a
+        // malformed body with no "vulns" array can never be mistaken for a clean verdict.
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException(
+                "OSV API returned HTTP " + response.statusCode());
+        }
         JsonNode root = objectMapper.readTree(response.body());
         JsonNode vulnsNode = root.path("vulns");
 

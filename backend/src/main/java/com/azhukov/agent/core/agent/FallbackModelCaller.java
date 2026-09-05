@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.agent;
 
 import com.azhukov.agent.client.langchain4j.ErrorClassifier;
+import com.azhukov.agent.client.langchain4j.LangChain4jModelClient;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.config.FallbackConfig;
 import com.azhukov.agent.core.client.ModelClient;
@@ -53,6 +54,14 @@ public class FallbackModelCaller {
     private final AgentProperties properties;
     private final ContextCompressor contextCompressor;
     private final ContextEngine contextEngine;
+
+    /** Optional usage sink injected by the runtime (Hermes parity: fallback tokens are billed). */
+    private volatile java.util.function.Consumer<LangChain4jModelClient.Usage> usageConsumer;
+
+    /** Runtime hook: register the turn usage sink so fallback completions are billed. */
+    public void setUsageConsumer(java.util.function.Consumer<LangChain4jModelClient.Usage> usageConsumer) {
+        this.usageConsumer = usageConsumer;
+    }
 
     public FallbackModelCaller(ErrorClassifier errorClassifier,
                                AgentProperties properties,
@@ -471,7 +480,7 @@ public class FallbackModelCaller {
 
         try {
             com.azhukov.agent.client.langchain4j.FallbackModelClient fallbackClient =
-                com.azhukov.agent.client.langchain4j.FallbackModelClient.from(fallbackConfig, properties);
+                com.azhukov.agent.client.langchain4j.FallbackModelClient.from(fallbackConfig, properties, usageConsumer);
             ctx.activeClient = fallbackClient;
             log.info("🔄 Switched to fallback model: {} via {}",
                 ctx.fallbackManager.getCurrentModel(), ctx.fallbackManager.getCurrentProvider());

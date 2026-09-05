@@ -140,6 +140,10 @@ public class AgentStreamingService {
     private final MidTurnPersistenceCallback midTurnPersistenceCallback;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
 
+    /** DEBT-2 (M32): optional turn usage sink (field injection — ctor is used positionally by tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private TurnUsageCollector turnUsageCollector;
+
     // ── Background self-improvement wiring (Hermes parity, ported 0.1.16) ──
     // The streaming path previously NEVER initialized or incremented the
     // memory/skill nudge counters (MemoryNudgeManager methods had zero
@@ -209,6 +213,11 @@ public class AgentStreamingService {
                 errorClassifier, properties, null, contextEngine,
                 toolExecutionService, toolResultFormatter, tokenEstimator,
                 interruptToken, null, null, null, steerBuffer);
+            // DEBT-2 (M32): fallback-model tokens must be billed in the streaming path too.
+            if (turnUsageCollector != null) {
+                turnExecutor.setUsageConsumer(usage ->
+                    turnUsageCollector.record(usage.promptTokens(), usage.completionTokens()));
+            }
         }
         return turnExecutor;
     }

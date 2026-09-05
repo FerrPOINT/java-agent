@@ -3,6 +3,7 @@ package com.azhukov.agent.core.agent;
 import com.azhukov.agent.client.credential.CredentialPool;
 import com.azhukov.agent.client.credential.PooledCredential;
 import com.azhukov.agent.client.langchain4j.ErrorClassifier;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.config.FallbackConfig;
 import com.azhukov.agent.core.budget.IterationBudget;
@@ -119,6 +120,21 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private volatile FallbackModelCaller fallbackModelCaller;
     private final ReentrantLock turnLock = new ReentrantLock();
 
+    /**
+     * DEBT-2 (M32): turn usage sink — fallback-model tokens must be billed like primary.
+     * Optional field injection (same pattern as McpOAuthManager) to avoid churning
+     * the @RequiredArgsConstructor signature used positionally by ~22 tests.
+     */
+    @Autowired(required = false)
+    private com.azhukov.agent.service.TurnUsageCollector turnUsageCollector;
+
+    /** Wire the usage sink into the lazily-created fallback callers. */
+    private java.util.function.Consumer<com.azhukov.agent.client.langchain4j.LangChain4jModelClient.Usage>
+            fallbackUsageConsumer() {
+        if (turnUsageCollector == null) return null;
+        return usage -> turnUsageCollector.record(usage.promptTokens(), usage.completionTokens());
+    }
+
     private FallbackModelCaller fallbackModelCaller() {
         FallbackModelCaller fmc = fallbackModelCaller;
         if (fmc == null) {
@@ -127,6 +143,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 if (fallbackModelCaller == null) {
                     fallbackModelCaller = new FallbackModelCaller(
                         errorClassifier, properties, contextCompressor, contextEngine);
+                    fallbackModelCaller.setUsageConsumer(fallbackUsageConsumer());
                 }
                 fmc = fallbackModelCaller;
             } finally {

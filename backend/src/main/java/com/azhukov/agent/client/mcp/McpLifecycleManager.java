@@ -9,6 +9,7 @@ import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.security.McpResponseScanner;
 import com.azhukov.agent.core.security.McpToolDefinitionScanner;
 import com.azhukov.agent.core.security.McpToolTrustService;
+import com.azhukov.agent.core.security.OsvCheckService;
 import com.azhukov.agent.core.security.ScanResult;
 import com.azhukov.agent.core.security.Severity;
 import com.azhukov.agent.core.security.SlidingWindowRateLimiter;
@@ -32,6 +33,7 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.context.event.EventListener;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -78,6 +80,8 @@ public class McpLifecycleManager {
     private final ToolArgumentInjectionScanner argumentScanner;
     private final ToolFingerprintStore fingerprintStore;
     private final SlidingWindowRateLimiter rateLimiter;
+    /** Derived: OSV malware gate for stdio MCP servers (null when disabled). Created in init() so tests can inject their own via a visible field. */
+    private OsvCheckService osvCheckService;
     private final Map<String, McpServerState> clients = new ConcurrentHashMap<>();
     @Autowired(required = false)
     private McpOAuthManager mcpOAuthManager;
@@ -159,6 +163,31 @@ public class McpLifecycleManager {
     @EventListener(ContextRefreshedEvent.class)
     public void onContextRefreshed() {
         connectConfiguredServers();
+    }
+
+    /** Derived-field init per repo convention (AGENTS.md): OSV gate is created after construction. */
+    @PostConstruct
+    void init() {
+        boolean osvEnabled = properties != null && properties.getMcp() != null
+            && properties.getMcp().isOsvCheckEnabled();
+        this.osvCheckService = osvEnabled ? new OsvCheckService(true) : null;
+    }
+
+    /** Test seam: inject a stub OSV service (same package, tests only). */
+    void setOsvCheckServiceForTesting(OsvCheckService service) {
+        this.osvCheckService = service;
+    }
+
+    /** Test seam: inspect the derived OSV gate state. */
+    OsvCheckService osvGate() {
+        return osvCheckService;
+    }
+
+    /** Test seam: connection state by server name. */
+    boolean isConnected(String serverName) {
+        synchronized (clients) {
+            return clients.containsKey(serverName);
+        }
     }
 
     public void connectConfiguredServers() {
@@ -331,7 +360,7 @@ public class McpLifecycleManager {
         return allPrompts;
     }
 
-    private McpSyncClient createClient(AgentProperties.McpProperties.ServerProperties server) {
+    McpSyncClient createClient(AgentProperties.McpProperties.ServerProperties server) {
         String transport = server.getTransport() == null ? "stdio" : server.getTransport().toLowerCase();
 
         return switch (transport) {
@@ -358,6 +387,15 @@ public class McpLifecycleManager {
         if (inlineScriptError != null) {
             throw new IllegalArgumentException(
                 "MCP server " + server.getName() + " inline script refused: " + inlineScriptError);
+        }
+        // OSV malware gate (Hermes osv_check.py parity): MAL-* advisories block stdio launch.
+        if (osvCheckService != null) {
+            String malwareError = osvCheckService.checkPackageForMalware(command, server.getArgs());
+            if (malwareError != null) {
+                log.warn("MCP server {} refused by OSV malware check: {}", server.getName(), malwareError);
+                throw new IllegalArgumentException(
+                    "MCP server " + server.getName() + " OSV malware check: " + malwareError);
+            }
         }
         ServerParameters.Builder paramsBuilder = ServerParameters.builder(command)
             .args(server.getArgs());
