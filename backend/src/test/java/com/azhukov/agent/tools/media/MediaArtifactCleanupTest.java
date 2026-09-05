@@ -16,6 +16,15 @@ class MediaArtifactCleanupTest {
     @TempDir
     Path tmp;
 
+    private MediaArtifactCleanup cleanerWithTtl(Duration ttl) {
+        return new MediaArtifactCleanup(null) {
+            @Override
+            Path cacheRoot() {
+                return tmp.resolve("cache");
+            }
+        };
+    }
+
     @Test
     void sweepsExpiredArtifactsAndKeepsFreshOnes() throws Exception {
         Path images = tmp.resolve("cache/images");
@@ -28,12 +37,11 @@ class MediaArtifactCleanupTest {
         Files.setLastModifiedTime(old,
             java.nio.file.attribute.FileTime.from(Instant.now().minus(Duration.ofHours(2))));
 
-        MediaArtifactCleanup cleaner = new MediaArtifactCleanup(Duration.ofHours(1)) {
-            @Override
-            Path cacheRoot() {
-                return tmp.resolve("cache");
-            }
-        };
+        // Set TTL via reflection-free seam: construct with env=null defaults to 24h, so
+        // instead simulate by making "old" 25h old.
+        Files.setLastModifiedTime(old,
+            java.nio.file.attribute.FileTime.from(Instant.now().minus(Duration.ofHours(25))));
+        MediaArtifactCleanup cleaner = cleanerWithTtl(Duration.ofHours(1));
         cleaner.sweep();
 
         assertThat(old).doesNotExist();
@@ -42,7 +50,7 @@ class MediaArtifactCleanupTest {
 
     @Test
     void missingCacheDirIsNoop() {
-        MediaArtifactCleanup cleaner = new MediaArtifactCleanup(Duration.ofHours(1));
+        MediaArtifactCleanup cleaner = new MediaArtifactCleanup(null);
         // cacheRoot points at the real home; the dir may or may not exist — must not throw
         cleaner.sweep();
     }

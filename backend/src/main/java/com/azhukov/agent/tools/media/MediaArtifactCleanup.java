@@ -34,13 +34,13 @@ public class MediaArtifactCleanup {
     private volatile boolean running = true;
 
     public MediaArtifactCleanup(org.springframework.core.env.Environment env) {
-        String hours = env.getProperty("agent.media.artifact-ttl-hours", "24");
-        this.ttl = Duration.ofHours(Math.max(1, Long.parseLong(hours)));
-    }
-
-    /** Test seam: inject a custom TTL. */
-    MediaArtifactCleanup(Duration ttl) {
-        this.ttl = ttl;
+        // env may be null in unit tests — default TTL then.
+        if (env != null) {
+            String hours = env.getProperty("agent.media.artifact-ttl-hours", "24");
+            this.ttl = Duration.ofHours(Math.max(1, Long.parseLong(hours)));
+        } else {
+            this.ttl = Duration.ofHours(24);
+        }
     }
 
     @Scheduled(fixedDelayString = "PT1H", initialDelayString = "PT10M")

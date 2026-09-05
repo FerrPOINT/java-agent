@@ -283,7 +283,10 @@ public class SpringToolRegistry implements ToolRegistry {
         }
 
         if ("terminal".equals(name)) {
-            retainProperties(properties, "command", "background", "timeout", "workdir", "pty", "notify");
+            // Parity with Hermes TERMINAL_SCHEMA: all background-control params are
+            // advertised (notify_on_complete / watch_patterns), not just 'notify'.
+            retainProperties(properties, "command", "background", "timeout", "workdir", "pty",
+                "notify", "notify_on_complete", "watch_patterns");
 
             Map<String, Object> background = copySchemaProperty(properties.get("background"));
             if (!background.isEmpty()) {
@@ -582,6 +585,9 @@ public class SpringToolRegistry implements ToolRegistry {
         }
 
         if ("clarify".equals(name)) {
+            // Hermes CLARIFY_SCHEMA parity: top-level question/choices/multi_select
+            // remain the primary surface (required=[question]); `questions` is the
+            // optional batch array (2-5 items), not a replacement for them.
             Map<String, Object> choices = new LinkedHashMap<>();
             choices.put("type", "array");
             choices.put("items", Map.of("type", "string"));
@@ -599,13 +605,15 @@ public class SpringToolRegistry implements ToolRegistry {
 
             Map<String, Object> questions = copySchemaProperty(properties.get("questions"));
             questions.put("type", "array");
-            questions.put("minItems", 1);
             questions.put("maxItems", 5);
             questions.put("items", questionItem);
 
             properties.clear();
+            properties.put("question", copySchemaProperty(properties.get("question")));
+            properties.put("choices", choices);
+            properties.put("multi_select", Map.of("type", "boolean"));
             properties.put("questions", questions);
-            setRequired(required, "questions");
+            setRequired(required, "question");
             return;
         }
 

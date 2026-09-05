@@ -532,8 +532,9 @@ class SpringToolRegistryTest {
         Map<String, Object> pty = (Map<String, Object>) props.get("pty");
         Map<String, Object> notify = (Map<String, Object>) props.get("notify");
 
-        assertThat(props).containsOnlyKeys("command", "background", "timeout", "workdir", "pty", "notify");
-        assertThat(props).doesNotContainKeys("notify_on_complete", "watch_patterns");
+        assertThat(props).containsOnlyKeys("command", "background", "timeout", "workdir", "pty",
+            "notify", "notify_on_complete", "watch_patterns");
+        assertThat(props).containsKeys("notify_on_complete", "watch_patterns");
         assertThat(background).containsEntry("default", false);
         assertThat(timeout).containsEntry("minimum", 1);
         assertThat(pty).containsEntry("default", false);
@@ -732,7 +733,7 @@ class SpringToolRegistryTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void generatedClarifySchemaKeepsHermesBatchOnlySurface() {
+    void generatedClarifySchemaKeepsHermesSingleQuestionSurfaceWithBatch() {
         SpringToolRegistry r = registryWithBeans(new ClarifyTool());
 
         ToolDefinition clarify = r.getDefinitions().stream()
@@ -745,13 +746,12 @@ class SpringToolRegistryTest {
         Map<String, Object> itemProps = (Map<String, Object>) questionItem.get("properties");
         Map<String, Object> choices = (Map<String, Object>) itemProps.get("choices");
 
-        assertThat(props).containsOnlyKeys("questions");
-        assertThat(questions)
-            .containsEntry("minItems", 1)
-            .containsEntry("maxItems", 5);
+        // Hermes CLARIFY_SCHEMA: question/choices/multi_select + optional batch questions
+        assertThat(props).containsOnlyKeys("question", "choices", "multi_select", "questions");
+        assertThat(questions).containsEntry("maxItems", 5);
         assertThat(questionItem.get("required")).isEqualTo(List.of("question"));
         assertThat(choices).containsEntry("maxItems", 4);
-        assertThat(clarify.parameters().get("required")).isEqualTo(List.of("questions"));
+        assertThat(clarify.parameters().get("required")).isEqualTo(List.of("question"));
     }
 
     @Test

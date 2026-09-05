@@ -620,7 +620,7 @@ class OpenAiRunsControllerTest {
 
     @Test
     void createRunPersistsExplicitConversationHistoryBeforeTurn() throws Exception {
-        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
+        lenient().when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
             .thenReturn(new ChatResponseDto(SESSION_ID, "fresh", List.of(), true));
 
         MvcResult created = mockMvc.perform(post("/v1/runs")
@@ -647,7 +647,7 @@ class OpenAiRunsControllerTest {
 
     @Test
     void createRunPreservesConversationHistoryAssistantToolCalls() throws Exception {
-        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
+        lenient().when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
             .thenReturn(new ChatResponseDto(SESSION_ID, "fresh", List.of(), true));
 
         mockMvc.perform(post("/v1/runs")
@@ -694,7 +694,7 @@ class OpenAiRunsControllerTest {
     @Test
     void createRunPersistsResponseStyleFunctionCallInputLikeHermes() throws Exception {
         String longCallId = "codex_mcp__hermes-tools__web_search_exec-" + "0".repeat(43);
-        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
+        lenient().when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
             .thenReturn(new ChatResponseDto(SESSION_ID, "fresh", List.of(), true));
 
         mockMvc.perform(post("/v1/runs")
