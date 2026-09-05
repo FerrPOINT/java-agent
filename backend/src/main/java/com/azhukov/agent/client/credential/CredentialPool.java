@@ -111,18 +111,36 @@ public class CredentialPool {
  * The credential enters a cooldown period based on the error type.
  */
  public void markExhausted(PooledCredential credential, int errorCode, String errorMessage) {
- if (credential == null) return;
- synchronized (lock) {
- credential.setStatus(Status.EXHAUSTED);
- credential.setLastStatusAt(System.currentTimeMillis());
- credential.setLastErrorCode(errorCode);
- credential.setLastErrorReason(errorMessage);
- long ttl = exhaustedTtl(errorCode);
- credential.setCooldownUntil(System.currentTimeMillis() + ttl * 1000);
- log.debug("Credential {} for provider {} exhausted (code={}): cooldown {}s",
- credential.id(), provider, errorCode, ttl);
- }
- }
+     if (credential == null) return;
+     synchronized (lock) {
+         credential.setStatus(Status.EXHAUSTED);
+         credential.setLastStatusAt(System.currentTimeMillis());
+         credential.setLastErrorCode(errorCode);
+         // M35 fix: sanitize the provider error text before persisting it on the
+         // credential — raw messages can embed keys/tokens that later surface in logs.
+         credential.setLastErrorReason(sanitizeErrorMessage(errorMessage));
+        long ttl = exhaustedTtl(errorCode);
+        credential.setCooldownUntil(System.currentTimeMillis() + ttl * 1000);
+        log.debug("Credential {} for provider {} exhausted (code={}): cooldown {}s",
+            credential.id(), provider, errorCode, ttl);
+        }
+    }
+
+    /**
+     * M35: strip anything that looks like a key/token from an error message before
+     * it is persisted on a credential record.
+     */
+    private static String sanitizeErrorMessage(String message) {
+        if (message == null || message.isEmpty()) {
+            return message;
+        }
+        // Bearer tokens, sk-/pk- style keys, long hex/base64 runs.
+        String sanitized = message
+            .replaceAll("(?i)bearer\\s+[A-Za-z0-9._\\-]+", "bearer [REDACTED]")
+            .replaceAll("\\b(sk|pk|rk)-[A-Za-z0-9_\\-]{16,}\\b", "$1-[REDACTED]")
+            .replaceAll("\\b[A-Za-z0-9+/]{32,}={0,2}\\b", "[REDACTED]");
+        return sanitized.length() > 500 ? sanitized.substring(0, 500) + "…" : sanitized;
+    }
 
  /**
  * Mark a credential as dead (permanently invalid — token revoked, etc.).
@@ -132,7 +150,8 @@ public class CredentialPool {
  synchronized (lock) {
  credential.setStatus(Status.DEAD);
  credential.setLastStatusAt(System.currentTimeMillis());
- credential.setLastErrorReason(reason);
+ // M35: same sanitization on the dead path.
+ credential.setLastErrorReason(sanitizeErrorMessage(reason));
  log.warn("Credential {} for provider {} marked dead: {}", credential.id(), provider, reason);
  }
  }

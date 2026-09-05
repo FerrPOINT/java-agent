@@ -259,12 +259,20 @@ public class LangChain4jModelClient implements ModelClient {
         // the post-await fallback path can use them to prevent double onError()/onComplete().
         final java.util.concurrent.atomic.AtomicBoolean errored = new java.util.concurrent.atomic.AtomicBoolean(false);
         final java.util.concurrent.atomic.AtomicBoolean completed = new java.util.concurrent.atomic.AtomicBoolean(false);
+        // M31: on timeout we can only stop future tokens via the token guard; the
+        // underlying HTTP stream is owned by the langchain4j client (no external
+        // handle is exposed by doChat), so late callbacks must become no-ops.
+        final java.util.concurrent.atomic.AtomicBoolean abandoned = new java.util.concurrent.atomic.AtomicBoolean(false);
 
         streamingChatModelFor(options).doChat(request, new StreamingChatResponseHandler() {
             private final StringBuilder content = new StringBuilder();
 
             @Override
             public void onPartialResponse(String partialResponse) {
+                // M31: after a timeout the caller has moved on — drop late tokens.
+                if (abandoned.get()) {
+                    return;
+                }
                 // If the turn was cancelled, throw to stop the stream early.
                 // This will cause the onError callback to fire, releasing the latch.
                 if (InterruptToken.isCancelledGlobally()) {
@@ -278,6 +286,10 @@ public class LangChain4jModelClient implements ModelClient {
             @Override
             public void onCompleteResponse(dev.langchain4j.model.chat.response.ChatResponse completeResponse) {
                 try {
+                    // M31: late completion after a timeout — ignore.
+                    if (abandoned.get()) {
+                        return;
+                    }
                     if (!completed.compareAndSet(false, true)) {
                         // H19: already completed (or error already reported) — skip duplicate.
                         return;
@@ -328,6 +340,10 @@ public class LangChain4jModelClient implements ModelClient {
             @Override
             public void onError(Throwable error) {
                 try {
+                    // M31: late error after a timeout — ignore.
+                    if (abandoned.get()) {
+                        return;
+                    }
                     // H19: Guard against double-invocation — if onCompleteResponse already
                     // completed successfully, or onError already fired, skip the second call.
                     if (!errored.compareAndSet(false, true)) {
@@ -359,6 +375,8 @@ public class LangChain4jModelClient implements ModelClient {
                 // Latch timed out without completing or erroring — set timeout error
                 String timeoutMsg = "Model stream() timed out after " + properties.getModel().getTimeoutSeconds() + "s";
                 log.warn(timeoutMsg);
+                // M31: mark the stream abandoned so late callbacks are dropped.
+                abandoned.set(true);
                 errorRef.set(new java.util.concurrent.TimeoutException(timeoutMsg));
                 // H19: Only call handler.onError if nothing has been reported yet.
                 if (errored.compareAndSet(false, true)) {

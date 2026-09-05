@@ -209,8 +209,22 @@ public class McpOAuthManager {
                 char c = json.charAt(valueEnd);
                 if (c == '\\' && valueEnd + 1 < json.length()) {
                     char next = json.charAt(valueEnd + 1);
-                    sb.append(next);
-                    valueEnd += 2;
+                    // M36 fix: decode JSON unicode escapes instead of
+                    // dropping the backslash and keeping literal "uXXXX".
+                    if (next == 'u' && valueEnd + 5 < json.length()) {
+                        String hex = json.substring(valueEnd + 2, valueEnd + 6);
+                        try {
+                            sb.append((char) Integer.parseInt(hex, 16));
+                            valueEnd += 6;
+                        } catch (NumberFormatException nfe) {
+                            // Not a valid escape — keep as-is.
+                            sb.append(next);
+                            valueEnd += 2;
+                        }
+                    } else {
+                        sb.append(next);
+                        valueEnd += 2;
+                    }
                 } else if (c == '"') {
                     break;
                 } else {

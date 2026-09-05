@@ -644,6 +644,18 @@ public class McpLifecycleManager {
                 var tools = listToolsWithPagination(client);
                 // WARNING 4: Synchronize the read-compare-write to prevent duplicate registrations
                 synchronized (clients) {
+                    // M27 fix: close the client we are replacing — an un-closed stale
+                    // client leaks its transport (process/socket) on every reconnect.
+                    McpServerState previous = clients.get(server.getName());
+                    if (previous != null && previous.client() != null && previous.client() != client) {
+                        try {
+                            previous.client().close();
+                            log.debug("Closed replaced MCP client for {} on reconnect", server.getName());
+                        } catch (Exception closeEx) {
+                            log.debug("Error closing replaced MCP client for {}: {}",
+                                server.getName(), closeEx.getMessage());
+                        }
+                    }
                     clients.put(server.getName(), new McpServerState(server, client, tools));
                 }
                 registerTools(server.getName(), client, tools);
@@ -788,7 +800,17 @@ public class McpLifecycleManager {
                     .filter(s -> s.getName().equals(serverName))
                     .findFirst()
                     .ifPresent(server -> {
-                        clients.remove(serverName);
+                        // M28 fix: close the stale client before dropping the reference —
+                        // remove-without-close leaked the transport on refresh-triggered reconnect.
+                        McpServerState stale = clients.remove(serverName);
+                        if (stale != null && stale.client() != null) {
+                            try {
+                                stale.client().close();
+                            } catch (Exception closeEx) {
+                                log.debug("Error closing stale MCP client for {}: {}",
+                                    serverName, closeEx.getMessage());
+                            }
+                        }
                         ScheduledFuture<?> oldRefresh = toolRefreshFutures.remove(serverName);
                         if (oldRefresh != null) {
                             oldRefresh.cancel(false);
@@ -1376,9 +1398,14 @@ public class McpLifecycleManager {
         // calls closeAll() then reconnects — one-shot shutdown made every later
         // schedule throw RejectedExecutionException).
         shutdownRequested.set(true);
+        // M29 fix: bounded drain of in-flight work before replacing the pools —
+        // shutdownNow() alone abandons running tool calls mid-write.
         reconnectExecutor.shutdownNow();
         toolRefreshExecutor.shutdownNow();
         toolCallExecutor.shutdownNow();
+        awaitTerminationBounded(reconnectExecutor, "reconnectExecutor");
+        awaitTerminationBounded(toolRefreshExecutor, "toolRefreshExecutor");
+        awaitTerminationBounded(toolCallExecutor, "toolCallExecutor");
         reconnectExecutor = newReconnectExecutor();
         toolRefreshExecutor = newToolRefreshExecutor();
         toolCallExecutor = newToolCallExecutor();
@@ -1399,6 +1426,18 @@ public class McpLifecycleManager {
         if (rateLimiter != null) rateLimiter.clear();
         mcpServerErrorCounts.clear();
         mcpServerBreakerOpenedAtNanos.clear();
+    }
+
+    /** M29: bounded awaitTermination so closeAll never hangs on a stuck task. */
+    private static void awaitTerminationBounded(ExecutorService executor, String name) {
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                log.debug("MCP {} did not terminate in 5s during closeAll", name);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.debug("Interrupted while waiting for MCP {} termination", name);
+        }
     }
 
     static ToolDefinition convertToolDefinition(String fullName, McpSchema.Tool tool) {

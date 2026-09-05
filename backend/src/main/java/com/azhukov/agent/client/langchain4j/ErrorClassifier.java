@@ -15,6 +15,12 @@ import java.util.Locale;
 @Slf4j
 public class ErrorClassifier {
 
+    /** M33: token-bound HTTP status patterns — reject digits embedded in longer numbers. */
+    private static final java.util.regex.Pattern HTTP_400 =
+        java.util.regex.Pattern.compile("(?<![0-9.])400(?![0-9])");
+    private static final java.util.regex.Pattern HTTP_429 =
+        java.util.regex.Pattern.compile("(?<![0-9.])429(?![0-9])");
+
     public enum ErrorType {
         RETRYABLE,
         PERMANENT,
@@ -134,6 +140,12 @@ public class ErrorClassifier {
 
         String message = exception.getMessage();
         String lowerMessage = message != null ? message.toLowerCase(Locale.ROOT) : "";
+        // M33 fix: HTTP status codes must be matched as standalone tokens, not
+        // substrings — "400" inside "14007 tokens" or a request id must not
+        // classify as a 400 error. Negative lookaround keeps "400", "400.0",
+        // "(400)", "status=400" matches while rejecting embedded digits.
+        boolean has400 = HTTP_400.matcher(lowerMessage).find();
+        boolean has429 = HTTP_429.matcher(lowerMessage).find();
 
         // ── 1. Content-policy blocks (highest priority — deterministic, don't retry) ──
         // Mirrors Hermes _CONTENT_POLICY_BLOCKED_PATTERNS
@@ -159,7 +171,7 @@ public class ErrorClassifier {
 
         // ── 2. Thinking signature (400 + thinking/sig) ──
         // Mirrors Hermes FailoverReason.thinking_signature
-        if (lowerMessage.contains("400")
+        if (has400
             && lowerMessage.contains("thinking")
             && (lowerMessage.contains("signature")
                 || lowerMessage.contains("cannot be modified")
@@ -169,7 +181,7 @@ public class ErrorClassifier {
 
         // ── 3. Long context tier (429 + "extra usage" + "long context") ──
         // Mirrors Hermes FailoverReason.long_context_tier
-        if (lowerMessage.contains("429")
+        if (has429
             && lowerMessage.contains("extra usage")
             && lowerMessage.contains("long context")) {
             return new ClassificationResult(ErrorType.LONG_CONTEXT_TIER, RecoveryHints.compressAndRetry());
@@ -177,7 +189,7 @@ public class ErrorClassifier {
 
         // ── 4. OAuth 1M beta forbidden (400 + "long context beta" + "not yet available") ──
         // Mirrors Hermes FailoverReason.oauth_long_context_beta_forbidden
-        if (lowerMessage.contains("400")
+        if (has400
             && lowerMessage.contains("long context beta")
             && lowerMessage.contains("not yet available")) {
             return new ClassificationResult(ErrorType.LONG_CONTEXT_TIER, RecoveryHints.canRetry());
@@ -185,7 +197,7 @@ public class ErrorClassifier {
 
         // ── 5. llama.cpp grammar pattern (400 + grammar patterns) ──
         // Mirrors Hermes FailoverReason.llama_cpp_grammar_pattern
-        if (lowerMessage.contains("400")
+        if (has400
             && (lowerMessage.contains("error parsing grammar")
                 || lowerMessage.contains("json-schema-to-grammar")
                 || (lowerMessage.contains("unable to generate parser") && lowerMessage.contains("template")))) {
@@ -194,7 +206,7 @@ public class ErrorClassifier {
 
         // ── 6. Invalid encrypted content (400 + encrypted_content) ──
         // Mirrors Hermes FailoverReason.invalid_encrypted_content
-        if (lowerMessage.contains("400")
+        if (has400
             && (lowerMessage.contains("encrypted_content")
                 || lowerMessage.contains("encrypted content")
                 || lowerMessage.contains("invalid encrypted"))) {
@@ -439,7 +451,7 @@ public class ErrorClassifier {
 
         // ── 18. Rate limit — 429 ──
         // Hermes _RATE_LIMIT_PATTERNS full set (2026-08-22)
-        if (lowerMessage.contains("rate limit") || lowerMessage.contains("429")
+        if (lowerMessage.contains("rate limit") || has429
             || lowerMessage.contains("rate_limit")
             || lowerMessage.contains("too many requests")
             || lowerMessage.contains("throttled") || lowerMessage.contains("resource_exhausted")
@@ -505,7 +517,7 @@ public class ErrorClassifier {
         // request shape is guaranteed to fail identically (observed live: ZAI
         // "The messages parameter is illegal" burned attempts in a retry loop).
         if (lowerMessage.contains("badrequest")
-            || lowerMessage.contains("400")
+            || has400
             || lowerMessage.contains("messages parameter is illegal")
             || lowerMessage.contains("bad request")) {
             return new ClassificationResult(ErrorType.FORMAT_ERROR, RecoveryHints.noRetry());
