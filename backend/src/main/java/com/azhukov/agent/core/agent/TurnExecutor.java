@@ -146,6 +146,49 @@ public class TurnExecutor {
     }
 
     // ──────────────────────────────────────────────────────────────────
+    //  Budget-exhaustion summary (Hermes _handle_max_iterations parity)
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Budget-exhaustion summary — mirrors Hermes {@code _handle_max_iterations}.
+     * <p>
+     * When the iteration budget is exhausted, instead of just printing a raw
+     * "budget exhausted" message, make one extra LLM call with tools stripped
+     * and ask the model to summarise what it accomplished and what remains.
+     * The summary replaces the bare budget-exhausted text as the final response.
+     * <p>
+     * c2: single owner — previously sync-only (DefaultAgentRuntime inline);
+     * the streaming loop emitted the raw budget message with no summary call.
+     *
+     * @param activeClient the model client to use (the caller's active/fallback client)
+     * @return the trimmed summary, or null when the call failed or was blank
+     */
+    public String requestBudgetExhaustionSummary(ModelClient activeClient, Session session,
+                                                  List<Message> turnMessages,
+                                                  com.azhukov.agent.core.client.ModelRequestOptions options) {
+        String summaryPrompt =
+            "You've reached the maximum number of tool-calling iterations allowed. " +
+            "Please provide a final response summarizing what you've found and accomplished so far, " +
+            "without calling any more tools.";
+
+        List<Message> summaryMessages = new ArrayList<>(turnMessages);
+        summaryMessages.add(Message.user(summaryPrompt));
+
+        try {
+            // Call model with NO tools — the model must produce a text summary, not tool calls
+            ChatResponse response = activeClient.complete(
+                HistorySanitizer.sanitizeForModelRequest(summaryMessages), List.of(), options);
+            if (response != null && response.content() != null && !response.content().isBlank()) {
+                log.info("Budget exhaustion summary generated for session {}", session.id());
+                return response.content().trim();
+            }
+        } catch (Exception e) {
+            log.warn("Budget exhaustion summary call failed for session {}: {}", session.id(), e.getMessage());
+        }
+        return null;
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     //  Model call with retry (shared by both runtimes)
     // ──────────────────────────────────────────────────────────────────
 
@@ -632,13 +675,44 @@ public class TurnExecutor {
      * @return list of tool result messages, or null if the turn was interrupted
      *         (caller should return the interrupted TurnResult)
      */
+    /**
+     * Optional per-tool progress events, driven from inside the batch
+     * executor so SSE surfaces (streaming) and silent execution (sync)
+     * traverse the identical gate/order.
+     */
+    public interface ToolBatchEvents {
+        default void onToolStart(ToolCall call) {}
+        default void onToolResult(ToolCall call, ToolResult result, String formatted) {}
+    }
+
+    /** One executed tool call, for post-batch budget recording by the caller. */
+    public record ToolExecutionRecord(String toolName, long durationMs, boolean refunded) {}
+
+    /**
+     * c2 canonical batch executor. Both the sync loop (DefaultAgentRuntime) and
+     * the streaming loop (AgentStreamingService) dispatch tool batches through
+     * this single owner so the approval gate (incl. rev-115 subagent auto-deny
+     * and rev-131 single-use approvals), /yolo bypass, interrupt checks, steer
+     * injection, result budget enforcement and the execute_code budget refund
+     * (Hermes conversation_loop.py:7277-7280, previously streaming-only)
+     * behave identically on both surfaces.
+     * <p>
+     * Budget recording stays with the caller: each executed call is returned in
+     * {@link ToolBatchResult#executions()} with its duration and refund flag so
+     * the caller applies {@code recordToolExecution}/{@code refundToolExecution}
+     * against its own snapshot.
+     *
+     * @param events optional SSE progress sink (null for the sync path)
+     */
     public ToolBatchResult executeToolBatch(List<ToolCall> toolCalls, Set<String> registeredToolNames,
                                              Session session, TurnState turnState, int currentTurnIndex,
-                                             boolean skipApproval) {
+                                             boolean skipApproval, ToolBatchEvents events) {
         // P9 parity (tool_executor.py:661,726): EVERY dispatched tool — including
         // concurrent-segment members — traverses the authorization gate before
         // execution. If any call in the batch requires approval, force the
         // sequential path so the per-call approval/wait/re-validate flow runs.
+        boolean allExecuteCode = !toolCalls.isEmpty()
+            && toolCalls.stream().allMatch(tc -> "execute_code".equals(tc.name()));
         boolean anyApprovalRequired = false;
         if (!skipApproval && approvalQueue != null && toolGuardrails != null) {
             for (ToolCall call : toolCalls) {
@@ -654,10 +728,11 @@ public class TurnExecutor {
         if (!shouldParallel) {
             // Sequential path
             List<Message> toolResults = new ArrayList<>();
+            List<ToolExecutionRecord> executions = new ArrayList<>();
             for (ToolCall call : toolCalls) {
                 if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                     log.info("Turn cancelled by interrupt for session {}", session.id());
-                    return ToolBatchResult.interruptedResult();
+                    return new ToolBatchResult(toolResults, true, executions);
                 }
                 // Approval flow — remember whether THIS call was gated so the
                 // post-wait re-validation below only fires for gated calls.
@@ -680,14 +755,25 @@ public class TurnExecutor {
                         "Tool execution denied by subagent policy: dangerous command '"
                         + call.name() + "' requires approval, but subagent sessions cannot ask the user. "
                         + "Set agent.delegation.subagent-auto-approve=true to allow subagents to run dangerous commands.");
-                    toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                    String formatted = toolResultFormatter.formatResult(deniedResult);
+                    toolResults.add(Message.toolResult(call.pairingId(), formatted, currentTurnIndex));
+                    if (events != null) events.onToolResult(call, deniedResult, formatted);
                     continue;
                 }
+                // Fail-closed (tools/approval.py:2984): when the guardrail flags
+                // the tool, gate the call even if the approval request could not
+                // be created (null producer) — nobody can approve a request that
+                // doesn't exist, so the post-wait re-validation denies. The old
+                // `requestApproval(...) != null` conjunct EXECUTED the call when
+                // creation failed (fail-open).
+                boolean flagRequiresApproval = !skipApproval && toolGuardrails != null
+                    && toolGuardrails.requiresApproval(call);
+                if (flagRequiresApproval && approvalQueue != null
+                        && approvalQueue.getPending(session.id()) == null) {
+                    requestApproval(session.id(), call);
+                }
                 boolean approvalRequired = !skipApproval && approvalQueue != null
-                    && (approvalQueue.isPending(session.id())
-                        || (toolGuardrails != null && toolGuardrails.requiresApproval(call)
-                            && approvalQueue.getPending(session.id()) == null
-                            && requestApproval(session.id(), call) != null));
+                    && (approvalQueue.isPending(session.id()) || flagRequiresApproval);
                 if (approvalRequired) {
                     log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
                     long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
@@ -698,16 +784,20 @@ public class TurnExecutor {
                     if (Thread.currentThread().isInterrupted()) {
                         log.info("Session {} interrupted while waiting for approval", session.id());
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
-                        toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                        String formatted = toolResultFormatter.formatResult(deniedResult);
+                        toolResults.add(Message.toolResult(call.pairingId(), formatted, currentTurnIndex));
                         approvalQueue.clear(session.id());
-                        return new ToolBatchResult(toolResults, true);
+                        if (events != null) events.onToolResult(call, deniedResult, formatted);
+                        return new ToolBatchResult(toolResults, true, executions);
                     }
                     if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                         log.info("Session {} interrupted while waiting for approval", session.id());
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
-                        toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                        String formatted = toolResultFormatter.formatResult(deniedResult);
+                        toolResults.add(Message.toolResult(call.pairingId(), formatted, currentTurnIndex));
                         approvalQueue.clear(session.id());
-                        return new ToolBatchResult(toolResults, true);
+                        if (events != null) events.onToolResult(call, deniedResult, formatted);
+                        return new ToolBatchResult(toolResults, true, executions);
                     }
                 }
                 // HERMES-SYNC (tools/approval.py:2984): post-debounce re-validation,
@@ -724,8 +814,10 @@ public class TurnExecutor {
                     log.info("Tool {} {} for session {}, skipping", call.name(),
                         denied ? "denied" : "unapproved after timeout", session.id());
                     ToolResult deniedResult = ToolResult.fail(why);
-                    toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
+                    String formatted = toolResultFormatter.formatResult(deniedResult);
+                    toolResults.add(Message.toolResult(call.pairingId(), formatted, currentTurnIndex));
                     approvalQueue.clear(session.id());
+                    if (events != null) events.onToolResult(call, deniedResult, formatted);
                 } else {
                     // rev-131 Hermes parity ('once' semantics, approval.py:4368):
                     // a user approval is SINGLE-USE. The approved entry must be
@@ -738,14 +830,31 @@ public class TurnExecutor {
                     }
                     // Reset skill/memory counters before execution
                     resetNudgeCounters(call, session.id());
+                    if (events != null) events.onToolStart(call);
+                    long toolStart = System.currentTimeMillis();
                     ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState);
-                    toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(result), currentTurnIndex));
+                    long duration = System.currentTimeMillis() - toolStart;
+                    String formatted = toolResultFormatter.formatResult(result);
+                    toolResults.add(Message.toolResult(call.pairingId(), formatted, currentTurnIndex));
+                    // Hermes parity (conversation_loop.py:7277-7280): execute_code
+                    // executions are refunded — programmatic calls are cheap RPCs
+                    // and must not starve the per-turn budget. Previously this
+                    // refund existed ONLY on the streaming path.
+                    boolean refunded = allExecuteCode && "execute_code".equals(call.name());
+                    executions.add(new ToolExecutionRecord(call.name(), duration, refunded));
+                    if (events != null) events.onToolResult(call, result, formatted);
                 }
             }
-            injectSteer(toolResults, session.id(), currentTurnIndex);
-            return new ToolBatchResult(toolExecutionService.enforceToolResultBudget(toolResults), false);
+            // Enforce the aggregate tool-result budget BEFORE steer injection so
+            // an injected steer note can never be truncated away (streaming
+            // semantics: enforce the batch, then append the steer).
+            List<Message> bounded = toolExecutionService.enforceToolResultBudget(toolResults);
+            injectSteer(bounded, session.id(), currentTurnIndex);
+            return new ToolBatchResult(bounded, false, executions);
         } else {
-            // Parallel path
+            // Parallel path. execute_code refunds do not reach here in practice
+            // (a single execute_code call is not parallel-safe), but the flag is
+            // still computed uniformly.
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                 log.info("Turn cancelled by interrupt for session {}", session.id());
                 return ToolBatchResult.interruptedResult();
@@ -753,15 +862,28 @@ public class TurnExecutor {
             // Reset skill/memory counters before parallel execution
             for (ToolCall call : toolCalls) {
                 resetNudgeCounters(call, session.id());
+                if (events != null) events.onToolStart(call);
             }
+            List<ToolExecutionRecord> executions = new ArrayList<>();
             List<Message> toolResults = executeToolsInParallel(toolCalls, session, turnState, currentTurnIndex);
+            for (int i = 0; i < toolCalls.size(); i++) {
+                ToolCall call = toolCalls.get(i);
+                Message msg = i < toolResults.size() ? toolResults.get(i) : null;
+                executions.add(new ToolExecutionRecord(call.name(), 0,
+                    allExecuteCode && "execute_code".equals(call.name())));
+                if (events != null && msg != null) {
+                    events.onToolResult(call, ToolResult.ok(msg.content() != null ? msg.content() : ""), msg.content());
+                }
+            }
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                 log.info("Turn cancelled by interrupt after parallel tool execution for session {}", session.id());
                 injectSteer(toolResults, session.id(), currentTurnIndex);
-                return new ToolBatchResult(toolResults, true);
+                return new ToolBatchResult(toolResults, true, executions);
             }
-            injectSteer(toolResults, session.id(), currentTurnIndex);
-            return new ToolBatchResult(toolExecutionService.enforceToolResultBudget(toolResults), false);
+            // Budget enforcement before steer injection — see sequential path.
+            List<Message> boundedParallel = toolExecutionService.enforceToolResultBudget(toolResults);
+            injectSteer(boundedParallel, session.id(), currentTurnIndex);
+            return new ToolBatchResult(boundedParallel, false, executions);
         }
     }
 
@@ -771,21 +893,32 @@ public class TurnExecutor {
      * When {@code interrupted} is true, the caller should return an interrupted
      * {@code TurnResult} (the {@code toolResults} may contain partial results
      * that were already generated before the interrupt).
+     * <p>
+     * {@code executions} carries per-call budget records (name, duration,
+     * refund flag) so the owning loop applies iteration-budget accounting
+     * against its own snapshot.
      */
     public static final class ToolBatchResult {
         private final List<Message> toolResults;
         private final boolean interrupted;
+        private final List<ToolExecutionRecord> executions;
 
         public ToolBatchResult(List<Message> toolResults, boolean interrupted) {
+            this(toolResults, interrupted, List.of());
+        }
+
+        public ToolBatchResult(List<Message> toolResults, boolean interrupted, List<ToolExecutionRecord> executions) {
             this.toolResults = toolResults;
             this.interrupted = interrupted;
+            this.executions = executions != null ? executions : List.of();
         }
 
         public List<Message> toolResults() { return toolResults; }
         public boolean isInterrupted() { return interrupted; }
+        public List<ToolExecutionRecord> executions() { return executions; }
 
         public static ToolBatchResult interruptedResult() {
-            return new ToolBatchResult(List.of(), true);
+            return new ToolBatchResult(List.of(), true, List.of());
         }
     }
 

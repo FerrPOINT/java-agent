@@ -24,15 +24,17 @@ import java.lang.reflect.Field;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * M17: Test that DefaultAgentRuntime uses a shared executor for parallel
- * tool execution instead of creating a new executor per tool batch.
+ * M17: parallel tool execution must run on a SHARED executor instead of one
+ * executor per batch. c2 moved the parallel dispatch into
+ * {@link TurnExecutor#executeToolBatch} — the executor under test is now
+ * TurnExecutor's {@code parallelToolExecutor}, reached through the runtime's
+ * lazily-created executor instance.
  */
 class DefaultAgentRuntimeSharedExecutorTest {
 
@@ -85,6 +87,9 @@ class DefaultAgentRuntimeSharedExecutorTest {
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
         when(guardrail.isHalted()).thenReturn(false);
+        // c2: canonical batch executor applies the aggregate tool-result budget.
+        when(toolExecutionService.enforceToolResultBudget(any()))
+            .thenAnswer(inv -> inv.getArgument(0));
 
         runtime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,
@@ -96,14 +101,23 @@ class DefaultAgentRuntimeSharedExecutorTest {
             new TokenEstimator(), new ToolResultFormatter(), null, null);
     }
 
+    private Session session() {
+        return Session.create("test-user", "openai-compatible", "gpt-4");
+    }
+
+    /** c2: the shared executor now lives on TurnExecutor (canonical owner). */
+    private ExecutorService sharedExecutor() throws Exception {
+        TurnExecutor executor = runtime.turnExecutor();
+        Field field = TurnExecutor.class.getDeclaredField("parallelToolExecutor");
+        field.setAccessible(true);
+        return (ExecutorService) field.get(executor);
+    }
+
     @Test
     void hasSharedParallelToolExecutorField() throws Exception {
-        Field field = DefaultAgentRuntime.class.getDeclaredField("parallelToolExecutor");
-        field.setAccessible(true);
-        Object executor = field.get(runtime);
-        assertThat(executor).isInstanceOf(ExecutorService.class);
+        assertThat(sharedExecutor()).isInstanceOf(ExecutorService.class);
         // Verify it's not shutdown (i.e., it's a shared, long-lived executor)
-        assertThat(((ExecutorService) executor).isShutdown()).isFalse();
+        assertThat(sharedExecutor().isShutdown()).isFalse();
     }
 
     @Test
@@ -116,13 +130,10 @@ class DefaultAgentRuntimeSharedExecutorTest {
         when(toolExecutionService.execute(anyString(), anyString(), anyString(), any(), any(Session.class), any()))
             .thenReturn(ToolResult.ok("result"));
 
-        runtime.run(List.of(Message.user("test")), List.of());
+        runtime.runTurn(session(), "test");
 
         // The shared executor should still be alive after execution
-        Field field = DefaultAgentRuntime.class.getDeclaredField("parallelToolExecutor");
-        field.setAccessible(true);
-        ExecutorService executor = (ExecutorService) field.get(runtime);
-        assertThat(executor.isShutdown()).isFalse();
+        assertThat(sharedExecutor().isShutdown()).isFalse();
     }
 
     @Test
@@ -135,14 +146,12 @@ class DefaultAgentRuntimeSharedExecutorTest {
         when(toolExecutionService.execute(anyString(), anyString(), anyString(), any(), any(Session.class), any()))
             .thenReturn(ToolResult.ok("result"));
 
-        runtime.run(List.of(Message.user("test1")), List.of());
+        runtime.runTurn(session(), "test1");
 
-        Field field = DefaultAgentRuntime.class.getDeclaredField("parallelToolExecutor");
-        field.setAccessible(true);
-        ExecutorService executor1 = (ExecutorService) field.get(runtime);
+        ExecutorService executor1 = sharedExecutor();
 
-        runtime.run(List.of(Message.user("test2")), List.of());
-        ExecutorService executor2 = (ExecutorService) field.get(runtime);
+        runtime.runTurn(session(), "test2");
+        ExecutorService executor2 = sharedExecutor();
 
         // Same instance — shared executor, not recreated per batch
         assertThat(executor1).isSameAs(executor2);

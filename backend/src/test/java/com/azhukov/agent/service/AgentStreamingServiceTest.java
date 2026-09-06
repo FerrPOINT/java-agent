@@ -56,6 +56,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
@@ -117,6 +118,10 @@ class AgentStreamingServiceTest {
         when(toolRegistry.getDefinitions(any(Set.class)))
             .thenAnswer(inv -> List.of(new ToolDefinition("weather", "Get weather", Map.of()),
                 new ToolDefinition("terminal", "Run a command", Map.of())));
+        // c2: canonical TurnExecutor batch path applies the aggregate
+        // tool-result budget; passthrough stub keeps test results intact.
+        when(toolExecutionService.enforceToolResultBudget(any()))
+            .thenAnswer(inv -> inv.getArgument(0));
 
         // SessionRepository returns a session entity for existing sessions
         SessionEntity sessionEntity = new SessionEntity();
@@ -283,6 +288,27 @@ class AgentStreamingServiceTest {
         assertThat(hasToolCalls).isTrue();
         assertThat(hasToolResult).isTrue();
         assertThat(hasDone).isTrue();
+        assertThat(emitter.completed.get()).isTrue();
+    }
+
+    @Test
+    void streamTurnHaltsWhenGuardrailIsHalted() throws Exception {
+        // c2 B2: guardrail halt parity — the streaming loop must stop iterating
+        // when the guardrail halts the session (sync path already did).
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        com.azhukov.agent.core.security.ToolCallGuardrail guardrail =
+            mock(com.azhukov.agent.core.security.ToolCallGuardrail.class);
+        when(guardrail.isHalted(SESSION_ID)).thenReturn(true);
+        streamingService.setToolCallGuardrail(guardrail);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        // No model call ever happened, and the halt message reached the user.
+        verify(modelClient, never()).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        assertThat(emitter.events.stream()
+            .anyMatch(e -> "token".equals(e.name) && e.data.contains("halted by guardrails"))).isTrue();
         assertThat(emitter.completed.get()).isTrue();
     }
 

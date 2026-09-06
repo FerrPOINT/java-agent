@@ -4,6 +4,7 @@ import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -57,6 +58,114 @@ public final class TurnExecutorUtils {
 
     // ──────────────────────────────────────────────────────────────────
     //  Interruptible sleep
+    // ──────────────────────────────────────────────────────────────────
+
+    // ──────────────────────────────────────────────────────────────────
+    //  Pre-API context injection (shared by sync + streaming loops)
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Hermes parity (conversation_loop.py:2104-2153): pre-API-call /steer drain.
+     * If a steer arrived during the previous API call, inject it into the last
+     * tool message NOW so the model sees it on THIS iteration. Without this,
+     * steers sent during an API call only land after the NEXT tool batch,
+     * which may never come if the model returns a final response.
+     * <p>
+     * c2: single owner of the steer-marker sanitization + injection scan —
+     * previously two verbatim copies in DefaultAgentRuntime and
+     * AgentStreamingService.
+     *
+     * @param context    the mutable context list about to be sent to the model
+     * @param steerText  the drained steer text (may be null — no-op)
+     * @param sessionId  session id for logging
+     * @return true if the steer was injected into a tool message; false when
+     *         there was no tool message to inject into (the CALLER must then
+     *         put the steer back via {@code steerBuffer.steer(...)} for the
+     *         post-batch drain)
+     */
+    public static boolean injectPreApiSteer(List<Message> context, String steerText, java.util.UUID sessionId) {
+        if (steerText == null || context == null) {
+            return false;
+        }
+        String sanitizedSteer = steerText
+            .replace(DefaultPromptBuilder.STEER_MARKER_OPEN, "")
+            .replace(DefaultPromptBuilder.STEER_MARKER_CLOSE, "");
+        String steerMarker = DefaultPromptBuilder.STEER_MARKER_OPEN + "\n"
+            + sanitizedSteer + "\n" + DefaultPromptBuilder.STEER_MARKER_CLOSE;
+        for (int si = context.size() - 1; si >= 0; si--) {
+            Message sm = context.get(si);
+            if (sm.toolCallId() != null || sm.role() == com.azhukov.agent.core.model.Role.TOOL) {
+                String enhanced = (sm.content() != null ? sm.content() : "") + "\n\n" + steerMarker;
+                context.set(si, Message.toolResult(sm.toolCallId(), enhanced, sm.turnIndex()));
+                log.info("Pre-API steer drain: injected into tool msg at index {} (session {})", si, sessionId);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Hermes parity (conversation_loop.py:2154-2172): wall-clock run-budget
+     * wrap-up notice. At 80% of runBudgetSeconds, inject a one-shot "wrap up
+     * and deliver" notice into the newest tool result. Dormant when
+     * runBudgetSeconds is 0 or unset.
+     * <p>
+     * c2: single owner — previously two verbatim copies (sync "(sync)" log tag
+     * and streaming). The log line no longer carries a path tag.
+     *
+     * @param context                mutable context about to be sent to the model
+     * @param runBudgetSeconds       configured run budget (0 = disabled)
+     * @param turnStartMillis        wall-clock start of the turn
+     * @param wrapupAlreadyInjected  latch holder (int[] of size 1, 0=pending,
+     *                               1=injected) — pass the same array across
+     *                               loop iterations
+     * @return true if the notice was injected this call
+     */
+    public static boolean maybeInjectRunBudgetWrapup(List<Message> context,
+                                                     int runBudgetSeconds,
+                                                     long turnStartMillis,
+                                                     int[] wrapupAlreadyInjected) {
+        if (runBudgetSeconds <= 0 || context == null || wrapupAlreadyInjected == null
+            || wrapupAlreadyInjected.length == 0 || wrapupAlreadyInjected[0] != 0) {
+            return false;
+        }
+        long elapsed = (System.currentTimeMillis() - turnStartMillis) / 1000;
+        if (elapsed < 0.8 * runBudgetSeconds) {
+            return false;
+        }
+        for (int si = context.size() - 1; si >= 0; si--) {
+            Message sm = context.get(si);
+            if (sm.toolCallId() != null || sm.role() == com.azhukov.agent.core.model.Role.TOOL) {
+                String enhanced = (sm.content() != null ? sm.content() : "")
+                    + "\n\n" + DefaultPromptBuilder.RUN_BUDGET_WRAPUP_NOTICE;
+                context.set(si, Message.toolResult(sm.toolCallId(), enhanced, sm.turnIndex()));
+                wrapupAlreadyInjected[0] = 1;
+                log.info("Run budget wrap-up notice injected (budget={}s, elapsed={}s)",
+                    runBudgetSeconds, elapsed);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * c2: single owner of the LENGTH-truncated-tool-call retry options copy —
+     * previously duplicated in both loops. Rebuilds the request options with a
+     * boosted {@code maxCompletionTokens} (2^attempt × base, capped).
+     *
+     * @see ResponseRecoveryPolicy#boostedMaxTokens(int, int)
+     */
+    public static com.azhukov.agent.core.client.ModelRequestOptions withBoostedMaxTokens(
+            com.azhukov.agent.core.client.ModelRequestOptions options, int boostedMax) {
+        return new com.azhukov.agent.core.client.ModelRequestOptions(
+            options.modelName(), options.reasoningEffort(),
+            options.fastMode(), options.voiceMode(),
+            options.personality(), options.subgoal(),
+            boostedMax);
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    //  Backoff sleep
     // ──────────────────────────────────────────────────────────────────
 
     /**

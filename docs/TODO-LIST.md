@@ -8,7 +8,7 @@
 ## CRITICAL — Architecture (0) — ✅ ALL DONE
 
 ~~1. **c1**~~ ✅ DONE 2026-08-20 (FallbackModelCaller extracted: retry+fallback loop + 7 one-shot guards + compression recovery; runtime 1951→1346 LOC; 11 dead helper copies removed)
-2. **c2** Eliminate duplicated agentic loop — extract shared TurnExecutor from DefaultAgentRuntime + AgentStreamingService (empty-response/LENGTH/dropped-toolcall recovery now aligned in both, but logic still duplicated)
+~~2. **c2**~~ ✅ DONE 2026-09-06 (canonical TurnExecutor.executeToolBatch: BOTH loops now dispatch tool batches through one owner — approval gate incl. fail-closed null-producer fix, /yolo + subagent-auto-approve + subagent auto-deny now streaming too, execute_code budget refund now sync too, budget-exhaustion summary now streaming too, guardrail-halt now streaming too; steer-drain/wrapup/boosted-options deduped into TurnExecutorUtils; DAR 1741→1483 LOC, dead parallel executor removed)
 
 ## HIGH — Architecture (2)
 

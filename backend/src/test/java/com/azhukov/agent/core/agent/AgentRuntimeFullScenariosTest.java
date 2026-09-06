@@ -91,6 +91,10 @@ class AgentRuntimeFullScenariosTest {
         properties.getBudget().setMaxTokensPerTurn(200000);
         properties.getBudget().setMaxToolDurationMsPerTurn(600000);
         properties.getBudget().setEnabled(true);
+        // c2: the canonical TurnExecutor batch path applies the aggregate
+        // tool-result budget; passthrough stub keeps test results intact.
+        when(toolExecutionService.enforceToolResultBudget(any()))
+            .thenAnswer(inv -> inv.getArgument(0));
 
         session = Session.create("test-user", "openai-compatible", "gpt-4");
         turnStateManager = new TurnStateManager();

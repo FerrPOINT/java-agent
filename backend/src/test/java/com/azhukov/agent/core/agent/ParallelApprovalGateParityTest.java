@@ -83,7 +83,7 @@ class ParallelApprovalGateParityTest {
         Set<String> registered = Set.of("web_search");
 
         var result = turnExecutor.executeToolBatch(calls, registered, session,
-            mock(TurnState.class), 1, false);
+            mock(TurnState.class), 1, false, null);
 
         // Sequential gate ran: a pending approval was created and the wait
         // timed out (no user decision) → fail-closed, no execution.
@@ -120,7 +120,7 @@ class ParallelApprovalGateParityTest {
         Set<String> registered = Set.of("web_search");
 
         var result = turnExecutor.executeToolBatch(calls, registered, session,
-            mock(TurnState.class), 1, false);
+            mock(TurnState.class), 1, false, null);
 
         assertThat(executions.get()).isEqualTo(2);
         assertThat(result.isInterrupted()).isFalse();

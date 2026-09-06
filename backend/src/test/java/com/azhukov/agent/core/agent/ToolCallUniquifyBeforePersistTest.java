@@ -84,6 +84,8 @@ class ToolCallUniquifyBeforePersistTest {
                 any(String.class), any(), any(), any()))
             .thenAnswer(inv -> {
                 executedCallIds.add(inv.getArgument(1));
+        when(toolExecutionService.enforceToolResultBudget(any()))
+            .thenAnswer(b -> b.getArgument(0));
                 return ToolResult.ok("result");
             });
 

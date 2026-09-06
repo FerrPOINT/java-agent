@@ -168,9 +168,54 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ExecutorService memorySyncExecutor = Executors.newThreadPerTaskExecutor(
         Thread.ofVirtual().name("memory-sync-", 0).factory());
 
-    // M17: Shared executor for parallel tool execution — avoids creating a new executor per batch
-    private final ExecutorService parallelToolExecutor = Executors.newThreadPerTaskExecutor(
-        Thread.ofVirtual().name("tool-parallel-", 0).factory());
+    // ── c2: canonical shared turn-execution owner ──────────────────────────
+    // TurnExecutor owns the tool-batch dispatch (approval gate, subagent
+    // auto-deny, /yolo bypass, steer injection, budget enforcement,
+    // execute_code refund) and the budget-exhaustion summary. Injected via
+    // optional setter to keep the @RequiredArgsConstructor signature stable
+    // for the ~14 positional test constructors; lazily built from existing
+    // dependencies when Spring doesn't wire it (unit tests).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private TurnExecutor turnExecutor;
+
+    TurnExecutor turnExecutor() {
+        TurnExecutor te = turnExecutor;
+        if (te == null) {
+            te = new TurnExecutor(
+                errorClassifier, properties, contextCompressor, contextEngine,
+                toolExecutionService, toolResultFormatter, tokenEstimator,
+                interruptToken, approvalQueue, toolGuardrails,
+                memoryNudgeManagerOrNull(), steerBuffer);
+            turnExecutor = te;
+        }
+        return te;
+    }
+
+    private MemoryNudgeManager memoryNudgeManagerOrNull() {
+        // The sync runtime keeps its own nudge maps (hydrated from history in
+        // run()); TurnExecutor's MemoryNudgeManager reference is used only for
+        // counter resets on skill_manage/memory calls, which the sync path
+        // performs inline on its own maps. Null keeps TurnExecutor from
+        // double-resetting a manager this runtime doesn't drive.
+        return null;
+    }
+
+    // c2: shared pre-execution validation pipeline (P-02). Optional injection
+    // keeps the @RequiredArgsConstructor signature stable for positional tests.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ToolBatchPipeline toolBatchPipeline;
+
+    ToolBatchPipeline toolBatchPipeline() {
+        ToolBatchPipeline p = toolBatchPipeline;
+        if (p == null) {
+            p = new ToolBatchPipeline();
+            toolBatchPipeline = p;
+        }
+        return p;
+    }
+
+    // M17 executor removed — parallel tool execution now runs on TurnExecutor's
+    // shared executor via executeToolBatch (c2).
 
     // Nudge counters — per-session, mirroring Hermes _turns_since_memory / _iters_since_skill.
     // Memory review fires every N user turns; skill review fires every M tool-calling iterations.
@@ -199,15 +244,6 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }
         } catch (InterruptedException e) {
             memorySyncExecutor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-        parallelToolExecutor.shutdown();
-        try {
-            if (!parallelToolExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                parallelToolExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            parallelToolExecutor.shutdownNow();
             Thread.currentThread().interrupt();
         }
     }
@@ -505,7 +541,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
         int retryStateEmptyResponse = 0;
         // Hermes parity: wall-clock run-budget wrap-up notice latch (one-shot per turn)
         final long turnStartMillis = System.currentTimeMillis();
-        boolean runBudgetWrapupInjected = false;
+        // c2: latch holder for the shared TurnExecutorUtils.maybeInjectRunBudgetWrapup
+        final int[] runBudgetWrapupLatch = {0};
         // Hermes: whether the PREVIOUS model round landed tool calls — drives the
         // empty-recovery nudge choice (post-tool stub vs plain backoff).
         boolean lastResponseHadToolCalls = false;
@@ -545,8 +582,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     session.id(), budget.modelCalls(), budget.toolExecutions());
                 // Mirrors Hermes _handle_max_iterations: make one extra toolless LLM call
                 // asking the model to summarise what it accomplished, instead of just
-                // printing a raw "budget exhausted" message.
-                String summary = requestBudgetExhaustionSummary(session, turnMessages, options);
+                // printing a raw "budget exhausted" message. c2: shared owner in
+                // TurnExecutor.
+                TurnModelState modelState = turnModelState.get();
+                ModelClient summaryClient = modelState != null && modelState.activeClient != null
+                    ? modelState.activeClient : modelClient;
+                String summary = turnExecutor().requestBudgetExhaustionSummary(
+                    summaryClient, session, turnMessages, options);
                 String budgetMsg = summary != null && !summary.isBlank()
                     ? summary
                     : "⚠️ Iteration budget exhausted (" + budget.modelCalls()
@@ -564,49 +606,20 @@ public class DefaultAgentRuntime implements AgentRuntime {
             List<Message> context = contextEngine.prepareContext(session, turnMessages);
             session = resolveRotatedSession(session);
             // Hermes parity: pre-API-call /steer drain (conversation_loop.py:2104-2153).
+            // c2: shared owner in TurnExecutorUtils — previously a verbatim copy
+            // in both loops.
             if (steerBuffer != null) {
                 String preApiSteer = steerBuffer.consume(session.id());
-                if (preApiSteer != null) {
-                    String sanitizedSteer = preApiSteer
-                        .replace(DefaultPromptBuilder.STEER_MARKER_OPEN, "")
-                        .replace(DefaultPromptBuilder.STEER_MARKER_CLOSE, "");
-                    String steerMarker = DefaultPromptBuilder.STEER_MARKER_OPEN + "\n"
-                        + sanitizedSteer + "\n" + DefaultPromptBuilder.STEER_MARKER_CLOSE;
-                    boolean injected = false;
-                    for (int si = context.size() - 1; si >= 0; si--) {
-                        Message sm = context.get(si);
-                        if (sm.toolCallId() != null || sm.role() == Role.TOOL) {
-                            String enhanced = (sm.content() != null ? sm.content() : "") + "\n\n" + steerMarker;
-                            context.set(si, Message.toolResult(sm.toolCallId(), enhanced, sm.turnIndex()));
-                            injected = true;
-                            log.info("Pre-API steer drain (sync): injected into tool msg at index {}", si);
-                            break;
-                        }
-                    }
-                    if (!injected) {
-                        steerBuffer.steer(session.id(), preApiSteer);
-                    }
+                if (preApiSteer != null
+                        && !TurnExecutorUtils.injectPreApiSteer(context, preApiSteer, session.id())) {
+                    steerBuffer.steer(session.id(), preApiSteer);
                 }
             }
             // Hermes parity: wall-clock run-budget wrap-up notice (conversation_loop.py:2154-2172).
-            int runBudget = properties.getBudget().getRunBudgetSeconds();
-            if (runBudget > 0 && !runBudgetWrapupInjected) {
-                long elapsed = (System.currentTimeMillis() - turnStartMillis) / 1000;
-                if (elapsed >= 0.8 * runBudget) {
-                    for (int si = context.size() - 1; si >= 0; si--) {
-                        Message sm = context.get(si);
-                        if (sm.toolCallId() != null || sm.role() == Role.TOOL) {
-                            String enhanced = (sm.content() != null ? sm.content() : "")
-                                + "\n\n" + DefaultPromptBuilder.RUN_BUDGET_WRAPUP_NOTICE;
-                            context.set(si, Message.toolResult(sm.toolCallId(), enhanced, sm.turnIndex()));
-                            runBudgetWrapupInjected = true;
-                            log.info("Run budget wrap-up notice injected (sync) (budget={}s, elapsed={}s)",
-                                runBudget, elapsed);
-                            break;
-                        }
-                    }
-                }
-            }
+            // c2: shared owner in TurnExecutorUtils.
+            TurnExecutorUtils.maybeInjectRunBudgetWrapup(context,
+                properties.getBudget().getRunBudgetSeconds(), turnStartMillis,
+                runBudgetWrapupLatch);
             ChatResponse response;
             try {
                 long callStart = System.currentTimeMillis();
@@ -693,11 +706,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     boostedMax, truncatedToolCallRetries, ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES);
                 // Don't append the broken response; re-run from current context
                 // with a boosted max_tokens so the model has room to complete the JSON.
-                ModelRequestOptions boostedOptions = new ModelRequestOptions(
-                    options.modelName(), options.reasoningEffort(),
-                    options.fastMode(), options.voiceMode(),
-                    options.personality(), options.subgoal(),
-                    boostedMax);
+                ModelRequestOptions boostedOptions = TurnExecutorUtils.withBoostedMaxTokens(options, boostedMax);
                 context = contextEngine.prepareContext(session, turnMessages);
                 session = resolveRotatedSession(session);
                 response = callModelWithRetry(context, tools, session, boostedOptions);
@@ -1047,244 +1056,75 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
             int currentTurnIndex = turnIndex;
 
-            // 1. Validate tool names — repair fuzzy mismatches, collect errors
-            //    (toolCalls was uniquified above, before the assistant row was built)
+            // c2: single shared pre-execution pipeline (P-02) + canonical batch
+            // executor. The sync loop previously ran this validation/approval/
+            // dispatch sequence inline — a verbatim sibling of the streaming
+            // loop's copy — so fixes drifted between the two surfaces.
             Set<String> registeredToolNames = new HashSet<>();
             for (ToolDefinition td : tools) {
                 registeredToolNames.add(td.name());
             }
-            List<String> nameErrors = ToolCallValidator.validateToolNames(toolCalls, registeredToolNames);
-            if (!nameErrors.isEmpty()) {
-                log.warn("Invalid tool calls detected: {}", nameErrors);
-                // h53: When the LLM returns a batch of tool calls where some have valid names
-                // and some have invalid (non-existent) names, execute the valid ones and return
-                // errors for the invalid ones, instead of failing the entire batch.
-                List<ToolCall> validCalls = new ArrayList<>();
-                List<Message> errorResults = new ArrayList<>();
-                for (ToolCall tc : toolCalls) {
-                    if (registeredToolNames.contains(tc.name())) {
-                        validCalls.add(tc);
-                    } else {
-                        // Invalid tool name — return error for this specific call
-                        errorResults.add(Message.toolResult(tc.pairingId(),
-                            "Tool '" + tc.name() + "' does not exist. Available tools: "
-                            + String.join(", ", new java.util.TreeSet<>(registeredToolNames)),
-                            currentTurnIndex));
-                    }
+            ToolBatchPipeline.PipelineResult pipeline =
+                toolBatchPipeline().prepare(toolCalls, registeredToolNames, currentTurnIndex);
+            if (pipeline.truncatedArgs()) {
+                log.warn("Truncated tool call arguments detected — refusing to execute.");
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.MAX_TURNS_REACHED);
                 }
-                // If there are valid calls, execute them
-                if (!validCalls.isEmpty()) {
-                    toolCalls = validCalls;
-                    // Continue to normal execution path below, but add error results after
-                } else {
-                    // All calls are invalid — return all errors and continue
-                    turnMessages.addAll(errorResults);
-                    turnIndex++;
-                    continue;
-                }
-                // Add error results for invalid calls before proceeding with valid ones
-                turnMessages.addAll(errorResults);
+                return TurnResult.error("Response truncated due to output length limit");
             }
-
-            // 2. Validate JSON arguments — detect truncation and invalid JSON
-            ToolCallValidator.JsonValidationResult jsonResult = ToolCallValidator.validateJsonArgs(toolCalls);
-            if (!jsonResult.isValid()) {
-                if (jsonResult.truncated()) {
-                    log.warn("Truncated tool call arguments detected — refusing to execute.");
-                    // On truncation, stop as partial (like Hermes)
-                    if (turnFinalizer != null) {
-                        turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.MAX_TURNS_REACHED);
-                    }
-                    return TurnResult.error("Response truncated due to output length limit");
-                }
-                log.warn("Invalid JSON in tool call arguments: {}", jsonResult.errors());
-                // Inject recovery tool results (preserves role alternation)
-                List<Message> errorResults = new ArrayList<>();
-                for (ToolCall tc : toolCalls) {
-                    boolean hasError = jsonResult.errors().stream()
-                        .anyMatch(e -> e.contains("'" + tc.name() + "'"));
-                    String content = hasError
-                        ? "Error: Invalid JSON arguments. Please retry with valid JSON. For tools with no required parameters, use an empty object: {}."
-                        : "Skipped: other tool call in this response had invalid JSON.";
-                    errorResults.add(Message.toolResult(tc.pairingId(), content, currentTurnIndex));
-                }
-                turnMessages.addAll(errorResults);
+            if (!pipeline.syntheticResults().isEmpty()) {
+                turnMessages.addAll(pipeline.syntheticResults());
+            }
+            if (pipeline.executableCalls().isEmpty()) {
                 turnIndex++;
                 continue;
             }
+            toolCalls = pipeline.executableCalls();
 
-            // 3. Post-call guardrails: cap delegate_task calls, deduplicate
-            toolCalls = ToolCallValidator.capDelegateTaskCalls(toolCalls);
-            toolCalls = ToolCallValidator.deduplicateToolCalls(toolCalls);
+            // Hermes /yolo parity + subagent auto-approve: skip the approval
+            // gate when explicitly requested for this session/request.
+            boolean skipApproval = "true".equals(session.getMetadata("subagent_auto_approve"))
+                || Boolean.TRUE.equals(options != null ? options.yoloMode() : null)
+                || "true".equals(session.getMetadata("yoloMode"));
 
-            List<Message> toolResults;
-
-            // ── Parallel-safety gate (parity with Hermes _should_parallelize_tool_batch) ──
-            // Even for multiple tool calls, fall back to sequential when the batch
-            // isn't safe to parallelise (clarify, overlapping paths, unknown tools, etc.).
-            boolean shouldParallel = ToolParallelSafety.shouldParallelize(toolCalls, registeredToolNames);
-
-            if (!shouldParallel) {
-                // Sequential path for single tool call or non-parallel-safe batches
-                toolResults = new ArrayList<>();
-                for (ToolCall call : toolCalls) {
-                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
-                    log.info("Turn cancelled by interrupt for session {}", session.id());
-                    turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
-                    if (turnFinalizer != null) {
-                        turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
-                    }
-                    return new TurnResult(turnMessages, true, null);
+            // L6/C4: reset skill/memory nudge counters BEFORE execution (Hermes
+            // resets _iters_since_skill before the tool runs). The sync runtime
+            // keeps its own hydrated counter maps, so the reset stays here
+            // rather than in TurnExecutor's MemoryNudgeManager hook.
+            for (ToolCall call : toolCalls) {
+                if ("skill_manage".equals(call.name())) {
+                    itersSinceSkill.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).set(0);
                 }
-                // Check approval flow — use latch-based wait instead of busy-wait
-                // Skip the approval gate entirely when the session metadata has
-                // subagent_auto_approve=true (set by DelegateTaskTool when
-                // agent.delegation.subagent-auto-approve is enabled).
-                boolean skipApproval = "true".equals(session.getMetadata("subagent_auto_approve"))
-                    // Hermes /yolo parity: per-session approval bypass requested via
-                    // the chat request (Telegram /yolo, CLI equivalents).
-                    || Boolean.TRUE.equals(options != null ? options.yoloMode() : null)
-                    || "true".equals(session.getMetadata("yoloMode"));
-                // rev-115 Hermes parity (delegate_tool.py:66-97): subagent child
-                // sessions auto-DENY dangerous calls immediately instead of
-                // blocking 5 minutes on an approval request no user will ever
-                // see (the user watches the parent session, not the child).
-                if (!skipApproval && session.getMetadata("delegation_parent_session") != null) {
-                    log.warn("Subagent session {} auto-denied dangerous tool {} (delegation.subagent_auto-approve=false)", session.id(), call.name());
-                    ToolResult deniedResult = ToolResult.fail(
-                        "Tool execution denied by subagent policy: dangerous command '"
-                        + call.name() + "' requires approval, but subagent sessions cannot ask the user. "
-                        + "Set agent.delegation.subagent-auto-approve=true to allow subagents to run dangerous commands.");
-                    toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
-                    turnMessages.addAll(toolResults);
-                    turnIndex++;
-                    continue;
-                }
-                // F16 fix: create the request when the guardrail flags the tool — the
-                // queue never had a producer, so isPending alone was always false.
-                boolean approvalRequired = !skipApproval && approvalQueue != null
-                    && (approvalQueue.isPending(session.id())
-                        || (toolGuardrails != null && toolGuardrails.requiresApproval(call)
-                            && approvalQueue.getPending(session.id()) == null
-                            && toolGuardrails.requestApproval(session.id(), call) != null));
-                if (approvalRequired) {
-                    log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
-                    long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
-                    boolean decided = approvalQueue.awaitDecision(session.id(), approvalTimeoutMs);
-                    if (!decided) {
-                        log.warn("Approval wait timed out for session {} after {} ms", session.id(), approvalTimeoutMs);
-                    }
-                    // After interrupt, check interrupt flag and skip execution
-                    if (Thread.currentThread().isInterrupted()) {
-                        log.info("Session {} interrupted while waiting for approval", session.id());
-                        ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
-                        toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
-                        approvalQueue.clear(session.id());
-                        turnMessages.addAll(toolResults);
-                        turnIndex++;
-                        continue;
-                    }
-                    if (interruptToken != null && interruptToken.isCancelled(session.id())) {
-                        log.info("Session {} interrupted while waiting for approval", session.id());
-                        ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
-                        toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
-                        approvalQueue.clear(session.id());
-                        turnMessages.addAll(toolResults);
-                        turnIndex++;
-                        continue;
-                    }
-                }
-                // HERMES-SYNC (tools/approval.py:2984): fail-closed post-wait re-validation —
-                // execute ONLY on explicit approval; timeout-without-response blocks too.
-                if (approvalRequired && !approvalQueue.isApproved(session.id())) {
-                    boolean denied = approvalQueue.isDenied(session.id());
-                    String why = denied
-                        ? "Tool execution denied by user approval"
-                        : "Approval wait timed out without a user decision — tool blocked (fail-closed). "
-                          + "Re-request approval if this action is still needed.";
-                    log.info("Tool {} {} for session {}, skipping", call.name(),
-                        denied ? "denied" : "unapproved after timeout", session.id());
-                    ToolResult deniedResult = ToolResult.fail(why);
-                    toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(deniedResult), currentTurnIndex));
-                    approvalQueue.clear(session.id());
-                } else {
-                    // rev-131 Hermes parity ('once' semantics, approval.py:4368):
-                    // single-use consent — consume the approval with the
-                    // execution it authorized. Leaving it approved in the map
-                    // let every later dangerous call (any tool) execute with
-                    // no prompt (fail-open).
-                    if (approvalRequired) {
-                        approvalQueue.clear(session.id());
-                    }
-                    long toolStart = System.currentTimeMillis();
-                    // L6: Reset skill counter BEFORE execution (parity with Hermes
-                    // which resets _iters_since_skill before the tool runs, not after).
-                    if ("skill_manage".equals(call.name())) {
-                        itersSinceSkill.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).set(0);
-                    }
-                    // C4: Reset memory turn counter when the memory tool is called,
-                    // so the next nudge interval starts fresh after actual memory use.
-                    if ("memory".equals(call.name())) {
-                        turnsSinceMemory.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).set(0);
-                    }
-                    ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState);
-                    long duration = System.currentTimeMillis() - toolStart;
-                    budget = iterationBudget.recordToolExecution(budget, call.name(), duration);
-                    log.debug("Tool {} executed in {} ms: success={}, content length={}, error={}",
-                        call.name(), duration, result.success(),
-                        result.content() != null ? result.content().length() : 0, result.error());
-                    toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(result), currentTurnIndex));
-                }
-                }
-            } else {
-                // Parallel path for multiple parallel-safe tool calls
-                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
-                    log.info("Turn cancelled by interrupt for session {}", session.id());
-                    turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
-                    if (turnFinalizer != null) {
-                        turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
-                    }
-                    return new TurnResult(turnMessages, true, null);
-                }
-                // L6: Reset skill counter BEFORE execution (parity with Hermes).
-                // In the parallel path, reset before executeToolsInParallel runs.
-                // C4: Also reset memory turn counter when the memory tool is called.
-                for (ToolCall call : toolCalls) {
-                    if ("skill_manage".equals(call.name())) {
-                        itersSinceSkill.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).set(0);
-                    }
-                    if ("memory".equals(call.name())) {
-                        turnsSinceMemory.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).set(0);
-                    }
-                }
-                toolResults = executeToolsInParallel(toolCalls, session, turnState, currentTurnIndex);
-                for (ToolCall call : toolCalls) {
-                    budget = iterationBudget.recordToolExecution(budget, call.name(), 0);
-                }
-                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
-                    log.info("Turn cancelled by interrupt after parallel tool execution for session {}", session.id());
-                    turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
-                    if (turnFinalizer != null) {
-                        turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
-                    }
-                    return new TurnResult(turnMessages, true, null);
+                if ("memory".equals(call.name())) {
+                    turnsSinceMemory.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).set(0);
                 }
             }
-            // Inject pending steer note into the last tool result
-            String steerText = steerBuffer.consume(session.id());
-            if (steerText != null && !toolResults.isEmpty()) {
-                // M8: Sanitize steer text — strip any steer marker strings to prevent injection
-                String sanitizedSteer = steerText
-                    .replace(DefaultPromptBuilder.STEER_MARKER_OPEN, "")
-                    .replace(DefaultPromptBuilder.STEER_MARKER_CLOSE, "");
-                Message lastToolResult = toolResults.get(toolResults.size() - 1);
-                String enhancedContent = lastToolResult.content() + "\n\n"
-                    + DefaultPromptBuilder.STEER_MARKER_OPEN + "\n" + sanitizedSteer + "\n"
-                    + DefaultPromptBuilder.STEER_MARKER_CLOSE;
-                toolResults.set(toolResults.size() - 1,
-                    Message.toolResult(lastToolResult.toolCallId(), enhancedContent, currentTurnIndex));
-                log.info("Injected steer note for session {}", session.id());
+
+            TurnExecutor.ToolBatchResult batchResult = turnExecutor().executeToolBatch(
+                toolCalls, registeredToolNames, session, turnState, currentTurnIndex,
+                skipApproval, null);
+            // Post-batch budget accounting (incl. the execute_code refund,
+            // previously streaming-only — Hermes conversation_loop.py:7277-7280).
+            for (TurnExecutor.ToolExecutionRecord rec : batchResult.executions()) {
+                budget = iterationBudget.recordToolExecution(budget, rec.toolName(), rec.durationMs());
+                if (rec.refunded()) {
+                    budget = iterationBudget.refundToolExecution(budget);
+                }
             }
+            if (batchResult.isInterrupted()) {
+                turnMessages.addAll(batchResult.toolResults());
+                turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
+                }
+                return new TurnResult(turnMessages, true, null);
+            }
+            List<Message> toolResults = batchResult.toolResults();
+
+            // c2: post-batch steer injection now lives inside
+            // TurnExecutor.executeToolBatch (enforce-then-inject order), so the
+            // turn results returned here already carry any pending steer note.
             turnMessages.addAll(toolResults);
             // Hermes empty-recovery driver: the previous round landed tool calls.
             lastResponseHadToolCalls = true;
@@ -1440,47 +1280,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
         TurnExecutorUtils.interruptibleSleep(delayMs);
     }
 
-    // c1: message/tool recovery helpers (extractRetryAfterMs, lowerMessageContains,
+    // c2: message/tool recovery helpers (extractRetryAfterMs, lowerMessageContains,
     // stripGrammarPatternsFromTools, detectRefusalPattern, thinking/image/multimodal
     // contains+strip pairs) moved to TurnExecutor as public statics — dead local
     // copies removed after FallbackModelCaller extraction.
-    /**
-     * Budget-exhaustion summary — mirrors Hermes {@code _handle_max_iterations}.
-     * <p>
-     * When the iteration budget is exhausted, instead of just printing a raw
-     * "budget exhausted" message, make one extra LLM call with tools stripped
-     * and ask the model to summarise what it accomplished and what remains.
-     * The summary replaces the bare budget-exhausted text as the final response.
-     * <p>
-     * If the extra LLM call fails for any reason, returns null and the caller
-     * falls back to the plain budget-exhausted message.
-     */
-    private String requestBudgetExhaustionSummary(Session session, List<Message> turnMessages,
-                                                   ModelRequestOptions options) {
-        String summaryPrompt =
-            "You've reached the maximum number of tool-calling iterations allowed. " +
-            "Please provide a final response summarizing what you've found and accomplished so far, " +
-            "without calling any more tools.";
-
-        List<Message> summaryMessages = new ArrayList<>(turnMessages);
-        summaryMessages.add(Message.user(summaryPrompt));
-
-        try {
-            // Call model with NO tools — the model must produce a text summary, not tool calls
-            TurnModelState modelState = turnModelState.get();
-            ModelClient client = modelState != null && modelState.activeClient != null
-                ? modelState.activeClient : modelClient;
-            ChatResponse response = client.complete(
-                HistorySanitizer.sanitizeForModelRequest(summaryMessages), List.of(), options);
-            if (response != null && response.content() != null && !response.content().isBlank()) {
-                log.info("Budget exhaustion summary generated for session {}", session.id());
-                return response.content().trim();
-            }
-        } catch (Exception e) {
-            log.warn("Budget exhaustion summary call failed for session {}: {}", session.id(), e.getMessage());
-        }
-        return null;
-    }
+    // c2: requestBudgetExhaustionSummary moved to TurnExecutor (shared owner —
+    // the streaming path previously had no summary call at all).
 
     /**
      * Nudge-gated background review trigger.
@@ -1604,72 +1409,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
         return result;
     }
 
-    private List<Message> executeToolsInParallel(List<ToolCall> toolCalls, Session session,
-                                                  TurnState turnState, int currentTurnIndex) {
-        List<CompletableFuture<ToolResult>> futures = new ArrayList<>();
-        // M17: Use shared executor instead of creating one per tool batch
-        for (ToolCall call : toolCalls) {
-            futures.add(CompletableFuture.supplyAsync(() -> {
-                try {
-                    return toolExecutionService.execute(call.name(), call.id(),
-                        call.arguments(), null, session, turnState);
-                } catch (Exception e) {
-                    log.warn("Tool {} failed in parallel execution: {}", call.name(), e.getMessage());
-                    return ToolResult.fail("Tool execution failed: " + call.name() + " - " + e.getMessage());
-                }
-            }, parallelToolExecutor));
-        }
-
-        // P5 (Hermes tool_executor.py:1589): poll at bounded intervals instead of a
-        // blind join() so a user interrupt is honored while tools are still running;
-        // unstarted work is cancelled and running tools see the interrupt signal.
-        CompletableFuture<Void> allOf = CompletableFuture.allOf(
-            futures.toArray(new CompletableFuture[0]));
-        try {
-            while (!allOf.isDone()) {
-                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
-                    log.info("Interrupt during parallel tool batch for session {} — cancelling {} futures",
-                        session.id(), futures.size());
-                    for (CompletableFuture<ToolResult> f : futures) {
-                        f.cancel(true);
-                    }
-                    break;
-                }
-                try {
-                    allOf.get(200, java.util.concurrent.TimeUnit.MILLISECONDS);
-                } catch (java.util.concurrent.TimeoutException te) {
-                    // keep polling
-                } catch (java.util.concurrent.ExecutionException ee) {
-                    break; // a tool future failed — handled by result collection below
-                }
-            }
-        } catch (CompletionException e) {
-            log.warn("Parallel tool execution had unexpected error", e);
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            for (CompletableFuture<ToolResult> f : futures) {
-                f.cancel(true);
-            }
-        }
-
-        // Collect results in order (preserve tool call ID ordering)
-        List<Message> toolResults = new ArrayList<>();
-        for (int i = 0; i < toolCalls.size(); i++) {
-            ToolCall call = toolCalls.get(i);
-            ToolResult result;
-            CompletableFuture<ToolResult> future = futures.get(i);
-            if (future.isDone() && !future.isCompletedExceptionally()) {
-                result = future.getNow(ToolResult.fail("Tool not completed: " + call.name()));
-            } else {
-                result = ToolResult.fail("Tool cancelled: " + call.name());
-            }
-            log.debug("Parallel tool {} result: success={}, content length={}, error={}",
-                call.name(), result.success(),
-                result.content() != null ? result.content().length() : 0, result.error());
-            toolResults.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(result), currentTurnIndex));
-        }
-        return toolResults;
-    }
+    // c2: executeToolsInParallel removed — the canonical parallel dispatch
+    // (M17 shared executor + P5 interruptible poll) lives in
+    // TurnExecutor.executeToolsInParallel, called via executeToolBatch.
 
     private int estimateResponseTokens(ChatResponse response) {
         int chars = response.content() != null ? response.content().length() : 0;

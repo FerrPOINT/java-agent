@@ -112,6 +112,10 @@ class AgentStreamingInterruptTest {
             .thenReturn(Message.system(SYSTEM_PROMPT));
         when(toolRegistry.getDefinitions(any(Set.class)))
             .thenReturn(List.of(new ToolDefinition("weather", "Get weather", Map.of())));
+        // c2: the canonical TurnExecutor batch path applies the aggregate
+        // tool-result budget; passthrough stub keeps test results intact.
+        when(toolExecutionService.enforceToolResultBudget(any()))
+            .thenAnswer(inv -> inv.getArgument(0));
 
         SessionEntity sessionEntity = new SessionEntity();
         sessionEntity.setId(SESSION_ID);

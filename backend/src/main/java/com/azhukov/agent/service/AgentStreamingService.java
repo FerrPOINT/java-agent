@@ -177,11 +177,14 @@ public class AgentStreamingService {
         this.toolGuardrails = toolGuardrails;
     }
 
-    private boolean requiresApproval(ToolCall call) {
-        return approvalQueue != null
-            && toolGuardrails != null
-            && toolGuardrails.requiresApproval(call);
+    // c2 B2: guardrail halt check — same per-iteration gate the sync loop runs.
+    private com.azhukov.agent.core.security.ToolCallGuardrail toolCallGuardrail;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setToolCallGuardrail(com.azhukov.agent.core.security.ToolCallGuardrail toolCallGuardrail) {
+        this.toolCallGuardrail = toolCallGuardrail;
     }
+
 
     // ── Session turn lock (rev-79) ────────────────────────────────────────
     // Shared with the sync path (AgentRuntimeService) so sync and streaming
@@ -209,10 +212,14 @@ public class AgentStreamingService {
 
     private com.azhukov.agent.core.agent.TurnExecutor turnExecutor() {
         if (turnExecutor == null) {
+            // c2: the streaming path now dispatches tool batches through the
+            // canonical executor, so approval queue/guardrails/nudge manager
+            // are wired here too (previously null — executeToolBatch had no
+            // streaming callers).
             turnExecutor = new com.azhukov.agent.core.agent.TurnExecutor(
                 errorClassifier, properties, null, contextEngine,
                 toolExecutionService, toolResultFormatter, tokenEstimator,
-                interruptToken, null, null, null, steerBuffer);
+                interruptToken, approvalQueue, toolGuardrails, memoryNudgeManager, steerBuffer);
             // DEBT-2 (M32): fallback-model tokens must be billed in the streaming path too.
             if (turnUsageCollector != null) {
                 turnExecutor.setUsageConsumer(usage ->
@@ -495,7 +502,8 @@ public class AgentStreamingService {
         var budget = iterationBudget.startTurn(session.id());
         // Hermes parity: wall-clock run-budget wrap-up notice latch (one-shot per turn)
         final long turnStartMillis = System.currentTimeMillis();
-        boolean runBudgetWrapupInjected = false;
+        // c2: latch holder for the shared TurnExecutorUtils.maybeInjectRunBudgetWrapup
+        final int[] runBudgetWrapupLatch = {0};
         turnStateManager.clear(session.id());
 
         // P1-5: Initialize persistence cursor. The user message is persisted
@@ -539,6 +547,11 @@ public class AgentStreamingService {
         // P-08 (Hermes #92450): bound escaped outer-loop exceptions per turn.
         com.azhukov.agent.core.agent.OuterErrorBudget outerErrors =
             new com.azhukov.agent.core.agent.OuterErrorBudget(maxTurns);
+        // c2 B4: holder so the budget-exhaustion summary (outer loop, declared
+        // before the per-iteration fallback state below) uses the same
+        // active/fallback client the inner stream loop switched to.
+        final java.util.concurrent.atomic.AtomicReference<ModelClient> activeStreamClientRef =
+            new java.util.concurrent.atomic.AtomicReference<>(modelClient);
         for (int i = 0; i < maxTurns; i++) {
           try {
             // Check for interrupt at the top of each agentic-loop iteration
@@ -550,11 +563,34 @@ public class AgentStreamingService {
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
                 return;
             }
+            // c2 B2: guardrail halt parity — the sync loop checks isHalted() at
+            // the top of every iteration; the streaming loop previously kept
+            // streaming after a guardrail halt.
+            if (toolCallGuardrail != null && toolCallGuardrail.isHalted(session.id())) {
+                log.warn("Streaming turn halted by guardrails for session {}", session.id());
+                eventHelper().send(emitter, new StreamEvent("token", "Turn halted by guardrails.", null, null), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                eventHelper().safeComplete(emitter);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                return;
+            }
             if (iterationBudget.isExhausted(budget)) {
                 log.warn("Iteration budget exhausted for session {} after {} model calls",
                     session.id(), budget.modelCalls());
-                String budgetMsg = "⚠️ Iteration budget exhausted (" + budget.modelCalls()
-                    + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
+                // c2 B4: Hermes _handle_max_iterations parity — one toolless
+                // summary call instead of a raw budget message (sync parity).
+                String budgetMsg;
+                try {
+                    String summary = turnExecutor().requestBudgetExhaustionSummary(
+                        activeStreamClientRef.get(), session, turnMessages, streamOptions);
+                    budgetMsg = summary != null && !summary.isBlank() ? summary
+                        : "⚠️ Iteration budget exhausted (" + budget.modelCalls()
+                            + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
+                } catch (Exception summaryEx) {
+                    log.debug("Budget summary call failed for {}: {}", session.id(), summaryEx.getMessage());
+                    budgetMsg = "⚠️ Iteration budget exhausted (" + budget.modelCalls()
+                        + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
+                }
                 eventHelper().send(emitter, new StreamEvent("token", budgetMsg, null, null), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
@@ -622,53 +658,25 @@ public class AgentStreamingService {
                     // last tool message NOW so the model sees it on THIS iteration. Without
                     // this, steers sent during an API call only land after the NEXT tool batch,
                     // which may never come if the model returns a final response.
+                    // c2: shared owner in TurnExecutorUtils — previously a verbatim
+                    // copy of the sync loop's block.
                     if (steerBuffer != null) {
                         String preApiSteer = steerBuffer.consume(session.id());
-                        if (preApiSteer != null) {
-                            String sanitizedSteer = preApiSteer
-                                .replace(DefaultPromptBuilder.STEER_MARKER_OPEN, "")
-                                .replace(DefaultPromptBuilder.STEER_MARKER_CLOSE, "");
-                            String steerMarker = DefaultPromptBuilder.STEER_MARKER_OPEN + "\n"
-                                + sanitizedSteer + "\n" + DefaultPromptBuilder.STEER_MARKER_CLOSE;
-                            boolean injected = false;
-                            for (int si = context.size() - 1; si >= 0; si--) {
-                                Message sm = context.get(si);
-                                if (sm.toolCallId() != null || sm.role() == Role.TOOL) {
-                                    String enhanced = (sm.content() != null ? sm.content() : "") + "\n\n" + steerMarker;
-                                    context.set(si, Message.toolResult(sm.toolCallId(), enhanced, sm.turnIndex()));
-                                    injected = true;
-                                    log.info("Pre-API steer drain: injected into tool msg at index {}", si);
-                                    break;
-                                }
-                            }
-                            if (!injected) {
-                                // No tool message to inject into — put it back for post-batch drain
-                                steerBuffer.steer(session.id(), preApiSteer);
-                            }
+                        if (preApiSteer != null
+                                && !com.azhukov.agent.core.agent.TurnExecutorUtils.injectPreApiSteer(
+                                    context, preApiSteer, session.id())) {
+                            // No tool message to inject into — put it back for post-batch drain
+                            steerBuffer.steer(session.id(), preApiSteer);
                         }
                     }
                     // Hermes parity (conversation_loop.py:2154-2172): wall-clock
                     // run-budget wrap-up notice. At 80% of runBudgetSeconds, inject
                     // a one-shot "wrap up and deliver" notice into the newest tool
                     // result. Dormant when runBudgetSeconds is 0 or unset.
-                    int runBudget = properties.getBudget().getRunBudgetSeconds();
-                    if (runBudget > 0 && !runBudgetWrapupInjected) {
-                        long elapsed = (System.currentTimeMillis() - turnStartMillis) / 1000;
-                        if (elapsed >= 0.8 * runBudget) {
-                            for (int si = context.size() - 1; si >= 0; si--) {
-                                Message sm = context.get(si);
-                                if (sm.toolCallId() != null || sm.role() == Role.TOOL) {
-                                    String enhanced = (sm.content() != null ? sm.content() : "")
-                                        + "\n\n" + DefaultPromptBuilder.RUN_BUDGET_WRAPUP_NOTICE;
-                                    context.set(si, Message.toolResult(sm.toolCallId(), enhanced, sm.turnIndex()));
-                                    runBudgetWrapupInjected = true;
-                                    log.info("Run budget wrap-up notice injected (budget={}s, elapsed={}s)",
-                                        runBudget, elapsed);
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    // c2: shared owner in TurnExecutorUtils.
+                    com.azhukov.agent.core.agent.TurnExecutorUtils.maybeInjectRunBudgetWrapup(
+                        context, properties.getBudget().getRunBudgetSeconds(),
+                        turnStartMillis, runBudgetWrapupLatch);
                     // P-06: OpenRouter empty-response retries bypass the response
                     // cache; the flag is set after each empty attempt and cleared
                     // once the handler completes.
@@ -778,6 +786,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                                 fallbackContext, errorClassification.type(),
                                 error instanceof Exception ex3 ? ex3 : new RuntimeException(error))) {
                             activeStreamClient = fallbackContext.activeClient;
+                            activeStreamClientRef.set(activeStreamClient);
                             streamRetries = 0;
                             compressionAttempts = 0;
                             eventHelper().send(emitter, new StreamEvent("retry", null, null,
@@ -994,11 +1003,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     collectedToolCalls.clear();
                     scrubber.reset();
                     com.azhukov.agent.core.client.ModelRequestOptions boostedOptions =
-                        new com.azhukov.agent.core.client.ModelRequestOptions(
-                        streamOptions.modelName(), streamOptions.reasoningEffort(),
-                        streamOptions.fastMode(), streamOptions.voiceMode(),
-                        streamOptions.personality(), streamOptions.subgoal(),
-                        boostedMax);
+                        com.azhukov.agent.core.agent.TurnExecutorUtils.withBoostedMaxTokens(streamOptions, boostedMax);
                     context = contextEngine.prepareContext(session, turnMessages);
                     context = HistorySanitizer.sanitizeForModelRequest(context);
                     session = resolveRotatedSession(session);
@@ -1184,6 +1189,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     fmc.activeClient = activeStreamClient == modelClient ? null : activeStreamClient;
                     if (streamFallbackCaller.tryActivateFallbackForEmpty(fmc)) {
                         activeStreamClient = fmc.activeClient;
+                        activeStreamClientRef.set(activeStreamClient);
                         emptyContentRetries = 0;
                         streamEmptyGuard.reset();
                         eventHelper().send(emitter, new StreamEvent("continuation", null, null,
@@ -1450,7 +1456,6 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
             }
 
             TurnState turnState = turnStateManager.getOrStart(session.id(), 1);
-            int toolBatchStart = turnMessages.size();
             // Skill-creation nudge (Hermes parity: conversation_loop.py:2099-2102):
             // increment ONCE per tool-calling iteration (not per tool call).
             // Hermes: `agent._iters_since_skill += 1` runs after the model
@@ -1466,105 +1471,54 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     log.debug("Skill iter increment failed for {}: {}", session.id(), e.getMessage());
                 }
             }
-            for (ToolCall call : pipeline.executableCalls()) {
-                // Check interrupt before each tool execution
-                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
-                    log.info("Streaming turn cancelled by interrupt before tool {} for session {}",
-                        call.name(), session.id());
-                    eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
-                    eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
-                    eventHelper().safeComplete(emitter);
-                    if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
-                    return;
-                }
-                eventHelper().send(emitter, new StreamEvent("tool_start", null,
-                    java.util.List.of(new com.azhukov.agent.core.model.ToolCall(call.id(), call.name(), call.arguments())),
-                    null, null, null, null, call.name(), null), streamCtx);
+            // c2: canonical batch dispatch through TurnExecutor — the approval
+            // gate (yolo/subagent auto-deny/fail-closed/single-use consent),
+            // interrupt checks, steer injection and budget enforcement now run
+            // the identical code the sync path runs, with SSE progress bridged
+            // via ToolBatchEvents. The previous inline loop missed yolo-mode
+            // skip, subagent auto-deny, and post-wait fail-closed re-validation
+            // (B1) and the skill_manage counter reset (B5).
+            boolean skipApproval = "true".equals(session.getMetadata("subagent_auto_approve"))
+                || Boolean.TRUE.equals(streamOptions != null ? streamOptions.yoloMode() : null)
+                || "true".equals(session.getMetadata("yoloMode"));
+            com.azhukov.agent.core.agent.TurnExecutor.ToolBatchEvents sseEvents =
+                new com.azhukov.agent.core.agent.TurnExecutor.ToolBatchEvents() {
+                    @Override
+                    public void onToolStart(ToolCall call) {
+                        eventHelper().send(emitter, new StreamEvent("tool_start", null,
+                            java.util.List.of(new com.azhukov.agent.core.model.ToolCall(call.id(), call.name(), call.arguments())),
+                            null, null, null, null, call.name(), null), streamCtx);
+                    }
 
-                if (requiresApproval(call)) {
-                    var pending = toolGuardrails.requestApproval(session.id(), call);
-                    boolean approved = pending != null
-                        && approvalQueue.awaitDecision(session.id(), java.time.Duration.ofMinutes(5).toMillis())
-                        && approvalQueue.isApproved(session.id());
-                    if (!approved) {
-                        ToolResult denied = ToolResult.fail("Tool execution blocked: approval was denied, timed out, or could not be requested.");
-                        String resultPreview = eventHelper().formatResultPreview(denied);
+                    @Override
+                    public void onToolResult(ToolCall call, ToolResult result, String formatted) {
+                        String resultPreview = eventHelper().formatResultPreview(result);
                         eventHelper().send(emitter, new StreamEvent("tool_result", null, null, null,
                             null, null, null, call.name(), resultPreview), streamCtx);
-                        turnMessages.add(Message.toolResult(call.pairingId(), toolResultFormatter.formatResult(denied), turnIndex));
-                        approvalQueue.clear(session.id());
-                        continue;
                     }
-                    approvalQueue.clear(session.id());
-                }
-
-                long toolStart = System.currentTimeMillis();
-                ToolResult result = toolExecutionService.execute(
-                    call.name(), call.id(), call.arguments(), null, session, turnState);
-                long duration = System.currentTimeMillis() - toolStart;
-
-                budget = iterationBudget.recordToolExecution(budget, call.name(), duration);
-                // Hermes parity (conversation_loop.py:7277-7280): when the ONLY
-                // tool(s) called in this iteration were execute_code, the tool
-                // executions are refunded — programmatic calls are cheap RPCs
-                // and must not starve the per-turn budget.
-                boolean onlyExecuteCodeThisIteration = response.toolCalls().stream()
-                    .allMatch(tc -> "execute_code".equals(tc.name()));
-                if (onlyExecuteCodeThisIteration && "execute_code".equals(call.name())) {
+                };
+            com.azhukov.agent.core.agent.TurnExecutor.ToolBatchResult batchResult =
+                turnExecutor().executeToolBatch(
+                    pipeline.executableCalls(), registeredToolNames, session, turnState, turnIndex,
+                    skipApproval, sseEvents);
+            for (com.azhukov.agent.core.agent.TurnExecutor.ToolExecutionRecord rec : batchResult.executions()) {
+                budget = iterationBudget.recordToolExecution(budget, rec.toolName(), rec.durationMs());
+                if (rec.refunded()) {
                     budget = iterationBudget.refundToolExecution(budget);
                 }
-
-                String resultPreview = eventHelper().formatResultPreview(result);
-                eventHelper().send(emitter, new StreamEvent("tool_result", null, null, null,
-                    null, null, null, call.name(), resultPreview), streamCtx);
-
-                String toolResultContent = toolResultFormatter.formatResult(result);
-                turnMessages.add(Message.toolResult(call.pairingId(), toolResultContent, turnIndex));
             }
-
-            // Aggregate budget comes AFTER the batch, as in Hermes
-            // enforce_turn_budget: many individually-small results can still
-            // overflow the model context together.
-            java.util.List<Message> batchToolMessages = new java.util.ArrayList<>();
-            for (int batchIndex = toolBatchStart; batchIndex < turnMessages.size(); batchIndex++) {
-                Message message = turnMessages.get(batchIndex);
-                if (message.role() == com.azhukov.agent.core.model.Role.TOOL) {
-                    batchToolMessages.add(message);
-                }
+            if (batchResult.isInterrupted()) {
+                eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
+                eventHelper().safeComplete(emitter);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                return;
             }
-            java.util.List<Message> boundedToolMessages = toolExecutionService.enforceToolResultBudget(batchToolMessages);
-            if (!boundedToolMessages.isEmpty()) {
-                for (int batchIndex = toolBatchStart, toolIndex = 0; batchIndex < turnMessages.size(); batchIndex++) {
-                    if (turnMessages.get(batchIndex).role() == com.azhukov.agent.core.model.Role.TOOL) {
-                        turnMessages.set(batchIndex, boundedToolMessages.get(toolIndex++));
-                    }
-                }
-            }
-
-            // M1: Inject pending steer note into the last tool result after all tools complete,
-            // matching DefaultAgentRuntime's post-batch steer injection (not per-tool).
-            if (steerBuffer != null) {
-                String steerText = steerBuffer.consume(session.id());
-                if (steerText != null && !turnMessages.isEmpty()) {
-                    // Find the last tool result message and append the steer note
-                    for (int mi = turnMessages.size() - 1; mi >= 0; mi--) {
-                        Message lastMsg = turnMessages.get(mi);
-                        if (lastMsg.toolCallId() != null || lastMsg.role() == Role.TOOL) {
-                            // M8: Sanitize steer text — strip any steer marker strings to prevent injection
-                            String sanitizedSteer = steerText
-                                .replace(DefaultPromptBuilder.STEER_MARKER_OPEN, "")
-                                .replace(DefaultPromptBuilder.STEER_MARKER_CLOSE, "");
-                            String enhancedContent = lastMsg.content() + "\n\n"
-                                + DefaultPromptBuilder.STEER_MARKER_OPEN + "\n" + sanitizedSteer + "\n"
-                                + DefaultPromptBuilder.STEER_MARKER_CLOSE;
-                            turnMessages.set(mi,
-                                Message.toolResult(lastMsg.toolCallId(), enhancedContent, lastMsg.turnIndex()));
-                            log.info("Injected steer note for session {}", session.id());
-                            break;
-                        }
-                    }
-                }
-            }
+            turnMessages.addAll(batchResult.toolResults());
+            // The canonical executor already enforced the aggregate tool-result
+            // budget and injected any pending steer into the LAST tool result
+            // (enforce-then-inject order, matching the previous streaming
+            // semantics of budget-then-steer).
 
             // P1-5: Persist tool result messages immediately after the batch completes.
             // If the JVM crashes after tool execution but before the next model call,
