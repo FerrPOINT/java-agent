@@ -37,8 +37,8 @@ class MessagePersistenceServiceTest {
 
     @BeforeEach
     void setUp() {
-        repository = mock(MessageRepository.class);
-        sessionRepo = mock(SessionRepository.class);
+        repository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
+        sessionRepo = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
         when(repository.countBySessionId(any(UUID.class))).thenReturn(0L);
         when(sessionRepo.existsById(any(UUID.class))).thenReturn(true);
         service = new MessagePersistenceService(repository, sessionRepo, Mappers.getMapper(MessageMapper.class));

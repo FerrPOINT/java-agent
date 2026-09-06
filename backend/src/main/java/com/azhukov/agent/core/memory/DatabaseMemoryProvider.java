@@ -4,7 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MemoryEntity;
-import com.azhukov.agent.persistence.repository.MemoryRepository;
+import com.azhukov.agent.core.ports.MemoryStorePort;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,7 +34,7 @@ import java.util.Optional;
 @Slf4j
 public class DatabaseMemoryProvider implements MemoryProvider {
 
-    private final MemoryRepository memoryRepository;
+    private final MemoryStorePort memoryRepository;
     private final AgentProperties agentProperties;
     private final MemoryThreatScanner threatScanner;
 
@@ -51,7 +51,7 @@ public class DatabaseMemoryProvider implements MemoryProvider {
      * @param agentProperties  config for char limits and max-facts enforcement
      * @param threatScanner    scans content for prompt injection / exfiltration
      */
-    public DatabaseMemoryProvider(MemoryRepository memoryRepository,
+    public DatabaseMemoryProvider(MemoryStorePort memoryRepository,
                                   AgentProperties agentProperties,
                                   MemoryThreatScanner threatScanner) {
         this.memoryRepository = memoryRepository;
@@ -62,14 +62,14 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     /**
      * Backward-compatible constructor without threat scanning (for unit tests).
      */
-    public DatabaseMemoryProvider(MemoryRepository memoryRepository) {
+    public DatabaseMemoryProvider(MemoryStorePort memoryRepository) {
         this(memoryRepository, null, null);
     }
 
     /**
      * Constructor with properties but without threat scanner (for unit tests).
      */
-    public DatabaseMemoryProvider(MemoryRepository memoryRepository, AgentProperties agentProperties) {
+    public DatabaseMemoryProvider(MemoryStorePort memoryRepository, AgentProperties agentProperties) {
         this(memoryRepository, agentProperties, null);
     }
 
@@ -227,8 +227,7 @@ public class DatabaseMemoryProvider implements MemoryProvider {
         // M7 fix: bounded read — pagination size guards against unbounded memory
         // materialization when maxFactsPerUser is disabled or misconfigured.
         List<String> existingFacts = memoryRepository
-            .findByUserIdAndTargetOrderByCreatedAtDesc(userId, effectiveTarget,
-                org.springframework.data.domain.PageRequest.of(0, maxFactsBounded()))
+            .findByUserIdAndTargetOrderByCreatedAtDesc(userId, effectiveTarget, maxFactsBounded())
             .stream().map(MemoryEntity::getFact).toList();
 
         // M6: Trim before dedup check

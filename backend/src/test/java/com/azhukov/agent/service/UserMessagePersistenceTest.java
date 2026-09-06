@@ -83,8 +83,8 @@ class UserMessagePersistenceTest {
         properties.getCore().setMaxTurns(1);
         properties.getError().setRetryDelayMs(10);
         properties.getError().setRetryCapMs(50);
-        SessionRepository sessionRepository = mock(SessionRepository.class);
-        messageRepository = mock(MessageRepository.class);
+        com.azhukov.agent.persistence.repository.SessionRepository sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        messageRepository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
         TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
         IterationBudget iterationBudget = mock(IterationBudget.class);
         TurnStateManager turnStateManager = mock(TurnStateManager.class);
@@ -105,7 +105,7 @@ class UserMessagePersistenceTest {
         sessionEntity.setCreatedAt(Instant.now());
         sessionEntity.setUpdatedAt(Instant.now());
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionEntity));
-        when(sessionRepository.existsById(any(UUID.class))).thenReturn(true);
+        org.mockito.Mockito.lenient().when(sessionRepository.existsById(any(UUID.class))).thenReturn(true);
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID)).thenReturn(List.of());
 
         IterationBudget.TurnSnapshot snapshot = mock(IterationBudget.TurnSnapshot.class);
@@ -133,8 +133,7 @@ class UserMessagePersistenceTest {
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
             new RuntimeConfigService(), new InterruptToken(), new SteerBuffer(),
             new TokenEstimator(), new ToolResultFormatter(),
-            new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate,
-                messageRepository, lineageService),
+            new AgentSessionResolver(sessionStorePort(sessionRepository), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), lineageService),
             lineageService,
             new CliStateApplier(), null, null,
             new ModelMetadataService(), null);
@@ -225,4 +224,21 @@ class UserMessagePersistenceTest {
             doneLatch.await(10, java.util.concurrent.TimeUnit.SECONDS);
         }
     }
+
+    private com.azhukov.agent.core.ports.SessionStorePort sessionStorePort(com.azhukov.agent.persistence.repository.SessionRepository sessionRepository) {
+        com.azhukov.agent.core.ports.SessionStorePort port = mock(com.azhukov.agent.core.ports.SessionStorePort.class);
+        org.mockito.Mockito.lenient().when(port.findById(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> sessionRepository.findById(inv.getArgument(0)));
+        org.mockito.Mockito.lenient().when(port.save(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> sessionRepository.save(inv.getArgument(0)));
+        org.mockito.Mockito.lenient().when(port.findChildSessions(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> java.util.List.of());
+        org.mockito.Mockito.lenient().doAnswer(inv -> null).when(port)
+            .insertSessionRow(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
+        return port;
+    }
+
 }

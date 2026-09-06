@@ -45,7 +45,7 @@ class DefaultContextCompressorQuickWinsTest {
         @Test
         @DisplayName("isLocked returns false when the lock repository throws")
         void isLockedFailsOpenOnRepositoryException() {
-            CompressionLockRepository repo = mock(CompressionLockRepository.class);
+            com.azhukov.agent.core.ports.CompressionLockPort repo = mock(com.azhukov.agent.core.ports.CompressionLockPort.class);
             when(repo.findBySessionId(any(UUID.class)))
                 .thenThrow(new RuntimeException("DB down"));
 
@@ -60,7 +60,7 @@ class DefaultContextCompressorQuickWinsTest {
         @Test
         @DisplayName("lock does not throw when the lock repository throws; in-memory lock still set")
         void lockFailsOpenOnRepositoryException() {
-            CompressionLockRepository repo = mock(CompressionLockRepository.class);
+            com.azhukov.agent.core.ports.CompressionLockPort repo = mock(com.azhukov.agent.core.ports.CompressionLockPort.class);
             when(repo.findBySessionId(any(UUID.class)))
                 .thenThrow(new RuntimeException("DB down"));
 
@@ -78,7 +78,7 @@ class DefaultContextCompressorQuickWinsTest {
         @Test
         @DisplayName("Compression proceeds even when lock repository throws during isLocked check")
         void compressionProceedsWhenLockRepoThrows() {
-            CompressionLockRepository repo = mock(CompressionLockRepository.class);
+            com.azhukov.agent.core.ports.CompressionLockPort repo = mock(com.azhukov.agent.core.ports.CompressionLockPort.class);
             when(repo.findBySessionId(any(UUID.class)))
                 .thenThrow(new RuntimeException("DB down"));
 
@@ -106,7 +106,7 @@ class DefaultContextCompressorQuickWinsTest {
         @Test
         @DisplayName("isLocked still returns true when in-memory lock is set, even if repo is broken")
         void isLockedUsesInMemoryLockBeforeRepo() {
-            CompressionLockRepository repo = mock(CompressionLockRepository.class);
+            com.azhukov.agent.core.ports.CompressionLockPort repo = mock(com.azhukov.agent.core.ports.CompressionLockPort.class);
             when(repo.findBySessionId(any(UUID.class)))
                 .thenThrow(new RuntimeException("DB down"));
 

@@ -47,8 +47,8 @@ import static org.mockito.Mockito.when;
 class AgentRuntimeServiceBranchTest {
 
     private AgentRuntime agentRuntime;
-    private SessionRepository sessionRepository;
-    private MessageRepository messageRepository;
+    private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+    private com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     private TransactionTemplate transactionTemplate;
     private AgentProperties properties;
     private AgentRuntimeService service;
@@ -56,8 +56,8 @@ class AgentRuntimeServiceBranchTest {
     @BeforeEach
     void setUp() {
         agentRuntime = mock(AgentRuntime.class);
-        sessionRepository = mock(SessionRepository.class);
-        messageRepository = mock(MessageRepository.class);
+        sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        messageRepository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
         transactionTemplate = mock(TransactionTemplate.class);
         properties = mock(AgentProperties.class);
         AgentProperties.ModelProperties modelProps = mock(AgentProperties.ModelProperties.class);
@@ -91,8 +91,7 @@ class AgentRuntimeServiceBranchTest {
             new com.fasterxml.jackson.databind.ObjectMapper(),
             new RuntimeConfigService(),
             transactionTemplate,
-            new AgentSessionResolver(sessionRepository, Mappers.getMapper(SessionEntityMapper.class),
-                transactionTemplate, messageRepository, mock(SessionLineageService.class)),
+            new AgentSessionResolver(sessionStorePort(), Mappers.getMapper(SessionEntityMapper.class), transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(SessionLineageService.class)),
             new CliStateApplier(),
             new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class),
                 mock(com.azhukov.agent.service.ConversationCompressor.class),
@@ -186,4 +185,16 @@ class AgentRuntimeServiceBranchTest {
             null, null, null, null, null, null, null, null, null, null, null, null,
             null, yoloMode, null, null);
     }
+
+    private com.azhukov.agent.core.ports.SessionStorePort sessionStorePort() {
+        com.azhukov.agent.core.ports.SessionStorePort port = mock(com.azhukov.agent.core.ports.SessionStorePort.class);
+        org.mockito.Mockito.lenient().when(port.findById(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> sessionRepository.findById(inv.getArgument(0)));
+        org.mockito.Mockito.lenient().when(port.save(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> sessionRepository.save(inv.getArgument(0)));
+        org.mockito.Mockito.lenient().when(port.findChildSessions(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> java.util.List.of());
+        return port;
+    }
+
 }

@@ -34,7 +34,7 @@ class SessionTitleServiceTest {
     @BeforeEach
     void setUp() {
         modelClient = mock(ModelClient.class);
-        sessionRepository = mock(SessionRepository.class);
+        sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
         properties = new AgentProperties();
         properties.getCore().setAutoTitleSession(true);
         service = new SessionTitleService(modelClient, sessionRepository, properties);

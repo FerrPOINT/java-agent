@@ -5,8 +5,8 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
-import com.azhukov.agent.persistence.repository.MessageRepository;
-import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.azhukov.agent.core.ports.MessageStorePort;
+import com.azhukov.agent.core.ports.SessionStorePort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -39,8 +39,8 @@ public class SessionLineageService implements SessionLineagePort {
     /** Maximum chain depth to guard against accidental cycles. Mirrors Hermes cap of 100. */
     static final int MAX_CHAIN_DEPTH = 100;
 
-    private final SessionRepository sessionRepository;
-    private final MessageRepository messageRepository;
+    private final SessionStorePort sessionRepository;
+    private final MessageStorePort messageRepository;
     private final MessageMapper messageMapper;
     private final TransactionTemplate transactionTemplate;
 

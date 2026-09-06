@@ -61,8 +61,8 @@ class ProfilesDashboardControllerTest {
         properties.getModel().setModelName("gpt-5");
         runtimeConfigService = new RuntimeConfigService();
         profileService = new ProfileService(properties, runtimeConfigService);
-        sessionRepository = mock(SessionRepository.class);
-        messageRepository = mock(MessageRepository.class);
+        sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        messageRepository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
         mockMvc = MockMvcBuilders.standaloneSetup(
             new ProfilesDashboardController(
                 properties,

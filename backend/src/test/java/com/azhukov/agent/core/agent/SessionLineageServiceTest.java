@@ -5,8 +5,8 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
-import com.azhukov.agent.persistence.repository.MessageRepository;
-import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.azhukov.agent.core.ports.MessageStorePort;
+import com.azhukov.agent.core.ports.SessionStorePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -30,16 +30,16 @@ import static org.mockito.Mockito.when;
  */
 class SessionLineageServiceTest {
 
-    private SessionRepository sessionRepository;
-    private MessageRepository messageRepository;
+    private com.azhukov.agent.core.ports.SessionStorePort sessionRepository;
+    private com.azhukov.agent.core.ports.MessageStorePort messageRepository;
     private MessageMapper messageMapper;
     private TransactionTemplate transactionTemplate;
     private SessionLineageService service;
 
     @BeforeEach
     void setUp() {
-        sessionRepository = mock(SessionRepository.class);
-        messageRepository = mock(MessageRepository.class);
+        sessionRepository = mock(com.azhukov.agent.core.ports.SessionStorePort.class);
+        messageRepository = mock(com.azhukov.agent.core.ports.MessageStorePort.class);
         messageMapper = org.mapstruct.factory.Mappers.getMapper(MessageMapper.class);
         transactionTemplate = mock(TransactionTemplate.class);
         when(transactionTemplate.execute(any())).thenAnswer(inv -> {

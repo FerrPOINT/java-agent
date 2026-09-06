@@ -6,9 +6,9 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.persistence.entity.SessionEntity;
-import com.azhukov.agent.persistence.repository.CompressionLockRepository;
-import com.azhukov.agent.persistence.repository.MessageRepository;
-import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.azhukov.agent.core.ports.CompressionLockPort;
+import com.azhukov.agent.core.ports.MessageStorePort;
+import com.azhukov.agent.core.ports.SessionStorePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,11 +43,11 @@ import static org.mockito.Mockito.*;
 class SessionRotationTest {
 
     @Mock
-    private SessionRepository sessionRepository;
+    private com.azhukov.agent.core.ports.SessionStorePort sessionRepository;
     @Mock
-    private CompressionLockRepository lockRepository;
+    private com.azhukov.agent.core.ports.CompressionLockPort lockRepository;
     @Mock
-    private MessageRepository messageRepository;
+    private com.azhukov.agent.core.ports.MessageStorePort messageRepository;
 
     private AgentProperties properties;
     private UUID sessionId;
@@ -315,7 +315,7 @@ class SessionRotationTest {
         assertThat(result).isEmpty();
     }
 
-    // ── 8. SessionRepository not injected (unit test scenario) ──
+    // ── 8. com.azhukov.agent.core.ports.SessionStorePort not injected (unit test scenario) ──
 
     @Test
     void rotateSessionReturnsEmptyWhenSessionRepositoryNull() {

@@ -99,7 +99,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void contextCompressor_bean() {
-        assertThat(contextConfig.contextCompressor(mock(ModelClient.class), mock(CompressionLockRepository.class), properties, mock(SessionRepository.class), mock(MessageRepository.class))).isNotNull();
+        assertThat(contextConfig.contextCompressor(mock(ModelClient.class), mock(com.azhukov.agent.core.ports.CompressionLockPort.class), properties, mock(com.azhukov.agent.core.ports.SessionStorePort.class), mock(com.azhukov.agent.core.ports.MessageStorePort.class))).isNotNull();
     }
 
     @Test
@@ -172,12 +172,12 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void contextEngine_bean() {
-        assertThat(contextConfig.contextEngine(mock(MemoryProvider.class), mock(SkillManager.class), mock(MessageRepository.class), mock(ContextCompressor.class), properties, mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.SessionLineagePort.class), mock(com.azhukov.agent.persistence.repository.SessionRepository.class), mock(com.azhukov.agent.core.metadata.ModelMetadataService.class))).isNotNull();
+        assertThat(contextConfig.contextEngine(mock(MemoryProvider.class), mock(SkillManager.class), mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(ContextCompressor.class), properties, mock(com.azhukov.agent.core.prompt.PromptCacheTracker.class), mock(com.azhukov.agent.core.context.SessionLineagePort.class), mock(com.azhukov.agent.core.ports.SessionStorePort.class), mock(com.azhukov.agent.core.metadata.ModelMetadataService.class))).isNotNull();
     }
 
     @Test
     void memoryProvider_bean() {
-        assertThat(memoryConfig.memoryProvider(mock(MemoryRepository.class), new AgentProperties(), new com.azhukov.agent.core.memory.MemoryThreatScanner())).isNotNull();
+        assertThat(memoryConfig.memoryProvider(mock(com.azhukov.agent.core.ports.MemoryStorePort.class), new AgentProperties(), new com.azhukov.agent.core.memory.MemoryThreatScanner())).isNotNull();
     }
 
     @Test
@@ -187,7 +187,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void skillManager_bean() {
-        assertThat(skillConfig.skillManager(mock(SkillRepository.class), new AgentProperties())).isNotNull();
+        assertThat(skillConfig.skillManager(mock(com.azhukov.agent.core.ports.SkillStorePort.class), new AgentProperties())).isNotNull();
     }
 
     @Test

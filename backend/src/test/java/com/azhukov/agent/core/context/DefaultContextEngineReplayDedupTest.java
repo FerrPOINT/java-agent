@@ -7,7 +7,7 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.MessageEntity;
-import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.core.ports.MessageStorePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -19,6 +19,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
@@ -41,7 +42,7 @@ class DefaultContextEngineReplayDedupTest {
     @Mock
     private SkillManager skillManager;
     @Mock
-    private MessageRepository messageRepository;
+    private com.azhukov.agent.core.ports.MessageStorePort messageRepository;
     @Mock
     private ContextCompressor contextCompressor;
     @Mock
@@ -111,7 +112,7 @@ class DefaultContextEngineReplayDedupTest {
         MessageEntity userRow = new MessageEntity();
         userRow.setRole("user");
         userRow.setContent("hello");
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(List.of(userRow, systemRow)); // desc: system last written
 
         List<Message> out = engine.prepareContext(session, List.of(

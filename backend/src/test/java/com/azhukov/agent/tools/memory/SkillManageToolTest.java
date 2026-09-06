@@ -42,7 +42,7 @@ class SkillManageToolTest {
         tool = new SkillManageTool(skillManager,
             new com.azhukov.agent.core.skill.SkillMutationLedger(
                 new org.springframework.beans.factory.support.DefaultListableBeanFactory()
-                    .getBeanProvider(com.azhukov.agent.persistence.repository.SkillAuditLogRepository.class)));
+                    .getBeanProvider(com.azhukov.agent.core.ports.SkillAuditPort.class)));
         // Ensure no leftover ThreadLocal from a previous test
         WriteContext.clear();
     }

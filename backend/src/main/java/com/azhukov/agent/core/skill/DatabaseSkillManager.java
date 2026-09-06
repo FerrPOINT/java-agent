@@ -2,7 +2,7 @@ package com.azhukov.agent.core.skill;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.SkillEntity;
-import com.azhukov.agent.persistence.repository.SkillRepository;
+import com.azhukov.agent.core.ports.SkillStorePort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -22,7 +22,7 @@ import java.util.stream.Stream;
 @RequiredArgsConstructor
 public class DatabaseSkillManager implements SkillManager {
 
- private final SkillRepository skillRepository;
+ private final SkillStorePort skillRepository;
  private final AgentProperties properties;
 
  // ─── Validation constants (ported from the original project's skill_manager_tool.py) ───
@@ -38,7 +38,7 @@ public class DatabaseSkillManager implements SkillManager {
  /** Subdirectories allowed for writeSupportFile/removeSupportFile. */
  private static final List<String> ALLOWED_SUBDIRS = List.of("references", "templates", "scripts", "assets");
 
- public DatabaseSkillManager(SkillRepository skillRepository) {
+ public DatabaseSkillManager(SkillStorePort skillRepository) {
  this.skillRepository = skillRepository;
  this.properties = null;
  }

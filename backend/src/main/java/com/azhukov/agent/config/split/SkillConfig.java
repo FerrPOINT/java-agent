@@ -4,7 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.skill.DatabaseSkillManager;
 import com.azhukov.agent.core.skill.NoOpSkillManager;
 import com.azhukov.agent.core.skill.SkillManager;
-import com.azhukov.agent.persistence.repository.SkillRepository;
+import com.azhukov.agent.core.ports.SkillStorePort;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -19,7 +19,7 @@ public class SkillConfig {
     @Bean
     @ConditionalOnProperty(name = "agent.skills.enabled", havingValue = "true", matchIfMissing = true)
     @ConditionalOnMissingBean(SkillManager.class)
-    public SkillManager skillManager(SkillRepository skillRepository, AgentProperties properties) {
+    public SkillManager skillManager(SkillStorePort skillRepository, AgentProperties properties) {
         return new DatabaseSkillManager(skillRepository, properties);
     }
 

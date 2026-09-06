@@ -8,7 +8,7 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.persistence.entity.CompressionLockEntity;
-import com.azhukov.agent.persistence.repository.CompressionLockRepository;
+import com.azhukov.agent.core.ports.CompressionLockPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,7 +36,7 @@ import static org.mockito.Mockito.when;
 class DefaultContextCompressorBranchCoverageTest {
 
     @Mock
-    private CompressionLockRepository lockRepository;
+    private com.azhukov.agent.core.ports.CompressionLockPort lockRepository;
 
     private AgentProperties properties;
     private DefaultContextCompressor compressor;

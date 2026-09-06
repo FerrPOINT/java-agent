@@ -11,8 +11,8 @@ import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.mapper.ToolCallPersistenceCodec;
-import com.azhukov.agent.persistence.repository.MessageRepository;
-import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.azhukov.agent.core.ports.MessageStorePort;
+import com.azhukov.agent.core.ports.SessionStorePort;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
@@ -35,7 +35,7 @@ public class DefaultContextEngine implements ContextEngine {
 
  private final MemoryProvider memoryProvider;
  private final SkillManager skillManager;
- private final MessageRepository messageRepository;
+ private final MessageStorePort messageRepository;
  private final ContextCompressor contextCompressor;
 
  /** Exposed for proactive compression checks from AgentStreamingService. */
@@ -60,7 +60,7 @@ public class DefaultContextEngine implements ContextEngine {
   * When null, falls back to loading current-session-only history.
   */
  private SessionLineagePort sessionLineageService;
- private SessionRepository sessionRepository;
+ private SessionStorePort sessionRepository;
 
  // Perf instrumentation (optional — no-op when not wired)
  @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -113,7 +113,7 @@ public class DefaultContextEngine implements ContextEngine {
 
  public DefaultContextEngine(MemoryProvider memoryProvider,
  SkillManager skillManager,
- MessageRepository messageRepository,
+ MessageStorePort messageRepository,
  ContextCompressor contextCompressor,
  AgentProperties properties) {
  this(memoryProvider, skillManager, messageRepository, contextCompressor, properties, null, null);
@@ -121,7 +121,7 @@ public class DefaultContextEngine implements ContextEngine {
 
  public DefaultContextEngine(MemoryProvider memoryProvider,
  SkillManager skillManager,
- MessageRepository messageRepository,
+ MessageStorePort messageRepository,
  ContextCompressor contextCompressor,
  AgentProperties properties,
  PromptCacheTracker cacheTracker) {
@@ -130,7 +130,7 @@ public class DefaultContextEngine implements ContextEngine {
 
  public DefaultContextEngine(MemoryProvider memoryProvider,
  SkillManager skillManager,
- MessageRepository messageRepository,
+ MessageStorePort messageRepository,
  ContextCompressor contextCompressor,
  AgentProperties properties,
  PromptCacheTracker cacheTracker,
@@ -167,7 +167,7 @@ public class DefaultContextEngine implements ContextEngine {
      this.sessionLineageService = sessionLineageService;
  }
 
- public void setSessionRepository(SessionRepository sessionRepository) {
+ public void setSessionRepository(SessionStorePort sessionRepository) {
      this.sessionRepository = sessionRepository;
  }
 
@@ -655,7 +655,7 @@ public class DefaultContextEngine implements ContextEngine {
              maxMessages = 50;
          }
          List<MessageEntity> descHistory = messageRepository.findBySessionIdOrderByCreatedAtDesc(
-                 session.id(), org.springframework.data.domain.PageRequest.of(0, maxMessages)).stream()
+                 session.id(), maxMessages).stream()
              .filter(DefaultContextEngine::isActive).toList();
          // Reverse to get ascending order (defensive copy in case the list is immutable)
          java.util.List<MessageEntity> ascHistory = new java.util.ArrayList<>(descHistory);

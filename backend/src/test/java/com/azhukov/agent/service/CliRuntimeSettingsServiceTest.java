@@ -28,7 +28,7 @@ class CliRuntimeSettingsServiceTest {
 
     @BeforeEach
     void setUp() {
-        sessionRepository = mock(SessionRepository.class);
+        sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
         toolRegistry = mock(ToolRegistry.class);
         service = new CliRuntimeSettingsService(sessionRepository, toolRegistry);
     }

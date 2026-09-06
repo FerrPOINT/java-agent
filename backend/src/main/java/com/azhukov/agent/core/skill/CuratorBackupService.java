@@ -2,8 +2,8 @@ package com.azhukov.agent.core.skill;
 
 import com.azhukov.agent.persistence.entity.CuratorSnapshotEntity;
 import com.azhukov.agent.persistence.entity.SkillEntity;
-import com.azhukov.agent.persistence.repository.CuratorSnapshotRepository;
-import com.azhukov.agent.persistence.repository.SkillRepository;
+import com.azhukov.agent.core.ports.CuratorSnapshotPort;
+import com.azhukov.agent.core.ports.SkillStorePort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,8 +47,8 @@ public class CuratorBackupService {
  private static final String SNAPSHOT_DATA_PREFIX = "=== ";
  private static final String SNAPSHOT_DATA_SEPARATOR = " ===\n";
 
- private final SkillRepository skillRepository;
- private final CuratorSnapshotRepository snapshotRepository;
+ private final SkillStorePort skillRepository;
+ private final com.azhukov.agent.core.ports.CuratorSnapshotPort snapshotRepository;
  private final ObjectMapper objectMapper = new ObjectMapper();
 
  /**

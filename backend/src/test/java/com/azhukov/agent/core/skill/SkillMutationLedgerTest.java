@@ -1,7 +1,7 @@
 package com.azhukov.agent.core.skill;
 
 import com.azhukov.agent.persistence.entity.SkillAuditLogEntity;
-import com.azhukov.agent.persistence.repository.SkillAuditLogRepository;
+import com.azhukov.agent.core.ports.SkillAuditPort;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
@@ -19,15 +19,15 @@ import static org.mockito.Mockito.*;
 class SkillMutationLedgerTest {
 
     @SuppressWarnings("unchecked")
-    private ObjectProvider<SkillAuditLogRepository> provider(SkillAuditLogRepository repo) {
-        ObjectProvider<SkillAuditLogRepository> p = mock(ObjectProvider.class);
+    private ObjectProvider<com.azhukov.agent.core.ports.SkillAuditPort> provider(com.azhukov.agent.core.ports.SkillAuditPort repo) {
+        ObjectProvider<com.azhukov.agent.core.ports.SkillAuditPort> p = mock(ObjectProvider.class);
         when(p.getIfAvailable()).thenReturn(repo);
         return p;
     }
 
     @Test
     void recordsMutationWithActorAndSnapshots() {
-        SkillAuditLogRepository repo = mock(SkillAuditLogRepository.class);
+        com.azhukov.agent.core.ports.SkillAuditPort repo = mock(com.azhukov.agent.core.ports.SkillAuditPort.class);
         SkillMutationLedger ledger = new SkillMutationLedger(provider(repo));
 
         ledger.record("update", "deploy-runbook", null, null,
@@ -45,7 +45,7 @@ class SkillMutationLedgerTest {
 
     @Test
     void backgroundReviewDerivesCuratorActor() {
-        SkillAuditLogRepository repo = mock(SkillAuditLogRepository.class);
+        com.azhukov.agent.core.ports.SkillAuditPort repo = mock(com.azhukov.agent.core.ports.SkillAuditPort.class);
         SkillMutationLedger ledger = new SkillMutationLedger(provider(repo));
 
         com.azhukov.agent.core.memory.WriteContext.set(
@@ -64,7 +64,7 @@ class SkillMutationLedgerTest {
 
     @Test
     void ledgerFailureNeverBlocksMutation() {
-        SkillAuditLogRepository repo = mock(SkillAuditLogRepository.class);
+        com.azhukov.agent.core.ports.SkillAuditPort repo = mock(com.azhukov.agent.core.ports.SkillAuditPort.class);
         when(repo.save(any())).thenThrow(new RuntimeException("DB down"));
         SkillMutationLedger ledger = new SkillMutationLedger(provider(repo));
 
@@ -75,7 +75,7 @@ class SkillMutationLedgerTest {
     @Test
     void missingRepositoryIsSilentNoOp() {
         @SuppressWarnings("unchecked")
-        ObjectProvider<SkillAuditLogRepository> empty = mock(ObjectProvider.class);
+        ObjectProvider<com.azhukov.agent.core.ports.SkillAuditPort> empty = mock(ObjectProvider.class);
         when(empty.getIfAvailable()).thenReturn(null);
         SkillMutationLedger ledger = new SkillMutationLedger(empty);
 
@@ -84,7 +84,7 @@ class SkillMutationLedgerTest {
 
     @Test
     void explicitActorOverrideWins() {
-        SkillAuditLogRepository repo = mock(SkillAuditLogRepository.class);
+        com.azhukov.agent.core.ports.SkillAuditPort repo = mock(com.azhukov.agent.core.ports.SkillAuditPort.class);
         SkillMutationLedger ledger = new SkillMutationLedger(provider(repo));
 
         ledger.record("archive", "old-skill", SkillMutationLedger.ACTOR_USER, "{}", null);

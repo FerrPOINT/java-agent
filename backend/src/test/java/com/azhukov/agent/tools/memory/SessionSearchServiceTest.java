@@ -37,8 +37,8 @@ class SessionSearchServiceTest {
 
     @BeforeEach
     void setUp() {
-        sessionRepository = mock(SessionRepository.class);
-        messageRepository = mock(MessageRepository.class);
+        sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        messageRepository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
         sessionLineageService = mock(SessionLineageService.class);
         service = new SessionSearchService(sessionRepository, messageRepository, sessionLineageService);
 

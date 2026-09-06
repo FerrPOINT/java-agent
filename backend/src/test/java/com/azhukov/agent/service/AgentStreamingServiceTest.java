@@ -76,8 +76,8 @@ class AgentStreamingServiceTest {
     private ObjectMapper objectMapper;
     private UsageTracker usageTracker;
     private AgentProperties properties;
-    private SessionRepository sessionRepository;
-    private MessageRepository messageRepository;
+    private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+    private com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     private TransactionTemplate transactionTemplate;
     private IterationBudget iterationBudget;
     private TurnStateManager turnStateManager;
@@ -100,8 +100,8 @@ class AgentStreamingServiceTest {
         properties.getCore().setMaxTurns(10);
         properties.getError().setRetryDelayMs(10);
         properties.getError().setRetryCapMs(50);
-        sessionRepository = mock(SessionRepository.class);
-        messageRepository = mock(MessageRepository.class);
+        sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        messageRepository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
         transactionTemplate = mock(TransactionTemplate.class);
         iterationBudget = mock(IterationBudget.class);
         turnStateManager = mock(TurnStateManager.class);
@@ -123,7 +123,7 @@ class AgentStreamingServiceTest {
         when(toolExecutionService.enforceToolResultBudget(any()))
             .thenAnswer(inv -> inv.getArgument(0));
 
-        // SessionRepository returns a session entity for existing sessions
+        // com.azhukov.agent.persistence.repository.SessionRepository returns a session entity for existing sessions
         SessionEntity sessionEntity = new SessionEntity();
         sessionEntity.setId(SESSION_ID);
         sessionEntity.setUserId("user-1");
@@ -134,7 +134,7 @@ class AgentStreamingServiceTest {
         sessionEntity.setUpdatedAt(Instant.now());
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionEntity));
 
-        // MessageRepository returns empty history by default
+        // com.azhukov.agent.persistence.repository.MessageRepository returns empty history by default
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID))
             .thenReturn(List.of());
 
@@ -183,7 +183,7 @@ class AgentStreamingServiceTest {
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
             new RuntimeConfigService(), new InterruptToken(), new SteerBuffer(),
             new TokenEstimator(), new ToolResultFormatter(),
-            new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate, messageRepository, mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
+            new AgentSessionResolver(sessionStorePort(), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
             lineageService,
             new CliStateApplier(), null, null, new ModelMetadataService(), null);
     }
@@ -780,4 +780,21 @@ class AgentStreamingServiceTest {
             return field;
         }
     }
+
+    private com.azhukov.agent.core.ports.SessionStorePort sessionStorePort() {
+        com.azhukov.agent.core.ports.SessionStorePort port = mock(com.azhukov.agent.core.ports.SessionStorePort.class);
+        org.mockito.Mockito.lenient().when(port.findById(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> sessionRepository.findById(inv.getArgument(0)));
+        org.mockito.Mockito.lenient().when(port.save(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> sessionRepository.save(inv.getArgument(0)));
+        org.mockito.Mockito.lenient().when(port.findChildSessions(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> java.util.List.of());
+        org.mockito.Mockito.lenient().doAnswer(inv -> null).when(port)
+            .insertSessionRow(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
+        return port;
+    }
+
 }

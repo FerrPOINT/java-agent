@@ -11,9 +11,9 @@ import com.azhukov.agent.persistence.entity.CompressionLockEntity;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.ToolCallPersistenceCodec;
-import com.azhukov.agent.persistence.repository.CompressionLockRepository;
-import com.azhukov.agent.persistence.repository.MessageRepository;
-import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.azhukov.agent.core.ports.CompressionLockPort;
+import com.azhukov.agent.core.ports.MessageStorePort;
+import com.azhukov.agent.core.ports.SessionStorePort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -218,7 +218,7 @@ public class DefaultContextCompressor implements ContextCompressor {
  private static final Pattern MEDIA_DIRECTIVE_RE = Pattern.compile("MEDIA:[^\\s]+");
 
  private final ModelClient modelClient;
- private final CompressionLockRepository lockRepository;
+ private final com.azhukov.agent.core.ports.CompressionLockPort lockRepository;
  private final AgentProperties properties;
 
  // Hermes parity (conversation_compression.py:3989): publish a compression
@@ -236,7 +236,7 @@ public class DefaultContextCompressor implements ContextCompressor {
  // by the @Bean factory after construction. This is a known trade-off documented in the audit.
  // WARNING 2: volatile — the setter is called from a different thread (Spring @Bean factory)
  // than the readers (turn loop threads), so visibility must be guaranteed.
- private volatile SessionRepository sessionRepository;
+ private volatile SessionStorePort sessionRepository;
  private final ConcurrentHashMap<String, Integer> inMemoryLocks = new ConcurrentHashMap<>();
 
     /** Per-session compression count — mirrors Hermes compression_count for protectFirstN decay. */
@@ -249,14 +249,14 @@ public class DefaultContextCompressor implements ContextCompressor {
  public record SessionRotationResult(UUID newSessionId, String newTitle) {}
 
  /** Sets the SessionRepository — called by the @Bean factory after construction. */
- public void setSessionRepository(SessionRepository sessionRepository) {
+ public void setSessionRepository(SessionStorePort sessionRepository) {
      this.sessionRepository = sessionRepository;
  }
 
- private volatile MessageRepository messageRepository;
+ private volatile MessageStorePort messageRepository;
 
  /** Sets the MessageRepository — needed to deactivate ancestor rows on rotation. */
- public void setMessageRepository(MessageRepository messageRepository) {
+ public void setMessageRepository(MessageStorePort messageRepository) {
      this.messageRepository = messageRepository;
  }
 

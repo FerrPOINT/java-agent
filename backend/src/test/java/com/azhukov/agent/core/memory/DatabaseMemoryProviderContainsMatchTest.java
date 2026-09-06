@@ -18,7 +18,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void replaceUsesContainsMatchNotExactOnly() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         // Entry contains "old text" as a substring of a larger fact
         MemoryEntity e = new MemoryEntity();
         e.setFact("the old text is here");
@@ -36,7 +36,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void replaceSetsNewFactEntirelyNotSubstringReplace() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         MemoryEntity e = new MemoryEntity();
         e.setFact("exact old text");
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem"))
@@ -53,7 +53,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void removeUsesContainsMatchNotExactOnly() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         MemoryEntity e = new MemoryEntity();
         e.setFact("the target text is here");
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "mem"))
@@ -68,7 +68,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void replaceWithMultipleUniqueContainsMatchesReturnsError() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         MemoryEntity e1 = new MemoryEntity();
         e1.setFact("same fact variant 1");
         MemoryEntity e2 = new MemoryEntity();
@@ -94,7 +94,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void replace_overflowCheck_rejectsWhenTotalExceedsLimit() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         // Two entries near the limit
         MemoryEntity e1 = new MemoryEntity();
         e1.setFact("a".repeat(1500));
@@ -115,7 +115,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void replace_withinLimit_succeeds() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         MemoryEntity e1 = new MemoryEntity();
         e1.setFact("short entry");
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "memory"))
@@ -132,7 +132,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void replace_multipleMatches_includesPreviewsInError() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         MemoryEntity e1 = new MemoryEntity();
         e1.setFact("The quick brown fox jumps");
         MemoryEntity e2 = new MemoryEntity();
@@ -149,7 +149,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void remove_multipleMatches_includesPreviewsInError() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         MemoryEntity e1 = new MemoryEntity();
         e1.setFact("The quick brown fox jumps");
         MemoryEntity e2 = new MemoryEntity();
@@ -167,7 +167,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void replace_previewTruncatedAt80Chars() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         String longFact1 = "This is a very long entry that contains the search term and goes well beyond eighty characters in total length";
         String longFact2 = "Another long entry that contains the search term and also exceeds the eighty character preview limit";
         MemoryEntity e1 = new MemoryEntity();
@@ -187,7 +187,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void getCharCount_returnsPureEntryContentWithoutHeaders() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         MemoryEntity e1 = new MemoryEntity();
         e1.setCategory("auto");
         e1.setFact("Fact one");
@@ -207,7 +207,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void getEntryCount_returnsRawEntryCount() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         MemoryEntity e1 = new MemoryEntity();
         e1.setFact("Fact one");
         MemoryEntity e2 = new MemoryEntity();
@@ -221,7 +221,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void getCharCount_emptyStore_returnsZero() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "memory"))
             .thenReturn(List.of());
 
@@ -232,7 +232,7 @@ class DatabaseMemoryProviderContainsMatchTest {
 
     @Test
     void getRawEntries_returnsFactTextsOnly() {
-        MemoryRepository repo = mock(MemoryRepository.class);
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
         MemoryEntity e1 = new MemoryEntity();
         e1.setCategory("auto");
         e1.setFact("Fact one");

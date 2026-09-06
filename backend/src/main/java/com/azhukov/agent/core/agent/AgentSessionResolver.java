@@ -3,8 +3,8 @@ package com.azhukov.agent.core.agent;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
-import com.azhukov.agent.persistence.repository.MessageRepository;
-import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.azhukov.agent.core.ports.MessageStorePort;
+import com.azhukov.agent.core.ports.SessionStorePort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.Hibernate;
@@ -29,10 +29,10 @@ import com.azhukov.agent.config.AgentProperties;
 @RequiredArgsConstructor
 public class AgentSessionResolver {
 
-    private final SessionRepository sessionRepository;
+    private final SessionStorePort sessionRepository;
     private final SessionEntityMapper sessionMapper;
     private final TransactionTemplate transactionTemplate;
-    private final MessageRepository messageRepository;
+    private final MessageStorePort messageRepository;
     private final SessionLineageService sessionLineageService;
 
     /**
@@ -245,7 +245,7 @@ public class AgentSessionResolver {
             seen.add(current);
             for (int i = 0; i < 32; i++) {
                 List<SessionEntity> children = sessionRepository
-                    .findByParentSessionIdOrderByCreatedAtDesc(current);
+                    .findChildSessions(current);
                 if (children == null || children.isEmpty()) {
                     return sessionId;
                 }

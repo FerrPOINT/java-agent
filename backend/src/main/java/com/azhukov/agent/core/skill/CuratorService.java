@@ -15,8 +15,8 @@ import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.persistence.entity.SkillAuditLogEntity;
 import com.azhukov.agent.persistence.entity.SkillEntity;
-import com.azhukov.agent.persistence.repository.SkillAuditLogRepository;
-import com.azhukov.agent.persistence.repository.SkillRepository;
+import com.azhukov.agent.core.ports.SkillAuditPort;
+import com.azhukov.agent.core.ports.SkillStorePort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -62,7 +62,7 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class CuratorService {
 
- private final SkillRepository skillRepository;
+ private final SkillStorePort skillRepository;
  private final AgentProperties properties;
  private final ModelClient modelClient;
  private final CuratorBackupService backupService;
@@ -73,7 +73,7 @@ public class CuratorService {
  // HERMES-SYNC Bug 3: Curator audit ledger — records each skill mutation.
  // Non-final with setter to avoid breaking existing constructors (same pattern as
  // DefaultContextCompressor's sessionRepository field).
- private volatile SkillAuditLogRepository auditLogRepository;
+ private volatile com.azhukov.agent.core.ports.SkillAuditPort auditLogRepository;
 
  private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
  Thread t = new Thread(r, "skill-curator");
@@ -141,7 +141,7 @@ public class CuratorService {
  }
 
  /** Manual constructor for tests — no LLM, no backup. */
- public CuratorService(SkillRepository skillRepository, AgentProperties properties) {
+ public CuratorService(SkillStorePort skillRepository, AgentProperties properties) {
      this.skillRepository = skillRepository;
      this.properties = properties;
      this.modelClient = null;
@@ -152,7 +152,7 @@ public class CuratorService {
 
  /** Full constructor with LLM and backup support. */
  @org.springframework.beans.factory.annotation.Autowired
- public CuratorService(SkillRepository skillRepository, AgentProperties properties,
+ public CuratorService(SkillStorePort skillRepository, AgentProperties properties,
          ModelClient modelClient, CuratorBackupService backupService,
          org.springframework.beans.factory.ObjectProvider<ToolExecutionService> toolExecutionServiceProvider,
          org.springframework.beans.factory.ObjectProvider<ToolRegistry> toolRegistryProvider) {
@@ -165,7 +165,7 @@ public class CuratorService {
  }
 
  /** Test constructor with tool execution support. */
- public CuratorService(SkillRepository skillRepository, AgentProperties properties,
+ public CuratorService(SkillStorePort skillRepository, AgentProperties properties,
          ModelClient modelClient, CuratorBackupService backupService,
          ToolExecutionService toolExecutionService, ToolRegistry toolRegistry) {
      this.skillRepository = skillRepository;
@@ -184,12 +184,12 @@ public class CuratorService {
   * existing constructors.
   */
  @org.springframework.beans.factory.annotation.Autowired
- public void setAuditLogRepository(org.springframework.beans.factory.ObjectProvider<SkillAuditLogRepository> provider) {
+ public void setAuditLogRepository(org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.ports.SkillAuditPort> provider) {
      this.auditLogRepository = provider != null ? provider.getIfAvailable() : null;
  }
 
  /** Test-friendly setter for direct injection. */
- public void setAuditLogRepository(SkillAuditLogRepository auditLogRepository) {
+ public void setAuditLogRepository(com.azhukov.agent.core.ports.SkillAuditPort auditLogRepository) {
      this.auditLogRepository = auditLogRepository;
  }
 
@@ -455,7 +455,7 @@ public class CuratorService {
  }
 
  // S5: Classify skills with three-state lifecycle
- List<SkillEntity> allSkills = skillRepository.findByArchivedFalse(PageRequest.of(0, 50)).getContent();
+ List<SkillEntity> allSkills = skillRepository.findByArchivedFalse(0, 50);
  List<String> active = new ArrayList<>();
  List<String> stale = new ArrayList<>();
  List<String> archived = new ArrayList<>();

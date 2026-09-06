@@ -2,7 +2,7 @@ package com.azhukov.agent.core.memory;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.PendingMemoryEntity;
-import com.azhukov.agent.persistence.repository.PendingMemoryRepository;
+import com.azhukov.agent.core.ports.PendingMemoryStorePort;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,7 +33,7 @@ public class WriteApprovalGate {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final PendingMemoryRepository pendingRepository;
+    private final com.azhukov.agent.core.ports.PendingMemoryStorePort pendingRepository;
     private final MemoryProvider memoryProvider;
     private final AgentProperties properties;
     private volatile boolean enabled;

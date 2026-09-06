@@ -56,7 +56,7 @@ class TrimToFitModelWindowTest {
     void realModelWindowKeepsToolPairsIntact() throws Exception {
         MemoryProvider mp = mock(MemoryProvider.class);
         SkillManager sm = mock(SkillManager.class);
-        MessageRepository mr = mock(MessageRepository.class);
+        com.azhukov.agent.core.ports.MessageStorePort mr = mock(com.azhukov.agent.core.ports.MessageStorePort.class);
         var cc = mock(com.azhukov.agent.core.context.ContextCompressor.class);
         ModelMetadataService meta = mock(ModelMetadataService.class);
         doReturn(202_752).when(meta).detectContextLength(any());
@@ -84,7 +84,7 @@ class TrimToFitModelWindowTest {
         // историю до 2 сообщений — фикс должен использовать хотя бы конфиг-максимум.
         MemoryProvider mp = mock(MemoryProvider.class);
         SkillManager sm = mock(SkillManager.class);
-        MessageRepository mr = mock(MessageRepository.class);
+        com.azhukov.agent.core.ports.MessageStorePort mr = mock(com.azhukov.agent.core.ports.MessageStorePort.class);
         var cc = mock(com.azhukov.agent.core.context.ContextCompressor.class);
 
         DefaultContextEngine engine = new DefaultContextEngine(mp, sm, mr, cc, props(), null, null);

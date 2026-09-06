@@ -2,7 +2,7 @@ package com.azhukov.agent.core.memory;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.PendingMemoryEntity;
-import com.azhukov.agent.persistence.repository.PendingMemoryRepository;
+import com.azhukov.agent.core.ports.PendingMemoryStorePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -17,14 +17,14 @@ import static org.mockito.Mockito.*;
 
 class WriteApprovalGateTest {
 
-    private PendingMemoryRepository pendingRepo;
+    private com.azhukov.agent.core.ports.PendingMemoryStorePort pendingRepo;
     private MemoryProvider memoryProvider;
     private AgentProperties properties;
     private WriteApprovalGate gate;
 
     @BeforeEach
     void setUp() {
-        pendingRepo = mock(PendingMemoryRepository.class);
+        pendingRepo = mock(com.azhukov.agent.core.ports.PendingMemoryStorePort.class);
         memoryProvider = mock(MemoryProvider.class);
         properties = mock(AgentProperties.class);
         AgentProperties.MemoryProperties memProps = mock(AgentProperties.MemoryProperties.class);

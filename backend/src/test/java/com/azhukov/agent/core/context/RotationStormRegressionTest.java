@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -46,7 +47,7 @@ class RotationStormRegressionTest {
 
         MemoryProvider mp = mock(MemoryProvider.class);
         SkillManager sm = mock(SkillManager.class);
-        MessageRepository mr = mock(MessageRepository.class);
+        com.azhukov.agent.core.ports.MessageStorePort mr = mock(com.azhukov.agent.core.ports.MessageStorePort.class);
         ContextCompressor cc = mock(ContextCompressor.class);
         ModelMetadataService meta = mock(ModelMetadataService.class);
                 org.mockito.Mockito.doReturn(256_000).when(meta).detectContextLength(any());
@@ -68,7 +69,7 @@ class RotationStormRegressionTest {
     void rotationCarriesCompressionCooldownToChildSession() throws Exception {
         MemoryProvider mp = mock(MemoryProvider.class);
         SkillManager sm = mock(SkillManager.class);
-        MessageRepository mr = mock(MessageRepository.class);
+        com.azhukov.agent.core.ports.MessageStorePort mr = mock(com.azhukov.agent.core.ports.MessageStorePort.class);
         AgentProperties p = props();
         DefaultContextCompressor cc = mock(DefaultContextCompressor.class);
         // Deliberately WITHOUT metadata service: reproduces the legacy 16K-window
@@ -94,7 +95,7 @@ class RotationStormRegressionTest {
         bulkyRow.setRole("user");
         bulkyRow.setCreatedAt(Instant.now());
         bulkyRow.setActive(true);
-        lenient().when(mr.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any()))
+        lenient().when(mr.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(java.util.List.of(bulkyRow));
 
         String bulky = "y".repeat(2_000);

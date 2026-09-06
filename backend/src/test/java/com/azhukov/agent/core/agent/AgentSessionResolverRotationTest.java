@@ -3,8 +3,8 @@ package com.azhukov.agent.core.agent;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
-import com.azhukov.agent.persistence.repository.MessageRepository;
-import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.azhukov.agent.core.ports.MessageStorePort;
+import com.azhukov.agent.core.ports.SessionStorePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,9 +34,9 @@ import static org.mockito.Mockito.when;
 class AgentSessionResolverRotationTest {
 
     @Mock
-    private SessionRepository sessionRepository;
+    private com.azhukov.agent.core.ports.SessionStorePort sessionRepository;
     @Mock
-    private MessageRepository messageRepository;
+    private com.azhukov.agent.core.ports.MessageStorePort messageRepository;
     @Mock
     private TransactionTemplate transactionTemplate;
 
@@ -67,7 +67,7 @@ class AgentSessionResolverRotationTest {
         child.setModelName("app-test");
         child.setTitle("New chat (compressed)");
         child.setParentSessionId(parentId);
-        when(sessionRepository.findByParentSessionIdOrderByCreatedAtDesc(parentId))
+        when(sessionRepository.findChildSessions(parentId))
             .thenReturn(List.of(child));
         when(sessionRepository.findById(childId)).thenReturn(java.util.Optional.of(child));
         when(messageRepository.countBySessionIdAndActiveTrue(childId)).thenReturn(5L);
@@ -99,7 +99,7 @@ class AgentSessionResolverRotationTest {
     @Test
     void createsNewSessionWhenChainEndsEmpty() {
         when(messageRepository.countBySessionIdAndActiveTrue(parentId)).thenReturn(0L);
-        when(sessionRepository.findByParentSessionIdOrderByCreatedAtDesc(parentId))
+        when(sessionRepository.findChildSessions(parentId))
             .thenReturn(List.of());
         SessionEntity fresh = new SessionEntity();
         fresh.setId(UUID.randomUUID());
@@ -117,7 +117,7 @@ class AgentSessionResolverRotationTest {
     void createsNewSessionWithInboundTransportSource() {
         UUID missing = UUID.randomUUID();
         when(messageRepository.countBySessionIdAndActiveTrue(missing)).thenReturn(0L);
-        when(sessionRepository.findByParentSessionIdOrderByCreatedAtDesc(missing)).thenReturn(List.of());
+        when(sessionRepository.findChildSessions(missing)).thenReturn(List.of());
         SessionEntity fresh = new SessionEntity();
         fresh.setId(UUID.randomUUID());
         fresh.setUserId("telegram-user");

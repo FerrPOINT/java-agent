@@ -38,15 +38,15 @@ import static org.mockito.Mockito.*;
 class AgentRuntimeServiceRestartTest {
 
     private AgentRuntimeService agentRuntimeService;
-    private SessionRepository sessionRepository;
-    private MessageRepository messageRepository;
+    private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+    private com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     private SkillManager skillManager;
     private McpLifecycleManager mcpLifecycleManager;
 
     @BeforeEach
     void setUp() {
-        sessionRepository = mock(SessionRepository.class);
-        messageRepository = mock(MessageRepository.class);
+        sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        messageRepository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
         skillManager = mock(SkillManager.class);
         mcpLifecycleManager = mock(McpLifecycleManager.class);
         TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
@@ -62,7 +62,7 @@ class AgentRuntimeServiceRestartTest {
             messageRepository,
             mock(SessionTitleService.class),
             mock(MemoryProvider.class),
-            mock(MemoryRepository.class),
+            mock(com.azhukov.agent.persistence.repository.MemoryRepository.class),
             mock(WriteApprovalGate.class),
             mock(ConversationCompressor.class),
             mock(UsageTracker.class),
@@ -77,7 +77,7 @@ class AgentRuntimeServiceRestartTest {
             new com.fasterxml.jackson.databind.ObjectMapper(),
             org.mockito.Mockito.mock(RuntimeConfigService.class),
             transactionTemplate,
-            new AgentSessionResolver(sessionRepository, Mappers.getMapper(SessionEntityMapper.class), transactionTemplate, messageRepository, mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
+            new AgentSessionResolver(sessionStorePort(), Mappers.getMapper(SessionEntityMapper.class), transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
             new CliStateApplier(),
             new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class), mock(ConversationCompressor.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class, org.mockito.Mockito.RETURNS_SELF), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class)),
             mock(com.azhukov.agent.core.context.ContextCompressor.class),
@@ -109,4 +109,16 @@ class AgentRuntimeServiceRestartTest {
 
         verify(messageRepository, never()).deleteAll(any());
     }
+
+    private com.azhukov.agent.core.ports.SessionStorePort sessionStorePort() {
+        com.azhukov.agent.core.ports.SessionStorePort port = mock(com.azhukov.agent.core.ports.SessionStorePort.class);
+        org.mockito.Mockito.lenient().when(port.findById(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> sessionRepository.findById(inv.getArgument(0)));
+        org.mockito.Mockito.lenient().when(port.save(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> sessionRepository.save(inv.getArgument(0)));
+        org.mockito.Mockito.lenient().when(port.findChildSessions(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> java.util.List.of());
+        return port;
+    }
+
 }

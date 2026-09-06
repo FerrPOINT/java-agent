@@ -67,8 +67,8 @@ class AgentStreamingServiceEntryBranchTest {
     @Mock private PromptBuilder promptBuilder;
     @Mock private ContextEngine contextEngine;
     @Mock private UsageTracker usageTracker;
-    @Mock private SessionRepository sessionRepository;
-    @Mock private MessageRepository messageRepository;
+    @Mock private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+    @Mock private com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     @Mock private TransactionTemplate transactionTemplate;
     @Mock private IterationBudget iterationBudget;
     @Mock private TurnStateManager turnStateManager;
@@ -148,7 +148,7 @@ class AgentStreamingServiceEntryBranchTest {
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
             new RuntimeConfigService(), new com.azhukov.agent.core.agent.InterruptToken(), new com.azhukov.agent.core.agent.SteerBuffer(),
             new com.azhukov.agent.core.agent.TokenEstimator(), new com.azhukov.agent.core.agent.ToolResultFormatter(),
-            new com.azhukov.agent.core.agent.AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate, messageRepository, mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
+            new com.azhukov.agent.core.agent.AgentSessionResolver(mock(com.azhukov.agent.core.ports.SessionStorePort.class), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
             lineageService,
             new com.azhukov.agent.core.agent.CliStateApplier(), null, null, new ModelMetadataService(), null);
     }

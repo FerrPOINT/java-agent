@@ -4,7 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.core.skill.SkillManager;
-import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.core.ports.MessageStorePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,7 +27,7 @@ class ContextEngineInterfaceTest {
     @Mock
     private SkillManager skillManager;
     @Mock
-    private MessageRepository messageRepository;
+    private com.azhukov.agent.core.ports.MessageStorePort messageRepository;
     @Mock
     private ContextCompressor contextCompressor;
 

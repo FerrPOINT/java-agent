@@ -90,8 +90,8 @@ class CommentaryStreamingTest {
         ObjectMapper objectMapper = new ObjectMapper();
         UsageTracker usageTracker = mock(UsageTracker.class);
 
-        SessionRepository sessionRepository = mock(SessionRepository.class);
-        MessageRepository messageRepository = mock(MessageRepository.class);
+        com.azhukov.agent.persistence.repository.SessionRepository sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        com.azhukov.agent.persistence.repository.MessageRepository messageRepository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
         TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
         IterationBudget iterationBudget = mock(IterationBudget.class);
         TurnStateManager turnStateManager = mock(TurnStateManager.class);
@@ -141,8 +141,7 @@ class CommentaryStreamingTest {
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
             new RuntimeConfigService(), new InterruptToken(), new SteerBuffer(),
             new TokenEstimator(), new ToolResultFormatter(),
-            new AgentSessionResolver(sessionRepository, sessionMapper, transactionTemplate,
-                messageRepository, mock(SessionLineageService.class)),
+            new AgentSessionResolver(sessionStorePort(sessionRepository), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(SessionLineageService.class)),
             lineageService,
             new CliStateApplier(), null, null,
             new ModelMetadataService(), null);
@@ -328,4 +327,21 @@ class CommentaryStreamingTest {
             return field;
         }
     }
+
+    private com.azhukov.agent.core.ports.SessionStorePort sessionStorePort(com.azhukov.agent.persistence.repository.SessionRepository sessionRepository) {
+        com.azhukov.agent.core.ports.SessionStorePort port = mock(com.azhukov.agent.core.ports.SessionStorePort.class);
+        org.mockito.Mockito.lenient().when(port.findById(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> sessionRepository.findById(inv.getArgument(0)));
+        org.mockito.Mockito.lenient().when(port.save(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> sessionRepository.save(inv.getArgument(0)));
+        org.mockito.Mockito.lenient().when(port.findChildSessions(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> java.util.List.of());
+        org.mockito.Mockito.lenient().doAnswer(inv -> null).when(port)
+            .insertSessionRow(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
+        return port;
+    }
+
 }

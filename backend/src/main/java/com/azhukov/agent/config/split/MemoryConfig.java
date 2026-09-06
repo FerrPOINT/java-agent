@@ -10,8 +10,8 @@ import com.azhukov.agent.core.memory.MemoryThreatScanner;
 import com.azhukov.agent.core.memory.NoOpMemoryProvider;
 import com.azhukov.agent.core.memory.ReviewToolProvider;
 import com.azhukov.agent.core.memory.WriteApprovalGate;
-import com.azhukov.agent.persistence.repository.MemoryRepository;
-import com.azhukov.agent.persistence.repository.PendingMemoryRepository;
+import com.azhukov.agent.core.ports.MemoryStorePort;
+import com.azhukov.agent.core.ports.PendingMemoryStorePort;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -28,7 +28,7 @@ public class MemoryConfig {
     @Bean
     @ConditionalOnProperty(name = "agent.memory.enabled", havingValue = "true", matchIfMissing = true)
     @ConditionalOnMissingBean(MemoryProvider.class)
-    public MemoryProvider memoryProvider(MemoryRepository memoryRepository,
+    public MemoryProvider memoryProvider(MemoryStorePort memoryRepository,
                                           AgentProperties agentProperties,
                                           MemoryThreatScanner memoryThreatScanner) {
         return new DatabaseMemoryProvider(memoryRepository, agentProperties, memoryThreatScanner);
@@ -52,7 +52,7 @@ public class MemoryConfig {
     }
 
     @Bean
-    public WriteApprovalGate writeApprovalGate(PendingMemoryRepository pendingMemoryRepository,
+    public WriteApprovalGate writeApprovalGate(PendingMemoryStorePort pendingMemoryRepository,
                                                 MemoryProvider memoryProvider,
                                                 AgentProperties properties) {
         return new WriteApprovalGate(pendingMemoryRepository, memoryProvider, properties);

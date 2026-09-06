@@ -63,8 +63,8 @@ class AgentRuntimeServiceTest {
     private static final String TOOL_RESULT = "Paris";
 
     private AgentRuntime agentRuntime;
-    private SessionRepository sessionRepository;
-    private MessageRepository messageRepository;
+    private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+    private com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     private SessionTitleService sessionTitleService;
     private MemoryProvider memoryProvider;
     private MemoryRepository memoryRepository;
@@ -82,11 +82,11 @@ class AgentRuntimeServiceTest {
     @BeforeEach
     void setUp() {
         agentRuntime = mock(AgentRuntime.class);
-        sessionRepository = mock(SessionRepository.class);
-        messageRepository = mock(MessageRepository.class);
+        sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        messageRepository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
         sessionTitleService = mock(SessionTitleService.class);
         memoryProvider = mock(MemoryProvider.class);
-        memoryRepository = mock(MemoryRepository.class);
+        memoryRepository = mock(com.azhukov.agent.persistence.repository.MemoryRepository.class);
         writeApprovalGate = mock(WriteApprovalGate.class);
         conversationCompressor = mock(ConversationCompressor.class);
         usageTracker = mock(UsageTracker.class);
@@ -127,7 +127,7 @@ class AgentRuntimeServiceTest {
             new com.fasterxml.jackson.databind.ObjectMapper(),
             new RuntimeConfigService(),
             transactionTemplate,
-            new AgentSessionResolver(sessionRepository, Mappers.getMapper(SessionEntityMapper.class), transactionTemplate, messageRepository, mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
+            new AgentSessionResolver(sessionStorePort(), Mappers.getMapper(SessionEntityMapper.class), transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
             new CliStateApplier(),
             new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class), conversationCompressor, org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class, org.mockito.Mockito.RETURNS_SELF), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class)),
             mock(com.azhukov.agent.core.context.ContextCompressor.class),
@@ -513,4 +513,16 @@ class AgentRuntimeServiceTest {
             UserContext.clear();
         }
     }
+
+    private com.azhukov.agent.core.ports.SessionStorePort sessionStorePort() {
+        com.azhukov.agent.core.ports.SessionStorePort port = mock(com.azhukov.agent.core.ports.SessionStorePort.class);
+        org.mockito.Mockito.lenient().when(port.findById(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> sessionRepository.findById(inv.getArgument(0)));
+        org.mockito.Mockito.lenient().when(port.save(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> sessionRepository.save(inv.getArgument(0)));
+        org.mockito.Mockito.lenient().when(port.findChildSessions(org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> java.util.List.of());
+        return port;
+    }
+
 }

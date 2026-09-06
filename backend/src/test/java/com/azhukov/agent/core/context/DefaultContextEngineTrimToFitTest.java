@@ -7,7 +7,7 @@ import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.skill.SkillManager;
-import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.core.ports.MessageStorePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,6 +20,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
 
 /**
@@ -36,7 +37,7 @@ class DefaultContextEngineTrimToFitTest {
     private SkillManager skillManager;
 
     @Mock
-    private MessageRepository messageRepository;
+    private com.azhukov.agent.core.ports.MessageStorePort messageRepository;
 
     @Mock
     private ContextCompressor contextCompressor;
@@ -65,7 +66,7 @@ class DefaultContextEngineTrimToFitTest {
 
     @Test
     void trimToFitRemovesToolCallAndResultTogether() {
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         // Build context: system + user + assistant(toolCalls) + tool(result) + user
@@ -95,7 +96,7 @@ class DefaultContextEngineTrimToFitTest {
 
     @Test
     void trimToFitWithMultipleToolCallsRemovesAllResults() {
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), any(org.springframework.data.domain.Pageable.class)))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         // Context with 2 tool calls and 2 results — trimming should remove pairs together

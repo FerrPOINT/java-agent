@@ -6,7 +6,7 @@ import com.azhukov.agent.core.metadata.ModelMetadataService;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.skill.SkillManager;
-import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.core.ports.MessageStorePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,7 +36,7 @@ class DefaultContextEngineUpdateModelTest {
     @Mock
     private SkillManager skillManager;
     @Mock
-    private MessageRepository messageRepository;
+    private com.azhukov.agent.core.ports.MessageStorePort messageRepository;
     @Mock
     private ModelMetadataService modelMetadataService;
 

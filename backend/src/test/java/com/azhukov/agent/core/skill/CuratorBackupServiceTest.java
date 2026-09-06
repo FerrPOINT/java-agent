@@ -3,7 +3,7 @@ package com.azhukov.agent.core.skill;
 import com.azhukov.agent.persistence.entity.CuratorSnapshotEntity;
 import com.azhukov.agent.persistence.entity.SkillEntity;
 import com.azhukov.agent.persistence.repository.CuratorSnapshotRepository;
-import com.azhukov.agent.persistence.repository.SkillRepository;
+import com.azhukov.agent.core.ports.SkillStorePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,8 +25,8 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class CuratorBackupServiceTest {
 
-    @Mock private SkillRepository skillRepository;
-    @Mock private CuratorSnapshotRepository snapshotRepository;
+    @Mock private SkillStorePort skillRepository;
+    @Mock private com.azhukov.agent.core.ports.CuratorSnapshotPort snapshotRepository;
 
     private CuratorBackupService service;
 

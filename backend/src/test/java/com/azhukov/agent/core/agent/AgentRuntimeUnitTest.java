@@ -188,7 +188,7 @@ class AgentRuntimeUnitTest {
         Session childSession = new Session(
             UUID.randomUUID(), "user", "child", "noop", "noop", "", java.util.Map.of(), null);
         ContextEngine rotatingContextEngine = new DefaultContextEngine(
-            mock(MemoryProvider.class), mock(SkillManager.class), mock(com.azhukov.agent.persistence.repository.MessageRepository.class),
+            mock(MemoryProvider.class), mock(SkillManager.class), mock(com.azhukov.agent.core.ports.MessageStorePort.class),
             mock(ContextCompressor.class), properties) {
             @Override
             public List<Message> prepareContext(Session session, List<Message> messages) {

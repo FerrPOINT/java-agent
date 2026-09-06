@@ -2,7 +2,7 @@ package com.azhukov.agent.core.skill;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.SkillEntity;
-import com.azhukov.agent.persistence.repository.SkillRepository;
+import com.azhukov.agent.core.ports.SkillStorePort;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -35,7 +35,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void listSkills_filtersArchivedAndMapsToInfo() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e1 = new SkillEntity();
         e1.setName("s1");
         e1.setContent(VALID_FRONTMATTER);
@@ -54,7 +54,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void listSkills_emptyRepo_returnsEmpty() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         when(repo.findAll()).thenReturn(List.of());
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         assertThat(mgr.listSkills()).isEmpty();
@@ -62,7 +62,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_existingSkill_returnsInfo() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setContent(VALID_FRONTMATTER);
@@ -83,7 +83,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_nonExistentSkill_returnsNull() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         when(repo.findByName("nonexistent")).thenReturn(Optional.empty());
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         assertThat(mgr.getSkillInfo("nonexistent")).isNull();
@@ -93,7 +93,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_extractsCategoryFromFrontmatter() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setContent("""
@@ -113,7 +113,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_noFrontmatter_fallsBackToHeading() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setContent("# My Skill Heading\nBody content");
@@ -126,7 +126,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_nullContent_returnsEmptyCategory() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setContent(null);
@@ -139,7 +139,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_blankContent_returnsEmptyCategory() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setContent("  ");
@@ -152,7 +152,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_noCategoryInFrontmatter_fallsBackToHeading() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setContent("""
@@ -173,7 +173,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void archiveSkill_nonExistent_returnsFalse() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         when(repo.findByName("nonexistent")).thenReturn(Optional.empty());
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         assertThat(mgr.archiveSkill("nonexistent")).isFalse();
@@ -181,7 +181,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void archiveSkill_existing_setsArchivedTrue() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         when(repo.findByName("test")).thenReturn(Optional.of(e));
@@ -193,7 +193,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void unarchiveSkill_existing_setsArchivedFalse() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setArchived(true);
@@ -206,7 +206,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void unarchiveSkill_nonExistent_returnsFalse() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         when(repo.findByName("nonexistent")).thenReturn(Optional.empty());
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         assertThat(mgr.unarchiveSkill("nonexistent")).isFalse();
@@ -216,7 +216,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void incrementManageCount_existing_incrementsAndSaves() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setManageCount(3);
@@ -229,7 +229,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void incrementManageCount_nonExistent_doesNothing() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         when(repo.findByName("nonexistent")).thenReturn(Optional.empty());
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         mgr.incrementManageCount("nonexistent");
@@ -240,7 +240,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void deleteSkill_nonExistent_returnsFalse() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         when(repo.findByName("nonexistent")).thenReturn(Optional.empty());
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         assertThat(mgr.deleteSkill("nonexistent")).isFalse();
@@ -250,7 +250,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void writeSupportFile_blankPath_throwsException() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         assertThatThrownBy(() -> mgr.writeSupportFile("test", "  ", "content"))
             .isInstanceOf(IllegalArgumentException.class)
@@ -259,7 +259,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void writeSupportFile_nullPath_throwsException() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         assertThatThrownBy(() -> mgr.writeSupportFile("test", null, "content"))
             .isInstanceOf(IllegalArgumentException.class)
@@ -270,7 +270,7 @@ class DatabaseSkillManagerBranchTest {
     void writeSupportFile_assetsSubdir_accepted(@TempDir Path tempDir) throws Exception {
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         mgr.writeSupportFile("test-skill", "assets/icon.png", "binary-data");
         assertThat(Files.exists(tempDir.resolve("skills").resolve("test-skill").resolve("assets").resolve("icon.png"))).isTrue();
@@ -280,7 +280,7 @@ class DatabaseSkillManagerBranchTest {
     void writeSupportFile_templatesSubdir_accepted(@TempDir Path tempDir) throws Exception {
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         mgr.writeSupportFile("test-skill", "templates/template.md", "content");
         assertThat(Files.exists(tempDir.resolve("skills").resolve("test-skill").resolve("templates").resolve("template.md"))).isTrue();
@@ -290,7 +290,7 @@ class DatabaseSkillManagerBranchTest {
     void writeSupportFile_scriptsSubdir_accepted(@TempDir Path tempDir) throws Exception {
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         mgr.writeSupportFile("test-skill", "scripts/run.sh", "echo hello");
         assertThat(Files.exists(tempDir.resolve("skills").resolve("test-skill").resolve("scripts").resolve("run.sh"))).isTrue();
@@ -300,7 +300,7 @@ class DatabaseSkillManagerBranchTest {
     void removeSupportFile_existingFile_returnsTrue(@TempDir Path tempDir) throws Exception {
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         mgr.writeSupportFile("test-skill", "references/file.md", "content");
         assertThat(mgr.removeSupportFile("test-skill", "references/file.md")).isTrue();
@@ -310,14 +310,14 @@ class DatabaseSkillManagerBranchTest {
     void removeSupportFile_nonExistentFile_returnsFalse(@TempDir Path tempDir) {
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         assertThat(mgr.removeSupportFile("test-skill", "references/nonexistent.md")).isFalse();
     }
 
     @Test
     void removeSupportFile_blankPath_throwsException() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         assertThatThrownBy(() -> mgr.removeSupportFile("test", "  "))
             .isInstanceOf(IllegalArgumentException.class);
@@ -327,7 +327,7 @@ class DatabaseSkillManagerBranchTest {
     void readSupportFile_existingFile_returnsContent(@TempDir Path tempDir) throws Exception {
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         mgr.writeSupportFile("test-skill", "references/file.md", "file content");
         assertThat(mgr.readSupportFile("test-skill", "references/file.md")).isEqualTo("file content");
@@ -337,14 +337,14 @@ class DatabaseSkillManagerBranchTest {
     void readSupportFile_nonExistentFile_returnsNull(@TempDir Path tempDir) {
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         assertThat(mgr.readSupportFile("test-skill", "references/nonexistent.md")).isNull();
     }
 
     @Test
     void readSupportFile_blankPath_throwsException() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         assertThatThrownBy(() -> mgr.readSupportFile("test", "  "))
             .isInstanceOf(IllegalArgumentException.class);
@@ -354,7 +354,7 @@ class DatabaseSkillManagerBranchTest {
     void listSupportFiles_nonExistentSkillDir_returnsEmpty(@TempDir Path tempDir) {
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         assertThat(mgr.listSupportFiles("nonexistent-skill")).isEmpty();
     }
@@ -363,7 +363,7 @@ class DatabaseSkillManagerBranchTest {
     void listSupportFiles_withFiles_returnsAll(@TempDir Path tempDir) throws Exception {
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         mgr.writeSupportFile("test-skill", "references/file1.md", "content1");
         mgr.writeSupportFile("test-skill", "references/file2.md", "content2");
@@ -377,7 +377,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void patchSkill_defaultRefusesAmbiguousMatch() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test-skill");
         e.setContent("""
@@ -399,7 +399,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void patchSkill_replaceAllUpdatesEveryMatch() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test-skill");
         e.setContent("""
@@ -424,7 +424,7 @@ class DatabaseSkillManagerBranchTest {
     void patchSupportFile_defaultRefusesAmbiguousMatch(@TempDir Path tempDir) throws Exception {
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         mgr.writeSupportFile("test-skill", "references/file.md", "old\nold\n");
 
@@ -438,7 +438,7 @@ class DatabaseSkillManagerBranchTest {
     void patchSupportFile_replaceAllUpdatesEveryMatch(@TempDir Path tempDir) throws Exception {
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo, props);
         mgr.writeSupportFile("test-skill", "references/file.md", "old\nold\n");
 
@@ -451,7 +451,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void reload_doesNotThrow() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         when(repo.findAll()).thenReturn(List.of());
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         mgr.reload(); // should not throw
@@ -461,7 +461,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void saveSkill_withWriteOrigin_setsOriginOnEntity() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         when(repo.findByName("test-skill")).thenReturn(Optional.empty());
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         mgr.saveSkill("test-skill", VALID_FRONTMATTER, WriteOrigin.HUB_INSTALL);
@@ -473,7 +473,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void saveSkill_withNullWriteOrigin_defaultsToForeground() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         when(repo.findByName("test-skill")).thenReturn(Optional.empty());
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         mgr.saveSkill("test-skill", VALID_FRONTMATTER, null);
@@ -484,7 +484,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void saveSkill_existingSkillWithTrustLevel_keepsTrustLevel() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity existing = new SkillEntity();
         existing.setTrustLevel("BUILTIN");
         when(repo.findByName("test-skill")).thenReturn(Optional.of(existing));
@@ -496,7 +496,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void saveSkill_existingSkillWithInvalidTrustLevel_defaultsToAgentCreated() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity existing = new SkillEntity();
         existing.setTrustLevel("INVALID_LEVEL");
         when(repo.findByName("test-skill")).thenReturn(Optional.of(existing));
@@ -520,7 +520,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void saveSkill_nullContent_throwsException() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         assertThatThrownBy(() -> mgr.saveSkill("test-skill", null))
             .isInstanceOf(IllegalArgumentException.class)
@@ -529,7 +529,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void saveSkill_blankContent_throwsException() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         assertThatThrownBy(() -> mgr.saveSkill("test-skill", "  "))
             .isInstanceOf(IllegalArgumentException.class)
@@ -538,7 +538,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void saveSkill_notStartingWithFrontmatter_throwsException() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         assertThatThrownBy(() -> mgr.saveSkill("test-skill", "Just text"))
             .isInstanceOf(IllegalArgumentException.class)
@@ -547,7 +547,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void saveSkill_emptyBody_throwsException() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         String content = "---\nname: test\ndescription: test\n---\n  \n  ";
         assertThatThrownBy(() -> mgr.saveSkill("test-skill", content))
@@ -557,7 +557,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void saveSkill_nameStartsWithNumber_valid() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         when(repo.findByName("2-test")).thenReturn(Optional.empty());
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         mgr.saveSkill("2-test", VALID_FRONTMATTER);
@@ -566,7 +566,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void saveSkill_nameWithDots_valid() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         when(repo.findByName("skill.v2")).thenReturn(Optional.empty());
         DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
         mgr.saveSkill("skill.v2", VALID_FRONTMATTER);
@@ -577,7 +577,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfoMultiStrategy_dbHit_returnsInfo(@TempDir Path tempDir) {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
         SkillEntity e = new SkillEntity();
@@ -595,7 +595,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfoMultiStrategy_notFound_returnsNull(@TempDir Path tempDir) {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
         when(repo.findByName("nonexistent")).thenReturn(Optional.empty());
@@ -608,7 +608,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfoMultiStrategy_filesystemHit_returnsInfo(@TempDir Path tempDir) throws Exception {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
         when(repo.findByName("fs-skill")).thenReturn(Optional.empty());
@@ -626,7 +626,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfoMultiStrategy_collision_returnsError(@TempDir Path tempDir) throws Exception {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
 
@@ -667,7 +667,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfoMultiStrategy_frontmatterNameMatch_returnsInfo(@TempDir Path tempDir) throws Exception {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
         when(repo.findByName("aliased-skill")).thenReturn(Optional.empty());
@@ -688,7 +688,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_extractsTagsFromFrontmatter() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setContent("""
@@ -707,7 +707,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_extractsTagsFromMetadataHermes() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setContent("""
@@ -728,7 +728,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_extractsRelatedSkillsFromFrontmatter() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setContent("""
@@ -747,7 +747,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_detectsDisabledFromFrontmatter() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setContent("""
@@ -766,7 +766,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_detectsDisabledFromRuntimeConfig() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setContent(VALID_FRONTMATTER);
@@ -781,7 +781,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_notDisabledWhenAbsent() {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         SkillEntity e = new SkillEntity();
         e.setName("test");
         e.setContent(VALID_FRONTMATTER);
@@ -796,7 +796,7 @@ class DatabaseSkillManagerBranchTest {
 
     @Test
     void getSkillInfo_listsLinkedFilesByType(@TempDir Path tempDir) throws Exception {
-        SkillRepository repo = mock(SkillRepository.class);
+        SkillStorePort repo = mock(SkillStorePort.class);
         AgentProperties props = new AgentProperties();
         props.getCore().setWorkingDirectory(tempDir.toString());
 

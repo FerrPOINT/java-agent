@@ -1,7 +1,7 @@
 package com.azhukov.agent.core.skill;
 
 import com.azhukov.agent.persistence.entity.SkillAuditLogEntity;
-import com.azhukov.agent.persistence.repository.SkillAuditLogRepository;
+import com.azhukov.agent.core.ports.SkillAuditPort;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
@@ -27,9 +27,9 @@ public class SkillMutationLedger {
     public static final String ACTOR_AGENT = "agent";
     public static final String ACTOR_USER = "user";
 
-    private final ObjectProvider<SkillAuditLogRepository> repositoryProvider;
+    private final ObjectProvider<com.azhukov.agent.core.ports.SkillAuditPort> repositoryProvider;
 
-    public SkillMutationLedger(ObjectProvider<SkillAuditLogRepository> repositoryProvider) {
+    public SkillMutationLedger(ObjectProvider<com.azhukov.agent.core.ports.SkillAuditPort> repositoryProvider) {
         this.repositoryProvider = repositoryProvider;
     }
 
@@ -44,7 +44,7 @@ public class SkillMutationLedger {
      * @param newValue JSON snapshot of the new state (may be null)
      */
     public void record(String action, String skill, String actor, String oldValue, String newValue) {
-        SkillAuditLogRepository repo = repositoryProvider.getIfAvailable();
+        com.azhukov.agent.core.ports.SkillAuditPort repo = repositoryProvider.getIfAvailable();
         if (repo == null) {
             log.debug("Skill audit repository unavailable — skipping ledger entry '{}' for '{}'", action, skill);
             return;

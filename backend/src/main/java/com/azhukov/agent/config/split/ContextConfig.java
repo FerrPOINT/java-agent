@@ -12,9 +12,9 @@ import com.azhukov.agent.core.context.SessionLineagePort;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
-import com.azhukov.agent.persistence.repository.CompressionLockRepository;
-import com.azhukov.agent.persistence.repository.MessageRepository;
-import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.azhukov.agent.core.ports.CompressionLockPort;
+import com.azhukov.agent.core.ports.MessageStorePort;
+import com.azhukov.agent.core.ports.SessionStorePort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -26,9 +26,9 @@ import org.springframework.context.annotation.Configuration;
 public class ContextConfig {
 
     @Bean
-    public ContextCompressor contextCompressor(ModelClient modelClient, CompressionLockRepository lockRepository,
-                                               AgentProperties properties, SessionRepository sessionRepository,
-                                               MessageRepository messageRepository) {
+    public ContextCompressor contextCompressor(ModelClient modelClient, CompressionLockPort lockRepository,
+                                               AgentProperties properties, SessionStorePort sessionRepository,
+                                               MessageStorePort messageRepository) {
         DefaultContextCompressor compressor = new DefaultContextCompressor(modelClient, lockRepository, properties);
         compressor.setSessionRepository(sessionRepository);
         compressor.setMessageRepository(messageRepository);
@@ -43,12 +43,12 @@ public class ContextConfig {
     @Bean
     public ContextEngine contextEngine(MemoryProvider memoryProvider,
                                        SkillManager skillManager,
-                                       MessageRepository messageRepository,
+                                       MessageStorePort messageRepository,
                                        ContextCompressor contextCompressor,
                                        AgentProperties properties,
                                        PromptCacheTracker cacheTracker,
                                        SessionLineagePort sessionLineageService,
-                                       SessionRepository sessionRepository,
+                                       SessionStorePort sessionRepository,
                                        com.azhukov.agent.core.metadata.ModelMetadataService modelMetadataService) {
         // Perf fix (2026-08-28): WITHOUT modelMetadataService the engine's
         // contextLength stays 0 and shouldCompressPreflight falls back to the

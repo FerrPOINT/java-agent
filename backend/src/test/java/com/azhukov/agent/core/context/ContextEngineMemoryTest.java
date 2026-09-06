@@ -8,7 +8,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.prompt.PromptCacheTracker;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.MessageEntity;
-import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.core.ports.MessageStorePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +21,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -42,7 +43,7 @@ class ContextEngineMemoryTest {
     @Mock
     private SkillManager skillManager;
     @Mock
-    private MessageRepository messageRepository;
+    private com.azhukov.agent.core.ports.MessageStorePort messageRepository;
     @Mock
     private ContextCompressor contextCompressor;
 
@@ -60,7 +61,7 @@ class ContextEngineMemoryTest {
     void snapshotIsFetchedFromProvider() {
         UUID sessionId = UUID.randomUUID();
         Session session = new Session(sessionId, "user1", "test", "noop", "model", null, Map.of());
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(sessionId), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of());
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(sessionId), anyInt())).thenReturn(List.of());
 
         List<Message> result = engine.prepareContext(session, List.of(Message.system("You are an agent."), Message.user("hello")));
 
@@ -81,7 +82,7 @@ class ContextEngineMemoryTest {
     void snapshotIsCachedPerSession() {
         UUID sessionId = UUID.randomUUID();
         Session session = new Session(sessionId, "user1", "test", "noop", "model", null, Map.of());
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(sessionId), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of());
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(sessionId), anyInt())).thenReturn(List.of());
 
         // Call twice with same session
         engine.prepareContext(session, List.of(Message.system("System"), Message.user("hi")));
@@ -98,7 +99,7 @@ class ContextEngineMemoryTest {
         UUID session2 = UUID.randomUUID();
         Session s1 = new Session(session1, "user1", "test", "noop", "model", null, Map.of());
         Session s2 = new Session(session2, "user2", "test", "noop", "model", null, Map.of());
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of());
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(), anyInt())).thenReturn(List.of());
 
         engine.prepareContext(s1, List.of(Message.system("S"), Message.user("hi")));
         engine.prepareContext(s2, List.of(Message.system("S"), Message.user("hi")));
@@ -112,7 +113,7 @@ class ContextEngineMemoryTest {
     void emptySnapshotFallsBackToLiveRecall() {
         UUID sessionId = UUID.randomUUID();
         Session session = new Session(sessionId, "user1", "test", "noop", "model", null, Map.of());
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(sessionId), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of());
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(sessionId), anyInt())).thenReturn(List.of());
 
         List<Message> result = engine.prepareContext(session, List.of(Message.system("System"), Message.user("hello")));
 
@@ -142,7 +143,7 @@ class ContextEngineMemoryTest {
         UUID session2Id = UUID.randomUUID();
         Session session1 = new Session(session1Id, "user1", "test", "noop", "model", null, Map.of());
         Session session2 = new Session(session2Id, "user1", "test", "noop", "model", null, Map.of());
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of());
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(), anyInt())).thenReturn(List.of());
 
         // First call
         engineWithTracker.prepareContext(session1, List.of(Message.system("System"), Message.user("hi")));
@@ -158,7 +159,7 @@ class ContextEngineMemoryTest {
     void memoryProviderExceptionReturnsEmptyResultWithoutCrash() {
         UUID sessionId = UUID.randomUUID();
         Session session = new Session(sessionId, "user1", "test", "noop", "model", null, Map.of());
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(sessionId), any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of());
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(sessionId), anyInt())).thenReturn(List.of());
 
         // Should not throw — memory provider is not called during prepareContext
         List<Message> result = engine.prepareContext(session, List.of(Message.system("System"), Message.user("hi")));

@@ -25,12 +25,12 @@ class SessionQueryServiceTest {
 
     @Test
     void listSessionsUsesExactOffsetRatherThanRoundingToPageBoundary() {
-        SessionRepository sessionRepository = mock(SessionRepository.class);
+        com.azhukov.agent.persistence.repository.SessionRepository sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
         when(sessionRepository.findAllByUserId(eq("user"), any(Pageable.class)))
             .thenAnswer(invocation -> new PageImpl<SessionEntity>(List.of(), invocation.getArgument(1), 1_000));
         SessionQueryService service = new SessionQueryService(
             sessionRepository,
-            mock(MessageRepository.class),
+            mock(com.azhukov.agent.persistence.repository.MessageRepository.class),
             mock(AgentSessionResolver.class),
             mock(DomainDtoMapper.class),
             new AgentProperties(),
@@ -45,14 +45,14 @@ class SessionQueryServiceTest {
 
     @Test
     void deleteSessionRejectsAnotherUsersSession() {
-        SessionRepository sessionRepository = mock(SessionRepository.class);
+        com.azhukov.agent.persistence.repository.SessionRepository sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
         SessionEntity session = new SessionEntity();
         session.setUserId("owner");
         java.util.UUID sessionId = java.util.UUID.randomUUID();
         when(sessionRepository.findById(sessionId)).thenReturn(java.util.Optional.of(session));
         SessionQueryService service = new SessionQueryService(
             sessionRepository,
-            mock(MessageRepository.class),
+            mock(com.azhukov.agent.persistence.repository.MessageRepository.class),
             mock(AgentSessionResolver.class),
             mock(DomainDtoMapper.class),
             new AgentProperties(),
