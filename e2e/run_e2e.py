@@ -360,6 +360,11 @@ class Runner:
         name = scenario.get("name", file.stem)
         steps = scenario.get("steps", [])
         evidence_file = None
+        requires = scenario.get("requires") or []
+        missing = [r for r in requires if r not in self.vars]
+        if missing:
+            print(f"\n▷ {name}  [{file.name}] — SKIPPED (missing vars: {', '.join(missing)})")
+            return True, [f"SKIPPED {name} (missing {', '.join(missing)})"]
         print(f"\n▶ {name}  [{file.name}, {len(steps)} steps]")
         log: list[str] = []
         ok = True

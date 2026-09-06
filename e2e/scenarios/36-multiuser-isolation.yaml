@@ -5,6 +5,10 @@
 # the admin master key). The runner substitutes {admin_key} from env
 # E2E_ADMIN_KEY (falls back to AGENT_SECURITY_API_KEY).
 name: multiuser-isolation
+# Requires an auth-enabled backend (AGENT_SECURITY_API_KEY / E2E_ADMIN_KEY set).
+# The runner skips this scenario when {admin_key} is not configured — dev runs
+# with auth disabled; verified against an auth-enabled instance instead.
+requires: [admin_key]
 steps:
   # ── Setup: two users with per-user keys via the admin API ──
   - name: admin key authenticates
