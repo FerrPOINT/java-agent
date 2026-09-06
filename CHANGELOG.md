@@ -1,4 +1,12 @@
 
+## Session 2026-09-06 — 0.1.237 (profile project tree)
+
+- V51 migration (renamed from V49 — version collision with db/postgresql): sessions.cwd + sessions.git_repo_root.
+- ProjectContextDetector: bounded .git walk (dir or worktree file), failure-tolerant, 6 tests.
+- New sessions stamped with cwd/repo root; /api/profiles/projects/tree builds real project → repo → worktree lanes; legacy rows keep the Home bucket with usage totals.
+- Live-verified: a session created from /opt/dev/java-agent groups under repo:/opt/dev/java-agent.
+- backend 6604/6604.
+
 ## Session 2026-09-06 — 0.1.236 (h10 + h12 + mu close-out)
 
 ### h10 — shared Gradle module
@@ -20,12 +28,14 @@
   1. RBAC denials returned 500 (ResponseStatusException unhandled) → dedicated handler, 403/404 preserved; regression test.
   2. 6 SessionController endpoints (history/context/usage/reset/compress/undo) had NO ownership guard → requireSessionOwnership added.
   3. E2E runner: admin_key/run_id vars for auth-enabled scenarios.
+
 - Scenario 36 live-verified 17/17: admin auth, 401/403 negatives, per-user keys, session isolation, memory isolation, key revocation.
 
 ### Numbers
 
 - backend 6597 (+3), telegram-bot 1720, cli 333, shared 9 — all green.
 - CI green (run 34028493904).
+
 # Changelog
 
 ## Session 2026-09-06 — 0.1.235 (c2: canonical TurnExecutor batch executor — sync/streaming tool-path unification)
