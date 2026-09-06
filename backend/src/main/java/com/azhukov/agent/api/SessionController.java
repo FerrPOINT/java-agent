@@ -74,6 +74,7 @@ public class SessionController {
      */
     @GetMapping("/agent/session/{sessionId}/history")
     public java.util.List<java.util.Map<String, Object>> history(@PathVariable java.util.UUID sessionId) {
+        agentRuntimeService.requireSessionOwnership(sessionId);
         return messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
             .map(m -> java.util.Map.<String, Object>of(
                 "role", m.getRole() == null ? "?" : m.getRole(),
@@ -85,16 +86,19 @@ public class SessionController {
 
     @GetMapping("/agent/session/{sessionId}/context")
     public ContextInfoDto getContext(@PathVariable UUID sessionId) {
+        agentRuntimeService.requireSessionOwnership(sessionId);
         return agentRuntimeService.getContext(sessionId);
     }
 
     @PostMapping("/agent/session/{sessionId}/reset")
     public void resetSession(@PathVariable UUID sessionId) {
+        agentRuntimeService.requireSessionOwnership(sessionId);
         agentRuntimeService.resetSession(sessionId);
     }
 
     @GetMapping("/agent/session/{sessionId}/usage")
     public UsageDto getUsage(@PathVariable UUID sessionId) {
+        agentRuntimeService.requireSessionOwnership(sessionId);
         return agentRuntimeService.getUsage(sessionId);
     }
 
@@ -112,6 +116,7 @@ public class SessionController {
         if (focusTopic == null && request != null) {
             focusTopic = request.focus();
         }
+        agentRuntimeService.requireSessionOwnership(sessionId);
         agentRuntimeService.compressSession(sessionId, focusTopic, keepLastN);
         return "Context compressed." + (focusTopic != null ? " Focus: " + focusTopic : "")
             + (keepLastN != null ? " Kept last " + keepLastN : "");
@@ -120,6 +125,7 @@ public class SessionController {
     @Operation(summary = "Undo the last N turns of a session")
     @PostMapping("/agent/session/{sessionId}/undo")
     public int undoTurns(@PathVariable UUID sessionId, @RequestParam(defaultValue = "1") int turns) {
+        agentRuntimeService.requireSessionOwnership(sessionId);
         return agentRuntimeService.undoTurns(sessionId, turns);
     }
 

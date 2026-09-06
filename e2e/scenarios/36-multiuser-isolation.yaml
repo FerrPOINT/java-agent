@@ -1,0 +1,138 @@
+# Multi-user isolation E2E (mu1-mu14): two users, per-user API keys,
+# session ownership, memory isolation, RBAC on admin endpoints.
+#
+# Requires: backend started with AGENT_SECURITY_API_KEY set (the global key is
+# the admin master key). The runner substitutes {admin_key} from env
+# E2E_ADMIN_KEY (falls back to AGENT_SECURITY_API_KEY).
+name: multiuser-isolation
+steps:
+  # ── Setup: two users with per-user keys via the admin API ──
+  - name: admin key authenticates
+    path: /api/v1/admin/users
+    headers: { X-API-Key: "{admin_key}" }
+    assert:
+      - { status: 200 }
+
+  - name: admin endpoints reject callers without a key (when auth enabled)
+    path: /api/v1/admin/users
+    assert:
+      - { status: 401 }
+
+  - name: create user alice
+    method: POST
+    path: /api/v1/admin/users
+    headers: { X-API-Key: "{admin_key}" }
+    body: { username: "e2e-alice-{run_id}", displayName: "Alice E2E", role: "user" }
+    extract: { id: user_id }
+    assert:
+      - { status: 200 }
+      - { path: username, matches: "^e2e-alice-" }
+      - { path: role, eq: user }
+
+  - name: per-user keys are issued with the raw key returned exactly once
+    method: POST
+    path: "/api/v1/admin/users/{user_id}/keys"
+    headers: { X-API-Key: "{admin_key}" }
+    body: { label: "e2e" }
+    extract: { rawKey: alice_key, id: alice_key_id }
+    assert:
+      - { status: 200 }
+      - { path: rawKey, matches: "^.+$" }
+
+  - name: create user bob
+    method: POST
+    path: /api/v1/admin/users
+    headers: { X-API-Key: "{admin_key}" }
+    body: { username: "e2e-bob-{run_id}", displayName: "Bob E2E", role: "user" }
+    extract: { id: bob_id }
+    assert:
+      - { status: 200 }
+
+  - name: issue bob a key
+    method: POST
+    path: "/api/v1/admin/users/{bob_id}/keys"
+    headers: { X-API-Key: "{admin_key}" }
+    body: { label: "e2e" }
+    extract: { rawKey: bob_key, id: bob_key_id }
+    assert:
+      - { status: 200 }
+
+  # ── RBAC: a plain user cannot reach admin endpoints ──
+  - name: per-user key authenticates as its user (not admin)
+    path: /api/v1/admin/users
+    headers: { X-API-Key: "{alice_key}" }
+    assert:
+      - { status: 403 }
+
+  - name: unknown key is rejected
+    path: /api/v1/agent/sessions
+    headers: { X-API-Key: "totally-wrong-key" }
+    assert:
+      - { status: 401 }
+
+  # ── Session isolation (mu10) ──
+  - name: alice chats in her own session
+    method: POST
+    path: /api/v1/agent/chat
+    headers: { X-API-Key: "{alice_key}" }
+    body: { message: "Reply with exactly the word apple and nothing else" }
+    extract: { sessionId: alice_session }
+    assert:
+      - { status: 200 }
+
+  - name: bob cannot read alice's session (ownership guard)
+    path: "/api/v1/agent/session/{alice_session}/context"
+    headers: { X-API-Key: "{bob_key}" }
+    assert:
+      - { status: 403 }
+
+  - name: admin (global key) can read alice's session
+    path: "/api/v1/agent/session/{alice_session}/context"
+    headers: { X-API-Key: "{admin_key}" }
+    assert:
+      - { status: 200 }
+
+  # ── Memory isolation (mu11) ──
+  - name: alice stores a memory
+    method: POST
+    path: /api/v1/agent/memory
+    headers: { X-API-Key: "{alice_key}" }
+    body: { target: "memory", category: "e2e", fact: "alice-secret-fact-12345" }
+    assert:
+      - { status: 200 }
+
+  - name: bob's memory list does not contain alice's fact
+    path: /api/v1/agent/memory
+    headers: { X-API-Key: "{bob_key}" }
+    assert:
+      - { status: 200 }
+      - { var: response, not_contains: alice-secret-fact-12345 }
+
+  - name: alice sees her own fact
+    path: /api/v1/agent/memory
+    headers: { X-API-Key: "{alice_key}" }
+    assert:
+      - { status: 200 }
+      - { var: response, contains: alice-secret-fact-12345 }
+
+  # ── Cleanup: revoke the issued keys (users remain; H2 is wiped on restart,
+  #    and on a persistent DB the e2e-* prefix marks them as disposable) ──
+  - name: revoke alice's key
+    method: DELETE
+    path: "/api/v1/admin/users/keys/{alice_key_id}"
+    headers: { X-API-Key: "{admin_key}" }
+    assert:
+      - { status: 200 }
+
+  - name: revoked key no longer authenticates
+    path: /api/v1/agent/memory
+    headers: { X-API-Key: "{alice_key}" }
+    assert:
+      - { status: 401 }
+
+  - name: revoke bob's key
+    method: DELETE
+    path: "/api/v1/admin/users/keys/{bob_key_id}"
+    headers: { X-API-Key: "{admin_key}" }
+    assert:
+      - { status: 200 }

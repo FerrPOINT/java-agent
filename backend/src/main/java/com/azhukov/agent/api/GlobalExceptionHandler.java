@@ -204,6 +204,30 @@ public class GlobalExceptionHandler {
         ));
     }
 
+    /**
+     * ResponseStatusException carries its own status (403 from requireAdmin,
+     * 404 from lookup failures) — rethrow it as the response instead of
+     * falling into the generic 500 handler, which masked RBAC denials.
+     */
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ResponseEntity<Map<String, Object>> handleResponseStatus(
+            org.springframework.web.server.ResponseStatusException ex) {
+        HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
+        String message = ex.getReason() != null ? ex.getReason() : status.getReasonPhrase();
+        if (status.is5xxServerError()) {
+            log.warn("ResponseStatusException {}: {}", status, message);
+        } else {
+            // Client errors (403 RBAC, 404 not found) are expected flows — debug only.
+            log.debug("ResponseStatusException {}: {}", status, message);
+        }
+        String type = status == HttpStatus.FORBIDDEN ? "forbidden"
+            : status == HttpStatus.NOT_FOUND ? "not_found" : "status";
+        return ResponseEntity.status(status).body(Map.of(
+            "type", type,
+            "error", message
+        ));
+    }
+
     @ExceptionHandler(Exception.class)
     public Object handleGeneric(Exception ex) {
         log.error("Unhandled exception", ex);

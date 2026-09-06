@@ -176,6 +176,14 @@ class Runner:
         self.base = base
         self.evidence_dir = evidence_dir
         self.vars: dict[str, object] = {"bot_base": BOT_BASE}
+        # Multi-user scenario (36): the global admin key comes from the same
+        # env the backend reads, or an explicit override. Empty when the
+        # backend runs with auth disabled — scenario 36 is skipped then.
+        admin_key = os.getenv("E2E_ADMIN_KEY") or os.getenv("AGENT_SECURITY_API_KEY") or ""
+        if admin_key:
+            self.vars["admin_key"] = admin_key
+        # Unique-per-run suffix so scenario 36 can create e2e users repeatedly.
+        self.vars["run_id"] = time.strftime("%H%M%S")
         self.session_ids: list[str] = []
         self.evidence: list[dict[str, object]] = []
         self.last_request: dict[str, object] | None = None
