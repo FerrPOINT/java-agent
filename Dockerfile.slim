@@ -8,6 +8,8 @@ WORKDIR /workspace
 COPY backend/gradle/ gradle/
 COPY backend/gradlew backend/build.gradle backend/settings.gradle backend/gradle.properties ./
 COPY backend/src src
+# h10: shared module (see Dockerfile — same sibling-layout resolution)
+COPY shared/ shared/
 RUN ./gradlew bootJar --no-daemon -x test
 
 FROM eclipse-temurin:25-jre-noble
