@@ -133,7 +133,7 @@ class UserMessagePersistenceTest {
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
             new RuntimeConfigService(), new InterruptToken(), new SteerBuffer(),
             new TokenEstimator(), new ToolResultFormatter(),
-            new AgentSessionResolver(sessionStorePort(sessionRepository), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), lineageService),
+            new AgentSessionResolver(sessionStorePort(sessionRepository), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), lineageService, mock(com.azhukov.agent.core.agent.ProjectContextDetector.class)),
             lineageService,
             new CliStateApplier(), null, null,
             new ModelMetadataService(), null);

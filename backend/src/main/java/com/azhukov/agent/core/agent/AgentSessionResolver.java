@@ -34,6 +34,7 @@ public class AgentSessionResolver {
     private final TransactionTemplate transactionTemplate;
     private final MessageStorePort messageRepository;
     private final SessionLineageService sessionLineageService;
+    private final ProjectContextDetector projectContextDetector;
 
     /**
      * Result of {@link #resolveOrCreate(UUID, String, String)} — carries the
@@ -153,6 +154,16 @@ public class AgentSessionResolver {
         e.setSource(source);
         e.setLastActive(now);
         e.setMessageCount(0);
+        // Project grouping metadata (dashboard project tree). Detection is
+        // failure-tolerant: null fields keep the session in the Home bucket.
+        // Mocked detectors in tests may return null — project metadata must
+        // never break session creation.
+        ProjectContextDetector.ProjectContext ctx = projectContextDetector != null
+            ? projectContextDetector.detect(null) : null;
+        if (ctx != null && ctx.cwd() != null) {
+            e.setCwd(ctx.cwd());
+            e.setGitRepoRoot(ctx.gitRepoRoot());
+        }
         return e;
     }
 

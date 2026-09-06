@@ -420,6 +420,48 @@ class ProfilesDashboardControllerTest {
             .andExpect(jsonPath("$.messaging.total").value(1));
     }
 
+
+    @Test
+    void profileProjectsTreeGroupsByRepoRootAndCwdWorktrees() throws Exception {
+        // Two sessions in the same repo, different cwd worktree lanes + one legacy no-project row.
+        SessionEntity repoA1 = sessionEntity("repo a wt1", "default", "cli", 2, BASE_TIME.plusSeconds(40));
+        repoA1.setCwd("/work/my-repo/packages/one");
+        repoA1.setGitRepoRoot("/work/my-repo");
+        SessionEntity repoA2 = sessionEntity("repo a wt2", "default", "cli", 3, BASE_TIME.plusSeconds(30));
+        repoA2.setCwd("/work/my-repo/packages/two");
+        repoA2.setGitRepoRoot("/work/my-repo");
+        SessionEntity legacy = sessionEntity("legacy home", "work", "telegram", 1, BASE_TIME.plusSeconds(20));
+        when(sessionRepository.findProfileDashboardPageOrderByRecent(
+                eq(AgentProperties.DEFAULT_USER_ID), isNull(), eq(2000), eq(0), eq(false), eq(false), eq(false),
+                isNull(), eq(true), anyList(), eq(true), anyList(), eq(0), eq(false), eq(true)))
+            .thenReturn(List.of(repoA1, repoA2, legacy));
+        when(sessionRepository.countProfileDashboardSessions(
+                eq(AgentProperties.DEFAULT_USER_ID), isNull(), eq(false), eq(false), eq(false),
+                isNull(), eq(true), anyList(), eq(true), anyList(), eq(0), eq(false), eq(true)))
+            .thenReturn(3L);
+        when(sessionRepository.countProfileDashboardUsageByProfile(AgentProperties.DEFAULT_USER_ID, null))
+            .thenReturn(List.<Object[]>of());
+
+        mockMvc.perform(get("/api/profiles/projects/tree"))
+            .andExpect(status().isOk())
+            // project lane from persisted repo root
+            .andExpect(jsonPath("$.projects[0].id").value("repo:/work/my-repo"))
+            .andExpect(jsonPath("$.projects[0].label").value("my-repo"))
+            .andExpect(jsonPath("$.projects[0].isNoProject").value(false))
+            .andExpect(jsonPath("$.projects[0].sessionCount").value(2))
+            // two cwd groups inside the repo
+            .andExpect(jsonPath("$.projects[0].repos[0].groups.length()").value(2))
+            .andExpect(jsonPath("$.projects[0].repos[0].groups[0].label").value("one"))
+            .andExpect(jsonPath("$.projects[0].repos[0].groups[0].sessions.length()").value(1))
+            .andExpect(jsonPath("$.projects[0].repos[0].groups[1].label").value("two"))
+            // legacy row keeps the Home bucket, listed after project lanes
+            .andExpect(jsonPath("$.projects[1].id").value("__no_project__"))
+            .andExpect(jsonPath("$.projects[1].isNoProject").value(true))
+            .andExpect(jsonPath("$.projects[1].sessionCount").value(1))
+            // session payloads expose the grouping metadata
+            .andExpect(jsonPath("$.scoped_session_ids.length()").value(3));
+    }
+
     @Test
     void sidebarSessionsUnknownConcreteProfileReturnsEmptyScopedPayloadLikeHermes() throws Exception {
         mockMvc.perform(get("/api/profiles/sessions/sidebar").param("recents_profile", "ghost"))

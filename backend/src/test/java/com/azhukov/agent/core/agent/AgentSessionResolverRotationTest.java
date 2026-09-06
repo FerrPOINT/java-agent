@@ -49,7 +49,7 @@ class AgentSessionResolverRotationTest {
     void setUp() {
         resolver = new AgentSessionResolver(sessionRepository,
             Mappers.getMapper(SessionEntityMapper.class), transactionTemplate,
-            messageRepository, org.mockito.Mockito.mock(SessionLineageService.class));
+            messageRepository, org.mockito.Mockito.mock(SessionLineageService.class), org.mockito.Mockito.mock(com.azhukov.agent.core.agent.ProjectContextDetector.class));
         lenient().when(transactionTemplate.execute(any())).thenAnswer(inv -> {
             TransactionCallback<?> cb = inv.getArgument(0);
             return cb.doInTransaction(null);

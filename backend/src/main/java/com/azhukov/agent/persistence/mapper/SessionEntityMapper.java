@@ -40,6 +40,8 @@ public interface SessionEntityMapper {
     @Mapping(target = "updatedAt", ignore = true)
     @Mapping(target = "cliState", ignore = true)
     @Mapping(target = "parentSessionId", ignore = true)
+    @Mapping(target = "cwd", ignore = true)
+    @Mapping(target = "gitRepoRoot", ignore = true)
     @Mapping(target = "sessionStatus", ignore = true)
     @Mapping(target = "source", ignore = true)
     @Mapping(target = "profile", ignore = true)

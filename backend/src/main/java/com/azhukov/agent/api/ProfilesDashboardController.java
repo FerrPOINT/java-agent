@@ -530,7 +530,7 @@ public class ProfilesDashboardController {
             true);
         Map<String, Object> usage = profileUsageTotals(AgentProperties.DEFAULT_USER_ID, null);
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("projects", List.of(homeProject(sessions, total, usage, cappedPreviewLimit)));
+        response.put("projects", projectTree(sessions, total, usage, cappedPreviewLimit));
         response.put("active_id", null);
         response.put("scoped_session_ids", sessions.stream().map(row -> row.get("id")).toList());
         response.put("errors", List.of());
@@ -835,6 +835,95 @@ public class ProfilesDashboardController {
         return response;
     }
 
+
+    /**
+     * Build the real project tree from persisted cwd/git_repo_root (Hermes
+     * parity): project (repo root) → repos → cwd worktree groups. Sessions
+     * without project metadata keep the Home/no-project bucket. Preserves the
+     * response contract of the previous Home-only implementation: the same
+     * fields, shape, and ordering guarantees.
+     */
+    private List<Map<String, Object>> projectTree(
+        List<Map<String, Object>> sessions,
+        long totalSessions,
+        Map<String, Object> profileUsage,
+        int previewLimit
+    ) {
+        List<Map<String, Object>> noProject = new java.util.ArrayList<>();
+        // repoRoot → (cwd → sessions)
+        Map<String, Map<String, List<Map<String, Object>>>> projects = new LinkedHashMap<>();
+        for (Map<String, Object> session : sessions) {
+            String repoRoot = (String) session.get("git_repo_root");
+            String cwd = (String) session.get("cwd");
+            if (repoRoot == null || repoRoot.isBlank()) {
+                noProject.add(session);
+                continue;
+            }
+            projects.computeIfAbsent(repoRoot, k -> new LinkedHashMap<>())
+                .computeIfAbsent(cwd != null ? cwd : repoRoot, k -> new java.util.ArrayList<>())
+                .add(session);
+        }
+
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+        for (Map.Entry<String, Map<String, List<Map<String, Object>>>> projectEntry : projects.entrySet()) {
+            String repoRoot = projectEntry.getKey();
+            Map<String, List<Map<String, Object>>> groupsByCwd = projectEntry.getValue();
+
+            List<Map<String, Object>> groups = new java.util.ArrayList<>();
+            List<Map<String, Object>> projectSessions = new java.util.ArrayList<>();
+            for (Map.Entry<String, List<Map<String, Object>>> groupEntry : groupsByCwd.entrySet()) {
+                List<Map<String, Object>> groupSessions = groupEntry.getValue();
+                Map<String, Object> group = new LinkedHashMap<>();
+                group.put("id", "cwd:" + groupEntry.getKey());
+                group.put("label", labelForPath(groupEntry.getKey()));
+                group.put("path", groupEntry.getKey());
+                group.put("isHome", false);
+                group.put("sessions", groupSessions);
+                groups.add(group);
+                projectSessions.addAll(groupSessions);
+            }
+
+            Map<String, Object> repo = new LinkedHashMap<>();
+            repo.put("id", "repo:" + repoRoot);
+            repo.put("label", labelForPath(repoRoot));
+            repo.put("path", repoRoot);
+            repo.put("groups", groups);
+            repo.put("sessionCount", projectSessions.size());
+
+            Map<String, Object> project = new LinkedHashMap<>();
+            project.put("id", "repo:" + repoRoot);
+            project.put("label", labelForPath(repoRoot));
+            project.put("path", repoRoot);
+            project.put("isNoProject", false);
+            project.put("repos", List.of(repo));
+            project.put("sessionCount", projectSessions.size());
+            project.put("totalTokens", 0L);
+            project.put("totalCostUsd", 0.0);
+            project.put("lastActive", projectSessions.stream()
+                .map(row -> numericLong(row.get("last_active")))
+                .max(Long::compareTo)
+                .orElse(0L));
+            project.put("previewSessions", projectSessions.stream().limit(previewLimit).toList());
+            result.add(project);
+        }
+
+        // Home bucket: sessions without project metadata (legacy rows, non-repo cwd).
+        // Keeps the real profile usage totals — Hermes reports them on Home.
+        if (!noProject.isEmpty()) {
+            result.add(homeProject(noProject, noProject.size(), profileUsage, previewLimit));
+        }
+        return result;
+    }
+
+    /** Last path segment for tree labels ("…/work/foo" → "foo"). */
+    private String labelForPath(String path) {
+        if (path == null || path.isBlank()) {
+            return "Home";
+        }
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 && slash < path.length() - 1 ? path.substring(slash + 1) : path;
+    }
+
     private Map<String, Object> homeProject(
         List<Map<String, Object>> sessions,
         long totalSessions,
@@ -1113,6 +1202,12 @@ public class ProfilesDashboardController {
         response.put("input_tokens", 0);
         response.put("output_tokens", 0);
         response.put("preview", entity.getPreview());
+        if (entity.getCwd() != null) {
+            response.put("cwd", entity.getCwd());
+        }
+        if (entity.getGitRepoRoot() != null) {
+            response.put("git_repo_root", entity.getGitRepoRoot());
+        }
         response.put("pinned", Boolean.TRUE.equals(entity.getPinned()));
         response.put("archived", Boolean.TRUE.equals(entity.getArchived()));
         response.put("hidden", Boolean.TRUE.equals(entity.getHidden()));

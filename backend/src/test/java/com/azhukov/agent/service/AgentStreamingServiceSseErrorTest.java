@@ -173,7 +173,7 @@ class AgentStreamingServiceSseErrorTest {
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
             new RuntimeConfigService(), new InterruptToken(), new SteerBuffer(),
             new TokenEstimator(), new ToolResultFormatter(),
-            new AgentSessionResolver(sessionStorePort(), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
+            new AgentSessionResolver(sessionStorePort(), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class), mock(com.azhukov.agent.core.agent.ProjectContextDetector.class)),
             lineageService,
             new CliStateApplier(), null, null, new com.azhukov.agent.core.metadata.ModelMetadataService(), null);
     }

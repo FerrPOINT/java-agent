@@ -77,7 +77,7 @@ class AgentRuntimeServiceRestartTest {
             new com.fasterxml.jackson.databind.ObjectMapper(),
             org.mockito.Mockito.mock(RuntimeConfigService.class),
             transactionTemplate,
-            new AgentSessionResolver(sessionStorePort(), Mappers.getMapper(SessionEntityMapper.class), transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class)),
+            new AgentSessionResolver(sessionStorePort(), Mappers.getMapper(SessionEntityMapper.class), transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class), mock(com.azhukov.agent.core.agent.ProjectContextDetector.class)),
             new CliStateApplier(),
             new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class), mock(ConversationCompressor.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class, org.mockito.Mockito.RETURNS_SELF), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class)),
             mock(com.azhukov.agent.core.context.ContextCompressor.class),

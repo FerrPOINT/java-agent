@@ -83,6 +83,14 @@ public class SessionEntity {
     @Column(columnDefinition = "TEXT")
     private String subgoal;
 
+    /** Working directory the session was started from (project grouping). Nullable. */
+    @Column(name = "cwd")
+    private String cwd;
+
+    /** Git repository root when the cwd is inside a work tree (project grouping). Nullable. */
+    @Column(name = "git_repo_root")
+    private String gitRepoRoot;
+
     @ElementCollection(fetch = FetchType.LAZY)
     @CollectionTable(name = "session_cli_state", joinColumns = @JoinColumn(name = "session_id"))
     @MapKeyColumn(name = "state_key")
