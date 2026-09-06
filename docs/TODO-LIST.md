@@ -10,10 +10,10 @@
 ~~1. **c1**~~ ✅ DONE 2026-08-20 (FallbackModelCaller extracted: retry+fallback loop + 7 one-shot guards + compression recovery; runtime 1951→1346 LOC; 11 dead helper copies removed)
 ~~2. **c2**~~ ✅ DONE 2026-09-06 (canonical TurnExecutor.executeToolBatch: BOTH loops now dispatch tool batches through one owner — approval gate incl. fail-closed null-producer fix, /yolo + subagent-auto-approve + subagent auto-deny now streaming too, execute_code budget refund now sync too, budget-exhaustion summary now streaming too, guardrail-halt now streaming too; steer-drain/wrapup/boosted-options deduped into TurnExecutorUtils; DAR 1741→1483 LOC, dead parallel executor removed)
 
-## HIGH — Architecture (2)
+## HIGH — Architecture (0) — ✅ ALL DONE
 
-3. **h10** Create shared module — API DTOs, SharedObjectMapper, base REST client
-4. **h12** ★RESTORED: Introduce repository ports in core — justified for multi-user
+~~3. **h10**~~ ✅ DONE 2026-09-06 (:shared Gradle module — SharedObjectMapper single source, ChatResponseDto wire DTO, BackendRestClientFactory; bot+cli REST clients migrated; bot's phantom backend dependency removed, reactive-streams added explicitly; bot hand-rolled JsonNode chat parsing → shared DTO; 9 shared tests)
+~~4. **h12**~~ ✅ DONE 2026-09-06 (core/ports package: SessionStorePort, MessageStorePort, MemoryStorePort, PendingMemoryStorePort, SkillStorePort, SkillAuditPort, CuratorSnapshotPort, CompressionLockPort + persistence/adapter Jpa*Store delegators; 11 core classes now depend on ports only — core → persistence.repository imports 11 → 0; Pageable no longer leaks into core)
 
 ## MEDIUM — Architecture (0) — ✅ ALL DONE
 
@@ -83,22 +83,20 @@ drain queued writes ✅ (h86)
 
 AGENTS.override.md ✅, auto-title ✅, reject answer-shaped ✅, ~~session handles~~ ✅ ALREADY IMPLEMENTED (@session:profile/id parse + sessionLink generation, verified 2026-08-20), ~~approval coalesce~~ ✅ (supersede via request() + F16 producer wiring), ~~/worktree~~ ⏴ DEFERRED BY USER 2026-08-20 (не нужен для текущего сценария; при необходимости — per-session cwd дизайн + API + CLI-команда), ~~session pin/unpin~~ ❌ NOT IN HERMES (speculative, removed), silence markers ✅ NEW (Hermes marker set + canonicalisation)
 
-## ★ NEW — MULTI-USER (14)
+## ★ NEW — MULTI-USER (0) — ✅ ALL DONE
 
-1. **mu1** Add userId to CronJobEntity — Migration V27
-2. **mu2** Add userId to SkillEntity — Migration V27
-3. **mu3** Add userId to CheckpointEntity — Migration V27
-4. **mu4** Add userId to AuditLogEntity — Migration V27
-5. **mu5** Add userId filtering to ALL repository queries
-6. **mu6** Add userId to ChatRequest DTO + propagate
-7. **mu7** Per-user API keys — UserEntity + UserApiKeyEntity, Migration V28
-8. **mu8** RBAC on API endpoints
-9. **mu9** Bot AuthorizationService roles
-10. **mu10** Session isolation
-11. **mu11** Memory isolation
-12. **mu12** Cron job isolation
-13. **mu13** Usage tracking per-user
-14. **mu14** Skill isolation
+~~mu1-mu4~~ ✅ DONE (V29 cron/skill/checkpoint/cron_execution_log user_id + V36 audit_log user_id; entities carry userId) — TODO lagged the code, verified 2026-09-06
+~~mu5~~ ✅ DONE (10 repositories scope by userId: findByUserId*/AndUserId* families)
+~~mu6~~ ✅ DONE (ChatRequest.userId + bot propagates runtime.getUserId(); session metadata + prompt identity)
+~~mu7~~ ✅ DONE (V37 agent_users + user_api_keys; AgentUserEntity/UserApiKeyEntity; raw key returned once, SHA-256 hash stored; UserAccessService)
+~~mu8~~ ✅ DONE (ApiKeyAuthFilter: per-user keys > global admin key; UserContext roles; UserAdminController.requireAdmin; 500→403 RBAC fix + ResponseStatusException handler 2026-09-06)
+~~mu9~~ ✅ DONE (bot auth: allowed-users/admin-ids, SlashAccessPolicy)
+~~mu10~~ ✅ DONE (requireSessionOwnership on chat paths + 6 SessionController endpoints guarded 2026-09-06: history/context/usage/reset/compress/undo; admin/no-auth unaffected)
+~~mu11~~ ✅ DONE (memory store/recall scoped by userId; verified live)
+~~mu12~~ ✅ DONE (CronJobService userId-first create + user-scoped list)
+~~mu13~~ ✅ DONE (UsageEntity.userId; UsageTracker.recordTurn(sessionId, userId, ...))
+~~mu14~~ ✅ DONE (SkillRepository findByNameAndUserId/findVisibleSkills)
+E2E: scenario 36-multiuser-isolation.yaml (17 steps) — admin auth, 401/403 negatives, per-user keys, session isolation, memory isolation, key revocation; live-verified 17/17 2026-09-06
 
 ## Parity-audit round 2 (2026-08-20) — CLOSED findings
 

@@ -5,6 +5,9 @@ WORKDIR /workspace
 COPY backend/gradle/ gradle/
 COPY backend/gradlew backend/build.gradle backend/settings.gradle backend/gradle.properties ./
 COPY backend/src src
+# h10: the backend build resolves :shared as a sibling module (backend/settings.gradle
+# includes ../shared when present) — copy it in so the container layout matches the repo.
+COPY shared/ shared/
 RUN ./gradlew bootJar --no-daemon -x test
 
 FROM eclipse-temurin:25-jre-noble

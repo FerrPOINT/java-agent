@@ -3,7 +3,10 @@ rootProject.name = 'java-agent-backend'
 // CI and standalone builds run inside backend/ as their own Gradle root.
 // When the shared module exists as a sibling (the normal repo checkout),
 // include it so ':shared' resolves exactly as in the root composite build.
-if (file('../shared/build.gradle').exists()) {
+// Repo checkout: shared sits next to backend/. Docker builder stage: the
+// backend project IS the workspace root and shared/ is copied inside it.
+def sharedDir = file('../shared/build.gradle').exists() ? file('../shared') : file('shared')
+if (new File(sharedDir, 'build.gradle').exists()) {
     include ':shared'
-    project(':shared').projectDir = file('../shared')
+    project(':shared').projectDir = sharedDir
 }
