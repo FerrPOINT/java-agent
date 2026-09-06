@@ -3,9 +3,11 @@
 ## Session 2026-09-06 — 0.1.235 (c2: canonical TurnExecutor batch executor — sync/streaming tool-path unification)
 
 ### Architecture (last CRITICAL closed)
+
 - **c2**: both agent loops (DefaultAgentRuntime sync + AgentStreamingService SSE) now dispatch tool batches through the single canonical `TurnExecutor.executeToolBatch` — one owner for the approval gate, subagent auto-deny, /yolo bypass, interrupt checks, steer injection and result-budget enforcement. DefaultAgentRuntime 1741→1483 LOC; the duplicate parallel executor is removed (M17 executor lives solely on TurnExecutor).
 
 ### Real divergences the duplication had caused (all fixed + regression-tested)
+
 - **B1**: streaming approval gate missed `/yolo` skip, `subagent_auto_approve`, subagent auto-deny (rev-115) and fail-closed post-wait re-validation — a gated tool could execute after a bare pending-approval check.
 - **B2**: streaming loop never checked `guardrail.isHalted()` per iteration — kept streaming after a guardrail halt.
 - **B3**: `execute_code` iteration-budget refund (Hermes conversation_loop.py:7277-7280) existed only in streaming; sync now refunds too.
@@ -14,9 +16,11 @@
 - **fail-open in the canonical gate**: when the guardrail flagged a tool but `requestApproval` could not create the request (null producer), the call EXECUTED. Fail-closed semantics restored (tools/approval.py:2984).
 
 ### Deduplication
+
 - Pre-API steer drain, run-budget wrap-up notice, boosted-max-tokens retry options and the budget-exhaustion summary moved to shared owners (`TurnExecutorUtils`, `TurnExecutor`).
 
 ### Tests
+
 - Backend 6594/6594 (+6 regression: null-producer fail-closed, skipApproval bypass, subagent auto-deny, execute_code refund records, steer-after-budget survival, streaming guardrail halt); bot 1716, cli 333; coverage 80.26% (gate 0.80).
 
 ## Session 2026-09-06 — 0.1.234 (release-hardening: full audit fix-wave + parity + coverage gate 80%)
