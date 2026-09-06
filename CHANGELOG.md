@@ -1,5 +1,45 @@
 # Changelog
 
+## Session 2026-09-06 — 0.1.234 (release-hardening: full audit fix-wave + parity + coverage gate 80%)
+
+### Fixed — concurrency & lifecycle
+
+- **M2**: `DefaultAgentRuntime` fallback/active-client state was shared mutable fields on a singleton bean — concurrent sessions overwrote each other's fallback chain. Now per-turn `TurnModelState` in a `ThreadLocal`, cleared in `finally`.
+- **M3**: `interruptibleSleep` polled `Thread.interrupted()` which silently clears the interrupt flag — plain `Thread.sleep` now propagates interruption losslessly.
+- **M11**: `ProcessTool.getRecentOutput` derived its slice from a separately tracked counter that could diverge from the ring buffer — now derived from the deque itself.
+- **M27/M28/M29**: MCP lifecycle — reconnect path closes the stale client before replacing it; `refreshTools` remove-without-close leak fixed; `closeAll` gets a bounded drain (`awaitTermination` 10s) before pool replacement instead of abandoning in-flight tool calls.
+- **M24**: `TelegramClient.lastCallConflict` global mutable flag raced across parallel API calls — `getUpdates` now rethrows 409 as a typed `TelegramApiException` and the polling loop keys off the exception, not the side-channel flag.
+- **M26**: `handleCommand` ran unsynchronized against `handleTextOrMedia` — commands (`/new`, `/model`, `/checkpoint`) now take the same per-chat lock as message handling.
+- **L12**: `BotLockManager.scopeHash` truncated `hashCode()` to 24 bits (colliding lock files for distinct bot tokens) — full SHA-256 now.
+
+### Fixed — data & API hygiene
+
+- **M16**: session DTO timestamps surfaced as `null` — entity `createdAt/updatedAt` are now snapshotted into domain metadata by `SessionEntityMapper` and read back by `DomainDtoMapper`.
+- **M17**: session delete materialized the entire transcript just to delete it — bulk `deleteBySessionId`.
+- **M18**: `undoTurns` loaded the whole transcript to pick turn indices — distinct-turn projection.
+- **M19**: `getContext` loaded the transcript for counts — SQL aggregates (`countBy`, `sum(length)`, distinct tool names).
+- **M7**: memory fact queries were unbounded — capped by `agent.memory.max-facts-per-query`.
+- **M21**: think-block scrubbing now applies to the sync/fallback commentary path (streaming already scrubbed).
+- **M23**: long-polling no longer reconnect-loops on unrecoverable auth failures (401/404 terminal by default).
+- **M31**: streaming timeout abandoned the caller but kept consuming — late tokens/completions/errors after timeout are dropped (`abandoned` flag), timeout result surfaces deterministically.
+- **M33**: `ErrorClassifier` matched HTTP status codes as substrings ("400" inside "14002") — standalone-token matching now.
+- **M35**: `CredentialPool` stored raw provider error strings (could contain key fragments) — sanitized to classified reasons.
+- **M36**: `McpOAuthManager` JSON string scanner dropped `\uXXXX` escapes to literal "uXXXX" — proper unicode decoding.
+- **L3**: TTS/ImageGen artifacts in cache roots accumulate forever — `MediaArtifactCleanup` scheduled sweep (TTL `agent.media.artifact-ttl-hours`, default 24h).
+- **CliStateApplier yolo bug** (found by new tests): rebuilding `ChatRequest` dropped `serviceTier/yoloMode/verboseMode/footerEnabled` — `/yolo` requests lost their bypass flag after CLI-state merge.
+
+### Fixed — Hermes tool-schema parity
+
+- `terminal`: advertises `notify_on_complete`/`watch_patterns` (previously only `notify`).
+- `clarify`: primary surface is top-level `question`/`choices`/`multi_select` (required=`[question]`) with `questions` as the batch extra — matching `CLARIFY_SCHEMA`.
+- `memory`: `old_text`/`new_text` documented as required for replace/remove operations.
+
+### Tests & coverage
+
+- Backend coverage **79.09% → 80.01%**; JaCoCo line gate raised **0.75 → 0.80**.
+- ~30 new branch/regression test classes covering every fix above (6588 backend tests total, 0 failures).
+- Delegation error paths, web-extract guards, git-review scopes, cron not-found branches, dashboard theme/checkpoint/stats branches, skills-hub helpers, context-compressor string bounds.
+
 ## Session 2026-09-05 — 0.1.233 (post-audit cleanup)
 
 ### Fixed

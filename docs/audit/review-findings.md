@@ -3,6 +3,12 @@
 Branch: `review/full-audit`
 Baseline: 6075 tests, 0 failures
 
+> **Status update 2026-09-06 (0.1.234):** the full remaining MEDIUM/LOW wave is
+> closed with regression tests: M2, M3, M7, M8, M11, M16–M19, M21, M23, M24,
+> M26, M27, M28, M29, M31, M33, M35, M36, L3, L12 (details in CHANGELOG 0.1.234;
+> tool-schema parity fixes for terminal/clarify/memory included). Backend
+> coverage 80.01% with the JaCoCo line gate raised to 0.80.
+>
 > **Status update 2026-09-05 (0.1.233):** most findings from this audit and the
 > 2026-08-20 TODO list have been closed across the audit rounds of 2026-09-04/05
 > (registry honesty, delegation leak, parity rounds 1–3) plus the post-audit
