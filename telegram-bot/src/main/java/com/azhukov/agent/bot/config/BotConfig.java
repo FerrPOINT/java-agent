@@ -73,22 +73,10 @@ public class BotConfig {
 
     @Bean
     public RestClient backendRestClient(BotProperties properties) {
-        // l38: explicit factory bean instead of double-brace initialization
-        // (anonymous subclass holds a hidden this$0 reference and leaks it).
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout((int) Duration.ofSeconds(10).toMillis());
-        factory.setReadTimeout((int) Duration.ofMinutes(10).toMillis());
-        RestClient.Builder builder = RestClient.builder()
-            .baseUrl(properties.getBackendUrl())
-            .requestFactory(factory);
-        // Forward the backend API key when configured — required when the
-        // backend runs with agent.security.api-key enabled (else every bot
-        // request would 401). No-op header when unset.
-        String apiKey = properties.getBackendApiKey();
-        if (apiKey != null && !apiKey.isBlank()) {
-            builder.defaultHeader("X-API-Key", apiKey);
-        }
-        return builder.build();
+        // h10: shared factory (timeouts, X-API-Key, tolerant converters) —
+        // same client behaviour as the CLI module.
+        return com.azhukov.agent.shared.http.BackendRestClientFactory.create(
+            properties.getBackendUrl(), properties.getBackendApiKey());
     }
 
     @Bean

@@ -34,6 +34,8 @@ repositories {
 }
 
 dependencies {
+    // shared DTOs + mapper + REST factory (h10)
+    implementation project(':shared')
     // Spring Boot
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-security'

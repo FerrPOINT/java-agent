@@ -1,16 +1,12 @@
 package com.azhukov.agent.cli;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.web.client.RestClient;
 
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 
 /**
  * CLI configuration — provides RestClient and ObjectMapper beans.
@@ -35,29 +31,10 @@ public class CliConfig {
     }
 
     @Bean
-    public RestClient backendRestClient(CliProperties properties, ObjectMapper objectMapper) {
-        MappingJackson2HttpMessageConverter jacksonConverter =
-            new MappingJackson2HttpMessageConverter(objectMapper);
-        List<org.springframework.http.MediaType> supportedTypes = new ArrayList<>(jacksonConverter.getSupportedMediaTypes());
-        supportedTypes.add(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM);
-        jacksonConverter.setSupportedMediaTypes(supportedTypes);
-
-        RestClient.Builder builder = RestClient.builder()
-            .baseUrl(properties.getBackendUrl())
-            .requestFactory(new SimpleClientHttpRequestFactory() {{
-                setConnectTimeout((int) Duration.ofSeconds(10).toMillis());
-                setReadTimeout((int) Duration.ofMinutes(10).toMillis());
-            }});
-        // Auth: send the API key when configured so the CLI works against a
-        // backend with agent.security.api-key set (or with per-user keys).
-        if (properties.getApiKey() != null && !properties.getApiKey().isBlank()) {
-            builder.defaultHeader("X-API-Key", properties.getApiKey());
-        }
-        return builder
-            .messageConverters(converters -> {
-                converters.removeIf(c -> c instanceof MappingJackson2HttpMessageConverter);
-                converters.add(jacksonConverter);
-            })
-            .build();
+    public RestClient backendRestClient(CliProperties properties) {
+        // h10: shared factory (timeouts, X-API-Key, tolerant converters) —
+        // same client behaviour as the telegram-bot module.
+        return com.azhukov.agent.shared.http.BackendRestClientFactory.create(
+            properties.getBackendUrl(), properties.getApiKey());
     }
 }

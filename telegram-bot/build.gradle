@@ -68,7 +68,12 @@ dependencies {
     testCompileOnly 'org.mapstruct:mapstruct:1.6.3'
     testAnnotationProcessor 'org.mapstruct:mapstruct-processor:1.6.3'
 
-    implementation project(':backend')
+    // h10: shared DTOs/mapper/REST client factory instead of the phantom backend dependency
+    implementation project(':shared')
+
+    // spring-web's MultipartBodyBuilder references reactive-streams types in
+    // method signatures; needed at runtime (was previously transitive via backend)
+    implementation 'org.reactivestreams:reactive-streams'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
     testImplementation 'org.apache.groovy:groovy-test:5.1.1'

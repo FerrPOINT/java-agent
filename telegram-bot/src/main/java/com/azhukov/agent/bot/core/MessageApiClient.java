@@ -63,33 +63,35 @@ public class MessageApiClient extends BaseBackendClient {
             }
 
             JsonNode node = objectMapper.readTree(responseJson);
-            JsonNode responseField = node.get("response");
-            String responseText;
-            if (responseField == null || responseField.isNull()) {
-                // Try "content" field (the actual ChatResponseDto field name)
-                responseField = node.get("content");
+            // h10: parse through the shared DTO — field names and types are the
+            // contract now, not hand-rolled JsonNode walking (which had already
+            // drifted once: "response" vs "content" fallback). The reader is
+            // explicitly tolerant: legacy builds send extra fields ("response")
+            // and the injected mapper may be strict.
+            com.azhukov.agent.shared.dto.ChatResponseDto dto;
+            try {
+                dto = objectMapper.readerFor(com.azhukov.agent.shared.dto.ChatResponseDto.class)
+                    .without(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                    .readValue(node);
+            } catch (Exception parseEx) {
+                log.warn("Backend chat response does not match ChatResponseDto: {}", responseJson);
+                return new AgentBackendClient.ChatResult("Error: malformed backend reply");
             }
-            if (responseField == null || responseField.isNull()) {
-                log.warn("Backend chat response missing 'response' or 'content' field: {}", responseJson);
-                return new AgentBackendClient.ChatResult("Error: missing 'response' field in backend reply");
-            }
-            responseText = responseField.asText();
-
-            String modelUsed = node.has("modelUsed") ? node.get("modelUsed").asText(null) : null;
-            Integer contextTokens = node.has("contextTokens") ? node.get("contextTokens").asInt(0) : null;
-            Integer contextLength = node.has("contextLength") ? node.get("contextLength").asInt(0) : null;
-            boolean memoryUpdated = node.has("memoryUpdated") && node.get("memoryUpdated").asBoolean(false);
-            java.util.UUID backendSessionId = null;
-            JsonNode sessionIdNode = node.get("sessionId");
-            if (sessionIdNode != null && !sessionIdNode.isNull() && sessionIdNode.isTextual()) {
-                try {
-                    backendSessionId = java.util.UUID.fromString(sessionIdNode.asText());
-                } catch (IllegalArgumentException e) {
-                    log.warn("Backend returned invalid sessionId: {}", sessionIdNode.asText());
+            String responseText = dto.content();
+            if (responseText == null) {
+                // Legacy fallback: old backend builds sent "response" instead of "content"
+                JsonNode responseField = node.get("response");
+                if (responseField != null && !responseField.isNull()) {
+                    responseText = responseField.asText();
                 }
             }
+            if (responseText == null) {
+                log.warn("Backend chat response missing 'content'/'response' field: {}", responseJson);
+                return new AgentBackendClient.ChatResult("Error: missing 'response' field in backend reply");
+            }
 
-            return new AgentBackendClient.ChatResult(responseText, modelUsed, contextTokens, contextLength, false, memoryUpdated, backendSessionId);
+            return new AgentBackendClient.ChatResult(responseText, dto.modelUsed(),
+                dto.contextTokens(), dto.contextLength(), false, dto.memoryUpdated(), dto.sessionId());
         } catch (Exception e) {
             log.warn("Backend chat failed for sessionId={}: {}", sessionId, e.getMessage());
             return new AgentBackendClient.ChatResult("Error: " + e.getMessage());
