@@ -1,4 +1,4 @@
--- V49: Profile isolation — persist session cwd/git_repo_root for project/repo/worktree grouping.
+-- V51: Profile isolation — persist session cwd/git_repo_root for project/repo/worktree grouping.
 -- Hermes records the working directory (and repo root when inside a git work
 -- tree) on every session; the dashboard project tree groups by project → repo
 -- → cwd. Both columns are nullable: legacy rows and sessions created outside
