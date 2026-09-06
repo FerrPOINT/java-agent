@@ -74,7 +74,11 @@ public class CliStateApplier {
             request.username(),
             request.firstName(),
             request.languageCode(),
-            request.chatType()
+            request.chatType(),
+            request.serviceTier(),
+            request.yoloMode(),
+            request.verboseMode(),
+            request.footerEnabled()
         );
     }
 

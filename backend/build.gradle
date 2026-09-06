@@ -193,7 +193,7 @@ tasks.named('jacocoTestCoverageVerification', JacocoCoverageVerification) {
         rule {
             limit {
                 counter = 'LINE'
-                minimum = 0.75
+                minimum = 0.80
             }
         }
     }
