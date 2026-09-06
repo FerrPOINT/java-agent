@@ -1,3 +1,31 @@
+
+## Session 2026-09-06 — 0.1.236 (h10 + h12 + mu close-out)
+
+### h10 — shared Gradle module
+
+- New `:shared` module: `SharedObjectMapper` (single Jackson conventions source), `ChatResponseDto` (wire contract), `BackendRestClientFactory` (timeouts, X-API-Key, tolerant converters).
+- Bot + CLI REST clients migrated to the shared factory; bot phantom `project(':backend')` dependency removed (reactive-streams added explicitly for MultipartBodyBuilder).
+- Bot hand-rolled JsonNode chat parsing replaced by the shared DTO (tolerant reader).
+- Build layouts unified: repo composite, backend-standalone (CI job, cd backend/), Docker + Dockerfile.slim all resolve `:shared`.
+
+### h12 — repository ports in core
+
+- `core/ports`: SessionStorePort, MessageStorePort, MemoryStorePort, PendingMemoryStorePort, SkillStorePort, SkillAuditPort, CuratorSnapshotPort, CompressionLockPort.
+- `persistence/adapter`: Jpa*Store delegators; 11 core classes port-clean — core → persistence.repository imports 11 → 0; Pageable no longer leaks into core.
+
+### mu1-mu14 — verified + gaps closed
+
+- Feature audit: all 14 items already implemented (V29/V36/V37, entities, ApiKeyAuthFilter, UserContext, UserAccessService, repo scoping, bot propagation) — TODO-LIST lagged.
+- Live E2E scenario 36-multiuser-isolation.yaml (17 steps) found 3 real defects, all fixed:
+  1. RBAC denials returned 500 (ResponseStatusException unhandled) → dedicated handler, 403/404 preserved; regression test.
+  2. 6 SessionController endpoints (history/context/usage/reset/compress/undo) had NO ownership guard → requireSessionOwnership added.
+  3. E2E runner: admin_key/run_id vars for auth-enabled scenarios.
+- Scenario 36 live-verified 17/17: admin auth, 401/403 negatives, per-user keys, session isolation, memory isolation, key revocation.
+
+### Numbers
+
+- backend 6597 (+3), telegram-bot 1720, cli 333, shared 9 — all green.
+- CI green (run 34028493904).
 # Changelog
 
 ## Session 2026-09-06 — 0.1.235 (c2: canonical TurnExecutor batch executor — sync/streaming tool-path unification)
