@@ -91,6 +91,22 @@ public class SessionEntity {
     @Column(name = "git_repo_root")
     private String gitRepoRoot;
 
+    /** Origin platform of the conversation (telegram, api_server, cli). Nullable for legacy rows. */
+    @Column(name = "origin_platform", length = 64)
+    private String originPlatform;
+
+    /** Origin chat id on the origin platform (delivery target resolution). Nullable. */
+    @Column(name = "origin_chat_id", length = 255)
+    private String originChatId;
+
+    /** Origin thread/topic id when the conversation lives in a forum topic. Nullable. */
+    @Column(name = "origin_thread_id", length = 255)
+    private String originThreadId;
+
+    /** Origin user id on the origin platform (delivery ownership). Nullable. */
+    @Column(name = "origin_user_id", length = 255)
+    private String originUserId;
+
     @ElementCollection(fetch = FetchType.LAZY)
     @CollectionTable(name = "session_cli_state", joinColumns = @JoinColumn(name = "session_id"))
     @MapKeyColumn(name = "state_key")

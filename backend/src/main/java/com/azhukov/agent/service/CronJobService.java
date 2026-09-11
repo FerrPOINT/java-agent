@@ -16,7 +16,6 @@ import com.cronutils.model.time.ExecutionTime;
 import com.cronutils.parser.CronParser;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
@@ -66,7 +65,6 @@ import java.util.regex.Pattern;
 
 @Service
 @Slf4j
-@RequiredArgsConstructor
 public class CronJobService {
 
 private static final String CRON_EXECUTION_HINT = """
@@ -86,8 +84,53 @@ private static final String CRON_EXECUTION_HINT = """
     private final com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
     private final CronScheduleParser scheduleParser;
+    private final ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider;
+    private final ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider;
     private EventService eventService;
     private ProfileService profileService;
+
+    /**
+     * Legacy constructor without delivery-ledger wiring: delivery enqueue is
+     * skipped (provider is null). Retained for tests of non-delivery behavior.
+     */
+    public CronJobService(
+        CronJobRepository cronJobRepository,
+        ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider,
+        AgentProperties properties,
+        SkillManager skillManager,
+        CronExecutionLogRepository cronExecutionLogRepository,
+        com.azhukov.agent.persistence.repository.MessageRepository messageRepository,
+        org.springframework.transaction.support.TransactionTemplate transactionTemplate,
+        CronScheduleParser scheduleParser
+    ) {
+        this(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
+            cronExecutionLogRepository, messageRepository, transactionTemplate, scheduleParser, null, null);
+    }
+
+    @Autowired
+    public CronJobService(
+        CronJobRepository cronJobRepository,
+        ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider,
+        AgentProperties properties,
+        SkillManager skillManager,
+        CronExecutionLogRepository cronExecutionLogRepository,
+        com.azhukov.agent.persistence.repository.MessageRepository messageRepository,
+        org.springframework.transaction.support.TransactionTemplate transactionTemplate,
+        CronScheduleParser scheduleParser,
+        ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider,
+        ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider
+    ) {
+        this.cronJobRepository = cronJobRepository;
+        this.agentRuntimeServiceProvider = agentRuntimeServiceProvider;
+        this.properties = properties;
+        this.skillManager = skillManager;
+        this.cronExecutionLogRepository = cronExecutionLogRepository;
+        this.messageRepository = messageRepository;
+        this.transactionTemplate = transactionTemplate;
+        this.scheduleParser = scheduleParser;
+        this.deliveryWorkItemServiceProvider = deliveryWorkItemServiceProvider;
+        this.sessionRepositoryProvider = sessionRepositoryProvider;
+    }
 
     // Daemon thread factory so cron threads don't prevent JVM shutdown
     private static final ThreadFactory DAEMON_THREAD_FACTORY = r -> {
@@ -957,7 +1000,9 @@ private static final String CRON_EXECUTION_HINT = """
             }
             cronJobRepository.save(job);
             // h72: Record successful execution in the ledger.
-            recordExecution(job.getId(), startedAt, Instant.now(), "success", null, null);
+            String executionOutput = loadLastRunOutput(job.getLastRunSessionId());
+            Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), "success", null, executionOutput);
+            enqueueDeliveryWork(job, executionLogId, executionOutput);
             publishCronEvent("cron.success", job, startedAt, Map.of("monitor_changed", monitorOutcome.changed()));
             return CronExecutionOutcome.success();
         } catch (Exception e) {
@@ -1349,17 +1394,102 @@ private static final String CRON_EXECUTION_HINT = """
      * @param status "success", "failure", or "timeout"
      * @param errorMessage error message if failed, null if succeeded
      */
-    private void recordExecution(UUID jobId, Instant startedAt, Instant finishedAt, String status,
+    private Long recordExecution(UUID jobId, Instant startedAt, Instant finishedAt, String status,
                                  String errorMessage, String outputText) {
         try {
             if (cronExecutionLogRepository != null) {
                 CronExecutionLogEntity logEntry = CronExecutionLogEntity.create(jobId, startedAt, finishedAt, status, errorMessage);
                 logEntry.setOutputText(outputText);
-                cronExecutionLogRepository.save(logEntry);
+                CronExecutionLogEntity saved = cronExecutionLogRepository.save(logEntry);
+                return saved != null ? saved.getId() : null;
             }
         } catch (Exception e) {
             log.warn("Failed to record cron execution log for job {}: {}", jobId, e.getMessage());
         }
+        return null;
+    }
+
+    /**
+     * WP-1 durable delivery: create the delivery work item for a finished cron
+     * execution in the same logical sequence. The target is resolved once, from
+     * the job's deliver_to (already normalized to platform:chat_id by the
+     * creator) — never from the current bot state at send time. Silenced runs
+     * ([SILENT] markers) are terminally acknowledged without platform send.
+     */
+    private void enqueueDeliveryWork(CronJobEntity job, Long executionLogId, String output) {
+        if (executionLogId == null || isSilentOutput(output)) {
+            return;
+        }
+        DeliveryWorkItemService deliveryService = deliveryWorkItemServiceProvider == null
+            ? null : deliveryWorkItemServiceProvider.getIfAvailable();
+        if (deliveryService == null) {
+            return;
+        }
+        String target = resolveDeliveryTarget(job);
+        if (target == null) {
+            log.debug("Cron job '{}' has no resolvable delivery target; skipping ledger enqueue", job.getName());
+            return;
+        }
+        String profile = job.getProfile() == null || job.getProfile().isBlank()
+            ? DEFAULT_PROFILE : job.getProfile();
+        try {
+            deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
+                DeliveryWorkItemService.SOURCE_CRON_EXECUTION,
+                String.valueOf(executionLogId),
+                profile,
+                job.getUserId(),
+                job.getLastRunSessionId(),
+                target,
+                output == null ? "" : output));
+        } catch (IllegalArgumentException e) {
+            log.warn("Cron job '{}' delivery target rejected: {}", job.getName(), e.getMessage());
+        } catch (Exception e) {
+            log.warn("Cron job '{}' delivery enqueue failed: {}", job.getName(), e.getMessage());
+        }
+    }
+
+    private static boolean isSilentOutput(String output) {
+        if (output == null) {
+            return true;
+        }
+        String trimmed = output.trim();
+        if (trimmed.isEmpty()) {
+            return true;
+        }
+        String canonical = trimmed.toUpperCase(java.util.Locale.ROOT)
+            .replaceAll("^[\\[\\(]+|[\\]\\)]+$", "");
+        return switch (canonical) {
+            case "SILENT", "NO_REPLY", "NO REPLY" -> true;
+            default -> trimmed.length() <= 64 && trimmed.startsWith("[SILE");
+        };
+    }
+
+    private String resolveDeliveryTarget(CronJobEntity job) {
+        String deliverTo = job.getDeliverTo();
+        if (deliverTo == null || deliverTo.isBlank()) {
+            return null;
+        }
+        String value = deliverTo.trim();
+        // Formats accepted today: "telegram:<chatId>", bare "telegram", "bot-chat",
+        // or a bare numeric chat id (CronDeliveryPoller.resolveChatId). Normalize
+        // to platform:chat_id; bare platform names without a chat cannot be
+        // resolved to a structured target yet (home-channel resolution is WP-2).
+        if (value.contains(":")) {
+            String[] parts = value.split(":", 2);
+            if (parts.length == 2 && !parts[1].isBlank()) {
+                return parts[0].trim().toLowerCase(java.util.Locale.ROOT) + ":" + parts[1].trim();
+            }
+            return null;
+        }
+        if (value.matches("\\d+")) {
+            return "telegram:" + value;
+        }
+        if ("bot-chat".equalsIgnoreCase(value)
+            || value.toLowerCase(java.util.Locale.ROOT).matches("telegram|discord|web")) {
+            // Bare platform names cannot name a chat yet — home-channel registry is WP-2.
+            return null;
+        }
+        return null;
     }
 
     private String loadLastRunOutput(UUID sessionId) {

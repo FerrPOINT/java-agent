@@ -1,4 +1,6 @@
-# План полного покрытия тестами java-agent
+# Тестовая стратегия java-agent
+
+Этот файл задаёт устойчивую стратегию, а не снимок количества тестов. Текущий измеренный baseline и release-gates находятся в `docs/35-full-parity-fix-and-test-plan-2026-09-08.md` и генерируемом `build/release-verification.json`.
 
 Цель: у каждого production-класса в `backend/src/main/java` есть автоматизированный тест, который ломается при регрессии.
 Разделение:
@@ -7,7 +9,7 @@
 - **Integration** — `@SpringBootTest` / `@DataJpaTest` / `@WebMvcTest` / Testcontainers.
 - **Live** — требуют внешнего сервиса (Ollama, Telegram, Chromium, интернет); помечены `@Tag("live")` и не гоняются в CI по умолчанию.
 
-Текущее состояние: ~40 тестовых файлов, 80 тестов проходят. Многие слои покрыты фрагментарно.
+Исторический baseline на момент создания этого плана устарел. Не использовать этот документ для текущих чисел тестов, покрытия или статуса классов: получать их из `python3 scripts/release_verify.py` и XML JaCoCo. Список ниже сохраняется как backlog и должен сверяться с исходниками перед постановкой задачи.
 
 ## Легенда
 
@@ -327,15 +329,17 @@
 
 ## Как мерить прогресс
 
-После каждого спринта запускать:
+После каждого change set запускать локальные evidence gates:
 
 ```bash
-./gradlew test jacocoTestReport
+python3 scripts/release_verify.py
 ```
+
+Скрипт выполняет module tests, JaCoCo, static endpoint inventory, PostgreSQL `slowTest` и boot JARs; HTTP/CLI/Docker E2E он явно помечает `NOT_RUN`, пока их не запросили отдельными флагами. Полный XML JaCoCo остаётся источником для package-level разбора.
 
 Целевые метрики:
 
-- line coverage ≥ 75%
-- branch coverage ≥ 60%
-- все P0-классы покрыты хотя бы одним тестом
+- общий backend line coverage >= 80%
+- затронутый production package line coverage >= 75%, кроме документированного external-I/O исключения
+- все новые stateful-contracts имеют unit, Postgres integration и E2E/fixture evidence
 - live-тесты не ломают CI

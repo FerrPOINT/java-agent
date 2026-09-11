@@ -48,6 +48,8 @@ public class DelegatedTaskRunService {
     private final DelegatedTaskRunRepository repository;
     private final ObjectMapper objectMapper;
     private final EventService eventService;
+    private final org.springframework.beans.factory.ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider;
     private final Object capacityLock = new Object();
 
     public DelegatedTaskRunService(DelegatedTaskRunRepository repository, ObjectMapper objectMapper) {
@@ -60,9 +62,21 @@ public class DelegatedTaskRunService {
         ObjectMapper objectMapper,
         EventService eventService
     ) {
+        this(repository, objectMapper, eventService, null, null);
+    }
+
+    public DelegatedTaskRunService(
+        DelegatedTaskRunRepository repository,
+        ObjectMapper objectMapper,
+        EventService eventService,
+        org.springframework.beans.factory.ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider,
+        org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider
+    ) {
         this.repository = repository;
         this.objectMapper = objectMapper;
         this.eventService = eventService;
+        this.deliveryWorkItemServiceProvider = deliveryWorkItemServiceProvider;
+        this.sessionRepositoryProvider = sessionRepositoryProvider;
     }
 
     @Transactional
@@ -143,8 +157,74 @@ public class DelegatedTaskRunService {
         entity.setError(blankToNull(effectiveError));
         entity.setCompletedAt(Instant.now());
         DelegatedTaskRunEntity saved = repository.save(entity);
+        enqueueDeliveryWork(saved);
         publish("delegate." + normalizedStatus, saved, completionPayload(saved, false));
         return saved;
+    }
+
+    /**
+     * WP-1 durable delivery: terminal delegated runs create a delivery work item
+     * in the same transaction. The target is the parent session's origin (where
+     * the conversation came from), resolved once at enqueue time — never from
+     * the current bot state at send time.
+     */
+    private void enqueueDeliveryWork(DelegatedTaskRunEntity run) {
+        if (deliveryWorkItemServiceProvider == null) {
+            return;
+        }
+        DeliveryWorkItemService deliveryService = deliveryWorkItemServiceProvider.getIfAvailable();
+        if (deliveryService == null) {
+            return;
+        }
+        String target = resolveOriginTarget(run.getParentSessionId());
+        if (target == null) {
+            log.debug("Delegated run {} has no origin target; delivery stays event-only", run.getId());
+            return;
+        }
+        try {
+            deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
+                DeliveryWorkItemService.SOURCE_DELEGATED_TASK_RUN,
+                run.getId().toString(),
+                run.getProfile(),
+                null,
+                run.getParentSessionId(),
+                target,
+                completionDeliveryPayload(run)));
+        } catch (IllegalArgumentException e) {
+            log.warn("Delegated run {} delivery target rejected: {}", run.getId(), e.getMessage());
+        } catch (Exception e) {
+            log.warn("Delegated run {} delivery enqueue failed: {}", run.getId(), e.getMessage());
+        }
+    }
+
+    private String resolveOriginTarget(UUID parentSessionId) {
+        if (sessionRepositoryProvider == null || parentSessionId == null) {
+            return null;
+        }
+        try {
+            var repo = sessionRepositoryProvider.getIfAvailable();
+            if (repo == null) {
+                return null;
+            }
+            var session = repo.findById(parentSessionId).orElse(null);
+            if (session == null || session.getOriginPlatform() == null || session.getOriginChatId() == null) {
+                return null;
+            }
+            return session.getOriginThreadId() == null
+                ? session.getOriginPlatform() + ":" + session.getOriginChatId()
+                : session.getOriginPlatform() + ":" + session.getOriginChatId() + ":" + session.getOriginThreadId();
+        } catch (Exception e) {
+            log.warn("Could not resolve origin target for session {}: {}", parentSessionId, e.getMessage());
+            return null;
+        }
+    }
+
+    private String completionDeliveryPayload(DelegatedTaskRunEntity run) {
+        String summary = run.getResultJson() != null && !run.getResultJson().isBlank()
+            ? run.getResultJson()
+            : (run.getError() != null ? "Delegated task failed: " + run.getError()
+                : "Delegated task " + run.getStatus());
+        return summary.length() > 200_000 ? summary.substring(0, 200_000) : summary;
     }
 
     @Transactional
