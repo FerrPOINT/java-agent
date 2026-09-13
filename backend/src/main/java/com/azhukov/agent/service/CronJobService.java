@@ -3,6 +3,7 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.DefaultUrlSafety;
+import com.azhukov.agent.core.util.CronSilenceFilter;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.tools.terminal.TerminalTool;
 import com.azhukov.agent.persistence.entity.CronExecutionLogEntity;
@@ -629,19 +630,6 @@ private static final String CRON_EXECUTION_HINT = """
         return entity;
     }
 
-    /**
-     * h76: Mark a job's latest run as delivered (high-water mark for the bot-side
-     * delivery poller). Called after the run's output was successfully pushed to
-     * the user's chat so each run is delivered exactly once.
-     */
-    @org.springframework.transaction.annotation.Transactional
-    public CronJobEntity markDelivered(UUID id) {
-        CronJobEntity entity = cronJobRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
-        entity.setLastDeliveredRunAt(java.time.Instant.now());
-        return cronJobRepository.save(entity);
-    }
-
     public CronJobEntity pause(UUID id) {
         CronJobEntity entity = cronJobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
@@ -882,7 +870,11 @@ private static final String CRON_EXECUTION_HINT = """
                 job.setLastStatus("success");
                 job.setLastError(null);
                 cronJobRepository.save(job);
-                recordExecution(job.getId(), startedAt, Instant.now(), "success", null, null);
+                // WP-1: no_agent stdout is the deliverable (Hermes run_job delivers
+                // it verbatim); record + enqueue in the same sequence as the agent path.
+                String stdout = scriptResult.output() == null ? "" : scriptResult.output().trim();
+                Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), "success", null, stdout);
+                enqueueDeliveryWork(job, executionLogId, stdout);
                 publishCronEvent("cron.success", job, startedAt, null);
                 return CronExecutionOutcome.success();
             }
@@ -1021,25 +1013,14 @@ private static final String CRON_EXECUTION_HINT = """
             }
             cronJobRepository.save(job);
 
-            // HERMES-SYNC Bug 1: Cron nudge — when consecutiveFailures >= threshold,
-            // show a single "automation needs attention" message instead of per-error pings.
-            int nudgeThreshold = properties.getCron().getNudgeFailureThreshold();
-            if (nudgeThreshold > 0 && job.getConsecutiveFailures() >= nudgeThreshold) {
-                // Only log the nudge at the exact threshold to avoid repeating on every failure
-                if (job.getConsecutiveFailures() == nudgeThreshold) {
-                    log.warn(AUTOMATION_NEEDS_ATTENTION_MSG,
-                        job.getName(), job.getConsecutiveFailures(), errorMsg);
-                }
-                // Beyond the threshold, suppress per-error ping — the nudge has already fired.
-            } else {
-                // Below threshold — log the per-error detail as before
-                log.warn("Cron job '{}' execution failed (consecutive failures: {}): {}",
-                    job.getName(), job.getConsecutiveFailures(), errorMsg);
-            }
-
             // h72: Record failed execution in the ledger.
             String status = errorMsg.toLowerCase().contains("timeout") ? "timeout" : "failure";
-            recordExecution(job.getId(), startedAt, Instant.now(), status, errorMsg, null);
+            Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), status, errorMsg, null);
+            // WP-1 (Hermes scheduler deliver path): every failed run delivers a
+            // compact one-line failure summary + a review nudge once the failure
+            // streak reaches the threshold — through the durable ledger, not a
+            // bot-side scan.
+            enqueueFailureDeliveryWork(job, executionLogId, errorMsg);
             publishCronEvent("cron." + status, job, startedAt, Map.of("error", errorMsg));
             // h71: Re-arm: clear the error status so the job can run on the next tick.
             // The error is recorded for audit but doesn't permanently block execution.
@@ -1417,11 +1398,10 @@ private static final String CRON_EXECUTION_HINT = """
      * ([SILENT] markers) are terminally acknowledged without platform send.
      */
     private void enqueueDeliveryWork(CronJobEntity job, Long executionLogId, String output) {
-        if (executionLogId == null || isSilentOutput(output)) {
+        if (executionLogId == null || CronSilenceFilter.isSilent(output)) {
             return;
         }
-        DeliveryWorkItemService deliveryService = deliveryWorkItemServiceProvider == null
-            ? null : deliveryWorkItemServiceProvider.getIfAvailable();
+        DeliveryWorkItemService deliveryService = deliveryProvider();
         if (deliveryService == null) {
             return;
         }
@@ -1448,20 +1428,62 @@ private static final String CRON_EXECUTION_HINT = """
         }
     }
 
-    private static boolean isSilentOutput(String output) {
-        if (output == null) {
-            return true;
+    /**
+     * WP-1 (Hermes _summarize_cron_failure_for_delivery + _failure_streak_nudge):
+     * every failed run delivers a compact one-line failure summary, plus a
+     * "worth a review" nudge line once the streak reaches the configured
+     * threshold. Compact by design — no provider JSON, retry noise or stack
+     * traces in the delivery channel.
+     */
+    private void enqueueFailureDeliveryWork(CronJobEntity job, Long executionLogId, String errorMsg) {
+        DeliveryWorkItemService deliveryService = deliveryProvider();
+        if (deliveryService == null || executionLogId == null) {
+            return;
         }
-        String trimmed = output.trim();
-        if (trimmed.isEmpty()) {
-            return true;
+        String target = resolveDeliveryTarget(job);
+        if (target == null) {
+            return;
         }
-        String canonical = trimmed.toUpperCase(java.util.Locale.ROOT)
-            .replaceAll("^[\\[\\(]+|[\\]\\)]+$", "");
-        return switch (canonical) {
-            case "SILENT", "NO_REPLY", "NO REPLY" -> true;
-            default -> trimmed.length() <= 64 && trimmed.startsWith("[SILE");
-        };
+        String profile = job.getProfile() == null || job.getProfile().isBlank()
+            ? DEFAULT_PROFILE : job.getProfile();
+        String payload = failureDeliveryText(job, errorMsg);
+        try {
+            deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
+                DeliveryWorkItemService.SOURCE_CRON_EXECUTION,
+                String.valueOf(executionLogId),
+                profile,
+                job.getUserId(),
+                job.getLastRunSessionId(),
+                target,
+                payload));
+        } catch (IllegalArgumentException e) {
+            log.warn("Cron job '{}' failure delivery target rejected: {}", job.getName(), e.getMessage());
+        } catch (Exception e) {
+            log.warn("Cron job '{}' failure delivery enqueue failed: {}", job.getName(), e.getMessage());
+        }
+    }
+
+    /** Hermes _summarize_cron_failure_for_delivery: one compact line + streak nudge. */
+    private String failureDeliveryText(CronJobEntity job, String errorMsg) {
+        String text = truncateForDelivery(errorMsg == null ? "unknown error" : errorMsg);
+        StringBuilder sb = new StringBuilder("⚠️ Cron '").append(job.getName()).append("' failed: ").append(text);
+        int threshold = properties.getCron().getNudgeFailureThreshold();
+        int streak = job.getConsecutiveFailures();
+        if (threshold > 0 && streak >= threshold) {
+            sb.append("\n\nThis job has failed ").append(streak)
+                .append(" runs in a row — worth a review. Fix its prompt/config, or pause it with /cron pause <name>.");
+        }
+        return sb.toString();
+    }
+
+    private String truncateForDelivery(String text) {
+        String cleaned = text.strip();
+        return cleaned.length() <= 180 ? cleaned : cleaned.substring(0, 179) + "…";
+    }
+
+    private DeliveryWorkItemService deliveryProvider() {
+        return deliveryWorkItemServiceProvider == null
+            ? null : deliveryWorkItemServiceProvider.getIfAvailable();
     }
 
     private String resolveDeliveryTarget(CronJobEntity job) {
@@ -1486,8 +1508,30 @@ private static final String CRON_EXECUTION_HINT = """
         }
         if ("bot-chat".equalsIgnoreCase(value)
             || value.toLowerCase(java.util.Locale.ROOT).matches("telegram|discord|web")) {
-            // Bare platform names cannot name a chat yet — home-channel registry is WP-2.
+            // Bare platform names resolve to the owner chat configured for that
+            // platform's gateway (WP-1: single-profile deployment → first
+            // allowed user id). Unresolvable stays undelivered (event-only).
+            String ownerChat = ownerChatId();
+            return ownerChat == null ? null : "telegram:" + ownerChat;
+        }
+        return null;
+    }
+
+    /**
+     * Owner chat for bare-platform delivery targets: the first configured
+     * gateway Telegram allowed user id (single-profile deployment — mirrors
+     * the old CronDeliveryPoller.ownerChat() resolution).
+     */
+    private String ownerChatId() {
+        var allowed = properties.getGateway().getTelegram().getAllowedUserIds();
+        if (allowed == null || allowed.isEmpty()) {
             return null;
+        }
+        for (String candidate : allowed) {
+            String trimmed = candidate == null ? "" : candidate.trim();
+            if (trimmed.matches("\\d+")) {
+                return trimmed;
+            }
         }
         return null;
     }

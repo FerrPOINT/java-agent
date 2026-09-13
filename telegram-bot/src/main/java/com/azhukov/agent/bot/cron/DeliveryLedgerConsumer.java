@@ -18,11 +18,13 @@ import java.util.Optional;
 /**
  * WP-1 durable delivery consumer (Hermes delivery_ledger parity).
  *
- * <p>Replaces the old high-water-mark flow: the bot no longer scans cron jobs
- * and session messages. It claims one ledger item at a time from the backend
- * ({@code POST /api/v1/agent/delivery/claim}), sends it through Telegram, and
- * acks with the outbound message id. A crash between send and ack leaves the
- * item in an explicitly fenced state on the backend — never a silent resend.
+ * <p>Sole cron/delegate delivery lane since the WP-1 cutover (the old
+ * high-water-mark poller is gone): the bot claims one ledger item at a time
+ * from the backend ({@code POST /api/v1/agent/delivery/claim}), sends it
+ * through Telegram (chunked via MessageSplitter — full output, UTF-16-safe),
+ * and acks with the outbound message id. A crash between send and ack leaves
+ * the item in an explicitly fenced state on the backend — never a silent
+ * resend; the backend sweeper recovers expired leases.
  */
 @Service
 @Slf4j
@@ -63,6 +65,11 @@ public class DeliveryLedgerConsumer {
 
     record ClaimedItem(String id, String claimToken, String sourceType, String sourceId,
                        String platform, String chatId, String threadId, String payload, int attempts) {}
+
+    /** Package-private delivery bridge for tests (no HTTP claim round-trip). */
+    void deliverForTest(ClaimedItem item) {
+        deliver(item);
+    }
 
     private Optional<ClaimedItem> claimNext() {
         try {
@@ -111,18 +118,39 @@ public class DeliveryLedgerConsumer {
             return;
         }
         try {
-            Optional<Long> sent = threadId == null
-                ? telegramClient.sendMessage(chatId, item.payload())
-                : telegramClient.sendMessage(chatId, item.payload(), null, null, threadId, false);
-            if (sent.isPresent()) {
-                ack(item, sent.get().toString());
-                log.info("Delivered {} item {} to chat {} (msg {})",
-                    item.sourceType(), item.sourceId(), chatId, sent.get());
+            List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.split(item.payload());
+            Long lastMessageId = null;
+            boolean sendFailed = false;
+            for (String chunk : chunks) {
+                Optional<Long> sent = threadId == null
+                    ? telegramClient.sendMessage(chatId, chunk)
+                    : telegramClient.sendMessage(chatId, chunk, null, null, threadId, false);
+                if (sent.isEmpty()) {
+                    sendFailed = true;
+                    break;
+                }
+                lastMessageId = sent.get();
+            }
+            if (!sendFailed) {
+                // P-03 (Hermes delivery.py): Telegram is chunking-capable, so the
+                // FULL output is sent (MessageSplitter, UTF-16-safe); the receipt
+                // names the LAST chunk's message id.
+                ack(item, lastMessageId == null ? null : lastMessageId.toString());
+                log.info("Delivered {} item {} to chat {} ({} chunks, last msg {})",
+                    item.sourceType(), item.sourceId(), chatId, chunks.size(), lastMessageId);
                 return;
             }
-            // Send returned empty — the outcome is ambiguous (Hermes: unknown,
-            // never auto-retry a possibly-sent message).
-            outcome(item, "unknown", "empty_send_result", null);
+            if (lastMessageId != null) {
+                // A chunk sent, a later chunk failed — PARTIAL delivery, the
+                // outcome is ambiguous (Hermes: unknown, never auto-retry).
+                outcome(item, "unknown", "partial_chunk_failure", null);
+            } else {
+                // First chunk returned empty — sendMessage conflates "chat not
+                // found" with "timeout after Telegram accepted" into empty, so
+                // the outcome is ambiguous (Hermes: unknown, never auto-retry
+                // a possibly-sent message).
+                outcome(item, "unknown", "empty_send_result", null);
+            }
         } catch (Exception e) {
             // Transport raised BEFORE Telegram accepted anything — known failure.
             outcome(item, "release", "transport_error", e.getMessage());

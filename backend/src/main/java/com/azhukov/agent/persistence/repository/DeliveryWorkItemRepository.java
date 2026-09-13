@@ -17,6 +17,8 @@ public interface DeliveryWorkItemRepository extends JpaRepository<DeliveryWorkIt
     Optional<DeliveryWorkItemEntity> findBySourceTypeAndSourceIdAndTargetHash(
         String sourceType, String sourceId, String targetHash);
 
+    List<DeliveryWorkItemEntity> findByStateAndClaimedAtBefore(String state, Instant cutoff);
+
     @Query("""
         select item from DeliveryWorkItemEntity item
         where item.state = 'pending'

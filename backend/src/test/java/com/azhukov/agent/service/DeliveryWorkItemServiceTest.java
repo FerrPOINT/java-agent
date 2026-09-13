@@ -17,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -257,6 +258,59 @@ class DeliveryWorkItemServiceTest {
 
     private DeliveryWorkItemService.DeliveryReceipt receipt(String messageId) {
         return new DeliveryWorkItemService.DeliveryReceipt(messageId, "idem-1");
+    }
+
+    // ── WP-1 stale-claim sweep (Hermes sweep_recoverable parity) ────────
+
+    @Test
+    void sweepReturnsExpiredClaimToPendingWhenAttemptsRemain() {
+        DeliveryWorkItemEntity claimed = pendingItem("default");
+        claimed.setState(DeliveryWorkItemService.STATE_CLAIMED);
+        claimed.setClaimToken("token-1");
+        claimed.setClaimedAt(Instant.now().minusSeconds(1200));
+        claimed.setAttempts(2);
+        when(repository.findByStateAndClaimedAtBefore(eq(DeliveryWorkItemService.STATE_CLAIMED), any(Instant.class)))
+            .thenReturn(List.of(claimed));
+        when(repository.releaseKnownFailure(eq(claimed.getId()), eq("token-1"), any(Instant.class), eq("lease_expired"), isNull()))
+            .thenReturn(1);
+
+        DeliveryWorkItemService.SweepResult result =
+            service().sweepStaleClaims(Instant.now(), java.time.Duration.ofMinutes(10));
+
+        assertThat(result.recovered()).isEqualTo(1);
+        assertThat(result.abandoned()).isZero();
+    }
+
+    @Test
+    void sweepAbandonsExpiredClaimOverAttemptsCap() {
+        DeliveryWorkItemEntity claimed = pendingItem("default");
+        claimed.setState(DeliveryWorkItemService.STATE_CLAIMED);
+        claimed.setClaimToken("token-2");
+        claimed.setClaimedAt(Instant.now().minusSeconds(1200));
+        claimed.setAttempts(8);
+        when(repository.findByStateAndClaimedAtBefore(eq(DeliveryWorkItemService.STATE_CLAIMED), any(Instant.class)))
+            .thenReturn(List.of(claimed));
+        when(repository.markTerminal(eq(claimed.getId()), eq("token-2"), eq(DeliveryWorkItemService.STATE_DROPPED),
+            any(Instant.class), eq("lease_expired_attempts_exhausted"), isNull()))
+            .thenReturn(1);
+
+        DeliveryWorkItemService.SweepResult result =
+            service().sweepStaleClaims(Instant.now(), java.time.Duration.ofMinutes(10));
+
+        assertThat(result.recovered()).isZero();
+        assertThat(result.abandoned()).isEqualTo(1);
+    }
+
+    @Test
+    void sweepIgnoresFreshClaims() {
+        when(repository.findByStateAndClaimedAtBefore(eq(DeliveryWorkItemService.STATE_CLAIMED), any(Instant.class)))
+            .thenReturn(List.of());
+
+        DeliveryWorkItemService.SweepResult result =
+            service().sweepStaleClaims(Instant.now(), java.time.Duration.ofMinutes(10));
+
+        assertThat(result.recovered()).isZero();
+        assertThat(result.abandoned()).isZero();
     }
 
     private DeliveryWorkItemEntity pendingItem(String profile) {

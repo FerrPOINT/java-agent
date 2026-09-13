@@ -78,7 +78,7 @@ values, `session_id` (last turn's session), `status`, `response`.
 | 30-mcp-tools | MCP server tools list, tool invoke (nonexistent → 4xx), resource read (nonexistent → 500) |
 | 31-memory-approve-reject | memory approve/reject (no pending → false), store + delete + verify empty |
 | 32-skills-hub-bundles | skills-hub list/search, install nonexistent (ok=false), bundles install/uninstall |
-| 33-cron-advanced | cron run-now, executions list, mark delivered, suggestions clear, heartbeat nack |
+| 33-cron-advanced | cron run-now, executions list, ledger claim empty for foreign profile, suggestions clear, heartbeat nack |
 | 34-agentchat-advanced | per-session approve/deny (no pending), reasoning-levels list |
 | 35-telegram-gateway | isolated bot health and webhook-secret rejection |
 | 36-multiuser-isolation | authenticated per-user/profile access isolation, ownership denial and cleanup |

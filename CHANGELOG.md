@@ -1,4 +1,15 @@
 
+## Session 2026-09-13 — WP-1 cutover (durable delivery ledger, sole cron/delegate lane)
+
+- CronDeliveryPoller deleted: the bot no longer scans cron jobs + session messages with a high-water mark (`last_delivered_run_at` dropped in V54; `/agent/cron/{id}/delivered` endpoint and CronApiClient.markDelivered removed).
+- Every failed cron run now delivers a compact one-line failure summary (+ streak nudge at threshold) through the ledger — Hermes `_summarize_cron_failure_for_delivery` + `_failure_streak_nudge` parity (previously failures were only delivered by the old poller's error-nudge).
+- no_agent runs: stdout recorded into the execution log and delivered verbatim through the ledger (was log-only).
+- Bare-platform targets (`telegram`, `bot-chat`, numeric) resolve to the owner chat from `agent.gateway.telegram.allowed-user-ids` at enqueue time.
+- CronSilenceFilter (core/util): full Hermes is_autonomous_silence_response shape set (whole/first-last-line/prefix + blank) shared by producer gate; replaces the simplified inline matcher.
+- DeliveryLedgerConsumer: chunked delivery via MessageSplitter (full output, UTF-16-safe, was single sendMessage → 400 on >4096); partial-chunk failure fenced as unknown; unsupported platforms dropped without send.
+- DeliveryLedgerSweeper (backend, 60s): expired claims (>10min lease) returned to pending or dropped at the attempts cap — Hermes sweep_recoverable parity; a bot crash mid-delivery can no longer strand an item.
+- E2E scenario 33: /delivered step replaced by ledger claim-empty-for-foreign-profile probe.
+
 ## Session 2026-09-06 — 0.1.237 (profile project tree)
 
 - V51 migration (renamed from V49 — version collision with db/postgresql): sessions.cwd + sessions.git_repo_root.

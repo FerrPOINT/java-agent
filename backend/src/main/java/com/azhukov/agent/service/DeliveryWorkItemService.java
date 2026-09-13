@@ -134,6 +134,44 @@ public class DeliveryWorkItemService {
         return markTerminal(id, claimToken, STATE_DROPPED, category, detail);
     }
 
+    /**
+     * WP-1 (Hermes sweep_recoverable): recovery for claims whose consumer died
+     * between claim and ack/release. A claim older than the lease cutoff is
+     * either returned to pending (bounded by the attempts cap) or terminalized
+     * as dropped when the cap is exhausted. Called from a scheduled sweep on
+     * the backend — the safety net for bot crashes mid-delivery.
+     *
+     * @return recovered = rows returned to pending, abandoned = rows over the cap
+     */
+    @Transactional
+    public SweepResult sweepStaleClaims(Instant now, Duration leaseCutoff) {
+        Instant cutoff = now.minus(leaseCutoff);
+        List<DeliveryWorkItemEntity> stale = repository.findByStateAndClaimedAtBefore(STATE_CLAIMED, cutoff);
+        int recovered = 0;
+        int abandoned = 0;
+        for (DeliveryWorkItemEntity item : stale) {
+            if (item.getAttempts() >= MAX_ATTEMPTS) {
+                abandoned += repository.markTerminal(
+                    item.getId(),
+                    item.getClaimToken(),
+                    STATE_DROPPED,
+                    Instant.now(),
+                    "lease_expired_attempts_exhausted",
+                    null) == 1 ? 1 : 0;
+            } else {
+                recovered += repository.releaseKnownFailure(
+                    item.getId(),
+                    item.getClaimToken(),
+                    now.plus(RETRY_BASE_DELAY),
+                    "lease_expired",
+                    null) == 1 ? 1 : 0;
+            }
+        }
+        return new SweepResult(recovered, abandoned);
+    }
+
+    public record SweepResult(int recovered, int abandoned) {}
+
     private boolean markTerminal(UUID id, String claimToken, String state, String category, String detail) {
         if (id == null || isBlank(claimToken)) {
             return false;
