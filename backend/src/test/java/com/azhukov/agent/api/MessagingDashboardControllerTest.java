@@ -38,9 +38,23 @@ class MessagingDashboardControllerTest {
         properties = new AgentProperties();
         gatewayRoutingService = mock(GatewayRoutingService.class);
         environment = new MockEnvironment();
+        org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.GatewayConfigWriter> writerProvider =
+            providerOf(new com.azhukov.agent.service.GatewayConfigWriter(properties, null));
         mockMvc = MockMvcBuilders.standaloneSetup(
-                new MessagingDashboardController(properties, gatewayRoutingService, environment))
+                new MessagingDashboardController(properties, gatewayRoutingService, environment,
+                    writerProvider, null))
             .build();
+    }
+
+    private static <T> org.springframework.beans.factory.ObjectProvider<T> providerOf(T value) {
+        return new org.springframework.beans.factory.ObjectProvider<T>() {
+            @Override public T getObject() { return value; }
+            @Override public T getObject(Object... args) { return value; }
+            @Override public T getIfAvailable() { return value; }
+            @Override public T getIfUnique() { return value; }
+            public java.util.stream.Stream<T> stream() { return value == null ? java.util.stream.Stream.empty() : java.util.stream.Stream.of(value); }
+            public java.util.stream.Stream<T> orderedStream() { return value == null ? java.util.stream.Stream.empty() : java.util.stream.Stream.of(value); }
+        };
     }
 
     @Test
@@ -98,12 +112,25 @@ class MessagingDashboardControllerTest {
 
     @Test
     void messagingWritesReturnExplicitErrorsAndUnknownPlatformsStill404() throws Exception {
+        // WP-2: Telegram config writes are real (runtime + profile-config persist
+        // is best-effort; ProfileService absent in standalone MockMvc → runtime-only).
         mockMvc.perform(put("/api/messaging/platforms/telegram")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"allowed_user_ids\":[\"42\",\"43\"]}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ok").value(true))
+            .andExpect(jsonPath("$.allowed_user_ids.length()").value(2));
+        org.assertj.core.api.Assertions.assertThat(
+                properties.getGateway().getTelegram().getAllowedUserIds())
+            .containsExactly("42", "43");
+
+        // Webhook platform config write stays an explicit capability-disabled 501.
+        mockMvc.perform(put("/api/messaging/platforms/webhook")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"enabled\":true}"))
             .andExpect(status().isNotImplemented())
             .andExpect(jsonPath("$.detail").value(
-                "messaging platform config writes are not implemented in the Java port"));
+                "config writes are only implemented for telegram in the Java port"));
 
         mockMvc.perform(post("/api/messaging/platforms/slack/test"))
             .andExpect(status().isNotFound())
@@ -167,23 +194,33 @@ class MessagingDashboardControllerTest {
             .andExpect(jsonPath("$.approved[1].user_id").value("@alice"))
             .andExpect(jsonPath("$.approved[1].user_name").value("alice"));
 
+        // WP-2: approve/revoke are real now — approve a new user, verify the
+        // allowlist mutates and the approved list reflects it, then revoke.
         mockMvc.perform(post("/api/pairing/approve")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"platform\":\"telegram\",\"request_id\":\"req_1\"}"))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value(
-                "dashboard pairing approvals are not implemented in the Java port"));
+                .content("{\"platform\":\"telegram\",\"user_id\":\"777\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ok").value(true))
+            .andExpect(jsonPath("$.user_id").value("777"))
+            .andExpect(jsonPath("$.added").value(true));
+        org.assertj.core.api.Assertions.assertThat(
+                properties.getGateway().getTelegram().getAllowedUserIds())
+            .contains("777");
 
         mockMvc.perform(post("/api/pairing/approve")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"platform\":\"telegram\"}"))
             .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.detail").value("platform and request_id or code are required"));
+            .andExpect(jsonPath("$.detail").value("user_id, code or request_id is required"));
 
         mockMvc.perform(post("/api/pairing/revoke")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"platform\":\"telegram\",\"user_id\":\"42\"}"))
-            .andExpect(status().isNotImplemented());
+                .content("{\"platform\":\"telegram\",\"user_id\":\"777\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ok").value(true));
+        org.assertj.core.api.Assertions.assertThat(
+                properties.getGateway().getTelegram().getAllowedUserIds())
+            .doesNotContain("777");
 
         mockMvc.perform(post("/api/pairing/revoke")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -205,6 +242,20 @@ class MessagingDashboardControllerTest {
             .andExpect(jsonPath("$.base_url").value(""))
             .andExpect(jsonPath("$.subscriptions").isArray())
             .andExpect(jsonPath("$.subscriptions.length()").value(0));
+
+        // WP-2: a configured webhook shows its real subscription state with a
+        // masked secret indicator (never the secret itself).
+        properties.getGateway().getTelegram().setWebhookUrl("https://bot.example.com/webhook/telegram");
+        properties.getGateway().getTelegram().setWebhookSecret("s3cret");
+        mockMvc.perform(get("/api/webhooks"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.enabled").value(true))
+            .andExpect(jsonPath("$.base_url").value("https://bot.example.com/webhook/telegram"))
+            .andExpect(jsonPath("$.subscriptions.length()").value(1))
+            .andExpect(jsonPath("$.subscriptions[0].name").value("telegram"))
+            .andExpect(jsonPath("$.subscriptions[0].secret_set").value(true));
+        properties.getGateway().getTelegram().setWebhookUrl("");
+        properties.getGateway().getTelegram().setWebhookSecret("");
 
         mockMvc.perform(post("/api/webhooks/enable"))
             .andExpect(status().isNotImplemented())

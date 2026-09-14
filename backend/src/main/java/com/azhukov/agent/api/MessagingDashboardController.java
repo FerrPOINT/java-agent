@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.file.Path;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,6 +46,8 @@ public class MessagingDashboardController {
     private final AgentProperties properties;
     private final GatewayRoutingService gatewayRoutingService;
     private final Environment environment;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.GatewayConfigWriter> gatewayConfigWriterProvider;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.GatewayHomeChannelService> gatewayHomeChannelProvider;
 
     @PostMapping("/api/messaging/telegram/onboarding/start")
     @Operation(summary = "Reject Telegram QR onboarding not supported by Java port")
@@ -116,7 +119,7 @@ public class MessagingDashboardController {
     }
 
     @PutMapping("/api/messaging/platforms/{platformId}")
-    @Operation(summary = "Reject dashboard messaging platform config writes")
+    @Operation(summary = "Write Telegram messaging config (token/allowlist); secrets never round-trip")
     public ResponseEntity<Map<String, Object>> updatePlatform(
         @PathVariable String platformId,
         @RequestBody(required = false) Map<String, Object> body
@@ -124,7 +127,29 @@ public class MessagingDashboardController {
         if (!isKnownPlatform(platformId)) {
             return unknownPlatform(platformId);
         }
-        return notImplemented("messaging platform config writes are not implemented in the Java port");
+        if (!TELEGRAM.equals(normalizePlatform(platformId))) {
+            return notImplemented("config writes are only implemented for telegram in the Java port");
+        }
+        com.azhukov.agent.service.GatewayConfigWriter writer = gatewayConfigWriterProvider.getIfAvailable();
+        if (writer == null) {
+            return notImplemented("gateway config writer is not available in this deployment");
+        }
+        try {
+            Map<String, Object> result = writer.updateTelegramConfig(
+                bodyString(body, "profile"),
+                bodyString(body, "bot_token"),
+                stringList(body == null ? null : body.get("allowed_user_ids")),
+                stringList(body == null ? null : body.get("allowed_usernames")),
+                body == null || body.get("allow_by_default") == null ? null
+                    : Boolean.parseBoolean(String.valueOf(body.get("allow_by_default"))));
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
+        } catch (IOException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("detail", "Failed to persist platform config: " + e.getMessage(),
+                    "error", "platform_config_persist_failed"));
+        }
     }
 
     @PostMapping("/api/messaging/platforms/{platformId}/test")
@@ -177,28 +202,84 @@ public class MessagingDashboardController {
     }
 
     @PostMapping("/api/pairing/approve")
-    @Operation(summary = "Reject dashboard pairing approvals without a Java pairing store")
+    @Operation(summary = "Approve a Telegram user into the persisted allowlist")
     public ResponseEntity<Map<String, Object>> approvePairing(
         @RequestBody(required = false) Map<String, Object> body
     ) {
         String platform = bodyString(body, "platform");
         String requestId = bodyString(body, "request_id");
         String code = bodyString(body, "code");
-        if (!hasText(platform) || !hasText(requestId) && !hasText(code)) {
-            return badRequest("platform and request_id or code are required");
+        String userId = bodyString(body, "user_id");
+        String userName = bodyString(body, "user_name");
+        if (!hasText(platform)) {
+            return badRequest("platform is required");
         }
-        return notImplemented("dashboard pairing approvals are not implemented in the Java port");
+        String normalized = normalizePlatform(platform);
+        if (!TELEGRAM.equals(normalized)) {
+            return badRequest("Pairing approvals are only supported for telegram in the Java port");
+        }
+        // Value may arrive as user_id, code (pairing code = the id itself in
+        // the Telegram allowlist model), or user_name (@handle).
+        String value = hasText(userId) ? userId : hasText(code) ? code : userName;
+        if (!hasText(value) && !hasText(requestId)) {
+            return badRequest("user_id, code or request_id is required");
+        }
+        com.azhukov.agent.service.GatewayConfigWriter writer = gatewayConfigWriterProvider.getIfAvailable();
+        if (writer == null) {
+            return notImplemented("gateway config writer is not available in this deployment");
+        }
+        try {
+            String target = hasText(value) ? value : requestId;
+            com.azhukov.agent.service.GatewayConfigWriter.ApproveResult result =
+                writer.approveTelegramUser(bodyString(body, "profile"), target);
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("ok", true);
+            payload.put("platform", TELEGRAM);
+            payload.put("user_id", result.user());
+            payload.put("added", result.added());
+            payload.put("approved", approvedPairingUsers());
+            return ResponseEntity.ok(payload);
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
+        } catch (IOException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("detail", "Failed to persist pairing: " + e.getMessage(),
+                    "error", "pairing_persist_failed"));
+        }
     }
 
     @PostMapping("/api/pairing/revoke")
-    @Operation(summary = "Reject dashboard pairing revokes without a Java pairing store")
+    @Operation(summary = "Revoke a Telegram user from the persisted allowlist")
     public ResponseEntity<Map<String, Object>> revokePairing(
         @RequestBody(required = false) Map<String, Object> body
     ) {
         if (!hasText(bodyString(body, "platform")) || !hasText(bodyString(body, "user_id"))) {
             return badRequest("platform and user_id are required");
         }
-        return notImplemented("dashboard pairing revokes are not implemented in the Java port");
+        if (!TELEGRAM.equals(normalizePlatform(bodyString(body, "platform")))) {
+            return badRequest("Pairing revokes are only supported for telegram in the Java port");
+        }
+        com.azhukov.agent.service.GatewayConfigWriter writer = gatewayConfigWriterProvider.getIfAvailable();
+        if (writer == null) {
+            return notImplemented("gateway config writer is not available in this deployment");
+        }
+        try {
+            boolean removed = writer.revokeTelegramUser(bodyString(body, "profile"), bodyString(body, "user_id"));
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("ok", removed);
+            payload.put("platform", TELEGRAM);
+            payload.put("approved", approvedPairingUsers());
+            if (!removed) {
+                payload.put("detail", "User was not in the allowlist");
+            }
+            return ResponseEntity.ok(payload);
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
+        } catch (IOException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("detail", "Failed to persist pairing revoke: " + e.getMessage(),
+                    "error", "pairing_persist_failed"));
+        }
     }
 
     @PostMapping("/api/pairing/clear-pending")
@@ -210,12 +291,25 @@ public class MessagingDashboardController {
     }
 
     @GetMapping("/api/webhooks")
-    @Operation(summary = "Return empty webhook subscription catalog in Hermes shape")
+    @Operation(summary = "Return the Telegram webhook subscription state (signed-callback contract)")
     public Map<String, Object> webhooks() {
-        return Map.of(
-            "enabled", false,
-            "base_url", "",
-            "subscriptions", List.of());
+        boolean enabled = hasText(properties.getGateway().getTelegram().getWebhookUrl());
+        String baseUrl = properties.getGateway().getTelegram().getWebhookUrl();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("enabled", enabled);
+        payload.put("base_url", baseUrl == null ? "" : baseUrl);
+        List<Map<String, Object>> subscriptions = new ArrayList<>();
+        if (enabled) {
+            Map<String, Object> subscription = new LinkedHashMap<>();
+            subscription.put("name", "telegram");
+            subscription.put("platform", TELEGRAM);
+            subscription.put("url", baseUrl);
+            subscription.put("secret_set", hasText(properties.getGateway().getTelegram().getWebhookSecret()));
+            subscription.put("enabled", true);
+            subscriptions.add(subscription);
+        }
+        payload.put("subscriptions", subscriptions);
+        return payload;
     }
 
     @PostMapping("/api/webhooks/enable")
@@ -480,7 +574,35 @@ public class MessagingDashboardController {
         return value == null ? "" : String.valueOf(value);
     }
 
-    private static String bodyString(Map<String, Object> body, String key) {
+        @SuppressWarnings("unchecked")
+    private static List<String> stringList(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof List<?> list) {
+            List<String> result = new ArrayList<>();
+            for (Object item : list) {
+                if (item != null) {
+                    result.add(String.valueOf(item));
+                }
+            }
+            return result;
+        }
+        if (raw instanceof String text && text.contains(",")) {
+            List<String> result = new ArrayList<>();
+            for (String part : text.split(",")) {
+                if (!part.isBlank()) {
+                    result.add(part.trim());
+                }
+            }
+            return result;
+        }
+        List<String> single = new ArrayList<>();
+        single.add(String.valueOf(raw));
+        return single;
+    }
+
+private static String bodyString(Map<String, Object> body, String key) {
         Object value = body != null ? body.get(key) : null;
         return value instanceof String text ? text.trim() : "";
     }
