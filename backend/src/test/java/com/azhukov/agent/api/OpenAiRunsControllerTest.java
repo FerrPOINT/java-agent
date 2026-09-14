@@ -110,7 +110,8 @@ class OpenAiRunsControllerTest {
             approvalQueue,
             new DefaultRedactor(properties),
             objectMapper,
-            processTool
+            processTool,
+            null
         );
 
         OpenAiMapper openAiMapper = Mappers.getMapper(OpenAiMapper.class);
@@ -122,7 +123,8 @@ class OpenAiRunsControllerTest {
             objectMapper,
             properties,
             new DefaultRedactor(properties),
-            runAdmissionService
+            runAdmissionService,
+            null
         );
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)

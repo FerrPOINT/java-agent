@@ -7,6 +7,7 @@
 - WP-3 (docs/35): persisted MCP server config store (V57) with validated CRUD, revision bumps and schema-cache invalidation; durable lazy MCP schema cache (single-flight, TTL 6h, stale-keep on failed refresh); MCP OAuth Authorization Code + PKCE flow (V58) with AES-256-GCM encrypted token storage; reviewed MCP catalog with real install.
 - WP-4 (docs/35): profile runtime registry (V56) replacing static JSON status; audited serialized config writer (default + named profiles, revision log); profile env store (allowlist keys, masked reads, POSIX 600, fail-closed); dashboard action service with persisted ledger; session prune endpoint over persisted filters with fail-closed unsupported-filter rejection.
 - WP-5 (docs/35): staged skills hub installer (backup + verbatim rollback + revision bump); capability-based toolset availability (registry-driven `available` + `unavailable_reason`); ADR-014 plugin model scope (no dynamic JVM plugins).
+- WP-6 (docs/35): durable OpenAI Runs state machine (V59) — contract-first transition table (queued/in_progress/requires_action/completed/failed/cancelled/expired, terminal idempotency, race-safe guarded transitions with cancel metadata); append-only monotonic run event log with restart-safe cursor replay (`GET /v1/runs/{id}/events/replay?after=`); in-memory run records now mirror every state change into the durable store.
 
 ## Session 2026-09-13 — WP-1 cutover (durable delivery ledger, sole cron/delegate lane)
 
