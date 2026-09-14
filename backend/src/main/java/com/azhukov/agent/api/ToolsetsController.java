@@ -366,7 +366,16 @@ public class ToolsetsController {
                 dashboardEntry.put("platform", platform);
                 dashboardEntry.put("platform_label", platformLabel(platform));
                 dashboardEntry.put("enabled", enabled);
-                dashboardEntry.put("available", enabled);
+                // WP-5: available mirrors the capability registry, not the
+                // enabled toggle — an enabled-but-unregistered toolset shows
+                // available=false with reason instead of masquerading.
+                Object capabilityAvailable = entry.get("available");
+                dashboardEntry.put("available",
+                    capabilityAvailable != null && Boolean.parseBoolean(String.valueOf(capabilityAvailable)));
+                if (!Boolean.parseBoolean(String.valueOf(dashboardEntry.get("available")))) {
+                    dashboardEntry.put("unavailable_reason", String.valueOf(entry
+                        .getOrDefault("unavailable_reason", "not available in this build")));
+                }
                 return dashboardEntry;
             })
             .toList();
@@ -1027,10 +1036,22 @@ public class ToolsetsController {
 
     private Map<String, Object> toolsetEntry(ToolsetMeta meta, Set<String> enabledToolsets, ToolsetConfig config) {
         Map<String, Object> entry = new LinkedHashMap<>();
+        // WP-5: availability is a CAPABILITY computed from the live tool
+        // registry — a toolset is available only when it actually exposes at
+        // least one registered tool. Labels/config alone never mark it
+        // available; unavailable ones are reported with a reason instead of
+        // silently appearing enabled.
+        List<String> registered = registryToolNames(meta.name());
+        boolean available = !registered.isEmpty()
+            || !registryToolNames(toolsetAlias(meta.name())).isEmpty();
         entry.put("name", meta.name());
         entry.put("label", meta.label());
         entry.put("description", meta.description());
         entry.put("enabled", enabledToolsets.contains(meta.name()) || enabledToolsets.contains(toolsetAlias(meta.name())));
+        entry.put("available", available);
+        if (!available) {
+            entry.put("unavailable_reason", "no tools registered for this toolset in this build");
+        }
         entry.put("configured", configured(config, meta.name()));
         entry.put("tools", meta.tools());
         return entry;

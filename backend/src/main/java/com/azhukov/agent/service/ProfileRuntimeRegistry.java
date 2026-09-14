@@ -59,6 +59,19 @@ public class ProfileRuntimeRegistry {
         repository.save(entity);
     }
 
+    /** Record a skill mutation (hub install/update/uninstall, WP-5) — bumps skill revision. */
+    public void recordSkillMutation(String profile, String detail) {
+        ProfileRuntimeStateRepository repository = repository();
+        if (repository == null) {
+            return;
+        }
+        ProfileRuntimeStateEntity entity = repository.findByProfile(profile)
+            .orElseGet(() -> newRow(profile));
+        entity.setSkillRevision(entity.getSkillRevision() + 1);
+        entity.setUpdatedAt(Instant.now());
+        repository.save(entity);
+    }
+
     /** Update worker lifecycle state (start/stop/restart/drain, WP-4.8). */
     public boolean updateWorkerState(String profile, String workerState) {
         ProfileRuntimeStateRepository repository = repository();

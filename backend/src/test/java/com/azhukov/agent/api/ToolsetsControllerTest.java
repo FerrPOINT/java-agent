@@ -50,6 +50,7 @@ class ToolsetsControllerTest {
         ToolDefinition termExec = new ToolDefinition("terminal", "Execute terminal command", Map.of());
 
         when(toolRegistry.getToolsets()).thenReturn(Set.of("web", "terminal", "hermes-cli", "hermes-api-server"));
+        when(toolRegistry.getDefinitions(Set.of("web"))).thenReturn(List.of(webSearch));
         when(toolRegistry.getDefinitions(Set.of("terminal"))).thenReturn(List.of(termExec));
         when(toolRegistry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(webSearch, termExec));
         when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(webSearch, termExec));
@@ -117,7 +118,11 @@ class ToolsetsControllerTest {
             .andExpect(jsonPath("$[0].tools[1]").value("web_search"))
             .andExpect(jsonPath("$[?(@.name=='discord')].platform").value("discord"))
             .andExpect(jsonPath("$[?(@.name=='discord')].platform_label").value("Discord"))
-            .andExpect(jsonPath("$[?(@.name=='discord')].enabled").value(false));
+            .andExpect(jsonPath("$[?(@.name=='discord')].enabled").value(false))
+            // WP-5 capability contract: availability comes from the live registry
+            .andExpect(jsonPath("$[?(@.name=='web')].available").value(true))
+            .andExpect(jsonPath("$[?(@.name=='discord')].available").value(false))
+            .andExpect(jsonPath("$[?(@.name=='discord')].unavailable_reason").exists());
     }
 
     @Test

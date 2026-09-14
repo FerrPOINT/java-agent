@@ -73,6 +73,15 @@ public class SkillsHubService {
  /**
  * SIMPLIFIED: list skills from the configured hub repo (default FerrPOINT/skills).
  */
+ /** Default hub repo for installer use (WP-5). */
+ public String defaultRepoUrl() {
+  return configuredHubRepo();
+ }
+
+ private String configuredHubRepo() {
+  return DEFAULT_HUB_REPO;
+ }
+
  public List<RemoteSkillInfo> listRemoteSkills() {
   return listRemoteSkills(hubRepo());
  }
