@@ -178,7 +178,7 @@ public class McpOAuthManager {
     }
 
     /** Extract a string field value from a JSON response body (simple parser, no Jackson needed). */
-    static String extractJsonField(String json, String fieldName) {
+    public static String extractJsonField(String json, String fieldName) {
         if (json == null || json.isEmpty()) {
             return null;
         }
@@ -243,7 +243,7 @@ public class McpOAuthManager {
         }
     }
 
-    static String sanitizeError(String text) {
+    public static String sanitizeError(String text) {
         if (text == null || text.isEmpty()) {
             return text;
         }
