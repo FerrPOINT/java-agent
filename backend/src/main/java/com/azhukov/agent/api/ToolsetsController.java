@@ -208,16 +208,23 @@ public class ToolsetsController {
     private final ToolRegistry toolRegistry;
     private final AgentProperties properties;
     private final ProfileService profileService;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.ProfileEnvStore> envStoreProvider;
 
     @Autowired
-    public ToolsetsController(ToolRegistry toolRegistry, AgentProperties properties, ProfileService profileService) {
+    public ToolsetsController(ToolRegistry toolRegistry, AgentProperties properties, ProfileService profileService,
+                              org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.ProfileEnvStore> envStoreProvider) {
         this.toolRegistry = toolRegistry;
         this.properties = properties;
         this.profileService = profileService;
+        this.envStoreProvider = envStoreProvider;
+    }
+
+    public ToolsetsController(ToolRegistry toolRegistry, AgentProperties properties, ProfileService profileService) {
+        this(toolRegistry, properties, profileService, null);
     }
 
     ToolsetsController(ToolRegistry toolRegistry, AgentProperties properties) {
-        this(toolRegistry, properties, null);
+        this(toolRegistry, properties, null, null);
     }
 
     @GetMapping({"/v1/toolsets", "/p/{profile}/v1/toolsets"})
@@ -515,7 +522,10 @@ public class ToolsetsController {
                     .body(Map.of("detail", "Unknown capability: " + capability + " (expected 'search' or 'extract')"));
             }
             if ("extract".equals(capability)) {
-                return notImplemented("web extract backend selection is not implemented in the Java port");
+                return ResponseEntity.badRequest().body(Map.of(
+                    "detail", "web extract backend selection is fixed to the built-in reader in this port; "
+                        + "third-party extract backends are not configurable",
+                    "supported", java.util.List.of("builtin")));
             }
         }
 
@@ -550,7 +560,7 @@ public class ToolsetsController {
     }
 
     @PutMapping({"/api/tools/toolsets/{toolset}/env", "/p/{profile}/api/tools/toolsets/{toolset}/env"})
-    @Operation(summary = "Reject dashboard env writes because Java has no Hermes profile env store")
+    @Operation(summary = "Persist allowlisted toolset environment keys via the profile env store")
     public ResponseEntity<Map<String, Object>> saveToolsetEnv(
         @PathVariable(name = "profile", required = false) String pathProfile,
         @PathVariable String toolset,
@@ -564,7 +574,38 @@ public class ToolsetsController {
         if (!isKnownConfigurableToolset(toolset)) {
             return ResponseEntity.badRequest().body(Map.of("detail", "Unknown toolset: " + toolset));
         }
-        return notImplemented("toolset environment writes are not implemented in the Java port");
+        com.azhukov.agent.service.ProfileEnvStore envStore =
+            envStoreProvider == null ? null : envStoreProvider.getIfAvailable();
+        if (envStore == null) {
+            return notImplemented("profile env store is not available in this deployment");
+        }
+        Object rawEnv = body == null ? null : body.get("env");
+        if (!(rawEnv instanceof Map<?, ?> envMap) || envMap.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("detail", "env map is required"));
+        }
+        Map<String, String> values = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : envMap.entrySet()) {
+            String key = String.valueOf(entry.getKey()).trim().toUpperCase(Locale.ROOT);
+            if (!envStore.isAllowedKey(key)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("detail", "key is not in the env allowlist: " + key));
+            }
+            values.put(key, entry.getValue() == null ? "" : String.valueOf(entry.getValue()));
+        }
+        try {
+            for (Map.Entry<String, String> entry : values.entrySet()) {
+                envStore.set(profile.profile(), entry.getKey(), entry.getValue());
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("ok", true);
+            response.put("name", toolset);
+            response.put("keys", values.keySet());
+            response.put("note", "values are write-only; reads are masked by design");
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("detail", "failed to persist env keys: " + e.getMessage()));
+        }
     }
 
     @PostMapping({"/api/tools/toolsets/{toolset}/post-setup", "/p/{profile}/api/tools/toolsets/{toolset}/post-setup"})

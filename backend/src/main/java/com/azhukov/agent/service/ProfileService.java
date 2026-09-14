@@ -258,6 +258,34 @@ public class ProfileService {
         return Map.of("ok", true);
     }
 
+    /** Compact non-secret config summary for auto-description prompts. */
+    public String readModelSummary(String name) {
+        Map<String, Object> config;
+        try {
+            config = readConfig(name);
+        } catch (java.io.IOException e) {
+            return "";
+        }
+        StringBuilder summary = new StringBuilder();
+        Object provider = config.get("provider");
+        Object model = config.get("model");
+        Object baseUrl = config.get("base_url");
+        if (provider != null) {
+            summary.append("provider=").append(provider).append('\n');
+        }
+        if (model != null) {
+            summary.append("model=").append(model).append('\n');
+        }
+        if (baseUrl != null) {
+            summary.append("base_url=").append(baseUrl).append('\n');
+        }
+        Object description = config.get("description");
+        if (description instanceof String s && !s.isBlank()) {
+            summary.append("description=").append(s).append('\n');
+        }
+        return summary.toString();
+    }
+
     public Map<String, Object> writeDescription(String name, String description) throws IOException {
         String canon = normalizeProfileName(name);
         validateProfileName(canon);

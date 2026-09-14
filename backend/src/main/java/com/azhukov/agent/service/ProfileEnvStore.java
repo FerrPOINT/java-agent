@@ -57,6 +57,11 @@ public class ProfileEnvStore {
         return rows;
     }
 
+    /** True when the dashboard may write this key. */
+    public boolean isAllowedKey(String key) {
+        return key != null && ALLOWED_KEYS.contains(key);
+    }
+
     /** Set one allowlisted key. Non-allowlisted keys are rejected. */
     public void set(String profile, String key, String value) throws IOException {
         requireAllowlisted(key);

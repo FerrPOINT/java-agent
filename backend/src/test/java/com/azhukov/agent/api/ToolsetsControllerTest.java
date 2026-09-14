@@ -337,8 +337,8 @@ class ToolsetsControllerTest {
         mockMvc.perform(put("/api/tools/toolsets/web/provider")
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .content("{\"provider\":\"ddg\",\"capability\":\"extract\"}"))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("web extract backend selection is not implemented in the Java port"));
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.supported[0]").value("builtin"));
 
         mockMvc.perform(put("/api/tools/toolsets/web/env")
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)

@@ -64,6 +64,7 @@ public class ProfilesDashboardController {
     private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
     private final ProfileTerminalLauncher terminalLauncher;
+    private org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.client.ModelClient> modelClientProvider;
 
     @Autowired
     public ProfilesDashboardController(
@@ -71,10 +72,13 @@ public class ProfilesDashboardController {
         RuntimeConfigService runtimeConfigService,
         ProfileService profileService,
         SessionRepository sessionRepository,
-        MessageRepository messageRepository
+        MessageRepository messageRepository,
+        org.springframework.beans.factory.ObjectProvider<ProfileTerminalLauncher> terminalLauncherProvider,
+        org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.client.ModelClient> modelClientProvider
     ) {
         this(properties, runtimeConfigService, profileService, sessionRepository, messageRepository,
-            ProfilesDashboardController::launchProfileTerminal);
+            terminalLauncherProvider == null ? null : terminalLauncherProvider.getIfAvailable());
+        this.modelClientProvider = modelClientProvider;
     }
 
     ProfilesDashboardController(
@@ -91,6 +95,7 @@ public class ProfilesDashboardController {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.terminalLauncher = terminalLauncher;
+        this.modelClientProvider = null;
     }
 
     @GetMapping
@@ -264,7 +269,32 @@ public class ProfilesDashboardController {
         if (validation != null) {
             return validation;
         }
-        return notImplemented("profile auto-description is not implemented in the Java port");
+        com.azhukov.agent.core.client.ModelClient modelClient =
+            modelClientProvider == null ? null : modelClientProvider.getIfAvailable();
+        if (modelClient == null) {
+            return notImplemented("model client is not available in this deployment");
+        }
+        try {
+            String configSummary = profileService.readModelSummary(name);
+            List<com.azhukov.agent.core.model.Message> messages = List.of(
+                com.azhukov.agent.core.model.Message.user(
+                    "Опиши кратко (до 200 символов, одно предложение, на русском) назначение "
+                        + "конфигурации агента по её настройкам. Ответь только описанием, без преамбул.\n"
+                        + "Настройки:\n" + configSummary)
+            );
+            com.azhukov.agent.core.model.ChatResponse response =
+                modelClient.complete(messages, List.of());
+            String description = response.content() == null ? "" : response.content().trim();
+            if (description.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("detail", "model returned an empty description"));
+            }
+            profileService.writeDescription(name, description);
+            return ResponseEntity.ok(Map.of("name", name, "description", description));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("detail", "auto-description failed: " + e.getMessage()));
+        }
     }
 
     @PostMapping("/{name}/export")
