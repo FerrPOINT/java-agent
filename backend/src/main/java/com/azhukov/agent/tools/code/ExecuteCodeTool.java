@@ -85,10 +85,12 @@ public class ExecuteCodeTool implements ToolHandler {
     );
 
     private final Redactor redactor;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.CodeSessionKernelManager> kernelManagerProvider;
 
     // Kept for direct unit construction; Spring uses the required constructor.
     ExecuteCodeTool() {
-        this(new NoopRedactor());
+        this.redactor = new NoopRedactor();
+        this.kernelManagerProvider = null;
     }
 
     /** No-op redactor for unit tests that construct the tool directly. */
@@ -135,6 +137,9 @@ public class ExecuteCodeTool implements ToolHandler {
                 "terminal(command=...) instead.");
         }
         String mode = normalizeExecutionMode(args.mode());
+        if (MODE_SESSION_KERNEL.equals(mode)) {
+            return runSessionKernel(session, args);
+        }
         if (!MODE_LOCAL.equals(mode)) {
             return unsupportedExecutionMode(mode);
         }
@@ -234,6 +239,38 @@ public class ExecuteCodeTool implements ToolHandler {
         return "success".equals(status)
             ? ToolResult.ok(payload)
             : new ToolResult(false, payload, error == null || error.isBlank() ? status : error);
+    }
+
+    private ToolResult runSessionKernel(Session session, ExecuteCodeArgs args) {
+        com.azhukov.agent.service.CodeSessionKernelManager manager =
+            kernelManagerProvider == null ? null : kernelManagerProvider.getIfAvailable();
+        if (manager == null) {
+            return unsupportedExecutionMode(MODE_SESSION_KERNEL);
+        }
+        if (Boolean.TRUE.equals(args.reset())) {
+            manager.reset(session.id());
+        }
+        Integer timeout = null;
+        if (args.timeout() != null && !args.timeout().isBlank()) {
+            try {
+                timeout = Integer.parseInt(args.timeout().replaceAll("[^0-9]", ""));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        String profile = session.metadata() != null
+            ? session.metadata().getOrDefault("profile", "default")
+            : "default";
+        Map<String, Object> payload = manager.evaluate(
+            session.id(), profile, session.userId(), args.code(), timeout);
+        String json;
+        try {
+            json = MAPPER.writeValueAsString(payload);
+        } catch (Exception e) {
+            return new ToolResult(false, "kernel response serialization failed", e.getMessage());
+        }
+        boolean ok = "success".equals(payload.get("status"));
+        return ok ? ToolResult.ok(json)
+            : new ToolResult(false, json, String.valueOf(payload.getOrDefault("error", "kernel error")));
     }
 
     private ToolResult unsupportedExecutionMode(String mode) {
