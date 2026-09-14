@@ -4,12 +4,14 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.MidTurnPersistenceCallback;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.gateway.BasePlatformAdapter;
+import com.azhukov.agent.gateway.GatewayLifecycleService;
 import com.azhukov.agent.gateway.GatewayRoutingService;
 import com.azhukov.agent.gateway.InboundMessageProcessor;
 import com.azhukov.agent.gateway.SessionResolver;
 import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.persistence.service.MessagePersistenceService;
+import com.azhukov.agent.service.OutboundReceiptService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -43,7 +45,9 @@ public class SessionConfig {
     @Bean
     @ConditionalOnMissingBean(GatewayRoutingService.class)
     public GatewayRoutingService gatewayRoutingService(List<BasePlatformAdapter> adapters,
-            Consumer<MessageEvent> gatewayMessageHandler) {
-        return new GatewayRoutingService(adapters, gatewayMessageHandler);
+            Consumer<MessageEvent> gatewayMessageHandler,
+            ObjectProvider<OutboundReceiptService> receiptServiceProvider,
+            ObjectProvider<GatewayLifecycleService> lifecycleProvider) {
+        return new GatewayRoutingService(adapters, gatewayMessageHandler, receiptServiceProvider, lifecycleProvider);
     }
 }

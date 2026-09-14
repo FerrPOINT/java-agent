@@ -1,10 +1,13 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.gateway.GatewayLifecycleService;
+import com.azhukov.agent.service.GatewayHomeChannelService;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.RuntimeConfigService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -27,6 +30,7 @@ import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -107,14 +111,186 @@ public class DashboardSystemController {
     @Autowired
     public DashboardSystemController(AgentProperties properties,
                                      RuntimeConfigService runtimeConfigService,
-                                     ProfileService profileService) {
+                                     ProfileService profileService,
+                                     ObjectProvider<GatewayLifecycleService> gatewayLifecycleProvider,
+                                     ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider) {
         this.properties = properties;
         this.runtimeConfigService = runtimeConfigService;
         this.profileService = profileService;
+        this.gatewayLifecycleProvider = gatewayLifecycleProvider;
+        this.gatewayHomeChannelProvider = gatewayHomeChannelProvider;
+    }
+
+    private final ObjectProvider<GatewayLifecycleService> gatewayLifecycleProvider;
+    private final ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider;
+
+    private static final Duration GATEWAY_DRAIN_BOUND = Duration.ofSeconds(30);
+
+    @PostMapping("/api/gateway/start")
+    @Operation(summary = "Start the gateway lifecycle (adapters accept inbound again)")
+    public ResponseEntity<Map<String, Object>> startGateway() {
+        GatewayLifecycleService lifecycle = gatewayLifecycleProvider == null ? null : gatewayLifecycleProvider.getIfAvailable();
+        if (lifecycle == null) {
+            return notImplemented("gateway lifecycle service is not available in this deployment");
+        }
+        GatewayLifecycleService.Status status = lifecycle.start();
+        return ResponseEntity.ok(lifecyclePayload(status));
+    }
+
+    @PostMapping("/api/gateway/stop")
+    @Operation(summary = "Stop the gateway lifecycle immediately (no drain wait)")
+    public ResponseEntity<Map<String, Object>> stopGateway() {
+        GatewayLifecycleService lifecycle = gatewayLifecycleProvider == null ? null : gatewayLifecycleProvider.getIfAvailable();
+        if (lifecycle == null) {
+            return notImplemented("gateway lifecycle service is not available in this deployment");
+        }
+        GatewayLifecycleService.Status status = lifecycle.stop();
+        return ResponseEntity.ok(lifecyclePayload(status));
+    }
+
+    @PostMapping("/api/gateway/restart")
+    @Operation(summary = "Drain (bounded) then start the gateway lifecycle")
+    public ResponseEntity<Map<String, Object>> restartGateway() {
+        GatewayLifecycleService lifecycle = gatewayLifecycleProvider == null ? null : gatewayLifecycleProvider.getIfAvailable();
+        if (lifecycle == null) {
+            return notImplemented("gateway lifecycle service is not available in this deployment");
+        }
+        GatewayLifecycleService.Status status = lifecycle.restart(GATEWAY_DRAIN_BOUND);
+        return ResponseEntity.ok(lifecyclePayload(status));
+    }
+
+    @PostMapping("/api/gateway/drain")
+    @Operation(summary = "Drain the gateway: stop new inbound, wait bounded time for in-flight work")
+    public ResponseEntity<Map<String, Object>> drainGateway(
+        @RequestBody(required = false) Map<String, Object> body
+    ) {
+        GatewayLifecycleService lifecycle = gatewayLifecycleProvider == null ? null : gatewayLifecycleProvider.getIfAvailable();
+        if (lifecycle == null) {
+            return notImplemented("gateway lifecycle service is not available in this deployment");
+        }
+        Object rawAction = body != null ? body.get("action") : null;
+        String action = rawAction == null ? "drain" : String.valueOf(rawAction).trim().toLowerCase(Locale.ROOT);
+        if (!"drain".equals(action) && !"cancel".equals(action)) {
+            return status(
+                HttpStatus.BAD_REQUEST,
+                "Unknown drain action '" + action + "'; expected 'drain' or 'cancel'");
+        }
+        if ("cancel".equals(action)) {
+            // Cancel = abandon the drain and resume accepting inbound.
+            GatewayLifecycleService.Status status = lifecycle.start();
+            return ResponseEntity.ok(lifecyclePayload(status));
+        }
+        GatewayLifecycleService.Status status = lifecycle.drain(GATEWAY_DRAIN_BOUND);
+        return ResponseEntity.ok(lifecyclePayload(status));
+    }
+
+    @GetMapping("/api/gateway/status")
+    @Operation(summary = "Real gateway lifecycle state instead of the static running flag")
+    public ResponseEntity<Map<String, Object>> gatewayStatus() {
+        GatewayLifecycleService lifecycle = gatewayLifecycleProvider == null ? null : gatewayLifecycleProvider.getIfAvailable();
+        if (lifecycle == null) {
+            return notImplemented("gateway lifecycle service is not available in this deployment");
+        }
+        return ResponseEntity.ok(lifecyclePayload(lifecycle.status()));
+    }
+
+    @GetMapping("/api/gateway/home-channel")
+    @Operation(summary = "Persisted home channel for a platform (masked, no secrets)")
+    public ResponseEntity<Map<String, Object>> getHomeChannel(
+        @RequestParam(name = "platform", defaultValue = "telegram") String platform,
+        @RequestParam(name = "profile", defaultValue = GatewayHomeChannelService.DEFAULT_PROFILE) String profile
+    ) {
+        GatewayHomeChannelService homeChannels = gatewayHomeChannelProvider == null ? null : gatewayHomeChannelProvider.getIfAvailable();
+        if (homeChannels == null) {
+            return notImplemented("gateway home channel store is not available in this deployment");
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        homeChannels.resolve(platform, profile).ifPresentOrElse(home -> {
+            payload.put("platform", platform);
+            payload.put("profile", profile);
+            payload.put("chat_id", home.chatId());
+            payload.put("thread_id", home.threadId());
+            payload.put("name", home.name());
+            payload.put("persisted", home.persisted());
+        }, () -> {
+            payload.put("platform", platform);
+            payload.put("profile", profile);
+            payload.put("persisted", false);
+        });
+        return ResponseEntity.ok(payload);
+    }
+
+    @PutMapping("/api/gateway/home-channel")
+    @Operation(summary = "Persist the home channel for a platform (/set_home backend)")
+    public ResponseEntity<Map<String, Object>> setHomeChannel(@RequestBody Map<String, Object> body) {
+        GatewayHomeChannelService homeChannels = gatewayHomeChannelProvider == null ? null : gatewayHomeChannelProvider.getIfAvailable();
+        if (homeChannels == null) {
+            return notImplemented("gateway home channel store is not available in this deployment");
+        }
+        Object platformRaw = body.getOrDefault("platform", "telegram");
+        Object chatRaw = body.get("chat_id");
+        Object threadRaw = body.get("thread_id");
+        Object nameRaw = body.get("name");
+        Object userRaw = body.get("user_id");
+        Object byRaw = body.get("updated_by");
+        Object profileRaw = body.get("profile");
+        if (chatRaw == null || String.valueOf(chatRaw).isBlank()) {
+            return status(HttpStatus.BAD_REQUEST, "chat_id is required");
+        }
+        try {
+            GatewayHomeChannelService.HomeTarget home = homeChannels.setHome(
+                String.valueOf(platformRaw),
+                profileRaw == null ? GatewayHomeChannelService.DEFAULT_PROFILE : String.valueOf(profileRaw),
+                String.valueOf(chatRaw),
+                threadRaw == null ? null : String.valueOf(threadRaw),
+                nameRaw == null ? null : String.valueOf(nameRaw),
+                userRaw == null ? null : String.valueOf(userRaw),
+                byRaw == null ? null : String.valueOf(byRaw));
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("ok", true);
+            payload.put("platform", String.valueOf(platformRaw));
+            payload.put("chat_id", home.chatId());
+            payload.put("thread_id", home.threadId());
+            payload.put("persisted", true);
+            return ResponseEntity.ok(payload);
+        } catch (IllegalArgumentException e) {
+            return status(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/api/gateway/home-channel")
+    @Operation(summary = "Clear the persisted home channel for a platform")
+    public ResponseEntity<Map<String, Object>> clearHomeChannel(
+        @RequestParam(name = "platform", defaultValue = "telegram") String platform,
+        @RequestParam(name = "profile", defaultValue = GatewayHomeChannelService.DEFAULT_PROFILE) String profile
+    ) {
+        GatewayHomeChannelService homeChannels = gatewayHomeChannelProvider == null ? null : gatewayHomeChannelProvider.getIfAvailable();
+        if (homeChannels == null) {
+            return notImplemented("gateway home channel store is not available in this deployment");
+        }
+        boolean cleared = homeChannels.clearHome(platform, profile);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("ok", cleared);
+        payload.put("platform", platform);
+        payload.put("profile", profile);
+        return ResponseEntity.ok(payload);
+    }
+
+    private Map<String, Object> lifecyclePayload(GatewayLifecycleService.Status status) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("gateway_state", status.state().name().toLowerCase(Locale.ROOT));
+        payload.put("gateway_running", status.state() == GatewayLifecycleService.State.RUNNING);
+        payload.put("gateway_accepts_inbound", status.state() == GatewayLifecycleService.State.RUNNING);
+        payload.put("gateway_active_inbound", status.activeInbound());
+        payload.put("gateway_since", status.since() == null ? null : status.since().toString());
+        payload.put("gateway_last_error", status.lastError());
+        payload.put("gateway_pid", ProcessHandle.current().pid());
+        payload.put("gateway_updated_at", Instant.now().toString());
+        return payload;
     }
 
     DashboardSystemController(AgentProperties properties, RuntimeConfigService runtimeConfigService) {
-        this(properties, runtimeConfigService, null);
+        this(properties, runtimeConfigService, null, null, null);
     }
 
     @GetMapping({"/api/status", "/p/{profile}/api/status"})
@@ -480,38 +656,9 @@ public class DashboardSystemController {
         return ResponseEntity.ok(response);
     }
 
-    @PostMapping("/api/gateway/restart")
-    @Operation(summary = "Reject dashboard gateway restart not supported by Java port")
-    public ResponseEntity<Map<String, Object>> restartGateway() {
-        return notImplemented("gateway restart is not implemented in the Java port");
-    }
-
-    @PostMapping("/api/gateway/start")
-    @Operation(summary = "Reject dashboard gateway start not supported by Java port")
-    public ResponseEntity<Map<String, Object>> startGateway() {
-        return notImplemented("gateway start is not implemented in the Java port");
-    }
-
-    @PostMapping("/api/gateway/stop")
-    @Operation(summary = "Reject dashboard gateway stop not supported by Java port")
-    public ResponseEntity<Map<String, Object>> stopGateway() {
-        return notImplemented("gateway stop is not implemented in the Java port");
-    }
-
-    @PostMapping("/api/gateway/drain")
-    @Operation(summary = "Reject dashboard gateway drain not supported by Java port")
-    public ResponseEntity<Map<String, Object>> drainGateway(
-        @RequestBody(required = false) Map<String, Object> body
-    ) {
-        Object rawAction = body != null ? body.get("action") : null;
-        String action = rawAction == null ? "drain" : String.valueOf(rawAction).trim().toLowerCase(Locale.ROOT);
-        if (!"drain".equals(action) && !"cancel".equals(action)) {
-            return status(
-                HttpStatus.BAD_REQUEST,
-                "Unknown drain action '" + action + "'; expected 'drain' or 'cancel'");
-        }
-        return notImplemented("gateway drain is not implemented in the Java port");
-    }
+    // WP-2 (ADR-012): gateway start/stop/restart/drain/status and home-channel
+    // endpoints are implemented above over GatewayLifecycleService and
+    // GatewayHomeChannelService — the 501 stubs that used to live here are gone.
 
     @PostMapping("/api/hermes/update")
     @Operation(summary = "Return managed-runtime update refusal for Java agent")

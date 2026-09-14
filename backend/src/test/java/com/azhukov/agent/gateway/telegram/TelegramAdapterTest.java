@@ -11,6 +11,7 @@ import org.springframework.web.client.RestClient;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -59,7 +60,7 @@ class TelegramAdapterTest {
         AgentProperties properties = new AgentProperties();
         TelegramBotApiClient client = new TelegramBotApiClient("token", RestClient.create()) {
             @Override
-            public Optional<String> sendMessage(long chatId, String text) {
+            public Optional<String> sendMessage(long chatId, String text, Integer messageThreadId) {
                 return Optional.of("42");
             }
         };
@@ -68,6 +69,25 @@ class TelegramAdapterTest {
         SendResult result = adapter.send(source("12345"), "hello").get();
         assertThat(result.success()).isTrue();
         assertThat(result.messageId()).isEqualTo("42");
+    }
+
+    @Test
+    void sendRoutesForumThreadId() throws ExecutionException, InterruptedException {
+        AgentProperties properties = new AgentProperties();
+        AtomicInteger capturedThread = new AtomicInteger(-1);
+        TelegramBotApiClient client = new TelegramBotApiClient("token", RestClient.create()) {
+            @Override
+            public Optional<String> sendMessage(long chatId, String text, Integer messageThreadId) {
+                capturedThread.set(messageThreadId == null ? -1 : messageThreadId);
+                return Optional.of("43");
+            }
+        };
+        TelegramAdapter adapter = new TelegramAdapter(properties, client);
+        adapter.connect(new PlatformConfig(Platform.TELEGRAM, true, Map.of(), Map.of())).get();
+        SessionSource topic = new SessionSource(Platform.TELEGRAM, "12345", null, null, null, "77");
+        SendResult result = adapter.send(topic, "topic hello").get();
+        assertThat(result.success()).isTrue();
+        assertThat(capturedThread.get()).isEqualTo(77);
     }
 
     @Test

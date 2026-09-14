@@ -87,6 +87,7 @@ private static final String CRON_EXECUTION_HINT = """
     private final CronScheduleParser scheduleParser;
     private final ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider;
     private final ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider;
+    private final ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider;
     private EventService eventService;
     private ProfileService profileService;
 
@@ -105,7 +106,7 @@ private static final String CRON_EXECUTION_HINT = """
         CronScheduleParser scheduleParser
     ) {
         this(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
-            cronExecutionLogRepository, messageRepository, transactionTemplate, scheduleParser, null, null);
+            cronExecutionLogRepository, messageRepository, transactionTemplate, scheduleParser, null, null, null);
     }
 
     @Autowired
@@ -119,7 +120,8 @@ private static final String CRON_EXECUTION_HINT = """
         org.springframework.transaction.support.TransactionTemplate transactionTemplate,
         CronScheduleParser scheduleParser,
         ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider,
-        ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider
+        ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider,
+        ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider
     ) {
         this.cronJobRepository = cronJobRepository;
         this.agentRuntimeServiceProvider = agentRuntimeServiceProvider;
@@ -131,6 +133,7 @@ private static final String CRON_EXECUTION_HINT = """
         this.scheduleParser = scheduleParser;
         this.deliveryWorkItemServiceProvider = deliveryWorkItemServiceProvider;
         this.sessionRepositoryProvider = sessionRepositoryProvider;
+        this.gatewayHomeChannelProvider = gatewayHomeChannelProvider;
     }
 
     // Daemon thread factory so cron threads don't prevent JVM shutdown
@@ -1508,9 +1511,9 @@ private static final String CRON_EXECUTION_HINT = """
         }
         if ("bot-chat".equalsIgnoreCase(value)
             || value.toLowerCase(java.util.Locale.ROOT).matches("telegram|discord|web")) {
-            // Bare platform names resolve to the owner chat configured for that
-            // platform's gateway (WP-1: single-profile deployment → first
-            // allowed user id). Unresolvable stays undelivered (event-only).
+            // Bare platform names resolve to the persisted home channel
+            // (WP-2/ADR-012); legacy first-allowed-user-id only when nothing
+            // is persisted yet.
             String ownerChat = ownerChatId();
             return ownerChat == null ? null : "telegram:" + ownerChat;
         }
@@ -1518,11 +1521,20 @@ private static final String CRON_EXECUTION_HINT = """
     }
 
     /**
-     * Owner chat for bare-platform delivery targets: the first configured
-     * gateway Telegram allowed user id (single-profile deployment — mirrors
-     * the old CronDeliveryPoller.ownerChat() resolution).
+     * Owner chat for bare-platform delivery targets: the persisted gateway
+     * home channel first (WP-2), legacy first-allowed-user-id fallback while
+     * no home is persisted (old CronDeliveryPoller resolution).
      */
     private String ownerChatId() {
+        if (gatewayHomeChannelProvider != null) {
+            GatewayHomeChannelService homeChannels = gatewayHomeChannelProvider.getIfAvailable();
+            if (homeChannels != null) {
+                var home = homeChannels.resolve("telegram", GatewayHomeChannelService.DEFAULT_PROFILE);
+                if (home.isPresent() && home.get().persisted()) {
+                    return home.get().chatId();
+                }
+            }
+        }
         var allowed = properties.getGateway().getTelegram().getAllowedUserIds();
         if (allowed == null || allowed.isEmpty()) {
             return null;

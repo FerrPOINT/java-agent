@@ -45,7 +45,7 @@ class DashboardSystemControllerBranchTest {
         RuntimeConfigService runtimeConfigService = new RuntimeConfigService();
         ProfileService profileService = new ProfileService(properties, runtimeConfigService);
         mockMvc = MockMvcBuilders.standaloneSetup(
-            new DashboardSystemController(properties, runtimeConfigService, profileService)).build();
+            new DashboardSystemController(properties, runtimeConfigService, profileService, null, null)).build();
     }
 
     @AfterEach

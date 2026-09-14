@@ -48,7 +48,7 @@ class CronJobServiceDeliveryProducerTest {
         return new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties,
             skillManager, cronExecutionLogRepository, messageRepository,
             new TransactionTemplate(), new CronScheduleParser(),
-            deliveryProvider, sessionRepositoryProvider);
+            deliveryProvider, sessionRepositoryProvider, null);
     }
 
     private CronJobEntity jobWithDeliverTo(String deliverTo) {

@@ -52,7 +52,7 @@ class DashboardSystemControllerTest {
         runtimeConfigService = new RuntimeConfigService();
         profileService = new ProfileService(properties, runtimeConfigService);
         mockMvc = MockMvcBuilders.standaloneSetup(
-            new DashboardSystemController(properties, runtimeConfigService, profileService)).build();
+            new DashboardSystemController(properties, runtimeConfigService, profileService, null, null)).build();
     }
 
     @AfterEach
@@ -656,30 +656,32 @@ class DashboardSystemControllerTest {
             .andExpect(status().isNotFound())
             .andExpect(jsonPath("$.detail").value("No update receipt found (no `hermes update` run recorded)."));
 
+        // WP-2: gateway lifecycle routes are real now. Without a lifecycle
+        // service wired (standalone MockMvc) they respond with the honest
+        // capability-disabled 501; with one wired they return real state.
         mockMvc.perform(post("/api/gateway/restart"))
             .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("gateway restart is not implemented in the Java port"))
-            .andExpect(jsonPath("$.error").value("gateway restart is not implemented in the Java port"));
+            .andExpect(jsonPath("$.detail").value("gateway lifecycle service is not available in this deployment"));
 
         mockMvc.perform(post("/api/gateway/start"))
             .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("gateway start is not implemented in the Java port"));
+            .andExpect(jsonPath("$.detail").value("gateway lifecycle service is not available in this deployment"));
 
         mockMvc.perform(post("/api/gateway/stop"))
             .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("gateway stop is not implemented in the Java port"));
+            .andExpect(jsonPath("$.detail").value("gateway lifecycle service is not available in this deployment"));
 
         mockMvc.perform(post("/api/gateway/drain")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"action\":\"drain\"}"))
             .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("gateway drain is not implemented in the Java port"));
+            .andExpect(jsonPath("$.detail").value("gateway lifecycle service is not available in this deployment"));
 
         mockMvc.perform(post("/api/gateway/drain")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"action\":\"explode\"}"))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.detail").value("Unknown drain action 'explode'; expected 'drain' or 'cancel'"));
+            .andExpect(status().isNotImplemented())
+            .andExpect(jsonPath("$.detail").value("gateway lifecycle service is not available in this deployment"));
 
         mockMvc.perform(post("/api/ops/doctor"))
             .andExpect(status().isNotImplemented())

@@ -227,7 +227,7 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void gatewayRoutingService_bean() {
-assertThat(sessionConfig.gatewayRoutingService(java.util.Collections.emptyList(), (java.util.function.Consumer<MessageEvent>) mock(java.util.function.Consumer.class))).isNotNull();
+assertThat(sessionConfig.gatewayRoutingService(java.util.Collections.emptyList(), (java.util.function.Consumer<MessageEvent>) mock(java.util.function.Consumer.class), null, null)).isNotNull();
     }
 
     @Test
