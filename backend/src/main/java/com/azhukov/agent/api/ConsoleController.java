@@ -47,15 +47,24 @@ public class ConsoleController {
     private final ProcessTool processTool;
     private final CommandGuard commandGuard;
     private final Redactor redactor;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.ConsoleTaskService> consoleTaskServiceProvider;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.PtySessionService> ptyServiceProvider;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.PubChannelRegistry> pubRegistryProvider;
 
     public ConsoleController(ProcessTool processTool,
                              AgentProperties properties,
-                             Redactor redactor) {
+                             Redactor redactor,
+                             org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.ConsoleTaskService> consoleTaskServiceProvider,
+                             org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.PtySessionService> ptyServiceProvider,
+                             org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.PubChannelRegistry> pubRegistryProvider) {
         this.processTool = processTool;
         this.commandGuard = new CommandGuard(
             properties.getSecurity().getBlockedCommands(),
             properties.getTerminal().isBlockSudo());
         this.redactor = redactor;
+        this.consoleTaskServiceProvider = consoleTaskServiceProvider;
+        this.ptyServiceProvider = ptyServiceProvider;
+        this.pubRegistryProvider = pubRegistryProvider;
     }
 
     /** Start a guarded background command task. */
@@ -138,18 +147,170 @@ public class ConsoleController {
         return ResponseEntity.ok(Map.of("id", id, "status", "killed"));
     }
 
-    /**
-     * Interactive PTY remains a documented gap and fails closed. Output
-     * streaming lives on the WebSocket endpoint {@code /api/console/ws?id=...}
-     * ({@link ConsoleWebSocketHandler}).
-     */
+    // ── PTY (WP-9, ADR-015): interactive sessions via script(1), fail-closed ──
+
     @GetMapping("/pty")
-    public ResponseEntity<Map<String, Object>> unsupported() {
-        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(Map.of(
-            "error", "console interactive PTY is not implemented",
-            "detail", "Output streaming: WebSocket /api/console/ws?id=<task>. "
-                + "REST command tasks: POST /api/console/commands, GET /commands/{id}, "
-                + "GET /commands/{id}/output, POST /commands/{id}/kill"));
+    public ResponseEntity<Map<String, Object>> ptyCapability(
+        @PathVariable(name = "profile", required = false) String profile) {
+        boolean available = com.azhukov.agent.service.PtySessionService.ptyAvailable();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("available", available);
+        body.put("transport", available ? "script" : "none");
+        body.put("detail", available
+            ? "Interactive PTY: POST /api/console/pty (start), POST /{id}/input, "
+                + "GET /{id}/read?after=<cursor>, POST /{id}/close"
+            : "PTY unavailable on this host (/usr/bin/script missing) — fail-closed");
+        return ResponseEntity.ok(body);
+    }
+
+    @PostMapping("/pty")
+    public ResponseEntity<Map<String, Object>> ptyStart(
+        @PathVariable(name = "profile", required = false) String profile,
+        @RequestBody Map<String, Object> body) {
+        com.azhukov.agent.service.PtySessionService pty = pty();
+        if (pty == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("error", "PTY service is not available in this deployment"));
+        }
+        String cwd = body.get("cwd") instanceof String s && !s.isBlank() ? s : null;
+        var started = pty.start(profile, null, null, cwd);
+        if (started.error() != null) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("error", started.error()));
+        }
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+            .body(Map.of("id", started.id(), "status", "started"));
+    }
+
+    @PostMapping("/pty/{id}/input")
+    public ResponseEntity<Map<String, Object>> ptyInput(
+        @PathVariable(name = "profile", required = false) String profile,
+        @PathVariable String id,
+        @RequestBody Map<String, Object> body) {
+        com.azhukov.agent.service.PtySessionService pty = pty();
+        if (pty == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("error", "PTY service is not available in this deployment"));
+        }
+        String input = body.get("input") instanceof String s ? s : "";
+        if (input.isEmpty()) {
+            return badRequest("input is required");
+        }
+        return pty.write(profile, id, input)
+            ? ResponseEntity.ok(Map.of("id", id, "status", "written"))
+            : ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown PTY session"));
+    }
+
+    @GetMapping("/pty/{id}/read")
+    public ResponseEntity<Map<String, Object>> ptyRead(
+        @PathVariable(name = "profile", required = false) String profile,
+        @PathVariable String id,
+        @RequestParam(name = "after", defaultValue = "0") long after,
+        @RequestParam(name = "limit", defaultValue = "500") int limit) {
+        com.azhukov.agent.service.PtySessionService pty = pty();
+        if (pty == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("error", "PTY service is not available in this deployment"));
+        }
+        var read = pty.read(profile, id, after, limit);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", id);
+        body.put("cursor", read.cursor());
+        body.put("alive", read.alive());
+        body.put("lines", read.lines().stream().map(line -> Map.of(
+            "seq", line.seq(), "text", redactor.redact(line.text()))).toList());
+        return ResponseEntity.ok(body);
+    }
+
+    @PostMapping("/pty/{id}/close")
+    public ResponseEntity<Map<String, Object>> ptyClose(
+        @PathVariable(name = "profile", required = false) String profile,
+        @PathVariable String id) {
+        com.azhukov.agent.service.PtySessionService pty = pty();
+        if (pty == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("error", "PTY service is not available in this deployment"));
+        }
+        return pty.close(profile, id)
+            ? ResponseEntity.ok(Map.of("id", id, "status", "closed"))
+            : ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown PTY session"));
+    }
+
+    // ── pub channels (WP-9, ADR-015): named ACL-scoped event lanes ──
+
+    @PostMapping("/pub/{channel}")
+    public ResponseEntity<Map<String, Object>> pubCreate(
+        @PathVariable(name = "profile", required = false) String profile,
+        @PathVariable String channel) {
+        com.azhukov.agent.service.PubChannelRegistry pub = pub();
+        if (pub == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("error", "pub registry is not available in this deployment"));
+        }
+        var result = pub.create(profile, channel);
+        return result.allowed()
+            ? ResponseEntity.ok(Map.of("channel", channel, "status", "created"))
+            : ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", result.reason()));
+    }
+
+    @PostMapping("/pub/{channel}/publish")
+    public ResponseEntity<Map<String, Object>> pubPublish(
+        @PathVariable(name = "profile", required = false) String profile,
+        @PathVariable String channel,
+        @RequestBody Map<String, Object> body) {
+        com.azhukov.agent.service.PubChannelRegistry pub = pub();
+        if (pub == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("error", "pub registry is not available in this deployment"));
+        }
+        String type = body.get("type") instanceof String s && !s.isBlank() ? s : "event";
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = body.get("payload") instanceof Map<?, ?> m
+            ? (Map<String, Object>) m : Map.of();
+        long seq = pub.publish(profile, channel, type, payload);
+        return seq >= 0
+            ? ResponseEntity.ok(Map.of("channel", channel, "seq", seq))
+            : ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown channel"));
+    }
+
+    @GetMapping("/pub/{channel}/read")
+    public ResponseEntity<Map<String, Object>> pubRead(
+        @PathVariable(name = "profile", required = false) String profile,
+        @PathVariable String channel,
+        @RequestParam(name = "after", defaultValue = "0") long after,
+        @RequestParam(name = "limit", defaultValue = "200") int limit) {
+        com.azhukov.agent.service.PubChannelRegistry pub = pub();
+        if (pub == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("error", "pub registry is not available in this deployment"));
+        }
+        var events = pub.replay(profile, channel, after, limit);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("channel", channel);
+        body.put("events", events);
+        return ResponseEntity.ok(body);
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/pub/{channel}")
+    public ResponseEntity<Map<String, Object>> pubDelete(
+        @PathVariable(name = "profile", required = false) String profile,
+        @PathVariable String channel) {
+        com.azhukov.agent.service.PubChannelRegistry pub = pub();
+        if (pub == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("error", "pub registry is not available in this deployment"));
+        }
+        return pub.delete(profile, channel)
+            ? ResponseEntity.ok(Map.of("channel", channel, "status", "deleted"))
+            : ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown channel"));
+    }
+
+    private com.azhukov.agent.service.PtySessionService pty() {
+        return ptyServiceProvider == null ? null : ptyServiceProvider.getIfAvailable();
+    }
+
+    private com.azhukov.agent.service.PubChannelRegistry pub() {
+        return pubRegistryProvider == null ? null : pubRegistryProvider.getIfAvailable();
     }
 
     private static ResponseEntity<Map<String, Object>> badRequest(String message) {

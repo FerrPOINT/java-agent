@@ -45,7 +45,7 @@ class ConsoleControllerTest {
     @BeforeEach
     void setUp() {
         properties = new AgentProperties();
-        controller = new ConsoleController(processTool, properties, redactor);
+        controller = new ConsoleController(processTool, properties, redactor, null, null, null);
     }
 
     @Test
@@ -125,8 +125,11 @@ class ConsoleControllerTest {
     }
 
     @Test
-    void ptySurfaceFailsClosed() {
-        assertThat(controller.unsupported().getStatusCode())
-            .isEqualTo(HttpStatus.NOT_IMPLEMENTED);
+    void ptySurfaceReportsCapability() {
+        // WP-9: /api/console/pty now reports the real capability (available or
+        // fail-closed with reason) instead of a permanent 501
+        ResponseEntity<Map<String, Object>> response = controller.ptyCapability(null);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).containsKeys("available", "transport", "detail");
     }
 }
