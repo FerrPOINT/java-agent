@@ -20,6 +20,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -143,6 +144,97 @@ class DeliveryWorkItemServiceTest {
         assertThat(claimed).isPresent();
         assertThat(claimed.get().claimToken()).startsWith("bot-1:");
         verify(repository).claimPending(eq(candidate.getId()), any(String.class), any(Instant.class));
+    }
+
+    @Test
+    void claimNextDropsDelegatedRunWhenParentClosedByUser() {
+        DeliveryWorkItemEntity candidate = delegatedItem();
+        when(repository.findClaimable(eq(List.of("default")), any(Instant.class), any()))
+            .thenReturn(List.of(candidate));
+        when(repository.claimPending(eq(candidate.getId()), any(String.class), any(Instant.class))).thenReturn(1);
+        when(repository.markTerminal(eq(candidate.getId()), any(String.class),
+            eq(DeliveryWorkItemService.STATE_DROPPED), any(Instant.class),
+            eq("completion_target_terminal"), isNull())).thenReturn(1);
+        org.springframework.beans.factory.ObjectProvider<DelegatedCompletionClassifier> classifierProvider =
+            classifierProviderReturning(mockClassifier(DelegatedCompletionClassifier.Verdict.TERMINAL));
+        DeliveryWorkItemService classified = new DeliveryWorkItemService(repository, classifierProvider);
+
+        assertThat(classified.claimNext("bot-1", List.of("default"))).isEmpty();
+        verify(repository).markTerminal(eq(candidate.getId()), any(String.class),
+            eq(DeliveryWorkItemService.STATE_DROPPED), any(Instant.class),
+            eq("completion_target_terminal"), isNull());
+    }
+
+    @Test
+    void claimNextReleasesDelegatedRunWhenTargetRotationMidFlight() {
+        DeliveryWorkItemEntity candidate = delegatedItem();
+        when(repository.findClaimable(eq(List.of("default")), any(Instant.class), any()))
+            .thenReturn(List.of(candidate));
+        when(repository.claimPending(eq(candidate.getId()), any(String.class), any(Instant.class))).thenReturn(1);
+        when(repository.releaseKnownFailure(eq(candidate.getId()), any(String.class), any(Instant.class),
+            eq("completion_target_retry"), isNull())).thenReturn(1);
+        org.springframework.beans.factory.ObjectProvider<DelegatedCompletionClassifier> classifierProvider =
+            classifierProviderReturning(mockClassifier(DelegatedCompletionClassifier.Verdict.RETRY));
+        DeliveryWorkItemService classified = new DeliveryWorkItemService(repository, classifierProvider);
+
+        assertThat(classified.claimNext("bot-1", List.of("default"))).isEmpty();
+        verify(repository).releaseKnownFailure(eq(candidate.getId()), any(String.class), any(Instant.class),
+            eq("completion_target_retry"), isNull());
+    }
+
+    @Test
+    void claimNextDeliversDelegatedRunWhenTargetLive() {
+        DeliveryWorkItemEntity candidate = delegatedItem();
+        when(repository.findClaimable(eq(List.of("default")), any(Instant.class), any()))
+            .thenReturn(List.of(candidate));
+        when(repository.claimPending(eq(candidate.getId()), any(String.class), any(Instant.class))).thenReturn(1);
+        when(repository.findById(candidate.getId())).thenReturn(Optional.of(candidate));
+        org.springframework.beans.factory.ObjectProvider<DelegatedCompletionClassifier> classifierProvider =
+            classifierProviderReturning(mockClassifier(DelegatedCompletionClassifier.Verdict.DELIVER));
+        DeliveryWorkItemService classified = new DeliveryWorkItemService(repository, classifierProvider);
+
+        assertThat(classified.claimNext("bot-1", List.of("default"))).isPresent();
+    }
+
+    @Test
+    void claimNextSkipsClassificationForCronItems() {
+        DeliveryWorkItemEntity candidate = pendingItem("default"); // source = cron_execution
+        when(repository.findClaimable(eq(List.of("default")), any(Instant.class), any()))
+            .thenReturn(List.of(candidate));
+        when(repository.claimPending(eq(candidate.getId()), any(String.class), any(Instant.class))).thenReturn(1);
+        when(repository.findById(candidate.getId())).thenReturn(Optional.of(candidate));
+        DelegatedCompletionClassifier classifier = org.mockito.Mockito.mock(DelegatedCompletionClassifier.class);
+        org.springframework.beans.factory.ObjectProvider<DelegatedCompletionClassifier> classifierProvider =
+            classifierProviderReturning(classifier);
+        DeliveryWorkItemService classified = new DeliveryWorkItemService(repository, classifierProvider);
+
+        assertThat(classified.claimNext("bot-1", List.of("default"))).isPresent();
+        verifyNoInteractions(classifier);
+    }
+
+    private static DelegatedCompletionClassifier mockClassifier(DelegatedCompletionClassifier.Verdict verdict) {
+        DelegatedCompletionClassifier classifier = org.mockito.Mockito.mock(DelegatedCompletionClassifier.class);
+        org.mockito.Mockito.when(classifier.classify(any())).thenReturn(verdict);
+        return classifier;
+    }
+
+    private static org.springframework.beans.factory.ObjectProvider<DelegatedCompletionClassifier> classifierProviderReturning(
+            DelegatedCompletionClassifier classifier) {
+        return new org.springframework.beans.factory.ObjectProvider<>() {
+            @Override public DelegatedCompletionClassifier getObject() { return classifier; }
+            @Override public DelegatedCompletionClassifier getObject(Object... args) { return classifier; }
+            @Override public DelegatedCompletionClassifier getIfAvailable() { return classifier; }
+            @Override public DelegatedCompletionClassifier getIfUnique() { return classifier; }
+            public java.util.stream.Stream<DelegatedCompletionClassifier> stream() { return java.util.stream.Stream.of(classifier); }
+            public java.util.stream.Stream<DelegatedCompletionClassifier> orderedStream() { return java.util.stream.Stream.of(classifier); }
+        };
+    }
+
+    private DeliveryWorkItemEntity delegatedItem() {
+        DeliveryWorkItemEntity entity = pendingItem("default");
+        entity.setSourceType(DeliveryWorkItemService.SOURCE_DELEGATED_TASK_RUN);
+        entity.setParentSessionId(UUID.randomUUID());
+        return entity;
     }
 
     @Test

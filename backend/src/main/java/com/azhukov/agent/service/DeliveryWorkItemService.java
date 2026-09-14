@@ -2,7 +2,6 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.persistence.entity.DeliveryWorkItemEntity;
 import com.azhukov.agent.persistence.repository.DeliveryWorkItemRepository;
-import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,7 +20,6 @@ import java.util.UUID;
  * Owns durable final-delivery state; transports may only act through claimed work.
  */
 @Service
-@RequiredArgsConstructor
 public class DeliveryWorkItemService {
 
     public static final String SOURCE_CRON_EXECUTION = "cron_execution";
@@ -40,6 +38,21 @@ public class DeliveryWorkItemService {
     private static final Duration RETRY_BASE_DELAY = Duration.ofSeconds(5);
 
     private final DeliveryWorkItemRepository repository;
+    private final org.springframework.beans.factory.ObjectProvider<DelegatedCompletionClassifier> classifierProvider;
+
+    /** Legacy constructor without the classifier (tests of non-delegate delivery). */
+    public DeliveryWorkItemService(DeliveryWorkItemRepository repository) {
+        this.repository = repository;
+        this.classifierProvider = null;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public DeliveryWorkItemService(
+            DeliveryWorkItemRepository repository,
+            org.springframework.beans.factory.ObjectProvider<DelegatedCompletionClassifier> classifierProvider) {
+        this.repository = repository;
+        this.classifierProvider = classifierProvider;
+    }
 
     @Transactional
     public DeliveryWorkItemEntity enqueue(EnqueueRequest request) {
@@ -69,10 +82,35 @@ public class DeliveryWorkItemService {
             normalizedProfiles, now, PageRequest.of(0, 25));
         for (DeliveryWorkItemEntity candidate : candidates) {
             String claimToken = claimToken(consumerId);
-            if (repository.claimPending(candidate.getId(), claimToken, now) == 1) {
-                return repository.findById(candidate.getId())
-                    .map(item -> new ClaimedWorkItem(item, claimToken));
+            if (repository.claimPending(candidate.getId(), claimToken, now) != 1) {
+                continue;
             }
+            // Hermes _completion_delivery_ready parity (WP-1 tail): the durable
+            // claim is spent, but a delivery attempt is NOT. Classify delegated
+            // run targets right after the atomic claim and settle unusable ones
+            // immediately: TERMINAL -> drop (user-closed parent, never falsely
+            // retry), RETRY -> release with delay (rotation mid-flight / DB
+            // hiccup). Only DELIVER reaches the consumer.
+            if (SOURCE_DELEGATED_TASK_RUN.equals(candidate.getSourceType())
+                && classifierProvider != null) {
+                DelegatedCompletionClassifier classifier = classifierProvider.getIfAvailable();
+                if (classifier != null) {
+                    DelegatedCompletionClassifier.Verdict verdict =
+                        classifier.classify(candidate.getParentSessionId());
+                    if (verdict == DelegatedCompletionClassifier.Verdict.TERMINAL) {
+                        repository.markTerminal(candidate.getId(), claimToken, STATE_DROPPED,
+                            Instant.now(), "completion_target_terminal", null);
+                        continue;
+                    }
+                    if (verdict == DelegatedCompletionClassifier.Verdict.RETRY) {
+                        repository.releaseKnownFailure(candidate.getId(), claimToken,
+                            now.plus(RETRY_BASE_DELAY), "completion_target_retry", null);
+                        continue;
+                    }
+                }
+            }
+            return repository.findById(candidate.getId())
+                .map(item -> new ClaimedWorkItem(item, claimToken));
         }
         return Optional.empty();
     }
