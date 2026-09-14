@@ -345,6 +345,27 @@ public class DelegatedTaskRunService {
             });
     }
 
+    /**
+     * Gateway consumer loop entry point (Hermes reinjection parity):
+     * atomically claims the oldest restorable terminal completion for the
+     * given consumer. Returns empty when nothing is pending.
+     */
+    @Transactional
+    public Optional<DeliveryClaim> claimNextPendingDelivery(String consumer) {
+        String normalizedConsumer = blankToNull(consumer);
+        if (normalizedConsumer == null) {
+            return Optional.empty();
+        }
+        Instant now = Instant.now();
+        List<DelegatedTaskRunEntity> pending = repository.findRestorablePendingDelivery(
+            now.minus(DELIVERY_CLAIM_STALE_AFTER), PageRequest.of(0, 1));
+        if (pending.isEmpty()) {
+            return Optional.empty();
+        }
+        DelegatedTaskRunEntity candidate = pending.get(0);
+        return claimCompletionDelivery(candidate.getId(), normalizedConsumer);
+    }
+
     @Transactional
     public boolean completeDeliveryClaim(UUID runId, String claimId, String target, String idempotencyKey) {
         String normalizedClaim = blankToNull(claimId);

@@ -1,4 +1,9 @@
 
+## [Unreleased]
+
+### Added
+- Delegate reinjection gateway (`DelegateReinjectionGateway`): scheduled consumer loop claims terminal delegated-task completions (`claimNextPendingDelivery`), reinjects bounded assistant summaries into the parent session history plus the steer buffer, and acks/releases via the delivery ledger (docs/34 Hermes parity update).
+
 ## Session 2026-09-13 — WP-1 cutover (durable delivery ledger, sole cron/delegate lane)
 
 - CronDeliveryPoller deleted: the bot no longer scans cron jobs + session messages with a high-water mark (`last_delivered_run_at` dropped in V54; `/agent/cron/{id}/delivered` endpoint and CronApiClient.markDelivered removed).

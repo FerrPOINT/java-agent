@@ -17,6 +17,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -207,6 +208,37 @@ class DelegatedTaskRunServiceTest {
                 assertThat(event.payload()).containsEntry("delivery_pending", false);
                 assertThat(event.payload()).containsEntry("replay_age_cap_hours", 48L);
             });
+    }
+
+    @Test
+    void claimNextPendingDeliveryClaimsOldestRestorableRunForGateway() {
+        UUID runId = UUID.randomUUID();
+        DelegatedTaskRunEntity entity = runningRun(runId, UUID.randomUUID());
+        entity.setStatus("completed");
+        entity.setCompletedAt(Instant.now());
+        when(repository.findRestorablePendingDelivery(any(), any()))
+            .thenReturn(List.of(entity));
+        when(repository.claimPendingDelivery(eq(runId), anyString(), any(Instant.class), any(Instant.class)))
+            .thenReturn(1);
+        when(repository.findById(runId)).thenReturn(Optional.of(entity));
+        EventService eventService = new EventService(10);
+        DelegatedTaskRunService service = new DelegatedTaskRunService(repository, new ObjectMapper(), eventService);
+
+        var claim = service.claimNextPendingDelivery("gateway-consumer");
+
+        assertThat(claim).isPresent();
+        assertThat(claim.get().runId()).isEqualTo(runId);
+        assertThat(claim.get().claimId()).startsWith("gateway-consumer");
+        assertThat(claim.get().run()).isSameAs(entity);
+    }
+
+    @Test
+    void claimNextPendingDeliveryReturnsEmptyWhenNothingRestorable() {
+        when(repository.findRestorablePendingDelivery(any(), any()))
+            .thenReturn(List.of());
+        DelegatedTaskRunService service = new DelegatedTaskRunService(repository, new ObjectMapper(), new EventService(10));
+
+        assertThat(service.claimNextPendingDelivery("gateway")).isEmpty();
     }
 
     @Test
