@@ -40,6 +40,7 @@ public class McpDashboardController {
     private final McpLifecycleManager mcpLifecycleManager;
     private final AgentProperties properties;
     private final ObjectMapper objectMapper;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.McpConfigStore> configStoreProvider;
 
     @GetMapping("/servers")
     public Map<String, Object> listServers(@RequestParam(name = "profile", required = false) String profile) {
@@ -110,26 +111,88 @@ public class McpDashboardController {
     }
 
     @PostMapping("/servers")
-    public ResponseEntity<Map<String, Object>> addServer(@RequestBody(required = false) Map<String, Object> body) {
-        return notImplemented("MCP server config writes are not implemented in Java agent");
+    @io.swagger.v3.oas.annotations.Operation(summary = "Add/update a persisted MCP server config (validated, revisioned)")
+    public ResponseEntity<Map<String, Object>> addServer(
+        @RequestParam(name = "profile", required = false) String profile,
+        @RequestBody(required = false) Map<String, Object> body
+    ) {
+        com.azhukov.agent.service.McpConfigStore store = configStore();
+        if (store == null) {
+            return notImplemented("MCP config store is not available in this deployment");
+        }
+        try {
+            com.azhukov.agent.service.McpConfigStore.ServerConfigInput input = parseServerInput(body);
+            var saved = store.upsert(profile, input);
+            return ResponseEntity.ok(store.redactedView(saved));
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
+        }
     }
 
     @PutMapping("/servers")
-    public ResponseEntity<Map<String, Object>> replaceServers(@RequestBody(required = false) Map<String, Object> body) {
-        return notImplemented("MCP server config replacement is not implemented in Java agent");
+    @io.swagger.v3.oas.annotations.Operation(summary = "Replace persisted MCP server configs from a servers list")
+    public ResponseEntity<Map<String, Object>> replaceServers(
+        @RequestParam(name = "profile", required = false) String profile,
+        @RequestBody(required = false) Map<String, Object> body
+    ) {
+        Object rawServers = body == null ? null : body.get("servers");
+        if (!(rawServers instanceof List<?> entries) || entries.isEmpty()) {
+            return badRequest("servers list is required");
+        }
+        com.azhukov.agent.service.McpConfigStore store = configStore();
+        if (store == null) {
+            return notImplemented("MCP config store is not available in this deployment");
+        }
+        List<Map<String, Object>> saved = new java.util.ArrayList<>();
+        try {
+            for (Object entry : entries) {
+                if (!(entry instanceof Map<?, ?> entryMap)) {
+                    throw new IllegalArgumentException("each server entry must be a mapping");
+                }
+                @SuppressWarnings("unchecked")
+                Map<String, Object> entryBody = (Map<String, Object>) entryMap;
+                saved.add(store.redactedView(store.upsert(profile, parseServerInput(entryBody))));
+            }
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
+        }
+        return ResponseEntity.ok(Map.of("servers", saved));
     }
 
     @DeleteMapping("/servers/{name}")
-    public ResponseEntity<Map<String, Object>> removeServer(@PathVariable String name) {
-        return notImplemented("MCP server removal is not implemented in Java agent");
+    @io.swagger.v3.oas.annotations.Operation(summary = "Delete a persisted MCP server config and its schema cache")
+    public ResponseEntity<Map<String, Object>> removeServer(
+        @PathVariable String name,
+        @RequestParam(name = "profile", required = false) String profile
+    ) {
+        com.azhukov.agent.service.McpConfigStore store = configStore();
+        if (store == null) {
+            return notImplemented("MCP config store is not available in this deployment");
+        }
+        boolean deleted = store.delete(profile, name);
+        return deleted
+            ? ResponseEntity.ok(Map.of("ok", true, "deleted", name))
+            : notFound("Server '" + name + "' not found");
     }
 
     @PutMapping("/servers/{name}/enabled")
+    @io.swagger.v3.oas.annotations.Operation(summary = "Toggle a persisted MCP server enabled flag (bumps config revision)")
     public ResponseEntity<Map<String, Object>> setEnabled(
         @PathVariable String name,
+        @RequestParam(name = "profile", required = false) String profile,
         @RequestBody(required = false) Map<String, Object> body
     ) {
-        return notImplemented("Per-server MCP enable toggles are not implemented in Java agent");
+        com.azhukov.agent.service.McpConfigStore store = configStore();
+        if (store == null) {
+            return notImplemented("MCP config store is not available in this deployment");
+        }
+        boolean enabled = body == null
+            || body.get("enabled") == null
+            || Boolean.parseBoolean(String.valueOf(body.get("enabled")));
+        return store.setEnabled(profile, name, enabled)
+            .<ResponseEntity<Map<String, Object>>>map(saved ->
+                ResponseEntity.ok(store.redactedView(saved)))
+            .orElseGet(() -> notFound("Server '" + name + "' not found"));
     }
 
     @PostMapping("/servers/{name}/auth")
@@ -264,6 +327,62 @@ public class McpDashboardController {
 
     private static ResponseEntity<Map<String, Object>> notFound(String detail) {
         return ResponseEntity.status(HttpStatusCode.valueOf(404)).body(errorBody(detail));
+    }
+
+    private com.azhukov.agent.service.McpConfigStore configStore() {
+        return configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static com.azhukov.agent.service.McpConfigStore.ServerConfigInput parseServerInput(Map<String, Object> body) {
+        if (body == null) {
+            throw new IllegalArgumentException("server config body is required");
+        }
+        String name = str(body.get("name"));
+        if (name == null) {
+            throw new IllegalArgumentException("server name is required");
+        }
+        return new com.azhukov.agent.service.McpConfigStore.ServerConfigInput(
+            name,
+            body.get("enabled") == null || Boolean.parseBoolean(String.valueOf(body.get("enabled"))),
+            body.get("transport") == null ? "stdio" : str(body.get("transport")),
+            str(body.get("command")),
+            strList(body.get("args")),
+            str(body.get("base_url")),
+            strList(body.get("env_keys")),
+            strMap(body.get("headers")),
+            strList(body.get("include_tools")),
+            strList(body.get("exclude_tools")),
+            body.get("timeout_seconds") == null ? 0
+                : Double.parseDouble(String.valueOf(body.get("timeout_seconds"))),
+            body.get("trust") == null ? "full" : str(body.get("trust")),
+            str(body.get("oauth_token_url")),
+            str(body.get("oauth_client_id")),
+            str(body.get("oauth_scopes")));
+    }
+
+    private static String str(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private static List<String> strList(Object raw) {
+        if (!(raw instanceof List<?> list)) {
+            return null;
+        }
+        return list.stream().map(String::valueOf).toList();
+    }
+
+    private static Map<String, String> strMap(Object raw) {
+        if (!(raw instanceof Map<?, ?> map)) {
+            return null;
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        map.forEach((k, v) -> result.put(String.valueOf(k), String.valueOf(v)));
+        return result;
+    }
+
+    private static ResponseEntity<Map<String, Object>> badRequest(String detail) {
+        return ResponseEntity.badRequest().body(errorBody(detail));
     }
 
     private static ResponseEntity<Map<String, Object>> notImplemented(String detail) {

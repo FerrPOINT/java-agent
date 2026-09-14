@@ -38,7 +38,7 @@ class McpDashboardControllerTest {
     void setUp() {
         properties = new AgentProperties();
         mockMvc = MockMvcBuilders.standaloneSetup(new McpDashboardController(
-                mcpLifecycleManager, properties, new ObjectMapper()))
+                mcpLifecycleManager, properties, new ObjectMapper(), null))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
     }
@@ -128,17 +128,19 @@ class McpDashboardControllerTest {
     }
 
     @Test
-    void mutatingConfigEndpointsReturnExplicitNotImplemented() throws Exception {
+    void configMutationsAnswerCapabilityDisabledWithoutStoreAndCatalogStays501() throws Exception {
+        // WP-3: CRUD/toggle are real over the persisted store now. In standalone
+        // MockMvc (no store bean) they answer the honest capability-disabled 501.
         mockMvc.perform(post("/api/mcp/servers")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"name\":\"srv\",\"command\":\"npx\"}"))
             .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("MCP server config writes are not implemented in Java agent"));
+            .andExpect(jsonPath("$.detail").value("MCP config store is not available in this deployment"));
 
         mockMvc.perform(put("/api/mcp/servers")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"servers\":{}}"))
-            .andExpect(status().isNotImplemented());
+            .andExpect(status().isBadRequest());
 
         mockMvc.perform(delete("/api/mcp/servers/srv"))
             .andExpect(status().isNotImplemented());
@@ -148,6 +150,7 @@ class McpDashboardControllerTest {
                 .content("{\"enabled\":false}"))
             .andExpect(status().isNotImplemented());
 
+        // OAuth flow and catalog install remain explicit capability gaps.
         mockMvc.perform(post("/api/mcp/servers/srv/auth"))
             .andExpect(status().isNotImplemented());
 
