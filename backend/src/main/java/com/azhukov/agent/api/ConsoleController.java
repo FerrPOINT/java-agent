@@ -30,8 +30,10 @@ import java.util.Map;
  * start/status/output/kill/list — behind the same {@link CommandGuard}
  * policy the terminal tool uses, with output redaction.
  *
- * WebSocket streaming, reconnect/cursor protocol and {@code /api/pty}
- * remain explicit unsupported gaps and fail closed.
+ * Live output streaming is provided by {@link ConsoleWebSocketHandler} on
+ * {@code /api/console/ws?id=<task>} (redacted frames + exit frame). The
+ * reconnect/cursor protocol and interactive {@code /api/pty} remain
+ * explicit unsupported gaps and fail closed.
  */
 @RestController
 @RequestMapping({"/api/console", "/p/{profile}/api/console"})
@@ -136,12 +138,17 @@ public class ConsoleController {
         return ResponseEntity.ok(Map.of("id", id, "status", "killed"));
     }
 
-    /** Explicit fail-closed markers for the unsupported WebSocket/PTY surface. */
-    @GetMapping({"/ws", "/pty"})
+    /**
+     * Interactive PTY remains a documented gap and fails closed. Output
+     * streaming lives on the WebSocket endpoint {@code /api/console/ws?id=...}
+     * ({@link ConsoleWebSocketHandler}).
+     */
+    @GetMapping("/pty")
     public ResponseEntity<Map<String, Object>> unsupported() {
         return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(Map.of(
-            "error", "console WebSocket/PTY streaming is not implemented",
-            "detail", "REST command tasks: POST /api/console/commands, GET /commands/{id}, "
+            "error", "console interactive PTY is not implemented",
+            "detail", "Output streaming: WebSocket /api/console/ws?id=<task>. "
+                + "REST command tasks: POST /api/console/commands, GET /commands/{id}, "
                 + "GET /commands/{id}/output, POST /commands/{id}/kill"));
     }
 

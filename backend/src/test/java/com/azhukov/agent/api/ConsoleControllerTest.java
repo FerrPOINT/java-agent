@@ -125,7 +125,7 @@ class ConsoleControllerTest {
     }
 
     @Test
-    void webSocketAndPtySurfaceFailClosed() {
+    void ptySurfaceFailsClosed() {
         assertThat(controller.unsupported().getStatusCode())
             .isEqualTo(HttpStatus.NOT_IMPLEMENTED);
     }
