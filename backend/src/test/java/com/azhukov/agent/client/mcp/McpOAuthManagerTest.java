@@ -35,7 +35,7 @@ class McpOAuthManagerTest {
 
     @Test
     void getToken_returnsEmpty_whenNoEntity() {
-        when(mcpOAuthRepository.findByServerName("test-server")).thenReturn(Optional.empty());
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.empty());
 
         Optional<String> token = manager.getToken("test-server");
 
@@ -47,7 +47,7 @@ class McpOAuthManagerTest {
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setAccessToken("access-123");
         entity.setExpiresAt(Instant.now().plusSeconds(3600));
-        when(mcpOAuthRepository.findByServerName("test-server")).thenReturn(Optional.of(entity));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
 
         Optional<String> token = manager.getToken("test-server");
 
@@ -61,7 +61,7 @@ class McpOAuthManagerTest {
         entity.setAccessToken("access-123");
         entity.setExpiresAt(Instant.now().minusSeconds(3600));
         // No refresh token URL configured → refresh throws, returns empty
-        when(mcpOAuthRepository.findByServerName("test-server")).thenReturn(Optional.of(entity));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
 
         Optional<String> token = manager.getToken("test-server");
 
@@ -71,7 +71,7 @@ class McpOAuthManagerTest {
     @Test
     void storeToken_savesEntity() {
         Instant expiresAt = Instant.now().plusSeconds(3600);
-        when(mcpOAuthRepository.findByServerName("test-server")).thenReturn(Optional.empty());
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.empty());
         when(mcpOAuthRepository.save(any(McpOAuthEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         manager.storeToken("test-server", "access-123", "refresh-456", expiresAt);
@@ -134,7 +134,7 @@ class McpOAuthManagerTest {
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setAccessToken("access-123");
         entity.setExpiresAt(Instant.now().minusSeconds(3600));
-        when(mcpOAuthRepository.findByServerName("test-server")).thenReturn(Optional.of(entity));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
 
         // Simulate interrupt by pre-interrupting the thread
         Thread.currentThread().interrupt();
@@ -169,7 +169,7 @@ class McpOAuthManagerTest {
         serverConfig.setOauthTokenUrl("https://example.com/token");
         properties.getMcp().getServers().add(serverConfig);
 
-        when(mcpOAuthRepository.findByServerName("empty-server")).thenReturn(Optional.empty());
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "empty-server")).thenReturn(Optional.empty());
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                 manager.refreshToken("empty-server"))
@@ -186,7 +186,7 @@ class McpOAuthManagerTest {
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setRefreshToken(null);
-        when(mcpOAuthRepository.findByServerName("no-refresh-server")).thenReturn(Optional.of(entity));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "no-refresh-server")).thenReturn(Optional.of(entity));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                 manager.refreshToken("no-refresh-server"))

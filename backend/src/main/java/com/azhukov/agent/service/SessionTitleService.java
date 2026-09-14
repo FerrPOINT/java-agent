@@ -42,6 +42,19 @@ Too long: {"title": "Investigate and fix the issue where the login button does n
 
 Reply with JSON only: {"title": "..."}""";
 
+    /**
+     * Example-echo guard (Hermes parity, port of QwenLM/qwen-code#9709): a
+     * small model sometimes parrots one of the prompt's own example titles
+     * back verbatim — "Fix login button on mobile" naming sessions that have
+     * nothing to do with a login button. The reject set mirrors the prompt
+     * examples; "Friendly greeting" is deliberately NOT rejected (the prompt
+     * instructs the model to produce it for bare greetings).
+     */
+    private static final java.util.Set<String> PROMPT_EXAMPLE_ECHO_REJECT = java.util.Set.of(
+        "fix login button on mobile",
+        "postgres connection pool exhaustion",
+        "code changes");
+
     private final ModelClient modelClient;
     private final SessionRepository sessionRepository;
     private final AgentProperties properties;
@@ -107,12 +120,31 @@ Reply with JSON only: {"title": "..."}""";
                     log.warn("Auto-title looks like an answer, rejecting: '{}'", title);
                     return normalized.substring(0, MAX_TITLE_LENGTH).trim() + "...";
                 }
+                if (isPromptExampleEcho(title)) {
+                    log.warn("Auto-title echoes a prompt example, rejecting: '{}'", title);
+                    return normalized.substring(0, MAX_TITLE_LENGTH).trim() + "...";
+                }
                 return title.length() > MAX_TITLE_LENGTH ? title.substring(0, MAX_TITLE_LENGTH) : title;
             }
         } catch (Exception e) {
             log.warn("Failed to generate title via LLM: {}", e.getMessage());
         }
         return normalized.substring(0, MAX_TITLE_LENGTH).trim() + "...";
+    }
+
+    /**
+     * True when the title is one of the prompt's own example titles
+     * (case-insensitive, bracket/quote wrappers stripped — the derived
+     * fallback title is strictly more informative than a parroted example).
+     */
+    static boolean isPromptExampleEcho(String title) {
+        if (title == null || title.isEmpty()) {
+            return false;
+        }
+        String normalized = title.strip()
+            .replaceAll("^[\\p{Punct}\\p{IsPunctuation}_]+|[\\p{Punct}\\p{IsPunctuation}_]+$", "")
+            .toLowerCase(java.util.Locale.ROOT);
+        return PROMPT_EXAMPLE_ECHO_REJECT.contains(normalized);
     }
 
     // h93: Check if a generated title looks like an answer rather than a title.

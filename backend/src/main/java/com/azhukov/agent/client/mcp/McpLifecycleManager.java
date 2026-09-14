@@ -1683,8 +1683,58 @@ public class McpLifecycleManager {
     }
 
     static String mcpPrefixedToolName(String serverName, String toolName) {
-        return MCP_TOOL_NAME_PREFIX + sanitizeMcpNameComponent(serverName)
+        String fullName = MCP_TOOL_NAME_PREFIX + sanitizeMcpNameComponent(serverName)
             + MCP_NAME_DELIMITER + sanitizeMcpNameComponent(toolName);
+        return clampMcpToolName(fullName);
+    }
+
+    private static final int MCP_TOOL_NAME_MAX_LENGTH = 64;
+    private static final int MCP_TOOL_NAME_HASH_LENGTH = 8;
+    private static final java.util.Set<String> CLAMPED_NAMES_WARNED =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * OpenAI-compatible providers reject function names longer than 64 chars,
+     * which kills the WHOLE request when one generated name is longer.
+     * Hermes parity (tools/mcp_tool_schema.py, #81331): clamp with a
+     * deterministic sha256 hash suffix — distinct long names never collide,
+     * the same inputs always produce the same shortened name. Dispatch is
+     * unaffected: handlers close over the original unprefixed tool name.
+     */
+    static String clampMcpToolName(String fullName) {
+        if (fullName.length() <= MCP_TOOL_NAME_MAX_LENGTH) {
+            return fullName;
+        }
+        String suffix = "_" + sha256Prefix(fullName, MCP_TOOL_NAME_HASH_LENGTH);
+        if (CLAMPED_NAMES_WARNED.add(fullName)) { // recomputed on health refresh — warn once
+            log.warn("MCP tool name '{}' ({} chars) exceeds the {}-char provider limit; "
+                + "shortened to a deterministic hash-suffixed name",
+                fullName, fullName.length(), MCP_TOOL_NAME_MAX_LENGTH);
+        }
+        return fullName.substring(0, MCP_TOOL_NAME_MAX_LENGTH - suffix.length()) + suffix;
+    }
+
+    private static String sha256Prefix(String value, int chars) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : digest) {
+                hex.append(String.format("%02x", b));
+                if (hex.length() >= chars) {
+                    break;
+                }
+            }
+            return hex.substring(0, chars);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            // FNV-1a fallback — still deterministic, collision-safe enough for name clamping
+            long fnv = 0xcbf29ce484222325L;
+            for (int i = 0; i < value.length(); i++) {
+                fnv ^= value.charAt(i);
+                fnv *= 0x100000001b3L;
+            }
+            return String.format("%016x", fnv).substring(0, chars);
+        }
     }
 
     static String mcpToolsetName(String serverName) {

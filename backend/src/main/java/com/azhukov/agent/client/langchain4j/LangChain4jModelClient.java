@@ -216,7 +216,12 @@ public class LangChain4jModelClient implements ModelClient {
         }
     }
 
-    /** Extract the langchain4j finish reason name, "STOP" when absent. */
+    /**
+     * Extract the langchain4j finish reason name, "STOP" when absent.
+     * Aliased/uppercase wire values the SDK maps to null (MAX_TOKENS, end,
+     * legacy function_call) fold through {@link #normalizeFinishReason} so
+     * stop handling and LENGTH recovery never silently skip.
+     */
     private static String finishReasonOf(dev.langchain4j.model.chat.response.ChatResponse response) {
         try {
             var fr = response.finishReason();
@@ -224,6 +229,31 @@ public class LangChain4jModelClient implements ModelClient {
         } catch (Exception e) {
             return "STOP";
         }
+    }
+
+    /**
+     * Hermes parity (agent/message_sanitization.py normalize_finish_reason,
+     * port of can1357/oh-my-pi#9566): fold a wire finish_reason to the
+     * canonical lowercase OpenAI contract BEFORE LangChain4j's case-sensitive
+     * enum mapping — some gateways fronting Gemini backends emit uppercase
+     * (STOP, MAX_TOKENS) or aliased (end, function_call) values that would
+     * otherwise map to null and silently skip stop handling and LENGTH
+     * recovery.
+     */
+    static String normalizeFinishReason(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return raw;
+        }
+        return switch (raw.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "max_tokens" -> "length";   // Gemini-native / Anthropic-style cap reason
+            case "end" -> "stop";            // some gateways' clean-completion spelling
+            case "function_call" -> "tool_calls"; // OpenAI legacy pre-tools spelling
+            case "stop" -> "stop";
+            case "length" -> "length";
+            case "tool_calls" -> "tool_calls";
+            case "content_filter" -> "content_filter";
+            default -> raw.trim().toLowerCase(java.util.Locale.ROOT);
+        };
     }
 
     @Override
@@ -317,7 +347,8 @@ public class LangChain4jModelClient implements ModelClient {
                     String finishReason = null;
                     try {
                         if (completeResponse.finishReason() != null) {
-                            finishReason = completeResponse.finishReason().name();
+                            finishReason = normalizeFinishReason(
+                                completeResponse.finishReason().name());
                         }
                     } catch (Exception e) {
                         log.debug("Could not extract finishReason: {}", e.getMessage());
@@ -896,8 +927,11 @@ public class LangChain4jModelClient implements ModelClient {
                         .connectTimeout(connectTimeout)
                         .readTimeout(readTimeout)
                         .build();
-                return new DeveloperRoleHttpClient(inner,
-                    () -> currentModelName != null ? currentModelName : configuredModel);
+                // finish_reason wire normalization sits INSIDE the transport so
+                // uppercase/aliased values (MAX_TOKENS, end, function_call) fold
+                // to the canonical contract before the SDK's case-sensitive mapping
+                return new FinishReasonNormalizingHttpClient(new DeveloperRoleHttpClient(inner,
+                    () -> currentModelName != null ? currentModelName : configuredModel));
             }
         };
     }

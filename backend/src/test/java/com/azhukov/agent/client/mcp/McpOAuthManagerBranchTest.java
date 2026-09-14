@@ -40,7 +40,7 @@ class McpOAuthManagerBranchTest {
 
     @Test
     void getToken_emptyEntity_returnsEmpty() {
-        when(mcpOAuthRepository.findByServerName("srv")).thenReturn(Optional.empty());
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.empty());
         assertThat(manager.getToken("srv")).isEmpty();
     }
 
@@ -49,7 +49,7 @@ class McpOAuthManagerBranchTest {
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setAccessToken("access-123");
         entity.setExpiresAt(Instant.now().plusSeconds(3600));
-        when(mcpOAuthRepository.findByServerName("srv")).thenReturn(Optional.of(entity));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
         Optional<String> token = manager.getToken("srv");
         assertThat(token).isPresent();
         assertThat(token.get()).isEqualTo("access-123");
@@ -60,7 +60,7 @@ class McpOAuthManagerBranchTest {
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setAccessToken("access-no-expiry");
         entity.setExpiresAt(null);
-        when(mcpOAuthRepository.findByServerName("srv")).thenReturn(Optional.of(entity));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
         Optional<String> token = manager.getToken("srv");
         assertThat(token).isPresent();
         assertThat(token.get()).isEqualTo("access-no-expiry");
@@ -71,7 +71,7 @@ class McpOAuthManagerBranchTest {
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setAccessToken("expired");
         entity.setExpiresAt(Instant.now().minusSeconds(3600));
-        when(mcpOAuthRepository.findByServerName("srv")).thenReturn(Optional.of(entity));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
         // No server config → refresh throws → returns empty
         assertThat(manager.getToken("srv")).isEmpty();
     }
@@ -88,7 +88,7 @@ class McpOAuthManagerBranchTest {
         refreshed.setRefreshToken("refresh-token");
         refreshed.setExpiresAt(Instant.now().plusSeconds(3600));
 
-        when(mcpOAuthRepository.findByServerName("srv"))
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv"))
             .thenReturn(Optional.of(expired))
             .thenReturn(Optional.of(refreshed));
 
@@ -104,7 +104,7 @@ class McpOAuthManagerBranchTest {
 
     @Test
     void storeToken_newEntity_createsAndSaves() {
-        when(mcpOAuthRepository.findByServerName("srv")).thenReturn(Optional.empty());
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.empty());
         when(mcpOAuthRepository.save(any(McpOAuthEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         Instant expiresAt = Instant.now().plusSeconds(3600);
@@ -117,7 +117,7 @@ class McpOAuthManagerBranchTest {
     void storeToken_existingEntity_updatesAndSaves() {
         McpOAuthEntity existing = new McpOAuthEntity();
         existing.setCreatedAt(Instant.now().minusSeconds(86400));
-        when(mcpOAuthRepository.findByServerName("srv")).thenReturn(Optional.of(existing));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(existing));
         when(mcpOAuthRepository.save(any(McpOAuthEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         Instant expiresAt = Instant.now().plusSeconds(3600);
@@ -130,7 +130,7 @@ class McpOAuthManagerBranchTest {
     void storeToken_nullCreatedAt_setsCreatedAt() {
         McpOAuthEntity existing = new McpOAuthEntity();
         existing.setCreatedAt(null);
-        when(mcpOAuthRepository.findByServerName("srv")).thenReturn(Optional.of(existing));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(existing));
         when(mcpOAuthRepository.save(any(McpOAuthEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         manager.storeToken("srv", "access", "refresh", Instant.now().plusSeconds(3600));
@@ -165,7 +165,7 @@ class McpOAuthManagerBranchTest {
         server.setOauthTokenUrl("https://example.com/token");
         properties.getMcp().getServers().add(server);
 
-        when(mcpOAuthRepository.findByServerName("srv")).thenReturn(Optional.empty());
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> manager.refreshToken("srv"))
             .isInstanceOf(IllegalStateException.class)
@@ -181,7 +181,7 @@ class McpOAuthManagerBranchTest {
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setRefreshToken(null);
-        when(mcpOAuthRepository.findByServerName("srv")).thenReturn(Optional.of(entity));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
 
         assertThatThrownBy(() -> manager.refreshToken("srv"))
             .isInstanceOf(IllegalStateException.class)
@@ -197,7 +197,7 @@ class McpOAuthManagerBranchTest {
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setRefreshToken("  ");
-        when(mcpOAuthRepository.findByServerName("srv")).thenReturn(Optional.of(entity));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
 
         assertThatThrownBy(() -> manager.refreshToken("srv"))
             .isInstanceOf(IllegalStateException.class)
@@ -216,7 +216,7 @@ class McpOAuthManagerBranchTest {
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setRefreshToken("refresh-token");
-        when(mcpOAuthRepository.findByServerName("srv")).thenReturn(Optional.of(entity));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
 
         // The HTTP call will fail (no server) but we verify it doesn't throw before that
         assertThatThrownBy(() -> manager.refreshToken("srv"))
@@ -233,7 +233,7 @@ class McpOAuthManagerBranchTest {
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setRefreshToken("refresh-token");
-        when(mcpOAuthRepository.findByServerName("srv")).thenReturn(Optional.of(entity));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
 
         // The HTTP call will fail
         assertThatThrownBy(() -> manager.refreshToken("srv"))
