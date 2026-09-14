@@ -2,7 +2,11 @@
 ## [Unreleased]
 
 ### Added
+
 - Delegate reinjection gateway (`DelegateReinjectionGateway`): scheduled consumer loop claims terminal delegated-task completions (`claimNextPendingDelivery`), reinjects bounded assistant summaries into the parent session history plus the steer buffer, and acks/releases via the delivery ledger (docs/34 Hermes parity update).
+- WP-3 (docs/35): persisted MCP server config store (V57) with validated CRUD, revision bumps and schema-cache invalidation; durable lazy MCP schema cache (single-flight, TTL 6h, stale-keep on failed refresh); MCP OAuth Authorization Code + PKCE flow (V58) with AES-256-GCM encrypted token storage; reviewed MCP catalog with real install.
+- WP-4 (docs/35): profile runtime registry (V56) replacing static JSON status; audited serialized config writer (default + named profiles, revision log); profile env store (allowlist keys, masked reads, POSIX 600, fail-closed); dashboard action service with persisted ledger; session prune endpoint over persisted filters with fail-closed unsupported-filter rejection.
+- WP-5 (docs/35): staged skills hub installer (backup + verbatim rollback + revision bump); capability-based toolset availability (registry-driven `available` + `unavailable_reason`); ADR-014 plugin model scope (no dynamic JVM plugins).
 
 ## Session 2026-09-13 — WP-1 cutover (durable delivery ledger, sole cron/delegate lane)
 
