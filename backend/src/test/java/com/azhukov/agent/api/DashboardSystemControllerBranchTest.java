@@ -73,9 +73,10 @@ class DashboardSystemControllerBranchTest {
     }
 
     @Test
-    void checkpointsPruneIsExplicitlyNotImplemented() throws Exception {
+    void checkpointsPruneWithoutActionServiceAnswersCapabilityDisabled() throws Exception {
         mockMvc.perform(post("/api/ops/checkpoints/prune"))
-            .andExpect(status().isNotImplemented());
+            .andExpect(status().isNotImplemented())
+            .andExpect(jsonPath("$.detail").value("checkpoint-prune action is not available in this deployment"));
     }
 
     @Test

@@ -2,7 +2,10 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.gateway.GatewayLifecycleService;
+import com.azhukov.agent.service.DashboardActionService;
 import com.azhukov.agent.service.GatewayHomeChannelService;
+import com.azhukov.agent.service.ProfileConfigWriter;
+import com.azhukov.agent.service.ProfileEnvStore;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.RuntimeConfigService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -105,6 +108,11 @@ public class DashboardSystemController {
     private final AgentProperties properties;
     private final RuntimeConfigService runtimeConfigService;
     private final ProfileService profileService;
+    private final ObjectProvider<GatewayLifecycleService> gatewayLifecycleProvider;
+    private final ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider;
+    private final ObjectProvider<DashboardActionService> dashboardActionProvider;
+    private final ObjectProvider<ProfileConfigWriter> profileConfigWriterProvider;
+    private final ObjectProvider<ProfileEnvStore> profileEnvStoreProvider;
     private volatile String dashboardTheme = "default";
     private volatile String dashboardFont = "theme";
 
@@ -113,16 +121,32 @@ public class DashboardSystemController {
                                      RuntimeConfigService runtimeConfigService,
                                      ProfileService profileService,
                                      ObjectProvider<GatewayLifecycleService> gatewayLifecycleProvider,
-                                     ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider) {
+                                     ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider,
+                                     ObjectProvider<DashboardActionService> dashboardActionProvider,
+                                     ObjectProvider<ProfileConfigWriter> profileConfigWriterProvider,
+                                     ObjectProvider<ProfileEnvStore> profileEnvStoreProvider) {
         this.properties = properties;
         this.runtimeConfigService = runtimeConfigService;
         this.profileService = profileService;
         this.gatewayLifecycleProvider = gatewayLifecycleProvider;
         this.gatewayHomeChannelProvider = gatewayHomeChannelProvider;
+        this.dashboardActionProvider = dashboardActionProvider;
+        this.profileConfigWriterProvider = profileConfigWriterProvider;
+        this.profileEnvStoreProvider = profileEnvStoreProvider;
     }
 
-    private final ObjectProvider<GatewayLifecycleService> gatewayLifecycleProvider;
-    private final ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider;
+    DashboardSystemController(AgentProperties properties,
+                              RuntimeConfigService runtimeConfigService,
+                              ProfileService profileService,
+                              ObjectProvider<GatewayLifecycleService> gatewayLifecycleProvider,
+                              ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider) {
+        this(properties, runtimeConfigService, profileService,
+            gatewayLifecycleProvider, gatewayHomeChannelProvider, null, null, null);
+    }
+
+    DashboardSystemController(AgentProperties properties, RuntimeConfigService runtimeConfigService) {
+        this(properties, runtimeConfigService, null, null, null);
+    }
 
     private static final Duration GATEWAY_DRAIN_BOUND = Duration.ofSeconds(30);
 
@@ -289,9 +313,6 @@ public class DashboardSystemController {
         return payload;
     }
 
-    DashboardSystemController(AgentProperties properties, RuntimeConfigService runtimeConfigService) {
-        this(properties, runtimeConfigService, null, null, null);
-    }
 
     @GetMapping({"/api/status", "/p/{profile}/api/status"})
     @Operation(summary = "Return Hermes desktop dashboard status shape")
@@ -696,42 +717,62 @@ public class DashboardSystemController {
         return status(HttpStatus.NOT_FOUND, "No update receipt found (no `hermes update` run recorded).");
     }
 
+    private ResponseEntity<Map<String, Object>> runDashboardAction(String action, String profile) {
+        DashboardActionService actions = dashboardActionProvider == null
+            ? null : dashboardActionProvider.getIfAvailable();
+        if (actions == null) {
+            return notImplemented(action + " action is not available in this deployment");
+        }
+        if (!actions.isAllowlisted(action)) {
+            return status(HttpStatus.BAD_REQUEST, "Unknown action: " + action);
+        }
+        DashboardActionService.ActionResult result = actions.run(action, profile, "dashboard");
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("action_id", result.id() == null ? null : result.id().toString());
+        body.put("action", result.action());
+        body.put("state", result.state());
+        body.put("output", result.output());
+        if (result.error() != null) {
+            body.put("detail", result.error());
+        }
+        return ResponseEntity.status("failed".equals(result.state())
+            ? HttpStatus.INTERNAL_SERVER_ERROR : HttpStatus.OK).body(body);
+    }
+
     @PostMapping("/api/ops/doctor")
-    @Operation(summary = "Reject dashboard doctor action not supported by Java port")
+    @Operation(summary = "Run the dashboard doctor action (real runtime checks)")
     public ResponseEntity<Map<String, Object>> runDoctor() {
-        return notImplemented("doctor action is not implemented in the Java port");
+        return runDashboardAction("doctor", "default");
     }
 
     @PostMapping("/api/ops/prompt-size")
-    @Operation(summary = "Reject dashboard prompt-size action not supported by Java port")
+    @Operation(summary = "Run the dashboard prompt-size action")
     public ResponseEntity<Map<String, Object>> runPromptSize() {
-        return notImplemented("prompt-size action is not implemented in the Java port");
+        return runDashboardAction("prompt-size", "default");
     }
 
     @PostMapping("/api/ops/dump")
-    @Operation(summary = "Reject dashboard dump action not supported by Java port")
+    @Operation(summary = "Run the dashboard dump action (redacted artifact)")
     public ResponseEntity<Map<String, Object>> runDump() {
-        return notImplemented("dump action is not implemented in the Java port");
+        return runDashboardAction("dump", "default");
     }
 
     @PostMapping("/api/ops/config-migrate")
-    @Operation(summary = "Reject dashboard config migration action not supported by Java port")
+    @Operation(summary = "Normalize the profile config (idempotent migrate)")
     public ResponseEntity<Map<String, Object>> runConfigMigrate() {
-        return notImplemented("config migration action is not implemented in the Java port");
+        return runDashboardAction("config-migrate", "default");
     }
 
     @PostMapping("/api/ops/security-audit")
-    @Operation(summary = "Reject dashboard security audit action not supported by Java port")
+    @Operation(summary = "Run the dashboard security audit action")
     public ResponseEntity<Map<String, Object>> runSecurityAudit() {
-        return notImplemented("security audit action is not implemented in the Java port");
+        return runDashboardAction("security-audit", "default");
     }
 
     @PostMapping("/api/ops/backup")
-    @Operation(summary = "Reject dashboard backup action not supported by Java port")
-    public ResponseEntity<Map<String, Object>> runBackup(
-        @RequestBody(required = false) Map<String, Object> body
-    ) {
-        return notImplemented("backup action is not implemented in the Java port");
+    @Operation(summary = "Run the dashboard backup action (config artifact)")
+    public ResponseEntity<Map<String, Object>> runBackup() {
+        return runDashboardAction("backup", "default");
     }
 
     @PostMapping("/api/ops/import")
@@ -752,13 +793,52 @@ public class DashboardSystemController {
         if (!Files.isRegularFile(archivePath)) {
             return status(HttpStatus.NOT_FOUND, "Archive not found: " + archive);
         }
-        return notImplemented("import action is not implemented in the Java port");
+        if (!archivePath.normalize().startsWith(artifactRoot().normalize())) {
+            return status(HttpStatus.FORBIDDEN, "Archive path must live under the dashboard artifact root");
+        }
+        ProfileConfigWriter writer = profileConfigWriterProvider == null
+            ? null : profileConfigWriterProvider.getIfAvailable();
+        if (writer == null) {
+            return notImplemented("config restore is not available in this deployment");
+        }
+        try {
+            String yamlText = Files.readString(archivePath, java.nio.charset.StandardCharsets.UTF_8);
+            long revision = writer.writeRaw("default", yamlText, "dashboard:import");
+            return ResponseEntity.ok(Map.of("ok", true, "restored_revision", revision));
+        } catch (IllegalArgumentException e) {
+            return status(HttpStatus.BAD_REQUEST, e.getMessage());
+        } catch (IOException e) {
+            return status(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to restore config from archive");
+        }
     }
 
     @PostMapping("/api/ops/import-upload")
-    @Operation(summary = "Reject dashboard import upload not supported by Java port")
-    public ResponseEntity<Map<String, Object>> runImportUpload() {
-        return notImplemented("import upload is not implemented in the Java port");
+    @Operation(summary = "Upload a config backup as YAML and restore it (redacted artifact flow)")
+    public ResponseEntity<Map<String, Object>> runImportUpload(
+        @RequestBody(required = false) Map<String, Object> body
+    ) {
+        String yamlText = bodyString(body, "yaml");
+        if (!hasText(yamlText)) {
+            return status(HttpStatus.BAD_REQUEST, "yaml payload is required");
+        }
+        ProfileConfigWriter writer = profileConfigWriterProvider == null
+            ? null : profileConfigWriterProvider.getIfAvailable();
+        if (writer == null) {
+            return notImplemented("config restore is not available in this deployment");
+        }
+        try {
+            java.io.File tempFile = java.io.File.createTempFile("import-upload-", ".yaml", artifactRoot().toFile());
+            java.nio.file.Files.writeString(tempFile.toPath(), yamlText, java.nio.charset.StandardCharsets.UTF_8);
+            long revision = writer.writeRaw("default", yamlText, "dashboard:import-upload");
+            return ResponseEntity.ok(Map.of(
+                "ok", true,
+                "restored_revision", revision,
+                "staged_artifact", tempFile.toPath().toString()));
+        } catch (IllegalArgumentException e) {
+            return status(HttpStatus.BAD_REQUEST, e.getMessage());
+        } catch (IOException e) {
+            return status(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to stage import upload");
+        }
     }
 
     @GetMapping("/api/ops/backup/download")
@@ -778,15 +858,58 @@ public class DashboardSystemController {
         if (!Files.isRegularFile(archivePath)) {
             return status(HttpStatus.NOT_FOUND, "Backup not found");
         }
-        return notImplemented("backup download is not implemented in the Java port");
+        if (!archivePath.normalize().startsWith(artifactRoot().normalize())) {
+            return status(HttpStatus.FORBIDDEN, "Backup path must live under the dashboard artifact root");
+        }
+        try {
+            String content = Files.readString(archivePath, java.nio.charset.StandardCharsets.UTF_8);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("archive", archivePath.getFileName().toString());
+            body.put("sha256", sha256Hex(content));
+            body.put("yaml", content);
+            return ResponseEntity.ok(body);
+        } catch (IOException e) {
+            return status(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to read backup artifact");
+        }
+    }
+
+    private Path artifactRoot() {
+        try {
+            return profileService != null
+                ? profileService.hermesHome().resolve("dashboard-artifacts")
+                : Path.of(System.getProperty("java.io.tmpdir"));
+        } catch (Exception e) {
+            return Path.of(System.getProperty("java.io.tmpdir"));
+        }
+    }
+
+    private static String sha256Hex(String input) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            return java.util.HexFormat.of().formatHex(
+                digest.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            return "unavailable";
+        }
     }
 
     @PostMapping("/api/ops/debug-share")
-    @Operation(summary = "Reject dashboard debug-share upload not supported by Java port")
+    @Operation(summary = "Create a local debug bundle (doctor + config dump); no external upload")
     public ResponseEntity<Map<String, Object>> runDebugShare(
         @RequestBody(required = false) Map<String, Object> body
     ) {
-        return notImplemented("debug share is not implemented in the Java port");
+        DashboardActionService actions = dashboardActionProvider == null
+            ? null : dashboardActionProvider.getIfAvailable();
+        if (actions == null) {
+            return notImplemented("debug share is not available in this deployment");
+        }
+        DashboardActionService.ActionResult doctor = actions.run("doctor", "default", "dashboard:debug-share");
+        DashboardActionService.ActionResult dump = actions.run("dump", "default", "dashboard:debug-share");
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("doctor", doctor.output());
+        result.put("dump", dump.output());
+        result.put("shared_externally", false);
+        return ResponseEntity.ok(result);
     }
 
     @PutMapping("/api/dashboard/plugin-providers")
@@ -854,9 +977,9 @@ public class DashboardSystemController {
     }
 
     @PostMapping("/api/ops/checkpoints/prune")
-    @Operation(summary = "Reject dashboard checkpoint prune not supported by Java port")
+    @Operation(summary = "Prune rollback checkpoints older than 30 days")
     public ResponseEntity<Map<String, Object>> pruneCheckpoints() {
-        return notImplemented("checkpoint pruning is not implemented in the Java port");
+        return runDashboardAction("checkpoint-prune", "default");
     }
 
     @GetMapping({"/api/config", "/p/{profile}/api/config"})
@@ -920,13 +1043,15 @@ public class DashboardSystemController {
         if (profile.error() != null) {
             return profile.error();
         }
-        if (isDefaultProfile(profile.profile())) {
-            return notImplemented("raw dashboard config writes are not implemented in the Java port");
-        }
         String yamlText = rawConfigBodyText(body);
+        ProfileConfigWriter writer = profileConfigWriterProvider == null
+            ? null : profileConfigWriterProvider.getIfAvailable();
+        if (writer == null) {
+            return notImplemented("dashboard config writes are not available in this deployment");
+        }
         try {
-            profileService.writeRawConfig(profile.profile(), yamlText);
-            return ResponseEntity.ok(Map.of("ok", true));
+            long revision = writer.writeRaw(profile.profile(), yamlText, "dashboard");
+            return ResponseEntity.ok(Map.of("ok", true, "revision", revision));
         } catch (IllegalArgumentException e) {
             return status(HttpStatus.BAD_REQUEST, e.getMessage());
         } catch (IOException e) {
@@ -970,18 +1095,21 @@ public class DashboardSystemController {
         if (profile.error() != null) {
             return profile.error();
         }
-        if (isDefaultProfile(profile.profile())) {
-            return notImplemented("dashboard config writes are not implemented in the Java port");
-        }
         Object rawConfig = body != null ? body.get("config") : null;
         if (!(rawConfig instanceof Map<?, ?> incomingRaw)) {
             return status(HttpStatus.BAD_REQUEST, "config must be a mapping");
         }
+        ProfileConfigWriter writer = profileConfigWriterProvider == null
+            ? null : profileConfigWriterProvider.getIfAvailable();
+        if (writer == null) {
+            return notImplemented("dashboard config writes are not available in this deployment");
+        }
         try {
-            Map<String, Object> existing = profileService.readConfig(profile.profile());
             Map<String, Object> incoming = toStringKeyMap(incomingRaw);
-            profileService.writeConfig(profile.profile(), deepMerge(existing, incoming));
-            return ResponseEntity.ok(Map.of("ok", true));
+            long revision = writer.write(profile.profile(), incoming, "dashboard");
+            return ResponseEntity.ok(Map.of("ok", true, "revision", revision));
+        } catch (IllegalArgumentException e) {
+            return status(HttpStatus.BAD_REQUEST, e.getMessage());
         } catch (IOException e) {
             return status(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to write profile config");
         }
@@ -1015,7 +1143,23 @@ public class DashboardSystemController {
         if (profile.error() != null) {
             return profile.error();
         }
-        return notImplemented("dashboard env writes are not implemented in the Java port");
+        String key = bodyString(body, "key");
+        if (!hasText(key)) {
+            return status(HttpStatus.BAD_REQUEST, "key is required");
+        }
+        String value = bodyString(body, "value");
+        ProfileEnvStore store = profileEnvStoreProvider == null ? null : profileEnvStoreProvider.getIfAvailable();
+        if (store == null) {
+            return notImplemented("env store is not available in this deployment");
+        }
+        try {
+            store.set(profile.profile(), key, value);
+            return ResponseEntity.ok(Map.of("ok", true, "key", key));
+        } catch (IllegalArgumentException e) {
+            return status(HttpStatus.BAD_REQUEST, e.getMessage());
+        } catch (IOException e) {
+            return status(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to write profile env");
+        }
     }
 
     @DeleteMapping({"/api/env", "/p/{profile}/api/env"})
@@ -1029,7 +1173,22 @@ public class DashboardSystemController {
         if (profile.error() != null) {
             return profile.error();
         }
-        return notImplemented("dashboard env deletes are not implemented in the Java port");
+        String key = bodyString(body, "key");
+        if (!hasText(key)) {
+            return status(HttpStatus.BAD_REQUEST, "key is required");
+        }
+        ProfileEnvStore store = profileEnvStoreProvider == null ? null : profileEnvStoreProvider.getIfAvailable();
+        if (store == null) {
+            return notImplemented("env store is not available in this deployment");
+        }
+        try {
+            boolean removed = store.delete(profile.profile(), key);
+            return ResponseEntity.ok(Map.of("ok", removed, "key", key));
+        } catch (IllegalArgumentException e) {
+            return status(HttpStatus.BAD_REQUEST, e.getMessage());
+        } catch (IOException e) {
+            return status(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to delete profile env");
+        }
     }
 
     @PostMapping({"/api/env/reveal", "/p/{profile}/api/env/reveal"})

@@ -399,6 +399,20 @@ public class ProfileService {
         }
     }
 
+    /**
+     * Bootstrap the default profile directory on demand (WP-4 serialized
+     * writer path): default config writes must work even before any profile
+     * was ever created via the dashboard.
+     */
+    public void ensureDefaultProfile() throws IOException {
+        Path dir = profilePath("default");
+        if (!Files.isDirectory(dir)) {
+            bootstrapProfileDirectories(dir);
+            ensureProfileEnv(dir);
+            ensureProfileSoul(dir);
+        }
+    }
+
     public boolean knownProfile(String name) {
         String canon;
         try {

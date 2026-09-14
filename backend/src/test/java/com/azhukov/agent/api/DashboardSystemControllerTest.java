@@ -51,8 +51,28 @@ class DashboardSystemControllerTest {
         properties.getWeb().setSearxngUrl("http://localhost:8888");
         runtimeConfigService = new RuntimeConfigService();
         profileService = new ProfileService(properties, runtimeConfigService);
+        com.azhukov.agent.service.ProfileConfigWriter configWriter =
+            new com.azhukov.agent.service.ProfileConfigWriter(
+                providerOf(profileService), null, new com.fasterxml.jackson.databind.ObjectMapper());
+        com.azhukov.agent.service.DashboardActionService actionService =
+            new com.azhukov.agent.service.DashboardActionService(
+                providerOf(profileService), null, null, null, properties);
+        com.azhukov.agent.service.ProfileEnvStore envStore =
+            new com.azhukov.agent.service.ProfileEnvStore(providerOf(profileService));
         mockMvc = MockMvcBuilders.standaloneSetup(
-            new DashboardSystemController(properties, runtimeConfigService, profileService, null, null)).build();
+            new DashboardSystemController(properties, runtimeConfigService, profileService,
+                null, null, providerOf(actionService), providerOf(configWriter), providerOf(envStore))).build();
+    }
+
+    private static <T> org.springframework.beans.factory.ObjectProvider<T> providerOf(T value) {
+        return new org.springframework.beans.factory.ObjectProvider<T>() {
+            @Override public T getObject() { return value; }
+            @Override public T getObject(Object... args) { return value; }
+            @Override public T getIfAvailable() { return value; }
+            @Override public T getIfUnique() { return value; }
+            public java.util.stream.Stream<T> stream() { return value == null ? java.util.stream.Stream.empty() : java.util.stream.Stream.of(value); }
+            public java.util.stream.Stream<T> orderedStream() { return value == null ? java.util.stream.Stream.empty() : java.util.stream.Stream.of(value); }
+        };
     }
 
     @AfterEach
@@ -277,33 +297,49 @@ class DashboardSystemControllerTest {
     }
 
     @Test
-    void configAndEnvWritesFailExplicitly() throws Exception {
+    void configAndEnvWritesAreRealWithSafeBoundaries() throws Exception {
+        // WP-4: default-profile config writes are real (serialized writer +
+        // revision); env writes are allowlist-gated; reveal stays disabled BY
+        // DESIGN (ADR-013).
         mockMvc.perform(put("/api/config")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"config\":{}}"))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("dashboard config writes are not implemented in the Java port"));
+                .content("{\"config\":{\"dashboard\":{\"theme\":\"dark\"}}}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ok").value(true))
+            .andExpect(jsonPath("$.revision").isNumber());
 
+        // Non-allowlisted env key is rejected 400.
         mockMvc.perform(put("/api/env")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"key\":\"OPENAI_API_KEY\",\"value\":\"secret\"}"))
-            .andExpect(status().isNotImplemented());
+            .andExpect(status().isBadRequest());
+
+        // Allowlisted env key round-trips masked (no value in response).
+        mockMvc.perform(put("/api/env")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"key\":\"AGENT_MODEL_API_KEY\",\"value\":\"secret\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ok").value(true))
+            .andExpect(jsonPath("$.key").value("AGENT_MODEL_API_KEY"));
 
         mockMvc.perform(delete("/api/env")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"key\":\"OPENAI_API_KEY\"}"))
-            .andExpect(status().isNotImplemented());
+                .content("{\"key\":\"AGENT_MODEL_API_KEY\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ok").value(true));
 
+        // env reveal is deliberately NOT implemented (ADR-013: no reveal path).
         mockMvc.perform(post("/api/env/reveal")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"key\":\"OPENAI_API_KEY\"}"))
+                .content("{\"key\":\"AGENT_MODEL_API_KEY\"}"))
             .andExpect(status().isNotImplemented());
 
         mockMvc.perform(put("/api/config/raw")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"yaml_text\":\"model: {}\"}"))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("raw dashboard config writes are not implemented in the Java port"));
+                .content("{\"yaml_text\":\"model: {}\\n\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ok").value(true))
+            .andExpect(jsonPath("$.revision").isNumber());
     }
 
     @Test
@@ -429,10 +465,12 @@ class DashboardSystemControllerTest {
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.detail").value("YAML must be a mapping"));
 
+        // WP-4: default-profile raw write is real (revisioned, validated).
         mockMvc.perform(put("/api/config/raw")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"yaml_text\":\"model: {}\"}"))
-            .andExpect(status().isNotImplemented());
+                .content("{\"yaml_text\":\"model: {}\\n\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ok").value(true));
     }
 
     @Test
@@ -683,29 +721,40 @@ class DashboardSystemControllerTest {
             .andExpect(status().isNotImplemented())
             .andExpect(jsonPath("$.detail").value("gateway lifecycle service is not available in this deployment"));
 
+        // WP-4: ops actions are REAL implementations (audited, whitelisted,
+        // in-process) — doctor/security-audit/config-migrate/checkpoint-prune
+        // return real output; dump/backup return artifact+sha256.
         mockMvc.perform(post("/api/ops/doctor"))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("doctor action is not implemented in the Java port"));
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.state").value("completed"))
+            .andExpect(jsonPath("$.output.checked_at").isNotEmpty());
 
         mockMvc.perform(post("/api/ops/prompt-size"))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("prompt-size action is not implemented in the Java port"));
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.state").value("completed"))
+            .andExpect(jsonPath("$.output.available").isBoolean());
 
         mockMvc.perform(post("/api/ops/dump"))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("dump action is not implemented in the Java port"));
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.state").value("completed"))
+            .andExpect(jsonPath("$.output.sha256").isNotEmpty());
 
         mockMvc.perform(post("/api/ops/config-migrate"))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("config migration action is not implemented in the Java port"));
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.state").value("completed"))
+            .andExpect(jsonPath("$.output.migrated").value(true));
 
         mockMvc.perform(post("/api/ops/security-audit"))
-            .andExpect(status().isNotImplemented());
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.state").value("completed"))
+            .andExpect(jsonPath("$.output.findings").isArray());
 
         mockMvc.perform(post("/api/ops/backup")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{}"))
-            .andExpect(status().isNotImplemented());
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.state").value("completed"))
+            .andExpect(jsonPath("$.output.artifact").isNotEmpty());
 
         mockMvc.perform(post("/api/ops/import")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -720,41 +769,49 @@ class DashboardSystemControllerTest {
             .andExpect(jsonPath("$.detail").value(
                 "Archive not found: definitely-missing-java-agent-backup.zip"));
 
+        // WP-4: import is real now — archives outside the dashboard artifact
+        // root are rejected 403 (path-traversal fence), never executed.
         java.nio.file.Path importArchive = java.nio.file.Files.createTempFile("java-agent-import", ".zip");
         try {
             mockMvc.perform(post("/api/ops/import")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("{\"archive\":\"" + importArchive.toString().replace("\\", "\\\\") + "\",\"force\":true}"))
-                .andExpect(status().isNotImplemented())
-                .andExpect(jsonPath("$.detail").value("import action is not implemented in the Java port"));
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.detail").value(
+                    "Archive path must live under the dashboard artifact root"));
         } finally {
             java.nio.file.Files.deleteIfExists(importArchive);
         }
 
         mockMvc.perform(post("/api/ops/import-upload")
-                .contentType(MediaType.MULTIPART_FORM_DATA))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("import upload is not implemented in the Java port"));
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.detail").value("yaml payload is required"));
 
         mockMvc.perform(get("/api/ops/backup/download?archive=definitely-missing-java-agent-backup.zip"))
             .andExpect(status().isNotFound())
             .andExpect(jsonPath("$.detail").value("Backup not found"));
 
+        // WP-4: downloads are scoped to the dashboard artifact root.
         java.nio.file.Path downloadArchive = java.nio.file.Files.createTempFile("java-agent-backup", ".zip");
         try {
             mockMvc.perform(get("/api/ops/backup/download")
                     .param("archive", downloadArchive.toString()))
-                .andExpect(status().isNotImplemented())
-                .andExpect(jsonPath("$.detail").value("backup download is not implemented in the Java port"));
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.detail").value(
+                    "Backup path must live under the dashboard artifact root"));
         } finally {
             java.nio.file.Files.deleteIfExists(downloadArchive);
         }
 
+        // WP-4: debug-share creates a local bundle (doctor + dump), no upload.
         mockMvc.perform(post("/api/ops/debug-share")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"redact\":true}"))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("debug share is not implemented in the Java port"));
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.shared_externally").value(false))
+            .andExpect(jsonPath("$.doctor.checked_at").isNotEmpty());
 
         mockMvc.perform(get("/api/ops/hooks"))
             .andExpect(status().isOk())
@@ -791,7 +848,8 @@ class DashboardSystemControllerTest {
             .andExpect(jsonPath("$.total_bytes").isNumber());
 
         mockMvc.perform(post("/api/ops/checkpoints/prune"))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("checkpoint pruning is not implemented in the Java port"));
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.state").value("completed"))
+            .andExpect(jsonPath("$.output.removed_files").isNumber());
     }
 }
