@@ -55,6 +55,36 @@ public class DeliveryWorkItemController {
         String category,
         String detail) {}
 
+    public record BatchClaimRequest(
+        @JsonProperty("consumer_id") @JsonAlias("consumerId") String consumerId,
+        List<String> profiles,
+        Integer max) {}
+
+    @PostMapping("/claim-batch")
+    public ResponseEntity<Map<String, Object>> claimBatch(@RequestBody BatchClaimRequest request) {
+        if (request == null || request.consumerId() == null || request.consumerId().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "consumer_id is required"));
+        }
+        int max = request.max() == null ? 5 : Math.min(Math.max(request.max(), 1), 10);
+        java.util.List<DeliveryWorkItemService.ClaimedWorkItem> batch =
+            deliveryService.claimNextBatch(request.consumerId(), request.profiles(), max);
+        java.util.List<Map<String, Object>> items = new java.util.ArrayList<>();
+        for (var claimed : batch) {
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("id", claimed.item().getId().toString());
+            body.put("claim_token", claimed.claimToken());
+            body.put("source_type", claimed.item().getSourceType());
+            body.put("source_id", claimed.item().getSourceId());
+            body.put("platform", claimed.item().getPlatform() == null ? "" : claimed.item().getPlatform());
+            body.put("chat_id", claimed.item().getChatId() == null ? "" : claimed.item().getChatId());
+            body.put("thread_id", claimed.item().getThreadId() == null ? "" : claimed.item().getThreadId());
+            body.put("payload", claimed.item().getPayloadText());
+            body.put("attempts", claimed.item().getAttempts());
+            items.add(body);
+        }
+        return ResponseEntity.ok(Map.of("claimed", !items.isEmpty(), "items", items));
+    }
+
     @PostMapping("/claim")
     public ResponseEntity<Map<String, Object>> claim(@RequestBody ClaimRequest request) {
         if (request == null || request.consumerId() == null || request.consumerId().isBlank()) {

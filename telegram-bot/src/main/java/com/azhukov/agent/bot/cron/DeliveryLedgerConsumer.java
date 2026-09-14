@@ -54,12 +54,141 @@ public class DeliveryLedgerConsumer {
         }
         int processed = 0;
         while (processed < 10) {
-            Optional<ClaimedItem> claimed = claimNext();
-            if (claimed.isEmpty()) {
+            List<ClaimedItem> batch = claimNextBatch();
+            if (batch.isEmpty()) {
                 break;
             }
-            deliver(claimed.get());
-            processed++;
+            deliverBatch(batch);
+            processed += batch.size();
+        }
+    }
+
+    /**
+     * Hermes completion-batch parity: claim several pending items for ONE
+     * target and deliver them as a single coalesced message (or the plain
+     * payload when there is exactly one).
+     */
+    private List<ClaimedItem> claimNextBatch() {
+        try {
+            String body = objectMapper.writeValueAsString(Map.of(
+                "consumer_id", consumerId(),
+                "profiles", List.of(profile()),
+                "max", 5));
+            String json = restClient.post()
+                .uri("/api/v1/agent/delivery/claim-batch")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+            JsonNode parsed = json == null ? null : objectMapper.readTree(json);
+            if (parsed == null || !parsed.path("claimed").asBoolean(false)) {
+                return List.of();
+            }
+            List<ClaimedItem> items = new java.util.ArrayList<>();
+            for (JsonNode node : parsed.path("items")) {
+                items.add(new ClaimedItem(
+                    node.path("id").asText(),
+                    node.path("claim_token").asText(),
+                    node.path("source_type").asText(),
+                    node.path("source_id").asText(),
+                    node.path("platform").asText(""),
+                    node.path("chat_id").asText(""),
+                    node.path("thread_id").asText(""),
+                    node.path("payload").asText(""),
+                    node.path("attempts").asInt(0)));
+            }
+            return items;
+        } catch (Exception e) {
+            log.debug("Delivery batch claim failed: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * Hermes {@code _format_coalesced_process_completions} parity: one bounded
+     * synthetic message for several completions, last-800-chars tail, redaction
+     * before slicing, "absorb silently" instruction.
+     */
+    static String formatCoalescedBatch(List<ClaimedItem> batch) {
+        if (batch.size() == 1) {
+            return batch.get(0).payload();
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("[IMPORTANT: ").append(batch.size())
+            .append(" background processes completed for this session.\n")
+            .append("Treat these results as one completion batch and send at most one ")
+            .append("consolidated user-facing response.\n");
+        List<ClaimedItem> shown = batch.size() > 10 ? batch.subList(0, 10) : batch;
+        for (ClaimedItem item : shown) {
+            sb.append("\n- ").append(item.sourceId()).append(": ");
+            String output = item.payload() == null ? "" : item.payload().strip();
+            if (output.length() > 800) {
+                output = "[… truncated …]\n" + output.substring(output.length() - 800);
+            }
+            sb.append(output);
+        }
+        int omitted = batch.size() - shown.size();
+        if (omitted > 0) {
+            sb.append("\n\n- … and ").append(omitted)
+                .append(" more completion(s); inspect them with the process tool if they affect the conclusion.");
+        }
+        sb.append("\nIf a result does not change the current conclusion, absorb it silently.]");
+        return sb.toString();
+    }
+
+    /** Deliver a coalesced batch; on failure every item gets the SAME fence. */
+    private void deliverBatch(List<ClaimedItem> batch) {
+        ClaimedItem first = batch.get(0);
+        if (!"telegram".equals(first.platform()) || first.chatId().isBlank()) {
+            for (ClaimedItem item : batch) {
+                outcome(item, "drop", "unsupported_platform",
+                    "platform=" + item.platform() + " chat=" + item.chatId());
+            }
+            return;
+        }
+        long chatId;
+        Integer threadId = first.threadId().isBlank() ? null : Integer.valueOf(first.threadId());
+        try {
+            chatId = Long.parseLong(first.chatId());
+        } catch (NumberFormatException e) {
+            for (ClaimedItem item : batch) {
+                outcome(item, "drop", "invalid_chat_id", item.chatId());
+            }
+            return;
+        }
+        String text = formatCoalescedBatch(batch);
+        try {
+            List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.split(text);
+            Long lastMessageId = null;
+            boolean sendFailed = false;
+            for (String chunk : chunks) {
+                Optional<Long> sent = threadId == null
+                    ? telegramClient.sendMessage(chatId, chunk)
+                    : telegramClient.sendMessage(chatId, chunk, null, null, threadId, false);
+                if (sent.isEmpty()) {
+                    sendFailed = true;
+                    break;
+                }
+                lastMessageId = sent.get();
+            }
+            if (!sendFailed) {
+                String messageId = lastMessageId == null ? null : lastMessageId.toString();
+                for (ClaimedItem item : batch) {
+                    ack(item, messageId);
+                }
+                log.info("Delivered batch of {} items ({} source types) to chat {} ({} chunks, last msg {})",
+                    batch.size(), batch.stream().map(ClaimedItem::sourceType).distinct().count(),
+                    chatId, chunks.size(), lastMessageId);
+                return;
+            }
+            for (ClaimedItem item : batch) {
+                outcome(item, "unknown",
+                    lastMessageId != null ? "partial_chunk_failure" : "empty_send_result", null);
+            }
+        } catch (Exception e) {
+            for (ClaimedItem item : batch) {
+                outcome(item, "release", "transport_error", e.getMessage());
+            }
         }
     }
 
@@ -69,6 +198,11 @@ public class DeliveryLedgerConsumer {
     /** Package-private delivery bridge for tests (no HTTP claim round-trip). */
     void deliverForTest(ClaimedItem item) {
         deliver(item);
+    }
+
+    /** Package-private batch bridge for tests. */
+    void deliverBatchForTest(List<ClaimedItem> batch) {
+        deliverBatch(batch);
     }
 
     private Optional<ClaimedItem> claimNext() {

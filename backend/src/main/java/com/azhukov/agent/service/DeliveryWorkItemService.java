@@ -73,14 +73,44 @@ public class DeliveryWorkItemService {
 
     @Transactional
     public Optional<ClaimedWorkItem> claimNext(String consumerId, List<String> profiles) {
+        return claimNextBatch(consumerId, profiles, 1).stream().findFirst();
+    }
+
+    /**
+     * Hermes completion-batch parity (WP-1 tail, gateway/run_notifications.py
+     * {@code _flush_process_completion_batch}): claim up to {@code max} pending
+     * items for ONE delivery target (platform + chat + thread) so the consumer
+     * can coalesce them into a single synthetic batch message instead of N
+     * separate pings. The first successfully claimed item fixes the target;
+     * later candidates for a different target are left pending. Classification
+     * (deliver/terminal/retry) still runs per item — unusable targets settle
+     * immediately without spending an outbound delivery attempt.
+     */
+    @Transactional
+    public List<ClaimedWorkItem> claimNextBatch(String consumerId, List<String> profiles, int max) {
+        List<ClaimedWorkItem> claimedItems = new java.util.ArrayList<>();
+        if (max <= 0) {
+            return claimedItems;
+        }
         List<String> normalizedProfiles = normalizeProfiles(profiles);
         if (normalizedProfiles.isEmpty()) {
-            return Optional.empty();
+            return claimedItems;
         }
         Instant now = Instant.now();
         List<DeliveryWorkItemEntity> candidates = repository.findClaimable(
             normalizedProfiles, now, PageRequest.of(0, 25));
+        String targetKey = null;
         for (DeliveryWorkItemEntity candidate : candidates) {
+            if (claimedItems.size() >= max) {
+                break;
+            }
+            String candidateKey = targetKey(candidate);
+            if (targetKey == null) {
+                targetKey = candidateKey;
+            } else if (!targetKey.equals(candidateKey)) {
+                // Different target — leave it for its own batch cycle.
+                continue;
+            }
             String claimToken = claimToken(consumerId);
             if (repository.claimPending(candidate.getId(), claimToken, now) != 1) {
                 continue;
@@ -109,10 +139,17 @@ public class DeliveryWorkItemService {
                     }
                 }
             }
-            return repository.findById(candidate.getId())
-                .map(item -> new ClaimedWorkItem(item, claimToken));
+            repository.findById(candidate.getId())
+                .ifPresent(item -> claimedItems.add(new ClaimedWorkItem(item, claimToken)));
         }
-        return Optional.empty();
+        return claimedItems;
+    }
+
+    private static String targetKey(DeliveryWorkItemEntity item) {
+        return String.join("|",
+            item.getPlatform() == null ? "" : item.getPlatform(),
+            item.getChatId() == null ? "" : item.getChatId(),
+            item.getThreadId() == null ? "" : item.getThreadId());
     }
 
     @Transactional
