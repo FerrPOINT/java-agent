@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -509,6 +510,76 @@ class ToolsetsControllerTest {
             .andExpect(jsonPath("$.error.param").value(org.hamcrest.Matchers.nullValue()))
             .andExpect(jsonPath("$.error.code").value(org.hamcrest.Matchers.nullValue()))
             .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("secret backend detail"))));
+    }
+
+    @Test
+    void namedProfileEnvWritePersistsMaskedEnvStore() throws Exception {
+        AgentProperties realProperties = new AgentProperties();
+        ProfileService profileService = profileService(realProperties);
+        profileService.createProfile(new ProfileService.CreateProfileRequest(
+            "work", null, false, false, true, null, null, null, null));
+        com.azhukov.agent.service.ProfileEnvStore envStore =
+            new com.azhukov.agent.service.ProfileEnvStore(providerOf(profileService));
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(
+            new ToolsetsController(toolRegistry, realProperties, profileService,
+                providerOf(envStore))).build();
+
+        // env write persists into the profile env store (write-only, masked reads)
+        mvc.perform(put("/p/work/api/tools/toolsets/web/env")
+                .contentType("application/json")
+                .content("{\"env\":{\"AGENT_WEB_SEARXNG_URL\":\"http://searxng.local:8080\"}}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ok").value(true))
+            .andExpect(jsonPath("$.keys[0]").value("AGENT_WEB_SEARXNG_URL"));
+
+        assertThat(envStore.readAll("work"))
+            .containsEntry("AGENT_WEB_SEARXNG_URL", "http://searxng.local:8080");
+        // masked status row reflects the write without leaking the value
+        Map<String, Map<String, Object>> rows = envStore.maskedRows("work");
+        assertThat(rows.get("AGENT_WEB_SEARXNG_URL").get("is_set")).isEqualTo(true);
+        assertThat(rows.get("AGENT_WEB_SEARXNG_URL").get("redacted_value")).isEqualTo("********");
+    }
+
+    @Test
+    void envWriteWithoutEnvStoreIsHonest501() throws Exception {
+        AgentProperties realProperties = new AgentProperties();
+        ProfileService profileService = profileService(realProperties);
+        profileService.createProfile(new ProfileService.CreateProfileRequest(
+            "work", null, false, false, true, null, null, null, null));
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(
+            new ToolsetsController(toolRegistry, realProperties, profileService, null)).build();
+
+        mvc.perform(put("/p/work/api/tools/toolsets/web/env")
+                .contentType("application/json")
+                .content("{\"env\":{\"AGENT_WEB_SEARXNG_URL\":\"http://x\"}}"))
+            .andExpect(status().isNotImplemented())
+            .andExpect(jsonPath("$.detail").value("profile env store is not available in this deployment"));
+    }
+
+    @Test
+    void postSetupStays501WithHonestDetail() throws Exception {
+        AgentProperties realProperties = new AgentProperties();
+        ProfileService profileService = profileService(realProperties);
+        profileService.createProfile(new ProfileService.CreateProfileRequest(
+            "work", null, false, false, true, null, null, null, null));
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(
+            new ToolsetsController(toolRegistry, realProperties, profileService)).build();
+
+        mvc.perform(post("/p/work/api/tools/toolsets/web/post-setup")
+                .contentType("application/json")
+                .content("{\"key\":\"AGENT_WEB_SEARXNG_URL\"}"))
+            .andExpect(status().isNotImplemented());
+    }
+
+    private static <T> org.springframework.beans.factory.ObjectProvider<T> providerOf(T value) {
+        return new org.springframework.beans.factory.ObjectProvider<T>() {
+            @Override public T getObject() { return value; }
+            @Override public T getObject(Object... args) { return value; }
+            @Override public T getIfAvailable() { return value; }
+            @Override public T getIfUnique() { return value; }
+            public java.util.stream.Stream<T> stream() { return value == null ? java.util.stream.Stream.empty() : java.util.stream.Stream.of(value); }
+            public java.util.stream.Stream<T> orderedStream() { return value == null ? java.util.stream.Stream.empty() : java.util.stream.Stream.of(value); }
+        };
     }
 
     private ProfileService profileService(AgentProperties properties) {

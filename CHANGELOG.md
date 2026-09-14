@@ -3,6 +3,12 @@
 
 ### Added
 
+- Toolset env-write contract tests: masked `ProfileEnvStore` write path (`PUT /p/{profile}/api/tools/toolsets/{toolset}/env` — allowlist, write-only, `********` redaction) and honest 501 when the env store bean is absent.
+
+## [Unreleased]
+
+### Added
+
 - Delegate reinjection gateway (`DelegateReinjectionGateway`): scheduled consumer loop claims terminal delegated-task completions (`claimNextPendingDelivery`), reinjects bounded assistant summaries into the parent session history plus the steer buffer, and acks/releases via the delivery ledger (docs/34 Hermes parity update).
 - WP-3 (docs/35): persisted MCP server config store (V57) with validated CRUD, revision bumps and schema-cache invalidation; durable lazy MCP schema cache (single-flight, TTL 6h, stale-keep on failed refresh); MCP OAuth Authorization Code + PKCE flow (V58) with AES-256-GCM encrypted token storage; reviewed MCP catalog with real install.
 - WP-4 (docs/35): profile runtime registry (V56) replacing static JSON status; audited serialized config writer (default + named profiles, revision log); profile env store (allowlist keys, masked reads, POSIX 600, fail-closed); dashboard action service with persisted ledger; session prune endpoint over persisted filters with fail-closed unsupported-filter rejection.
