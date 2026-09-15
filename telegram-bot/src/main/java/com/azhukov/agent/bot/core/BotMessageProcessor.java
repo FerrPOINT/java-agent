@@ -335,6 +335,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             log.debug("No text content in update {}, skipping", event.updateId());
             return;
         }
+        // WP-11: collect artifact ids the media handler registered, strip the
+        // inline markers from the visible text, and forward them as structured
+        // attachment references on the chat request.
+        java.util.List<String> artifactIds = extractArtifactIds(messageText);
+        messageText = stripArtifactMarkers(messageText);
 
         // Check busy state
         if (busyHandler.isBusy(chatId)) {
@@ -363,7 +368,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
             // Build footer text (will be appended to streaming message or sync response)
             result = streamingOrchestrator.streamChat(chatId, messageText, sessionId, session,
-                event.messageId(), threadId, this);
+                event.messageId(), threadId, artifactIds, this);
 
             // Persist the backend-assigned session ID for conversation history continuity
             if (result.backendSessionId() != null) {
@@ -786,6 +791,24 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     private void sendFormatted(long chatId, String text) {
         sendFormatted(chatId, text, 0L, 0L);
+    }
+
+    /** WP-11: artifact ids the media handler appended as {@code (artifact=att_...)}. */
+    static java.util.List<String> extractArtifactIds(String messageText) {
+        if (messageText == null) return java.util.List.of();
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("\\(artifact=(att_[a-f0-9]+)\\)").matcher(messageText);
+        while (m.find()) {
+            ids.add(m.group(1));
+        }
+        return ids;
+    }
+
+    /** WP-11: remove {@code (artifact=att_...)} markers from user-visible text. */
+    static String stripArtifactMarkers(String messageText) {
+        if (messageText == null) return null;
+        return messageText.replaceAll("\\s*\\(artifact=att_[a-f0-9]+\\)", "");
     }
 
     /**

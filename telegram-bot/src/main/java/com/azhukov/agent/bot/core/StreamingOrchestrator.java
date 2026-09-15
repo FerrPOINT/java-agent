@@ -106,6 +106,16 @@ public class StreamingOrchestrator {
     public AgentBackendClient.ChatResult streamChat(long chatId, String messageText, String sessionId,
                                                      BotSessionEntity session, long userMessageId,
                                                      long messageThreadId, ProcessorHooks hooks) {
+        return streamChat(chatId, messageText, sessionId, session, userMessageId,
+            messageThreadId, null, hooks);
+    }
+
+    /** WP-11 overload carrying inbound attachment artifact ids into the chat request. */
+    public AgentBackendClient.ChatResult streamChat(long chatId, String messageText, String sessionId,
+                                                     BotSessionEntity session, long userMessageId,
+                                                     long messageThreadId,
+                                                     java.util.List<String> attachmentIds,
+                                                     ProcessorHooks hooks) {
         // P0: PII Redaction — prepend redacted session context to the message
         String fullMessage = hooks.buildMessageWithContext(messageText, session, chatId);
         StringBuilder accumulated = new StringBuilder(); // clean LLM text only
@@ -121,7 +131,11 @@ public class StreamingOrchestrator {
                 messageId[0] = initialMsgId.get();
             }
 
-            AgentBackendClient.ChatResult streamResult = backendClient.chatStream(fullMessage, sessionId, session,
+            java.util.List<java.util.Map<String, String>> attachmentRefs = attachmentIds == null
+                ? null : attachmentIds.stream()
+                    .map(id -> java.util.Map.of("artifactId", id))
+                    .toList();
+            AgentBackendClient.ChatResult streamResult = backendClient.chatStream(fullMessage, sessionId, session, attachmentRefs,
                 // token consumer
                 token -> {
                     accumulated.append(token);

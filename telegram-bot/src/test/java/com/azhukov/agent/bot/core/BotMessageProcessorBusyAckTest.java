@@ -143,12 +143,12 @@ class BotMessageProcessorBusyAckTest {
 
     @SuppressWarnings("unchecked")
     private void stubStreamingResult(String content, boolean streamFinalized) {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<String> tokenConsumer = inv.getArgument(3);
+                Consumer<String> tokenConsumer = inv.getArgument(4);
                 tokenConsumer.accept(content);
                 if (streamFinalized) {
-                    Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(8);
+                    Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
                     onComplete.accept(new AgentBackendClient.ChatResult(content, "test-model", 100, 1000, true));
                 }
                 return new AgentBackendClient.ChatResult(content, "test-model", 100, 1000, streamFinalized, false);

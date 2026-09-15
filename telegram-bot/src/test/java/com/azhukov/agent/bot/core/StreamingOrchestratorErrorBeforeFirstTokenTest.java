@@ -70,10 +70,10 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
 
     @SuppressWarnings("unchecked")
     private void stubErrorBeforeTokens(String errorMessage) {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(),
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
             any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<Throwable> onError = inv.getArgument(9);
+                Consumer<Throwable> onError = inv.getArgument(10);
                 onError.accept(new RuntimeException(errorMessage));
                 return new AgentBackendClient.ChatResult("");
             });
@@ -121,12 +121,12 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
 
     @Test
     void streamInterrupted_beforeAnyToken_cleansUpDraftSession() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(),
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
             any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<String> tokenConsumer = inv.getArgument(3);
+                Consumer<String> tokenConsumer = inv.getArgument(4);
                 tokenConsumer.accept("he"); // first token arrives…
-                Consumer<Throwable> onError = inv.getArgument(9);
+                Consumer<Throwable> onError = inv.getArgument(10);
                 onError.accept(new StreamingOrchestrator.StreamInterruptedException());
                 return new AgentBackendClient.ChatResult("");
             });
