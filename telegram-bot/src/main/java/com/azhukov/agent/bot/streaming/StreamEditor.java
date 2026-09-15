@@ -675,23 +675,27 @@ public class StreamEditor {
         if (buffer.length() > 0) {
             log.info("Flood fallback mode: sending buffered content ({} chars) as new message for chat {}", buffer.length(), chatId);
             String bufferedContent = buffer.toString();
-            session.floodFallbackBuffer.setLength(0);
-            // Delete the old streaming message if it exists
+            // CRITICAL: delivery is a two-phase replacement. The old draft is
+            // the user's only visible copy until Telegram accepts the final send.
+            // Deleting it first turns a 429/transport failure into total response
+            // loss (incident 2026-09-15: Telegram retry_after=269).
             long currentMsg = session.currentMessageId.get();
             long oldMsgId = currentMsg >= 0 ? currentMsg : messageId;
-            if (oldMsgId > 0) {
-                telegramClient.deleteMessage(chatId, oldMsgId);
-            }
-            // Send the buffered content as a formatted message (Hermes parity: apply MarkdownV2)
-            Optional<Long> newMsgId = sendFormattedFinalMessage(chatId, bufferedContent);
-            removeSession(chatId);
+            Optional<Long> newMsgId = sendFormattedFinalMessage(chatId, bufferedContent, session.messageThreadId);
             if (newMsgId.isPresent()) {
+                session.floodFallbackBuffer.setLength(0);
+                if (oldMsgId > 0) {
+                    telegramClient.deleteMessage(chatId, oldMsgId);
+                }
+                removeSession(chatId);
                 log.debug("Flood fallback sent for chat {}, new messageId={}", chatId, newMsgId.get());
                 return true;
-            } else {
-                log.warn("Flood fallback sendMessage failed for chat {}", chatId);
-                return false;
             }
+            // Preserve the stream session and original draft. A later completion
+            // retry / user retry can still recover it; never erase visible output
+            // merely because the replacement was rate-limited.
+            log.warn("Flood fallback sendMessage failed for chat {}; preserving draft message {}", chatId, oldMsgId);
+            return false;
         }
 
         // Use internal currentMessageId if available (may differ from messageId
@@ -1244,17 +1248,23 @@ public class StreamEditor {
      * format_message is always applied before delivery).
      */
     public Optional<Long> sendFormattedFinalMessage(long chatId, String text) {
+        return sendFormattedFinalMessage(chatId, text, 0L);
+    }
+
+    /** Final delivery preserving the active forum topic when present. */
+    private Optional<Long> sendFormattedFinalMessage(long chatId, String text, long threadId) {
         String formatted = formatForTelegramDelegate(text);
+        Integer messageThreadId = threadId > 0 ? (int) threadId : null;
         if (formatted.length() > MessageSplitter.TELEGRAM_MAX_LENGTH) {
             List<String> chunks = MessageSplitter.splitAndFormat(text, parseMode);
             Optional<Long> last = Optional.empty();
             for (String chunk : chunks) {
                 if (chunk.isBlank()) continue;
-                last = telegramClient.sendMessage(chatId, chunk, parseMode, null, null, false);
+                last = telegramClient.sendMessage(chatId, chunk, parseMode, null, messageThreadId, false);
             }
             return last;
         }
-        return telegramClient.sendMessage(chatId, formatted, parseMode, null, null, false);
+        return telegramClient.sendMessage(chatId, formatted, parseMode, null, messageThreadId, false);
     }
 
     /**
