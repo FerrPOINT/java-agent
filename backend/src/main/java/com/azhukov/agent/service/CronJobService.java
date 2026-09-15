@@ -1489,6 +1489,7 @@ private static final String CRON_EXECUTION_HINT = """
             return;
         }
         String target = resolveDeliveryTarget(job);
+        target = withSessionOriginThread(job, target);
         if (target == null) {
             log.debug("Cron job '{}' has no resolvable delivery target; skipping ledger enqueue", job.getName());
             return;
@@ -1580,9 +1581,16 @@ private static final String CRON_EXECUTION_HINT = """
         // to platform:chat_id; bare platform names without a chat cannot be
         // resolved to a structured target yet (home-channel resolution is WP-2).
         if (value.contains(":")) {
-            String[] parts = value.split(":", 2);
+            // WP-k: three-part targets platform:chat_id:thread_id keep the forum
+            // topic so recurring answers land in the topic they were born in
+            // (DeliveryWorkItemService.Target parses it; two-part stays as-is).
+            String[] parts = value.split(":", 3);
+            String platform = parts[0].trim().toLowerCase(java.util.Locale.ROOT);
+            if (parts.length == 3 && !parts[1].isBlank() && !parts[2].isBlank()) {
+                return platform + ":" + parts[1].trim() + ":" + parts[2].trim();
+            }
             if (parts.length == 2 && !parts[1].isBlank()) {
-                return parts[0].trim().toLowerCase(java.util.Locale.ROOT) + ":" + parts[1].trim();
+                return platform + ":" + parts[1].trim();
             }
             return null;
         }
@@ -1598,6 +1606,32 @@ private static final String CRON_EXECUTION_HINT = """
             return ownerChat == null ? null : "telegram:" + ownerChat;
         }
         return null;
+    }
+
+    /**
+     * WP-k (Hermes delivery-into-origin-topic parity): when the job's last run
+     * session originated inside a forum topic, deliver into that topic even
+     * for a plain chat target — recurring answers land in the topic they were
+     * born in. Explicit 3-part targets already carry the thread and win.
+     */
+    String withSessionOriginThread(CronJobEntity job, String target) {
+        if (target == null || target.indexOf(':', target.indexOf(':') + 1) >= 0 || job.getLastRunSessionId() == null) {
+            return target; // absent, or already thread-scoped
+        }
+        try {
+            var sessions = sessionRepositoryProvider == null ? null : sessionRepositoryProvider.getIfAvailable();
+            if (sessions == null) {
+                return target;
+            }
+            var session = sessions.findById(job.getLastRunSessionId()).orElse(null);
+            if (session == null || session.getOriginThreadId() == null || session.getOriginThreadId().isBlank()) {
+                return target;
+            }
+            return target + ":" + session.getOriginThreadId().trim();
+        } catch (Exception e) {
+            log.debug("origin-thread resolution failed for job {}: {}", job.getName(), e.getMessage());
+            return target;
+        }
     }
 
     /**
