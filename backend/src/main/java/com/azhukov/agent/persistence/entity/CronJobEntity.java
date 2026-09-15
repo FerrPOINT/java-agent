@@ -137,6 +137,13 @@ public class CronJobEntity {
     @Column(name = "consecutive_failures")
     private int consecutiveFailures = 0;
 
+    /**
+     * WP-c (V66): position on the unreachable-retry ladder (5/15/30 min).
+     * Reset to 0 by any run that reaches the model; capped by the service.
+     */
+    @Column(name = "unreachable_retries")
+    private int unreachableRetries = 0;
+
     // h75: Session produced by the last run (delivery reads its output).
     // WP-1: the bot-side high-water mark is superseded by the durable
     // delivery ledger (V54 dropped last_delivered_run_at).

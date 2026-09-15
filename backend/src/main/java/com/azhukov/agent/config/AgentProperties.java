@@ -639,6 +639,12 @@ public class AgentProperties {
         private int dispatchIntervalSeconds = 60;
         /** HERMES-SYNC: Consecutive failures before showing "needs attention" nudge (default 3). */
         private int nudgeFailureThreshold = 3;
+        /**
+         * WP-c (Hermes cron.retry_unreachable parity): automatic bounded re-runs
+         * (5/15/30 min ladder) when a recurring job's fire fails with a transient
+         * network error BEFORE any model call. One-shots never re-run.
+         */
+        private boolean retryUnreachable = true;
     }
 
     @Getter @Setter
