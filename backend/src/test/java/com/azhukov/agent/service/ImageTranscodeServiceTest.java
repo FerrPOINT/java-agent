@@ -70,8 +70,15 @@ class ImageTranscodeServiceTest {
         java.nio.file.Path src = java.nio.file.Files.createTempFile("t", ".png");
         java.nio.file.Files.write(src, png);
         java.nio.file.Path heic = java.nio.file.Path.of(src + ".heic");
-        Process enc = new ProcessBuilder("heif-enc", src.toString(), "-o", heic.toString())
-            .redirectErrorStream(true).start();
+        Process enc;
+        try {
+            enc = new ProcessBuilder("heif-enc", src.toString(), "-o", heic.toString())
+                .redirectErrorStream(true).start();
+        } catch (java.io.IOException binaryMissing) {
+            // Encoder binary not installed in this environment — skip, not fail.
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "heif-enc unavailable");
+            return;
+        }
         enc.getInputStream().readAllBytes();
         assertThat(enc.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
         if (enc.exitValue() != 0 || !java.nio.file.Files.exists(heic)) {
