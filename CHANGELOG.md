@@ -1,4 +1,17 @@
 
+## [0.1.241] — 2026-09-15
+
+Five reliability/parity fixes: one live incident, four docs/34-35 tails.
+
+### Fixed
+
+- **Flood fallback could delete the only visible answer (live incident)**: under a Telegram 429 (retry_after up to 269s) the stream editor's fallback deleted the draft message BEFORE sending the final text; when the send also hit 429, the user's answer vanished entirely (observed live 2026-09-15). Fallback is now transactional: final text is delivered and confirmed first, only then is the draft deleted; on failure the draft, the buffered final text and the stream session all survive for the next attempt.
+- **Orphaned stdio MCP servers**: an agent killed hard (kill -9, crash, power loss) left its stdio MCP children — and their own descendants — running forever, racing the next startup. A bundled watchdog script (`classpath:mcp/mcp-stdio-watchdog.sh`, per-server `agent.mcp.servers[].stdio-parent-death-watchdog`, default on, POSIX only) is interposed between the agent and the real command: stdio is relayed transparently, the child runs in its own session, and the moment the parent is gone the watchdog SIGTERM→grace→SIGKILLs the whole child group. (Hermes tools/mcp_stdio_watchdog.py parity)
+- **Wedged MCP client poisoned every later call**: after one call timed out, the half-dead client stayed connected and every subsequent call burned a full timeout again. A timed-out client is now closed, evicted and asynchronously reconnected so the next call finds a healthy connection. (Hermes in-flight RPC teardown parity)
+- **HEIC/HEIF/AVIF photos were unreadable**: iPhone photos hit the vision lane as raw HEIC bytes `ImageIO` cannot decode — the model saw garbage instead of the photo. New `ImageTranscodeService`: magic-byte detection (ftyp brand), transparent pass-through for decodable formats, system-converter transcode to PNG (libheif `heif-convert`, ImageMagick fallback), honest error naming the missing package when no converter exists. Integrated before the shrink decision so a small HEIC still gets decoded. Dev host: `libheif-examples` installed. (Hermes vision parity)
+- **Cron answers escaped their forum topic**: a job born inside a topic delivered recurring answers to the group root. Delivery targets now accept `platform:chat:thread`, and a plain chat target gains the session's `origin_thread_id` automatically (explicit 3-part targets win; missing data degrades to the plain target). (Hermes delivery-into-origin-topic parity)
+- **Toolset toggles ignored by /v1/chat/completions**: dashboard/API enable-disable mutated `AgentProperties` in-memory, but the main chat-completions endpoint built its tool list unfiltered — a toggle had no effect until restart. The endpoint now applies the effective `api.chat-completion-toolsets` (default `hermes-api-server`) through the same filtered registry lane the Responses controller uses. (Hot toolset reload parity)
+
 ## [0.1.240] — 2026-09-15
 
 Hermes upstream sync (13–15.09): five parity fixes from the upstream digest.
