@@ -60,6 +60,8 @@ class BotMessageProcessorDrainQueueLockTest {
     private GoalAutoContinueService goalAutoContinueService;
     private EditCaptureService editCaptureService;
     private BotMessageProcessor processor;
+    private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
+
 
     @BeforeEach
     void setUp() {
@@ -108,7 +110,7 @@ class BotMessageProcessorDrainQueueLockTest {
             properties, editCaptureService, textBatchDebouncer, photoBatchDebouncer);
         StreamingOrchestrator streamingOrchestrator = new StreamingOrchestrator(
             backendClient, streamEditor, busyHandler, runtimeFooter, properties, mediaDeliveryService,
-            mock(com.azhukov.agent.bot.client.TelegramClient.class));
+            mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock);
 
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,

@@ -34,6 +34,8 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
 
     private StreamingOrchestrator orchestrator;
     private StreamingOrchestrator.ProcessorHooks hooks;
+    private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
+
 
     @BeforeEach
     void setUp() {
@@ -48,7 +50,7 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("");
         orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
             runtimeFooter, properties, new MediaDeliveryService(),
-            mock(com.azhukov.agent.bot.client.TelegramClient.class));
+            mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock);
 
         hooks = mock(StreamingOrchestrator.ProcessorHooks.class);
         when(hooks.buildMessageWithContext(anyString(), any(), anyLong()))

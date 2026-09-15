@@ -48,6 +48,7 @@ public class StreamingOrchestrator {
     private final BotProperties properties;
     private final MediaDeliveryService mediaDeliveryService;
     private final com.azhukov.agent.bot.client.TelegramClient telegramClient;
+    private final com.azhukov.agent.bot.session.BotSessionStore sessionStore;
 
     /**
      * Hermes parity (display.tool_progress_grouping="accumulate"): tool
@@ -121,6 +122,19 @@ public class StreamingOrchestrator {
         StringBuilder accumulated = new StringBuilder(); // clean LLM text only
         final long[] messageId = {-1};
         final boolean[] finalized = {false};
+
+        // WP-b: mark the turn in flight BEFORE the first backend call. If the
+        // process dies mid-stream the flag survives (V6 column) and startup
+        // recovery tells the user their turn was lost instead of silence.
+        if (session.getId() != null) {
+            try {
+                sessionStore.markResumePending(session.getId());
+                session.setResumePending(true);
+            } catch (Exception flagEx) {
+                log.debug("resumePending mark failed for session {}: {}",
+                    session.getId(), flagEx.getMessage());
+            }
+        }
 
         // Try streaming first
         try {
@@ -369,6 +383,17 @@ public class StreamingOrchestrator {
             // remove it on an exceptional stream exit or its heartbeat keeps posting.
             streamEditor.clearStream(chatId);
             throw new RuntimeException("Streaming failed: " + e.getMessage(), e);
+        } finally {
+            // WP-b: turn ended inside THIS process — no recovery notice needed.
+            if (session.getId() != null && session.isResumePending()) {
+                try {
+                    sessionStore.clearResumePending(session.getId());
+                    session.setResumePending(false);
+                } catch (Exception flagEx) {
+                    log.debug("resumePending clear failed for session {}: {}",
+                        session.getId(), flagEx.getMessage());
+                }
+            }
         }
     }
 

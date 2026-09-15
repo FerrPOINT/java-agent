@@ -42,6 +42,8 @@ class StreamingOrchestratorTest {
     private MediaDeliveryService mediaDeliveryService;
     private StreamingOrchestrator orchestrator;
     private StreamingOrchestrator.ProcessorHooks hooks;
+    private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
+
 
     @BeforeEach
     void setUp() {
@@ -59,7 +61,7 @@ class StreamingOrchestratorTest {
         mediaDeliveryService = new MediaDeliveryService();
         orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
             runtimeFooter, properties, mediaDeliveryService,
-            mock(com.azhukov.agent.bot.client.TelegramClient.class));
+            mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock);
 
         // Hooks: the processor's media delivery / model resolution / PII prefix
         hooks = mock(StreamingOrchestrator.ProcessorHooks.class);
