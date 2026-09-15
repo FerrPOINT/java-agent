@@ -3,18 +3,9 @@
 
 ### Added
 
+- WP-11 tail (docs/35): cross-surface attachment contract completed end-to-end. Backend REST `POST /api/v1/attachments` (multipart, hash dedupe by owner+content+disposition, controlled cache root), `GET /{id}`, `GET /{id}/content` (inline + X-Artifact-Id), `POST /{id}/delivered` (idempotent, first receipt wins), `GET /session/{id}`; `ChatRequest.attachments` artifact refs; `CliStateApplier` injects a bounded `[Attachments]` block (text preview / safe cache path, honest `[unavailable:]` degradation) on the first turn too. Telegram inbound registers media as artifacts (best-effort, legacy fallback); outbound resolves artifact ids from cache paths, never re-sends a delivered artifact (V65 `delivered_message_id`/`delivered_at` + CHECK) and records the platform message id per send. M3 fixed: streaming display holds back a trailing partial `MEDIA:` tag. CLI gains `/attach` (path/symlink/size/extension/disposition validation), `/attachments`, `/detach`; `/image` reuses the validated lane. AttachmentFlowE2ETest (PG, 5) + V65 PG contract (3).
 - Delivery coalescing в DelegateReinjectionGateway: completions группируются по parent session (DelegateCompletionBatcher, ≤5 на сообщение), одна synthetic-нота на сессию вместо N пингов; одиночные раны сохраняют детальный Hermes-parity формат.
-
-## [Unreleased]
-
-### Added
-
 - Stalled-run monitor for delegated runs (WP-1 item 8): Flyway V64 progress columns, `recordProgress` с coalesce одинаковых summary, `StalledRunMonitor` — единичный diagnostic для running-ранов без свежего прогресса, без auto-fail.
-
-## [Unreleased]
-
-### Added
-
 - Toolset env-write contract tests: masked `ProfileEnvStore` write path (`PUT /p/{profile}/api/tools/toolsets/{toolset}/env` — allowlist, write-only, `********` redaction) and honest 501 when the env store bean is absent.
 
 ## [Unreleased]

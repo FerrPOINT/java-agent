@@ -393,6 +393,8 @@ Browser provider port + provider credentials
 
 **Done when:** docs/34 gap 9 has supported CLI and Telegram attachment/media behavior backed by persisted receipts and E2E fixtures.
 
+**Status 2026-09-15: CLOSED (tail).** Artifact contract (V62) + REST surface + ChatRequest.attachments + first-turn `[Attachments]` injection are real; Telegram inbound registers artifacts with legacy fallback, outbound delivery is receipt-guarded (V64, first platform message id wins, no re-send after ambiguous success), M3 partial-tag leak fixed; CLI `/attach`/`/attachments`/`/detach` with full validation. Evidence: AttachmentFlowE2ETest (PG, 5/5), AttachmentArtifactRepositoryTest incl. V64 CHECK (6/6), AttachmentControllerTest (10), CliStateApplierAttachmentsTest (8), AttachmentApiClientTest (9), BotMessageProcessorAttachmentsTest (7), MediaDeliveryPartialTagTest (6), BotMessageProcessorArtifactPathTest (6), AttachCommandsTest (12). Remaining (tracked in docs/34): bot active-session recovery after restart, DM topics depth.
+
 ---
 
 ### WP-12. Dashboard and filesystem capability closure

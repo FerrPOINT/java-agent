@@ -1,4 +1,4 @@
--- V64 (WP-11 tail / docs/35): outbound delivery receipt columns on
+-- V65 (WP-11 tail / docs/35): outbound delivery receipt columns on
 -- attachment_artifacts. When the bot delivers an artifact as a native
 -- Telegram attachment it records the platform message id — a retry after
 -- an ambiguous send checks this and never re-sends the same artifact.

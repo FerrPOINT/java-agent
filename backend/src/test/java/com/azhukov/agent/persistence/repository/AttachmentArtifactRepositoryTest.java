@@ -104,7 +104,7 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
         assertThat(repository.findById(stale.getId())).isEmpty();
     }
 
-    // ── V64: outbound delivery receipt columns ──
+    // ── V65: outbound delivery receipt columns ──
 
     @Test
     void deliveredReceiptColumnsPersist() {
