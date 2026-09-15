@@ -80,6 +80,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     private final StreamEditor streamEditor;
     private final InboundMediaHandler inboundMediaHandler;
     private final MediaDeliveryService mediaDeliveryService;
+    private final AttachmentApiClient attachmentApiClient;
     private final RuntimeFooter runtimeFooter;
     private final ReactionManager reactionManager;
     private final TextBatchDebouncer textBatchDebouncer;
@@ -690,6 +691,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 log.warn("MEDIA path outside allowed directories, skipping: {}", desc.path());
                 continue;
             }
+            // WP-11: skip artifacts that were already delivered — a retry after
+            // an ambiguous send must never re-send the same file.
+            String artifactId = artifactIdForPath(desc.path());
+            if (artifactId != null && isArtifactDelivered(artifactId)) {
+                log.info("Skipping already-delivered artifact {} ({})", artifactId, desc.path());
+                continue;
+            }
             if (desc.isImage() && !desc.asDocument()) {
                 imageBatch.add(desc);
             } else {
@@ -706,6 +714,24 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         for (MediaDeliveryService.MediaDescriptor desc : individualFiles) {
             deliverSingleMedia(chatId, desc);
         }
+    }
+
+    /**
+     * WP-11: outbound artifacts live under the backend cache root as
+     * {@code <owner>/att_<id>.<ext>} — resolve the artifact id from a
+     * delivered file path. Returns null for non-artifact (legacy) paths.
+     */
+    static String artifactIdForPath(String path) {
+        if (path == null) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("(att_[a-f0-9]+)\\.[a-zA-Z0-9]+$").matcher(path);
+        return m.find() ? m.group(1) : null;
+    }
+
+    private boolean isArtifactDelivered(String artifactId) {
+        return attachmentApiClient.find(artifactId)
+            .map(AttachmentApiClient.Registered::duplicate)
+            .orElse(false);
     }
 
     /**
@@ -933,7 +959,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 }
                 byte[] data = Files.readAllBytes(file.toPath());
                 String fileName = file.getName();
-                telegramClient.sendPhoto(chatId, data, null, null);
+                java.util.Optional<Long> sent = telegramClient.sendPhoto(chatId, data, null, null);
+                markArtifactDelivered(artifactIdForPath(desc.path()), sent);
                 log.debug("Sent photo {} to chat {}", desc.path(), chatId);
             } catch (Exception e) {
                 log.error("Failed to send photo {} to chat {}: {}", desc.path(), chatId, e.getMessage());
@@ -968,6 +995,16 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
             if (!photoInputs.isEmpty()) {
                 List<Long> messageIds = telegramClient.sendMediaGroup(chatId, photoInputs);
+                // WP-11: mark every artifact in the group delivered with the first
+                // platform message id of the album.
+                String firstMsgId = messageIds == null || messageIds.isEmpty()
+                    ? null : String.valueOf(messageIds.get(0));
+                for (MediaDeliveryService.MediaDescriptor desc : chunk) {
+                    String artifactId = artifactIdForPath(desc.path());
+                    if (artifactId != null) {
+                        attachmentApiClient.markDelivered(artifactId, firstMsgId);
+                    }
+                }
                 log.debug("Sent media group of {} to chat {} (messageIds: {})",
                     photoInputs.size(), chatId, messageIds);
             }
@@ -994,20 +1031,32 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             String fileName = file.getName();
             String parseMode = properties.getParseMode();
 
+            String artifactId = artifactIdForPath(desc.path());
             if (desc.isVideo()) {
-                telegramClient.sendVideo(chatId, data, fileName, null, null);
+                java.util.Optional<Long> sent = telegramClient.sendVideo(chatId, data, fileName, null, null);
+                markArtifactDelivered(artifactId, sent);
                 log.debug("Sent video {} to chat {}", desc.path(), chatId);
             } else if (desc.isAudio() && desc.asVoice()) {
-                telegramClient.sendAudioAsVoice(chatId, data, fileName, null);
+                java.util.Optional<Long> sent = telegramClient.sendAudioAsVoice(chatId, data, fileName, null);
+                markArtifactDelivered(artifactId, sent);
                 log.debug("Sent voice {} to chat {}", desc.path(), chatId);
             } else {
                 // Document (covers as_document images, audio without voice, PDFs, etc.)
-                telegramClient.sendDocument(chatId, data, fileName, null, null);
+                java.util.Optional<Long> sent = telegramClient.sendDocument(chatId, data, fileName, null, null);
+                markArtifactDelivered(artifactId, sent);
                 log.debug("Sent document {} to chat {}", desc.path(), chatId);
             }
         } catch (Exception e) {
             log.error("Failed to send media {} to chat {}: {}", desc.path(), chatId, e.getMessage());
         }
+    }
+
+    /** WP-11: record the outbound receipt (platform message id) after a successful send. */
+    private void markArtifactDelivered(String artifactId, java.util.Optional<Long> platformMessageId) {
+        if (artifactId == null) return;
+        attachmentApiClient.markDelivered(artifactId,
+            platformMessageId == null ? null
+                : platformMessageId.map(String::valueOf).orElse(null));
     }
 
     @PostConstruct

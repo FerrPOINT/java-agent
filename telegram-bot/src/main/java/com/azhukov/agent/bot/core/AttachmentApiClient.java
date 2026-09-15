@@ -92,18 +92,57 @@ public class AttachmentApiClient extends BaseBackendClient {
      * Idempotent server-side; failures are logged, never thrown.
      */
     public boolean markDelivered(String artifactId) {
+        return markDelivered(artifactId, null);
+    }
+
+    /**
+     * Mark an artifact delivered, recording the platform message id of the
+     * successful send (WP-11 outbound receipt). A retry after an ambiguous
+     * send re-posts; the server keeps the FIRST receipt.
+     */
+    public boolean markDelivered(String artifactId, String platformMessageId) {
         if (artifactId == null || artifactId.isBlank()) {
             return false;
         }
         try {
+            String path = "/api/v1/attachments/" + artifactId + "/delivered"
+                + (platformMessageId == null || platformMessageId.isBlank()
+                    ? "" : "?messageId=" + platformMessageId);
             restClient.post()
-                .uri("/api/v1/attachments/{id}/delivered", artifactId)
+                .uri(path)
                 .retrieve()
                 .toBodilessEntity();
             return true;
         } catch (Exception e) {
             log.debug("attachment markDelivered failed for {}: {}", artifactId, e.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Fetch artifact metadata by id (null on any failure) — the outbound lane
+     * uses this to learn whether an artifact was already delivered.
+     */
+    public java.util.Optional<Registered> find(String artifactId) {
+        if (artifactId == null || artifactId.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/attachments/{id}", artifactId)
+                .retrieve()
+                .body(String.class);
+            JsonNode node = readTree(json);
+            if (node == null || node.path("id").asText("").isBlank()) {
+                return java.util.Optional.empty();
+            }
+            return java.util.Optional.of(new Registered(
+                node.path("id").asText(),
+                node.path("contentHash").asText(null),
+                "delivered".equals(node.path("state").asText(""))));
+        } catch (Exception e) {
+            log.debug("attachment lookup failed for {}: {}", artifactId, e.getMessage());
+            return java.util.Optional.empty();
         }
     }
 

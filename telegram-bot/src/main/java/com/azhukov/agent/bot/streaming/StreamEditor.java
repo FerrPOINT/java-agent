@@ -1135,8 +1135,10 @@ public class StreamEditor {
         // Stateless regex scrub — handles closed tags, orphaned open tags,
         // and stray tags without cross-call state.
         String result = ThinkTagFilter.stripThinkTagsRegex(text);
-        // S-2: Strip MEDIA: tags from streaming display
-        result = mediaDeliveryService.stripMediaTagsForDisplay(result);
+        // S-2: Strip MEDIA: tags from streaming display. M3 (WP-11): streaming
+        // variant holds back a trailing PARTIAL tag — the path may still be
+        // arriving across chunk boundaries and must not flash raw.
+        result = mediaDeliveryService.stripMediaTagsForDisplay(result, true);
         return result;
     }
 

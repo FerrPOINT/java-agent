@@ -99,7 +99,7 @@ class AttachmentControllerTest {
     void getReturnsArtifactMetadata() throws Exception {
         when(service.find("att_1")).thenReturn(Optional.of(new AttachmentArtifact(
             "att_1", "u1", "default", null, null, "hash", "telegram",
-            "file", "image/png", "cat.png", 3, "received")));
+            "file", "image/png", "cat.png", 3, "received", null, null)));
 
         mockMvc.perform(get("/api/v1/attachments/att_1"))
             .andExpect(status().isOk())
@@ -117,7 +117,7 @@ class AttachmentControllerTest {
 
     @Test
     void deliveredMarksAndIsIdempotent() throws Exception {
-        when(service.markDelivered("att_1")).thenReturn(true);
+        when(service.markDelivered("att_1", null)).thenReturn(true);
         mockMvc.perform(post("/api/v1/attachments/att_1/delivered"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.state").value("delivered"));
@@ -125,7 +125,7 @@ class AttachmentControllerTest {
 
     @Test
     void deliveredUnknownArtifactIs404() throws Exception {
-        when(service.markDelivered("att_missing")).thenReturn(false);
+        when(service.markDelivered("att_missing", null)).thenReturn(false);
         mockMvc.perform(post("/api/v1/attachments/att_missing/delivered"))
             .andExpect(status().isNotFound());
     }

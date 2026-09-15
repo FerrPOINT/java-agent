@@ -59,6 +59,14 @@ public class AttachmentArtifactEntity {
     @Column(name = "state", nullable = false, length = 16)
     private String state = "received";
 
+    /** V64: platform message id of the successful outbound delivery, if any. */
+    @Column(name = "delivered_message_id", length = 128)
+    private String deliveredMessageId;
+
+    /** V64: when the outbound delivery happened. */
+    @Column(name = "delivered_at")
+    private Instant deliveredAt;
+
     @Column(name = "lifetime_secs", nullable = false)
     private int lifetimeSecs = 86_400;
 

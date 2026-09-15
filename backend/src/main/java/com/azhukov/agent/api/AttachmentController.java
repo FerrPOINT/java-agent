@@ -123,10 +123,14 @@ public class AttachmentController {
             .body(resource);
     }
 
-    /** Outbound receipt: mark delivered exactly once (idempotent). */
+    /**
+     * Outbound receipt: mark delivered exactly once (idempotent). Accepts an
+     * optional platform message id from the successful send.
+     */
     @PostMapping("/{id}/delivered")
-    public Map<String, Object> delivered(@PathVariable("id") String id) {
-        boolean ok = service().markDelivered(id);
+    public Map<String, Object> delivered(@PathVariable("id") String id,
+            @RequestParam(value = "messageId", required = false) String messageId) {
+        boolean ok = service().markDelivered(id, messageId);
         if (!ok) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id);
         }

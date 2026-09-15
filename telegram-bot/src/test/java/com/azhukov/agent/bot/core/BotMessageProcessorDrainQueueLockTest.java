@@ -112,7 +112,7 @@ class BotMessageProcessorDrainQueueLockTest {
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
-            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, runtimeFooter,
+            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AttachmentApiClient.class), runtimeFooter,
             reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
             editCaptureService, updateDispatcher, streamingOrchestrator

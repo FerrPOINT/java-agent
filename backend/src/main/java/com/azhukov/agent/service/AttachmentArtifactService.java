@@ -61,14 +61,15 @@ public class AttachmentArtifactService {
     public record AttachmentArtifact(String id, String ownerId, String profile, UUID sessionId,
                                      String messageId, String contentHash, String origin,
                                      String disposition, String mimeType, String fileName,
-                                     long sizeBytes, String state) {
+                                     long sizeBytes, String state,
+                                     String deliveredMessageId, Instant deliveredAt) {
 
         public static AttachmentArtifact from(AttachmentArtifactEntity entity) {
             return new AttachmentArtifact(entity.getId(), entity.getOwnerId(), entity.getProfile(),
                 entity.getSessionId(), entity.getMessageId(), entity.getContentHash(),
                 entity.getOrigin(), entity.getDisposition(), entity.getMimeType(),
                 entity.getFileName(), entity.getSizeBytes() == null ? 0 : entity.getSizeBytes(),
-                entity.getState());
+                entity.getState(), entity.getDeliveredMessageId(), entity.getDeliveredAt());
         }
     }
 
@@ -139,12 +140,29 @@ public class AttachmentArtifactService {
 
     /** Outbound receipt: mark delivered exactly once (idempotent). */
     public boolean markDelivered(String artifactId) {
+        return markDelivered(artifactId, null);
+    }
+
+    /**
+     * Outbound receipt with the platform message id of the successful send.
+     * Idempotent: an already-delivered artifact keeps its FIRST receipt —
+     * a retry after an ambiguous send never overwrites it and the caller
+     * can detect the duplicate by the false return.
+     */
+    public boolean markDelivered(String artifactId, String deliveredMessageId) {
         AttachmentArtifactRepository repository = repository();
         AttachmentArtifactEntity entity = repository.findById(artifactId).orElse(null);
-        if (entity == null || "delivered".equals(entity.getState())) {
-            return entity != null;
+        if (entity == null) {
+            return false;
+        }
+        if ("delivered".equals(entity.getState())) {
+            return true;
         }
         entity.setState("delivered");
+        if (deliveredMessageId != null && !deliveredMessageId.isBlank()) {
+            entity.setDeliveredMessageId(deliveredMessageId.trim());
+            entity.setDeliveredAt(Instant.now());
+        }
         repository.save(entity);
         return true;
     }

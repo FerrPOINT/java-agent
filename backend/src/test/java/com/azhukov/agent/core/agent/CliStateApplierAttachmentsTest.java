@@ -59,7 +59,7 @@ class CliStateApplierAttachmentsTest {
     private AttachmentArtifactService.AttachmentArtifact artifact(String id, String mime, String name) {
         return new AttachmentArtifactService.AttachmentArtifact(
             id, "u1", "default", SESSION_ID, null, "hash" + id, "telegram",
-            "file", mime, name, 11, "received");
+            "file", mime, name, 11, "received", null, null);
     }
 
     @Test
