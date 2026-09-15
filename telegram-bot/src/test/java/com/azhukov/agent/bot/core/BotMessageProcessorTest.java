@@ -131,6 +131,8 @@ class BotMessageProcessorTest {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         // Default: textBatchDebouncer.offer returns false (not buffered)
         when(textBatchDebouncer.offer(any())).thenReturn(false);
@@ -912,6 +914,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setModelOverride("session-model");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingResultWithMetadata("response", false, null, 100, 1000, false);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n\nmodel: session-model");
@@ -937,6 +941,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingWithTokensAndFinalize("Voice response text", "test-model", false);
         when(backendClient.tts(anyString(), any())).thenReturn(new byte[]{1, 2, 3});
@@ -952,6 +958,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         // Stream finalized with no content → result.content() is blank
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
@@ -967,6 +975,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult(null, "test-model", 100, 1000, true, false));
@@ -981,6 +991,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingWithTokensAndFinalize("Voice response", "test-model", false);
         when(backendClient.tts(anyString(), any())).thenReturn(new byte[0]);
@@ -995,6 +1007,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingWithTokensAndFinalize("Voice response", "test-model", false);
         when(backendClient.tts(anyString(), any())).thenThrow(new RuntimeException("TTS error"));
@@ -1009,6 +1023,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         String longContent = "A".repeat(5000);
         stubStreamingWithTokensAndFinalize(longContent, "test-model", false);
@@ -1026,6 +1042,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         // Content that is only MEDIA: lines → cleanText is blank → no TTS
         stubStreamingWithTokensAndFinalize("MEDIA:/tmp/test.jpg", "test-model", false);
@@ -1061,6 +1079,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setMetadata("_standingGoal", "Complete the task");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingWithTokensAndFinalize("First response", "test-model", false);
         when(goalAutoContinueService.runAutoContinue(any(), anyString(), any()))
@@ -1098,6 +1118,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setMetadata("_standingGoal", "Complete the task");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingWithTokensAndFinalize("response", "test-model", false);
         // Simulate interrupt after processing
@@ -1115,6 +1137,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setMetadata("_standingGoal", "Complete the task");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingWithTokensAndFinalize("response", "test-model", false);
         when(goalAutoContinueService.runAutoContinue(any(), anyString(), any()))
@@ -1426,6 +1450,8 @@ class BotMessageProcessorTest {
         session.setUserId("12345");
         session.setUsername("testuser");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         processor.accept(textEvent(1, 100L, "hello"));
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
@@ -1452,6 +1478,8 @@ class BotMessageProcessorTest {
         BotSessionEntity session = new BotSessionEntity();
         // id is null
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
         stubStreamingResult("response", true);
         processor.accept(textEvent(1, 100L, "hello"));
         verify(backendClient).chatStream(anyString(), isNull(), any(), any(), any(), any(), any(), any(), any(), any(), any());

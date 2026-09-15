@@ -101,6 +101,7 @@ class BotMessageProcessorDrainQueueLockTest {
         when(session.getBackendSessionId()).thenReturn(null);
         when(session.getUserId()).thenReturn("123");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), any())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), any(), org.mockito.ArgumentMatchers.any())).thenReturn(session);
 
         // c5: construct the extracted collaborators with the same mocked deps
         UpdateDispatcher updateDispatcher = new UpdateDispatcher(

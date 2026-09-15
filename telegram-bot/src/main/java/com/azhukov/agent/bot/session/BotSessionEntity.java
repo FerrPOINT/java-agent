@@ -25,6 +25,13 @@ public class BotSessionEntity {
 
     private String userId;
     private String chatId;
+
+    /**
+     * V9: Telegram forum-topic thread id (NULL for DMs / non-topic chats).
+     * Sessions are keyed by (userId, threadId): each topic in a group gets
+     * its own backend transcript instead of collapsing onto one.
+     */
+    private Long threadId;
     private String username;
     private String title;
     private String modelOverride;

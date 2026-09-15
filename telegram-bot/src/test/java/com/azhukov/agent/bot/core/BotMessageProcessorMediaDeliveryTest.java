@@ -136,6 +136,8 @@ class BotMessageProcessorMediaDeliveryTest {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         when(textBatchDebouncer.offer(any())).thenReturn(false);
         when(photoBatchDebouncer.offer(any())).thenReturn(false);

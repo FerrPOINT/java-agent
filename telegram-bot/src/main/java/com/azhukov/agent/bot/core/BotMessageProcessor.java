@@ -768,7 +768,10 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         String userId = String.valueOf(event.userId());
         String chatId = String.valueOf(event.chatId());
         String username = event.username();
-        BotSessionEntity session = sessionStore.resolveOrCreate(userId, chatId, username);
+        // V9: forum topics key their own session (threadId > 0); DMs and
+        // non-topic group messages resolve the legacy null-thread lane.
+        Long threadId = event.messageThreadId() > 0 ? event.messageThreadId() : null;
+        BotSessionEntity session = sessionStore.resolveOrCreate(userId, chatId, username, threadId);
         // Store firstName and languageCode as session metadata so buildChatBody
         // can forward them to the backend for the system prompt volatile tier.
         if (event.firstName() != null && !event.firstName().isBlank()) {

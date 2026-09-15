@@ -118,6 +118,8 @@ class BotMessageProcessorBusyAckTest {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         when(textBatchDebouncer.offer(any())).thenReturn(false);
         when(photoBatchDebouncer.offer(any())).thenReturn(false);
@@ -175,6 +177,8 @@ class BotMessageProcessorBusyAckTest {
         session.setId(UUID.randomUUID());
         session.setBackendSessionId(UUID.randomUUID());
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         // Stub steer to succeed
         when(backendClient.steer(anyString(), anyString())).thenReturn(true);
@@ -244,6 +248,8 @@ class BotMessageProcessorBusyAckTest {
         session.setId(UUID.randomUUID());
         session.setBackendSessionId(UUID.randomUUID());
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         // Stub backendClient to return active subagents (non-null, is array, has different session ID)
         com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();

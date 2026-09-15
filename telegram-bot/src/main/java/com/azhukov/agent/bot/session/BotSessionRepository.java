@@ -17,6 +17,14 @@ public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UU
 
     Optional<BotSessionEntity> findByUserIdAndActiveTrue(String userId);
 
+    /**
+     * V9: active session for a user inside a specific forum topic.
+     * threadId null = the DM / non-topic lane.
+     */
+    Optional<BotSessionEntity> findByUserIdAndThreadIdAndActiveTrue(String userId, Long threadId);
+
+    List<BotSessionEntity> findByUserIdAndThreadId(String userId, Long threadId);
+
     Page<BotSessionEntity> findByUserIdAndActiveTrue(String userId, Pageable pageable);
 
     Optional<BotSessionEntity> findByChatIdAndActiveTrue(String chatId);
