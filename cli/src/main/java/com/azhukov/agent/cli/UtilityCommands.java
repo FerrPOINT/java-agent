@@ -103,20 +103,57 @@ public class UtilityCommands implements CommandGroup {
 
         registry.register("image", "Attach a local image file for your next prompt: /image <path>", (args, client, sessionId) -> {
             if (args.isBlank()) return "Usage: /image <file-path>";
-            String path = args.strip();
+            return attach(args, "photo");
+        });
+
+        // ── WP-11: /attach — full attachment lifecycle with validation ──
+        registry.register("attach", "Attach a local file for your next prompt: /attach <path> [as photo|voice|video|file]", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                return "Usage: /attach <file-path> [photo|voice|video|file]\n"
+                    + "The file is validated (path, symlink, size, readability), uploaded as an"
+                    + " attachment artifact, and referenced by your next prompt.";
+            }
+            String[] parts = args.strip().split("\\s+", 2);
+            String disposition = parts.length > 1 ? parts[1].strip().toLowerCase() : "file";
+            if (!java.util.Set.of("photo", "voice", "video", "file").contains(disposition)) {
+                return "Unknown disposition '" + disposition + "'. Use photo, voice, video or file.";
+            }
+            return attach(parts[0], disposition);
+        });
+
+        registry.register("attachments", "Show pending attachment artifacts: /attachments", (args, client, sessionId) -> {
+            if (!cliState.hasPendingAttachments()) {
+                return "No pending attachments. Use /attach <path>.";
+            }
+            StringBuilder sb = new StringBuilder("Pending attachments (sent with your next prompt):\n");
+            int i = 1;
+            synchronized (cliState) {
+                for (String id : snapshotPending()) {
+                    sb.append("  ").append(i++).append(". ").append(id).append("\n");
+                }
+            }
+            return sb.toString();
+        });
+
+        registry.register("detach", "Remove pending attachment artifacts: /detach [n|all]", (args, client, sessionId) -> {
+            String sub = args.strip().toLowerCase();
+            if ("all".equals(sub)) {
+                cliState.drainPendingAttachments();
+                return "All pending attachments removed.";
+            }
+            if (sub.isEmpty()) {
+                return "Usage: /detach <n|all> — see /attachments for the numbered list.";
+            }
             try {
-                java.nio.file.Path imgPath = java.nio.file.Path.of(path);
-                if (!java.nio.file.Files.exists(imgPath)) {
-                    return "File not found: " + path;
+                int n = Integer.parseInt(sub);
+                java.util.List<String> current = snapshotPending();
+                if (n < 1 || n > current.size()) {
+                    return "No attachment #" + n + ". See /attachments.";
                 }
-                if (!java.nio.file.Files.isReadable(imgPath)) {
-                    return "File not readable: " + path;
-                }
-                cliState.setPendingImage(imgPath);
-                return "Image attached for your next prompt: " + imgPath.toAbsolutePath()
-                    + "\n(Sent as a file reference, like Telegram media.)";
-            } catch (Exception e) {
-                return "Error attaching image: " + e.getMessage();
+                cliState.removePendingAttachment(current.get(n - 1));
+                return "Removed attachment #" + n + " (" + current.get(n - 1) + ").";
+            } catch (NumberFormatException e) {
+                return "Usage: /detach <n|all>";
             }
         });
 
@@ -260,5 +297,54 @@ public class UtilityCommands implements CommandGroup {
         registry.registerAlias("fork", "branch");
         registry.registerAlias("v", "version");
         registry.registerAlias("sb", "statusbar");
+    }
+
+    /** WP-11: validate and stage a local file as a pending attachment. */
+    private String attach(String pathArg, String disposition) {
+        try {
+            java.nio.file.Path path = java.nio.file.Path.of(pathArg.strip());
+            if (!java.nio.file.Files.exists(path)) {
+                return "File not found: " + pathArg;
+            }
+            if (java.nio.file.Files.isSymbolicLink(path)) {
+                return "Symlinks are not attachable: " + pathArg;
+            }
+            if (!java.nio.file.Files.isReadable(path)) {
+                return "File not readable: " + pathArg;
+            }
+            long size = java.nio.file.Files.size(path);
+            long max = 20L * 1024 * 1024;
+            if (size <= 0) {
+                return "File is empty: " + pathArg;
+            }
+            if (size > max) {
+                return "File too large (" + size + " bytes > " + max + "): " + pathArg;
+            }
+            String name = path.getFileName().toString();
+            String ext = name.lastIndexOf('.') > 0 ? name.substring(name.lastIndexOf('.') + 1).toLowerCase() : "";
+            if (ext.isEmpty()) {
+                return "File has no extension (MIME cannot be derived): " + pathArg;
+            }
+            if ("photo".equals(disposition) && !java.util.Set.of("png", "jpg", "jpeg", "webp", "gif").contains(ext)) {
+                return "photo disposition expects an image (png/jpg/jpeg/webp/gif), got ." + ext;
+            }
+            if ("voice".equals(disposition) && !java.util.Set.of("ogg", "mp3", "wav", "m4a", "opus").contains(ext)) {
+                return "voice disposition expects audio (ogg/mp3/wav/m4a/opus), got ." + ext;
+            }
+            if ("video".equals(disposition) && !java.util.Set.of("mp4", "webm", "mov", "mkv").contains(ext)) {
+                return "video disposition expects video (mp4/webm/mov/mkv), got ." + ext;
+            }
+            cliState.setPendingImage(path);
+            return "Image attached for your next prompt: " + path.toAbsolutePath()
+                + "\n(disposition=" + disposition + ", " + size
+                + " bytes; uploaded as an artifact when you send the prompt)";
+        } catch (Exception e) {
+            return "Error attaching file: " + e.getMessage();
+        }
+    }
+
+    private java.util.List<String> snapshotPending() {
+        // CliState.drainPendingAttachments consumes; for listing we need a peek.
+        return cliState.snapshotPendingAttachments();
     }
 }

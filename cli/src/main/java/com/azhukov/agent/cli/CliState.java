@@ -39,6 +39,9 @@ public class CliState {
     private volatile String userProfile = "default";
     private volatile boolean statusBarEnabled = false;
     private volatile java.nio.file.Path pendingImage = null;
+    // WP-11: artifact ids registered for the next prompt (via /attach, /image).
+    private final java.util.List<String> pendingAttachments =
+        java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
     public VerboseMode getVerboseMode() { return verboseMode; }
     public void setVerboseMode(VerboseMode verboseMode) { this.verboseMode = verboseMode; }
@@ -159,4 +162,34 @@ public class CliState {
     /** Local image attached via /image; consumed by the next outbound chat request. */
     public java.nio.file.Path getPendingImage() { return pendingImage; }
     public void setPendingImage(java.nio.file.Path path) { this.pendingImage = path; }
+
+    public void addPendingAttachment(String artifactId) {
+        if (artifactId != null && !artifactId.isBlank()) {
+            pendingAttachments.add(artifactId);
+        }
+    }
+
+    public boolean hasPendingAttachments() { return !pendingAttachments.isEmpty(); }
+
+    /** Drains pending attachment ids (consumed by the next chat request). */
+    public java.util.List<String> drainPendingAttachments() {
+        synchronized (pendingAttachments) {
+            java.util.List<String> drained = new java.util.ArrayList<>(pendingAttachments);
+            pendingAttachments.clear();
+            return drained;
+        }
+    }
+
+    /** Read-only view of pending attachment ids (for /attachments listing). */
+    public java.util.List<String> snapshotPendingAttachments() {
+        synchronized (pendingAttachments) {
+            return new java.util.ArrayList<>(pendingAttachments);
+        }
+    }
+
+    public boolean removePendingAttachment(String artifactId) {
+        synchronized (pendingAttachments) {
+            return pendingAttachments.remove(artifactId);
+        }
+    }
 }

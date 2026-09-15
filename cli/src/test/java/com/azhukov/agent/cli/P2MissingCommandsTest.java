@@ -246,6 +246,7 @@ class P2MissingCommandsTest {
     @Test
     void imageCommandWithExistingFileReturnsMessage() throws Exception {
         java.nio.file.Path tempImg = java.nio.file.Files.createTempFile("test-img-", ".png");
+        java.nio.file.Files.write(tempImg, new byte[] {(byte) 0x89, 'P', 'N', 'G'});
         tempImg.toFile().deleteOnExit();
         String result = registry.execute("/image " + tempImg.toString(), client, "sid");
         // f10b: /image now really attaches the pending reference for the next prompt
