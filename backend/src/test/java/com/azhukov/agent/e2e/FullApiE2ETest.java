@@ -1145,10 +1145,14 @@ class FullApiE2ETest {
     @Test @Order(261) @DisplayName("POST /v1/chat/completions — with temperature and maxTokens")
     void openAiCompletionWithParams() throws Exception {
         HttpResponse<String> resp = postWithRetry5xx("/v1/chat/completions",
-            "{\"model\":\"main-dev\",\"messages\":[{\"role\":\"user\",\"content\":\"What is 3+3? Just the number.\"}],\"temperature\":0.3,\"maxTokens\":50}");
+            "{\"model\":\"main-dev\",\"messages\":[{\"role\":\"user\",\"content\":\"What is 3+3? Just the number.\"}],\"temperature\":0.3,\"maxTokens\":2000}");
         assertEquals(200, resp.statusCode());
         JsonNode body = parseJson(resp.body());
         assertEquals("chat.completion", body.get("object").asText());
+        // Provider note: with a small maxTokens budget a reasoning model burns the
+        // whole budget on reasoning_content and returns an empty visible content
+        // (finish_reason=length) — 50 tokens reproduced that; 2000 keeps the
+        // visible-content assertion honest.
         assertFalse(body.get("choices").get(0).get("message").get("content").asText().isBlank());
     }
 
