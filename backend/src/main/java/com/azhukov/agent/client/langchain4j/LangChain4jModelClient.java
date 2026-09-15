@@ -293,12 +293,19 @@ public class LangChain4jModelClient implements ModelClient {
         // underlying HTTP stream is owned by the langchain4j client (no external
         // handle is exposed by doChat), so late callbacks must become no-ops.
         final java.util.concurrent.atomic.AtomicBoolean abandoned = new java.util.concurrent.atomic.AtomicBoolean(false);
+        // WP-d (Hermes #110769 stale-stream parity): last stream event time.
+        // Each token/tool event resets the stall clock; a silent connection is
+        // wedged after agent.model.stream-stall-seconds (0 disables).
+        final java.util.concurrent.atomic.AtomicLong lastEventAt =
+            new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
+        final int stallSeconds = properties.getModel().getStreamStallSeconds();
 
         streamingChatModelFor(options).doChat(request, new StreamingChatResponseHandler() {
             private final StringBuilder content = new StringBuilder();
 
             @Override
             public void onPartialResponse(String partialResponse) {
+                lastEventAt.set(System.nanoTime());
                 // M31: after a timeout the caller has moved on — drop late tokens.
                 if (abandoned.get()) {
                     return;
@@ -315,6 +322,7 @@ public class LangChain4jModelClient implements ModelClient {
 
             @Override
             public void onCompleteResponse(dev.langchain4j.model.chat.response.ChatResponse completeResponse) {
+                lastEventAt.set(System.nanoTime());
                 try {
                     // M31: late completion after a timeout — ignore.
                     if (abandoned.get()) {
@@ -399,19 +407,52 @@ public class LangChain4jModelClient implements ModelClient {
             }
         });
 
-        // Block until streaming completes or errors
+        // Block until streaming completes or errors. WP-d: the wait is
+        // stall-aware — as long as events keep arriving (thinking tokens,
+        // partials), the stream is alive no matter how long the total turn
+        // takes; only a connection that goes silent longer than the stall
+        // window (or the hard overall timeout) is declared wedged.
+        long overallTimeoutSeconds = properties.getModel().getTimeoutSeconds();
+        long hardDeadline = System.nanoTime()
+            + java.util.concurrent.TimeUnit.SECONDS.toNanos(Math.max(1, overallTimeoutSeconds) * 10L);
         try {
-            boolean done = latch.await(properties.getModel().getTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS);
-            if (!done && errorRef.get() == null) {
-                // Latch timed out without completing or erroring — set timeout error
-                String timeoutMsg = "Model stream() timed out after " + properties.getModel().getTimeoutSeconds() + "s";
-                log.warn(timeoutMsg);
-                // M31: mark the stream abandoned so late callbacks are dropped.
-                abandoned.set(true);
-                errorRef.set(new java.util.concurrent.TimeoutException(timeoutMsg));
-                // H19: Only call handler.onError if nothing has been reported yet.
-                if (errored.compareAndSet(false, true)) {
-                    handler.onError(errorRef.get());
+            long stallNanos = java.util.concurrent.TimeUnit.SECONDS.toNanos(Math.max(0, stallSeconds));
+            while (true) {
+                if (latch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    break; // completed or errored
+                }
+                if (errorRef.get() != null) {
+                    break;
+                }
+                long silentNanos = System.nanoTime() - lastEventAt.get();
+                boolean stalled = stallSeconds > 0 && silentNanos >= stallNanos;
+                boolean hardTimedOut = silentNanos >= java.util.concurrent.TimeUnit.SECONDS
+                    .toNanos(Math.max(1, overallTimeoutSeconds));
+                if (stalled || hardTimedOut) {
+                    String reason = stalled
+                        ? "no stream events for " + (silentNanos / 1_000_000_000) + "s "
+                          + "(stall watchdog " + stallSeconds + "s) — connection declared wedged"
+                        : "Model stream() timed out after " + overallTimeoutSeconds + "s of silence";
+                    log.warn(reason);
+                    abandoned.set(true);
+                    errorRef.set(new java.util.concurrent.TimeoutException(reason));
+                    if (errored.compareAndSet(false, true)) {
+                        handler.onError(errorRef.get());
+                    }
+                    break;
+                }
+                if (System.nanoTime() >= hardDeadline) {
+                    // Absolute ceiling (10x overall timeout) so a pathological
+                    // stream that never fully silences still cannot hang forever.
+                    String reason = "Model stream() exceeded hard ceiling of "
+                        + (Math.max(1, overallTimeoutSeconds) * 10) + "s";
+                    log.warn(reason);
+                    abandoned.set(true);
+                    errorRef.set(new java.util.concurrent.TimeoutException(reason));
+                    if (errored.compareAndSet(false, true)) {
+                        handler.onError(errorRef.get());
+                    }
+                    break;
                 }
             }
         } catch (InterruptedException e) {

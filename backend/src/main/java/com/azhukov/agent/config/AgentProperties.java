@@ -86,6 +86,15 @@ public class AgentProperties {
         private String apiKey = "";
         private String modelName = "";
         private int timeoutSeconds = 120;
+
+        /**
+         * WP-d (Hermes stale-stream parity #110769): max silence BETWEEN stream
+         * events before the stream is declared wedged. Each token resets the
+         * clock, so a reasoning model thinking for many minutes stays alive,
+         * while a TCP connection that stopped delivering fails fast.
+         * 0 disables the stall watchdog (only the overall timeout applies).
+         */
+        private int streamStallSeconds = 180;
         private int maxRetries = 3;
         private int maxTokens = 4096;
         private double temperature = 0.7;
