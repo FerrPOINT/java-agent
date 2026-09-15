@@ -103,4 +103,46 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
         assertThat(repository.findById(fresh.getId())).isPresent();
         assertThat(repository.findById(stale.getId())).isEmpty();
     }
+
+    // ── V64: outbound delivery receipt columns ──
+
+    @Test
+    void deliveredReceiptColumnsPersist() {
+        AttachmentArtifactEntity e = entity("alice", "hash-v64", "photo");
+        e.setState("delivered");
+        e.setDeliveredMessageId("42133");
+        e.setDeliveredAt(Instant.now());
+        AttachmentArtifactEntity saved = repository.save(e);
+
+        AttachmentArtifactEntity loaded = repository.findById(saved.getId()).orElseThrow();
+        assertThat(loaded.getDeliveredMessageId()).isEqualTo("42133");
+        assertThat(loaded.getDeliveredAt()).isNotNull();
+        assertThat(loaded.getState()).isEqualTo("delivered");
+    }
+
+    @Test
+    void receiptColumnsNullByDefault() {
+        AttachmentArtifactEntity saved = repository.save(entity("bob", "hash-v64b", "file"));
+        AttachmentArtifactEntity loaded = repository.findById(saved.getId()).orElseThrow();
+        assertThat(loaded.getDeliveredMessageId()).isNull();
+        assertThat(loaded.getDeliveredAt()).isNull();
+    }
+
+    @Test
+    void receiptOnReceivedStateViolatesCheck() {
+        // CHECK constraint: receipt columns require state='delivered'
+        AttachmentArtifactEntity e = entity("carol", "hash-v64c", "file");
+        e.setState("received");
+        e.setDeliveredMessageId("999");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                transactionTemplate.execute(tx -> {
+                    repository.saveAndFlush(e);
+                    return null;
+                }))
+            .hasMessageContaining("chk_artifact_receipt_state");
+        // the failing row must not be persisted
+        Optional<AttachmentArtifactEntity> after = repository.findAll().stream()
+            .filter(x -> "hash-v64c".equals(x.getContentHash())).findFirst();
+        assertThat(after).isEmpty();
+    }
 }

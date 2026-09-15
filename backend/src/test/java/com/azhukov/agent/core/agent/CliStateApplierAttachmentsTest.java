@@ -153,10 +153,21 @@ class CliStateApplierAttachmentsTest {
     }
 
     @Test
-    void attachmentsSurviveNullSessionUntouched() {
-        // session == null returns the request unchanged (existing contract)
+    void attachmentsApplyEvenWithoutSessionEntity() {
+        // WP-11: the first turn has no session entity yet (the session is
+        // created later) — attachment references are request-scoped and
+        // still resolve, degrading honestly when the service is absent.
         CliStateApplier applier = new CliStateApplier(prov(null));
         ChatRequest request = requestWith(List.of(AttachmentRef.of("att_x")));
+        ChatRequest out = applier.applyCliState(request, null);
+        assertThat(out.message()).contains("[Attachments]").contains("att_x");
+        assertThat(out.attachments()).isEqualTo(request.attachments());
+    }
+
+    @Test
+    void nullSessionWithoutAttachmentsReturnsSameRequest() {
+        CliStateApplier applier = new CliStateApplier(prov(null));
+        ChatRequest request = requestWith(null);
         ChatRequest out = applier.applyCliState(request, null);
         assertThat(out).isSameAs(request);
     }

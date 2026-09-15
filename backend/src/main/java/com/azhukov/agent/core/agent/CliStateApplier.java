@@ -49,7 +49,25 @@ public class CliStateApplier {
      */
     public ChatRequest applyCliState(ChatRequest request, SessionEntity session) {
         if (session == null) {
-            return request;
+            // WP-11: no session entity (first turn — the session is created
+            // later by the resolver) still resolves attachment references:
+            // they are request-scoped, not session-scoped.
+            if (request.attachments() == null || request.attachments().isEmpty()) {
+                return request;
+            }
+            String withAttachments = appendAttachments(request.message(), request.attachments());
+            return new ChatRequest(
+                request.sessionId(), withAttachments,
+                request.delegationDepth(), request.timeoutMs(),
+                request.model(), request.provider(), request.baseUrl(), request.apiKey(),
+                request.reasoningEffort(), request.fastMode(), request.voiceMode(),
+                request.personality(), request.enabledTools(), request.disabledTools(),
+                request.queuedPrompt(), request.subgoal(),
+                request.maxCompletionTokens(), request.systemPromptOverride(),
+                request.cdpUrl(), null, request.userId(), request.username(),
+                request.firstName(), request.languageCode(), request.chatType(),
+                request.serviceTier(), request.yoloMode(), request.verboseMode(),
+                request.footerEnabled(), request.attachments());
         }
         String reasoningEffort = request.reasoningEffort() != null ? request.reasoningEffort() : session.getCliStateValue("reasoningEffort");
         String personality = request.personality() != null ? request.personality() : session.getCliStateValue("personality");
