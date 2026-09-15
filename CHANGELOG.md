@@ -1,4 +1,17 @@
 
+## [0.1.240] — 2026-09-15
+
+Hermes upstream sync (13–15.09): five parity fixes from the upstream digest.
+
+### Fixed
+
+- **Thread-keyed sessions (bot)**: a group member's session was keyed by user alone, so every forum topic in a room collapsed onto one transcript — topic B resumed topic A's context mid-thought. Sessions now resolve per `(user, thread)`; V9 `bot_sessions.thread_id` + unique-active-per-thread invariant. (Hermes d631ad5f5c)
+- **Active-session recovery (bot)**: a bot restart mid-stream silently ate the in-flight turn — the user got neither answer nor error. The dead `resume_pending` wiring is now alive: streaming turns set the flag on their session, completion clears it, and on startup `InterruptedSessionNotifier` finds interrupted sessions and sends an honest one-time notice. Complements upstream's shutdown-marking (`SessionRecoveryService`) — that one covers graceful shutdown, this one covers in-flight streams. (Hermes run-turn recovery parity)
+- **Cron unreachable-retry**: a recurring job whose fire failed transiently (network/DNS) BEFORE reaching the model simply waited out the whole period — a daily job skipped its day. Transient pre-model failures now climb a bounded retry ladder (5/15/30min via `unreachable_retry_at` + attempt counter, V66), interim failure notices are suppressed while a retry is pending, and a success resets the ladder. Non-transient (model/content) failures keep legacy semantics. `agent.cron.retry-unreachable` kill-switch. (Hermes ec58e08a35)
+- **Stale-stream watchdog**: `stream()` used a flat overall timeout — reasoning models thinking legitimately for minutes hit it falsely, while a wedged connection under a large timeout hung the turn. The wait is now stall-based: every token/completion event resets the clock; silence past `agent.model.stream-stall-seconds` (default 180, 0 = disable) declares the connection wedged; legacy overall-silence timeout and a 10x hard ceiling remain as backstops. (Hermes #110769)
+- **MCP OAuth issuer-binding**: a refresh token minted by authorization server A could be replayed at server B after a protected-resource metadata edit or migration — protocol-invalid and a credential leak. V67 `mcp_oauth_tokens.token_issuer`; refresh derives the current issuer from the token endpoint origin, discards the stored token on mismatch (re-auth required), re-binds legacy NULL-issuer rows on next success. (Hermes d9e88e19e2)
+- **Gateway attachments were dead wiring**: `MessageEvent.attachments` existed but nothing read it — every gateway-adapter attachment was silently dropped. Inbound gateway attachments now register as backend artifacts (same service as the bot lane) and their cache paths flow into the turn as references; rejected/failed attachments degrade to an attachment-free turn.
+
 ## [0.1.239] — 2026-09-15
 
 Выпущено из main после WP-3…WP-12 + upstream sync + V-тура (stalled monitor, coalescing) + W/F-тура (WP-9 parity docs) + R-тура (session recovery, DM topics).
