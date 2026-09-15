@@ -421,6 +421,10 @@ agent:
     base-dir: ${AGENT_PROFILE_BASE_DIR:}
 
 management:
+  # M2: separate management port so Prometheus can scrape /actuator/prometheus
+  # on the internal network without crossing the API security filter.
+  server:
+    port: 9969
   endpoints:
     web:
       exposure:
