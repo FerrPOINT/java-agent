@@ -421,10 +421,12 @@ agent:
     base-dir: ${AGENT_PROFILE_BASE_DIR:}
 
 management:
-  # M2: separate management port so Prometheus can scrape /actuator/prometheus
-  # on the internal network without crossing the API security filter.
+  # M2: optional separate management port (stand compose sets
+  # MANAGEMENT_SERVER_PORT=9969 so Prometheus can scrape /actuator/prometheus
+  # without crossing the API security filter). Default: same port as the app,
+  # which is what CI smoke tests and e2e scripts expect.
   server:
-    port: 9969
+    port: ${MANAGEMENT_SERVER_PORT:}
   endpoints:
     web:
       exposure:
