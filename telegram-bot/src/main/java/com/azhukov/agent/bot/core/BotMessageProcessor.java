@@ -366,6 +366,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
             // B1.6/B2.7: Thread the message_thread_id from the event through to all sends
             long threadId = event.messageThreadId();
+            // DM-topics depth (docs/34): persist the originating topic so
+            // restart-surviving sends (recovery notices, resumed turns)
+            // route back into the same thread.
+            if (session != null && session.getLastMessageThreadId() != threadId) {
+                session.setLastMessageThreadId(threadId);
+            }
 
             // Build footer text (will be appended to streaming message or sync response)
             result = streamingOrchestrator.streamChat(chatId, messageText, sessionId, session,

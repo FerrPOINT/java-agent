@@ -345,6 +345,8 @@ Browser provider port + provider credentials
 
 ### WP-10. Provider ecosystem: TTS, transcription, image generation and vision
 
+**Статус 2026-09-15:** capability matrix (WP-10 шаги 1–3) реализована (`MediaProvider` contract + `MediaProviderRegistry` + `ExistingProvidersFacade`). Реальные TTS/STT/image-провайдеры — **not planned** по решению владельца (2026-09-15): голосовые и image-интеграции не нужны флоту, реальных required-интеграций нет. Raw PCM streaming (шаг 5) отменён вместе с ними; MP3-relay остаётся поддерживаемым контрактом. Пункт закрыт; переоткрытие — только по явному запросу с именем конкретного провайдера.
+
 **Проблема:** the current OpenAI-oriented providers and MP3 relay are narrower than Hermes. There is no common credential resolver, provider capability matrix or raw PCM streaming contract.
 
 **Решение**

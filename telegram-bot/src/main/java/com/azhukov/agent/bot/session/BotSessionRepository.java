@@ -28,6 +28,12 @@ public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UU
     // P0: Session expiry watcher — list all active sessions
     List<BotSessionEntity> findByActiveTrue();
 
+    /** Active, non-suspended sessions — candidates for resume-pending marking on shutdown. */
+    List<BotSessionEntity> findByActiveTrueAndSuspendedFalse();
+
+    /** Sessions interrupted by a restart that still need user notification. */
+    List<BotSessionEntity> findByResumePendingTrueAndActiveTrue();
+
     @Modifying
     @Query("UPDATE BotSessionEntity s SET s.updatedAt = :ts WHERE s.id = :id")
     void touchUpdatedAt(UUID id, Instant ts);
