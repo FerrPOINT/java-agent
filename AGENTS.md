@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-project: `backend` (REST API, LLM, tools) + `telegram-bot` (61 команда, streaming, polling) + `cli` (92+ slash commands, REPL). Production (dev): 0.1.238; main накопил WP-3…WP-12 + upstream sync — ждёт релиза 0.1.239.
+Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-project: `backend` (REST API, LLM, tools) + `telegram-bot` (61 команда, streaming, polling) + `cli` (92+ slash commands, REPL). Production (dev): 0.1.239; main накопил WP-3…WP-12 + upstream sync — ждёт релиза 0.1.239.
 
 ## Build & Test
 
@@ -316,7 +316,7 @@ Remaining 501s are deliberate fail-closed guards: env reveal (ADR-013), shell ho
 | Bot tests | 1752 |
 | CLI tests | 345 |
 | E2E scenarios | 28 HTTP + 35 CLI + PG slowTests |
-| Production version | 0.1.238 (dev) |
+| Production version | 0.1.239 (dev) |
 
 ## Project Structure
 

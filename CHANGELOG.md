@@ -1,5 +1,7 @@
 
-## [Unreleased]
+## [0.1.239] — 2026-09-15
+
+Выпущено из main после WP-3…WP-12 + upstream sync + V-тура (stalled monitor, coalescing) + W/F-тура (WP-9 parity docs) + R-тура (session recovery, DM topics).
 
 ### Added
 
