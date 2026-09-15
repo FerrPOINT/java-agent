@@ -25,13 +25,6 @@ public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UU
 
     List<BotSessionEntity> findByUserIdAndThreadId(String userId, Long threadId);
 
-    /**
-     * WP-b: sessions whose turn was interrupted by a bot restart. The flag is
-     * set when a streaming turn starts and cleared when it completes; rows
-     * still flagged at startup lost their turn to a restart.
-     */
-    List<BotSessionEntity> findByResumePendingTrueAndActiveTrue();
-
     Page<BotSessionEntity> findByUserIdAndActiveTrue(String userId, Pageable pageable);
 
     Optional<BotSessionEntity> findByChatIdAndActiveTrue(String chatId);

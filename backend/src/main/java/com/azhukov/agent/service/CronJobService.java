@@ -980,6 +980,10 @@ private static final String CRON_EXECUTION_HINT = """
             job.setLastRunAt(Instant.now());
             job.setLastStatus("success");
             job.setLastError(null);
+            // WP-c: the run reached the model — reset the unreachable retry ladder.
+            if (job.getUnreachableRetries() != 0) {
+                job.setUnreachableRetries(0);
+            }
             if (monitorOutcome.changed()) {
                 job.setMonitorLastHash(monitorOutcome.hash());
                 job.setMonitorLastOutput(capStoredMonitorOutput(monitorOutcome.output()));
@@ -1006,10 +1010,20 @@ private static final String CRON_EXECUTION_HINT = """
             // h74: Detect backend unavailability (connection refused) for backoff.
             String errorMsg = e.getMessage() != null ? e.getMessage() : "unknown error";
             boolean isBackendUnavailable = isBackendUnavailable(errorMsg);
+            boolean unreachableBeforeModel = isUnreachableBeforeModel(errorMsg);
             job.setLastStatus("error");
             job.setLastError(errorMsg);
             job.setLastErrorAt(Instant.now());
             job.setConsecutiveFailures(job.getConsecutiveFailures() + 1);
+            if (unreachableBeforeModel && retryUnreachableEnabled() && isRecurring(job)) {
+                // WP-c: advance the retry ladder; a re-run is pending, so the interim
+                // failure notice is suppressed (the user would get "it broke" followed
+                // by it working 5 minutes later).
+                job.setUnreachableRetries(job.getUnreachableRetries() + 1);
+                log.warn("Cron job '{}' transient failure before any model call "
+                    + "(retry ladder step {}/{}); interim failure notice suppressed",
+                    job.getName(), job.getUnreachableRetries(), UNREACHABLE_LADDER_SECONDS.length);
+            }
             if (isBackendUnavailable) {
                 log.warn("Cron job '{}' detected backend unavailability (consecutive failures: {})",
                     job.getName(), job.getConsecutiveFailures());
@@ -1019,20 +1033,44 @@ private static final String CRON_EXECUTION_HINT = """
             // h72: Record failed execution in the ledger.
             String status = errorMsg.toLowerCase().contains("timeout") ? "timeout" : "failure";
             Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), status, errorMsg, null);
+            boolean retryPending = job.getUnreachableRetries() > 0
+                && job.getUnreachableRetries() <= UNREACHABLE_LADDER_SECONDS.length;
             // WP-1 (Hermes scheduler deliver path): every failed run delivers a
             // compact one-line failure summary + a review nudge once the failure
             // streak reaches the threshold — through the durable ledger, not a
             // bot-side scan.
-            enqueueFailureDeliveryWork(job, executionLogId, errorMsg);
+            // WP-c: suppressed while an unreachable re-run is still pending.
+            if (!retryPending) {
+                enqueueFailureDeliveryWork(job, executionLogId, errorMsg);
+            }
             publishCronEvent("cron." + status, job, startedAt, Map.of("error", errorMsg));
             // h71: Re-arm: clear the error status so the job can run on the next tick.
             // The error is recorded for audit but doesn't permanently block execution.
             // The scheduleJob call in executeAndReschedule will still fire.
-            return CronExecutionOutcome.failure(status);
+            return unreachableBeforeModel
+                ? CronExecutionOutcome.unreachableBeforeModel(status)
+                : CronExecutionOutcome.failure(status);
         }
     }
 
     private void scheduleJobAfterExecution(CronJobEntity job, CronExecutionOutcome outcome) {
+        // WP-c: a recurring job that never reached the model on a transient
+        // network error pulls its next run earlier along a bounded 5/15/30-minute
+        // ladder instead of silently skipping a whole period (a daily job behind
+        // a reconnecting VPN used to lose the day). One-shots (repeatCount=1)
+        // keep at-most-once dispatch semantics and never re-run.
+        if (outcome.unreachableBeforeModel() && retryUnreachableEnabled()
+                && isRecurring(job)) {
+            long ladderSeconds = unreachableRetryLadderSeconds(job);
+            long regularSeconds = calculateDelaySeconds(job.getSchedule());
+            if (ladderSeconds < regularSeconds) {
+                log.warn("Cron job '{}' never reached the model (attempt {} on the retry ladder); "
+                    + "re-running in {}s instead of waiting the full period",
+                    job.getName(), job.getUnreachableRetries() + 1, ladderSeconds);
+                scheduleJob(job, ladderSeconds);
+                return;
+            }
+        }
         if (!outcome.failed() || job.getConsecutiveFailures() < MAX_CONSECUTIVE_FAILURES) {
             scheduleJob(job);
             return;
@@ -1041,6 +1079,38 @@ private static final String CRON_EXECUTION_HINT = """
         log.warn("Cron job {} backing off {}s after {} consecutive failures",
             job.getName(), delaySeconds, job.getConsecutiveFailures());
         scheduleJob(job, delaySeconds);
+    }
+
+    private static final long[] UNREACHABLE_LADDER_SECONDS = {5 * 60L, 15 * 60L, 30 * 60L};
+
+    private long unreachableRetryLadderSeconds(CronJobEntity job) {
+        int step = Math.min(job.getUnreachableRetries(), UNREACHABLE_LADDER_SECONDS.length - 1);
+        return UNREACHABLE_LADDER_SECONDS[step];
+    }
+
+    private boolean retryUnreachableEnabled() {
+        return properties.getCron().isRetryUnreachable();
+    }
+
+    private static boolean isRecurring(CronJobEntity job) {
+        // One-shot jobs (repeatCount 1 or null) never re-run: at-most-once dispatch.
+        return job.getRepeatCount() == null || job.getRepeatCount() > 1;
+    }
+
+    /**
+     * WP-c: classify a failure as transient-unreachable — connection refused /
+     * reset / DNS / timeout before any model tokens flowed. Conservative: only
+     * errors that clearly indicate no model call happened.
+     */
+    static boolean isUnreachableBeforeModel(String errorMsg) {
+        if (errorMsg == null) return false;
+        String lower = errorMsg.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains("connection refused")
+            || lower.contains("connection reset")
+            || lower.contains("connect timed out")
+            || lower.contains("unknownhost")
+            || lower.contains("no route to host")
+            || lower.contains("network is unreachable");
     }
 
     private long failureBackoffSeconds(CronJobEntity job) {
@@ -1073,17 +1143,27 @@ private static final String CRON_EXECUTION_HINT = """
         }
     }
 
-    private record CronExecutionOutcome(String status, boolean failed, boolean countsTowardRepeat) {
+    private record CronExecutionOutcome(String status, boolean failed, boolean countsTowardRepeat,
+                                        boolean unreachableBeforeModel) {
         static CronExecutionOutcome success() {
-            return new CronExecutionOutcome("success", false, true);
+            return new CronExecutionOutcome("success", false, true, false);
         }
 
         static CronExecutionOutcome noChange() {
-            return new CronExecutionOutcome("no_change", false, false);
+            return new CronExecutionOutcome("no_change", false, false, false);
         }
 
         static CronExecutionOutcome failure(String status) {
-            return new CronExecutionOutcome(status, true, false);
+            return new CronExecutionOutcome(status, true, false, false);
+        }
+
+        /**
+         * WP-c (Hermes unreachable_retry parity): the run died on a transient
+         * network/DNS error BEFORE any model call — nothing executed, nothing
+         * was spent, a re-run cannot duplicate side effects.
+         */
+        static CronExecutionOutcome unreachableBeforeModel(String status) {
+            return new CronExecutionOutcome(status, true, false, true);
         }
 
         boolean resetFailureStreak() {
