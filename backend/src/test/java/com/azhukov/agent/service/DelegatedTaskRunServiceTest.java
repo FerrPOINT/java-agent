@@ -30,6 +30,32 @@ class DelegatedTaskRunServiceTest {
     private DelegatedTaskRunRepository repository;
 
     @Test
+    void recordProgressCoalescesIdenticalSummariesAndClearsStalledDiagnostic() throws Exception {
+        when(repository.save(any(DelegatedTaskRunEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        DelegatedTaskRunEntity running = new DelegatedTaskRunEntity();
+        java.lang.reflect.Field id = DelegatedTaskRunEntity.class.getDeclaredField("id");
+        id.setAccessible(true);
+        id.set(running, UUID.randomUUID());
+        running.setStatus("running");
+        when(repository.findById(any(UUID.class))).thenReturn(java.util.Optional.of(running));
+        DelegatedTaskRunService service = new DelegatedTaskRunService(repository, new ObjectMapper(), new EventService(10));
+        UUID runId = UUID.randomUUID();
+
+        DelegatedTaskRunEntity first = service.recordProgress(runId, "compiling");
+        assertThat(first.getLastProgressAt()).isNotNull();
+        assertThat(first.getLastProgressSummary()).isEqualTo("compiling");
+
+        // identical summary coalesces: no timestamp movement
+        DelegatedTaskRunEntity same = service.recordProgress(runId, "compiling");
+        assertThat(same.getLastProgressAt()).isEqualTo(first.getLastProgressAt());
+
+        // changed summary moves the timestamp
+        DelegatedTaskRunEntity next = service.recordProgress(runId, "running tests");
+        assertThat(next.getLastProgressAt()).isNotNull();
+        assertThat(next.getLastProgressSummary()).isEqualTo("running tests");
+    }
+
+    @Test
     void createPersistsRunningRunForParentSession() {
         when(repository.save(any(DelegatedTaskRunEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
         EventService eventService = new EventService(10);

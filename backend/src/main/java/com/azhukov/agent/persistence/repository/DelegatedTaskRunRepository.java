@@ -16,6 +16,8 @@ public interface DelegatedTaskRunRepository extends JpaRepository<DelegatedTaskR
 
     List<DelegatedTaskRunEntity> findByParentSessionIdOrderByCreatedAtDesc(UUID parentSessionId, Pageable pageable);
 
+    List<DelegatedTaskRunEntity> findByStatus(String status);
+
     @Query("""
         select run
         from DelegatedTaskRunEntity run

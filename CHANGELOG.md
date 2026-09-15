@@ -3,6 +3,12 @@
 
 ### Added
 
+- Stalled-run monitor for delegated runs (WP-1 item 8): Flyway V64 progress columns, `recordProgress` с coalesce одинаковых summary, `StalledRunMonitor` — единичный diagnostic для running-ранов без свежего прогресса, без auto-fail.
+
+## [Unreleased]
+
+### Added
+
 - Toolset env-write contract tests: masked `ProfileEnvStore` write path (`PUT /p/{profile}/api/tools/toolsets/{toolset}/env` — allowlist, write-only, `********` redaction) and honest 501 when the env store bean is absent.
 
 ## [Unreleased]

@@ -142,6 +142,32 @@ public class DelegatedTaskRunService {
         return saved;
     }
 
+    /**
+     * Record a progress heartbeat for a running delegated run (docs/35 WP-1
+     * item 8 progress events). Consecutive identical summaries coalesce: the
+     * timestamp moves only when the summary changes or the run was diagnosed
+     * as stalled, so repeated "still working on it" events do not mask real
+     * staleness and do not spam state.
+     */
+    @Transactional
+    public DelegatedTaskRunEntity recordProgress(UUID runId, String summary) {
+        DelegatedTaskRunEntity entity = require(runId);
+        if (!STATUS_RUNNING.equals(entity.getStatus())) {
+            return entity;
+        }
+        String normalized = summary == null ? "" : summary.trim();
+        boolean sameAsLast = normalized.equals(entity.getLastProgressSummary());
+        boolean stalledBefore = entity.getStalledDiagnosticAt() != null;
+        if (!sameAsLast || stalledBefore) {
+            entity.setLastProgressAt(Instant.now());
+            entity.setLastProgressSummary(normalized.isEmpty() ? null : normalized);
+        }
+        if (stalledBefore) {
+            entity.setStalledDiagnosticAt(null);
+        }
+        return repository.save(entity);
+    }
+
     @Transactional
     public DelegatedTaskRunEntity finish(UUID runId, String status, Object result, String error) {
         DelegatedTaskRunEntity entity = require(runId);

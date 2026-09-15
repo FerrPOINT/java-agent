@@ -94,7 +94,7 @@ Browser provider port + provider credentials
 5. После успешного delegate delivery один раз записывать parent-session completion/reinjection marker; повторная доставка/restart marker не дублирует.
 6. Перенести cron success/failure/no-change delivery в ledger. `[SILENT]` становится terminal acknowledged без отправки. Частичный Telegram chunk failure не может ack весь payload.
 7. Заменить `CronDeliveryPoller` и/или `DeliveryRouter` после переноса их уникальных возможностей. Не оставлять два конкурирующих consumer-а одного result.
-8. Добавить stalled-run monitor: progress events coalesce, stale child runs получают diagnostic state, но не auto-fail без подтверждённого timeout policy.
+8. Добавить stalled-run monitor — done (V64, StalledRunPolicy/StalledRunMonitor, recordProgress coalesce): progress events coalesce, stale child runs получают diagnostic state, но не auto-fail без подтверждённого timeout policy.
 
 **Данные/миграции**
 
