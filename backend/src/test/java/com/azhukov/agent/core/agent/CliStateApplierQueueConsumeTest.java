@@ -17,7 +17,7 @@ class CliStateApplierQueueConsumeTest {
     private ChatRequest full(String message, String queuedPrompt) {
         return new ChatRequest(null, message, null, null, null, null, null, null,
             null, null, null, null, null, null, queuedPrompt, null, null, null,
-            null, null, null, null, null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     private ChatRequest minimalRequest(String message) {
@@ -26,7 +26,7 @@ class CliStateApplierQueueConsumeTest {
 
     @Test
     void queuedPromptIsConsumedExactlyOnce() {
-        CliStateApplier applier = new CliStateApplier();
+        CliStateApplier applier = new CliStateApplier(null);
         SessionEntity session = new SessionEntity();
         session.setUserId("u1");
         session.setCliStateValue("queuedPrompt", "remember this once");
@@ -47,7 +47,7 @@ class CliStateApplierQueueConsumeTest {
 
     @Test
     void requestCarriedQueuedPromptIsAlsoConsumed() {
-        CliStateApplier applier = new CliStateApplier();
+        CliStateApplier applier = new CliStateApplier(null);
         SessionEntity session = new SessionEntity();
         session.setUserId("u1");
 
