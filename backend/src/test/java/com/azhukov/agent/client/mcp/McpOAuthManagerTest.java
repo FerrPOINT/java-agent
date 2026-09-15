@@ -206,4 +206,78 @@ class McpOAuthManagerTest {
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("No OAuth token URL configured");
     }
+
+    // ─── V67 (WP-e): refresh tokens are bound to their issuer ──────────
+
+    @Test
+    void refreshToken_issuerMismatch_discardsTokenAndThrows() {
+        AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
+        serverConfig.setName("migrated-server");
+        serverConfig.setOauthTokenUrl("https://new-auth.example.com/token");
+        properties.getMcp().getServers().add(serverConfig);
+
+        McpOAuthEntity entity = new McpOAuthEntity();
+        entity.setProfile("default");
+        entity.setServerName("migrated-server");
+        entity.setRefreshToken("legacy-refresh-token");
+        entity.setTokenIssuer("https://old-auth.example.com"); // minted by the OLD issuer
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "migrated-server"))
+            .thenReturn(Optional.of(entity));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                manager.refreshToken("migrated-server"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("was issued by https://old-auth.example.com")
+            .hasMessageContaining("re-authorization required");
+        // the mismatched token is DISCARDED, never replayed at the new issuer
+        org.mockito.Mockito.verify(mcpOAuthRepository).delete(entity);
+    }
+
+    @Test
+    void refreshToken_matchingIssuer_proceedsToRefresh() {
+        AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
+        serverConfig.setName("stable-server");
+        serverConfig.setOauthTokenUrl("https://auth.example.com/token");
+        properties.getMcp().getServers().add(serverConfig);
+
+        McpOAuthEntity entity = new McpOAuthEntity();
+        entity.setProfile("default");
+        entity.setServerName("stable-server");
+        entity.setRefreshToken("refresh-token");
+        entity.setTokenIssuer("https://auth.example.com");
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "stable-server"))
+            .thenReturn(Optional.of(entity));
+
+        // The issuer check passes; the refresh itself fails on the HTTP call
+        // (no server behind example.com in tests) — but NOT with the issuer error.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                manager.refreshToken("stable-server"))
+            .isNotInstanceOf(IllegalStateException.class);
+        org.mockito.Mockito.verify(mcpOAuthRepository, org.mockito.Mockito.never())
+            .delete(entity);
+    }
+
+    @Test
+    void refreshToken_legacyNullIssuer_proceedsWithoutDiscard() {
+        // Pre-V67 rows have NULL issuer: unbound, but not silently replayed-
+        // and-dropped — the refresh runs and re-binds the issuer on success.
+        AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
+        serverConfig.setName("legacy-server");
+        serverConfig.setOauthTokenUrl("https://auth.example.com/token");
+        properties.getMcp().getServers().add(serverConfig);
+
+        McpOAuthEntity entity = new McpOAuthEntity();
+        entity.setProfile("default");
+        entity.setServerName("legacy-server");
+        entity.setRefreshToken("refresh-token");
+        entity.setTokenIssuer(null);
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "legacy-server"))
+            .thenReturn(Optional.of(entity));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                manager.refreshToken("legacy-server"))
+            .isNotInstanceOf(IllegalStateException.class);
+        org.mockito.Mockito.verify(mcpOAuthRepository, org.mockito.Mockito.never())
+            .delete(entity);
+    }
 }

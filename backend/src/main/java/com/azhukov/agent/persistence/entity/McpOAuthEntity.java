@@ -46,4 +46,12 @@ public class McpOAuthEntity {
 
     @Column(name = "token_scope", columnDefinition = "TEXT")
     private String tokenScope;
+
+    /**
+     * V67 (Hermes d9e88e19e2 parity): the authorization-server identity this
+     * token was minted by (token endpoint origin, or RFC 9207 iss). A refresh
+     * token must never be replayed at a different issuer.
+     */
+    @Column(name = "token_issuer")
+    private String tokenIssuer;
 }

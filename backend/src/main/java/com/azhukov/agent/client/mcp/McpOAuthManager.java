@@ -112,6 +112,7 @@ public class McpOAuthManager {
             throw new IllegalStateException(
                 "No OAuth token URL configured for MCP server: " + serverName);
         }
+        String currentIssuer = issuerOf(tokenUrl);
 
         String scope = profile == null || profile.isBlank() ? "default" : profile;
         McpOAuthEntity entity = mcpOAuthRepository.findByProfileAndServerName(scope, serverName)
@@ -121,6 +122,18 @@ public class McpOAuthManager {
         if (entity.getRefreshToken() == null || entity.getRefreshToken().isBlank()) {
             throw new IllegalStateException(
                 "No refresh token stored for MCP server: " + serverName);
+        }
+
+        // WP-e (V67): a refresh token minted by issuer A must never be replayed
+        // at issuer B (protected-resource metadata edit, server migration). A
+        // mismatched issuer invalidates the stored token instead of leaking it.
+        String storedIssuer = entity.getTokenIssuer();
+        if (storedIssuer != null && !storedIssuer.isBlank() && !storedIssuer.equals(currentIssuer)) {
+            mcpOAuthRepository.delete(entity);
+            throw new IllegalStateException(
+                "Stored OAuth token for MCP server " + serverName
+                + " was issued by " + storedIssuer + " but the server now points at "
+                + currentIssuer + " — token discarded; re-authorization required");
         }
 
         // Build form-encoded POST body per RFC 6749 §6
@@ -179,12 +192,36 @@ public class McpOAuthManager {
             }
         }
 
-        storeToken(serverName, newAccessToken, newRefreshToken, expiresAt);
+        storeToken(scope, serverName, newAccessToken, newRefreshToken, expiresAt, currentIssuer);
         log.info("Successfully refreshed OAuth token for MCP server {}", serverName);
+    }
+
+    /** V67: issuer identity = token endpoint origin (scheme + host + port). */
+    static String issuerOf(String tokenUrl) {
+        try {
+            java.net.URL url = new java.net.URI(tokenUrl).toURL();
+            String port = url.getPort() == -1 ? "" : ":" + url.getPort();
+            return url.getProtocol() + "://" + url.getHost() + port;
+        } catch (Exception e) {
+            return tokenUrl; // opaque fallback: compare raw strings
+        }
     }
 
     public void storeToken(String serverName, String accessToken, String refreshToken, Instant expiresAt) {
         storeToken("default", serverName, accessToken, refreshToken, expiresAt);
+    }
+
+    /** V67: profile-scoped storage that binds the token to its issuer. */
+    public void storeToken(String profile, String serverName, String accessToken,
+                           String refreshToken, Instant expiresAt, String issuer) {
+        storeToken(profile, serverName, accessToken, refreshToken, expiresAt);
+        McpOAuthEntity entity = mcpOAuthRepository
+            .findByProfileAndServerName(profile == null || profile.isBlank() ? "default" : profile, serverName)
+            .orElse(null);
+        if (entity != null) {
+            entity.setTokenIssuer(issuer);
+            mcpOAuthRepository.save(entity);
+        }
     }
 
     /** Profile-scoped token storage (upstream 399238f2c2 parity, V63 unique (profile, server_name)). */
