@@ -3,6 +3,12 @@
 
 ### Added
 
+- Delivery coalescing в DelegateReinjectionGateway: completions группируются по parent session (DelegateCompletionBatcher, ≤5 на сообщение), одна synthetic-нота на сессию вместо N пингов; одиночные раны сохраняют детальный Hermes-parity формат.
+
+## [Unreleased]
+
+### Added
+
 - Stalled-run monitor for delegated runs (WP-1 item 8): Flyway V64 progress columns, `recordProgress` с coalesce одинаковых summary, `StalledRunMonitor` — единичный diagnostic для running-ранов без свежего прогресса, без auto-fail.
 
 ## [Unreleased]
