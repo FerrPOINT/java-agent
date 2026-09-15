@@ -416,6 +416,14 @@ public class AgentProperties {
             private String trust = "full";
             // OAuth configuration for remote MCP servers
             private String oauthTokenUrl = "";
+
+            /**
+             * WP-i (Hermes tools/mcp_stdio_watchdog.py parity): interpose a
+             * parent-death supervisor between the agent and stdio MCP servers
+             * so a hard agent crash cannot orphan the server processes.
+             * POSIX only; disabled => direct spawn (legacy behavior).
+             */
+            private boolean stdioParentDeathWatchdog = true;
             private String oauthClientId = "";
             private String oauthClientSecret = "";
             /** OAuth scopes (space-separated), empty = use server defaults */
