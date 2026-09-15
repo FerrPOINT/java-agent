@@ -31,6 +31,8 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     private final AgentProperties agentProperties;
     private final SteerBuffer steerBuffer;
     private final ObjectProvider<com.azhukov.agent.core.agent.InterruptToken> interruptTokenProvider;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.AttachmentArtifactService>
+        attachmentArtifacts;
 
     // rev-83: subagent protection (#30170 parity) — demote interrupt to queue
     // when the running agent has active subagents, so a conversational follow-up
@@ -168,7 +170,8 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             }
 
             activeSessions.put(sessionKey, true);
-            var turnResult = agentRuntime.runTurn(session, event.text(), List.of());
+            var turnResult = agentRuntime.runTurn(session, event.text(),
+                registerAttachments(session, event, source));
 
             // Persist user input + assistant response so context engine can load history on next turn
             // P1-5: Skip end-of-turn persistence when mid-turn persistence is active
@@ -261,5 +264,62 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             }
         }
         return false;
+    }
+
+    /**
+     * WP-f: register inbound gateway attachments as backend artifacts and
+     * return their cache paths as turn references. MessageEvent.attachments
+     * was previously a dead field nothing read; the reference lane loads the
+     * cached file content into the turn exactly like the bot's artifact path.
+     * Best-effort: on any failure the turn runs attachment-free rather than
+     * failing the user's message.
+     */
+    private List<String> registerAttachments(com.azhukov.agent.core.model.Session session, MessageEvent event,
+                                             com.azhukov.agent.gateway.model.SessionSource source) {
+        if (event.attachments() == null || event.attachments().isEmpty()) {
+            return List.of();
+        }
+        com.azhukov.agent.service.AttachmentArtifactService artifacts =
+            attachmentArtifacts == null ? null : attachmentArtifacts.getIfAvailable();
+        if (artifacts == null) {
+            return List.of();
+        }
+        List<String> references = new java.util.ArrayList<>();
+        for (MessageEvent.Attachment att : event.attachments()) {
+            if (att == null || att.data() == null || att.data().length == 0) {
+                continue;
+            }
+            try {
+                String name = att.fileName() != null && !att.fileName().isBlank()
+                    ? att.fileName() : "gateway-file.bin";
+                var registration = artifacts.register(
+                    source.userId() != null ? source.userId() : "gateway",
+                    "default",
+                    session != null ? session.id() : null,
+                    event.eventId(),
+                    source.platform().name().toLowerCase(java.util.Locale.ROOT),
+                    dispositionOf(att.mimeType()),
+                    att.mimeType(),
+                    name,
+                    att.data());
+                if (registration != null && registration.id() != null && registration.cachePath() != null) {
+                    references.add(registration.cachePath());
+                } else if (registration != null && registration.rejection() != null) {
+                    log.debug("gateway attachment rejected: {}", registration.rejection());
+                }
+            } catch (Exception e) {
+                // One bad attachment must not kill the message.
+                log.debug("gateway attachment registration failed: {}", e.getMessage());
+            }
+        }
+        return references;
+    }
+
+    private static String dispositionOf(String mimeType) {
+        if (mimeType == null) return "file";
+        if (mimeType.startsWith("image/")) return "photo";
+        if (mimeType.startsWith("audio/")) return "voice";
+        if (mimeType.startsWith("video/")) return "video";
+        return "file";
     }
 }

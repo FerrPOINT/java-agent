@@ -36,10 +36,11 @@ public class SessionConfig {
             MidTurnPersistenceCallback midTurnPersistenceCallback,
             AgentProperties agentProperties,
             SteerBuffer steerBuffer,
-            ObjectProvider<com.azhukov.agent.core.agent.InterruptToken> interruptTokenProvider) {
+            ObjectProvider<com.azhukov.agent.core.agent.InterruptToken> interruptTokenProvider,
+            ObjectProvider<com.azhukov.agent.service.AttachmentArtifactService> attachmentArtifacts) {
         return new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider,
             messagePersistenceService, midTurnPersistenceCallback, agentProperties, steerBuffer,
-            interruptTokenProvider);
+            interruptTokenProvider, attachmentArtifacts);
     }
 
     @Bean
