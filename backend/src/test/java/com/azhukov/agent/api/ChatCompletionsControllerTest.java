@@ -332,7 +332,8 @@ class ChatCompletionsControllerTest {
             "Reads a file",
             objectSchema()
         );
-        when(toolRegistry.getDefinitions()).thenReturn(List.of(registryTool));
+        when(toolRegistry.getDefinitions(org.mockito.ArgumentMatchers.<java.util.Set<String>>any()))
+            .thenReturn(List.of(registryTool));
         ArgumentCaptor<List<ToolDefinition>> toolsCaptor = ArgumentCaptor.forClass(List.class);
         when(agentRuntime.run(anyList(), toolsCaptor.capture(), any(ModelRequestOptions.class))).thenReturn(ChatResponse.text("fallback ok"));
 
@@ -351,7 +352,10 @@ class ChatCompletionsControllerTest {
 
         // Verify the controller actually used the registry definitions (not just that
         // getDefinitions was called during setup), and that they were passed to run().
-        verify(toolRegistry).getDefinitions();
+        // WP-l: default toolsets route through the filtered overload; registry
+        // definitions still reach run() (captured below).
+        verify(toolRegistry, org.mockito.Mockito.atLeastOnce())
+            .getDefinitions(org.mockito.ArgumentMatchers.<java.util.Set<String>>any());
         List<ToolDefinition> tools = toolsCaptor.getValue();
         assertThat(tools).hasSize(1);
         assertThat(tools.get(0).name()).isEqualTo("read_file");
