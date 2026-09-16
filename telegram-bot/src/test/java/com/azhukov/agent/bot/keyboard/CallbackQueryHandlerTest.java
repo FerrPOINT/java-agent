@@ -228,7 +228,23 @@ class CallbackQueryHandlerTest {
         assertThat(result).isEqualTo("Model set to: gpt-4");
     }
 
-    // ─── Helpers ──────────────────────────────────────────────────
+    @Test
+    void handleClarificationCallback_returnsAnswerForSelectedChoice() {
+        ClarificationStateStore clarification = new ClarificationStateStore(
+            new com.fasterxml.jackson.databind.ObjectMapper(), inlineKeyboardBuilder);
+        when(client.sendMessage(anyLong(), any(), any(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(91L));
+        clarification.present(123L, 0L,
+            "{\"question\":\"Deploy where?\",\"choices\":[\"dev\",\"prod\"]}", client);
+        handler.setClarificationStateStore(clarification);
+
+        ClarificationStateStore.CallbackOutcome outcome = handler.handleClarification(callbackEvent("cq-clarify", "cq:1:0"));
+
+        assertThat(outcome.complete()).isTrue();
+        assertThat(outcome.answer()).isEqualTo("Answer to clarification question 'Deploy where?': dev");
+        verify(client).answerCallbackQuery("cq-clarify", "Selected", false);
+    }
+
 
     private UpdateEvent callbackEvent(String callbackQueryId, String callbackData) {
         // Use 17-arg constructor with messageId=456L (same as userId for test simplicity)

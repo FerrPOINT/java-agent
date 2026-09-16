@@ -107,6 +107,11 @@ public class CallbackQueryHandler {
         if (clarificationStateStore == null || event == null || event.type() != UpdateEvent.Type.CALLBACK_QUERY) {
             return ClarificationStateStore.CallbackOutcome.invalid("Unknown clarification");
         }
+        if (!authorizationService.isAuthorized(event.userId(), event.username(), event.chatId())) {
+            log.warn("Unauthorized clarification callback: userId={}, chatId={}", event.userId(), event.chatId());
+            answer(event.callbackQueryId(), "Not authorized", true);
+            return ClarificationStateStore.CallbackOutcome.invalid("Not authorized");
+        }
         String data = event.callbackData();
         String value = data != null && data.startsWith(ClarificationStateStore.CALLBACK_COMMAND + ":")
             ? data.substring((ClarificationStateStore.CALLBACK_COMMAND + ":").length()) : "";
