@@ -172,6 +172,7 @@ public class AttachmentArtifactService {
      * delivered artifacts expire too; a receipt row without its blob is a
      * lie, so files go first, rows after).
      */
+    @org.springframework.transaction.annotation.Transactional
     public int sweepExpired() {
         AttachmentArtifactRepository repository = repository();
         List<AttachmentArtifactEntity> expired = repository
