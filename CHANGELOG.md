@@ -1,3 +1,18 @@
+## [0.1.248] — 2026-09-16
+
+Container test policy and end-to-end turn diagnostics.
+
+### Fixed
+
+- **A bare “test this” could still lead an agent into a broad Gradle/Testcontainers run**: each turn now classifies the request as generic, focused, or explicitly broad. Generic requests cannot invoke the shell at all; focused requests reject unfiltered test suites, `slowTest`, `liveTest`, `e2eTest`, and Testcontainers. The policy is both injected into the prompt and enforced inside `terminal`, so a model cannot bypass it with a tool call.
+- **Docker runtime bot health was only internal**: dev Compose now binds bot health to `127.0.0.1:8091`, allowing the real Telegram gateway fixture E2E to probe the same container runtime.
+
+### Changed
+
+- **Turn forensics are now traceable without exposing tool arguments or secrets**: structured logs cover turn start/model/test policy, model finish reason/usage/content size, raw and repaired tool argument byte size plus SHA-256 fingerprint, tool execution start/finish, persistence, and delivery-ledger claim/ack/release/unknown outcomes.
+
+Verification: backend `6905/0`, Telegram bot `1774/0`; Docker rebuild/deploy, source-isolation assertion, aggregate health with real model ping, generic Telegram-like `протестируй` live turn (no terminal execution; persisted reply asks for a concrete target), API terminal scenario, and Telegram gateway health/auth-negative E2E.
+
 ## [0.1.247] — 2026-09-16
 
 Containerized dev runtime and workspace isolation.

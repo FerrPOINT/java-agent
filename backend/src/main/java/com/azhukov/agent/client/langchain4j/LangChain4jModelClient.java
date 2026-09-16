@@ -370,6 +370,9 @@ public class LangChain4jModelClient implements ModelClient {
                     } catch (Exception e) {
                         log.debug("Could not extract outputTokens: {}", e.getMessage());
                     }
+                    log.info("model_stream_completed finishReason={} outputTokens={} toolCalls={} contentBytes={}",
+                        finishReason, outputTokens, completeResponse.aiMessage().hasToolExecutionRequests(),
+                        content.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
                     handler.onComplete(finishReason, outputTokens);
                 } finally {
                     latch.countDown();

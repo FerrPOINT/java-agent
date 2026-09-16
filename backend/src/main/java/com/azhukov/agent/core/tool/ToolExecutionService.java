@@ -123,6 +123,9 @@ public class ToolExecutionService {
         ensureFileCheckpoint(toolName, arguments);
 
         long start = System.currentTimeMillis();
+        log.info("tool_execution_started session={} callId={} tool={} argsBytes={}",
+            session != null ? session.id() : null, toolCallId, toolName,
+            arguments == null ? 0 : arguments.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
         Callable<ToolResult> callable = () -> toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session);
         Supplier<ToolResult> decorated = Retry.decorateSupplier(
             NO_RETRY_TOOLS.contains(toolName) ? noRetry : retry, () -> {
@@ -161,6 +164,9 @@ public class ToolExecutionService {
             failed = true;
         }
         long duration = System.currentTimeMillis() - start;
+        log.info("tool_execution_finished session={} callId={} tool={} success={} durationMs={} resultBytes={}",
+            session != null ? session.id() : null, toolCallId, toolName, !failed, duration,
+            result.content() == null ? 0 : result.content().getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
 
         if (agentMetrics != null) {
             agentMetrics.incrementToolCalls(toolName);

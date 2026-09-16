@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.prompt;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.agent.TestExecutionPolicy;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
@@ -49,6 +50,38 @@ class DefaultPromptBuilderTest {
         assertThat(msg.role()).isEqualTo(Role.SYSTEM);
         // Three-tier prompt uses properties.getName() in the stable tier
         assertThat(msg.content()).contains("Agent");
+    }
+
+    @Test
+    void genericTestRequestCarriesNoShellGuidance() {
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, new DefaultAgentConstants());
+
+        Message prompt = builder.buildSystemMessage(Session.create("u", "p", "m")
+            .withMetadata(TestExecutionPolicy.METADATA_KEY, "GENERIC"));
+
+        assertThat(prompt.content()).contains("Generic testing requests");
+        assertThat(prompt.content()).contains("never guess a repository");
+    }
+
+    @Test
+    void focusedTestRequestCarriesNarrowVerificationGuidance() {
+        AgentProperties properties = new AgentProperties();
+        properties.setName("Agent");
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry, new DefaultAgentConstants());
+
+        Message prompt = builder.buildSystemMessage(Session.create("u", "p", "m")
+            .withMetadata(TestExecutionPolicy.METADATA_KEY, "FOCUSED"));
+
+        assertThat(prompt.content()).contains("Focused testing requests");
+        assertThat(prompt.content()).contains("unfiltered test task");
     }
 
     // ── Out-of-band steer guidance tests (P1-8) ──────────────────────────

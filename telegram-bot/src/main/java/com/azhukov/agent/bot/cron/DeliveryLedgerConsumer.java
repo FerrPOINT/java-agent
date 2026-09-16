@@ -157,6 +157,9 @@ public class DeliveryLedgerConsumer {
             return;
         }
         String text = formatCoalescedBatch(batch);
+        log.info("delivery_batch_started items={} sourceIds={} chat={} attempts={}", batch.size(),
+            batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
+            batch.stream().map(ClaimedItem::attempts).toList());
         try {
             List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.split(text);
             Long lastMessageId = null;
@@ -176,6 +179,8 @@ public class DeliveryLedgerConsumer {
                 for (ClaimedItem item : batch) {
                     ack(item, messageId);
                 }
+                log.info("delivery_batch_acked items={} sourceIds={} chat={} chunks={} lastMessageId={}",
+                    batch.size(), batch.stream().map(ClaimedItem::sourceId).toList(), chatId, chunks.size(), lastMessageId);
                 log.info("Delivered batch of {} items ({} source types) to chat {} ({} chunks, last msg {})",
                     batch.size(), batch.stream().map(ClaimedItem::sourceType).distinct().count(),
                     chatId, chunks.size(), lastMessageId);
@@ -185,10 +190,15 @@ public class DeliveryLedgerConsumer {
                 outcome(item, "unknown",
                     lastMessageId != null ? "partial_chunk_failure" : "empty_send_result", null);
             }
+            log.warn("delivery_batch_unresolved items={} sourceIds={} chat={} category={}", batch.size(),
+                batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
+                lastMessageId != null ? "partial_chunk_failure" : "empty_send_result");
         } catch (Exception e) {
             for (ClaimedItem item : batch) {
                 outcome(item, "release", "transport_error", e.getMessage());
             }
+            log.warn("delivery_batch_released items={} sourceIds={} chat={} error={}", batch.size(),
+                batch.stream().map(ClaimedItem::sourceId).toList(), chatId, e.getMessage());
         }
     }
 

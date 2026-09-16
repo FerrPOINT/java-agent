@@ -5,6 +5,7 @@ import com.azhukov.agent.api.dto.StreamEvent;
 
 import com.azhukov.agent.core.agent.TurnExitReason;
 import com.azhukov.agent.core.agent.TurnFinalizer;
+import com.azhukov.agent.core.agent.TestExecutionPolicy;
 import com.azhukov.agent.core.agent.ThinkingTimeoutGuidance;
 import com.azhukov.agent.core.memory.MemoryContextFence;
 import com.azhukov.agent.core.agent.ResponseRecoveryPolicy;
@@ -419,6 +420,9 @@ public class AgentStreamingService {
             properties.getModel().getModelName(), sessionSource);
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
+        log.info("turn_started session={} source={} model={} testScope={}", session.id(), sessionSource,
+            request.model() != null && !request.model().isBlank() ? request.model() : properties.getModel().getModelName(),
+            TestExecutionPolicy.classify(request.message()));
 
         // Enrich session metadata with user identity from the request so the
         // system prompt volatile tier can include the real name, language, and platform.
@@ -436,6 +440,8 @@ public class AgentStreamingService {
         if (request.chatType() != null && !request.chatType().isBlank()) {
             session = session.withMetadata("chatType", request.chatType());
         }
+        session = session.withMetadata(TestExecutionPolicy.METADATA_KEY,
+            TestExecutionPolicy.classify(request.message()).name());
 
         // Set the ThreadLocal session ID so LangChain4jModelClient can check cancellation
         InterruptToken.setCurrentSessionId(session.id());
@@ -1644,6 +1650,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
         // assistant message so the persisted history doesn't end on tool→user
         // (role-alternation violation → Gemini/Claude 400, #48879).
         TurnFinalizer.closeInterruptedToolSequence(turnMessages, TurnExitReason.INTERRUPTED);
+        log.info("turn_persist_started session={} messages={} fromIndex={}", session.id(), turnMessages.size(), fromIndex);
         try {
             transactionTemplate.execute(status -> {
                 Instant now = Instant.now();
@@ -1679,8 +1686,10 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 }
                 return null;
             });
+            log.info("turn_persist_finished session={} messages={} fromIndex={}", session.id(), turnMessages.size(), fromIndex);
         } catch (Exception e) {
-            log.warn("Failed to persist streaming turn for session {}: {}", session.id(), e.getMessage());
+            log.warn("turn_persist_failed session={} messages={} fromIndex={} error={}",
+                session.id(), turnMessages.size(), fromIndex, e.getMessage());
         }
     }
 

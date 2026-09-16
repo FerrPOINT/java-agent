@@ -1,5 +1,15 @@
 # Hermes-Parity Audit - 2026-09-01
 
+## 2026-09-16 Runtime Follow-up
+
+| Area | Java files | Verified contract |
+|------|------------|-------------------|
+| Container test policy | `TestExecutionPolicy`, `DefaultPromptBuilder`, `AgentStreamingService`, `AgentRuntimeService`, `TerminalTool` | A generic testing request is classified per turn, receives explicit no-shell prompt guidance, and is rejected by terminal even if the model attempts a bypass. Focused requests allow `--tests` but reject full/slow/live/e2e/Testcontainers suites unless broad testing is explicit. Docker live turn `протестируй` produced a clarification and no terminal execution. |
+| Boundary diagnostics | `LangChain4jModelClient`, `ToolBatchPipeline`, `ToolExecutionService`, `AgentStreamingService`, `DeliveryLedgerConsumer` | Logs connect session/model/finish reason with tool batch receipt, safe raw/repaired argument fingerprints, execution timing/result sizes, persistence, and durable delivery outcome. Raw arguments and secrets are not emitted. |
+| Container Telegram probe | `docker-compose.dev.yml` | Bot health is published only on `127.0.0.1:8091`; fixture E2E confirmed bot health plus webhook unauthorized/invalid-secret 403 paths against the actual container. |
+
+Evidence: full Gradle gate backend `6905/0`, bot `1774/0`; Docker rebuild/deploy; aggregate backend health including real model ping; source/state isolation check; API terminal E2E and Telegram gateway E2E.
+
 ## Scope
 
 - Java target: current dirty worktree `C:\git\azhukov\sdlc\java-agent`.

@@ -69,6 +69,12 @@ public class ToolBatchPipeline {
             return new PipelineResult(List.of(), List.of(), false);
         }
 
+        log.info("tool_batch_received calls={} turnIndex={}", rawCalls.size(), turnIndex);
+        for (ToolCall call : rawCalls) {
+            log.debug("tool_args_raw callId={} tool={} bytes={} sha256={}", call.id(), call.name(),
+                argumentBytes(call.arguments()), argumentFingerprint(call.arguments()));
+        }
+
         // 0. Uniquify duplicate tool-call ids before any downstream consumer
         List<ToolCall> toolCalls = new ArrayList<>(rawCalls);
         ToolCallValidator.uniquifyToolCallIds(toolCalls);
@@ -113,6 +119,11 @@ public class ToolBatchPipeline {
             if (argumentRepair.isUnrepairable(call.arguments(), call.name())) {
                 unrepairableCalls.add(call);
                 continue;
+            }
+            if (!java.util.Objects.equals(call.arguments(), repaired)) {
+                log.info("tool_args_repaired callId={} tool={} rawBytes={} rawSha256={} repairedBytes={} repairedSha256={}",
+                    call.id(), call.name(), argumentBytes(call.arguments()), argumentFingerprint(call.arguments()),
+                    argumentBytes(repaired), argumentFingerprint(repaired));
             }
             repairedCalls.add(new ToolCall(call.id(), call.name(), repaired));
         }
@@ -160,7 +171,22 @@ public class ToolBatchPipeline {
         List<ToolCall> capped = ToolCallValidator.capDelegateTaskCalls(validCalls);
         capped = ToolCallValidator.deduplicateToolCalls(capped);
 
+        log.info("tool_batch_ready executable={} synthetic={} truncated={}", capped.size(), synthetic.size(), false);
         return new PipelineResult(capped, synthetic, false);
+    }
+
+    private static int argumentBytes(String arguments) {
+        return arguments == null ? 0 : arguments.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+    }
+
+    private static String argumentFingerprint(String arguments) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest((arguments == null ? "" : arguments).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest, 0, 8);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return "unavailable";
+        }
     }
 
     /** Convenience overload preserving insertion order of the registered set. */
