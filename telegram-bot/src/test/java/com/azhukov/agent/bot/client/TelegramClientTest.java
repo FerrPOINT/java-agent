@@ -302,6 +302,21 @@ class TelegramClientTest {
         }
 
         @Test
+        @DisplayName("long Telegram FloodWait does not block the delivery thread")
+        void sendMessageLongRateLimitReturnsImmediatelyWithoutRetry() {
+            stubPostChain(errorResponseWithParams(429, "Too Many Requests",
+                Map.of("retry_after", objectMapper.valueToTree(270))));
+
+            long started = System.nanoTime();
+            Optional<Long> result = client.sendMessage(1L, "text");
+            long elapsedMillis = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+
+            assertThat(result).isEmpty();
+            assertThat(elapsedMillis).isLessThan(1_000L);
+            verify(restClient, times(1)).post();
+        }
+
+        @Test
         @DisplayName("sendMessage fails without replyToMessageId — no retry")
         void sendMessageFailsNoRetry() {
             stubPostChain(errorResponse(400, "Bad request"));

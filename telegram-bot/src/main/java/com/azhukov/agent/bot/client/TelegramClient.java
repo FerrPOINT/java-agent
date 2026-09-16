@@ -39,6 +39,8 @@ public class TelegramClient {
     private final int rateLimitPerSecond;
     private final ScheduledExecutorService rateLimitScheduler;
     private final TelegramMediaClient mediaClient;
+    /** Long FloodWaits belong to durable delivery retry, never a live stream thread. */
+    static final int MAX_INLINE_RATE_LIMIT_RETRY_SECONDS = 5;
     private boolean linkPreviewEnabled = true; // B3.7: default to enabling link previews
 
     // B3: Track whether the last API call returned HTTP 409 (conflict)
@@ -197,8 +199,16 @@ public class TelegramClient {
             return response.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
-                // sendMessage keeps the blocking 429 retry — it's important for delivery
+                // A long Telegram FloodWait must not pin the stream/debouncer
+                // thread. Preserve the visible draft and let the durable
+                // delivery/retry path own recovery instead.
                 int retryAfter = e.getRetryAfter();
+                if (retryAfter > MAX_INLINE_RATE_LIMIT_RETRY_SECONDS) {
+                    log.warn("sendMessage 429 retry_after={}s exceeds inline cap {}s; not blocking delivery thread",
+                        retryAfter, MAX_INLINE_RATE_LIMIT_RETRY_SECONDS);
+                    return Optional.empty();
+                }
+                // sendMessage retries one short server-directed delay only.
                 if (retryAfter >= 0) {
                     log.warn("sendMessage 429 rate limit, blocking {}s before retry", retryAfter);
                     try {
