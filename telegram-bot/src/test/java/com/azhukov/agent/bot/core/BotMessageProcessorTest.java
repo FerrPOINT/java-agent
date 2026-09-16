@@ -80,6 +80,8 @@ class BotMessageProcessorTest {
     private EditCaptureService editCaptureService;
 
     private BotMessageProcessor processor;
+    private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
+
 
     @BeforeEach
     void setUp() {
@@ -131,6 +133,8 @@ class BotMessageProcessorTest {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         // Default: textBatchDebouncer.offer returns false (not buffered)
         when(textBatchDebouncer.offer(any())).thenReturn(false);
@@ -141,12 +145,12 @@ class BotMessageProcessorTest {
             properties, editCaptureService, textBatchDebouncer, photoBatchDebouncer);
         StreamingOrchestrator streamingOrchestrator = new StreamingOrchestrator(
             backendClient, streamEditor, busyHandler, runtimeFooter, properties, mediaDeliveryService,
-            mock(com.azhukov.agent.bot.client.TelegramClient.class));
+            mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock);
 
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
-            properties, streamEditor, inboundMediaHandler, mediaDeliveryService,
+            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AttachmentApiClient.class),
             runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
             editCaptureService, updateDispatcher, streamingOrchestrator);
@@ -243,7 +247,7 @@ class BotMessageProcessorTest {
         // Should send the capture confirmation message
         verify(telegramClient).sendMessage(eq(chatId), contains("captured for approval #55"));
         // Should NOT call the backend (normal processing should be skipped)
-        verify(backendClient, never()).chatStream(anyString(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient, never()).chatStream(anyString(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
         verify(backendClient, never()).chat(anyString(), any(), any());
         // Should end the capture
         verify(editCaptureService).endCapture(chatId);
@@ -259,17 +263,17 @@ class BotMessageProcessorTest {
         // Should NOT send a capture confirmation
         verify(telegramClient, never()).sendMessage(eq(chatId), contains("captured for approval"));
         // Should call the backend (normal processing)
-        verify(backendClient, atLeastOnce()).chatStream(anyString(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient, atLeastOnce()).chatStream(anyString(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @SuppressWarnings("unchecked")
     private void stubStreamingResult(String content, boolean streamFinalized) {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<String> tokenConsumer = inv.getArgument(3);
+                Consumer<String> tokenConsumer = inv.getArgument(4);
                 tokenConsumer.accept(content);
                 if (streamFinalized) {
-                    Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(8);
+                    Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
                     onComplete.accept(new AgentBackendClient.ChatResult(content, "test-model", 100, 1000, true));
                 }
                 return new AgentBackendClient.ChatResult(content, "test-model", 100, 1000, streamFinalized, false);
@@ -279,14 +283,14 @@ class BotMessageProcessorTest {
     @SuppressWarnings("unchecked")
     private void stubStreamingResultWithMetadata(String content, boolean streamFinalized, String modelUsed,
                                                   Integer contextTokens, Integer contextLength, boolean memoryUpdated) {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<String> tokenConsumer = inv.getArgument(3);
+                Consumer<String> tokenConsumer = inv.getArgument(4);
                 if (content != null) {
                     tokenConsumer.accept(content);
                 }
                 if (streamFinalized) {
-                    Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(8);
+                    Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
                     onComplete.accept(new AgentBackendClient.ChatResult(content, modelUsed, contextTokens, contextLength, true));
                 }
                 return new AgentBackendClient.ChatResult(content, modelUsed, contextTokens, contextLength, streamFinalized, memoryUpdated);
@@ -295,11 +299,11 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     private void stubStreamingWithTokensAndFinalize(String content, String modelUsed, boolean memoryUpdated) {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<String> tokenConsumer = inv.getArgument(3);
+                Consumer<String> tokenConsumer = inv.getArgument(4);
                 tokenConsumer.accept(content);
-                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(8);
+                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
                 onComplete.accept(new AgentBackendClient.ChatResult(content, modelUsed, 100, 1000, true, memoryUpdated));
                 return new AgentBackendClient.ChatResult(content, modelUsed, 100, 1000, true, memoryUpdated);
             });
@@ -413,7 +417,7 @@ class BotMessageProcessorTest {
     void textMessageProcessingCallsBackend() {
         stubStreamingResult("Hello back", true);
         processor.accept(textEvent(1, 100L, "Hello"));
-        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -479,7 +483,7 @@ class BotMessageProcessorTest {
         when(textBatchDebouncer.offer(any())).thenReturn(false);
         stubStreamingResult("Response", true);
         processor.accept(textEvent(1, 100L, "Hello"));
-        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -509,7 +513,7 @@ class BotMessageProcessorTest {
         stubStreamingResult("desc", true);
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: test]"));
         processor.accept(photoEvent(1, 100L, "file123", "caption", null));
-        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -518,7 +522,7 @@ class BotMessageProcessorTest {
         stubStreamingResult("desc", true);
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: test]"));
         processor.accept(photoEvent(1, 100L, "file123", "caption", "  "));
-        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     // ─── Other media types ──────────────────────────────────────
@@ -528,7 +532,7 @@ class BotMessageProcessorTest {
         stubStreamingResult("doc response", true);
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Document: test]"));
         processor.accept(documentEvent(1, 100L, "file123", "caption"));
-        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -536,7 +540,7 @@ class BotMessageProcessorTest {
         stubStreamingResult("voice response", true);
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Voice: test]"));
         processor.accept(voiceEvent(1, 100L, "file123"));
-        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -544,7 +548,7 @@ class BotMessageProcessorTest {
         stubStreamingResult("sticker response", true);
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Sticker: test]"));
         processor.accept(stickerEvent(1, 100L, "file123"));
-        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -552,14 +556,14 @@ class BotMessageProcessorTest {
         stubStreamingResult("animation response", true);
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Animation: test]"));
         processor.accept(animationEvent(1, 100L, "file123"));
-        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
     void locationEventProcessed() {
         stubStreamingResult("location response", true);
         processor.accept(locationEvent(1, 100L, "Location: 55.75, 37.61"));
-        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     // ─── Group message filter ───────────────────────────────────
@@ -665,7 +669,7 @@ class BotMessageProcessorTest {
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: /tmp/test.jpg]"));
         processor.accept(event);
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
         assertThat(msgCaptor.getValue()).contains("What is this?");
         assertThat(msgCaptor.getValue()).contains("[Photo: /tmp/test.jpg]");
     }
@@ -676,7 +680,7 @@ class BotMessageProcessorTest {
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: /tmp/test.jpg]"));
         processor.accept(photoEvent(1, 100L, "file123", "Look at this", null));
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
         assertThat(msgCaptor.getValue()).contains("Look at this");
         assertThat(msgCaptor.getValue()).contains("[Photo: /tmp/test.jpg]");
     }
@@ -687,7 +691,7 @@ class BotMessageProcessorTest {
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.empty());
         processor.accept(photoEvent(1, 100L, "file123", "Just caption", null));
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
         assertThat(msgCaptor.getValue()).contains("Just caption");
     }
 
@@ -698,7 +702,7 @@ class BotMessageProcessorTest {
         UpdateEvent event = photoEvent(1, 100L, "file123", null, null);
         processor.accept(event);
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
         assertThat(msgCaptor.getValue()).contains("[Photo: /tmp/test.jpg]");
     }
 
@@ -709,7 +713,7 @@ class BotMessageProcessorTest {
         UpdateEvent event = photoEvent(1, 100L, "file123", null, null);
         processor.accept(event);
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
         assertThat(msgCaptor.getValue()).contains("[Media attachment: photo]");
     }
 
@@ -722,7 +726,7 @@ class BotMessageProcessorTest {
             null, null, null, false, null, null, 101L, null, 0);
         processor.accept(event);
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
         assertThat(msgCaptor.getValue()).contains("[Media attachment: unknown]");
     }
 
@@ -769,10 +773,10 @@ class BotMessageProcessorTest {
                 return true;
             });
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<String> tokenConsumer = inv.getArgument(3);
-                Consumer<Throwable> onError = inv.getArgument(9);
+                Consumer<String> tokenConsumer = inv.getArgument(4);
+                Consumer<Throwable> onError = inv.getArgument(10);
                 // Simulate token delivery, then interrupt
                 tokenConsumer.accept("Partial response");
                 // Set interrupt flag
@@ -801,9 +805,9 @@ class BotMessageProcessorTest {
                 return true;
             });
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<Throwable> onError = inv.getArgument(9);
+                Consumer<Throwable> onError = inv.getArgument(10);
                 onError.accept(new RuntimeException("stream error"));
                 return new AgentBackendClient.ChatResult("", null, null, null, false, false);
             });
@@ -822,10 +826,10 @@ class BotMessageProcessorTest {
                 return true;
             });
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<String> tokenConsumer = inv.getArgument(3);
-                Consumer<Throwable> onError = inv.getArgument(9);
+                Consumer<String> tokenConsumer = inv.getArgument(4);
+                Consumer<Throwable> onError = inv.getArgument(10);
                 tokenConsumer.accept("Partial content");
                 onError.accept(new RuntimeException("stream error"));
                 return new AgentBackendClient.ChatResult("Partial content", null, null, null, false, false);
@@ -845,7 +849,7 @@ class BotMessageProcessorTest {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.empty());
         // When startStream returns empty, messageId stays -1, so no tokens are delivered,
         // accumulated is empty, and the code falls through to sync fallback
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "test-model", 100, 1000, false, false));
         when(backendClient.chat(anyString(), nullable(String.class), any()))
             .thenReturn(new AgentBackendClient.ChatResult("Sync response", "sync-model", 50, 500, false, false));
@@ -857,7 +861,7 @@ class BotMessageProcessorTest {
 
     @Test
     void streamingThrowsExceptionSendsError() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("connection refused"));
 
         processor.accept(textEvent(1, 100L, "hello"));
@@ -866,7 +870,7 @@ class BotMessageProcessorTest {
 
     @Test
     void streamingThrowsExceptionClearsStream() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("connection refused"));
 
         processor.accept(textEvent(1, 100L, "hello"));
@@ -875,7 +879,7 @@ class BotMessageProcessorTest {
 
     @Test
     void streamingNoContentButHasMetadataFallsBackToSync() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "test-model", 100, 1000, false, false));
         when(backendClient.chat(anyString(), nullable(String.class), any()))
             .thenReturn(new AgentBackendClient.ChatResult("Sync fallback", "sync-model", 50, 500, false, false));
@@ -887,7 +891,7 @@ class BotMessageProcessorTest {
 
     @Test
     void streamingNoContentNoMetadataReturnsEmpty() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", null, null, null, false, false));
 
         processor.accept(textEvent(1, 100L, "hello"));
@@ -912,6 +916,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setModelOverride("session-model");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingResultWithMetadata("response", false, null, 100, 1000, false);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n\nmodel: session-model");
@@ -937,6 +943,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingWithTokensAndFinalize("Voice response text", "test-model", false);
         when(backendClient.tts(anyString(), any())).thenReturn(new byte[]{1, 2, 3});
@@ -952,9 +960,11 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         // Stream finalized with no content → result.content() is blank
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "test-model", 100, 1000, true, false));
 
         processor.accept(textEvent(1, 100L, "hello"));
@@ -967,8 +977,10 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult(null, "test-model", 100, 1000, true, false));
 
         processor.accept(textEvent(1, 100L, "hello"));
@@ -981,6 +993,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingWithTokensAndFinalize("Voice response", "test-model", false);
         when(backendClient.tts(anyString(), any())).thenReturn(new byte[0]);
@@ -995,6 +1009,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingWithTokensAndFinalize("Voice response", "test-model", false);
         when(backendClient.tts(anyString(), any())).thenThrow(new RuntimeException("TTS error"));
@@ -1009,6 +1025,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         String longContent = "A".repeat(5000);
         stubStreamingWithTokensAndFinalize(longContent, "test-model", false);
@@ -1026,6 +1044,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setVoiceMode(true);
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         // Content that is only MEDIA: lines → cleanText is blank → no TTS
         stubStreamingWithTokensAndFinalize("MEDIA:/tmp/test.jpg", "test-model", false);
@@ -1061,6 +1081,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setMetadata("_standingGoal", "Complete the task");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingWithTokensAndFinalize("First response", "test-model", false);
         when(goalAutoContinueService.runAutoContinue(any(), anyString(), any()))
@@ -1098,6 +1120,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setMetadata("_standingGoal", "Complete the task");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingWithTokensAndFinalize("response", "test-model", false);
         // Simulate interrupt after processing
@@ -1115,6 +1139,8 @@ class BotMessageProcessorTest {
         session.setId(UUID.randomUUID());
         session.setMetadata("_standingGoal", "Complete the task");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         stubStreamingWithTokensAndFinalize("response", "test-model", false);
         when(goalAutoContinueService.runAutoContinue(any(), anyString(), any()))
@@ -1133,9 +1159,9 @@ class BotMessageProcessorTest {
     @Test
     void reactionOnCancelWhenInterrupted() {
         // Use streaming that triggers an interrupt during processing
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<String> tokenConsumer = inv.getArgument(3);
+                Consumer<String> tokenConsumer = inv.getArgument(4);
                 tokenConsumer.accept("response");
                 // Set interrupt during token processing
                 busyHandler.interrupt(100L);
@@ -1273,7 +1299,7 @@ class BotMessageProcessorTest {
     @Test
     void sendErrorEscapesMarkdownV2() {
         properties.setParseMode("MarkdownV2");
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("Error at C:\\Users\\test_file.java"));
         processor.accept(textEvent(1, 100L, "test"));
         verify(telegramClient).sendMessage(eq(100L), argThat(text ->
@@ -1284,7 +1310,7 @@ class BotMessageProcessorTest {
     @Test
     void sendErrorWithHtmlParseMode() {
         properties.setParseMode("HTML");
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("Backend error"));
         processor.accept(textEvent(1, 100L, "test"));
         verify(telegramClient).sendMessage(eq(100L), contains("Backend error"), eq("HTML"), isNull(), isNull());
@@ -1293,7 +1319,7 @@ class BotMessageProcessorTest {
     @Test
     void sendErrorThrowsExceptionLogsOnly() {
         properties.setParseMode("MarkdownV2");
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("Primary error"));
         // telegramClient.sendMessage throws
         when(telegramClient.sendMessage(anyLong(), anyString(), anyString(), any(), any()))
@@ -1306,7 +1332,7 @@ class BotMessageProcessorTest {
 
     @Test
     void backendCallFailsSendsErrorAndReaction() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("backend down"));
         processor.accept(textEvent(1, 100L, "hello"));
         verify(telegramClient).sendMessage(eq(100L), contains("Error contacting the agent backend"), anyString(), any(), any());
@@ -1317,7 +1343,7 @@ class BotMessageProcessorTest {
 
     @Test
     void backendCallFailsMarksFree() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("backend down"));
         processor.accept(textEvent(1, 100L, "hello"));
         assertThat(busyHandler.isBusy(100L)).isFalse();
@@ -1334,10 +1360,10 @@ class BotMessageProcessorTest {
                 return true;
             });
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<String> tokenConsumer = inv.getArgument(3);
-                Consumer<String> toolCallConsumer = inv.getArgument(4);
+                Consumer<String> tokenConsumer = inv.getArgument(4);
+                Consumer<String> toolCallConsumer = inv.getArgument(5);
                 tokenConsumer.accept("Answer");
                 toolCallConsumer.accept("search");
                 return new AgentBackendClient.ChatResult("Answer", "test-model", 100, 1000, true, false);
@@ -1352,10 +1378,10 @@ class BotMessageProcessorTest {
 
     @Test
     void toolResultConsumerDoesNotTriggerSegmentBreak() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<String> tokenConsumer = inv.getArgument(3);
-                BiConsumer<String, String> toolResultConsumer = inv.getArgument(5);
+                Consumer<String> tokenConsumer = inv.getArgument(4);
+                BiConsumer<String, String> toolResultConsumer = inv.getArgument(6);
                 tokenConsumer.accept("Answer");
                 toolResultConsumer.accept("search", "results found");
                 return new AgentBackendClient.ChatResult("Answer", "test-model", 100, 1000, true, false);
@@ -1378,10 +1404,10 @@ class BotMessageProcessorTest {
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean()))
             .thenReturn("\n\nfooter");
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<String> tokenConsumer = inv.getArgument(3);
-                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(8);
+                Consumer<String> tokenConsumer = inv.getArgument(4);
+                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
                 tokenConsumer.accept("Final answer");
                 onComplete.accept(new AgentBackendClient.ChatResult("Final answer", "test-model", 100, 1000, true));
                 return new AgentBackendClient.ChatResult("Final answer", "test-model", 100, 1000, true, false);
@@ -1400,9 +1426,9 @@ class BotMessageProcessorTest {
                 return true;
             });
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(8);
+                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
                 onComplete.accept(new AgentBackendClient.ChatResult("", "test-model", 100, 1000, true));
                 return new AgentBackendClient.ChatResult("", "test-model", 100, 1000, true, false);
             });
@@ -1426,10 +1452,12 @@ class BotMessageProcessorTest {
         session.setUserId("12345");
         session.setUsername("testuser");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         processor.accept(textEvent(1, 100L, "hello"));
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
         // The message must be the raw user text — the context block lives in
         // the backend system prompt (volatile tier), NOT in the user message.
         assertThat(msgCaptor.getValue()).isEqualTo("hello");
@@ -1441,7 +1469,7 @@ class BotMessageProcessorTest {
         stubStreamingResult("response", true);
         processor.accept(textEvent(1, 100L, "hello"));
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
         assertThat(msgCaptor.getValue()).isEqualTo("hello");
     }
 
@@ -1452,9 +1480,11 @@ class BotMessageProcessorTest {
         BotSessionEntity session = new BotSessionEntity();
         // id is null
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
         stubStreamingResult("response", true);
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(backendClient).chatStream(anyString(), isNull(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient).chatStream(anyString(), isNull(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     // ─── Drain queue ─────────────────────────────────────────────
@@ -1465,7 +1495,7 @@ class BotMessageProcessorTest {
         List<String> processedTexts = new ArrayList<>();
         AtomicInteger callCount = new AtomicInteger(0);
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 String msg = inv.getArgument(0);
                 int n = callCount.incrementAndGet();
@@ -1494,7 +1524,7 @@ class BotMessageProcessorTest {
         List<String> processedTexts = new ArrayList<>();
         AtomicInteger callCount = new AtomicInteger(0);
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 String msg = inv.getArgument(0);
                 int n = callCount.incrementAndGet();
@@ -1525,7 +1555,7 @@ class BotMessageProcessorTest {
         long chatId = 300L;
         AtomicInteger processCount = new AtomicInteger(0);
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 processCount.incrementAndGet();
                 busyHandler.queueMessage(chatId, textEvent(999, chatId, "loop-msg"));
@@ -1547,7 +1577,7 @@ class BotMessageProcessorTest {
         long chatId = 400L;
         AtomicInteger callCount = new AtomicInteger(0);
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 int n = callCount.incrementAndGet();
                 if (n == 1) {
@@ -1573,7 +1603,7 @@ class BotMessageProcessorTest {
         long chatId = 700L;
         List<String> callOrder = new ArrayList<>();
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 callOrder.add("chatStream");
                 return new AgentBackendClient.ChatResult("reply", null, 100, 1000, false);
@@ -1607,18 +1637,18 @@ class BotMessageProcessorTest {
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(123L));
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.of(123L));
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.of(123L));
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<String> tokenConsumer = inv.getArgument(3);
+                Consumer<String> tokenConsumer = inv.getArgument(4);
                 tokenConsumer.accept("Here is the answer");
-                Consumer<String> toolCallConsumer = inv.getArgument(4);
+                Consumer<String> toolCallConsumer = inv.getArgument(5);
                 toolCallConsumer.accept("search\u0001{\"q\":\"test\"}");
-                BiConsumer<String, String> toolResultConsumer = inv.getArgument(5);
+                BiConsumer<String, String> toolResultConsumer = inv.getArgument(6);
                 toolResultConsumer.accept("search", "results found");
                 // Post-tool tokens form the final segment (the tool-call consumer
                 // committed the previous segment and reset the accumulator).
                 tokenConsumer.accept("Here is the answer");
-                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(8);
+                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
                 onComplete.accept(new AgentBackendClient.ChatResult("Here is the answer", "test-model", 100, 1000, true));
                 return new AgentBackendClient.ChatResult("Here is the answer", "test-model", 100, 1000, true);
             });
@@ -1645,7 +1675,7 @@ class BotMessageProcessorTest {
         AtomicInteger callCount = new AtomicInteger(0);
         List<String> processedTexts = new ArrayList<>();
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 String msg = inv.getArgument(0);
                 int n = callCount.incrementAndGet();
@@ -1682,7 +1712,7 @@ class BotMessageProcessorTest {
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.empty());
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.empty());
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.empty());
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "test-model", 100, 1000, false, false));
         when(backendClient.chat(anyString(), nullable(String.class), any()))
             .thenReturn(new AgentBackendClient.ChatResult("sync response", "sync-model", 100, 1000, false, false));
@@ -1696,7 +1726,7 @@ class BotMessageProcessorTest {
 
     @Test
     void syncFallbackMergesMetadataFromStreamAndSync() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "stream-model", 200, 2000, false, true));
         when(backendClient.chat(anyString(), nullable(String.class), any()))
             .thenReturn(new AgentBackendClient.ChatResult("sync content", null, 100, 1000, false, false));
@@ -1710,7 +1740,7 @@ class BotMessageProcessorTest {
 
     @Test
     void syncFallbackPrefersSyncMetadata() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "stream-model", 200, 2000, false, false));
         when(backendClient.chat(anyString(), nullable(String.class), any()))
             .thenReturn(new AgentBackendClient.ChatResult("sync content", "sync-model", 100, 1000, false, true));
@@ -1721,7 +1751,7 @@ class BotMessageProcessorTest {
 
     @Test
     void syncFallbackMergesMemoryUpdated() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "stream-model", 200, 2000, false, true));
         when(backendClient.chat(anyString(), nullable(String.class), any()))
             .thenReturn(new AgentBackendClient.ChatResult("sync content", "sync-model", 100, 1000, false, false));
@@ -1801,7 +1831,7 @@ class BotMessageProcessorTest {
                 return true;
             });
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 // No tokens delivered, no onError call — just return empty
                 return new AgentBackendClient.ChatResult("", null, null, null, false, false);
@@ -1851,7 +1881,7 @@ class BotMessageProcessorTest {
             "testuser", null, null, "edited text", null, null, null,
             null, null, null, false, null, null, 101L, null, 0, null);
         processor.accept(event);
-        verify(backendClient, never()).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient, never()).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     // ─── MEDIA: path traversal protection ──────────────────────────
@@ -1959,7 +1989,7 @@ class BotMessageProcessorTest {
         java.util.concurrent.CountDownLatch workStarted = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.CountDownLatch workDoneLatch = new java.util.concurrent.CountDownLatch(1);
 
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 int cur = concurrent.incrementAndGet();
                 maxConcurrent.set(Math.max(maxConcurrent.get(), cur));

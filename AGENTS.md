@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-project: `backend` (REST API, LLM, tools) + `telegram-bot` (61 команда, streaming, polling) + `cli` (92 slash commands, REPL). Production: 0.1.140.
+Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-project: `backend` (REST API, LLM, tools) + `telegram-bot` (61 команда, streaming, polling) + `cli` (92+ slash commands, REPL). Production (dev): 0.1.239; main накопил WP-3…WP-12 + upstream sync — ждёт релиза 0.1.239.
 
 ## Build & Test
 
@@ -279,6 +279,24 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 | 43 | 0.1.63 | Review prompts byte-identical to Hermes |
 | 44 | 0.1.65 | Tool progress off + todo numeric ID |
 
+### 10a. Full Parity Wave (docs/35, 2026-09-14)
+
+| WP | Commit | Scope |
+|----|--------|-------|
+| WP-1 tail | `e8024563` | Delegate-completion coalescing (claimNextBatch, one target per batch, batch fencing) |
+| WP-4 | `a38eba76`, `2aadcd7e`, `e2cfc5d3` | V56 profile runtime registry + audited config/env writes + dashboard ops ledger + session prune |
+| WP-3 | `7ffebd98`, `1c29dd51` | V57 MCP config store + schema cache; V58 OAuth Code+PKCE + AES-GCM tokens + catalog install |
+| WP-5 | `2d776ddb` | SkillHubInstaller staged+rollback, capability-based toolsets, ADR-014 |
+| WP-6 | `4e304515` | V59 durable OpenAI Runs state machine + restart-safe event replay |
+| WP-7 | `590a9fed` | V60 execute-code session_kernel (persistent driver, no local fallback) |
+| WP-8 | `12d15b9f` | BrowserBackend port + explicit provider router + extension backend |
+| WP-9 | `f974c67e`, `6d54c534` | V61 console tasks + cursor replay; PTY + pub channels (ADR-015) |
+| WP-10 | `b06cedba` | MediaProvider capability matrix (honest provider exposure) |
+| WP-11 | `04bfc6cb` | V62 attachment artifacts (dedupe, safe cache, receipts) |
+| WP-12 | (this commit) | Remaining 501 inventory: describe-auto real (LLM), toolset env writes real (ProfileEnvStore), web-extract backend honest 400; docs/34/35 refreshed |
+
+Remaining 501s are deliberate fail-closed guards: env reveal (ADR-013), shell hooks (no arbitrary commands), plugins (ADR-014), credential pool (deferred), unsupported prune filters (persisted-fields-only), standalone-deployment ObjectProvider guards.
+
 ### 11. Key Numbers
 
 | Metric | Value |
@@ -293,11 +311,12 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 | CLI slash commands | 92 |
 | Backend endpoints | 140 |
 | Flyway migrations | 30 (V1–V30) |
-| Gradle modules | 3 (backend, telegram-bot, cli) |
-| Backend tests | 4710 |
-| Bot tests | 1511 |
-| E2E scenarios | 28 HTTP + 35 CLI |
-| Production version | 0.1.66 |
+| Gradle modules | 4 (backend, telegram-bot, cli, shared) |
+| Backend tests | 6834 |
+| Bot tests | 1752 |
+| CLI tests | 345 |
+| E2E scenarios | 28 HTTP + 35 CLI + PG slowTests |
+| Production version | 0.1.239 (dev) |
 
 ## Project Structure
 

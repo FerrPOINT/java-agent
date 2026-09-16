@@ -25,6 +25,13 @@ public class BotSessionEntity {
 
     private String userId;
     private String chatId;
+
+    /**
+     * V9: Telegram forum-topic thread id (NULL for DMs / non-topic chats).
+     * Sessions are keyed by (userId, threadId): each topic in a group gets
+     * its own backend transcript instead of collapsing onto one.
+     */
+    private Long threadId;
     private String username;
     private String title;
     private String modelOverride;
@@ -60,8 +67,40 @@ public class BotSessionEntity {
     @Convert(converter = MetadataConverter.class)
     private ConcurrentHashMap<String, String> metadata = new ConcurrentHashMap<>();
 
+    /** Metadata key persisting the last known forum/DM topic thread id (docs/34 gap 9). */
+    public static final String METADATA_KEY_THREAD_ID = "last_thread_id";
+
     public String getMetadata(String key) {
         return metadata.get(key);
+    }
+
+    /**
+     * Last Telegram thread (forum topic / DM topic) the user messaged from.
+     * Persisted in metadata so restart-surviving sends can route back into
+     * the same topic; 0 means "no thread routing".
+     */
+    public long getLastMessageThreadId() {
+        String raw = metadata.get(METADATA_KEY_THREAD_ID);
+        if (raw == null || raw.isBlank()) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(raw.trim());
+        } catch (NumberFormatException e) {
+            return 0L; // corrupt value: fail safe to "no routing"
+        }
+    }
+
+    /**
+     * Persist the last thread id. Passing 0 clears the routing (a bogus 0
+     * must never override a real topic).
+     */
+    public void setLastMessageThreadId(long threadId) {
+        if (threadId > 0) {
+            setMetadata(METADATA_KEY_THREAD_ID, Long.toString(threadId));
+        } else {
+            setMetadata(METADATA_KEY_THREAD_ID, null);
+        }
     }
 
     public void setMetadata(String key, String value) {

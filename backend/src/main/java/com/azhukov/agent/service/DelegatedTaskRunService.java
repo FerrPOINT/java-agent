@@ -48,6 +48,8 @@ public class DelegatedTaskRunService {
     private final DelegatedTaskRunRepository repository;
     private final ObjectMapper objectMapper;
     private final EventService eventService;
+    private final org.springframework.beans.factory.ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider;
     private final Object capacityLock = new Object();
 
     public DelegatedTaskRunService(DelegatedTaskRunRepository repository, ObjectMapper objectMapper) {
@@ -60,9 +62,21 @@ public class DelegatedTaskRunService {
         ObjectMapper objectMapper,
         EventService eventService
     ) {
+        this(repository, objectMapper, eventService, null, null);
+    }
+
+    public DelegatedTaskRunService(
+        DelegatedTaskRunRepository repository,
+        ObjectMapper objectMapper,
+        EventService eventService,
+        org.springframework.beans.factory.ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider,
+        org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider
+    ) {
         this.repository = repository;
         this.objectMapper = objectMapper;
         this.eventService = eventService;
+        this.deliveryWorkItemServiceProvider = deliveryWorkItemServiceProvider;
+        this.sessionRepositoryProvider = sessionRepositoryProvider;
     }
 
     @Transactional
@@ -128,6 +142,32 @@ public class DelegatedTaskRunService {
         return saved;
     }
 
+    /**
+     * Record a progress heartbeat for a running delegated run (docs/35 WP-1
+     * item 8 progress events). Consecutive identical summaries coalesce: the
+     * timestamp moves only when the summary changes or the run was diagnosed
+     * as stalled, so repeated "still working on it" events do not mask real
+     * staleness and do not spam state.
+     */
+    @Transactional
+    public DelegatedTaskRunEntity recordProgress(UUID runId, String summary) {
+        DelegatedTaskRunEntity entity = require(runId);
+        if (!STATUS_RUNNING.equals(entity.getStatus())) {
+            return entity;
+        }
+        String normalized = summary == null ? "" : summary.trim();
+        boolean sameAsLast = normalized.equals(entity.getLastProgressSummary());
+        boolean stalledBefore = entity.getStalledDiagnosticAt() != null;
+        if (!sameAsLast || stalledBefore) {
+            entity.setLastProgressAt(Instant.now());
+            entity.setLastProgressSummary(normalized.isEmpty() ? null : normalized);
+        }
+        if (stalledBefore) {
+            entity.setStalledDiagnosticAt(null);
+        }
+        return repository.save(entity);
+    }
+
     @Transactional
     public DelegatedTaskRunEntity finish(UUID runId, String status, Object result, String error) {
         DelegatedTaskRunEntity entity = require(runId);
@@ -143,8 +183,74 @@ public class DelegatedTaskRunService {
         entity.setError(blankToNull(effectiveError));
         entity.setCompletedAt(Instant.now());
         DelegatedTaskRunEntity saved = repository.save(entity);
+        enqueueDeliveryWork(saved);
         publish("delegate." + normalizedStatus, saved, completionPayload(saved, false));
         return saved;
+    }
+
+    /**
+     * WP-1 durable delivery: terminal delegated runs create a delivery work item
+     * in the same transaction. The target is the parent session's origin (where
+     * the conversation came from), resolved once at enqueue time — never from
+     * the current bot state at send time.
+     */
+    private void enqueueDeliveryWork(DelegatedTaskRunEntity run) {
+        if (deliveryWorkItemServiceProvider == null) {
+            return;
+        }
+        DeliveryWorkItemService deliveryService = deliveryWorkItemServiceProvider.getIfAvailable();
+        if (deliveryService == null) {
+            return;
+        }
+        String target = resolveOriginTarget(run.getParentSessionId());
+        if (target == null) {
+            log.debug("Delegated run {} has no origin target; delivery stays event-only", run.getId());
+            return;
+        }
+        try {
+            deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
+                DeliveryWorkItemService.SOURCE_DELEGATED_TASK_RUN,
+                run.getId().toString(),
+                run.getProfile(),
+                null,
+                run.getParentSessionId(),
+                target,
+                completionDeliveryPayload(run)));
+        } catch (IllegalArgumentException e) {
+            log.warn("Delegated run {} delivery target rejected: {}", run.getId(), e.getMessage());
+        } catch (Exception e) {
+            log.warn("Delegated run {} delivery enqueue failed: {}", run.getId(), e.getMessage());
+        }
+    }
+
+    private String resolveOriginTarget(UUID parentSessionId) {
+        if (sessionRepositoryProvider == null || parentSessionId == null) {
+            return null;
+        }
+        try {
+            var repo = sessionRepositoryProvider.getIfAvailable();
+            if (repo == null) {
+                return null;
+            }
+            var session = repo.findById(parentSessionId).orElse(null);
+            if (session == null || session.getOriginPlatform() == null || session.getOriginChatId() == null) {
+                return null;
+            }
+            return session.getOriginThreadId() == null
+                ? session.getOriginPlatform() + ":" + session.getOriginChatId()
+                : session.getOriginPlatform() + ":" + session.getOriginChatId() + ":" + session.getOriginThreadId();
+        } catch (Exception e) {
+            log.warn("Could not resolve origin target for session {}: {}", parentSessionId, e.getMessage());
+            return null;
+        }
+    }
+
+    private String completionDeliveryPayload(DelegatedTaskRunEntity run) {
+        String summary = run.getResultJson() != null && !run.getResultJson().isBlank()
+            ? run.getResultJson()
+            : (run.getError() != null ? "Delegated task failed: " + run.getError()
+                : "Delegated task " + run.getStatus());
+        return summary.length() > 200_000 ? summary.substring(0, 200_000) : summary;
     }
 
     @Transactional
@@ -263,6 +369,27 @@ public class DelegatedTaskRunService {
                     "delivery_state", deliveryState(entity)));
                 return new DeliveryClaim(entity.getId(), claimId, entity);
             });
+    }
+
+    /**
+     * Gateway consumer loop entry point (Hermes reinjection parity):
+     * atomically claims the oldest restorable terminal completion for the
+     * given consumer. Returns empty when nothing is pending.
+     */
+    @Transactional
+    public Optional<DeliveryClaim> claimNextPendingDelivery(String consumer) {
+        String normalizedConsumer = blankToNull(consumer);
+        if (normalizedConsumer == null) {
+            return Optional.empty();
+        }
+        Instant now = Instant.now();
+        List<DelegatedTaskRunEntity> pending = repository.findRestorablePendingDelivery(
+            now.minus(DELIVERY_CLAIM_STALE_AFTER), PageRequest.of(0, 1));
+        if (pending.isEmpty()) {
+            return Optional.empty();
+        }
+        DelegatedTaskRunEntity candidate = pending.get(0);
+        return claimCompletionDelivery(candidate.getId(), normalizedConsumer);
     }
 
     @Transactional

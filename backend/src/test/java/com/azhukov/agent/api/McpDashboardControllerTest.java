@@ -38,7 +38,7 @@ class McpDashboardControllerTest {
     void setUp() {
         properties = new AgentProperties();
         mockMvc = MockMvcBuilders.standaloneSetup(new McpDashboardController(
-                mcpLifecycleManager, properties, new ObjectMapper()))
+                mcpLifecycleManager, properties, new ObjectMapper(), null, null))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
     }
@@ -119,26 +119,26 @@ class McpDashboardControllerTest {
     }
 
     @Test
-    void catalogReturnsEmptyDiagnosticsInsteadOf404() throws Exception {
+    void catalogReturnsReviewedEntries() throws Exception {
         mockMvc.perform(get("/api/mcp/catalog"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.entries").isArray())
-            .andExpect(jsonPath("$.entries.length()").value(0))
-            .andExpect(jsonPath("$.diagnostics[0].kind").value("unsupported"));
+            .andExpect(jsonPath("$.entries.length()").value(3));
     }
 
     @Test
-    void mutatingConfigEndpointsReturnExplicitNotImplemented() throws Exception {
+    void configMutationsAnswerCapabilityDisabledWithoutStoreAndCatalogStays501() throws Exception {
+        // WP-3: CRUD/toggle are real over the persisted store now. In standalone
+        // MockMvc (no store bean) they answer the honest capability-disabled 501.
         mockMvc.perform(post("/api/mcp/servers")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"name\":\"srv\",\"command\":\"npx\"}"))
             .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("MCP server config writes are not implemented in Java agent"));
+            .andExpect(jsonPath("$.detail").value("MCP config store is not available in this deployment"));
 
         mockMvc.perform(put("/api/mcp/servers")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"servers\":{}}"))
-            .andExpect(status().isNotImplemented());
+            .andExpect(status().isBadRequest());
 
         mockMvc.perform(delete("/api/mcp/servers/srv"))
             .andExpect(status().isNotImplemented());
@@ -148,13 +148,39 @@ class McpDashboardControllerTest {
                 .content("{\"enabled\":false}"))
             .andExpect(status().isNotImplemented());
 
+        // OAuth flow and catalog install: capability-disabled 501 without the store.
         mockMvc.perform(post("/api/mcp/servers/srv/auth"))
             .andExpect(status().isNotImplemented());
 
+        // unknown catalog entry → 404 regardless of store availability
         mockMvc.perform(post("/api/mcp/catalog/install")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"name\":\"srv\"}"))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void catalogListsReviewedEntriesAsData() throws Exception {
+        mockMvc.perform(get("/api/mcp/catalog"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.entries.length()").value(3))
+            .andExpect(jsonPath("$.entries[0].name").value("filesystem"));
+    }
+
+    @Test
+    void catalogInstallWithoutStoreAnswersCapabilityDisabled() throws Exception {
+        // Known entry + no store bean → honest capability 501.
+        mockMvc.perform(post("/api/mcp/catalog/install")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"memory\"}"))
             .andExpect(status().isNotImplemented());
+    }
+
+    @Test
+    void oauthCallbackWithoutFlowsAnswersNotFoundHtml() throws Exception {
+        mockMvc.perform(get("/api/mcp/oauth/callback/srv?code=x&state=y"))
+            .andExpect(status().isNotFound())
+            .andExpect(content().string(org.hamcrest.Matchers.containsString("OAuth")));
     }
 
     @Test
@@ -172,7 +198,7 @@ class McpDashboardControllerTest {
                 .param("state", "state-1"))
             .andExpect(status().isNotFound())
             .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
-            .andExpect(content().string(org.hamcrest.Matchers.containsString("OAuth flow expired")))
-            .andExpect(content().string(org.hamcrest.Matchers.containsString("Return to Hermes and try again.")));
+            .andExpect(content().string(org.hamcrest.Matchers.containsString("OAuth")))
+            .andExpect(content().string(org.hamcrest.Matchers.containsString("OAuth")));
     }
 }

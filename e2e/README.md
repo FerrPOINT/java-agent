@@ -1,8 +1,6 @@
 # E2E scenarios
 
-Declarative end-to-end tests against a RUNNING java-agent backend
-(default `http://localhost:8090/api/v1`). No mocks: real model turns,
-real DB, real tool executions.
+Declarative end-to-end tests against a running java-agent backend (default `http://localhost:8090/api/v1`). They use real model turns, DB and tool executions, then clean up sessions they create. The suite currently contains 36 scenario files; scenario count alone is not evidence of endpoint behavior.
 
 ## Run
 
@@ -10,6 +8,8 @@ real DB, real tool executions.
 python3 e2e/run_e2e.py                     # all scenarios
 python3 e2e/run_e2e.py 01-core-chat.yaml   # selected
 python3 e2e/run_e2e.py --base http://host:8090/api/v1
+python3 e2e/run_e2e.py --evidence-dir build/http-e2e-evidence
+python3 e2e/run_cli_e2e.py                 # 50 REPL cases; needs a local backend and deployed CLI JAR
 ```
 
 Requires: backend UP (health-gated), `pyyaml`, `requests`.
@@ -78,11 +78,15 @@ values, `session_id` (last turn's session), `status`, `response`.
 | 30-mcp-tools | MCP server tools list, tool invoke (nonexistent → 4xx), resource read (nonexistent → 500) |
 | 31-memory-approve-reject | memory approve/reject (no pending → false), store + delete + verify empty |
 | 32-skills-hub-bundles | skills-hub list/search, install nonexistent (ok=false), bundles install/uninstall |
-| 33-cron-advanced | cron run-now, executions list, mark delivered, suggestions clear, heartbeat nack |
+| 33-cron-advanced | cron run-now, executions list, ledger claim empty for foreign profile, suggestions clear, heartbeat nack |
 | 34-agentchat-advanced | per-session approve/deny (no pending), reasoning-levels list |
-| 35-telegram-gateway | bot health (200), webhook without secret (403), webhook wrong secret (403) |
+| 35-telegram-gateway | isolated bot health and webhook-secret rejection |
+| 36-multiuser-isolation | authenticated per-user/profile access isolation, ownership denial and cleanup |
+
+Run `python3 scripts/endpoint_coverage_report.py` to generate the conservative static mapping inventory in `build/endpoint-coverage.json`. A mapping reference is not behavioral proof: every new stateful endpoint needs an executed lifecycle, persisted side effect, negative/repeat path and cleanup assertion.
 
 Bugs this suite has caught so far (keep the cases that found them):
+
 CLI /toolsets hitting a nonexistent path (404 forever), toolset
 enable/disable endpoints missing entirely, /subgoal replace-instead-of-append
 (Hermes always appends), cron double-delete returning 200 instead of 404,

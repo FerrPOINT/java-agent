@@ -428,14 +428,70 @@ public class BackendClient {
         }
     }
 
+    /**
+     * WP-11 (docs/35): register a local file as a backend attachment artifact.
+     * Validates path/symlink/size before upload; returns the artifact id or
+     * null on any failure (caller keeps the legacy file-reference fallback).
+     */
+    public String uploadAttachment(java.nio.file.Path file, String disposition) {
+        try {
+            if (file == null || !java.nio.file.Files.exists(file)) {
+                return null;
+            }
+            if (java.nio.file.Files.isSymbolicLink(file)) {
+                return null;
+            }
+            long size = java.nio.file.Files.size(file);
+            if (size <= 0 || size > 20L * 1024 * 1024) {
+                return null;
+            }
+            byte[] data = java.nio.file.Files.readAllBytes(file);
+            String name = file.getFileName().toString().replaceAll("[^a-zA-Z0-9._-]", "_");
+            org.springframework.http.client.MultipartBodyBuilder builder =
+                new org.springframework.http.client.MultipartBodyBuilder();
+            builder.part("file", new org.springframework.core.io.ByteArrayResource(data) {
+                @Override public String getFilename() { return name; }
+            });
+            builder.part("origin", "cli");
+            if (disposition != null) {
+                builder.part("disposition", disposition);
+            }
+            String json = restClient.post()
+                .uri("/api/v1/attachments")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(builder.build())
+                .retrieve()
+                .body(String.class);
+            JsonNode node = json == null ? null : objectMapper.readTree(json);
+            return node != null && !node.path("id").asText("").isBlank()
+                ? node.path("id").asText() : null;
+        } catch (Exception e) {
+            log.debug("attachment upload failed for {}: {}", file, e.getMessage());
+            return null;
+        }
+    }
+
     private Map<String, Object> buildChatBody(String message, String sessionId, CliState state) {
         Map<String, Object> body = new LinkedHashMap<>();
-        // /image attachment: reference the saved file in the outbound message
-        // (same media-reference convention the Telegram gateway uses) and consume it.
+        // WP-11: /image and /attach register the file as a backend artifact
+        // first; the chat request references the artifact id. Legacy fallback:
+        // inline file reference (same convention as the Telegram gateway).
         if (state != null && state.getPendingImage() != null) {
             java.nio.file.Path img = state.getPendingImage();
             state.setPendingImage(null);
-            message = "[Photo: " + img.toAbsolutePath() + "]\n" + message;
+            String artifactId = uploadAttachment(img, "photo");
+            if (artifactId != null) {
+                state.addPendingAttachment(artifactId);
+                message = "[Photo: " + img.getFileName() + " (artifact=" + artifactId + ")]\n" + message;
+            } else {
+                message = "[Photo: " + img.toAbsolutePath() + "]\n" + message;
+            }
+        }
+        if (state != null && state.hasPendingAttachments()) {
+            java.util.List<java.util.Map<String, String>> refs = state.drainPendingAttachments().stream()
+                .map(id -> java.util.Map.of("artifactId", (String) id))
+                .toList();
+            body.put("attachments", refs);
         }
         body.put("message", message);
         if (sessionId != null && !sessionId.isBlank()) {

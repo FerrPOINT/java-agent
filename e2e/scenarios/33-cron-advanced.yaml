@@ -34,15 +34,15 @@ steps:
       - { path: "[0].status", eq: success }
       - { path: "[0].finishedAt", exists: true }
 
-  - name: mark delivered
+  - name: ledger claim returns nothing for foreign profile
     method: POST
-    path: /agent/cron/{cron_id}/delivered
-    body: {}
+    path: /agent/delivery/claim
+    body:
+      consumer_id: e2e-probe
+      profiles: [no-such-profile]
     assert:
       - { status: 200 }
-      - { path: lastStatus, eq: success }
-      - { path: lastDeliveredRunAt, exists: true }
-      - { path: lastDeliveredRunAt, ne: null }
+      - { path: claimed, eq: false }
 
   - name: clear accepted suggestions
     method: POST

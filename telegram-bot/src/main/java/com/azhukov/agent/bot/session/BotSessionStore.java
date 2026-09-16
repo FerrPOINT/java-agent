@@ -39,18 +39,30 @@ public class BotSessionStore {
      */
     @Transactional
     public BotSessionEntity resolveOrCreate(String userId, String chatId, String username) {
-        Optional<BotSessionEntity> existing = repository.findByUserIdAndActiveTrue(userId);
+        return resolveOrCreate(userId, chatId, username, null);
+    }
+
+    /**
+     * V9: thread-scoped resolution. Forum topics get their own active session
+     * per user ((userId, threadId) identity); DMs keep the legacy null-thread
+     * lane. A topic message never resumes the DM session or another topic's
+     * session.
+     */
+    @Transactional
+    public BotSessionEntity resolveOrCreate(String userId, String chatId, String username, Long threadId) {
+        Optional<BotSessionEntity> existing = findActive(userId, threadId);
         if (existing.isPresent()) {
             return existing.get();
         }
 
-        // Synchronize per userId to prevent duplicate session creation on concurrent calls.
+        // Synchronize per (userId|thread) to prevent duplicate session creation on concurrent calls.
         // The database unique constraint is the ultimate safety net, but this lock avoids
         // unnecessary constraint violation exceptions and duplicate write attempts.
-        Object lock = createLocks.computeIfAbsent(userId, k -> new Object());
+        String lockKey = userId + "|" + (threadId == null ? "-" : threadId);
+        Object lock = createLocks.computeIfAbsent(lockKey, k -> new Object());
         synchronized (lock) {
             // Double-check after acquiring the lock — another thread may have created the session
-            existing = repository.findByUserIdAndActiveTrue(userId);
+            existing = findActive(userId, threadId);
             if (existing.isPresent()) {
                 return existing.get();
             }
@@ -58,6 +70,7 @@ public class BotSessionStore {
             BotSessionEntity session = new BotSessionEntity();
             session.setUserId(userId);
             session.setChatId(chatId);
+            session.setThreadId(threadId);
             session.setUsername(username);
             session.setActive(true);
             session.setCreatedAt(Instant.now());
@@ -321,5 +334,10 @@ public class BotSessionStore {
             session.setUpdatedAt(Instant.now());
             repository.save(session);
         });
+    }
+
+    /** V9: active session lookup by (userId, threadId). */
+    private Optional<BotSessionEntity> findActive(String userId, Long threadId) {
+        return repository.findByUserIdAndThreadIdAndActiveTrue(userId, threadId);
     }
 }

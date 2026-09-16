@@ -115,19 +115,49 @@ class ExecuteCodeToolUnitTest {
     }
 
     @Test
-    void sessionKernelModeFailsWithoutStartingProcess() throws Exception {
+    void sessionKernelModeWithoutManagerAnswersCapabilityError() throws Exception {
         ExecuteCodeTool tool = spy(new ExecuteCodeTool());
 
         ToolResult r = tool.execute("{\"code\":\"x = 41\",\"mode\":\"session_kernel\"}", null, session);
 
+        // WP-7: session_kernel is REAL now; without a wired kernel manager the
+        // tool answers the honest capability error (no silent local fallback)
         assertThat(r.success()).isFalse();
         JsonNode response = json(r);
         assertThat(response.get("status").asText()).isEqualTo("error");
         assertThat(response.get("execution_mode").asText()).isEqualTo("session_kernel");
-        assertThat(response.get("kernel_mode").asText()).isEqualTo("session");
         assertThat(response.get("supported_modes").get(0).asText()).isEqualTo("local");
-        assertThat(response.get("error").asText()).contains("requires Hermes session-persistent kernel runtime");
+        assertThat(response.get("error").asText())
+            .contains("session-persistent kernel runtime");
         verify(tool, never()).createProcessBuilder(anyString());
+    }
+
+    @Test
+    void sessionKernelModeRoutesToManagerWhenWired() throws Exception {
+        com.azhukov.agent.service.CodeSessionKernelManager manager =
+            org.mockito.Mockito.mock(com.azhukov.agent.service.CodeSessionKernelManager.class);
+        org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.CodeSessionKernelManager> provider =
+            new org.springframework.beans.factory.ObjectProvider<>() {
+                @Override public com.azhukov.agent.service.CodeSessionKernelManager getObject() { return manager; }
+                @Override public com.azhukov.agent.service.CodeSessionKernelManager getObject(Object... args) { return manager; }
+                @Override public com.azhukov.agent.service.CodeSessionKernelManager getIfAvailable() { return manager; }
+                @Override public com.azhukov.agent.service.CodeSessionKernelManager getIfUnique() { return manager; }
+            };
+        ExecuteCodeTool tool = new ExecuteCodeTool(
+            org.mockito.Mockito.mock(com.azhukov.agent.core.security.Redactor.class), provider);
+        org.mockito.Mockito.when(manager.evaluate(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(java.util.Map.of("status", "success", "output", "42",
+                "execution_mode", "session_kernel"));
+
+        ToolResult r = tool.execute("{\"code\":\"x = 41\",\"mode\":\"session_kernel\"}", null, session);
+
+        assertThat(r.success()).isTrue();
+        JsonNode response = json(r);
+        assertThat(response.get("status").asText()).isEqualTo("success");
+        assertThat(response.get("output").asText()).isEqualTo("42");
+        assertThat(response.get("execution_mode").asText()).isEqualTo("session_kernel");
     }
 
     @Test

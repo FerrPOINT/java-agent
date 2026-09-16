@@ -253,9 +253,18 @@ public class ChatCompletionsController {
     }
 
     private List<ToolDefinition> buildTools(OpenAiChatRequest request) {
-        return request.tools() != null
-            ? request.tools().stream().map(openAiMapper::toToolDefinition).toList()
-            : toolRegistry.getDefinitions();
+        if (request.tools() != null) {
+            return request.tools().stream().map(openAiMapper::toToolDefinition).toList();
+        }
+        // WP-l: honor the live api_server toolset toggles (hot reload parity).
+        // ToolsetsController.toggle mutates AgentProperties in-memory; without
+        // this filter a dashboard/API enable/disable had no effect on this
+        // endpoint until a full restart.
+        if (properties.getApi() != null && properties.getApi().getChatCompletionToolsets() != null
+            && !properties.getApi().getChatCompletionToolsets().isEmpty()) {
+            return toolRegistry.getDefinitions(new java.util.HashSet<>(properties.getApi().getChatCompletionToolsets()));
+        }
+        return toolRegistry.getDefinitions();
     }
 
     /**

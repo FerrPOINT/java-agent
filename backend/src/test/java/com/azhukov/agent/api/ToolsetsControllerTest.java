@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -50,6 +51,7 @@ class ToolsetsControllerTest {
         ToolDefinition termExec = new ToolDefinition("terminal", "Execute terminal command", Map.of());
 
         when(toolRegistry.getToolsets()).thenReturn(Set.of("web", "terminal", "hermes-cli", "hermes-api-server"));
+        when(toolRegistry.getDefinitions(Set.of("web"))).thenReturn(List.of(webSearch));
         when(toolRegistry.getDefinitions(Set.of("terminal"))).thenReturn(List.of(termExec));
         when(toolRegistry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(webSearch, termExec));
         when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(webSearch, termExec));
@@ -117,7 +119,11 @@ class ToolsetsControllerTest {
             .andExpect(jsonPath("$[0].tools[1]").value("web_search"))
             .andExpect(jsonPath("$[?(@.name=='discord')].platform").value("discord"))
             .andExpect(jsonPath("$[?(@.name=='discord')].platform_label").value("Discord"))
-            .andExpect(jsonPath("$[?(@.name=='discord')].enabled").value(false));
+            .andExpect(jsonPath("$[?(@.name=='discord')].enabled").value(false))
+            // WP-5 capability contract: availability comes from the live registry
+            .andExpect(jsonPath("$[?(@.name=='web')].available").value(true))
+            .andExpect(jsonPath("$[?(@.name=='discord')].available").value(false))
+            .andExpect(jsonPath("$[?(@.name=='discord')].unavailable_reason").exists());
     }
 
     @Test
@@ -332,8 +338,8 @@ class ToolsetsControllerTest {
         mockMvc.perform(put("/api/tools/toolsets/web/provider")
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .content("{\"provider\":\"ddg\",\"capability\":\"extract\"}"))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.detail").value("web extract backend selection is not implemented in the Java port"));
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.supported[0]").value("builtin"));
 
         mockMvc.perform(put("/api/tools/toolsets/web/env")
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
@@ -504,6 +510,76 @@ class ToolsetsControllerTest {
             .andExpect(jsonPath("$.error.param").value(org.hamcrest.Matchers.nullValue()))
             .andExpect(jsonPath("$.error.code").value(org.hamcrest.Matchers.nullValue()))
             .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("secret backend detail"))));
+    }
+
+    @Test
+    void namedProfileEnvWritePersistsMaskedEnvStore() throws Exception {
+        AgentProperties realProperties = new AgentProperties();
+        ProfileService profileService = profileService(realProperties);
+        profileService.createProfile(new ProfileService.CreateProfileRequest(
+            "work", null, false, false, true, null, null, null, null));
+        com.azhukov.agent.service.ProfileEnvStore envStore =
+            new com.azhukov.agent.service.ProfileEnvStore(providerOf(profileService));
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(
+            new ToolsetsController(toolRegistry, realProperties, profileService,
+                providerOf(envStore))).build();
+
+        // env write persists into the profile env store (write-only, masked reads)
+        mvc.perform(put("/p/work/api/tools/toolsets/web/env")
+                .contentType("application/json")
+                .content("{\"env\":{\"AGENT_WEB_SEARXNG_URL\":\"http://searxng.local:8080\"}}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ok").value(true))
+            .andExpect(jsonPath("$.keys[0]").value("AGENT_WEB_SEARXNG_URL"));
+
+        assertThat(envStore.readAll("work"))
+            .containsEntry("AGENT_WEB_SEARXNG_URL", "http://searxng.local:8080");
+        // masked status row reflects the write without leaking the value
+        Map<String, Map<String, Object>> rows = envStore.maskedRows("work");
+        assertThat(rows.get("AGENT_WEB_SEARXNG_URL").get("is_set")).isEqualTo(true);
+        assertThat(rows.get("AGENT_WEB_SEARXNG_URL").get("redacted_value")).isEqualTo("********");
+    }
+
+    @Test
+    void envWriteWithoutEnvStoreIsHonest501() throws Exception {
+        AgentProperties realProperties = new AgentProperties();
+        ProfileService profileService = profileService(realProperties);
+        profileService.createProfile(new ProfileService.CreateProfileRequest(
+            "work", null, false, false, true, null, null, null, null));
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(
+            new ToolsetsController(toolRegistry, realProperties, profileService, null)).build();
+
+        mvc.perform(put("/p/work/api/tools/toolsets/web/env")
+                .contentType("application/json")
+                .content("{\"env\":{\"AGENT_WEB_SEARXNG_URL\":\"http://x\"}}"))
+            .andExpect(status().isNotImplemented())
+            .andExpect(jsonPath("$.detail").value("profile env store is not available in this deployment"));
+    }
+
+    @Test
+    void postSetupStays501WithHonestDetail() throws Exception {
+        AgentProperties realProperties = new AgentProperties();
+        ProfileService profileService = profileService(realProperties);
+        profileService.createProfile(new ProfileService.CreateProfileRequest(
+            "work", null, false, false, true, null, null, null, null));
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(
+            new ToolsetsController(toolRegistry, realProperties, profileService)).build();
+
+        mvc.perform(post("/p/work/api/tools/toolsets/web/post-setup")
+                .contentType("application/json")
+                .content("{\"key\":\"AGENT_WEB_SEARXNG_URL\"}"))
+            .andExpect(status().isNotImplemented());
+    }
+
+    private static <T> org.springframework.beans.factory.ObjectProvider<T> providerOf(T value) {
+        return new org.springframework.beans.factory.ObjectProvider<T>() {
+            @Override public T getObject() { return value; }
+            @Override public T getObject(Object... args) { return value; }
+            @Override public T getIfAvailable() { return value; }
+            @Override public T getIfUnique() { return value; }
+            public java.util.stream.Stream<T> stream() { return value == null ? java.util.stream.Stream.empty() : java.util.stream.Stream.of(value); }
+            public java.util.stream.Stream<T> orderedStream() { return value == null ? java.util.stream.Stream.empty() : java.util.stream.Stream.of(value); }
+        };
     }
 
     private ProfileService profileService(AgentProperties properties) {

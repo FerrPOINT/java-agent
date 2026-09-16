@@ -24,10 +24,18 @@ public class TelegramBotApiClient {
     }
 
     public Optional<String> sendMessage(long chatId, String text) {
-        return callApi("sendMessage", Map.of(
-            "chat_id", chatId,
-            "text", text
-        ));
+        return sendMessage(chatId, text, null);
+    }
+
+    /** Send with optional forum-topic routing ({@code message_thread_id}). */
+    public Optional<String> sendMessage(long chatId, String text, Integer messageThreadId) {
+        Map<String, Object> params = new java.util.HashMap<>();
+        params.put("chat_id", chatId);
+        params.put("text", text);
+        if (messageThreadId != null) {
+            params.put("message_thread_id", messageThreadId);
+        }
+        return callApi("sendMessage", params);
     }
 
     public Optional<String> sendDocument(long chatId, byte[] document, String fileName, String caption) {

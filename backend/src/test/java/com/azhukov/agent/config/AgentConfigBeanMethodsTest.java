@@ -222,12 +222,12 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void gatewayMessageHandler_bean() {
-        assertThat(sessionConfig.gatewayMessageHandler(mock(SessionResolver.class), mock(AgentRuntime.class), mock(ObjectProvider.class), mock(MessagePersistenceService.class), mock(com.azhukov.agent.core.agent.MidTurnPersistenceCallback.class), properties, mock(com.azhukov.agent.core.agent.SteerBuffer.class), mock(ObjectProvider.class))).isNotNull();
+        assertThat(sessionConfig.gatewayMessageHandler(mock(SessionResolver.class), mock(AgentRuntime.class), mock(ObjectProvider.class), mock(MessagePersistenceService.class), mock(com.azhukov.agent.core.agent.MidTurnPersistenceCallback.class), properties, mock(com.azhukov.agent.core.agent.SteerBuffer.class), mock(ObjectProvider.class), mock(ObjectProvider.class))).isNotNull();
     }
 
     @Test
     void gatewayRoutingService_bean() {
-assertThat(sessionConfig.gatewayRoutingService(java.util.Collections.emptyList(), (java.util.function.Consumer<MessageEvent>) mock(java.util.function.Consumer.class))).isNotNull();
+assertThat(sessionConfig.gatewayRoutingService(java.util.Collections.emptyList(), (java.util.function.Consumer<MessageEvent>) mock(java.util.function.Consumer.class), null, null)).isNotNull();
     }
 
     @Test

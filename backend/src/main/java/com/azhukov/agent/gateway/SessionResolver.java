@@ -43,11 +43,19 @@ public class SessionResolver {
         created.setCreatedAt(Instant.now());
         created.setUpdatedAt(Instant.now());
         created.setSource("telegram");
+        created.setOriginPlatform(source.platform() == null ? null : source.platform().name().toLowerCase(java.util.Locale.ROOT));
+        created.setOriginChatId(trimToNull(source.chatId()));
+        created.setOriginThreadId(trimToNull(source.threadId()));
+        created.setOriginUserId(trimToNull(source.userId()));
         created.setLastActive(Instant.now());
         created.setMessageCount(0);
         SessionEntity saved = sessionRepository.save(created);
         log.info("Created new session for userId={} sessionId={}", userId, saved.getId());
         return new Session(saved.getId(), saved.getUserId(), saved.getTitle(),
             saved.getModelProvider(), saved.getModelName(), null, java.util.Map.of(), saved.getSubgoal());
+    }
+
+    private static String trimToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 }

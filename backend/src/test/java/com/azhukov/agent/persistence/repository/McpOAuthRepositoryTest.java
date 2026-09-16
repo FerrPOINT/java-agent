@@ -45,6 +45,13 @@ class McpOAuthRepositoryTest extends PostgresTestContainer {
     @Autowired
     private McpOAuthRepository mcpOAuthRepository;
 
+    @org.junit.jupiter.api.BeforeEach
+    void cleanSharedContainerTable() {
+        // The PG Testcontainer is JVM-wide shared across slowTest classes;
+        // sibling tests (e.g. McpOAuthProfileIsolationTest) leave rows behind.
+        mcpOAuthRepository.deleteAll();
+    }
+
     @Test
     void saveAndFindById() {
         McpOAuthEntity entity = newMcpOAuth(SERVER_NAME_1, ACCESS_TOKEN_1, REFRESH_TOKEN_1);

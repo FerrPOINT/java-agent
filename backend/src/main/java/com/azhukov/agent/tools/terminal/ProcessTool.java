@@ -549,6 +549,38 @@ public class ProcessTool implements ToolHandler {
             }
         }
     }
+    /** Console bridge: lookup a tracked process by id or unique prefix (dashboard console). */
+    public ManagedProcess findConsoleProcess(String id) {
+        return findProcess(id);
+    }
+
+    /** Console bridge: process id for API responses. */
+    public String processId(ManagedProcess process) {
+        return process == null ? null : process.id;
+    }
+
+    /** Console bridge: liveness for API responses. */
+    public boolean isProcessAlive(ManagedProcess process) {
+        return process != null && process.isAlive();
+    }
+
+    /** Console bridge: recent redacted-by-caller output snapshot. */
+    public List<String> recentOutput(ManagedProcess process, int maxLines) {
+        if (process == null) {
+            return List.of();
+        }
+        List<String> snapshot = process.getOutputLines();
+        int start = Math.max(0, snapshot.size() - Math.max(1, maxLines));
+        return snapshot.subList(start, snapshot.size());
+    }
+
+    /** Console bridge: terminate with a console-specific termination source. */
+    public void killProcess(ManagedProcess process, String source) {
+        if (process != null) {
+            process.destroy(source);
+        }
+    }
+
     /** PR-3 parity: bind a spawned process to the session that owns it. */
     public void claimProcess(ManagedProcess p, UUID ownerSessionId) {
         if (p != null) p.ownerSessionId = ownerSessionId;

@@ -208,16 +208,23 @@ public class ToolsetsController {
     private final ToolRegistry toolRegistry;
     private final AgentProperties properties;
     private final ProfileService profileService;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.ProfileEnvStore> envStoreProvider;
 
     @Autowired
-    public ToolsetsController(ToolRegistry toolRegistry, AgentProperties properties, ProfileService profileService) {
+    public ToolsetsController(ToolRegistry toolRegistry, AgentProperties properties, ProfileService profileService,
+                              org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.ProfileEnvStore> envStoreProvider) {
         this.toolRegistry = toolRegistry;
         this.properties = properties;
         this.profileService = profileService;
+        this.envStoreProvider = envStoreProvider;
+    }
+
+    public ToolsetsController(ToolRegistry toolRegistry, AgentProperties properties, ProfileService profileService) {
+        this(toolRegistry, properties, profileService, null);
     }
 
     ToolsetsController(ToolRegistry toolRegistry, AgentProperties properties) {
-        this(toolRegistry, properties, null);
+        this(toolRegistry, properties, null, null);
     }
 
     @GetMapping({"/v1/toolsets", "/p/{profile}/v1/toolsets"})
@@ -366,7 +373,16 @@ public class ToolsetsController {
                 dashboardEntry.put("platform", platform);
                 dashboardEntry.put("platform_label", platformLabel(platform));
                 dashboardEntry.put("enabled", enabled);
-                dashboardEntry.put("available", enabled);
+                // WP-5: available mirrors the capability registry, not the
+                // enabled toggle — an enabled-but-unregistered toolset shows
+                // available=false with reason instead of masquerading.
+                Object capabilityAvailable = entry.get("available");
+                dashboardEntry.put("available",
+                    capabilityAvailable != null && Boolean.parseBoolean(String.valueOf(capabilityAvailable)));
+                if (!Boolean.parseBoolean(String.valueOf(dashboardEntry.get("available")))) {
+                    dashboardEntry.put("unavailable_reason", String.valueOf(entry
+                        .getOrDefault("unavailable_reason", "not available in this build")));
+                }
                 return dashboardEntry;
             })
             .toList();
@@ -506,7 +522,10 @@ public class ToolsetsController {
                     .body(Map.of("detail", "Unknown capability: " + capability + " (expected 'search' or 'extract')"));
             }
             if ("extract".equals(capability)) {
-                return notImplemented("web extract backend selection is not implemented in the Java port");
+                return ResponseEntity.badRequest().body(Map.of(
+                    "detail", "web extract backend selection is fixed to the built-in reader in this port; "
+                        + "third-party extract backends are not configurable",
+                    "supported", java.util.List.of("builtin")));
             }
         }
 
@@ -541,7 +560,7 @@ public class ToolsetsController {
     }
 
     @PutMapping({"/api/tools/toolsets/{toolset}/env", "/p/{profile}/api/tools/toolsets/{toolset}/env"})
-    @Operation(summary = "Reject dashboard env writes because Java has no Hermes profile env store")
+    @Operation(summary = "Persist allowlisted toolset environment keys via the profile env store")
     public ResponseEntity<Map<String, Object>> saveToolsetEnv(
         @PathVariable(name = "profile", required = false) String pathProfile,
         @PathVariable String toolset,
@@ -555,7 +574,38 @@ public class ToolsetsController {
         if (!isKnownConfigurableToolset(toolset)) {
             return ResponseEntity.badRequest().body(Map.of("detail", "Unknown toolset: " + toolset));
         }
-        return notImplemented("toolset environment writes are not implemented in the Java port");
+        com.azhukov.agent.service.ProfileEnvStore envStore =
+            envStoreProvider == null ? null : envStoreProvider.getIfAvailable();
+        if (envStore == null) {
+            return notImplemented("profile env store is not available in this deployment");
+        }
+        Object rawEnv = body == null ? null : body.get("env");
+        if (!(rawEnv instanceof Map<?, ?> envMap) || envMap.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("detail", "env map is required"));
+        }
+        Map<String, String> values = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : envMap.entrySet()) {
+            String key = String.valueOf(entry.getKey()).trim().toUpperCase(Locale.ROOT);
+            if (!envStore.isAllowedKey(key)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("detail", "key is not in the env allowlist: " + key));
+            }
+            values.put(key, entry.getValue() == null ? "" : String.valueOf(entry.getValue()));
+        }
+        try {
+            for (Map.Entry<String, String> entry : values.entrySet()) {
+                envStore.set(profile.profile(), entry.getKey(), entry.getValue());
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("ok", true);
+            response.put("name", toolset);
+            response.put("keys", values.keySet());
+            response.put("note", "values are write-only; reads are masked by design");
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("detail", "failed to persist env keys: " + e.getMessage()));
+        }
     }
 
     @PostMapping({"/api/tools/toolsets/{toolset}/post-setup", "/p/{profile}/api/tools/toolsets/{toolset}/post-setup"})
@@ -1027,10 +1077,22 @@ public class ToolsetsController {
 
     private Map<String, Object> toolsetEntry(ToolsetMeta meta, Set<String> enabledToolsets, ToolsetConfig config) {
         Map<String, Object> entry = new LinkedHashMap<>();
+        // WP-5: availability is a CAPABILITY computed from the live tool
+        // registry — a toolset is available only when it actually exposes at
+        // least one registered tool. Labels/config alone never mark it
+        // available; unavailable ones are reported with a reason instead of
+        // silently appearing enabled.
+        List<String> registered = registryToolNames(meta.name());
+        boolean available = !registered.isEmpty()
+            || !registryToolNames(toolsetAlias(meta.name())).isEmpty();
         entry.put("name", meta.name());
         entry.put("label", meta.label());
         entry.put("description", meta.description());
         entry.put("enabled", enabledToolsets.contains(meta.name()) || enabledToolsets.contains(toolsetAlias(meta.name())));
+        entry.put("available", available);
+        if (!available) {
+            entry.put("unavailable_reason", "no tools registered for this toolset in this build");
+        }
         entry.put("configured", configured(config, meta.name()));
         entry.put("tools", meta.tools());
         return entry;

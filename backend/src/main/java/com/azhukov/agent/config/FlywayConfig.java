@@ -1,7 +1,9 @@
 package com.azhukov.agent.config;
 
+import jakarta.persistence.EntityManagerFactory;
 import lombok.extern.slf4j.Slf4j;
 import org.flywaydb.core.Flyway;
+import org.springframework.boot.autoconfigure.AbstractDependsOnBeanFactoryPostProcessor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,6 +16,21 @@ import java.sql.SQLException;
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "spring.flyway.enabled", havingValue = "true", matchIfMissing = true)
 public class FlywayConfig {
+
+    /**
+     * WP-g: a manual Flyway bean (not Boot's FlywayAutoConfiguration) gets no
+     * automatic EntityManagerFactory dependency, so bean-creation order decided
+     * whether migrations ran before services whose @PostConstruct reads schema
+     * (CronJobService.loadJobs vs V66 cron_jobs columns — the 0.1.240 crash
+     * loop). Register the same EMF→flyway dependsOn edge Boot's auto-config
+     * installs, making the order deterministic.
+     */
+    @Bean
+    static AbstractDependsOnBeanFactoryPostProcessor flywayEmfDependency() {
+        return new AbstractDependsOnBeanFactoryPostProcessor(
+            EntityManagerFactory.class, "flyway") {
+        };
+    }
 
     @Bean(initMethod = "migrate")
     public Flyway flyway(DataSource dataSource) {

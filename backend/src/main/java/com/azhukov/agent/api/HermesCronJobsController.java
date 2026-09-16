@@ -400,7 +400,6 @@ public class HermesCronJobsController {
         job.put("origin", null);
         job.put("enabled_toolsets", splitCsv(entity.getEnabledToolsets()));
         job.put("workdir", entity.getWorkdir());
-        job.put("last_delivered_run_at", entity.getLastDeliveredRunAt());
         job.put("last_run_session_id", entity.getLastRunSessionId());
         return job;
     }

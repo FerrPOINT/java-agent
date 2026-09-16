@@ -45,7 +45,11 @@ public class SecurityConfig {
                 // was already validated on the initial REQUEST dispatch by ApiKeyAuthFilter.
                 .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                 .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/api-docs/**", "/v3/api-docs/**",
-                    "/actuator/health/**", "/actuator/info").permitAll()
+                    "/actuator/health/**", "/actuator/info",
+                    // M2: Prometheus scrape on the dedicated management port
+                    // (9969) — metrics carry endpoint names only, no payloads;
+                    // the port stays on the internal compose network.
+                    "/actuator/prometheus").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(securityHeadersFilter, UsernamePasswordAuthenticationFilter.class)

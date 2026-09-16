@@ -67,7 +67,7 @@ class InboundMessageProcessorBusyInputModeTest {
         agentProperties.getGateway().getTelegram().setAllowByDefault(true);
 
         processor = new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider,
-            messagePersistenceService, null, agentProperties, steerBuffer, interruptTokenProvider);
+            messagePersistenceService, null, agentProperties, steerBuffer, interruptTokenProvider, null);
     }
 
     @Test

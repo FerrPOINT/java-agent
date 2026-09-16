@@ -86,6 +86,15 @@ public class AgentProperties {
         private String apiKey = "";
         private String modelName = "";
         private int timeoutSeconds = 120;
+
+        /**
+         * WP-d (Hermes stale-stream parity #110769): max silence BETWEEN stream
+         * events before the stream is declared wedged. Each token resets the
+         * clock, so a reasoning model thinking for many minutes stays alive,
+         * while a TCP connection that stopped delivering fails fast.
+         * 0 disables the stall watchdog (only the overall timeout applies).
+         */
+        private int streamStallSeconds = 180;
         private int maxRetries = 3;
         private int maxTokens = 4096;
         private double temperature = 0.7;
@@ -407,6 +416,14 @@ public class AgentProperties {
             private String trust = "full";
             // OAuth configuration for remote MCP servers
             private String oauthTokenUrl = "";
+
+            /**
+             * WP-i (Hermes tools/mcp_stdio_watchdog.py parity): interpose a
+             * parent-death supervisor between the agent and stdio MCP servers
+             * so a hard agent crash cannot orphan the server processes.
+             * POSIX only; disabled => direct spawn (legacy behavior).
+             */
+            private boolean stdioParentDeathWatchdog = true;
             private String oauthClientId = "";
             private String oauthClientSecret = "";
             /** OAuth scopes (space-separated), empty = use server defaults */
@@ -639,6 +656,12 @@ public class AgentProperties {
         private int dispatchIntervalSeconds = 60;
         /** HERMES-SYNC: Consecutive failures before showing "needs attention" nudge (default 3). */
         private int nudgeFailureThreshold = 3;
+        /**
+         * WP-c (Hermes cron.retry_unreachable parity): automatic bounded re-runs
+         * (5/15/30 min ladder) when a recurring job's fire fails with a transient
+         * network error BEFORE any model call. One-shots never re-run.
+         */
+        private boolean retryUnreachable = true;
     }
 
     @Getter @Setter

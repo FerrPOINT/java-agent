@@ -29,6 +29,7 @@ class BotSessionStoreTest {
         existing.setUserId("123");
         existing.setActive(true);
         when(repository.findByUserIdAndActiveTrue("123")).thenReturn(Optional.of(existing));
+        org.mockito.Mockito.lenient().when(repository.findByUserIdAndThreadIdAndActiveTrue("123", null)).thenReturn(Optional.of(existing));
 
         BotSessionEntity result = store.resolveOrCreate("123", "456", "user");
         assertThat(result).isSameAs(existing);

@@ -134,4 +134,44 @@ class SessionTitleServiceTest {
         verify(sessionRepository).save(captor.capture());
         assertThat(captor.getValue().getTitle()).isEqualTo("x".repeat(80) + "...");
     }
+
+    @Test
+    void isPromptExampleEchoRejectsParrotedExamples() {
+        // exact echoes (any case)
+        assertThat(SessionTitleService.isPromptExampleEcho("Fix login button on mobile")).isTrue();
+        assertThat(SessionTitleService.isPromptExampleEcho("fix login button on mobile")).isTrue();
+        assertThat(SessionTitleService.isPromptExampleEcho("Postgres connection pool exhaustion")).isTrue();
+        assertThat(SessionTitleService.isPromptExampleEcho("Code changes")).isTrue();
+        // bracket/quote wrappers cannot bypass the guard
+        assertThat(SessionTitleService.isPromptExampleEcho("[Fix login button on mobile]")).isTrue();
+        assertThat(SessionTitleService.isPromptExampleEcho("\"Code changes\"")).isTrue();
+        // "Friendly greeting" is a LEGITIMATE output for bare greetings — NOT rejected
+        assertThat(SessionTitleService.isPromptExampleEcho("Friendly greeting")).isFalse();
+        // real titles unaffected
+        assertThat(SessionTitleService.isPromptExampleEcho("Fix build pipeline on staging")).isFalse();
+        assertThat(SessionTitleService.isPromptExampleEcho("")).isFalse();
+        assertThat(SessionTitleService.isPromptExampleEcho(null)).isFalse();
+    }
+
+    @Test
+    void parrotedExampleTitleFallsBackToDerivedTitle() {
+        SessionEntity session = new SessionEntity();
+        session.setId(SESSION_ID);
+        session.setTitle("New chat");
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+
+        String longMessage = "please help me with the deployment pipeline " + "y".repeat(100);
+        when(modelClient.complete(any(), any())).thenReturn(
+            new com.azhukov.agent.core.model.ChatResponse(
+                "Fix login button on mobile", java.util.List.of(), "STOP"));
+
+        service.maybeUpdateTitle(SESSION_ID, List.of(Message.user(longMessage)), true);
+
+        // the parroted example must NOT become the title
+        ArgumentCaptor<SessionEntity> captor = ArgumentCaptor.forClass(SessionEntity.class);
+        verify(sessionRepository).save(captor.capture());
+        assertThat(captor.getValue().getTitle())
+            .isNotEqualTo("Fix login button on mobile")
+            .endsWith("...");
+    }
 }
