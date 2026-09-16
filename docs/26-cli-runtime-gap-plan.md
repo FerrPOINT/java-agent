@@ -47,9 +47,9 @@
 - `/api/v1/agent/snapshot` — create state snapshot
 - `/api/v1/agent/subgoal` — add subgoal criteria
 - `/api/v1/agent/queue` — queue prompt for next turn
-- `/api/v1/health` (telegram-bot `AgentBackendClient.health()` зовёт `/api/v1/agent/health`, которого нет)
+- Все перечисленные пути выше остаются gap-кандидатами, кроме health: `GET /api/v1/health` и совместимый `GET /api/v1/agent/health` реализованы в `HealthController`; Telegram Bot использует второй путь и имеет E2E-покрытие.
 
-**Чинить:** для каждого endpoint — `AgentController` mapping + `AgentRuntimeService` метод + реализация в runtime (или временно `501 Not Implemented` с честным сообщением). Предпочтительно: не возвращать 404, а либо реализовать, либо убрать команду из CLI.
+**Чинить:** для каждого оставшегося endpoint — `AgentController` mapping + `AgentRuntimeService` метод + реализация в runtime (или временно `501 Not Implemented` с честным сообщением). Предпочтительно: не возвращать 404, а либо реализовать, либо убрать команду из CLI.
 
 ### 4. CLI state (reasoning, fast, voice, personality, tools) не передаётся backend при chat
 
