@@ -1140,6 +1140,25 @@ class TelegramClientTest {
         }
 
         @Test
+        @DisplayName("HTTP 429 cooldown suppresses later Telegram calls")
+        void rateLimit429BlocksLaterCallsUntilRetryAfter() {
+            TelegramResponse error429 = errorResponseWithParams(429, "Too Many Requests",
+                Map.of("retry_after", IntNode.valueOf(1)));
+            stubPostChain(error429);
+
+            assertThatThrownBy(() -> client.callApi("sendMessage", Map.of("chat_id", 1)))
+                .isInstanceOf(TelegramApiException.class);
+            assertThatThrownBy(() -> client.callApi("editMessageText", Map.of("chat_id", 1)))
+                .isInstanceOf(TelegramApiException.class)
+                .satisfies(ex -> {
+                    TelegramApiException rateLimit = (TelegramApiException) ex;
+                    assertThat(rateLimit.getRetryAfter()).isPositive();
+                    assertThat(rateLimit.getMessage()).contains("flood cooldown");
+                });
+            verify(restClient, times(1)).post();
+        }
+
+        @Test
         @DisplayName("HTTP 429 without retry_after parameter has retryAfter=-1")
         void rateLimit429NoRetryParam() {
             TelegramResponse error429 = errorResponse(429, "Too Many Requests");

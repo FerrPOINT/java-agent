@@ -38,6 +38,7 @@ public class TelegramClient {
     private final Semaphore rateLimiter;
     private final int rateLimitPerSecond;
     private final ScheduledExecutorService rateLimitScheduler;
+    private final java.util.concurrent.atomic.AtomicLong floodBlockedUntilMs = new java.util.concurrent.atomic.AtomicLong();
     private final TelegramMediaClient mediaClient;
     /** Long FloodWaits belong to durable delivery retry, never a live stream thread. */
     static final int MAX_INLINE_RATE_LIMIT_RETRY_SECONDS = 5;
@@ -80,6 +81,11 @@ public class TelegramClient {
      * effective rate within the configured limit.
      */
     private void acquireRateLimit() {
+        long now = System.currentTimeMillis();
+        long blockedUntil = floodBlockedUntilMs.get();
+        if (blockedUntil > now) {
+            throw new TelegramApiException(429, "Telegram flood cooldown active", Math.max(1, (int) Math.ceil((blockedUntil - now) / 1000.0)));
+        }
         if (rateLimiter != null) {
             try {
                 if (!rateLimiter.tryAcquire(5, TimeUnit.SECONDS)) {
@@ -815,6 +821,7 @@ public class TelegramClient {
                 if (code == 429 && response.parameters() != null
                     && response.parameters().containsKey("retry_after")) {
                     retryAfter = response.parameters().get("retry_after").asInt(1);
+                    applyFloodCooldown(retryAfter);
                 }
                 throw new TelegramApiException(code, desc, retryAfter);
             }
@@ -836,6 +843,15 @@ public class TelegramClient {
         } finally {
             releaseRateLimit();
         }
+    }
+
+    private void applyFloodCooldown(int retryAfterSeconds) {
+        if (retryAfterSeconds <= 0) {
+            return;
+        }
+        long until = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(retryAfterSeconds);
+        floodBlockedUntilMs.accumulateAndGet(until, Math::max);
+        log.warn("Telegram flood cooldown registered for {}s", retryAfterSeconds);
     }
 
     /**
@@ -878,6 +894,7 @@ public class TelegramClient {
                 if (code == 429 && response.parameters() != null
                     && response.parameters().containsKey("retry_after")) {
                     retryAfter = response.parameters().get("retry_after").asInt(1);
+                    applyFloodCooldown(retryAfter);
                 }
                 throw new TelegramApiException(code, desc, retryAfter);
             }
