@@ -14,7 +14,6 @@ Two delivery-semantics fixes closing docs/34 gap 10 (cron residual delivery), pl
 - `ToolCallUniquifyBeforePersistTest`: the fixture's recording list raced itself — `web_search` is PARALLEL_SAFE so the batch runs on virtual threads while the list was a plain `ArrayList`; now synchronized.
 - docs/34: MCP line 882 (watchdog/teardown shipped in 0.1.241) and cron line 901 (delivery semantics closed) updated so no fix is double-tracked.
 
-
 ## [0.1.241] — 2026-09-15
 
 Five reliability/parity fixes: one live incident, four docs/34-35 tails.
