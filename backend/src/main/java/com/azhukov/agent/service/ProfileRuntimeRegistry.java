@@ -28,6 +28,12 @@ public class ProfileRuntimeRegistry {
 
     private final ObjectProvider<ProfileRuntimeStateRepository> repositoryProvider;
 
+    /** Fetch the runtime row without creating it (read-only health/status calls). */
+    public Optional<ProfileRuntimeStateEntity> find(String profile) {
+        ProfileRuntimeStateRepository repository = repository();
+        return repository == null ? Optional.empty() : repository.findByProfile(profile);
+    }
+
     /** Fetch (or lazily create) the runtime row for a profile. */
     public Optional<ProfileRuntimeStateEntity> state(String profile) {
         ProfileRuntimeStateRepository repository = repository();

@@ -1,5 +1,6 @@
 package com.azhukov.agent.gateway;
 
+import com.azhukov.agent.service.ProfileRuntimeRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -8,6 +9,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.mock;
 
 class GatewayLifecycleServiceTest {
 
@@ -72,6 +75,20 @@ class GatewayLifecycleServiceTest {
         lifecycle.start();
         GatewayLifecycleService.Status again = lifecycle.start();
         assertThat(again.state()).isEqualTo(GatewayLifecycleService.State.RUNNING);
+    }
+
+    @Test
+    void lifecycleTransitionsArePersistedIntoDefaultProfileRuntimeState() {
+        ProfileRuntimeRegistry runtimeRegistry = mock(ProfileRuntimeRegistry.class);
+        GatewayLifecycleService lifecycle = new GatewayLifecycleService(null, runtimeRegistry);
+
+        lifecycle.start();
+        lifecycle.drain(Duration.ZERO);
+        lifecycle.fail("adapter down");
+
+        verify(runtimeRegistry).updateWorkerState("default", "running");
+        verify(runtimeRegistry).updateWorkerState("default", "stopped");
+        verify(runtimeRegistry).updateWorkerState("default", "failed");
     }
 
     @Test

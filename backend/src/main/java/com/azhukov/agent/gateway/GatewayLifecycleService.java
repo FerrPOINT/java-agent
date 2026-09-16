@@ -3,6 +3,7 @@ package com.azhukov.agent.gateway;
 import com.azhukov.agent.persistence.entity.GatewayRuntimeStateEntity;
 import com.azhukov.agent.persistence.repository.GatewayRuntimeStateRepository;
 import com.azhukov.agent.service.GatewayHomeChannelService;
+import com.azhukov.agent.service.ProfileRuntimeRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -29,13 +30,24 @@ public class GatewayLifecycleService {
     public enum State { RUNNING, DRAINING, STOPPED, FAILED }
 
     private final GatewayRuntimeStateRepository stateRepository;
+    private final ProfileRuntimeRegistry profileRuntimeRegistry;
     private final AtomicReference<State> state = new AtomicReference<>(State.STOPPED);
     private final AtomicInteger activeInbound = new AtomicInteger();
     private final Instant startedAt = Instant.now();
     private volatile String lastError;
 
+    /** Legacy constructor for focused lifecycle tests. */
     public GatewayLifecycleService(@Autowired(required = false) GatewayRuntimeStateRepository stateRepository) {
+        this(stateRepository, null);
+    }
+
+    @Autowired
+    public GatewayLifecycleService(
+        @Autowired(required = false) GatewayRuntimeStateRepository stateRepository,
+        @Autowired(required = false) ProfileRuntimeRegistry profileRuntimeRegistry
+    ) {
         this.stateRepository = stateRepository;
+        this.profileRuntimeRegistry = profileRuntimeRegistry;
     }
 
     public State currentState() {
@@ -79,6 +91,13 @@ public class GatewayLifecycleService {
 
     public String lastError() {
         return lastError;
+    }
+
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    public void startOnApplicationReady() {
+        // The backend owns the HTTP gateway adapters; without this transition
+        // every inbound event is rejected as STOPPED after a JVM restart.
+        start();
     }
 
     /** RUNNING. Idempotent: start on RUNNING is a no-op returning current status. */
@@ -149,6 +168,15 @@ public class GatewayLifecycleService {
     public record Status(State state, int activeInbound, Instant since, String lastError) {}
 
     private void persist(State newState, String error) {
+        // The profile runtime row is the dashboard/health authority. Gateway
+        // lifecycle has one JVM-wide adapter set today, so transitions are
+        // recorded against the default profile until real per-profile adapter
+        // processes exist; do not fabricate a separate worker.
+        if (profileRuntimeRegistry != null) {
+            profileRuntimeRegistry.updateWorkerState(
+                GatewayHomeChannelService.DEFAULT_PROFILE,
+                newState.name().toLowerCase(Locale.ROOT));
+        }
         if (stateRepository == null) {
             return;
         }

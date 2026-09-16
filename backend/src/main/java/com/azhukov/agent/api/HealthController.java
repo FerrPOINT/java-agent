@@ -1,10 +1,13 @@
 package com.azhukov.agent.api;
 
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.gateway.GatewayLifecycleService;
 import com.azhukov.agent.service.ApiRunAdmissionService;
+import com.azhukov.agent.service.ProfileRuntimeRegistry;
 import com.azhukov.agent.service.OpenAiRunService;
 import org.springframework.beans.factory.annotation.Autowired;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +24,8 @@ public class HealthController {
     private final AgentProperties properties;
     private OpenAiRunService openAiRunService;
     private ApiRunAdmissionService apiRunAdmissionService;
+    private GatewayLifecycleService gatewayLifecycleService;
+    private ProfileRuntimeRegistry profileRuntimeRegistry;
     private DataSource dataSource;
 
     @Autowired(required = false)
@@ -31,6 +36,16 @@ public class HealthController {
     @Autowired(required = false)
     void setApiRunAdmissionService(ApiRunAdmissionService apiRunAdmissionService) {
         this.apiRunAdmissionService = apiRunAdmissionService;
+    }
+
+    @Autowired(required = false)
+    void setGatewayLifecycleService(GatewayLifecycleService gatewayLifecycleService) {
+        this.gatewayLifecycleService = gatewayLifecycleService;
+    }
+
+    @Autowired(required = false)
+    void setProfileRuntimeRegistry(ProfileRuntimeRegistry profileRuntimeRegistry) {
+        this.profileRuntimeRegistry = profileRuntimeRegistry;
     }
 
     @Autowired(required = false)
@@ -64,18 +79,27 @@ public class HealthController {
     }
 
     @GetMapping({"/health", "/v1/health", "/p/{profile}/health", "/p/{profile}/v1/health"})
-    public Map<String, Object> hermesHealth() {
+    public Map<String, Object> hermesHealth(@PathVariable(name = "profile", required = false) String profile) {
+        RuntimeSnapshot runtime = runtimeSnapshot(profile);
         return Map.of(
-            "status", "ok",
+            "status", healthStatus(runtime.workerState()),
             "platform", "java-agent",
-            "version", implementationVersion()
-        );
+            "version", implementationVersion(),
+            "profile", runtime.profile(),
+            "gateway_state", runtime.workerState(),
+            "platform_binding", runtime.gatewayBinding());
+    }
+
+    /** Direct-call compatibility for services and unit tests. */
+    public Map<String, Object> hermesHealthDetailed() {
+        return hermesHealthDetailed(null);
     }
 
     @GetMapping({"/health/detailed", "/p/{profile}/health/detailed"})
-    public Map<String, Object> hermesHealthDetailed() {
+    public Map<String, Object> hermesHealthDetailed(@PathVariable(name = "profile", required = false) String profile) {
+        RuntimeSnapshot runtime = runtimeSnapshot(profile);
         int activeRuns = activeApiRuns();
-        String gatewayState = "running";
+        String gatewayState = runtime.workerState();
         Map<String, Object> readiness = collectReadiness(gatewayState, activeRuns);
 
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -83,7 +107,9 @@ public class HealthController {
         payload.put("readiness", readiness);
         payload.put("platform", "java-agent");
         payload.put("version", implementationVersion());
+        payload.put("profile", runtime.profile());
         payload.put("gateway_state", gatewayState);
+        payload.put("platform_binding", runtime.gatewayBinding());
         payload.put("platforms", Map.of());
         payload.put("active_agents", activeRuns);
         payload.put("gateway_busy", "running".equals(gatewayState) && activeRuns > 0);
@@ -92,6 +118,40 @@ public class HealthController {
         payload.put("updated_at", Instant.now().toString());
         payload.put("pid", ProcessHandle.current().pid());
         return payload;
+    }
+
+    private record RuntimeSnapshot(String profile, String workerState, String gatewayBinding) {}
+
+    /**
+     * Profile-runtime state is persisted by lifecycle transitions. The default
+     * profile can additionally report the live in-memory lifecycle between a
+     * transition and its best-effort DB write; named profiles intentionally do
+     * not inherit it (no fabricated per-profile worker).
+     */
+    private RuntimeSnapshot runtimeSnapshot(String requestedProfile) {
+        String profile = requestedProfile == null || requestedProfile.isBlank()
+            ? "default" : requestedProfile.trim();
+        var persisted = profileRuntimeRegistry == null ? java.util.Optional.<com.azhukov.agent.persistence.entity.ProfileRuntimeStateEntity>empty()
+            : profileRuntimeRegistry.find(profile);
+        String worker = persisted.map(com.azhukov.agent.persistence.entity.ProfileRuntimeStateEntity::getWorkerState)
+            .filter(value -> value != null && !value.isBlank())
+            // Backwards-compatible lightweight controller/test setup has no
+            // lifecycle or registry injected; retain the pre-WP-2 ready view.
+            // A real runtime always injects lifecycle and therefore reports
+            // its actual state below.
+            .orElse(gatewayLifecycleService == null && profileRuntimeRegistry == null
+                ? "running" : "stopped");
+        String binding = persisted.map(com.azhukov.agent.persistence.entity.ProfileRuntimeStateEntity::getGatewayState)
+            .filter(value -> value != null && !value.isBlank())
+            .orElse("unbound");
+        if ("default".equals(profile) && gatewayLifecycleService != null) {
+            worker = gatewayLifecycleService.currentState().name().toLowerCase(java.util.Locale.ROOT);
+        }
+        return new RuntimeSnapshot(profile, worker, binding);
+    }
+
+    private static String healthStatus(String workerState) {
+        return "running".equals(workerState) || "draining".equals(workerState) ? "ok" : "degraded";
     }
 
     private static String implementationVersion() {
