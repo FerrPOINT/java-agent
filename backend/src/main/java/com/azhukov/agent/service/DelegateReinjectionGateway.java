@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -166,9 +167,14 @@ public class DelegateReinjectionGateway {
         tx.executeWithoutResult(status -> {
             MessageEntity note = new MessageEntity();
             note.setSessionId(parentSessionId);
-            note.setRole("assistant");
+            // Hermes #2221 parity (gateway/mirror.py): an out-of-band completion
+            // note is NOT the agent speaking — an assistant-role mirror is
+            // indistinguishable from a real assistant turn on replay and
+            // produces assistant→assistant pairs that break strict-alternation
+            // providers. A user-role note collapses safely on every provider.
+            note.setRole("user");
             note.setContent(summary);
-            note.setTurnIndex(0);
+            note.setTurnIndex(nextTurnIndex(messages, parentSessionId));
             note.setCreatedAt(Instant.now());
             messages.save(note);
         });
@@ -177,6 +183,17 @@ public class DelegateReinjectionGateway {
             steer.steer(parentSessionId, summary);
         }
         return true;
+    }
+
+    /**
+     * Next free turn index for the session (max existing + 1) so the note
+     * lands at a turn boundary after the last user turn — never collides
+     * with an existing turn (undo cutoffs would delete it together with a
+     * real turn).
+     */
+    private int nextTurnIndex(MessageRepository messages, UUID parentSessionId) {
+        List<Integer> indices = messages.findTurnIndicesBySessionIdDesc(parentSessionId);
+        return indices == null || indices.isEmpty() ? 0 : indices.get(0) + 1;
     }
 
     private String bound(String value, int max) {

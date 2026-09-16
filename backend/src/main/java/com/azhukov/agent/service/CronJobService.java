@@ -8,6 +8,7 @@ import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.tools.terminal.TerminalTool;
 import com.azhukov.agent.persistence.entity.CronExecutionLogEntity;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
+import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.azhukov.agent.persistence.repository.CronJobRepository;
 import com.cronutils.model.Cron;
@@ -1496,6 +1497,8 @@ private static final String CRON_EXECUTION_HINT = """
         }
         String profile = job.getProfile() == null || job.getProfile().isBlank()
             ? DEFAULT_PROFILE : job.getProfile();
+        String payload = output == null ? "" : output;
+        mirrorToAttachedSession(job, payload);
         try {
             deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
                 DeliveryWorkItemService.SOURCE_CRON_EXECUTION,
@@ -1504,7 +1507,7 @@ private static final String CRON_EXECUTION_HINT = """
                 job.getUserId(),
                 job.getLastRunSessionId(),
                 target,
-                output == null ? "" : output));
+                payload));
         } catch (IllegalArgumentException e) {
             log.warn("Cron job '{}' delivery target rejected: {}", job.getName(), e.getMessage());
         } catch (Exception e) {
@@ -1531,6 +1534,7 @@ private static final String CRON_EXECUTION_HINT = """
         String profile = job.getProfile() == null || job.getProfile().isBlank()
             ? DEFAULT_PROFILE : job.getProfile();
         String payload = failureDeliveryText(job, errorMsg);
+        mirrorToAttachedSession(job, payload);
         try {
             deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
                 DeliveryWorkItemService.SOURCE_CRON_EXECUTION,
@@ -1544,6 +1548,46 @@ private static final String CRON_EXECUTION_HINT = """
             log.warn("Cron job '{}' failure delivery target rejected: {}", job.getName(), e.getMessage());
         } catch (Exception e) {
             log.warn("Cron job '{}' failure delivery enqueue failed: {}", job.getName(), e.getMessage());
+        }
+    }
+
+    /**
+     * Hermes {@code _maybe_mirror_cron_delivery} parity (cron/scheduler.py,
+     * mirror_delivery / attach_to_session): when a job opted in, its final
+     * output (or compact failure line) is appended to the attached session so
+     * the next user reply in that conversation sees the brief in context —
+     * no "what is Task #2?" amnesia.
+     *
+     * <p>Best-effort by design (Hermes: "a delivery that succeeded must never
+     * be reported as failed because the transcript mirror hit a problem"):
+     * all failures are swallowed, the ledger delivery is independent.
+     *
+     * <p>Role is {@code user}, never {@code assistant} — Hermes #2221: a
+     * cron brief is not the agent speaking; assistant-role mirrors produce
+     * assistant→assistant pairs that break strict-alternation providers, a
+     * user-role mirror collapses safely via consecutive-user merge.
+     */
+    private void mirrorToAttachedSession(CronJobEntity job, String payload) {
+        if (job.getAttachedSessionId() == null || payload == null || payload.isBlank()) {
+            return;
+        }
+        try {
+            UUID sessionId = job.getAttachedSessionId();
+            transactionTemplate.executeWithoutResult(status -> {
+                List<Integer> indices =
+                    messageRepository.findTurnIndicesBySessionIdDesc(sessionId);
+                MessageEntity note = new MessageEntity();
+                note.setSessionId(sessionId);
+                note.setRole("user");
+                note.setContent("[cron '" + job.getName() + "' output]\n" + payload);
+                note.setTurnIndex(indices.isEmpty() ? 0 : indices.get(0) + 1);
+                note.setCreatedAt(Instant.now());
+                messageRepository.save(note);
+            });
+            log.debug("Cron job '{}' output mirrored into attached session {}", job.getName(), sessionId);
+        } catch (Exception e) {
+            log.warn("Cron job '{}' attached-session mirror failed (delivery unaffected): {}",
+                job.getName(), e.getMessage());
         }
     }
 

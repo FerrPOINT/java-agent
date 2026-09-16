@@ -78,6 +78,9 @@ class DelegateReinjectionGatewayTest {
                 .accept(null);
             return null;
         }).when(tx).executeWithoutResult(any());
+        // Session already has 4 turns (0..3) — the note must land at turn 4.
+        when(messages.findTurnIndicesBySessionIdDesc(parentSessionId))
+            .thenReturn(java.util.List.of(3, 1, 0));
         ArgumentCaptor<MessageEntity> saved = ArgumentCaptor.forClass(MessageEntity.class);
 
         gateway.reinjectPendingCompletions();
@@ -85,7 +88,12 @@ class DelegateReinjectionGatewayTest {
         verify(messages).save(saved.capture());
         MessageEntity note = saved.getValue();
         assertThat(note.getSessionId()).isEqualTo(parentSessionId);
-        assertThat(note.getRole()).isEqualTo("assistant");
+        // Hermes #2221 parity: the completion note mirrors with role=user —
+        // assistant-role mirrors break strict-alternation providers.
+        assertThat(note.getRole()).isEqualTo("user");
+        // The note lands at its own turn boundary (max existing turn + 1),
+        // never turnIndex 0 of an existing conversation.
+        assertThat(note.getTurnIndex()).isGreaterThan(0);
         assertThat(note.getContent()).contains("[delegated task completed]");
         assertThat(note.getContent()).contains(runId.toString());
         assertThat(note.getContent()).contains("status: completed");

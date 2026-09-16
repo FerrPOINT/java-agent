@@ -898,4 +898,4 @@ Latest profile-scope batch release manifest snapshot:
 
 10. Cron residual delivery/profile depth.
     - The bounded cron tool/service parity for monitor, continuity, attach-to-session, persistence, and background run reporting is implemented.
-    - Cron lifecycle events now publish into the shared event core. Remaining gaps are cross-cutting rather than local cron fields: durable gateway delivery loop parity and richer run-result delivery semantics shared with delegate/profile work.
+    - Cron lifecycle events now publish into the shared event core. *(Update 2026-09-16: durable gateway delivery loop parity and run-result delivery semantics are closed — the delivery ledger is the single lane (WP-1 cutover), delegate completions are reinjected into the parent session as user-role notes at the next free turn boundary (Hermes #2221-safe, DelegateReinjectionGateway), and cron jobs with `attach_to_session` mirror their delivered output/failure line into the attached session (Hermes `_maybe_mirror_cron_delivery` parity, best-effort, role=user).)*
