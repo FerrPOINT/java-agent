@@ -1,3 +1,15 @@
+## [0.1.244] — 2026-09-16
+
+Gateway lifecycle / profile-health parity (docs/34 WP-2 and WP-4 tails).
+
+### Fixed
+
+- **Gateway was silently STOPPED after every backend restart**: `GatewayLifecycleService` started in STOPPED and had no application-ready transition; all inbound events were rejected until someone pressed dashboard Start. It now transitions to RUNNING at `ApplicationReadyEvent`.
+- **Profile runtime lifecycle was dead metadata**: lifecycle start/drain/stop/fail never called `ProfileRuntimeRegistry.updateWorkerState`. Every transition now persists `running`/`draining`/`stopped`/`failed` for the default profile (one JVM-wide adapter set; no fabricated per-profile worker).
+- **`/p/{profile}/health` lied**: it always returned generic `ok` and detailed health hard-coded `gateway_state=running`. Both endpoints now report the actual profile worker state and binding. Unknown/named profiles are explicitly `stopped`/`degraded`, rather than inheriting a fictitious default worker. Health reads do not create runtime rows.
+
+Live E2E: after restart default detailed health=`running`; stop→start API persisted `default|running|unbound`; `/p/work/health` returned `degraded`, `stopped`, `unbound`. backend 6892/0.
+
 ## [0.1.243] — 2026-09-16
 
 Attachment lifecycle fixes (docs/34 WP-4 tail: session prune/export file-cleanup fidelity), one live-500 fix.
