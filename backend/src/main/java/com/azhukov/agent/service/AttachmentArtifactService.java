@@ -174,6 +174,11 @@ public class AttachmentArtifactService {
      */
     @org.springframework.transaction.annotation.Transactional
     public int sweepExpired() {
+        return sweepExpiredWithinTransaction();
+    }
+
+    /** Internal body shared by direct calls and the scheduler's proxy entry point. */
+    private int sweepExpiredWithinTransaction() {
         AttachmentArtifactRepository repository = repository();
         List<AttachmentArtifactEntity> expired = repository
             .findByExpiresAtBefore(Instant.now());
@@ -224,9 +229,10 @@ public class AttachmentArtifactService {
 
     /** Scheduled wrapper so the TTL sweep actually runs (WP-4 tail: the method existed with zero callers). */
     @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 300_000L, initialDelay = 60_000L)
+    @org.springframework.transaction.annotation.Transactional
     public void scheduledSweep() {
         try {
-            int removed = sweepExpired();
+            int removed = sweepExpiredWithinTransaction();
             if (removed > 0) {
                 log.info("Attachment TTL sweep removed {} expired artifact(s)", removed);
             }
