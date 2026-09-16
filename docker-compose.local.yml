@@ -48,6 +48,12 @@ services:
       AGENT_GATEWAY_TELEGRAM_ALLOW_BY_DEFAULT: ${AGENT_GATEWAY_TELEGRAM_ALLOW_BY_DEFAULT:-true}
     ports:
       - "18090:18090"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18090/actuator/health/readiness >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
     volumes:
       - agent_local_chromium:/home/agent/.azhukov-agent
       - ${AGENT_WORK_DIR:-./work}:/workspace
@@ -60,7 +66,7 @@ services:
       db:
         condition: service_healthy
       agent:
-        condition: service_started
+        condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: dev
       DB_HOST: db
@@ -79,6 +85,12 @@ services:
       BOT_ALLOW_BY_DEFAULT: ${BOT_ALLOW_BY_DEFAULT:-true}
     ports:
       - "18092:18092"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18092/bot/health | grep -q '\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
 volumes:
   java_agent_local_pg:
