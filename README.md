@@ -190,15 +190,20 @@ flowchart TD
 ## 🚀 Deployment
 
 ```bash
-docker compose -f docker-compose.prod.yml up --build
+# Dev runtime: builds immutable backend/bot images, stops the old host services,
+# and starts an unprivileged, source-isolated container stack on localhost:8090.
+./scripts/deploy-dev-docker.sh
+
+# Other compose fixtures
 docker compose -f docker-compose.local.yml up --build
 docker compose -f docker-compose.e2e.yml up --build
 ```
 
 | Compose file | Назначение |
 |---|---|
+| `docker-compose.dev.yml` + `scripts/deploy-dev-docker.sh` | Dev runtime: isolated backend/bot containers on `127.0.0.1:8090`; reuses existing PostgreSQL |
 | `docker-compose.prod.yml` | Production-like stack on port `8080` with PostgreSQL `5432` |
-| `docker-compose.local.yml` | Local dev stack on `18090`/`18091` |
+| `docker-compose.local.yml` | Local dev fixture on `18090`/`18091` |
 | `docker-compose.e2e.yml` | E2E testing stack |
 
 Docker images use `eclipse-temurin:25-jre-noble`; slim images install Chromium at runtime.

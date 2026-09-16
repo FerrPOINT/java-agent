@@ -19,6 +19,12 @@ public class BrowserHealthIndicator implements HealthIndicator {
     @Override
     public Health health() {
         String cdpUrl = properties.getBrowser().getCdpUrl();
+        if (!properties.getChromium().isAutoStart()) {
+            return Health.up()
+                .withDetail("status", "disabled")
+                .withDetail("reason", "Browser auto-start is disabled")
+                .build();
+        }
         if (cdpUrl == null || cdpUrl.isBlank()) {
             return Health.up()
                 .withDetail("status", "not_configured")

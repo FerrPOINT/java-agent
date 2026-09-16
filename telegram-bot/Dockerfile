@@ -14,10 +14,17 @@ COPY telegram-bot/build.gradle ./telegram-bot/build.gradle
 COPY telegram-bot/src ./telegram-bot/src
 RUN chmod +x gradlew && ./gradlew :telegram-bot:bootJar -x test
 
-FROM eclipse-temurin:25-jre
+FROM eclipse-temurin:25-jre-noble
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates && rm -rf /var/lib/apt/lists/*
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 agent \
+    && useradd --uid 10001 --gid agent --create-home agent
 WORKDIR /app
 COPY --from=builder /workspace/telegram-bot/build/libs/*.jar app.jar
+RUN chown -R agent:agent /app
+USER agent
+ENV HOME=/home/agent
 EXPOSE 8091
 ENTRYPOINT ["java", "--enable-native-access=ALL-UNNAMED", "-jar", "app.jar"]

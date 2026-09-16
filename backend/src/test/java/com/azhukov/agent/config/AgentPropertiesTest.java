@@ -6,7 +6,6 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.entry;
 
 class AgentPropertiesTest {
 
@@ -21,6 +20,7 @@ class AgentPropertiesTest {
             assertThat(properties.getName()).isEqualTo("Джава агент");
             assertThat(properties.getModel().getProvider()).isEqualTo("openai-compatible");
             assertThat(properties.getCore().getMaxTurns()).isEqualTo(100);
+            assertThat(properties.getCore().getCodingContext()).isEqualTo("off");
             assertThat(properties.getSkills().getDefaultToolsets())
                     .containsExactly("hermes-cli");
             assertThat(properties.getApi().getChatCompletionToolsets())
@@ -41,6 +41,7 @@ class AgentPropertiesTest {
                         "agent.name=Custom Agent",
                         "agent.model.provider=anthropic",
                         "agent.core.maxTurns=42",
+                        "agent.core.codingContext=on",
                         "agent.skills.defaultToolsets=web,file",
                         "agent.api.modelName=custom-agent",
                         "agent.api.chatCompletionToolsets=web",
@@ -59,6 +60,7 @@ class AgentPropertiesTest {
                     assertThat(properties.getName()).isEqualTo("Custom Agent");
                     assertThat(properties.getModel().getProvider()).isEqualTo("anthropic");
                     assertThat(properties.getCore().getMaxTurns()).isEqualTo(42);
+                    assertThat(properties.getCore().getCodingContext()).isEqualTo("on");
                     assertThat(properties.getSkills().getDefaultToolsets()).containsExactly("web", "file");
                     assertThat(properties.getApi().getModelName()).isEqualTo("custom-agent");
                     assertThat(properties.getApi().getChatCompletionToolsets()).containsExactly("web");

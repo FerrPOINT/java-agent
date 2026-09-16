@@ -1,0 +1,118 @@
+# Dev runtime deployment: backend and Telegram bot run as isolated containers.
+#
+# This file intentionally does not mount the repository, Docker socket, or the
+# host home directory. The agent receives an empty /workspace and cannot inspect
+# or execute the java-agent source tree unless an operator deliberately changes
+# this deployment contract.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: java-agent-backend:dev
+    init: true
+    user: "10001:10001"
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      AGENT_SERVER_PORT: "8090"
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-java_agent}
+      DB_USER: ${DB_USER:-project_workflow}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      AGENT_CORE_WORKING_DIRECTORY: /workspace
+      AGENT_MODEL_PROVIDER: ${AGENT_MODEL_PROVIDER:-openai-compatible}
+      AGENT_MODEL_BASE_URL: ${AGENT_MODEL_BASE_URL:?AGENT_MODEL_BASE_URL is required}
+      AGENT_MODEL_API_KEY: ${AGENT_MODEL_API_KEY:?AGENT_MODEL_API_KEY is required}
+      AGENT_MODEL_NAME: ${AGENT_MODEL_NAME:?AGENT_MODEL_NAME is required}
+      AGENT_NAME: ${AGENT_NAME:-Java Agent}
+      AGENT_COMPRESSION_SESSION_ROTATION_ENABLED: ${AGENT_COMPRESSION_SESSION_ROTATION_ENABLED:-true}
+      AGENT_CRON_ENABLED: ${AGENT_CRON_ENABLED:-true}
+      AGENT_CHROMIUM_AUTO_START: "false"
+      AGENT_GATEWAY_TELEGRAM_LONG_POLLING_ENABLED: "false"
+      AGENT_TTS_ENABLED: ${AGENT_TTS_ENABLED:-false}
+      # Run the image-bundled client, never a host interpreter.
+      AGENT_TTS_EDGE_COMMAND: ${AGENT_TTS_EDGE_COMMAND:-/opt/edge-tts/bin/edge-tts}
+      HERMES_HOME: /home/agent/.java-agent
+      HOME: /home/agent
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - java_agent_state:/home/agent/.java-agent
+      - java_agent_workspace:/workspace
+      - java_agent_tmp:/tmp
+    networks:
+      - runtime
+    read_only: true
+    tmpfs:
+      - /run:uid=10001,gid=10001,mode=0755
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8090/actuator/health/readiness >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 45s
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: telegram-bot/Dockerfile
+    image: java-agent-telegram-bot:dev
+    init: true
+    user: "10001:10001"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-java_agent}
+      DB_USER: ${DB_USER:-project_workflow}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      BOT_SERVER_PORT: "8091"
+      BOT_MODE: polling
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      BOT_BACKEND_URL: http://backend:8090
+      BOT_AGENT_NAME: ${BOT_AGENT_NAME:-Java Agent}
+      BOT_ALLOWED_USER_IDS: ${BOT_ALLOWED_USER_IDS:-}
+      BOT_ALLOWED_USERNAMES: ${BOT_ALLOWED_USERNAMES:-}
+      BOT_ALLOW_BY_DEFAULT: ${BOT_ALLOW_BY_DEFAULT:-false}
+      BOT_AVAILABLE_MODELS: ${BOT_AVAILABLE_MODELS:-}
+      BOT_WORKING_DIRECTORY: /workspace
+      BOT_DISPLAY_TOOL_PROGRESS: ${BOT_DISPLAY_TOOL_PROGRESS:-hidden}
+      HOME: /home/agent
+    volumes:
+      - java_agent_state:/home/agent/.java-agent
+      - java_agent_tmp:/tmp
+    networks:
+      - runtime
+    read_only: true
+    tmpfs:
+      - /run:uid=10001,gid=10001,mode=0755
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8091/bot/health | grep -q '\"UP\"'"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  runtime:
+    name: java-agent-runtime
+    external: true
+
+volumes:
+  java_agent_state:
+  java_agent_workspace:
+  java_agent_tmp:

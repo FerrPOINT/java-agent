@@ -1,3 +1,16 @@
+## [0.1.247] — 2026-09-16
+
+Containerized dev runtime and workspace isolation.
+
+### Changed
+
+- **Dev agent no longer runs as root systemd processes with the source checkout as CWD**: `scripts/deploy-dev-docker.sh` builds and starts the backend and Telegram bot from `docker-compose.dev.yml`, then stops the legacy host units before they can compete for port `8090` or Telegram long polling.
+- **Runtime filesystem is least-privilege**: both containers use UID/GID `10001`, a read-only root filesystem, dropped Linux capabilities and `no-new-privileges`; only named state, `/workspace`, and `/tmp` volumes are writable. The deployment does not bind-mount `/opt/dev/java-agent`, `/root`, or the Docker socket. The script fails its deployment check if either runtime container can see host source or host agent state.
+- **Ordinary agent sessions start outside coding posture**: `agent.core.coding-context` defaults to `off`, and the container's working directory is an empty `/workspace`. A model cannot infer Gradle/Testcontainers commands from the Java source checkout after a generic "test" request; repository work requires an explicit operator-provided workspace mount and coding-context opt-in.
+- **Container health is honest**: a deliberately disabled Chromium/CDP lane reports `UP`/`disabled` rather than making aggregate service health fail. The backend image bundles the maintained `edge-tts` client, so TTS does not require mounting the host Hermes virtualenv.
+
+Verification: focused configuration/browser health tests, Compose schema and shell syntax checks, Docker build, backend readiness + aggregate health with real model ping, bot health/long-poll start, PostgreSQL connectivity, and in-container source/state isolation assertions.
+
 ## [0.1.246] — 2026-09-16
 
 Runtime TTS recovery from production-log triage.

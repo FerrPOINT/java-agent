@@ -45,12 +45,16 @@ RUN apt-get update \
         libxkbcommon0 \
         libxrandr2 \
         libxshmfence1 \
+        python3 \
+        python3-venv \
         unzip \
         wget \
         xdg-utils \
+    && python3 -m venv /opt/edge-tts \
+    && /opt/edge-tts/bin/pip install --no-cache-dir edge-tts==7.2.7 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -r agent && useradd -r -g agent -m agent
+RUN groupadd --gid 10001 agent && useradd --uid 10001 --gid agent --create-home agent
 WORKDIR /app
 COPY --from=builder /workspace/build/libs/*.jar app.jar
 RUN chown -R agent:agent /app

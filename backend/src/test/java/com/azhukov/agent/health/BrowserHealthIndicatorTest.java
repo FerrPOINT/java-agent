@@ -12,6 +12,19 @@ import static org.mockito.Mockito.*;
 class BrowserHealthIndicatorTest {
 
     @Test
+    void upWhenBrowserAutostartIsDisabled() {
+        CdpClient c = mock(CdpClient.class);
+        AgentProperties props = new AgentProperties();
+        props.getChromium().setAutoStart(false);
+
+        Health health = new BrowserHealthIndicator(c, props).health();
+
+        assertThat(health.getStatus()).isEqualTo(Status.UP);
+        assertThat(health.getDetails()).containsEntry("status", "disabled");
+        verifyNoInteractions(c);
+    }
+
+    @Test
     void upWhenConnected() throws Exception {
         CdpClient c = mock(CdpClient.class);
         when(c.isConnected()).thenReturn(true);
