@@ -119,6 +119,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Verify bot/backend auth Compose wiring
+        run: python3 scripts/check-compose-backend-auth.py
       - uses: articulate/actions-markdownlint@v1
         with:
           config: .markdownlint.json
