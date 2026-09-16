@@ -488,7 +488,7 @@ public class AgentStreamingService {
         // This is what arms the background self-improvement review: without
         // this increment the review thresholds are never reached and the
         // review NEVER fires for streaming (bot) turns.
-        if (memoryNudgeManager != null && toolsetsIncludeMemory(request)) {
+        if (memoryNudgeManager != null && tools.stream().anyMatch(tool -> "memory".equals(tool.name()))) {
             try {
                 int memNudge = properties.getMemory().getNudgeInterval();
                 if (memNudge > 0) {
@@ -1611,20 +1611,6 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 .toList();
         }
         return all;
-    }
-
-    /**
-     * Hermes parity (turn_context.py:707): the memory nudge only counts when
-     * the memory toolset is actually available to the session (tool not
-     * disabled via request). Subagents and memory-disabled sessions never
-     * accumulate review counters.
-     */
-    private boolean toolsetsIncludeMemory(ChatRequest request) {
-        if (request != null && request.disabledTools() != null
-                && request.disabledTools().contains("memory")) {
-            return false;
-        }
-        return properties.getSkills().getDefaultToolsets().contains("memory");
     }
 
     private int estimateResponseTokens(String content, List<ToolCall> toolCalls) {

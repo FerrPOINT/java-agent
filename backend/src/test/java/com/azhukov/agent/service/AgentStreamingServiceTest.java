@@ -4,6 +4,7 @@ import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.StreamEvent;
 import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.agent.MemoryNudgeManager;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.context.ContextEngine;
@@ -186,6 +187,32 @@ class AgentStreamingServiceTest {
             new AgentSessionResolver(sessionStorePort(), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class), mock(com.azhukov.agent.core.agent.ProjectContextDetector.class)),
             lineageService,
             new CliStateApplier(null), null, null, new ModelMetadataService(), null);
+    }
+
+
+    @Test
+    void streamingTurnWithMemoryToolArmsBackgroundReviewCounter() throws Exception {
+        properties.getMemory().setNudgeInterval(1);
+        when(toolRegistry.getDefinitions(any(Set.class))).thenReturn(List.of(
+            new ToolDefinition("memory", "Store durable facts", Map.of())
+        ));
+        MemoryNudgeManager nudgeManager = mock(MemoryNudgeManager.class);
+        streamingService.setMemoryNudgeManager(nudgeManager);
+
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            handler.onToken("Done");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L), emitter);
+        emitter.awaitDone();
+
+        verify(nudgeManager).initMemoryCounter(eq(SESSION_ID), eq(0L));
+        verify(nudgeManager).incrementMemoryTurns(SESSION_ID);
+        verify(nudgeManager).triggerNudgedBackgroundReview(any(Session.class), any(List.class), eq(false));
     }
 
     @Test
