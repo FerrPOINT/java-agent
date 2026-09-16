@@ -9,6 +9,7 @@ import com.azhukov.agent.service.tts.TtsProvider;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.tools.ToolHandler;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -311,7 +312,7 @@ public class TtsTool implements ToolHandler {
 
     record TtsArgs(
         @ToolParam(description = "The text to convert to speech. Markdown, URLs, emoji, and <think> reasoning blocks are cleaned before synthesis.") String text,
-        @ToolParam(description = "Optional custom save path.", required = false) @JsonProperty("output_path") String outputPath,
+        @ToolParam(description = "Optional custom save path.", required = false) @JsonProperty("output_path") @JsonAlias("outputPath") String outputPath,
         @ToolParam(description = "Optional provider-specific voice override.", required = false) @JsonProperty("voice") String voice,
         @ToolParam(description = "Playback speed multiplier. Range: 0.25-4.0.", required = false) @JsonProperty("speed") Double speed,
         @ToolParam(description = "Optional voice-design guidance for providers that support it.", required = false) @JsonProperty("instructions") String instructions,

@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @AgentTool(
@@ -675,10 +676,10 @@ public class PatchTool implements ToolHandler {
     public record PatchArgs(
         @ToolParam(description = "replace or patch") String mode,
         @ToolParam(description = "file path") String path,
-        @ToolParam(description = "old string to find (replace mode)", required = false) @JsonProperty("old_string") String oldString,
-        @ToolParam(description = "new string to substitute (replace mode)", required = false) @JsonProperty("new_string") String newString,
-        @ToolParam(description = "replace all occurrences", required = false) @JsonProperty("replace_all") boolean replaceAll,
+        @ToolParam(description = "old string to find (replace mode)", required = false) @JsonProperty("old_string") @JsonAlias("oldString") String oldString,
+        @ToolParam(description = "new string to substitute (replace mode)", required = false) @JsonProperty("new_string") @JsonAlias("newString") String newString,
+        @ToolParam(description = "replace all occurrences", required = false) @JsonProperty("replace_all") @JsonAlias("replaceAll") boolean replaceAll,
         @ToolParam(description = "V4A patch content (patch mode)", required = false) String patch,
-        @ToolParam(description = "Opt out of the cross-profile soft guard. Defaults to false. Set true ONLY after explicit user direction to edit another Hermes profile's skills/plugins/cron/memories.", required = false) @JsonProperty("cross_profile") Boolean crossProfile
+        @ToolParam(description = "Opt out of the cross-profile soft guard. Defaults to false. Set true ONLY after explicit user direction to edit another Hermes profile's skills/plugins/cron/memories.", required = false) @JsonProperty("cross_profile") @JsonAlias("crossProfile") Boolean crossProfile
     ) {}
 }

@@ -643,19 +643,19 @@ public class CronJobTool implements ToolHandler {
         @JsonProperty("deliver") @JsonAlias({"deliver_to", "deliverTo"}) String deliver,
         @ToolParam(description = "Legacy single skill name.", required = false) String skill,
         @ToolParam(description = "Ordered skill name or array of skill names to load before executing the prompt.", required = false) Object skills,
-        @JsonProperty("context_from") Object contextFrom,
+        @JsonProperty("context_from") @JsonAlias("contextFrom") Object contextFrom,
         @ToolParam(description = "Repeat count (omit for defaults).", required = false) Integer repeat,
         @ToolParam(description = "Script path that runs each tick (relative to ~/.hermes/scripts/).", required = false) String script,
         String monitor,
-        @JsonProperty("monitor_script") String monitorScript,
-        @JsonProperty("monitor_url") String monitorUrl,
-        @JsonProperty("no_agent") Boolean noAgent,
+        @JsonProperty("monitor_script") @JsonAlias("monitorScript") String monitorScript,
+        @JsonProperty("monitor_url") @JsonAlias("monitorUrl") String monitorUrl,
+        @JsonProperty("no_agent") @JsonAlias("noAgent") Boolean noAgent,
         @JsonProperty("continuity") Boolean continuity,
-        @JsonProperty("enabled_toolsets") Object enabledToolsets,
+        @JsonProperty("enabled_toolsets") @JsonAlias("enabledToolsets") Object enabledToolsets,
         @ToolParam(description = "Absolute working directory for the job.", required = false) String workdir,
-        @JsonProperty("attach_to_session") Boolean attachToSession,
-        @JsonProperty("model_provider") String modelProvider,
-        @JsonProperty("model_name") String modelName,
-        @JsonProperty("base_url") String baseUrl
+        @JsonProperty("attach_to_session") @JsonAlias("attachToSession") Boolean attachToSession,
+        @JsonProperty("model_provider") @JsonAlias("modelProvider") String modelProvider,
+        @JsonProperty("model_name") @JsonAlias("modelName") String modelName,
+        @JsonProperty("base_url") @JsonAlias("baseUrl") String baseUrl
     ) {}
 }

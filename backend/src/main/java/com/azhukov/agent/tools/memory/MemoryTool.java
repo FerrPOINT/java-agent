@@ -440,8 +440,8 @@ public class MemoryTool implements ToolHandler {
         @ToolParam(description = "The action to perform. Omit when using 'operations' array.", required = false, enumValues = {"add", "replace", "remove"}) String action,
         @ToolParam(description = "Which memory store: 'memory' for personal notes, 'user' for user profile.", enumValues = {"memory", "user"}, required = true) String target,
         @ToolParam(description = "The entry content. Required for 'add' and 'replace'. Alias: 'new_text' is also accepted (mirrors old_text).", required = false) String content,
-        @ToolParam(description = "REQUIRED for 'replace' and 'remove': a short unique substring identifying the existing entry to modify. Omit only for 'add'.", required = false) @JsonProperty("old_text") String old_text,
-        @ToolParam(description = "Alias for 'content'. Provided so the replace/remove old_text/new_text pairing works; if both are set, 'content' wins.", required = false) @JsonProperty("new_text") String new_text,
+        @ToolParam(description = "REQUIRED for 'replace' and 'remove': a short unique substring identifying the existing entry to modify. Omit only for 'add'.", required = false) @JsonProperty("old_text") @JsonAlias("oldText") String old_text,
+        @ToolParam(description = "Alias for 'content'. Provided so the replace/remove old_text/new_text pairing works; if both are set, 'content' wins.", required = false) @JsonProperty("new_text") @JsonAlias("newText") String new_text,
         @ToolParam(description = "Max results for read", required = false) int limit,
         @ToolParam(description = "Batch shape: a list of operations applied atomically in one call (all-or-nothing). Each item: {action, content?, old_text?, new_text?}. When provided, the single action/content/old_text fields are ignored.", required = false)
         List<MemoryOperation> operations
@@ -450,7 +450,7 @@ public class MemoryTool implements ToolHandler {
     public record MemoryOperation(
         @ToolParam(description = "Action: add, replace, or remove") String action,
         @ToolParam(description = "Entry content for add/replace. Alias: 'new_text'.", required = false) String content,
-        @JsonProperty("old_text") String old_text,
-        @JsonProperty("new_text") @JsonAlias("new_text") String new_text
+        @JsonProperty("old_text") @JsonAlias("oldText") String old_text,
+        @JsonProperty("new_text") @JsonAlias("newText") String new_text
     ) {}
 }

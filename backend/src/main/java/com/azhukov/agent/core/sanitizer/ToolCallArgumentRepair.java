@@ -137,6 +137,16 @@ public class ToolCallArgumentRepair {
  return repair(rawArgs, "?");
  }
 
+    /**
+     * Returns true when a malformed argument becomes the repairer's terminal
+     * empty-object fallback. A genuinely supplied `{}` remains valid.
+     */
+    public boolean isUnrepairable(String rawArgs, String toolName) {
+        String raw = rawArgs == null ? "" : rawArgs.strip();
+        String repaired = repair(rawArgs, toolName);
+        return "{}".equals(repaired) && !"{}".equals(raw);
+    }
+
  /**
  * Escape unescaped control characters inside JSON string values.
  * Walks the raw JSON character-by-character, tracking whether we are inside

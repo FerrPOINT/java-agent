@@ -90,7 +90,7 @@ public class VisionAnalyzeTool implements ToolHandler {
     }
 
     public record VisionArgs(
-        @ToolParam(description = "Image URL (http/https), local file path, or data URL to load.") @JsonProperty("image_url") @JsonAlias("image") String image,
+        @ToolParam(description = "Image URL (http/https), local file path, or data URL to load.") @JsonProperty("image_url") @JsonAlias({"image", "imageUrl"}) String image,
         @ToolParam(description = "Your specific question or request about the image.") @JsonProperty("question") @JsonAlias("prompt") String prompt,
         @ToolParam(description = "Optional [x1, y1, x2, y2] crop region in pixel coordinates.", required = false) int[] region
     ) {}

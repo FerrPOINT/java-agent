@@ -56,6 +56,22 @@ class ToolHandlerTest {
         @ToolParam(description = "content") String content
     ) {}
 
+    static record CamelCaseArgs(
+        @com.fasterxml.jackson.annotation.JsonProperty("old_text")
+        @com.fasterxml.jackson.annotation.JsonAlias("oldText") String oldText,
+        @com.fasterxml.jackson.annotation.JsonProperty("output_path")
+        @com.fasterxml.jackson.annotation.JsonAlias("outputPath") String outputPath
+    ) {}
+
+    @Test
+    void snakeCaseSchemaFieldsAcceptCamelCaseProviderArguments() {
+        CamelCaseArgs args = ToolHandler.parseJson(
+            "{\"oldText\":\"before\",\"outputPath\":\"/tmp/result.txt\"}", CamelCaseArgs.class);
+
+        assertThat(args.oldText()).isEqualTo("before");
+        assertThat(args.outputPath()).isEqualTo("/tmp/result.txt");
+    }
+
     @Test
     void repairsUnescapedWindowsPathBackslashesOnlyForPathFields() {
         String json = "{\"path\":\"C:\\Users\\ferru\\file.txt\",\"content\":\"line1\\nline2\"}";

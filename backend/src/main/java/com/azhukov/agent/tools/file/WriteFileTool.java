@@ -6,6 +6,7 @@ import com.azhukov.agent.core.security.FileSafety;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.azhukov.agent.core.security.DefaultFileSafety;
@@ -204,6 +205,6 @@ public class WriteFileTool implements ToolHandler {
     public record WriteArgs(
         @ToolParam(description = "file path to write") String path,
         @ToolParam(description = "full file content") String content,
-        @ToolParam(description = "Opt out of the cross-profile soft guard. Defaults to false. Set true ONLY after explicit user direction to edit another Hermes profile's skills/plugins/cron/memories — by default these writes are blocked with a warning because they affect a different profile than the one this session is running under.", required = false) @JsonProperty("cross_profile") Boolean crossProfile
+        @ToolParam(description = "Opt out of the cross-profile soft guard. Defaults to false. Set true ONLY after explicit user direction to edit another Hermes profile's skills/plugins/cron/memories — by default these writes are blocked with a warning because they affect a different profile than the one this session is running under.", required = false) @JsonProperty("cross_profile") @JsonAlias("crossProfile") Boolean crossProfile
     ) {}
 }

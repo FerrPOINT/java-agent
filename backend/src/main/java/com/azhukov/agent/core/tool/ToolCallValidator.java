@@ -277,9 +277,10 @@ public final class ToolCallValidator {
             try {
                 MAPPER.readTree(args);
             } catch (Exception e) {
-                // Check for truncation: args that don't end with } or ]
-                String stripped = args.strip();
-                if (!stripped.endsWith("}") && !stripped.endsWith("]")) {
+                // A fragment can still end in `}` while an inner object/string
+                // remains open. Detect that before any repair would invent the
+                // missing tail and execute a different request.
+                if (isStructurallyIncomplete(args)) {
                     anyTruncated = true;
                 }
                 errors.add("Invalid JSON in tool call arguments for '" + tc.name()
@@ -288,6 +289,38 @@ public final class ToolCallValidator {
         }
 
         return new JsonValidationResult(errors, anyTruncated);
+    }
+
+    /** Recognizes unterminated JSON structures without trusting the final byte. */
+    private static boolean isStructurallyIncomplete(String arguments) {
+        String value = arguments == null ? "" : arguments.strip();
+        boolean inString = false;
+        boolean escaped = false;
+        int objectDepth = 0;
+        int arrayDepth = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (ch == '\\') {
+                    escaped = true;
+                } else if (ch == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            switch (ch) {
+                case '"' -> inString = true;
+                case '{' -> objectDepth++;
+                case '}' -> objectDepth--;
+                case '[' -> arrayDepth++;
+                case ']' -> arrayDepth--;
+                default -> { }
+            }
+        }
+        return inString || objectDepth > 0 || arrayDepth > 0
+            || (!value.endsWith("}") && !value.endsWith("]"));
     }
 
     // ── Deduplication ──────────────────────────────────────────────────────

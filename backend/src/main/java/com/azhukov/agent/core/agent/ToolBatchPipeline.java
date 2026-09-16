@@ -61,6 +61,9 @@ public class ToolBatchPipeline {
      * @param registeredToolNames names exposed to the model this session
      * @param turnIndex          turn index for synthetic result rows
      */
+    private final com.azhukov.agent.core.sanitizer.ToolCallArgumentRepair argumentRepair =
+        new com.azhukov.agent.core.sanitizer.ToolCallArgumentRepair();
+
     public PipelineResult prepare(List<ToolCall> rawCalls, Set<String> registeredToolNames, int turnIndex) {
         if (rawCalls == null || rawCalls.isEmpty()) {
             return new PipelineResult(List.of(), List.of(), false);
@@ -91,7 +94,39 @@ public class ToolBatchPipeline {
             validCalls.addAll(toolCalls);
         }
 
-        // 2. JSON argument validation
+        // 2. Detect a stream-cut argument before any repair can close its
+        // braces. Completing a cut JSON object would invent parameters.
+        ToolCallValidator.JsonValidationResult rawJsonResult =
+            ToolCallValidator.validateJsonArgs(new ArrayList<>(validCalls));
+        if (rawJsonResult.truncated()) {
+            log.warn("Truncated tool call arguments detected — refusing to execute.");
+            return PipelineResult.truncated();
+        }
+
+        // Repair complete malformed forms (fences, trailing commas, control
+        // characters), but never silently turn unrecoverable arguments into
+        // `{}`: that loses the caller's intended parameters and executes nonsense.
+        List<ToolCall> repairedCalls = new ArrayList<>(validCalls.size());
+        List<ToolCall> unrepairableCalls = new ArrayList<>();
+        for (ToolCall call : validCalls) {
+            String repaired = argumentRepair.repair(call.arguments(), call.name());
+            if (argumentRepair.isUnrepairable(call.arguments(), call.name())) {
+                unrepairableCalls.add(call);
+                continue;
+            }
+            repairedCalls.add(new ToolCall(call.id(), call.name(), repaired));
+        }
+        if (!unrepairableCalls.isEmpty()) {
+            for (ToolCall call : validCalls) {
+                boolean failed = unrepairableCalls.contains(call);
+                synthetic.add(Message.toolResult(call.pairingId(), ToolCallValidator.failurePayload(
+                    failed
+                        ? "Error: Tool arguments could not be repaired. Please retry the call with the complete JSON object."
+                        : "Skipped: other tool call in this response had invalid JSON."), turnIndex));
+            }
+            return new PipelineResult(List.of(), synthetic, false);
+        }
+        validCalls = repairedCalls;
         ToolCallValidator.JsonValidationResult jsonResult = ToolCallValidator.validateJsonArgs(validCalls);
         if (jsonResult.truncated()) {
             log.warn("Truncated tool call arguments detected — refusing to execute.");

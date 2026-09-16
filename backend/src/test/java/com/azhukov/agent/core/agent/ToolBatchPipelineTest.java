@@ -59,16 +59,14 @@ class ToolBatchPipelineTest {
     }
 
     @Test
-    void invalidJsonBlocksWholeBatchWithRecoveryResults() {
+    void malformedArgumentsWithUnclosedObjectAbortInsteadOfInventingParameters() {
         var result = pipeline.prepare(List.of(
-            new ToolCall("c1", "weather", "{\"city\": {}"),        // invalid, not truncated-looking
-            new ToolCall("c2", "search", "{\"q\":\"x\"}")           // valid
+            new ToolCall("c1", "weather", "{\"city\": {}"),
+            new ToolCall("c2", "search", "{\"q\":\"x\"}")
         ), registered, 1);
-        assertThat(result.truncatedArgs()).isFalse();
+        assertThat(result.truncatedArgs()).isTrue();
         assertThat(result.executableCalls()).isEmpty();
-        assertThat(result.syntheticResults()).hasSize(2);
-        assertThat(result.syntheticResults().get(0).content()).contains("Invalid JSON");
-        assertThat(result.syntheticResults().get(1).content()).contains("Skipped");
+        assertThat(result.syntheticResults()).isEmpty();
     }
 
     @Test
@@ -79,6 +77,16 @@ class ToolBatchPipelineTest {
         assertThat(result.truncatedArgs()).isTrue();
         assertThat(result.executableCalls()).isEmpty();
         assertThat(result.syntheticResults()).isEmpty();
+    }
+
+    @Test
+    void truncatedArgumentsThatEndInClosingBraceStillAbort() {
+        var result = pipeline.prepare(List.of(
+            new ToolCall("c1", "terminal", "{\"command\": {\"shell\":\"cat /var/log\"}")
+        ), registered, 1);
+
+        assertThat(result.truncatedArgs()).isTrue();
+        assertThat(result.executableCalls()).isEmpty();
     }
 
     @Test

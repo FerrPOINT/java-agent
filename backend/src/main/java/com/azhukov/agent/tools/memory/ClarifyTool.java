@@ -245,6 +245,7 @@ public class ClarifyTool implements ToolHandler {
         private List<Object> choices;
 
         @JsonProperty("multi_select")
+        @com.fasterxml.jackson.annotation.JsonAlias("multiSelect")
         @ToolParam(description = "When true, the user may select multiple choices. Has no effect without choices.", required = false)
         private boolean multiSelect;
 
@@ -262,6 +263,7 @@ public class ClarifyTool implements ToolHandler {
         private String question;
         private List<Object> choices;
         @JsonProperty("multi_select")
+        @com.fasterxml.jackson.annotation.JsonAlias("multiSelect")
         private boolean multiSelect;
 
         public String id() { return id; }

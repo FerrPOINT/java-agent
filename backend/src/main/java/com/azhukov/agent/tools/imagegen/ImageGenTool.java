@@ -7,6 +7,7 @@ import com.azhukov.agent.service.imagegen.ImageGenProvider;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -156,9 +157,9 @@ public class ImageGenTool implements ToolHandler {
 
     record ImageGenArgs(
         @ToolParam(description = "Text prompt describing the image to generate.") String prompt,
-        @ToolParam(description = "Aspect ratio: landscape, square, or portrait. Legacy aliases 16:9, 1:1, and 9:16 are accepted. Default landscape.", required = false) @JsonProperty("aspect_ratio") String aspectRatio,
-        @ToolParam(description = "Optional source image URL for image-to-image editing (model must support edit endpoint).", required = false) @JsonProperty("image_url") String imageUrl,
-        @ToolParam(description = "Optional list of reference image URLs for multi-image editing.", required = false) @JsonProperty("reference_image_urls") List<String> referenceImageUrls,
+        @ToolParam(description = "Aspect ratio: landscape, square, or portrait. Legacy aliases 16:9, 1:1, and 9:16 are accepted. Default landscape.", required = false) @JsonProperty("aspect_ratio") @JsonAlias("aspectRatio") String aspectRatio,
+        @ToolParam(description = "Optional source image URL for image-to-image editing (model must support edit endpoint).", required = false) @JsonProperty("image_url") @JsonAlias("imageUrl") String imageUrl,
+        @ToolParam(description = "Optional list of reference image URLs for multi-image editing.", required = false) @JsonProperty("reference_image_urls") @JsonAlias("referenceImageUrls") List<String> referenceImageUrls,
         @ToolParam(description = "Optional high-resolution post-generation pass. Unsupported by the current Java provider.", required = false) @JsonProperty("upscale") Boolean upscale
     ) {}
 }
