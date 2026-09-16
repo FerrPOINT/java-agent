@@ -5,8 +5,9 @@ Runtime hotfix from production-log triage.
 ### Fixed
 
 - **Attachment TTL cleanup failed forever**: its five-minute scheduler invoked a Spring Data `DELETE` outside a transaction (`No active transaction for update or delete query`). The first attempt annotated the internal service method, but the scheduler called it through `this`, bypassing the Spring proxy — live verification caught the failure again. The scheduled proxy entry point is now transactional; the shared cleanup body remains private.
+- **Telegram FloodWait froze the live delivery path**: a real `retry_after=269/270s` on final streaming delivery caused `sendMessage()` to sleep inline, pinning the debouncer thread exactly when the draft needed recovery. Server-directed retries are now capped at five seconds; long penalties return immediately to durable retry while the original draft remains visible.
 
-Verification: focused service and real PostgreSQL repository tests pass. Post-deploy scheduler run completes with no transaction warning.
+Verification: focused service + real PostgreSQL repository tests, Telegram long-FloodWait regression test. Post-deploy attachment scheduler run completes with no transaction warning; bot long polling starts cleanly.
 
 ## [0.1.244] — 2026-09-16
 
