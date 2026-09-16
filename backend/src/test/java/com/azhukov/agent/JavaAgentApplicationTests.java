@@ -12,7 +12,9 @@ import org.springframework.test.context.TestPropertySource;
     "spring.datasource.driver-class-name=org.h2.Driver",
     "spring.datasource.username=sa",
     "spring.datasource.password=",
-    "spring.jpa.hibernate.ddl-auto=none",
+    // This intentionally uses an empty H2 database. Keep Hibernate DDL enabled
+    // so ApplicationReady lifecycle writes exercise every current entity table.
+    "spring.jpa.hibernate.ddl-auto=create-drop",
     "spring.flyway.enabled=false",
     "agent.model.provider=noop"
 })
