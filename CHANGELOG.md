@@ -1,3 +1,19 @@
+## [0.1.242] — 2026-09-16
+
+Two delivery-semantics fixes closing docs/34 gap 10 (cron residual delivery), plus hygiene.
+
+### Fixed
+
+- **Delegate completion notes broke strict-alternation providers (Hermes #2221 parity)**: `DelegateReinjectionGateway` persisted the completion note with role=`assistant` — on replay it was indistinguishable from a real assistant turn and produced assistant→assistant pairs that strict-alternation providers reject. Notes now persist with role=`user` and land at the next free turn boundary (max existing turnIndex + 1) instead of colliding with turnIndex 0 of a live conversation.
+- **`attach_to_session` was a dead field**: `attachedSessionId` was stored at job creation but never used during execution — cron output never reached the attached session. `CronJobService.mirrorToAttachedSession` (Hermes `_maybe_mirror_cron_delivery` parity) now appends the delivered output (or compact failure line) into the attached session as a user-role note. Best-effort by design: a mirror failure never fails the ledger delivery, and the mirror rides ANY delivery — including target-less `deliver=local` runs (live E2E caught the first cut placing the mirror behind the target-null early return). No new opts-in needed: `attach_to_session=true` + `attached_session_id` (already accepted by REST/dashboard/bot cron APIs) now take effect.
+- **DelegateTaskTool description updated**: the stale "until the full Hermes gateway reinjection loop lands in Java" caveat is gone — reinjection is real; the annotation-parity guard test now enforces the new truth.
+
+### Changed
+
+- Dockerfile / Dockerfile.slim bundle `libheif-examples` + `libheif-plugin-aomdec`/`libheif-plugin-libde265` so the HEIC/AVIF transcode lane (0.1.241) works in container deploys, not only on the dev host (verified in a clean noble image).
+- `ToolCallUniquifyBeforePersistTest`: the fixture's recording list raced itself — `web_search` is PARALLEL_SAFE so the batch runs on virtual threads while the list was a plain `ArrayList`; now synchronized.
+- docs/34: MCP line 882 (watchdog/teardown shipped in 0.1.241) and cron line 901 (delivery semantics closed) updated so no fix is double-tracked.
+
 
 ## [0.1.241] — 2026-09-15
 
