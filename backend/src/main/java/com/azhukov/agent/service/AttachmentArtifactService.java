@@ -167,11 +167,15 @@ public class AttachmentArtifactService {
         return true;
     }
 
-    /** TTL cleanup of expired metadata rows + cache blobs. */
+    /**
+     * TTL cleanup of expired metadata rows + cache blobs (any state —
+     * delivered artifacts expire too; a receipt row without its blob is a
+     * lie, so files go first, rows after).
+     */
     public int sweepExpired() {
         AttachmentArtifactRepository repository = repository();
         List<AttachmentArtifactEntity> expired = repository
-            .findByStateAndExpiresAtBefore("received", Instant.now());
+            .findByExpiresAtBefore(Instant.now());
         for (AttachmentArtifactEntity entity : expired) {
             try {
                 if (entity.getCachePath() != null) {
@@ -183,6 +187,72 @@ public class AttachmentArtifactService {
             }
         }
         return repository.deleteExpired(Instant.now());
+    }
+
+    /**
+     * Hermes `_remove_session_files` parity (prune/delete file-cleanup
+     * fidelity, WP-4 tail): when a session is deleted (direct delete or
+     * prune), its attachment blobs and metadata rows must go too —
+     * otherwise expired-on-paper artifacts sit on disk forever with no
+     * sweep ever selecting them again (the session row that named them is
+     * gone). File deletions are best-effort; row deletion always runs.
+     */
+    public int cleanupForSession(UUID sessionId) {
+        if (sessionId == null) {
+            return 0;
+        }
+        AttachmentArtifactRepository repository = repository();
+        List<AttachmentArtifactEntity> artifacts =
+            repository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        if (artifacts.isEmpty()) {
+            return 0;
+        }
+        for (AttachmentArtifactEntity entity : artifacts) {
+            try {
+                if (entity.getCachePath() != null) {
+                    Files.deleteIfExists(safeCachePath(entity.getCachePath()));
+                }
+            } catch (Exception e) {
+                log.debug("Attachment blob cleanup failed for {}: {}",
+                    entity.getId(), e.getMessage());
+            }
+        }
+        repository.deleteAllById(artifacts.stream().map(AttachmentArtifactEntity::getId).toList());
+        return artifacts.size();
+    }
+
+    /** Scheduled wrapper so the TTL sweep actually runs (WP-4 tail: the method existed with zero callers). */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 300_000L, initialDelay = 60_000L)
+    public void scheduledSweep() {
+        try {
+            int removed = sweepExpired();
+            if (removed > 0) {
+                log.info("Attachment TTL sweep removed {} expired artifact(s)", removed);
+            }
+        } catch (Exception e) {
+            log.warn("Attachment TTL sweep failed: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Session delete/prune cascade (Hermes `_remove_session_files` parity):
+     * a deleted session's attachment blobs and rows must not outlive it.
+     * Failures are swallowed — session deletion must never be blocked by
+     * attachment cleanup (mirrors Hermes "filesystem hiccup never blocks a
+     * DB operation").
+     */
+    @org.springframework.context.event.EventListener
+    public void onSessionDeleted(com.azhukov.agent.core.agent.SessionDeletedEvent event) {
+        try {
+            int removed = cleanupForSession(event.sessionId());
+            if (removed > 0) {
+                log.info("Cleaned up {} attachment artifact(s) of deleted session {}",
+                    removed, event.sessionId());
+            }
+        } catch (Exception e) {
+            log.warn("Attachment cleanup for deleted session {} failed: {}",
+                event.sessionId(), e.getMessage());
+        }
     }
 
     // ── internals ────────────────────────────────────────────────────────

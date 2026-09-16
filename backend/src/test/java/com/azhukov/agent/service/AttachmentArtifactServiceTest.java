@@ -12,6 +12,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -148,5 +149,69 @@ class AttachmentArtifactServiceTest {
             method.setAccessible(true);
             return (String) method.invoke(null, data);
         }
+    }
+
+    private static AttachmentArtifactEntity entity(String id, UUID sessionId, Instant expiresAt) {
+        AttachmentArtifactEntity entity = new AttachmentArtifactEntity();
+        ReflectionTestUtils.setField(entity, "id", id);
+        ReflectionTestUtils.setField(entity, "sessionId", sessionId);
+        ReflectionTestUtils.setField(entity, "expiresAt", expiresAt);
+        return entity;
+    }
+
+    @Test
+    void sweepExpiredCoversDeliveredArtifactsToo() {
+        // WP-4 tail: the old sweep selected only state="received" — delivered
+        // artifacts (with receipts) expired on paper but their blobs sat on
+        // disk forever. The sweep must cover ANY state.
+        Path blob = tempDir.resolve("att_expired_delivered.bin");
+        try {
+            Files.writeString(blob, "data");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        AttachmentArtifactEntity delivered = entity("expired-delivered", null, Instant.now().minusSeconds(60));
+        ReflectionTestUtils.setField(delivered, "state", "delivered");
+        ReflectionTestUtils.setField(delivered, "cachePath", "att_expired_delivered.bin");
+        when(repository.findByExpiresAtBefore(any(Instant.class))).thenReturn(List.of(delivered));
+        when(repository.deleteExpired(any(Instant.class))).thenReturn(1);
+
+        int removed = service().sweepExpired();
+
+        assertThat(removed).isEqualTo(1);
+        assertThat(blob).doesNotExist();
+        verify(repository).deleteExpired(any(Instant.class));
+    }
+
+    @Test
+    void sessionDeleteCascadesToArtifacts() {
+        UUID sessionId = UUID.randomUUID();
+        Path blob = tempDir.resolve("att_session.bin");
+        try {
+            Files.writeString(blob, "data");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        AttachmentArtifactEntity artifact = entity("att-1", sessionId, Instant.now().plusSeconds(3600));
+        ReflectionTestUtils.setField(artifact, "cachePath", "att_session.bin");
+        when(repository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of(artifact));
+
+        int removed = service().cleanupForSession(sessionId);
+
+        assertThat(removed).isEqualTo(1);
+        assertThat(blob).doesNotExist();
+        verify(repository).deleteAllById(List.of("att-1"));
+    }
+
+    @Test
+    void sessionDeleteListenerSwallowsFailures() {
+        UUID sessionId = UUID.randomUUID();
+        when(repository.findBySessionIdOrderByCreatedAtAsc(sessionId))
+            .thenThrow(new IllegalStateException("db gone"));
+
+        // Must not throw — session deletion must never be blocked by cleanup.
+        service().onSessionDeleted(new com.azhukov.agent.core.agent.SessionDeletedEvent(sessionId));
+
+        verify(repository, never()).deleteAllById(any());
     }
 }

@@ -21,6 +21,9 @@ public interface AttachmentArtifactRepository extends JpaRepository<AttachmentAr
 
     List<AttachmentArtifactEntity> findByStateAndExpiresAtBefore(String state, Instant cutoff);
 
+    /** TTL sweep input: expired artifacts of ANY state (delivered ones expire too). */
+    List<AttachmentArtifactEntity> findByExpiresAtBefore(Instant cutoff);
+
     @Modifying
     @Query("DELETE FROM AttachmentArtifactEntity a WHERE a.expiresAt < :cutoff")
     int deleteExpired(@Param("cutoff") Instant cutoff);
