@@ -78,7 +78,9 @@ class ToolCallUniquifyBeforePersistTest {
                 new ToolCall("dup-id", "web_search", "{\"query\":\"b\"}")))
             : ChatResponse.text("done");
 
-        List<String> executedCallIds = new ArrayList<>();
+        // web_search is PARALLEL_SAFE → the batch runs on virtual threads; the
+        // recording list MUST be thread-safe or the fixture races itself.
+        List<String> executedCallIds = java.util.Collections.synchronizedList(new ArrayList<>());
         ToolExecutionService toolExecutionService = mock(ToolExecutionService.class);
         when(toolExecutionService.execute(any(String.class), any(String.class),
                 any(String.class), any(), any(), any()))
