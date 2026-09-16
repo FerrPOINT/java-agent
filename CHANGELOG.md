@@ -1,3 +1,15 @@
+## [0.1.243] — 2026-09-16
+
+Attachment lifecycle fixes (docs/34 WP-4 tail: session prune/export file-cleanup fidelity), one live-500 fix.
+
+### Fixed
+
+- **Attachment TTL sweep never ran**: `sweepExpired()` had zero callers since V65 — expired metadata rows and cache blobs accumulated forever. Now scheduled (5-minute cadence). It also selected only `state='received'`: delivered artifacts (with outbound receipts) expired on paper while their blobs sat on disk forever; the sweep now covers ANY state (files first, rows after).
+- **Session delete left orphan artifacts**: deleting a session (direct delete or prune) never touched its attachment blobs/rows. The `SessionDeletedEvent` listener now cascades cleanup (Hermes `_remove_session_files` parity), best-effort — a file hiccup never blocks the DB delete.
+- **REST attachment upload 500ed (live E2E)**: the multipart endpoint defaulted a blank `origin` to `api`, violating the V62 `chk_attachment_origin` check (telegram/cli/internal only). Blank origin now maps to `internal`.
+
+Tests: any-state sweep coverage, session-delete cascade, listener failure swallow. backend 6891/0. Live E2E: upload → blob on disk → session delete → row 0 + blob gone + cleanup log line.
+
 ## [0.1.242] — 2026-09-16
 
 Two delivery-semantics fixes closing docs/34 gap 10 (cron residual delivery), plus hygiene.
