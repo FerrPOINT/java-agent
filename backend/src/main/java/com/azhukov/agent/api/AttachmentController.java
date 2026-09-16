@@ -86,7 +86,9 @@ public class AttachmentController {
         }
         ArtifactRegistration registration = service().register(
             ownerId, profile, sessionId, messageId,
-            origin == null || origin.isBlank() ? "api" : origin,
+            // V62 chk_attachment_origin allows telegram/cli/internal only —
+            // a blank origin from the REST upload is an internal one.
+            origin == null || origin.isBlank() ? "internal" : origin,
             disposition, file.getContentType(), sanitizeFileName(file.getOriginalFilename()), data);
         if (registration.rejection() != null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, registration.rejection());
