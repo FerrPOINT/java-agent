@@ -362,6 +362,9 @@ agent:
     api-key: ${AGENT_TTS_API_KEY:}
     model: ${AGENT_TTS_MODEL:gpt-4o-mini-tts}
     voice: ${AGENT_TTS_VOICE:alloy}
+    edge:
+      # Optional maintained edge-tts CLI. Empty preserves the legacy HTTP path.
+      command: ${AGENT_TTS_EDGE_COMMAND:}
     auto-tts: ${AGENT_TTS_AUTO_TTS:false}
   
   # ─── Transcription ───
