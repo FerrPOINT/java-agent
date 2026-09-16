@@ -78,11 +78,15 @@ public record UpdateEvent(
             String cqLanguageCode = from != null ? (String) from.get("language_code") : null;
             String cqId = (String) callbackQuery.get("id");
             String data = (String) callbackQuery.get("data");
+            long messageId = message != null && message.get("message_id") instanceof Number id
+                ? id.longValue() : 0L;
+            long threadId = message != null && message.get("message_thread_id") instanceof Number id
+                ? id.longValue() : 0L;
             return new UpdateEvent(updateId, Type.CALLBACK_QUERY, chatId, userId,
                 username != null ? username : "", cqFirstName, cqLanguageCode,
                 null, null, null, null,
                 cqId, data, null, false, null, null,
-                0L, null, 0L, null);
+                messageId, null, threadId, null);
         }
 
         // Message

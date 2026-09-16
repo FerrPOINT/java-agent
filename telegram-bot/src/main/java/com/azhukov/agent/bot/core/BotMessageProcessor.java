@@ -16,6 +16,7 @@ import com.azhukov.agent.bot.formatting.ResponseFilter;
 import com.azhukov.agent.bot.goal.GoalAutoContinueService;
 import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
+import com.azhukov.agent.bot.keyboard.ClarificationStateStore;
 import com.azhukov.agent.bot.media.AgentMediaPaths;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
 import com.azhukov.agent.bot.media.MediaDeliveryService;
@@ -76,6 +77,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     private final AgentBackendClient backendClient;
     private final CommandRegistry commandRegistry;
     private final CallbackQueryHandler callbackQueryHandler;
+    private ClarificationStateStore clarificationStateStore;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setClarificationStateStore(ClarificationStateStore clarificationStateStore) {
+        this.clarificationStateStore = clarificationStateStore;
+    }
     private final BotProperties properties;
     private final StreamEditor streamEditor;
     private final InboundMediaHandler inboundMediaHandler;
@@ -124,10 +131,27 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     @Override
     public void handleCallbackQuery(UpdateEvent event) {
+        String callbackData = event.callbackData();
+        if (callbackData != null && callbackData.startsWith(ClarificationStateStore.CALLBACK_COMMAND + ":")) {
+            var outcome = callbackQueryHandler.handleClarification(event);
+            if (outcome.complete()) {
+                handleClarificationAnswer(event, outcome.answer());
+            }
+            return;
+        }
         String response = callbackQueryHandler.handle(event);
         if (response != null && !response.isBlank()) {
             telegramClient.sendMessage(event.chatId(), response);
         }
+    }
+
+    private void handleClarificationAnswer(UpdateEvent callback, String answer) {
+        if (answer == null || answer.isBlank()) return;
+        UpdateEvent reply = new UpdateEvent(callback.updateId(), UpdateEvent.Type.TEXT,
+            callback.chatId(), callback.userId(), callback.username(), callback.firstName(),
+            callback.languageCode(), answer, null, null, null, null, null, null,
+            false, null, null, callback.messageId(), null, callback.messageThreadId(), null);
+        handleTextOrMedia(reply);
     }
 
     @Override
@@ -332,6 +356,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
         // Build message text from the event — now uses InboundMediaHandler for media
         String messageText = extractMessageText(event);
+        if (clarificationStateStore != null) {
+            String clarificationAnswer = clarificationStateStore.consumeTypedAnswer(chatId, messageText);
+            if (clarificationAnswer != null) {
+                messageText = clarificationAnswer;
+            }
+        }
         if (messageText == null || messageText.isBlank()) {
             log.debug("No text content in update {}, skipping", event.updateId());
             return;

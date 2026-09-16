@@ -588,6 +588,7 @@ public class SpringToolRegistry implements ToolRegistry {
             // Hermes CLARIFY_SCHEMA parity: top-level question/choices/multi_select
             // remain the primary surface (required=[question]); `questions` is the
             // optional batch array (2-5 items), not a replacement for them.
+            Map<String, Object> question = copySchemaProperty(properties.get("question"));
             Map<String, Object> choices = new LinkedHashMap<>();
             choices.put("type", "array");
             choices.put("items", Map.of("type", "string"));
@@ -609,7 +610,7 @@ public class SpringToolRegistry implements ToolRegistry {
             questions.put("items", questionItem);
 
             properties.clear();
-            properties.put("question", copySchemaProperty(properties.get("question")));
+            properties.put("question", question);
             properties.put("choices", choices);
             properties.put("multi_select", Map.of("type", "boolean"));
             properties.put("questions", questions);

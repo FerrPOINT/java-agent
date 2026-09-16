@@ -48,6 +48,13 @@ public class StreamingOrchestrator {
     private final BotProperties properties;
     private final MediaDeliveryService mediaDeliveryService;
     private final com.azhukov.agent.bot.client.TelegramClient telegramClient;
+    private com.azhukov.agent.bot.keyboard.ClarificationStateStore clarificationStateStore;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setClarificationStateStore(com.azhukov.agent.bot.keyboard.ClarificationStateStore clarificationStateStore) {
+        this.clarificationStateStore = clarificationStateStore;
+    }
+
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStore;
 
     /**
@@ -199,6 +206,9 @@ public class StreamingOrchestrator {
                         }
                         String toolDisplay = ToolEmojiMap.formatToolCall(toolName, toolArgs);
                         bubble.appendLine(chatId, toolDisplay);
+                    }
+                    if ("clarify".equals(toolName) && clarificationStateStore != null) {
+                        clarificationStateStore.present(chatId, messageThreadId, toolArgs, telegramClient);
                     }
                 },
                 // toolResultConsumer — called when backend emits tool_result event.
