@@ -230,10 +230,6 @@ public class BotProperties {
     @Getter
     @Setter
     public static class Display {
-        // Hermes parity: operator config runs display.tool_progress: all —
-        // "all" is the effective default. Values: all | hidden | off.
-        // Rendering is the Hermes ACCUMULATE mode: one bubble per turn,
-        // subsequent tools edit it (see ToolProgressBubble).
         private String toolProgress = "all";
     }
 }

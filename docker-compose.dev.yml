@@ -86,7 +86,9 @@ services:
       BOT_ALLOW_BY_DEFAULT: ${BOT_ALLOW_BY_DEFAULT:-false}
       BOT_AVAILABLE_MODELS: ${BOT_AVAILABLE_MODELS:-}
       BOT_WORKING_DIRECTORY: /workspace
-      BOT_DISPLAY_TOOL_PROGRESS: ${BOT_DISPLAY_TOOL_PROGRESS:-hidden}
+      # The bot supports `all`, `hidden`, and `off`. Docker must not silently
+      # override the application default and hide real tool executions.
+      BOT_DISPLAY_TOOL_PROGRESS: ${BOT_DISPLAY_TOOL_PROGRESS:-all}
       HOME: /home/agent
     ports:
       - "127.0.0.1:8091:8091"

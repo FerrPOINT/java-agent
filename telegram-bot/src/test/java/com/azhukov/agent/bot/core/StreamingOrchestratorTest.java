@@ -61,7 +61,7 @@ class StreamingOrchestratorTest {
         mediaDeliveryService = new MediaDeliveryService();
         orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
             runtimeFooter, properties, mediaDeliveryService,
-            mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock);
+            telegramClient, sessionStoreMock);
 
         // Hooks: the processor's media delivery / model resolution / PII prefix
         hooks = mock(StreamingOrchestrator.ProcessorHooks.class);
@@ -302,6 +302,31 @@ class StreamingOrchestratorTest {
             .isInstanceOf(RuntimeException.class);
 
         verify(streamEditor).clearStream(100L);
+    }
+
+    @Test
+    void streamChat_toolProgressVisibleByDefaultRendersExecutedTool() {
+        stubChatStream(ctx -> {
+            ctx.toolCallConsumer.accept("web_search\u0001{\"query\":\"latest news\"}");
+            ctx.returnResult = new AgentBackendClient.ChatResult("", null, null, null, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+        verify(telegramClient).sendMessage(eq(100L), contains("web_search"), isNull(), isNull(), isNull(), eq(true));
+    }
+
+    @Test
+    void streamChat_hiddenToolProgressDoesNotRenderExecutedTool() {
+        properties.getDisplay().setToolProgress("hidden");
+        stubChatStream(ctx -> {
+            ctx.toolCallConsumer.accept("web_search\u0001{\"query\":\"latest news\"}");
+            ctx.returnResult = new AgentBackendClient.ChatResult("", null, null, null, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+        verify(telegramClient, never()).sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean());
     }
 
     @Test
