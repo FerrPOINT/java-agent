@@ -1,3 +1,13 @@
+## [0.1.246] — 2026-09-16
+
+Runtime TTS recovery from production-log triage.
+
+### Fixed
+
+- **Default Edge TTS was permanently broken**: Java posted SSML to the retired public HTTP endpoint, which now returns `404`. The provider can now use the maintained `edge-tts` command (current signed WebSocket protocol) via `AGENT_TTS_EDGE_COMMAND`; the dev service is configured to use the already installed Hermes venv client. Command output/error are redirected before waiting so MP3-sized output cannot deadlock the provider process. Direct live endpoint verification produced a valid 15,840-byte Russian MP3.
+
+Tests: CLI-provider regression, complete backend suite (`6893/0`), and live `/api/v1/agent/tts` synthesis.
+
 ## [0.1.245] — 2026-09-16
 
 Runtime hotfix from production-log triage.
