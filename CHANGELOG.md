@@ -1,3 +1,13 @@
+## [0.1.245] — 2026-09-16
+
+Runtime hotfix from production-log triage.
+
+### Fixed
+
+- **Attachment TTL cleanup failed forever**: its five-minute scheduler invoked a Spring Data `DELETE` outside a transaction (`No active transaction for update or delete query`). The first attempt annotated the internal service method, but the scheduler called it through `this`, bypassing the Spring proxy — live verification caught the failure again. The scheduled proxy entry point is now transactional; the shared cleanup body remains private.
+
+Verification: focused service and real PostgreSQL repository tests pass. Post-deploy scheduler run completes with no transaction warning.
+
 ## [0.1.244] — 2026-09-16
 
 Gateway lifecycle / profile-health parity (docs/34 WP-2 and WP-4 tails).
