@@ -51,22 +51,25 @@ public class SkillsDashboardController {
     private final AgentProperties properties;
     private final SkillsHubService skillsHubService;
     private final ProfileService profileService;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.SkillHubInstaller> hubInstallerProvider;
 
     @Autowired
     public SkillsDashboardController(
         SkillManager skillManager,
         AgentProperties properties,
         SkillsHubService skillsHubService,
-        ProfileService profileService
+        ProfileService profileService,
+        org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.SkillHubInstaller> hubInstallerProvider
     ) {
         this.skillManager = skillManager;
         this.properties = properties;
         this.skillsHubService = skillsHubService;
         this.profileService = profileService;
+        this.hubInstallerProvider = hubInstallerProvider;
     }
 
     SkillsDashboardController(SkillManager skillManager, AgentProperties properties, SkillsHubService skillsHubService) {
-        this(skillManager, properties, skillsHubService, null);
+        this(skillManager, properties, skillsHubService, null, null);
     }
 
     @GetMapping
@@ -390,7 +393,13 @@ public class SkillsDashboardController {
         if (profile.error() != null) {
             return profile.error();
         }
-        return notImplemented("background skills hub install is not implemented in the Java port");
+        com.azhukov.agent.service.SkillHubInstaller installer = hubInstaller();
+        if (installer == null) {
+            return notImplemented("skills hub installer is not available in this deployment");
+        }
+        com.azhukov.agent.service.SkillHubInstaller.HubOpResult result =
+            installer.install(profile.profile(), body.identifier(), false);
+        return hubOpResponse(result);
     }
 
     @PostMapping("/hub/uninstall")
@@ -406,7 +415,13 @@ public class SkillsDashboardController {
         if (profile.error() != null) {
             return profile.error();
         }
-        return notImplemented("background skills hub uninstall is not implemented in the Java port");
+        com.azhukov.agent.service.SkillHubInstaller installer = hubInstaller();
+        if (installer == null) {
+            return notImplemented("skills hub installer is not available in this deployment");
+        }
+        com.azhukov.agent.service.SkillHubInstaller.HubOpResult result =
+            installer.uninstall(profile.profile(), body.name());
+        return hubOpResponse(result);
     }
 
     @PostMapping("/hub/update")
@@ -419,7 +434,17 @@ public class SkillsDashboardController {
         if (profile.error() != null) {
             return profile.error();
         }
-        return notImplemented("background skills hub update is not implemented in the Java port");
+        String name = stringValue(body != null ? body.get("name") : null);
+        if (blank(name)) {
+            return badRequest("name is required");
+        }
+        com.azhukov.agent.service.SkillHubInstaller installer = hubInstaller();
+        if (installer == null) {
+            return notImplemented("skills hub installer is not available in this deployment");
+        }
+        com.azhukov.agent.service.SkillHubInstaller.HubOpResult result =
+            installer.update(profile.profile(), name);
+        return hubOpResponse(result);
     }
 
     private List<SkillManager.SkillInfo> listProfileSkillInfos(String profile) throws IOException {
@@ -930,6 +955,23 @@ public class SkillsDashboardController {
 
     private static ResponseEntity<Map<String, Object>> badRequest(String detail) {
         return ResponseEntity.badRequest().body(Map.of("detail", detail));
+    }
+
+    private com.azhukov.agent.service.SkillHubInstaller hubInstaller() {
+        return hubInstallerProvider == null ? null : hubInstallerProvider.getIfAvailable();
+    }
+
+    private static ResponseEntity<Map<String, Object>> hubOpResponse(
+        com.azhukov.agent.service.SkillHubInstaller.HubOpResult result) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("ok", result.ok());
+        payload.put("detail", result.detail());
+        payload.put("updated", result.updated());
+        if (result.backupPath() != null) {
+            payload.put("backup_path", result.backupPath());
+        }
+        return ResponseEntity.status(result.ok() ? HttpStatus.OK : HttpStatus.BAD_REQUEST)
+            .body(payload);
     }
 
     private static ResponseEntity<Map<String, Object>> notImplemented(String detail) {

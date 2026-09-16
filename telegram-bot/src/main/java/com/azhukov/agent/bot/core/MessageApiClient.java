@@ -47,7 +47,16 @@ public class MessageApiClient extends BaseBackendClient {
      * from a Telegram bot session (fast mode, reasoning effort, voice mode, etc.).
      */
     public AgentBackendClient.ChatResult chat(String message, String sessionId, BotSessionEntity runtime) {
+        return chat(message, sessionId, runtime, null);
+    }
+
+    /** Chat with inbound attachment references (WP-11 artifact ids). */
+    public AgentBackendClient.ChatResult chat(String message, String sessionId, BotSessionEntity runtime,
+                                              java.util.List<java.util.Map<String, String>> attachments) {
         Map<String, Object> body = buildChatBody(message, sessionId, runtime);
+        if (attachments != null && !attachments.isEmpty()) {
+            body.put("attachments", attachments);
+        }
 
         try {
             String responseJson = restClient.post()
@@ -124,7 +133,26 @@ public class MessageApiClient extends BaseBackendClient {
                                                     Consumer<String> reviewConsumer,
                                                     Consumer<AgentBackendClient.ChatResult> onComplete,
                                                     Consumer<Throwable> onError) {
+        return chatStream(message, sessionId, runtime, null, tokenConsumer, toolCallConsumer,
+            toolResultConsumer, retryConsumer, reviewConsumer, onComplete, onError);
+    }
+
+    /** WP-11 overload carrying inbound attachment artifact ids on the chat request. */
+    public AgentBackendClient.ChatResult chatStream(String message,
+                                                    String sessionId,
+                                                    BotSessionEntity runtime,
+                                                    java.util.List<java.util.Map<String, String>> attachments,
+                                                    Consumer<String> tokenConsumer,
+                                                    Consumer<String> toolCallConsumer,
+                                                    java.util.function.BiConsumer<String, String> toolResultConsumer,
+                                                    Consumer<String> retryConsumer,
+                                                    Consumer<String> reviewConsumer,
+                                                    Consumer<AgentBackendClient.ChatResult> onComplete,
+                                                    Consumer<Throwable> onError) {
         Map<String, Object> body = buildChatBody(message, sessionId, runtime);
+        if (attachments != null && !attachments.isEmpty()) {
+            body.put("attachments", attachments);
+        }
 
         StringBuilder accumulated = new StringBuilder();
         AgentBackendClient.ChatResult[] metadataHolder = new AgentBackendClient.ChatResult[1];

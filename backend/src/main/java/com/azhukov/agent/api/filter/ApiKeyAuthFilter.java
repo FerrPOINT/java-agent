@@ -70,6 +70,16 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
         String requestUri = request.getRequestURI();
 
+        // Prometheus scrape on the dedicated management port is exempt:
+        // metrics carry endpoint names only, and the port (9969) sits on the
+        // internal compose network.
+        if ("/actuator/prometheus".equals(requestUri)) {
+            SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("prometheus"));
+            UserContext.set("prometheus", UserContext.ROLE_ADMIN);
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         // Health endpoints are always exempt: set a default authenticated principal
         if (isHealthEndpoint(requestUri)) {
             SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("health"));

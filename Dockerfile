@@ -30,6 +30,9 @@ RUN apt-get update \
         libgbm1 \
         libglib2.0-0 \
         libgtk-3-0 \
+        libheif-examples \
+        libheif-plugin-aomdec \
+        libheif-plugin-libde265 \
         libnspr4 \
         libnss3 \
         libpango-1.0-0 \

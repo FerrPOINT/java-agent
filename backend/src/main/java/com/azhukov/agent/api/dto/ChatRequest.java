@@ -32,7 +32,8 @@ public record ChatRequest(
     String serviceTier,
     Boolean yoloMode,
     Boolean verboseMode,
-    Boolean footerEnabled
+    Boolean footerEnabled,
+    java.util.List<AttachmentRef> attachments
 ) {
     public ChatRequest(UUID sessionId,
                        String message,
@@ -63,7 +64,7 @@ public record ChatRequest(
             model, provider, baseUrl, apiKey, reasoningEffort, fastMode, voiceMode,
             personality, enabledTools, disabledTools, queuedPrompt, subgoal,
             maxCompletionTokens, systemPromptOverride, cdpUrl, goal, userId, username,
-            firstName, languageCode, chatType, null, null, null, null);
+            firstName, languageCode, chatType, null, null, null, null, null);
     }
 
     public ChatRequest(UUID sessionId,

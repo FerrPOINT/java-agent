@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -53,6 +54,7 @@ public class SessionCrudController {
     private final SessionQueryService sessionQueryService;
     private final AgentRuntimeService agentRuntimeService;
     private final AgentStreamingService streamingService;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.SessionPruneService> pruneServiceProvider;
 
     // ── List sessions ──
 
@@ -132,6 +134,93 @@ public class SessionCrudController {
         return sessionQueryService.getSessionMessages(sessionId, limit, offset)
             .map(ResponseEntity::ok)
             .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    // ── Prune ended sessions (WP-4.6) — Hermes prune_sessions parity subset ──
+
+    @org.springframework.web.bind.annotation.PostMapping("/prune")
+    @io.swagger.v3.oas.annotations.Operation(summary = "Prune ended sessions over persisted filters; unsupported filters are rejected explicitly")
+    public ResponseEntity<Map<String, Object>> pruneSessions(
+        @org.springframework.web.bind.annotation.RequestBody(required = false) Map<String, Object> body
+    ) {
+        com.azhukov.agent.service.SessionPruneService pruneService =
+            pruneServiceProvider == null ? null : pruneServiceProvider.getIfAvailable();
+        if (pruneService == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("detail", "session prune is not available in this deployment"));
+        }
+        Map<String, Object> raw = body == null ? Map.of() : body;
+        // Fail closed on filters Java cannot evaluate (no fabricated matches).
+        Map<String, Object> unsupported = new java.util.LinkedHashMap<>();
+        for (String filter : com.azhukov.agent.service.SessionPruneService.UNSUPPORTED_FILTERS) {
+            Object value = raw.get(filter);
+            if (value != null && !String.valueOf(value).isBlank()) {
+                unsupported.put(filter, value);
+            }
+        }
+        if (!unsupported.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of(
+                    "detail", "unsupported prune filters (fields not persisted in the Java port): "
+                        + String.join(", ", unsupported.keySet()),
+                    "unsupported_filters", unsupported.keySet(),
+                    "error", "unsupported_filters"));
+        }
+        com.azhukov.agent.service.SessionPruneService.PruneRequest request =
+            new com.azhukov.agent.service.SessionPruneService.PruneRequest(
+                string(raw, "profile"),
+                string(raw, "source"),
+                string(raw, "title_contains"),
+                string(raw, "end_reason"),
+                string(raw, "user_id"),
+                string(raw, "model_contains"),
+                instant(raw, "started_before"),
+                instant(raw, "started_after"),
+                instant(raw, "older_than"),
+                integer(raw, "min_messages"),
+                integer(raw, "max_messages"),
+                Boolean.parseBoolean(String.valueOf(raw.getOrDefault("include_archived", false))),
+                Boolean.parseBoolean(String.valueOf(raw.getOrDefault("dry_run", false))));
+        com.azhukov.agent.service.SessionPruneService.PruneResult result = pruneService.prune(request);
+        Map<String, Object> response = new java.util.LinkedHashMap<>();
+        response.put("pruned", result.pruned());
+        response.put("pruned_count", result.pruned().size());
+        response.put("skipped_open", result.skippedOpen());
+        response.put("deleted_messages", result.deletedMessages());
+        response.put("dry_run", result.dryRun());
+        return ResponseEntity.ok(response);
+    }
+
+    private static String string(Map<String, Object> raw, String key) {
+        Object value = raw.get(key);
+        if (value == null || String.valueOf(value).isBlank()) {
+            return null;
+        }
+        return String.valueOf(value);
+    }
+
+    private static Integer integer(Map<String, Object> raw, String key) {
+        Object value = raw.get(key);
+        if (value == null || String.valueOf(value).isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static java.time.Instant instant(Map<String, Object> raw, String key) {
+        Object value = raw.get(key);
+        if (value == null || String.valueOf(value).isBlank()) {
+            return null;
+        }
+        try {
+            return java.time.Instant.parse(String.valueOf(value));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ── Fork (branch) session — Hermes parity for POST /api/sessions/{id}/fork ──

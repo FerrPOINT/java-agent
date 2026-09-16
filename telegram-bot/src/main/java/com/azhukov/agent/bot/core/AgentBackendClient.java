@@ -94,6 +94,12 @@ public class AgentBackendClient {
         return messages.chat(message, sessionId, runtime);
     }
 
+    /** Chat with inbound attachment references (WP-11 artifact ids). */
+    public ChatResult chat(String message, String sessionId, BotSessionEntity runtime,
+                           java.util.List<java.util.Map<String, String>> attachments) {
+        return messages.chat(message, sessionId, runtime, attachments);
+    }
+
     public ChatResult chat(String message, String sessionId) {
         return messages.chat(message, sessionId);
     }
@@ -121,8 +127,24 @@ public class AgentBackendClient {
                                  Consumer<String> reviewConsumer,
                                  Consumer<ChatResult> onComplete,
                                  Consumer<Throwable> onError) {
-        return messages.chatStream(message, sessionId, runtime, tokenConsumer, toolCallConsumer,
+        return chatStream(message, sessionId, runtime, null, tokenConsumer, toolCallConsumer,
             toolResultConsumer, retryConsumer, reviewConsumer, onComplete, onError);
+    }
+
+    /** WP-11 overload carrying inbound attachment artifact ids. */
+    public ChatResult chatStream(String message,
+                                 String sessionId,
+                                 BotSessionEntity runtime,
+                                 java.util.List<java.util.Map<String, String>> attachments,
+                                 Consumer<String> tokenConsumer,
+                                 Consumer<String> toolCallConsumer,
+                                 java.util.function.BiConsumer<String, String> toolResultConsumer,
+                                 Consumer<String> retryConsumer,
+                                 Consumer<String> reviewConsumer,
+                                 Consumer<ChatResult> onComplete,
+                                 Consumer<Throwable> onError) {
+        return messages.chatStream(message, sessionId, runtime, attachments, tokenConsumer,
+            toolCallConsumer, toolResultConsumer, retryConsumer, reviewConsumer, onComplete, onError);
     }
 
     public ChatResult chatStream(String message,

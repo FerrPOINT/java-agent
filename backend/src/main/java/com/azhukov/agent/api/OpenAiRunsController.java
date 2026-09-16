@@ -29,6 +29,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -55,6 +56,7 @@ public class OpenAiRunsController {
     private final AgentProperties properties;
     private final Redactor redactor;
     private final ApiRunAdmissionService runAdmissionService;
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.OpenAiRunStateMachine> runStateMachineProvider;
 
     @PostMapping
     public ResponseEntity<Map<String, Object>> createRun(
@@ -168,6 +170,42 @@ public class OpenAiRunsController {
             .headers(sseHeaders())
             .contentType(MediaType.TEXT_EVENT_STREAM)
             .body(emitter);
+    }
+
+    @GetMapping("/{runId}/events/replay")
+    @io.swagger.v3.oas.annotations.Operation(summary = "Durable run event replay after a sequence cursor (restart-safe)")
+    public ResponseEntity<Map<String, Object>> replayEvents(
+            @PathVariable String runId,
+            @RequestParam(name = "after", required = false, defaultValue = "0") long after,
+            @RequestParam(name = "limit", required = false, defaultValue = "100") int limit) {
+        com.azhukov.agent.service.OpenAiRunStateMachine stateMachine =
+            runStateMachineProvider == null ? null : runStateMachineProvider.getIfAvailable();
+        if (stateMachine == null) {
+            return openAiError(HttpStatus.NOT_IMPLEMENTED,
+                "run event persistence is not available in this deployment",
+                "invalid_request_error", "run_persistence_unavailable");
+        }
+        var state = stateMachine.state(runId);
+        if (state.isEmpty()) {
+            return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
+                "invalid_request_error", "run_not_found");
+        }
+        int cappedLimit = Math.min(Math.max(limit, 1), 500);
+        List<Map<String, Object>> events = stateMachine.replayParsed(runId, after, cappedLimit)
+            .stream()
+            .map(parsed -> {
+                Map<String, Object> payload = new LinkedHashMap<>(parsed.payload());
+                payload.put("seq", parsed.seq());
+                return payload;
+            })
+            .toList();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("run_id", runId);
+        body.put("state", state.get().getState());
+        body.put("last_seq", state.get().getLastSeq());
+        body.put("after", after);
+        body.put("events", events);
+        return ResponseEntity.ok(body);
     }
 
     @PostMapping("/{runId}/approval")

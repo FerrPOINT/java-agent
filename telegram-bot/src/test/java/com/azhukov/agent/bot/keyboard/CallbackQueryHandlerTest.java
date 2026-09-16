@@ -59,6 +59,8 @@ class CallbackQueryHandlerTest {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         UpdateEvent event = callbackEvent("cq-1", "mp:kimi-k2");
         String result = handler.handle(event);
@@ -217,6 +219,8 @@ class CallbackQueryHandlerTest {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         UpdateEvent event = callbackEvent("cq-auth-2", "mp:gpt-4");
         String result = handler.handle(event);

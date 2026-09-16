@@ -134,8 +134,35 @@ class StreamEditorFloodFallbackTest {
         // Flood fallback now sends formatted text (parseMode=MarkdownV2) — Hermes parity.
         // Anchor on the buffered content to exclude the earlier delayed-start message.
         verify(client).sendMessage(eq(123L), contains("buffered content"), eq("MarkdownV2"), any(), any(), anyBoolean());
-        // Should have deleted the old streaming message
-        verify(client).deleteMessage(123L, 42L);
+        // The replacement must arrive before the draft is removed. This prevents
+        // a Telegram 429 from turning into total response loss.
+        var order = inOrder(client);
+        order.verify(client).sendMessage(eq(123L), contains("buffered content"), eq("MarkdownV2"), any(), any(), anyBoolean());
+        order.verify(client).deleteMessage(123L, 42L);
+    }
+
+    @Test
+    void floodFallback_sendFailurePreservesVisibleDraftAndSession() throws InterruptedException {
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(42L));
+        editor.startStream(123L, "visible draft");
+        Thread.sleep(110);
+        when(client.getLastApiErrorCode()).thenReturn(429);
+        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
+            .thenReturn(false);
+        editor.editStream(123L, 42L, "one");
+        Thread.sleep(110);
+        editor.editStream(123L, 42L, "two");
+        Thread.sleep(500);
+        editor.editStream(123L, 42L, "three");
+        Thread.sleep(1_000);
+        // The final replacement is rate-limited. It must not delete the draft.
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.empty());
+
+        assertThat(editor.finalizeStream(123L, 42L, "final content")).isFalse();
+        verify(client, never()).deleteMessage(123L, 42L);
+        assertThat(editor.sessionFor(123L).floodFallbackBuffer).isNotEmpty();
     }
 
     @Test

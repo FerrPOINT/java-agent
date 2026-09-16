@@ -36,11 +36,18 @@ public class ImageShrinkerService {
     private final int maxImageSizeBytes;
     private final int maxTotalImageSizeBytes;
     private final float jpegQuality;
+    private final ImageTranscodeService transcodeService;
 
     public ImageShrinkerService(AgentProperties properties) {
+        this(properties, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ImageShrinkerService(AgentProperties properties, ImageTranscodeService transcodeService) {
         this.maxImageSizeBytes = properties.getModel().getMaxImageSizeBytes();
         this.maxTotalImageSizeBytes = properties.getModel().getMaxTotalImageSizeBytes();
         this.jpegQuality = (float) properties.getModel().getImageJpegQuality();
+        this.transcodeService = transcodeService;
     }
 
     /**
@@ -55,8 +62,23 @@ public class ImageShrinkerService {
         }
 
         byte[] imageBytes = Base64.getDecoder().decode(base64Image);
+        // WP-j: HEIC/HEIF/AVIF cannot be read by ImageIO nor by the provider's
+        // vision endpoint — transcode to PNG first (no-op for decodable input).
+        if (transcodeService != null) {
+            try {
+                byte[] decoded = transcodeService.toDecodablePng(imageBytes);
+                if (decoded != imageBytes) {
+                    log.info("image-shrink: transcoded HEIF-family image ({} bytes -> {} bytes PNG)",
+                        imageBytes.length, decoded.length);
+                    imageBytes = decoded;
+                }
+            } catch (java.io.IOException e) {
+                log.warn("image-shrink: HEIF transcode failed: {}", e.getMessage());
+                throw new IllegalArgumentException(e.getMessage(), e);
+            }
+        }
         if (imageBytes.length <= maxImageSizeBytes) {
-            return base64Image;
+            return Base64.getEncoder().encodeToString(imageBytes);
         }
 
         byte[] shrunk = shrinkImageBytes(imageBytes, maxImageSizeBytes);

@@ -397,8 +397,9 @@ public class McpLifecycleManager {
                     "MCP server " + server.getName() + " OSV malware check: " + malwareError);
             }
         }
-        ServerParameters.Builder paramsBuilder = ServerParameters.builder(command)
-            .args(server.getArgs());
+        List<String> effectiveCommand = stdioLaunchCommand(server, command);
+        ServerParameters.Builder paramsBuilder = ServerParameters.builder(effectiveCommand.get(0))
+            .args(effectiveCommand.subList(1, effectiveCommand.size()));
         // Build filtered environment for stdio subprocess
         Map<String, String> filteredEnv = buildSafeEnv(server.getEnv());
         if (!filteredEnv.isEmpty()) {
@@ -408,6 +409,58 @@ public class McpLifecycleManager {
         StdioClientTransport transport = new StdioClientTransport(params, new JacksonMcpJsonMapper(objectMapper));
         return McpClient.sync(transport).build();
     }
+
+    /**
+     * WP-i (Hermes tools/mcp_stdio_watchdog.py parity): interpose a
+     * parent-death supervisor between the agent and the stdio server command.
+     * The supervisor relays stdio transparently, runs the real command in its
+     * own process group, and kills that group the moment the agent process
+     * dies — a hard crash can no longer orphan MCP servers.
+     */
+    List<String> stdioLaunchCommand(AgentProperties.McpProperties.ServerProperties server, String command) {
+        List<String> argv = new java.util.ArrayList<>();
+        argv.add(command);
+        if (server.getArgs() != null) {
+            argv.addAll(server.getArgs());
+        }
+        if (!server.isStdioParentDeathWatchdog()
+                || !"/".equals(java.nio.file.FileSystems.getDefault().getSeparator())) {
+            return argv; // watchdog disabled or non-POSIX platform
+        }
+        String script = mcpStdioWatchdogScript();
+        if (script == null) {
+            log.debug("mcp-stdio-watchdog.sh not found on classpath; spawning {} directly", command);
+            return argv;
+        }
+        argv.add(0, "--");
+        argv.add(0, String.valueOf(ProcessHandle.current().pid()));
+        argv.add(0, "--ppid");
+        argv.add(0, script);
+        argv.add(0, "sh");
+        return argv;
+    }
+
+    /** Resolve the bundled watchdog script to a real filesystem path (extract if nested in the jar). */
+    String mcpStdioWatchdogScript() {
+        if (watchdogScriptPath != null) {
+            return watchdogScriptPath;
+        }
+        try (var in = getClass().getResourceAsStream("/mcp/mcp-stdio-watchdog.sh")) {
+            if (in == null) {
+                return null;
+            }
+            java.nio.file.Path target = java.nio.file.Files.createTempFile("mcp-stdio-watchdog", ".sh");
+            java.nio.file.Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            target.toFile().setExecutable(true, false);
+            watchdogScriptPath = target.toAbsolutePath().toString();
+            return watchdogScriptPath;
+        } catch (Exception e) {
+            log.debug("failed to extract mcp-stdio-watchdog.sh: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String watchdogScriptPath;
 
     private McpSyncClient createSseClient(AgentProperties.McpProperties.ServerProperties server) {
         var transport = HttpClientSseClientTransport.builder(server.getBaseUrl())
@@ -1329,6 +1382,11 @@ public class McpLifecycleManager {
             return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             future.cancel(true);
+            // WP-i (Hermes in-flight RPC teardown parity): a timed-out stdio call
+            // typically means the underlying process/pipe is wedged. Leaving the
+            // client connected turns EVERY later call into another full timeout.
+            // Tear the wedged client down so the reconnect path can rebuild it.
+            teardownWedgedClient(state, operation, timeout);
             throw new RuntimeException("MCP call timed out after configured timeout: "
                 + formatSeconds(timeout) + " for " + operation, e);
         } catch (ExecutionException e) {
@@ -1342,6 +1400,47 @@ public class McpLifecycleManager {
             Thread.currentThread().interrupt();
             throw e;
         }
+    }
+
+    /**
+     * WP-i: close a client whose RPC timed out and schedule an asynchronous
+     * reconnect. The in-flight call already failed to its caller; this exists
+     * so the NEXT call finds a healthy client instead of inheriting the wedge.
+     */
+    private void teardownWedgedClient(McpServerState state, String operation, Duration timeout) {
+        if (state == null || state.client() == null) {
+            return;
+        }
+        String serverName = serverNameOf(state);
+        if (serverName == null) {
+            return;
+        }
+        try {
+            state.client().close();
+        } catch (Exception closeEx) {
+            log.debug("close of wedged MCP client {} failed: {}", serverName, closeEx.getMessage());
+        }
+        // Remove and reconnect in the background; callers keep failing fast
+        // with "not connected"/breaker semantics until it is healthy again.
+        McpServerState stale = clients.remove(serverName);
+        if (stale == null) {
+            clients.put(serverName, state); // someone re-registered; leave it
+            return;
+        }
+        ScheduledFuture<?> oldRefresh = toolRefreshFutures.remove(serverName);
+        if (oldRefresh != null) {
+            oldRefresh.cancel(false);
+        }
+        properties.getMcp().getServers().stream()
+            .filter(s -> s.getName().equals(serverName))
+            .findFirst()
+            .ifPresent(server -> scheduleReconnect(server, 0, false));
+        log.info("MCP {} wedged ({} timeout {}); client torn down, reconnect scheduled",
+            serverName, operation, formatSeconds(timeout));
+    }
+
+    private String serverNameOf(McpServerState state) {
+        return state.properties() == null ? null : state.properties().getName();
     }
 
     private static String formatSeconds(Duration timeout) {
@@ -1683,8 +1782,58 @@ public class McpLifecycleManager {
     }
 
     static String mcpPrefixedToolName(String serverName, String toolName) {
-        return MCP_TOOL_NAME_PREFIX + sanitizeMcpNameComponent(serverName)
+        String fullName = MCP_TOOL_NAME_PREFIX + sanitizeMcpNameComponent(serverName)
             + MCP_NAME_DELIMITER + sanitizeMcpNameComponent(toolName);
+        return clampMcpToolName(fullName);
+    }
+
+    private static final int MCP_TOOL_NAME_MAX_LENGTH = 64;
+    private static final int MCP_TOOL_NAME_HASH_LENGTH = 8;
+    private static final java.util.Set<String> CLAMPED_NAMES_WARNED =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * OpenAI-compatible providers reject function names longer than 64 chars,
+     * which kills the WHOLE request when one generated name is longer.
+     * Hermes parity (tools/mcp_tool_schema.py, #81331): clamp with a
+     * deterministic sha256 hash suffix — distinct long names never collide,
+     * the same inputs always produce the same shortened name. Dispatch is
+     * unaffected: handlers close over the original unprefixed tool name.
+     */
+    static String clampMcpToolName(String fullName) {
+        if (fullName.length() <= MCP_TOOL_NAME_MAX_LENGTH) {
+            return fullName;
+        }
+        String suffix = "_" + sha256Prefix(fullName, MCP_TOOL_NAME_HASH_LENGTH);
+        if (CLAMPED_NAMES_WARNED.add(fullName)) { // recomputed on health refresh — warn once
+            log.warn("MCP tool name '{}' ({} chars) exceeds the {}-char provider limit; "
+                + "shortened to a deterministic hash-suffixed name",
+                fullName, fullName.length(), MCP_TOOL_NAME_MAX_LENGTH);
+        }
+        return fullName.substring(0, MCP_TOOL_NAME_MAX_LENGTH - suffix.length()) + suffix;
+    }
+
+    private static String sha256Prefix(String value, int chars) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : digest) {
+                hex.append(String.format("%02x", b));
+                if (hex.length() >= chars) {
+                    break;
+                }
+            }
+            return hex.substring(0, chars);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            // FNV-1a fallback — still deterministic, collision-safe enough for name clamping
+            long fnv = 0xcbf29ce484222325L;
+            for (int i = 0; i < value.length(); i++) {
+                fnv ^= value.charAt(i);
+                fnv *= 0x100000001b3L;
+            }
+            return String.format("%016x", fnv).substring(0, chars);
+        }
     }
 
     static String mcpToolsetName(String serverName) {
@@ -2175,9 +2324,14 @@ public class McpLifecycleManager {
         }
     }
 
-    private record McpServerState(AgentProperties.McpProperties.ServerProperties properties,
-                                  McpSyncClient client,
-                                  List<McpSchema.Tool> tools) {}
+    record McpServerState(AgentProperties.McpProperties.ServerProperties properties,
+                          McpSyncClient client,
+                          List<McpSchema.Tool> tools) {}
+
+    /** Test seam: direct access to the connected-clients map. */
+    Map<String, McpServerState> getClientsForTest() {
+        return clients;
+    }
 
     public record McpServerInfo(String name, String baseUrl, String transport, int toolCount, List<String> toolNames) {}
 

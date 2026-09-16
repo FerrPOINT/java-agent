@@ -64,6 +64,15 @@ public class DelegatedTaskRunEntity {
     @Column(name = "delivery_error", columnDefinition = "text")
     private String deliveryError;
 
+    @Column(name = "last_progress_at")
+    private Instant lastProgressAt;
+
+    @Column(name = "last_progress_summary")
+    private String lastProgressSummary;
+
+    @Column(name = "stalled_diagnostic_at")
+    private Instant stalledDiagnosticAt;
+
     @Column(name = "delivery_attempts", nullable = false)
     private int deliveryAttempts;
 
@@ -248,4 +257,28 @@ public class DelegatedTaskRunEntity {
     public void setDeliveryClaimedAt(Instant deliveryClaimedAt) {
         this.deliveryClaimedAt = deliveryClaimedAt;
     }
+    public Instant getLastProgressAt() {
+        return lastProgressAt;
+    }
+
+    public void setLastProgressAt(Instant lastProgressAt) {
+        this.lastProgressAt = lastProgressAt;
+    }
+
+    public String getLastProgressSummary() {
+        return lastProgressSummary;
+    }
+
+    public void setLastProgressSummary(String lastProgressSummary) {
+        this.lastProgressSummary = lastProgressSummary;
+    }
+
+    public Instant getStalledDiagnosticAt() {
+        return stalledDiagnosticAt;
+    }
+
+    public void setStalledDiagnosticAt(Instant stalledDiagnosticAt) {
+        this.stalledDiagnosticAt = stalledDiagnosticAt;
+    }
+
 }

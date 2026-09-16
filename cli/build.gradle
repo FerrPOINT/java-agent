@@ -28,6 +28,9 @@ dependencies {
 
     // Jackson
     implementation 'com.fasterxml.jackson.core:jackson-databind'
+    // spring-web's MultipartBodyBuilder references reactive-streams types in
+    // its API surface (CLI attachment uploads need multipart).
+    implementation 'org.reactivestreams:reactive-streams'
     implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
 
     // Lombok

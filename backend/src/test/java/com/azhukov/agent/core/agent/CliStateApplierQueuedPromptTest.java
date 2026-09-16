@@ -17,7 +17,7 @@ class CliStateApplierQueuedPromptTest {
         req = com.azhukov.agent.api.dto.ChatRequest.simple(
             java.util.UUID.randomUUID(), "main", null, null);
 
-        CliStateApplier applier = new CliStateApplier();
+        CliStateApplier applier = new CliStateApplier(null);
         var applied = applier.applyCliState(req, e);
         assertThat(applied.message()).contains("follow-up");
         assertThat(applier.consumeQueuedPromptFlag()).isTrue();

@@ -26,7 +26,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/JUnit-green?style=flat-square" alt="JUnit" />
   <img src="https://img.shields.io/badge/Testcontainers-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Testcontainers" />
-  <img src="https://img.shields.io/badge/Jacoco-75%25%20LINE%20gate-0A9EDC?style=flat-square" alt="Jacoco" />
+  <img src="https://img.shields.io/badge/Jacoco-80%25%20LINE%20gate-0A9EDC?style=flat-square" alt="Jacoco" />
   <img src="https://img.shields.io/badge/source--available-not%20open%20source-7F1D1D?style=flat-square" alt="Not open source" />
 </p>
 
@@ -42,7 +42,7 @@ The project is an active product line. `AGENTS.md` is the canonical development 
 
 | Поле | Значение |
 |---|---|
-| Product line | `0.1.140` |
+| Product line | Source baseline `0.1.237` (`66be1d81`); deployed state is verified separately |
 | Gradle artifacts | `0.0.1-SNAPSHOT` |
 | Modules | `backend`, `telegram-bot`, `cli` |
 | Runtime | Java 25 LTS, Spring Boot 4.1, Gradle 9.6.1 |
@@ -207,12 +207,13 @@ Docker images use `eclipse-temurin:25-jre-noble`; slim images install Chromium a
 
 | Проверка | Команда |
 |---|---|
-| Full gate | `./gradlew check` |
-| Module tests | `./gradlew :backend:test :telegram-bot:test :cli:test` |
-| Slow integration | `./gradlew :backend:slowTest` |
-| Coverage | `./gradlew jacocoTestReport` |
+| Full local evidence | `python3 scripts/release_verify.py` |
+| Module tests | `./gradlew :backend:test :telegram-bot:test :cli:test --no-daemon` |
+| Slow PostgreSQL integration | `./gradlew :backend:slowTest --no-daemon` |
+| Coverage reports | `./gradlew :backend:jacocoTestReport :telegram-bot:jacocoTestReport --no-daemon` |
+| Local Docker E2E | `./scripts/e2e-docker-compose-test.sh` |
 
-Slow tests use real PostgreSQL through Testcontainers; H2 remains only for selected offline/streaming tests.
+`release_verify.py` records pass/fail/not-run gates, exact test counts, JaCoCo metrics and a conservative endpoint-reference inventory in `build/release-verification.json`. HTTP and CLI E2E are intentionally opt-in because they need a running local backend; Docker E2E is opt-in because it creates an isolated stack.
 
 ## 🧭 Project Map
 

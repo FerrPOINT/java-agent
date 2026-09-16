@@ -53,16 +53,18 @@ class AgentToolAnnotationParityTest {
     }
 
     @Test
-    void delegateTaskDescriptionDoesNotOverpromiseGatewayReinjection() {
+    void delegateTaskDescriptionPromisesRealGatewayReinjection() {
         String description = DelegateTaskTool.class.getAnnotation(AgentTool.class).description();
 
         assertThat(description)
             .contains("run_id/delegation_id")
             .contains("action='status'")
             .contains("action='read'")
-            .contains("full Hermes gateway reinjection loop");
+            // Reinjection is REAL since DelegateReinjectionGateway landed: the
+            // description must promise it (user-role note, next turn sees it).
+            .contains("reinjected into the parent session")
+            .doesNotContain("until the full Hermes gateway reinjection loop lands");
         assertThat(description)
-            .doesNotContain("re-enters the conversation on its own")
             .doesNotContain("Do NOT wait or poll");
     }
 

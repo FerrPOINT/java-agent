@@ -37,7 +37,8 @@ class BotSessionStoreConcurrencyTest {
 
         // First call returns empty (no existing session), subsequent calls (after lock) also return empty
         // but only one thread should actually save due to the synchronized block + double-check
-        when(repository.findByUserIdAndActiveTrue(anyString())).thenAnswer(inv -> {
+        // V9: resolution goes through findByUserIdAndThreadIdAndActiveTrue (thread-scoped).
+        when(repository.findByUserIdAndThreadIdAndActiveTrue(anyString(), any())).thenAnswer(inv -> {
             findByCount.incrementAndGet();
             return Optional.empty();
         });
@@ -89,6 +90,7 @@ class BotSessionStoreConcurrencyTest {
         existing.setUserId("123");
         existing.setActive(true);
         when(repository.findByUserIdAndActiveTrue("123")).thenReturn(Optional.of(existing));
+        org.mockito.Mockito.lenient().when(repository.findByUserIdAndThreadIdAndActiveTrue("123", null)).thenReturn(Optional.of(existing));
 
         BotSessionEntity result = store.resolveOrCreate("123", "456", "user");
         assertThat(result).isSameAs(existing);

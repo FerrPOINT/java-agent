@@ -150,7 +150,7 @@ class AgentStreamingServiceEntryBranchTest {
             new com.azhukov.agent.core.agent.TokenEstimator(), new com.azhukov.agent.core.agent.ToolResultFormatter(),
             new com.azhukov.agent.core.agent.AgentSessionResolver(mock(com.azhukov.agent.core.ports.SessionStorePort.class), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class), org.mockito.Mockito.mock(com.azhukov.agent.core.agent.ProjectContextDetector.class)),
             lineageService,
-            new com.azhukov.agent.core.agent.CliStateApplier(), null, null, new ModelMetadataService(), null);
+            new com.azhukov.agent.core.agent.CliStateApplier(null), null, null, new ModelMetadataService(), null);
     }
 
     @Test

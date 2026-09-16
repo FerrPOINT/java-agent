@@ -91,6 +91,17 @@ public class MediaDeliveryService {
      * Anchors: ~/ (home), / (absolute), X:\ or X:/ (Windows).
      * Excludes paths inside URLs (negative lookbehind for /, :, word chars, dot).
      */
+    /**
+     * M3 (WP-11 tail): does the text starting at a MEDIA: marker look like a
+     * COMPLETE tag (path terminated by a deliverable extension)? Used by the
+     * streaming display path to hold back partial tags still arriving across
+     * chunk boundaries.
+     */
+    private static final Pattern MEDIA_TAG_COMPLETE_RE = Pattern.compile(
+        "\\S+\\.(?:" + EXT_ALTERNATION + ")(?=[\\s`\"',;:)}\\]]|$)",
+        Pattern.CASE_INSENSITIVE
+    );
+
     private static final Pattern BARE_PATH_RE = Pattern.compile(
         "(?<![/:\\w.])(?:~/|/|[A-Za-z]:[/\\\\])(?:[\\w.\\-]+[/\\\\])*[\\w.\\-]+\\.(?:" + EXT_ALTERNATION + ")\\b",
         Pattern.CASE_INSENSITIVE
@@ -277,14 +288,32 @@ public class MediaDeliveryService {
      * @return text with MEDIA: tags and directives removed
      */
     public String stripMediaTagsForDisplay(String text) {
+        return stripMediaTagsForDisplay(text, false);
+    }
+
+    /**
+     * M3 fix (WP-11 tail): streaming display variant. When {@code streaming}
+     * is true, a trailing partial MEDIA: tag (path still arriving across
+     * stream chunks) is held back instead of flashing raw to the user; the
+     * completed-text extraction in the onComplete/final path still sees the
+     * full tag and delivers the file.
+     */
+    public String stripMediaTagsForDisplay(String text, boolean streaming) {
         if (text == null || text.isEmpty()) {
             return "";
         }
-        if (!text.contains("MEDIA:") && !text.contains(AUDIO_AS_VOICE) && !text.contains(AS_DOCUMENT)) {
-            return text;
+        String effective = text;
+        if (streaming) {
+            int idx = effective.lastIndexOf("MEDIA:");
+            if (idx >= 0 && !MEDIA_TAG_COMPLETE_RE.matcher(effective.substring(idx)).find()) {
+                effective = effective.substring(0, idx);
+            }
+        }
+        if (!effective.contains("MEDIA:") && !effective.contains(AUDIO_AS_VOICE) && !effective.contains(AS_DOCUMENT)) {
+            return effective;
         }
 
-        String cleaned = text.replace(AUDIO_AS_VOICE, "");
+        String cleaned = effective.replace(AUDIO_AS_VOICE, "");
         cleaned = cleaned.replace(AS_DOCUMENT, "");
 
         // Use the anchored regex to strip MEDIA: tags

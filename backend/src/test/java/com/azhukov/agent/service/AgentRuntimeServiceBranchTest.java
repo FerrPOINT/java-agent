@@ -92,7 +92,7 @@ class AgentRuntimeServiceBranchTest {
             new RuntimeConfigService(),
             transactionTemplate,
             new AgentSessionResolver(sessionStorePort(), Mappers.getMapper(SessionEntityMapper.class), transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(SessionLineageService.class), mock(com.azhukov.agent.core.agent.ProjectContextDetector.class)),
-            new CliStateApplier(),
+            new CliStateApplier(null),
             new SessionCompressionHelper(messageRepository, Mappers.getMapper(MessageMapper.class),
                 mock(com.azhukov.agent.service.ConversationCompressor.class),
                 Mockito.mock(org.springframework.beans.factory.ObjectProvider.class, Mockito.RETURNS_SELF),
@@ -175,15 +175,16 @@ class AgentRuntimeServiceBranchTest {
     }
 
     private static ChatRequest chatRequest(UUID sessionId, String message, Boolean yoloMode) {
-        // canonical ctor: 29 params — sessionId, message, delegationDepth, timeoutMs,
+        // canonical ctor: 30 params — sessionId, message, delegationDepth, timeoutMs,
         // model, provider, baseUrl, apiKey, reasoningEffort, fastMode, voiceMode,
         // personality, enabledTools, disabledTools, queuedPrompt, subgoal,
         // maxCompletionTokens, systemPromptOverride, cdpUrl, goal, userId, username,
-        // firstName, languageCode, chatType, serviceTier, yoloMode, verboseMode, footerEnabled
+        // firstName, languageCode, chatType, serviceTier, yoloMode, verboseMode,
+        // footerEnabled, attachments
         return new ChatRequest(
             sessionId, message, null, null, null, null, null, null, null, null, null, null, null,
             null, null, null, null, null, null, null, null, null, null, null, null,
-            null, yoloMode, null, null);
+            null, yoloMode, null, null, null);
     }
 
     private com.azhukov.agent.core.ports.SessionStorePort sessionStorePort() {

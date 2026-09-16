@@ -668,16 +668,14 @@ public class AgentRuntimeService {
      * the lazy cliState ElementCollection is accessed outside a Hibernate session.
      */
     private ChatRequest applyCliState(ChatRequest request) {
-        if (request.sessionId() == null) {
-            return request;
-        }
-        SessionEntity session = transactionTemplate.execute(status -> {
-            SessionEntity e = sessionRepository.findById(request.sessionId()).orElse(null);
-            if (e != null) {
-                org.hibernate.Hibernate.initialize(e.getCliState());
-            }
-            return e;
-        });
+        SessionEntity session = request.sessionId() == null ? null
+            : transactionTemplate.execute(status -> {
+                SessionEntity e = sessionRepository.findById(request.sessionId()).orElse(null);
+                if (e != null) {
+                    org.hibernate.Hibernate.initialize(e.getCliState());
+                }
+                return e;
+            });
         ChatRequest applied = cliStateApplier.applyCliState(request, session);
         // Hermes /queue semantics: the queued prompt is consumed by THIS turn —
         // clear the persisted value so later turns don't replay stale context.

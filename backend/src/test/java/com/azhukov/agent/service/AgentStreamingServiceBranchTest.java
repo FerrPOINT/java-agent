@@ -183,7 +183,7 @@ class AgentStreamingServiceBranchTest {
             new TokenEstimator(), new ToolResultFormatter(),
             new AgentSessionResolver(sessionStorePort(), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class), mock(com.azhukov.agent.core.agent.ProjectContextDetector.class)),
             lineageService,
-            new CliStateApplier(), null, null, new com.azhukov.agent.core.metadata.ModelMetadataService(), null);
+            new CliStateApplier(null), null, null, new com.azhukov.agent.core.metadata.ModelMetadataService(), null);
     }
 
     // ── selectTools: disabledTools filtering ──

@@ -50,8 +50,9 @@ public class TelegramAdapter implements BasePlatformAdapter {
         if (chatId == 0L) {
             return CompletableFuture.completedFuture(new SendResult(false, null, "No chat_id in target"));
         }
+        Integer threadId = parseThreadId(target);
         return CompletableFuture.supplyAsync(() -> {
-            var messageId = botApiClient.sendMessage(chatId, text);
+            var messageId = botApiClient.sendMessage(chatId, text, threadId);
             return messageId
                 .map(id -> new SendResult(true, id, null))
                 .orElseGet(() -> new SendResult(false, null, "Telegram sendMessage failed"));
@@ -137,6 +138,18 @@ public class TelegramAdapter implements BasePlatformAdapter {
             return Long.parseLong(target.chatId());
         } catch (NumberFormatException e) {
             return 0L;
+        }
+    }
+
+    /** Forum-topic routing: numeric thread ids only (Telegram message_thread_id). */
+    private Integer parseThreadId(SessionSource target) {
+        if (target == null || target.threadId() == null || target.threadId().isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(target.threadId().trim());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 

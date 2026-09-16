@@ -44,8 +44,20 @@ public class McpOAuthManager {
         Pattern.CASE_INSENSITIVE
     );
 
+    /** Legacy default-profile path (kept for existing callers). */
     public Optional<String> getToken(String serverName) {
-        Optional<McpOAuthEntity> entity = mcpOAuthRepository.findByServerName(serverName);
+        return getToken("default", serverName);
+    }
+
+    /**
+     * Profile-scoped token resolution (upstream 399238f2c2 parity): one
+     * profile's stored OAuth must never authorize another profile's MCP
+     * requests. V63 enforces uniqueness per (profile, server_name).
+     */
+    public Optional<String> getToken(String profile, String serverName) {
+        String scope = profile == null || profile.isBlank() ? "default" : profile;
+        Optional<McpOAuthEntity> entity =
+            mcpOAuthRepository.findByProfileAndServerName(scope, serverName);
         if (entity.isEmpty()) {
             return Optional.empty();
         }
@@ -53,7 +65,7 @@ public class McpOAuthManager {
         if (token.getExpiresAt() != null && token.getExpiresAt().isBefore(Instant.now())) {
             // Token expired — attempt refresh automatically
             try {
-                refreshToken(serverName);
+                refreshToken(scope, serverName);
             } catch (InterruptedException e) {
                 // P2-17: Restore interrupt status rather than silently swallowing
                 Thread.currentThread().interrupt();
@@ -62,7 +74,8 @@ public class McpOAuthManager {
                 log.warn("Auto-refresh of OAuth token for MCP server {} failed: {}", serverName, e.getMessage());
             }
             // Re-read after refresh attempt
-            Optional<McpOAuthEntity> refreshed = mcpOAuthRepository.findByServerName(serverName);
+            Optional<McpOAuthEntity> refreshed =
+                mcpOAuthRepository.findByProfileAndServerName(scope, serverName);
             if (refreshed.isPresent() && refreshed.get().getExpiresAt() != null
                 && refreshed.get().getExpiresAt().isAfter(Instant.now())) {
                 return Optional.of(refreshed.get().getAccessToken());
@@ -80,7 +93,13 @@ public class McpOAuthManager {
      * @throws IllegalStateException if no stored token or no refresh token exists
      * @throws IOException if the token refresh HTTP request fails
      */
+    /** Legacy default-profile path (kept for existing callers). */
     public void refreshToken(String serverName) throws IOException, InterruptedException {
+        refreshToken("default", serverName);
+    }
+
+    /** Profile-scoped refresh (upstream 399238f2c2 parity). */
+    public void refreshToken(String profile, String serverName) throws IOException, InterruptedException {
         // Find the server config to get OAuth endpoint details
         AgentProperties.McpProperties.ServerProperties serverConfig = properties.getMcp().getServers().stream()
             .filter(s -> s.getName().equals(serverName))
@@ -93,14 +112,28 @@ public class McpOAuthManager {
             throw new IllegalStateException(
                 "No OAuth token URL configured for MCP server: " + serverName);
         }
+        String currentIssuer = issuerOf(tokenUrl);
 
-        McpOAuthEntity entity = mcpOAuthRepository.findByServerName(serverName)
+        String scope = profile == null || profile.isBlank() ? "default" : profile;
+        McpOAuthEntity entity = mcpOAuthRepository.findByProfileAndServerName(scope, serverName)
             .orElseThrow(() -> new IllegalStateException(
                 "No stored OAuth token for MCP server: " + serverName));
 
         if (entity.getRefreshToken() == null || entity.getRefreshToken().isBlank()) {
             throw new IllegalStateException(
                 "No refresh token stored for MCP server: " + serverName);
+        }
+
+        // WP-e (V67): a refresh token minted by issuer A must never be replayed
+        // at issuer B (protected-resource metadata edit, server migration). A
+        // mismatched issuer invalidates the stored token instead of leaking it.
+        String storedIssuer = entity.getTokenIssuer();
+        if (storedIssuer != null && !storedIssuer.isBlank() && !storedIssuer.equals(currentIssuer)) {
+            mcpOAuthRepository.delete(entity);
+            throw new IllegalStateException(
+                "Stored OAuth token for MCP server " + serverName
+                + " was issued by " + storedIssuer + " but the server now points at "
+                + currentIssuer + " — token discarded; re-authorization required");
         }
 
         // Build form-encoded POST body per RFC 6749 §6
@@ -159,13 +192,45 @@ public class McpOAuthManager {
             }
         }
 
-        storeToken(serverName, newAccessToken, newRefreshToken, expiresAt);
+        storeToken(scope, serverName, newAccessToken, newRefreshToken, expiresAt, currentIssuer);
         log.info("Successfully refreshed OAuth token for MCP server {}", serverName);
     }
 
+    /** V67: issuer identity = token endpoint origin (scheme + host + port). */
+    static String issuerOf(String tokenUrl) {
+        try {
+            java.net.URL url = new java.net.URI(tokenUrl).toURL();
+            String port = url.getPort() == -1 ? "" : ":" + url.getPort();
+            return url.getProtocol() + "://" + url.getHost() + port;
+        } catch (Exception e) {
+            return tokenUrl; // opaque fallback: compare raw strings
+        }
+    }
+
     public void storeToken(String serverName, String accessToken, String refreshToken, Instant expiresAt) {
-        McpOAuthEntity entity = mcpOAuthRepository.findByServerName(serverName)
+        storeToken("default", serverName, accessToken, refreshToken, expiresAt);
+    }
+
+    /** V67: profile-scoped storage that binds the token to its issuer. */
+    public void storeToken(String profile, String serverName, String accessToken,
+                           String refreshToken, Instant expiresAt, String issuer) {
+        storeToken(profile, serverName, accessToken, refreshToken, expiresAt);
+        McpOAuthEntity entity = mcpOAuthRepository
+            .findByProfileAndServerName(profile == null || profile.isBlank() ? "default" : profile, serverName)
+            .orElse(null);
+        if (entity != null) {
+            entity.setTokenIssuer(issuer);
+            mcpOAuthRepository.save(entity);
+        }
+    }
+
+    /** Profile-scoped token storage (upstream 399238f2c2 parity, V63 unique (profile, server_name)). */
+    public void storeToken(String profile, String serverName, String accessToken,
+                           String refreshToken, Instant expiresAt) {
+        String scope = profile == null || profile.isBlank() ? "default" : profile;
+        McpOAuthEntity entity = mcpOAuthRepository.findByProfileAndServerName(scope, serverName)
             .orElseGet(McpOAuthEntity::new);
+        entity.setProfile(scope);
         entity.setServerName(serverName);
         entity.setAccessToken(accessToken);
         entity.setRefreshToken(refreshToken);
@@ -178,7 +243,7 @@ public class McpOAuthManager {
     }
 
     /** Extract a string field value from a JSON response body (simple parser, no Jackson needed). */
-    static String extractJsonField(String json, String fieldName) {
+    public static String extractJsonField(String json, String fieldName) {
         if (json == null || json.isEmpty()) {
             return null;
         }
@@ -243,7 +308,7 @@ public class McpOAuthManager {
         }
     }
 
-    static String sanitizeError(String text) {
+    public static String sanitizeError(String text) {
         if (text == null || text.isEmpty()) {
             return text;
         }

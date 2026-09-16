@@ -60,6 +60,8 @@ class BotMessageProcessorDrainQueueLockTest {
     private GoalAutoContinueService goalAutoContinueService;
     private EditCaptureService editCaptureService;
     private BotMessageProcessor processor;
+    private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
+
 
     @BeforeEach
     void setUp() {
@@ -101,18 +103,19 @@ class BotMessageProcessorDrainQueueLockTest {
         when(session.getBackendSessionId()).thenReturn(null);
         when(session.getUserId()).thenReturn("123");
         when(sessionStore.resolveOrCreate(anyString(), anyString(), any())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), any(), org.mockito.ArgumentMatchers.any())).thenReturn(session);
 
         // c5: construct the extracted collaborators with the same mocked deps
         UpdateDispatcher updateDispatcher = new UpdateDispatcher(
             properties, editCaptureService, textBatchDebouncer, photoBatchDebouncer);
         StreamingOrchestrator streamingOrchestrator = new StreamingOrchestrator(
             backendClient, streamEditor, busyHandler, runtimeFooter, properties, mediaDeliveryService,
-            mock(com.azhukov.agent.bot.client.TelegramClient.class));
+            mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock);
 
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
-            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, runtimeFooter,
+            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AttachmentApiClient.class), runtimeFooter,
             reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
             editCaptureService, updateDispatcher, streamingOrchestrator
@@ -123,7 +126,7 @@ class BotMessageProcessorDrainQueueLockTest {
     @Test
     void queuedMessagesAreProcessedAfterInitialMessage() {
         long chatId = 500L;
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 // Queue a message during the first processing
                 busyHandler.queueMessage(chatId, textEvent(2, chatId, "queued"));
@@ -136,7 +139,7 @@ class BotMessageProcessorDrainQueueLockTest {
 
         // The queued message should have been processed (drained inside the lock)
         // Verify backendClient.chatStream was called at least twice (once for initial, once for queued)
-        verify(backendClient, atLeast(2)).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient, atLeast(2)).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     private UpdateEvent textEvent(long updateId, long chatId, String text) {

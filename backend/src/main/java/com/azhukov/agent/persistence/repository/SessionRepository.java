@@ -59,6 +59,19 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     @Query(value = "SELECT COUNT(*) FROM sessions WHERE COALESCE(archived, FALSE) = FALSE", nativeQuery = true)
     long countUnarchivedSessions();
 
+    /**
+     * Ended sessions for prune candidates (WP-4.6), profile-scoped, oldest
+     * first. Java-side filters apply on top (title/model substring, message
+     * bounds, started window).
+     */
+    @Query("""
+        SELECT s FROM SessionEntity s
+        WHERE s.endReason IS NOT NULL
+          AND (:profile IS NULL OR s.profile = :profile)
+        ORDER BY s.createdAt ASC
+        """)
+    java.util.List<SessionEntity> listEndedSessions(@Param("profile") String profile, org.springframework.data.domain.Pageable pageable);
+
     @Query(value = "SELECT COUNT(*) FROM sessions WHERE COALESCE(archived, FALSE) = TRUE", nativeQuery = true)
     long countArchivedSessions();
 

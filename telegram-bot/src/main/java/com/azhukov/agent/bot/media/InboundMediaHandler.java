@@ -1,6 +1,7 @@
 package com.azhukov.agent.bot.media;
 
 import com.azhukov.agent.bot.core.AgentBackendClient;
+import com.azhukov.agent.bot.core.AttachmentApiClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.sticker.StickerCache;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +38,7 @@ public class InboundMediaHandler {
     private final MediaDownloader mediaDownloader;
     private final StickerCache stickerCache;
     private final AgentBackendClient backendClient;
+    private final AttachmentApiClient attachmentApiClient;
 
     @Value("${agent.transcription.enabled:false}")
     private boolean transcriptionEnabled;
@@ -127,9 +129,80 @@ public class InboundMediaHandler {
         // Save to the shared agent media temp directory.
         Path savedPath = saveMedia(fileId, fileType, data);
         String description = describe(event, fileType, fileId, sizeBytes, savedPath);
-        log.debug("Handled media: type={}, fileId={}, size={}bytes, saved={}",
-            fileType, fileId, sizeBytes, savedPath);
+        // WP-11: register the downloaded media as a backend artifact so the
+        // turn references a durable, deduped id instead of only a temp path.
+        String artifactId = registerArtifact(event, fileType, data, savedPath);
+        if (artifactId != null) {
+            description = description + " (artifact=" + artifactId + ")";
+        }
+        log.debug("Handled media: type={}, fileId={}, size={}bytes, saved={}, artifact={}",
+            fileType, fileId, sizeBytes, savedPath, artifactId);
         return Optional.of(description);
+    }
+
+    /**
+     * WP-11: register downloaded media as a backend attachment artifact.
+     * Best-effort — on any failure returns null and the caller keeps the
+     * legacy local-path description (media handling never hard-fails).
+     */
+    private String registerArtifact(UpdateEvent event, String fileType, byte[] data, Path savedPath) {
+        try {
+            String ownerId = event.userId() > 0 ? String.valueOf(event.userId()) : null;
+            String messageId = event.messageId() > 0 ? String.valueOf(event.messageId()) : null;
+            String fileName = savedPath != null ? savedPath.getFileName().toString()
+                : (fileType + ".bin");
+            String mime = mimeFor(fileType, fileName);
+            return attachmentApiClient
+                .register(data, fileName, mime, dispositionFor(fileType), "telegram",
+                    ownerId, null, messageId)
+                .map(AttachmentApiClient.Registered::id)
+                .orElse(null);
+        } catch (Exception e) {
+            log.debug("artifact registration skipped: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private static String dispositionFor(String fileType) {
+        return switch (fileType == null ? "" : fileType) {
+            case "photo" -> "photo";
+            case "voice" -> "voice";
+            case "video", "video_note", "animation" -> "video";
+            case "audio" -> "audio";
+            case "sticker" -> "sticker";
+            default -> "file";
+        };
+    }
+
+    private static String mimeFor(String fileType, String fileName) {
+        return switch (fileType == null ? "" : fileType) {
+            case "photo" -> "image/jpeg";
+            case "voice" -> "audio/ogg";
+            case "video" -> "video/mp4";
+            case "video_note" -> "video/mp4";
+            case "animation" -> "image/gif";
+            case "audio" -> "audio/mpeg";
+            case "sticker" -> "image/webp";
+            default -> java.util.Optional.ofNullable(fileName)
+                .filter(n -> n.lastIndexOf('.') > 0)
+                .map(n -> {
+                    String ext = n.substring(n.lastIndexOf('.') + 1).toLowerCase();
+                    return switch (ext) {
+                        case "png" -> "image/png";
+                        case "jpg", "jpeg" -> "image/jpeg";
+                        case "webp" -> "image/webp";
+                        case "gif" -> "image/gif";
+                        case "pdf" -> "application/pdf";
+                        case "txt" -> "text/plain";
+                        case "json" -> "application/json";
+                        case "mp3" -> "audio/mpeg";
+                        case "ogg" -> "audio/ogg";
+                        case "mp4" -> "video/mp4";
+                        default -> "application/octet-stream";
+                    };
+                })
+                .orElse("application/octet-stream");
+        };
     }
 
     /**

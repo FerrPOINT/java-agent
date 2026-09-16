@@ -15,6 +15,7 @@ import com.azhukov.agent.tools.terminal.ProcessTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -37,6 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class OpenAiRunService {
 
     private static final long RUN_STATUS_TTL_SECONDS = 3600;
@@ -50,6 +52,8 @@ public class OpenAiRunService {
     private final Redactor redactor;
     private final ObjectMapper objectMapper;
     private final ProcessTool processTool;
+
+    private final org.springframework.beans.factory.ObjectProvider<OpenAiRunStateMachine> runStateMachineProvider;
 
     private final ConcurrentMap<String, RunRecord> runs = new ConcurrentHashMap<>();
     private final ExecutorService executor = Executors.newThreadPerTaskExecutor(
@@ -90,6 +94,8 @@ public class OpenAiRunService {
         UUID controlSessionId = UUID.randomUUID();
         RunRecord record = new RunRecord(runId, sessionId, controlSessionId, requestedModel);
         runs.put(runId, record);
+        record.attachPersistHook((status, reason) -> persistTransition(runId, status, reason));
+        persistRunCreated(runId, sessionId, requestedModel);
 
         Session runSession = RunControlScope.withControlSessionId(sessionContext.session(), controlSessionId);
         if (instructions != null && !instructions.isBlank()) {
@@ -384,6 +390,53 @@ public class OpenAiRunService {
         executor.shutdownNow();
     }
 
+    // ── WP-6 durable state machine mirror ─────────────────────────────
+
+    private OpenAiRunStateMachine stateMachine() {
+        return runStateMachineProvider == null ? null : runStateMachineProvider.getIfAvailable();
+    }
+
+    private void persistRunCreated(String runId, UUID sessionId, String model) {
+        OpenAiRunStateMachine stateMachine = stateMachine();
+        if (stateMachine == null) {
+            return;
+        }
+        try {
+            stateMachine.createRun(runId, sessionId, null, "default", model, null);
+            stateMachine.appendEvent(runId, Map.of(
+                "event", "run.created",
+                "run_id", runId,
+                "timestamp", epochSeconds()));
+        } catch (Exception e) {
+            log.warn("Failed to persist run creation {}: {}", runId, e.getMessage());
+        }
+    }
+
+    /** Mirror a status change into the durable state machine (best-effort, non-blocking). */
+    void persistTransition(String runId, String openAiStatus, String reason) {
+        OpenAiRunStateMachine stateMachine = stateMachine();
+        if (stateMachine == null) {
+            return;
+        }
+        String mapped = switch (openAiStatus == null ? "" : openAiStatus) {
+            case "queued" -> OpenAiRunStateMachine.QUEUED;
+            case "running", "in_progress" -> OpenAiRunStateMachine.IN_PROGRESS;
+            case "requires_action", "awaiting_approval" -> OpenAiRunStateMachine.REQUIRES_ACTION;
+            case "completed" -> OpenAiRunStateMachine.COMPLETED;
+            case "failed" -> OpenAiRunStateMachine.FAILED;
+            case "cancelled", "stopping" -> OpenAiRunStateMachine.CANCELLED;
+            default -> null;
+        };
+        if (mapped == null) {
+            return;
+        }
+        try {
+            stateMachine.transition(runId, mapped, reason);
+        } catch (Exception e) {
+            log.warn("Failed to persist run transition {} -> {}: {}", runId, mapped, e.getMessage());
+        }
+    }
+
     public static final class RunRecord {
         private final String runId;
         private final UUID sessionId;
@@ -394,6 +447,8 @@ public class OpenAiRunService {
         private final AtomicBoolean eventStreamClaimed = new AtomicBoolean(false);
         private final AtomicBoolean stopRequested = new AtomicBoolean(false);
         private final Map<String, Object> extra = new LinkedHashMap<>();
+        /** WP-6: mirror hook into the durable state machine (outer service). */
+        private java.util.function.BiConsumer<String, String> persistHook;
         private String status = "queued";
         private double updatedAt;
 
@@ -440,6 +495,7 @@ public class OpenAiRunService {
         }
 
         private synchronized void setStatus(String status, Map<String, Object> fields) {
+            String previous = this.status;
             this.status = status;
             this.updatedAt = epochSeconds();
             if (fields != null) {
@@ -449,6 +505,19 @@ public class OpenAiRunService {
                     }
                 }
             }
+            if (persistHook != null && !previous.equals(status)) {
+                String reason = fields == null ? null
+                    : (fields.get("error") != null ? String.valueOf(fields.get("error")) : null);
+                try {
+                    persistHook.accept(status, reason);
+                } catch (RuntimeException ignored) {
+                    // durable mirror is best-effort; in-memory run stays authoritative for the active process
+                }
+            }
+        }
+
+        private void attachPersistHook(java.util.function.BiConsumer<String, String> hook) {
+            this.persistHook = hook;
         }
 
         private void emit(String event, Map<String, Object> fields) {

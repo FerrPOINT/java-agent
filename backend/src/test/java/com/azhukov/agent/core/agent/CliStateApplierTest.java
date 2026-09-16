@@ -11,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class CliStateApplierTest {
 
-    private final CliStateApplier applier = new CliStateApplier();
+    private final CliStateApplier applier = new CliStateApplier(null);
 
     private static final UUID SESSION_ID = UUID.fromString("11111111-2222-3333-4444-555555555555");
 

@@ -17,9 +17,10 @@ public final class ChatRequestIdentity {
         if (java.util.Objects.equals(userId, request.userId())) return request;
         return new ChatRequest(
             request.sessionId(), request.message(), request.delegationDepth(), request.timeoutMs(),
-            request.model(), request.reasoningEffort(), request.fastMode(), request.voiceMode(),
-            request.personality(), request.enabledTools(), request.disabledTools(), request.queuedPrompt(),
-            request.subgoal(), request.cdpUrl(), request.goal(), userId, request.username(),
-            request.firstName(), request.languageCode(), request.chatType());
+            request.model(), null, null, null, request.reasoningEffort(), request.fastMode(),
+            request.voiceMode(), request.personality(), request.enabledTools(), request.disabledTools(),
+            request.queuedPrompt(), request.subgoal(), null, null, request.cdpUrl(), request.goal(),
+            userId, request.username(), request.firstName(), request.languageCode(), request.chatType(),
+            null, null, null, null, request.attachments());
     }
 }

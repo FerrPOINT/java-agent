@@ -54,5 +54,9 @@ public interface SessionEntityMapper {
     @Mapping(target = "hidden", ignore = true)
     @Mapping(target = "unread", ignore = true)
     @Mapping(target = "subgoal", ignore = true)
+    @Mapping(target = "originPlatform", ignore = true)
+    @Mapping(target = "originChatId", ignore = true)
+    @Mapping(target = "originThreadId", ignore = true)
+    @Mapping(target = "originUserId", ignore = true)
     SessionEntity toEntity(Session session);
 }

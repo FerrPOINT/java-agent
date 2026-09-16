@@ -85,6 +85,8 @@ class BotMessageProcessorMediaDeliveryTest {
     private EditCaptureService editCaptureService;
 
     private BotMessageProcessor processor;
+    private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
+
 
     @BeforeEach
     void setUp() {
@@ -136,6 +138,8 @@ class BotMessageProcessorMediaDeliveryTest {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         when(textBatchDebouncer.offer(any())).thenReturn(false);
         when(photoBatchDebouncer.offer(any())).thenReturn(false);
@@ -148,12 +152,12 @@ class BotMessageProcessorMediaDeliveryTest {
             properties, editCaptureService, textBatchDebouncer, photoBatchDebouncer);
         StreamingOrchestrator streamingOrchestrator = new StreamingOrchestrator(
             backendClient, streamEditor, busyHandler, runtimeFooter, properties, mediaDeliveryService,
-            mock(com.azhukov.agent.bot.client.TelegramClient.class));
+            mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock);
 
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
-            properties, streamEditor, inboundMediaHandler, mediaDeliveryService,
+            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AttachmentApiClient.class),
             runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
             editCaptureService, updateDispatcher, streamingOrchestrator);
@@ -168,14 +172,14 @@ class BotMessageProcessorMediaDeliveryTest {
     @SuppressWarnings("unchecked")
     private void stubStreamingResult(String content, boolean streamFinalized) {
         doAnswer(inv -> {
-            Consumer<String> tokenConsumer = inv.getArgument(3);
+            Consumer<String> tokenConsumer = inv.getArgument(4);
             tokenConsumer.accept(content);
             if (streamFinalized) {
-                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(8);
+                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
                 onComplete.accept(new AgentBackendClient.ChatResult(content, "test-model", 100, 1000, true));
             }
             return new AgentBackendClient.ChatResult(content, "test-model", 100, 1000, streamFinalized, false);
-        }).when(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any());
+        }).when(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     private UpdateEvent textEvent(long updateId, long chatId, String text) {

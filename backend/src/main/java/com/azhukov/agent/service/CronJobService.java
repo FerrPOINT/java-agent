@@ -3,10 +3,12 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.DefaultUrlSafety;
+import com.azhukov.agent.core.util.CronSilenceFilter;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.tools.terminal.TerminalTool;
 import com.azhukov.agent.persistence.entity.CronExecutionLogEntity;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
+import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.azhukov.agent.persistence.repository.CronJobRepository;
 import com.cronutils.model.Cron;
@@ -16,7 +18,6 @@ import com.cronutils.model.time.ExecutionTime;
 import com.cronutils.parser.CronParser;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
@@ -66,7 +67,6 @@ import java.util.regex.Pattern;
 
 @Service
 @Slf4j
-@RequiredArgsConstructor
 public class CronJobService {
 
 private static final String CRON_EXECUTION_HINT = """
@@ -86,8 +86,56 @@ private static final String CRON_EXECUTION_HINT = """
     private final com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
     private final CronScheduleParser scheduleParser;
+    private final ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider;
+    private final ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider;
+    private final ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider;
     private EventService eventService;
     private ProfileService profileService;
+
+    /**
+     * Legacy constructor without delivery-ledger wiring: delivery enqueue is
+     * skipped (provider is null). Retained for tests of non-delivery behavior.
+     */
+    public CronJobService(
+        CronJobRepository cronJobRepository,
+        ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider,
+        AgentProperties properties,
+        SkillManager skillManager,
+        CronExecutionLogRepository cronExecutionLogRepository,
+        com.azhukov.agent.persistence.repository.MessageRepository messageRepository,
+        org.springframework.transaction.support.TransactionTemplate transactionTemplate,
+        CronScheduleParser scheduleParser
+    ) {
+        this(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
+            cronExecutionLogRepository, messageRepository, transactionTemplate, scheduleParser, null, null, null);
+    }
+
+    @Autowired
+    public CronJobService(
+        CronJobRepository cronJobRepository,
+        ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider,
+        AgentProperties properties,
+        SkillManager skillManager,
+        CronExecutionLogRepository cronExecutionLogRepository,
+        com.azhukov.agent.persistence.repository.MessageRepository messageRepository,
+        org.springframework.transaction.support.TransactionTemplate transactionTemplate,
+        CronScheduleParser scheduleParser,
+        ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider,
+        ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider,
+        ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider
+    ) {
+        this.cronJobRepository = cronJobRepository;
+        this.agentRuntimeServiceProvider = agentRuntimeServiceProvider;
+        this.properties = properties;
+        this.skillManager = skillManager;
+        this.cronExecutionLogRepository = cronExecutionLogRepository;
+        this.messageRepository = messageRepository;
+        this.transactionTemplate = transactionTemplate;
+        this.scheduleParser = scheduleParser;
+        this.deliveryWorkItemServiceProvider = deliveryWorkItemServiceProvider;
+        this.sessionRepositoryProvider = sessionRepositoryProvider;
+        this.gatewayHomeChannelProvider = gatewayHomeChannelProvider;
+    }
 
     // Daemon thread factory so cron threads don't prevent JVM shutdown
     private static final ThreadFactory DAEMON_THREAD_FACTORY = r -> {
@@ -586,19 +634,6 @@ private static final String CRON_EXECUTION_HINT = """
         return entity;
     }
 
-    /**
-     * h76: Mark a job's latest run as delivered (high-water mark for the bot-side
-     * delivery poller). Called after the run's output was successfully pushed to
-     * the user's chat so each run is delivered exactly once.
-     */
-    @org.springframework.transaction.annotation.Transactional
-    public CronJobEntity markDelivered(UUID id) {
-        CronJobEntity entity = cronJobRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
-        entity.setLastDeliveredRunAt(java.time.Instant.now());
-        return cronJobRepository.save(entity);
-    }
-
     public CronJobEntity pause(UUID id) {
         CronJobEntity entity = cronJobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
@@ -839,7 +874,11 @@ private static final String CRON_EXECUTION_HINT = """
                 job.setLastStatus("success");
                 job.setLastError(null);
                 cronJobRepository.save(job);
-                recordExecution(job.getId(), startedAt, Instant.now(), "success", null, null);
+                // WP-1: no_agent stdout is the deliverable (Hermes run_job delivers
+                // it verbatim); record + enqueue in the same sequence as the agent path.
+                String stdout = scriptResult.output() == null ? "" : scriptResult.output().trim();
+                Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), "success", null, stdout);
+                enqueueDeliveryWork(job, executionLogId, stdout);
                 publishCronEvent("cron.success", job, startedAt, null);
                 return CronExecutionOutcome.success();
             }
@@ -942,6 +981,10 @@ private static final String CRON_EXECUTION_HINT = """
             job.setLastRunAt(Instant.now());
             job.setLastStatus("success");
             job.setLastError(null);
+            // WP-c: the run reached the model — reset the unreachable retry ladder.
+            if (job.getUnreachableRetries() != 0) {
+                job.setUnreachableRetries(0);
+            }
             if (monitorOutcome.changed()) {
                 job.setMonitorLastHash(monitorOutcome.hash());
                 job.setMonitorLastOutput(capStoredMonitorOutput(monitorOutcome.output()));
@@ -957,7 +1000,9 @@ private static final String CRON_EXECUTION_HINT = """
             }
             cronJobRepository.save(job);
             // h72: Record successful execution in the ledger.
-            recordExecution(job.getId(), startedAt, Instant.now(), "success", null, null);
+            String executionOutput = loadLastRunOutput(job.getLastRunSessionId());
+            Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), "success", null, executionOutput);
+            enqueueDeliveryWork(job, executionLogId, executionOutput);
             publishCronEvent("cron.success", job, startedAt, Map.of("monitor_changed", monitorOutcome.changed()));
             return CronExecutionOutcome.success();
         } catch (Exception e) {
@@ -966,44 +1011,67 @@ private static final String CRON_EXECUTION_HINT = """
             // h74: Detect backend unavailability (connection refused) for backoff.
             String errorMsg = e.getMessage() != null ? e.getMessage() : "unknown error";
             boolean isBackendUnavailable = isBackendUnavailable(errorMsg);
+            boolean unreachableBeforeModel = isUnreachableBeforeModel(errorMsg);
             job.setLastStatus("error");
             job.setLastError(errorMsg);
             job.setLastErrorAt(Instant.now());
             job.setConsecutiveFailures(job.getConsecutiveFailures() + 1);
+            if (unreachableBeforeModel && retryUnreachableEnabled() && isRecurring(job)) {
+                // WP-c: advance the retry ladder; a re-run is pending, so the interim
+                // failure notice is suppressed (the user would get "it broke" followed
+                // by it working 5 minutes later).
+                job.setUnreachableRetries(job.getUnreachableRetries() + 1);
+                log.warn("Cron job '{}' transient failure before any model call "
+                    + "(retry ladder step {}/{}); interim failure notice suppressed",
+                    job.getName(), job.getUnreachableRetries(), UNREACHABLE_LADDER_SECONDS.length);
+            }
             if (isBackendUnavailable) {
                 log.warn("Cron job '{}' detected backend unavailability (consecutive failures: {})",
                     job.getName(), job.getConsecutiveFailures());
             }
             cronJobRepository.save(job);
 
-            // HERMES-SYNC Bug 1: Cron nudge — when consecutiveFailures >= threshold,
-            // show a single "automation needs attention" message instead of per-error pings.
-            int nudgeThreshold = properties.getCron().getNudgeFailureThreshold();
-            if (nudgeThreshold > 0 && job.getConsecutiveFailures() >= nudgeThreshold) {
-                // Only log the nudge at the exact threshold to avoid repeating on every failure
-                if (job.getConsecutiveFailures() == nudgeThreshold) {
-                    log.warn(AUTOMATION_NEEDS_ATTENTION_MSG,
-                        job.getName(), job.getConsecutiveFailures(), errorMsg);
-                }
-                // Beyond the threshold, suppress per-error ping — the nudge has already fired.
-            } else {
-                // Below threshold — log the per-error detail as before
-                log.warn("Cron job '{}' execution failed (consecutive failures: {}): {}",
-                    job.getName(), job.getConsecutiveFailures(), errorMsg);
-            }
-
             // h72: Record failed execution in the ledger.
             String status = errorMsg.toLowerCase().contains("timeout") ? "timeout" : "failure";
-            recordExecution(job.getId(), startedAt, Instant.now(), status, errorMsg, null);
+            Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), status, errorMsg, null);
+            boolean retryPending = job.getUnreachableRetries() > 0
+                && job.getUnreachableRetries() <= UNREACHABLE_LADDER_SECONDS.length;
+            // WP-1 (Hermes scheduler deliver path): every failed run delivers a
+            // compact one-line failure summary + a review nudge once the failure
+            // streak reaches the threshold — through the durable ledger, not a
+            // bot-side scan.
+            // WP-c: suppressed while an unreachable re-run is still pending.
+            if (!retryPending) {
+                enqueueFailureDeliveryWork(job, executionLogId, errorMsg);
+            }
             publishCronEvent("cron." + status, job, startedAt, Map.of("error", errorMsg));
             // h71: Re-arm: clear the error status so the job can run on the next tick.
             // The error is recorded for audit but doesn't permanently block execution.
             // The scheduleJob call in executeAndReschedule will still fire.
-            return CronExecutionOutcome.failure(status);
+            return unreachableBeforeModel
+                ? CronExecutionOutcome.unreachableBeforeModel(status)
+                : CronExecutionOutcome.failure(status);
         }
     }
 
     private void scheduleJobAfterExecution(CronJobEntity job, CronExecutionOutcome outcome) {
+        // WP-c: a recurring job that never reached the model on a transient
+        // network error pulls its next run earlier along a bounded 5/15/30-minute
+        // ladder instead of silently skipping a whole period (a daily job behind
+        // a reconnecting VPN used to lose the day). One-shots (repeatCount=1)
+        // keep at-most-once dispatch semantics and never re-run.
+        if (outcome.unreachableBeforeModel() && retryUnreachableEnabled()
+                && isRecurring(job)) {
+            long ladderSeconds = unreachableRetryLadderSeconds(job);
+            long regularSeconds = calculateDelaySeconds(job.getSchedule());
+            if (ladderSeconds < regularSeconds) {
+                log.warn("Cron job '{}' never reached the model (attempt {} on the retry ladder); "
+                    + "re-running in {}s instead of waiting the full period",
+                    job.getName(), job.getUnreachableRetries() + 1, ladderSeconds);
+                scheduleJob(job, ladderSeconds);
+                return;
+            }
+        }
         if (!outcome.failed() || job.getConsecutiveFailures() < MAX_CONSECUTIVE_FAILURES) {
             scheduleJob(job);
             return;
@@ -1012,6 +1080,38 @@ private static final String CRON_EXECUTION_HINT = """
         log.warn("Cron job {} backing off {}s after {} consecutive failures",
             job.getName(), delaySeconds, job.getConsecutiveFailures());
         scheduleJob(job, delaySeconds);
+    }
+
+    private static final long[] UNREACHABLE_LADDER_SECONDS = {5 * 60L, 15 * 60L, 30 * 60L};
+
+    private long unreachableRetryLadderSeconds(CronJobEntity job) {
+        int step = Math.min(job.getUnreachableRetries(), UNREACHABLE_LADDER_SECONDS.length - 1);
+        return UNREACHABLE_LADDER_SECONDS[step];
+    }
+
+    private boolean retryUnreachableEnabled() {
+        return properties.getCron().isRetryUnreachable();
+    }
+
+    private static boolean isRecurring(CronJobEntity job) {
+        // One-shot jobs (repeatCount 1 or null) never re-run: at-most-once dispatch.
+        return job.getRepeatCount() == null || job.getRepeatCount() > 1;
+    }
+
+    /**
+     * WP-c: classify a failure as transient-unreachable — connection refused /
+     * reset / DNS / timeout before any model tokens flowed. Conservative: only
+     * errors that clearly indicate no model call happened.
+     */
+    static boolean isUnreachableBeforeModel(String errorMsg) {
+        if (errorMsg == null) return false;
+        String lower = errorMsg.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains("connection refused")
+            || lower.contains("connection reset")
+            || lower.contains("connect timed out")
+            || lower.contains("unknownhost")
+            || lower.contains("no route to host")
+            || lower.contains("network is unreachable");
     }
 
     private long failureBackoffSeconds(CronJobEntity job) {
@@ -1044,17 +1144,27 @@ private static final String CRON_EXECUTION_HINT = """
         }
     }
 
-    private record CronExecutionOutcome(String status, boolean failed, boolean countsTowardRepeat) {
+    private record CronExecutionOutcome(String status, boolean failed, boolean countsTowardRepeat,
+                                        boolean unreachableBeforeModel) {
         static CronExecutionOutcome success() {
-            return new CronExecutionOutcome("success", false, true);
+            return new CronExecutionOutcome("success", false, true, false);
         }
 
         static CronExecutionOutcome noChange() {
-            return new CronExecutionOutcome("no_change", false, false);
+            return new CronExecutionOutcome("no_change", false, false, false);
         }
 
         static CronExecutionOutcome failure(String status) {
-            return new CronExecutionOutcome(status, true, false);
+            return new CronExecutionOutcome(status, true, false, false);
+        }
+
+        /**
+         * WP-c (Hermes unreachable_retry parity): the run died on a transient
+         * network/DNS error BEFORE any model call — nothing executed, nothing
+         * was spent, a re-run cannot duplicate side effects.
+         */
+        static CronExecutionOutcome unreachableBeforeModel(String status) {
+            return new CronExecutionOutcome(status, true, false, true);
         }
 
         boolean resetFailureStreak() {
@@ -1349,17 +1459,255 @@ private static final String CRON_EXECUTION_HINT = """
      * @param status "success", "failure", or "timeout"
      * @param errorMessage error message if failed, null if succeeded
      */
-    private void recordExecution(UUID jobId, Instant startedAt, Instant finishedAt, String status,
+    private Long recordExecution(UUID jobId, Instant startedAt, Instant finishedAt, String status,
                                  String errorMessage, String outputText) {
         try {
             if (cronExecutionLogRepository != null) {
                 CronExecutionLogEntity logEntry = CronExecutionLogEntity.create(jobId, startedAt, finishedAt, status, errorMessage);
                 logEntry.setOutputText(outputText);
-                cronExecutionLogRepository.save(logEntry);
+                CronExecutionLogEntity saved = cronExecutionLogRepository.save(logEntry);
+                return saved != null ? saved.getId() : null;
             }
         } catch (Exception e) {
             log.warn("Failed to record cron execution log for job {}: {}", jobId, e.getMessage());
         }
+        return null;
+    }
+
+    /**
+     * WP-1 durable delivery: create the delivery work item for a finished cron
+     * execution in the same logical sequence. The target is resolved once, from
+     * the job's deliver_to (already normalized to platform:chat_id by the
+     * creator) — never from the current bot state at send time. Silenced runs
+     * ([SILENT] markers) are terminally acknowledged without platform send.
+     */
+    private void enqueueDeliveryWork(CronJobEntity job, Long executionLogId, String output) {
+        if (executionLogId == null || CronSilenceFilter.isSilent(output)) {
+            return;
+        }
+        DeliveryWorkItemService deliveryService = deliveryProvider();
+        if (deliveryService == null) {
+            return;
+        }
+        String target = resolveDeliveryTarget(job);
+        target = withSessionOriginThread(job, target);
+        // Mirror rides along ANY delivery — including target-less local runs
+        // (Hermes _maybe_mirror_cron_delivery is a transcript mirror, not a
+        // transport; it must not depend on the ledger target resolving).
+        mirrorToAttachedSession(job, output == null ? "" : output);
+        if (target == null) {
+            log.debug("Cron job '{}' has no resolvable delivery target; skipping ledger enqueue", job.getName());
+            return;
+        }
+        String profile = job.getProfile() == null || job.getProfile().isBlank()
+            ? DEFAULT_PROFILE : job.getProfile();
+        String payload = output == null ? "" : output;
+        try {
+            deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
+                DeliveryWorkItemService.SOURCE_CRON_EXECUTION,
+                String.valueOf(executionLogId),
+                profile,
+                job.getUserId(),
+                job.getLastRunSessionId(),
+                target,
+                payload));
+        } catch (IllegalArgumentException e) {
+            log.warn("Cron job '{}' delivery target rejected: {}", job.getName(), e.getMessage());
+        } catch (Exception e) {
+            log.warn("Cron job '{}' delivery enqueue failed: {}", job.getName(), e.getMessage());
+        }
+    }
+
+    /**
+     * WP-1 (Hermes _summarize_cron_failure_for_delivery + _failure_streak_nudge):
+     * every failed run delivers a compact one-line failure summary, plus a
+     * "worth a review" nudge line once the streak reaches the configured
+     * threshold. Compact by design — no provider JSON, retry noise or stack
+     * traces in the delivery channel.
+     */
+    private void enqueueFailureDeliveryWork(CronJobEntity job, Long executionLogId, String errorMsg) {
+        DeliveryWorkItemService deliveryService = deliveryProvider();
+        if (deliveryService == null || executionLogId == null) {
+            return;
+        }
+        String payload = failureDeliveryText(job, errorMsg);
+        // Mirror rides along ANY delivery — see enqueueDeliveryWork.
+        mirrorToAttachedSession(job, payload);
+        String target = resolveDeliveryTarget(job);
+        if (target == null) {
+            return;
+        }
+        String profile = job.getProfile() == null || job.getProfile().isBlank()
+            ? DEFAULT_PROFILE : job.getProfile();
+        try {
+            deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
+                DeliveryWorkItemService.SOURCE_CRON_EXECUTION,
+                String.valueOf(executionLogId),
+                profile,
+                job.getUserId(),
+                job.getLastRunSessionId(),
+                target,
+                payload));
+        } catch (IllegalArgumentException e) {
+            log.warn("Cron job '{}' failure delivery target rejected: {}", job.getName(), e.getMessage());
+        } catch (Exception e) {
+            log.warn("Cron job '{}' failure delivery enqueue failed: {}", job.getName(), e.getMessage());
+        }
+    }
+
+    /**
+     * Hermes {@code _maybe_mirror_cron_delivery} parity (cron/scheduler.py,
+     * mirror_delivery / attach_to_session): when a job opted in, its final
+     * output (or compact failure line) is appended to the attached session so
+     * the next user reply in that conversation sees the brief in context —
+     * no "what is Task #2?" amnesia.
+     *
+     * <p>Best-effort by design (Hermes: "a delivery that succeeded must never
+     * be reported as failed because the transcript mirror hit a problem"):
+     * all failures are swallowed, the ledger delivery is independent.
+     *
+     * <p>Role is {@code user}, never {@code assistant} — Hermes #2221: a
+     * cron brief is not the agent speaking; assistant-role mirrors produce
+     * assistant→assistant pairs that break strict-alternation providers, a
+     * user-role mirror collapses safely via consecutive-user merge.
+     */
+    private void mirrorToAttachedSession(CronJobEntity job, String payload) {
+        if (job.getAttachedSessionId() == null || payload == null || payload.isBlank()) {
+            return;
+        }
+        try {
+            UUID sessionId = job.getAttachedSessionId();
+            transactionTemplate.executeWithoutResult(status -> {
+                List<Integer> indices =
+                    messageRepository.findTurnIndicesBySessionIdDesc(sessionId);
+                MessageEntity note = new MessageEntity();
+                note.setSessionId(sessionId);
+                note.setRole("user");
+                note.setContent("[cron '" + job.getName() + "' output]\n" + payload);
+                note.setTurnIndex(indices.isEmpty() ? 0 : indices.get(0) + 1);
+                note.setCreatedAt(Instant.now());
+                messageRepository.save(note);
+            });
+            log.debug("Cron job '{}' output mirrored into attached session {}", job.getName(), sessionId);
+        } catch (Exception e) {
+            log.warn("Cron job '{}' attached-session mirror failed (delivery unaffected): {}",
+                job.getName(), e.getMessage());
+        }
+    }
+
+    /** Hermes _summarize_cron_failure_for_delivery: one compact line + streak nudge. */
+    private String failureDeliveryText(CronJobEntity job, String errorMsg) {
+        String text = truncateForDelivery(errorMsg == null ? "unknown error" : errorMsg);
+        StringBuilder sb = new StringBuilder("⚠️ Cron '").append(job.getName()).append("' failed: ").append(text);
+        int threshold = properties.getCron().getNudgeFailureThreshold();
+        int streak = job.getConsecutiveFailures();
+        if (threshold > 0 && streak >= threshold) {
+            sb.append("\n\nThis job has failed ").append(streak)
+                .append(" runs in a row — worth a review. Fix its prompt/config, or pause it with /cron pause <name>.");
+        }
+        return sb.toString();
+    }
+
+    private String truncateForDelivery(String text) {
+        String cleaned = text.strip();
+        return cleaned.length() <= 180 ? cleaned : cleaned.substring(0, 179) + "…";
+    }
+
+    private DeliveryWorkItemService deliveryProvider() {
+        return deliveryWorkItemServiceProvider == null
+            ? null : deliveryWorkItemServiceProvider.getIfAvailable();
+    }
+
+    private String resolveDeliveryTarget(CronJobEntity job) {
+        String deliverTo = job.getDeliverTo();
+        if (deliverTo == null || deliverTo.isBlank()) {
+            return null;
+        }
+        String value = deliverTo.trim();
+        // Formats accepted today: "telegram:<chatId>", bare "telegram", "bot-chat",
+        // or a bare numeric chat id (CronDeliveryPoller.resolveChatId). Normalize
+        // to platform:chat_id; bare platform names without a chat cannot be
+        // resolved to a structured target yet (home-channel resolution is WP-2).
+        if (value.contains(":")) {
+            // WP-k: three-part targets platform:chat_id:thread_id keep the forum
+            // topic so recurring answers land in the topic they were born in
+            // (DeliveryWorkItemService.Target parses it; two-part stays as-is).
+            String[] parts = value.split(":", 3);
+            String platform = parts[0].trim().toLowerCase(java.util.Locale.ROOT);
+            if (parts.length == 3 && !parts[1].isBlank() && !parts[2].isBlank()) {
+                return platform + ":" + parts[1].trim() + ":" + parts[2].trim();
+            }
+            if (parts.length == 2 && !parts[1].isBlank()) {
+                return platform + ":" + parts[1].trim();
+            }
+            return null;
+        }
+        if (value.matches("\\d+")) {
+            return "telegram:" + value;
+        }
+        if ("bot-chat".equalsIgnoreCase(value)
+            || value.toLowerCase(java.util.Locale.ROOT).matches("telegram|discord|web")) {
+            // Bare platform names resolve to the persisted home channel
+            // (WP-2/ADR-012); legacy first-allowed-user-id only when nothing
+            // is persisted yet.
+            String ownerChat = ownerChatId();
+            return ownerChat == null ? null : "telegram:" + ownerChat;
+        }
+        return null;
+    }
+
+    /**
+     * WP-k (Hermes delivery-into-origin-topic parity): when the job's last run
+     * session originated inside a forum topic, deliver into that topic even
+     * for a plain chat target — recurring answers land in the topic they were
+     * born in. Explicit 3-part targets already carry the thread and win.
+     */
+    String withSessionOriginThread(CronJobEntity job, String target) {
+        if (target == null || target.indexOf(':', target.indexOf(':') + 1) >= 0 || job.getLastRunSessionId() == null) {
+            return target; // absent, or already thread-scoped
+        }
+        try {
+            var sessions = sessionRepositoryProvider == null ? null : sessionRepositoryProvider.getIfAvailable();
+            if (sessions == null) {
+                return target;
+            }
+            var session = sessions.findById(job.getLastRunSessionId()).orElse(null);
+            if (session == null || session.getOriginThreadId() == null || session.getOriginThreadId().isBlank()) {
+                return target;
+            }
+            return target + ":" + session.getOriginThreadId().trim();
+        } catch (Exception e) {
+            log.debug("origin-thread resolution failed for job {}: {}", job.getName(), e.getMessage());
+            return target;
+        }
+    }
+
+    /**
+     * Owner chat for bare-platform delivery targets: the persisted gateway
+     * home channel first (WP-2), legacy first-allowed-user-id fallback while
+     * no home is persisted (old CronDeliveryPoller resolution).
+     */
+    private String ownerChatId() {
+        if (gatewayHomeChannelProvider != null) {
+            GatewayHomeChannelService homeChannels = gatewayHomeChannelProvider.getIfAvailable();
+            if (homeChannels != null) {
+                var home = homeChannels.resolve("telegram", GatewayHomeChannelService.DEFAULT_PROFILE);
+                if (home.isPresent() && home.get().persisted()) {
+                    return home.get().chatId();
+                }
+            }
+        }
+        var allowed = properties.getGateway().getTelegram().getAllowedUserIds();
+        if (allowed == null || allowed.isEmpty()) {
+            return null;
+        }
+        for (String candidate : allowed) {
+            String trimmed = candidate == null ? "" : candidate.trim();
+            if (trimmed.matches("\\d+")) {
+                return trimmed;
+            }
+        }
+        return null;
     }
 
     private String loadLastRunOutput(UUID sessionId) {

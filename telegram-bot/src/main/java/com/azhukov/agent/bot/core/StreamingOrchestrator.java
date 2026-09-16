@@ -48,6 +48,7 @@ public class StreamingOrchestrator {
     private final BotProperties properties;
     private final MediaDeliveryService mediaDeliveryService;
     private final com.azhukov.agent.bot.client.TelegramClient telegramClient;
+    private final com.azhukov.agent.bot.session.BotSessionStore sessionStore;
 
     /**
      * Hermes parity (display.tool_progress_grouping="accumulate"): tool
@@ -106,11 +107,34 @@ public class StreamingOrchestrator {
     public AgentBackendClient.ChatResult streamChat(long chatId, String messageText, String sessionId,
                                                      BotSessionEntity session, long userMessageId,
                                                      long messageThreadId, ProcessorHooks hooks) {
+        return streamChat(chatId, messageText, sessionId, session, userMessageId,
+            messageThreadId, null, hooks);
+    }
+
+    /** WP-11 overload carrying inbound attachment artifact ids into the chat request. */
+    public AgentBackendClient.ChatResult streamChat(long chatId, String messageText, String sessionId,
+                                                     BotSessionEntity session, long userMessageId,
+                                                     long messageThreadId,
+                                                     java.util.List<String> attachmentIds,
+                                                     ProcessorHooks hooks) {
         // P0: PII Redaction — prepend redacted session context to the message
         String fullMessage = hooks.buildMessageWithContext(messageText, session, chatId);
         StringBuilder accumulated = new StringBuilder(); // clean LLM text only
         final long[] messageId = {-1};
         final boolean[] finalized = {false};
+
+        // WP-b: mark the turn in flight BEFORE the first backend call. If the
+        // process dies mid-stream the flag survives (V6 column) and startup
+        // recovery tells the user their turn was lost instead of silence.
+        if (session.getId() != null) {
+            try {
+                sessionStore.markResumePending(session.getId());
+                session.setResumePending(true);
+            } catch (Exception flagEx) {
+                log.debug("resumePending mark failed for session {}: {}",
+                    session.getId(), flagEx.getMessage());
+            }
+        }
 
         // Try streaming first
         try {
@@ -121,7 +145,11 @@ public class StreamingOrchestrator {
                 messageId[0] = initialMsgId.get();
             }
 
-            AgentBackendClient.ChatResult streamResult = backendClient.chatStream(fullMessage, sessionId, session,
+            java.util.List<java.util.Map<String, String>> attachmentRefs = attachmentIds == null
+                ? null : attachmentIds.stream()
+                    .map(id -> java.util.Map.of("artifactId", id))
+                    .toList();
+            AgentBackendClient.ChatResult streamResult = backendClient.chatStream(fullMessage, sessionId, session, attachmentRefs,
                 // token consumer
                 token -> {
                     accumulated.append(token);
@@ -355,6 +383,17 @@ public class StreamingOrchestrator {
             // remove it on an exceptional stream exit or its heartbeat keeps posting.
             streamEditor.clearStream(chatId);
             throw new RuntimeException("Streaming failed: " + e.getMessage(), e);
+        } finally {
+            // WP-b: turn ended inside THIS process — no recovery notice needed.
+            if (session.getId() != null && session.isResumePending()) {
+                try {
+                    sessionStore.clearResumePending(session.getId());
+                    session.setResumePending(false);
+                } catch (Exception flagEx) {
+                    log.debug("resumePending clear failed for session {}: {}",
+                        session.getId(), flagEx.getMessage());
+                }
+            }
         }
     }
 

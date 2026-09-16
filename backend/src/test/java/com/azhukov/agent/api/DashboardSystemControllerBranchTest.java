@@ -45,7 +45,7 @@ class DashboardSystemControllerBranchTest {
         RuntimeConfigService runtimeConfigService = new RuntimeConfigService();
         ProfileService profileService = new ProfileService(properties, runtimeConfigService);
         mockMvc = MockMvcBuilders.standaloneSetup(
-            new DashboardSystemController(properties, runtimeConfigService, profileService)).build();
+            new DashboardSystemController(properties, runtimeConfigService, profileService, null, null)).build();
     }
 
     @AfterEach
@@ -73,9 +73,10 @@ class DashboardSystemControllerBranchTest {
     }
 
     @Test
-    void checkpointsPruneIsExplicitlyNotImplemented() throws Exception {
+    void checkpointsPruneWithoutActionServiceAnswersCapabilityDisabled() throws Exception {
         mockMvc.perform(post("/api/ops/checkpoints/prune"))
-            .andExpect(status().isNotImplemented());
+            .andExpect(status().isNotImplemented())
+            .andExpect(jsonPath("$.detail").value("checkpoint-prune action is not available in this deployment"));
     }
 
     @Test
