@@ -92,7 +92,9 @@ class CronJobServiceAttachedSessionMirrorTest {
             return entity;
         });
         when(deliveryProvider.getIfAvailable()).thenReturn(deliveryService);
-        when(deliveryService.enqueue(any())).thenAnswer(inv -> inv.getArgument(0));
+        // Lenient: target-less local runs never reach the ledger enqueue.
+        org.mockito.Mockito.lenient()
+            .when(deliveryService.enqueue(any())).thenAnswer(inv -> inv.getArgument(0));
         // Run the tx callback inline (no real transaction manager in unit tests).
         // Lenient: the no-attached-session path never opens a mirror transaction.
         org.mockito.Mockito.lenient().doAnswer(invocation -> {
@@ -137,6 +139,25 @@ class CronJobServiceAttachedSessionMirrorTest {
 
         verify(deliveryService).enqueue(any());
         verify(messageRepository, never()).save(any());
+    }
+
+    @Test
+    void localDeliveryJobStillMirrorsIntoAttachedSession() {
+        // deliver=local resolves no ledger target — the transcript mirror must
+        // still land (Hermes mirror is independent of the transport target).
+        UUID attachedSessionId = UUID.randomUUID();
+        CronJobEntity job = job(attachedSessionId);
+        job.setDeliverTo("local");
+        prepareFailingRun(job, attachedSessionId);
+
+        service().runNow(job.getId());
+
+        // No ledger enqueue for a local target, but the mirror note lands.
+        verify(deliveryService, never()).enqueue(any());
+        ArgumentCaptor<MessageEntity> saved = ArgumentCaptor.forClass(MessageEntity.class);
+        verify(messageRepository).save(saved.capture());
+        assertThat(saved.getValue().getRole()).isEqualTo("user");
+        assertThat(saved.getValue().getSessionId()).isEqualTo(attachedSessionId);
     }
 
     @Test

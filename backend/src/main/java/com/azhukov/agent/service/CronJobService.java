@@ -1491,6 +1491,10 @@ private static final String CRON_EXECUTION_HINT = """
         }
         String target = resolveDeliveryTarget(job);
         target = withSessionOriginThread(job, target);
+        // Mirror rides along ANY delivery — including target-less local runs
+        // (Hermes _maybe_mirror_cron_delivery is a transcript mirror, not a
+        // transport; it must not depend on the ledger target resolving).
+        mirrorToAttachedSession(job, output == null ? "" : output);
         if (target == null) {
             log.debug("Cron job '{}' has no resolvable delivery target; skipping ledger enqueue", job.getName());
             return;
@@ -1498,7 +1502,6 @@ private static final String CRON_EXECUTION_HINT = """
         String profile = job.getProfile() == null || job.getProfile().isBlank()
             ? DEFAULT_PROFILE : job.getProfile();
         String payload = output == null ? "" : output;
-        mirrorToAttachedSession(job, payload);
         try {
             deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
                 DeliveryWorkItemService.SOURCE_CRON_EXECUTION,
@@ -1527,14 +1530,15 @@ private static final String CRON_EXECUTION_HINT = """
         if (deliveryService == null || executionLogId == null) {
             return;
         }
+        String payload = failureDeliveryText(job, errorMsg);
+        // Mirror rides along ANY delivery — see enqueueDeliveryWork.
+        mirrorToAttachedSession(job, payload);
         String target = resolveDeliveryTarget(job);
         if (target == null) {
             return;
         }
         String profile = job.getProfile() == null || job.getProfile().isBlank()
             ? DEFAULT_PROFILE : job.getProfile();
-        String payload = failureDeliveryText(job, errorMsg);
-        mirrorToAttachedSession(job, payload);
         try {
             deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
                 DeliveryWorkItemService.SOURCE_CRON_EXECUTION,
