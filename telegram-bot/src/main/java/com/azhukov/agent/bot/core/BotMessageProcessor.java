@@ -393,8 +393,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     -1,
                     session == null || session.isFooterEnabled()
                 );
-                String backendResponse = result.content();
-                if (footer != null && !footer.isEmpty()) {
+                String backendResponse = streamEditor.takePendingFinalText(chatId);
+                if (backendResponse == null || backendResponse.isBlank()) {
+                    backendResponse = result.content();
+                }
+                if (footer != null && !footer.isEmpty() && !backendResponse.endsWith(footer)) {
                     backendResponse = backendResponse + footer;
                 }
 

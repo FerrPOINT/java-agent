@@ -242,8 +242,11 @@ public class StreamingOrchestrator {
                     // heartbeat and remove the draft session. Sending directly here leaked
                     // the StreamSession indefinitely after a successful response.
                     if (messageId[0] < 0 && accumulated.length() > 0) {
-                        streamEditor.finalizeStream(chatId, -1L, accumulated.toString());
-                        finalized[0] = true;
+                        boolean delivered = streamEditor.finalizeStream(chatId, -1L, accumulated.toString());
+                        if (!delivered) {
+                            streamEditor.recordFinalDeliveryFailure(chatId, accumulated.toString());
+                        }
+                        finalized[0] = delivered;
                     }
                     if (messageId[0] >= 0 && accumulated.length() > 0) {
                         // Append footer to the streaming message before finalizing
@@ -300,16 +303,22 @@ public class StreamingOrchestrator {
                             MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(finalText);
                             finalText = extraction.cleanedText();
                             // Finalize the stream with cleaned text
-                            streamEditor.finalizeStream(chatId, messageId[0], finalText);
-                            finalized[0] = true;
-                            // Deliver extracted media files as native Telegram attachments
-                            if (!extraction.media().isEmpty()) {
+                            boolean delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
+                            if (!delivered) {
+                                streamEditor.recordFinalDeliveryFailure(chatId, finalText);
+                            }
+                            finalized[0] = delivered;
+                            // Deliver extracted media files only after text finalization succeeds.
+                            if (delivered && !extraction.media().isEmpty()) {
                                 Integer mediaThreadId = messageThreadId > 0 ? (int) messageThreadId : null;
                                 hooks.deliverMedia(chatId, extraction.media(), mediaThreadId);
                             }
                         } else {
-                            streamEditor.finalizeStream(chatId, messageId[0], finalText);
-                            finalized[0] = true;
+                            boolean delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
+                            if (!delivered) {
+                                streamEditor.recordFinalDeliveryFailure(chatId, finalText);
+                            }
+                            finalized[0] = delivered;
                         }
                     }
                 },

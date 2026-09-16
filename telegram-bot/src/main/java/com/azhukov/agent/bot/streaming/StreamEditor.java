@@ -317,6 +317,7 @@ public class StreamEditor {
         Optional<Long> messageId = sendMessageWithNotification(chatId, formatted, false);
         if (messageId.isPresent()) {
             session.lastEditTime = System.currentTimeMillis();
+            session.lastRenderedChars = formatted.length();
             // Record start time for heartbeat and fresh-final
             long now = System.currentTimeMillis();
             session.streamStartTime = now;
@@ -430,12 +431,14 @@ public class StreamEditor {
         // B5: Use adaptive interval (may have been adjusted by flood handling)
         long currentInterval = EditThrottlePolicy.getEffectiveInterval(session, minIntervalMs);
 
-        // Buffer threshold: Hermes measures TOTAL accumulated text length (not delta since last edit).
-        // The accumulated text is the full scrubbed text passed to editStream.
+        // Buffer threshold limits the delta between Telegram edits; applying it
+        // to the total accumulated answer bypasses time throttling after the
+        // first threshold and quickly triggers Telegram flood limits.
         int charsAccumulated = text.length();
+        int charsSinceLastEdit = Math.max(0, charsAccumulated - session.lastRenderedChars);
 
         boolean intervalElapsed = last == 0 || (now - last) >= currentInterval;
-        boolean thresholdReached = bufferThreshold > 0 && charsAccumulated >= bufferThreshold;
+        boolean thresholdReached = bufferThreshold > 0 && charsSinceLastEdit >= bufferThreshold;
 
         if (!intervalElapsed && !thresholdReached) {
             log.trace("Throttled edit for chat {} ({}ms since last, interval={}, charsAccumulated={}, threshold={})",
@@ -493,6 +496,7 @@ public class StreamEditor {
 
         if (success) {
             session.lastEditTime = now;
+            session.lastRenderedChars = charsAccumulated;
             // P2-16: Track last sent text for redundant edit skip
             session.lastSentText = withCursor;
             // Hermes: on success, only reset flood strikes — interval stays at backoff level
@@ -717,9 +721,10 @@ public class StreamEditor {
             && (System.currentTimeMillis() - startTime) > freshFinalTimeoutMs;
 
         if (freshFinal) {
-            log.debug("Fresh-final for chat {} (stream exceeded {}ms), deleting old msg {} and sending new",
+            log.debug("Fresh-final for chat {} (stream exceeded {}ms), replacing old msg {} after the new delivery succeeds",
                 chatId, freshFinalTimeoutMs, effectiveMessageId);
-            // P1: Try rich message delivery first
+            // P1: Try rich message delivery first. Never delete the current visible answer first:
+            // an API failure must leave the streamed draft available.
             if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
                 Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null, null);
                 if (richMsgId.isPresent()) {
@@ -728,17 +733,15 @@ public class StreamEditor {
                     return true;
                 }
             }
-            // Delete old message and send new one (formatted — Hermes parity)
-            telegramClient.deleteMessage(chatId, effectiveMessageId);
-            Optional<Long> newMsgId = sendFormattedFinalMessage(chatId, scrubbed);
-            removeSession(chatId);
+            Optional<Long> newMsgId = sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
             if (newMsgId.isPresent()) {
+                telegramClient.deleteMessage(chatId, effectiveMessageId);
+                removeSession(chatId);
                 log.debug("Fresh-final sent for chat {}, new messageId={}", chatId, newMsgId.get());
                 return true;
-            } else {
-                log.warn("Fresh-final sendMessage failed for chat {}", chatId);
-                return false;
             }
+            log.warn("Fresh-final sendMessage failed for chat {}; preserving draft message {}", chatId, effectiveMessageId);
+            return false;
         }
 
         // P1: Try rich message delivery first (uses raw markdown, not formatted)
@@ -789,11 +792,11 @@ public class StreamEditor {
             }
         }
 
-        removeSession(chatId);
         if (success) {
+            removeSession(chatId);
             log.debug("Finalized stream for chat {}, messageId={}", chatId, effectiveMessageId);
         } else {
-            log.warn("Failed to finalize stream for chat {}, messageId={}", chatId, effectiveMessageId);
+            log.warn("Failed to finalize stream for chat {}, messageId={}; preserving visible draft", chatId, effectiveMessageId);
         }
         return success;
     }
@@ -805,6 +808,29 @@ public class StreamEditor {
      */
     public void clearStream(long chatId) {
         removeSession(chatId);
+    }
+
+    /**
+     * Record that final stream delivery could not replace the visible draft.
+     * The caller's regular fallback send must use the complete response rather
+     * than a stale partial stream buffer.
+     */
+    public void recordFinalDeliveryFailure(long chatId, String finalText) {
+        StreamSession session = sessionFor(chatId);
+        session.pendingFinalText = finalText;
+        log.warn("final_delivery_pending chat={} chars={}", chatId,
+            finalText == null ? 0 : finalText.length());
+    }
+
+    /** Consume the full response retained after a terminal stream-delivery failure. */
+    public String takePendingFinalText(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) {
+            return null;
+        }
+        String pending = session.pendingFinalText;
+        session.pendingFinalText = null;
+        return pending;
     }
 
     // ─── S5: Native draft streaming ───────────────────────────────

@@ -184,6 +184,24 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void streamChat_draftFinalDeliveryFailureDoesNotClaimFinalization() {
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        when(streamEditor.finalizeStream(100L, -1L, "draft answer")).thenReturn(false);
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("draft answer");
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult("draft answer", "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult("draft answer", "model", 1, 10, true, false, null);
+        });
+
+        AgentBackendClient.ChatResult result = orchestrator.streamChat(100L, "hi", null, session(),
+            5L, 0L, hooks);
+
+        assertThat(result.streamFinalized()).isFalse();
+        verify(streamEditor).recordFinalDeliveryFailure(100L, "draft answer");
+    }
+
+    @Test
     void streamChat_interrupted_finalizesWithAccumulatedContent() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
             any(), any(), any(), any(), any(), any(), any()))

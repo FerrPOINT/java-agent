@@ -173,6 +173,22 @@ class StreamEditorTest {
     }
 
     @Test
+    void editStream_doesNotBypassIntervalAfterAnswerExceedsBufferThreshold() {
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(42L));
+        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
+            .thenReturn(true);
+
+        editor.startStream(123L, "Hello");
+        String firstUpdate = "123456789012345678901234567890";
+        assertThat(editor.editStream(123L, 42L, firstUpdate)).isTrue();
+
+        // The response remains over the threshold, but only four new chars arrived.
+        assertThat(editor.editStream(123L, 42L, firstUpdate + "more")).isFalse();
+        verify(client, times(1)).editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
+    }
+
+    @Test
     void editStream_allowsAfterInterval() throws InterruptedException {
         String cursor = " \u2589";
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
@@ -231,6 +247,46 @@ class StreamEditorTest {
         verify(client).editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false));
         verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any());
         verify(client).deleteMessage(123L, 42L);
+    }
+
+    @Test
+    void freshFinal_preservesDraftWhenReplacementFails() {
+        BotProperties props = new BotProperties();
+        props.setParseMode("MarkdownV2");
+        props.setFreshFinalTimeoutMs(1L);
+        StreamEditor freshEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
+        freshEditor.init();
+        StreamSession streamSession = freshEditor.sessionFor(123L);
+        streamSession.streamStartTime = System.currentTimeMillis() - 1_000L;
+        streamSession.currentMessageId.set(42L);
+        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.empty());
+
+        boolean result = freshEditor.finalizeStream(123L, 42L, "Final text");
+
+        assertThat(result).isFalse();
+        verify(client, never()).deleteMessage(123L, 42L);
+        assertThat(freshEditor.getSession(123L)).isSameAs(streamSession);
+    }
+
+    @Test
+    void freshFinal_replacesDraftOnlyAfterReplacementSucceeds() {
+        BotProperties props = new BotProperties();
+        props.setParseMode("MarkdownV2");
+        props.setFreshFinalTimeoutMs(1L);
+        StreamEditor freshEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
+        freshEditor.init();
+        StreamSession streamSession = freshEditor.sessionFor(123L);
+        streamSession.streamStartTime = System.currentTimeMillis() - 1_000L;
+        streamSession.currentMessageId.set(42L);
+        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(99L));
+
+        boolean result = freshEditor.finalizeStream(123L, 42L, "Final text");
+
+        assertThat(result).isTrue();
+        verify(client).deleteMessage(123L, 42L);
+        assertThat(freshEditor.getSession(123L)).isNull();
     }
 
     // --- Clear stream test ---
