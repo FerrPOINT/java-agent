@@ -86,6 +86,8 @@ public class AgentProperties {
         private String apiKey = "";
         private String modelName = "";
         private int timeoutSeconds = 120;
+        /** Maximum time for the explicit model health probe; never block an actuator request for the full chat timeout. */
+        private int healthTimeoutSeconds = 10;
 
         /**
          * WP-d (Hermes stale-stream parity #110769): max silence BETWEEN stream

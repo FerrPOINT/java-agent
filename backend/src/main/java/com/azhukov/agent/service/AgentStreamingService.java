@@ -1598,19 +1598,34 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
         }
     }
 
+    /**
+     * Apply the generic-test safety boundary after resolving any toolset aliases.
+     */
+    private List<ToolDefinition> applyGenericTestToolFilter(List<ToolDefinition> tools, ChatRequest request) {
+        if (request == null || TestExecutionPolicy.classify(request.message()) != TestExecutionPolicy.Scope.GENERIC) {
+            return tools;
+        }
+        return tools.stream()
+            .filter(tool -> !TestExecutionPolicy.GENERIC_SMOKE_EXCLUDED_TOOLS.contains(tool.name()))
+            .toList();
+    }
+
     private List<ToolDefinition> selectTools(ChatRequest request) {
         Set<String> defaultToolsets = new HashSet<>(properties.getSkills().getDefaultToolsets());
         List<ToolDefinition> all = toolRegistry.getDefinitions(defaultToolsets);
         if (request == null) {
             return all;
         }
+        List<ToolDefinition> selected;
         if (request.disabledTools() != null && !request.disabledTools().isEmpty()) {
             Set<String> disabled = new HashSet<>(request.disabledTools());
-            return all.stream()
+            selected = all.stream()
                 .filter(d -> !disabled.contains(d.name()))
                 .toList();
+        } else {
+            selected = all;
         }
-        return all;
+        return applyGenericTestToolFilter(selected, request);
     }
 
     private int estimateResponseTokens(String content, List<ToolCall> toolCalls) {

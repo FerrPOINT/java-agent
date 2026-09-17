@@ -216,6 +216,34 @@ class AgentStreamingServiceBranchTest {
             .doesNotContain("weather");
     }
 
+    @Test
+    void genericSmokeFiltersInteractiveAndSideEffectingTools() throws Exception {
+        ChatRequest request = ChatRequest.simple(SESSION_ID, "протестируй каждый тул", null, 10_000L);
+        when(toolRegistry.getDefinitions(any(Set.class))).thenReturn(List.of(
+            new ToolDefinition("web_search", "Search", Map.of()),
+            new ToolDefinition("todo", "Todo", Map.of()),
+            new ToolDefinition("clarify", "Clarify", Map.of()),
+            new ToolDefinition("browser_snapshot", "Browser", Map.of()),
+            new ToolDefinition("text_to_speech", "TTS", Map.of())));
+
+        AtomicReference<List<ToolDefinition>> capturedTools = new AtomicReference<>();
+        doAnswer(invocation -> {
+            capturedTools.set(invocation.getArgument(1));
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            handler.onToken("ok");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        assertThat(emitter.error.get()).isNull();
+        assertThat(capturedTools.get()).extracting(ToolDefinition::name)
+            .containsExactly("web_search");
+    }
+
     // ── resolveModelUsed: blank model → runtime override ──
 
     @Test

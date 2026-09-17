@@ -11,6 +11,15 @@ public final class TestExecutionPolicy {
 
     public static final String METADATA_KEY = "test_execution_scope";
 
+    /** Tool names excluded from generic capability probes because they can mutate state or require interaction. */
+    public static final java.util.Set<String> GENERIC_SMOKE_EXCLUDED_TOOLS = java.util.Set.of(
+        "clarify", "delegate_task", "cronjob", "memory", "todo", "terminal", "process",
+        "write_file", "patch", "delete_file", "execute_code", "send_message",
+        "browser_navigate", "browser_click", "browser_type", "browser_scroll", "browser_back",
+        "browser_press", "browser_dialog", "browser_snapshot", "browser_get_images", "browser_vision",
+        "browser_console", "browser_cdp", "text_to_speech", "image_generate", "mcp_tool"
+    );
+
     private static final Pattern TEST_REQUEST = Pattern.compile(
         "(?iu)(?:\\btest(?:ing|s)?\\b|\\bverify\\b|\\bcheck\\s+tests?\\b|тестир|протестир|тесты|провер.*тест)"
     );

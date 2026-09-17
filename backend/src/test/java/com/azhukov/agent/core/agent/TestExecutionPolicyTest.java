@@ -38,4 +38,11 @@ class TestExecutionPolicyTest {
         assertThat(TestExecutionPolicy.terminalRefusal("./gradlew :backend:slowTest", TestExecutionPolicy.Scope.BROAD))
             .isNull();
     }
+
+    @Test
+    void genericSmokeExcludesInteractiveAndSideEffectingTools() {
+        assertThat(TestExecutionPolicy.GENERIC_SMOKE_EXCLUDED_TOOLS)
+            .contains("clarify", "delegate_task", "cronjob", "todo", "browser_snapshot", "text_to_speech", "image_generate")
+            .doesNotContain("read_file", "web_search", "session_search");
+    }
 }
