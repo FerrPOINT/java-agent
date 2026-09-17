@@ -56,7 +56,8 @@ public class ChromiumDownloader {
             log.info("Downloaded {} bytes to {}", Files.size(archive), archive);
         }
         Path extracted = installDir.resolve(platform.archiveFolder());
-        if (Files.exists(extracted)) {
+        Path executable = extracted.resolve(platform.executableName());
+        if (Files.isExecutable(executable)) {
             log.info("Chromium already extracted at {}", extracted);
             return extracted;
         }
@@ -85,11 +86,7 @@ public class ChromiumDownloader {
                     Files.createDirectories(entryPath.getParent());
                     Files.copy(zis, entryPath, StandardCopyOption.REPLACE_EXISTING);
                     if (isExecutableEntry(entry.getName())) {
-                        try {
-                            entryPath.toFile().setExecutable(true);
-                        } catch (SecurityException e) {
-                            log.warn("Could not mark {} as executable: {}", entryPath, e.getMessage());
-                        }
+                        entryPath.toFile().setExecutable(true, false);
                     }
                 }
                 zis.closeEntry();

@@ -55,6 +55,11 @@ class ChromiumDownloaderTest {
 
         Path extracted = dir.resolve("chrome-linux").resolve("chrome");
         assertThat(Files.exists(extracted)).isTrue();
+        assertThat(Files.getPosixFilePermissions(extracted)).contains(
+            java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE,
+            java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE,
+            java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE
+        );
         Files.walk(dir).sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
             try { Files.deleteIfExists(p); } catch (Exception ignored) {}
         });
@@ -71,20 +76,22 @@ class ChromiumDownloaderTest {
 
 
     @Test
-    void downloadUsesExistingArchiveAndExtractedDir() throws Exception {
+    void downloadRepairsExistingExtractedDirWhenChromeIsNotExecutable() throws Exception {
         Path dir = Files.createTempDirectory("chrome-download");
         ChromiumPlatform.Platform platform = ChromiumPlatform.Platform.LINUX_X64;
         String revision = "123";
         Path archive = dir.resolve(ChromiumPlatform.archiveName(platform, revision));
-        Files.createDirectories(archive.getParent());
-        Files.write(archive, "fake".getBytes());
-        Path extracted = dir.resolve(platform.archiveFolder());
-        Files.createDirectories(extracted);
+        Files.write(archive, createMinimalZip("chrome-linux/chrome", "#!/bin/sh\n"));
+        Path chrome = dir.resolve(platform.archiveFolder()).resolve(platform.executableName());
+        Files.createDirectories(chrome.getParent());
+        Files.writeString(chrome, "#!/bin/sh\n");
+        chrome.toFile().setExecutable(false, false);
 
         ChromiumDownloader downloader = new ChromiumDownloader("https://example.com/");
         Path result = downloader.download(platform, revision, dir);
 
-        assertThat(result).isEqualTo(extracted);
+        assertThat(result).isEqualTo(dir.resolve(platform.archiveFolder()));
+        assertThat(Files.isExecutable(result.resolve(platform.executableName()))).isTrue();
     }
 
     @Test
