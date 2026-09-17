@@ -434,12 +434,6 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
         // Toolsets already resolved above (before memory nudge counter).
         List<ToolDefinition> tools = toolRegistry.getDefinitions(effectiveToolsets);
-        if (TestExecutionPolicy.fromSessionMetadata(session.getMetadata(TestExecutionPolicy.METADATA_KEY))
-                == TestExecutionPolicy.Scope.GENERIC) {
-            tools = tools.stream()
-                .filter(tool -> !TestExecutionPolicy.GENERIC_SMOKE_EXCLUDED_TOOLS.contains(tool.name()))
-                .toList();
-        }
         // Delegation deny-list: subtract blocked TOOL names after composite
         // expansion (Hermes parity — mixed bundles like hermes-cli must not leak
         // delegate_task/clarify/memory/send_message/cronjob to child sessions).

@@ -217,14 +217,15 @@ class AgentStreamingServiceBranchTest {
     }
 
     @Test
-    void genericSmokeFiltersInteractiveAndSideEffectingTools() throws Exception {
+    void genericSmokeRetainsEveryConfiguredTool() throws Exception {
         ChatRequest request = ChatRequest.simple(SESSION_ID, "протестируй каждый тул", null, 10_000L);
-        when(toolRegistry.getDefinitions(any(Set.class))).thenReturn(List.of(
+        List<ToolDefinition> configuredTools = List.of(
             new ToolDefinition("web_search", "Search", Map.of()),
             new ToolDefinition("todo", "Todo", Map.of()),
             new ToolDefinition("clarify", "Clarify", Map.of()),
             new ToolDefinition("browser_snapshot", "Browser", Map.of()),
-            new ToolDefinition("text_to_speech", "TTS", Map.of())));
+            new ToolDefinition("text_to_speech", "TTS", Map.of()));
+        when(toolRegistry.getDefinitions(any(Set.class))).thenReturn(configuredTools);
 
         AtomicReference<List<ToolDefinition>> capturedTools = new AtomicReference<>();
         doAnswer(invocation -> {
@@ -240,8 +241,7 @@ class AgentStreamingServiceBranchTest {
         emitter.awaitDone();
 
         assertThat(emitter.error.get()).isNull();
-        assertThat(capturedTools.get()).extracting(ToolDefinition::name)
-            .containsExactly("web_search");
+        assertThat(capturedTools.get()).containsExactlyElementsOf(configuredTools);
     }
 
     // ── resolveModelUsed: blank model → runtime override ──
