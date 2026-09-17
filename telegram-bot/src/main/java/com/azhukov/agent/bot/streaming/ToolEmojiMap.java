@@ -57,16 +57,60 @@ public final class ToolEmojiMap {
     }
 
     /**
-     * Build a short one-line preview of a tool call for display in the streaming message.
-     * Format: "emoji tool_name: \"preview\""
+     * Build a compact, human-readable tool progress line.
+     * Todo calls deliberately show their action and item count, never their
+     * serialized task payload.
      */
     public static String formatToolCall(String toolName, String args) {
         String emoji = getEmoji(toolName);
+        if ("todo".equals(toolName)) {
+            String todoDisplay = formatTodoCall(args);
+            if (todoDisplay != null) {
+                return emoji + " " + todoDisplay;
+            }
+        }
+
         String preview = buildPreview(toolName, args);
         if (preview != null && !preview.isBlank()) {
             return emoji + " " + toolName + ": " + preview;
         }
         return emoji + " " + toolName + "...";
+    }
+
+    private static String formatTodoCall(String args) {
+        if (args == null || args.isBlank() || args.equals("{}") || args.equals("null")) {
+            return "Updating tasks";
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode node =
+                new com.fasterxml.jackson.databind.ObjectMapper().readTree(args);
+            com.fasterxml.jackson.databind.JsonNode todos = node.get("todos");
+            if (todos == null || todos.isNull()) {
+                return "Reading task list";
+            }
+            int count = todoCount(todos);
+            boolean merge = node.path("merge").asBoolean(false);
+            return (merge ? "Updating " : "Planning ") + count + " task(s)";
+        } catch (Exception ignored) {
+            // Fall through to the ordinary generic preview for malformed JSON.
+            return null;
+        }
+    }
+
+    private static int todoCount(com.fasterxml.jackson.databind.JsonNode todos) {
+        if (todos.isArray()) {
+            return todos.size();
+        }
+        if (todos.isTextual()) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode decoded =
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(todos.asText());
+                return decoded.isArray() ? decoded.size() : 1;
+            } catch (Exception ignored) {
+                return 1;
+            }
+        }
+        return 1;
     }
 
     private static String buildPreview(String toolName, String args) {
