@@ -1,7 +1,6 @@
 package com.azhukov.agent.core.prompt;
 
 import com.azhukov.agent.config.AgentProperties;
-import com.azhukov.agent.core.agent.TestExecutionPolicy;
 import com.azhukov.agent.core.context.CodingContextDetector;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.model.Message;
@@ -471,10 +470,6 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // P-04: disabledTools changes the API tool surface; cache separately so
         // its prompt can never advertise a tool from a prior wider request.
         String effectiveToolNames = session != null ? session.getMetadata("effectiveToolNames") : null;
-        String testScope = session != null ? session.getMetadata(TestExecutionPolicy.METADATA_KEY) : null;
-        if (testScope != null && !testScope.isBlank()) {
-            sessionId += ":test-scope:" + testScope;
-        }
         if (effectiveToolNames != null && !effectiveToolNames.isBlank()) {
             sessionId += ":tools:" + Integer.toHexString(effectiveToolNames.hashCode());
         }
@@ -1278,17 +1273,6 @@ public class DefaultPromptBuilder implements PromptBuilder {
         stable.append("10. **Parallel tool calls** — when multiple independent tools can run in parallel, call them together.\n");
         stable.append("11. **Error handling** — if a tool fails, try an alternative approach. Never fabricate results.\n");
         stable.append("12. **Session awareness** — use session_search to find and recall past conversations. When the user asks about sessions or past work, call session_search FIRST — do not describe what you 'could' do, do it.\n");
-        String testScope = session != null ? session.getMetadata(TestExecutionPolicy.METADATA_KEY) : null;
-        TestExecutionPolicy.Scope testScopeKind = TestExecutionPolicy.fromSessionMetadata(testScope);
-        if (testScopeKind == TestExecutionPolicy.Scope.GENERIC) {
-            stable.append("13. **Generic testing requests** — the user did not name a workspace or target. "
-                + "Do not run shell commands, Gradle, or integration tests. Explain that a concrete workspace/test "
-                + "target is required; never guess a repository.\n");
-        } else if (testScopeKind == TestExecutionPolicy.Scope.FOCUSED) {
-            stable.append("13. **Focused testing requests** — inspect the explicit workspace and run one targeted test. "
-                + "Do not run broad suites, slowTest, liveTest, e2eTest, Testcontainers, or an unfiltered test task "
-                + "unless the user explicitly asks for full or integration testing.\n");
-        }
 
         // ── Out-of-band steer guidance (anti-injection defense, mirrors Hermes STEER_CHANNEL_NOTE) ──
         stable.append("\n").append(STEER_CHANNEL_NOTE);

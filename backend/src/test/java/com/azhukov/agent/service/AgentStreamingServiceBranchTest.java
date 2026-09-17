@@ -244,7 +244,8 @@ class AgentStreamingServiceBranchTest {
         assertThat(capturedTools.get()).containsExactlyElementsOf(configuredTools);
     }
 
-    // ── resolveModelUsed: blank model → runtime override ──
+
+
 
     @Test
     void streamTurnUsesRuntimeOverrideWhenSessionModelIsBlank() throws Exception {

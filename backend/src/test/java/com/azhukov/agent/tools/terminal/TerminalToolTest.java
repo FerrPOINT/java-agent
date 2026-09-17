@@ -3,7 +3,6 @@ package com.azhukov.agent.tools.terminal;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.RunControlScope;
-import com.azhukov.agent.core.agent.TestExecutionPolicy;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
@@ -101,40 +100,6 @@ class TerminalToolTest {
         assertThat(json.path("success").asBoolean()).isFalse();
         assertThat(json.path("error").asText()).contains("Invalid tool arguments");
         assertThat(result.error()).isEqualTo(json.path("error").asText());
-    }
-
-    @Test
-    void genericTestingRequestBlocksAllShellExecution() {
-        TerminalTool tool = newTool(properties());
-        Session genericTest = session().withMetadata(TestExecutionPolicy.METADATA_KEY, "GENERIC");
-
-        ToolResult result = tool.execute("{\"command\":\"pwd\"}", null, genericTest);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.content()).contains("concrete workspace/test target");
-    }
-
-    @Test
-    void focusedTestingRequestBlocksBroadGradleSuite() {
-        TerminalTool tool = newTool(properties());
-        Session focusedTest = session().withMetadata(TestExecutionPolicy.METADATA_KEY, "FOCUSED");
-
-        ToolResult result = tool.execute("{\"command\":\"./gradlew :backend:test\"}", null, focusedTest);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.content()).contains("focused testing");
-    }
-
-    @Test
-    void focusedTestingRequestAllowsFilteredGradleTest() {
-        TerminalTool tool = newTool(properties());
-        Session focusedTest = session().withMetadata(TestExecutionPolicy.METADATA_KEY, "FOCUSED");
-
-        ToolResult result = tool.execute(
-            "{\"command\":\"./gradlew :backend:test --tests 'com.example.TargetTest'\"}", null, focusedTest);
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.content()).doesNotContain("focused testing");
     }
 
     // ── 1. Simple command — returns stdout ────────────────────────────────

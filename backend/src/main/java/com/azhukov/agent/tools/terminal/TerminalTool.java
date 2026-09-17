@@ -4,7 +4,6 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.RunControlScope;
-import com.azhukov.agent.core.agent.TestExecutionPolicy;
 import com.azhukov.agent.service.CheckpointManager;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
@@ -112,13 +111,6 @@ public class TerminalTool implements ToolHandler {
             return jsonFail("Command is required");
         }
         String command = args.command();
-        TestExecutionPolicy.Scope testScope = TestExecutionPolicy.fromSessionMetadata(
-            session != null ? session.getMetadata(TestExecutionPolicy.METADATA_KEY) : null);
-        String testPolicyRefusal = TestExecutionPolicy.terminalRefusal(command, testScope);
-        if (testPolicyRefusal != null) {
-            return jsonFail(testPolicyRefusal);
-        }
-
         if (!args.background()) {
             if (hasForegroundNotificationModifier(args)) {
                 return jsonFail(

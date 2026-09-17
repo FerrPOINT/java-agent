@@ -5,7 +5,6 @@ import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.agent.CliStateApplier;
-import com.azhukov.agent.core.agent.TestExecutionPolicy;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.client.ModelRequestOptions;
@@ -138,9 +137,7 @@ public class AgentRuntimeService {
         var resolved = sessionResolver.resolveOrCreate(
             applied.sessionId(), AgentProperties.DEFAULT_USER_ID, properties.getModel().getModelName());
         boolean isNew = resolved.isNew();
-        Session session = resolved.session()
-            .withMetadata(TestExecutionPolicy.METADATA_KEY,
-                TestExecutionPolicy.classify(applied.message()).name());
+        Session session = resolved.session();
         boolean acquired = sessionTurnLockManager.tryAcquire(session.id(), 30);
         if (!acquired) {
             throw new IllegalStateException("Session " + session.id() + " is busy (another turn is in progress). Retry later.");

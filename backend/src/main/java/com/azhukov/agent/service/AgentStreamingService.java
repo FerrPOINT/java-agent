@@ -5,7 +5,6 @@ import com.azhukov.agent.api.dto.StreamEvent;
 
 import com.azhukov.agent.core.agent.TurnExitReason;
 import com.azhukov.agent.core.agent.TurnFinalizer;
-import com.azhukov.agent.core.agent.TestExecutionPolicy;
 import com.azhukov.agent.core.agent.ThinkingTimeoutGuidance;
 import com.azhukov.agent.core.memory.MemoryContextFence;
 import com.azhukov.agent.core.agent.ResponseRecoveryPolicy;
@@ -420,9 +419,8 @@ public class AgentStreamingService {
             properties.getModel().getModelName(), sessionSource);
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
-        log.info("turn_started session={} source={} model={} testScope={}", session.id(), sessionSource,
-            request.model() != null && !request.model().isBlank() ? request.model() : properties.getModel().getModelName(),
-            TestExecutionPolicy.classify(request.message()));
+        log.info("turn_started session={} source={} model={}", session.id(), sessionSource,
+            request.model() != null && !request.model().isBlank() ? request.model() : properties.getModel().getModelName());
 
         // Enrich session metadata with user identity from the request so the
         // system prompt volatile tier can include the real name, language, and platform.
@@ -440,9 +438,6 @@ public class AgentStreamingService {
         if (request.chatType() != null && !request.chatType().isBlank()) {
             session = session.withMetadata("chatType", request.chatType());
         }
-        session = session.withMetadata(TestExecutionPolicy.METADATA_KEY,
-            TestExecutionPolicy.classify(request.message()).name());
-
         // Set the ThreadLocal session ID so LangChain4jModelClient can check cancellation
         InterruptToken.setCurrentSessionId(session.id());
 
