@@ -326,6 +326,7 @@ class AgentStreamingServiceTest {
         com.azhukov.agent.core.security.ToolCallGuardrail guardrail =
             mock(com.azhukov.agent.core.security.ToolCallGuardrail.class);
         when(guardrail.isHalted(SESSION_ID)).thenReturn(true);
+        when(guardrail.haltMessage(SESSION_ID)).thenReturn("Tool 'browser_snapshot' repeatedly failed for the same reason. Repair the browser connection before retrying.");
         streamingService.setToolCallGuardrail(guardrail);
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
@@ -335,7 +336,8 @@ class AgentStreamingServiceTest {
         // No model call ever happened, and the halt message reached the user.
         verify(modelClient, never()).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
         assertThat(emitter.events.stream()
-            .anyMatch(e -> "token".equals(e.name) && e.data.contains("halted by guardrails"))).isTrue();
+            .anyMatch(e -> "token".equals(e.name) && e.data.contains("browser_snapshot")
+                && e.data.contains("browser connection"))).isTrue();
         assertThat(emitter.completed.get()).isTrue();
     }
 

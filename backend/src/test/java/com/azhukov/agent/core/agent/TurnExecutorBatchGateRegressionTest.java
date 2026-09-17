@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -103,6 +104,43 @@ class TurnExecutorBatchGateRegressionTest {
 
         assertThat(executions.get()).isEqualTo(1);
         assertThat(result.isInterrupted()).isFalse();
+    }
+
+    @Test
+    @DisplayName("browser connection failure skips dependent browser calls but preserves independent work")
+    void browserInfrastructureFailureSkipsDependentBrowserCallsOnly() {
+        AgentProperties props = properties();
+        ApprovalQueue queue = mock(ApprovalQueue.class);
+        ToolGuardrails guardrails = mock(ToolGuardrails.class);
+        ToolExecutionService svc = mock(ToolExecutionService.class);
+        List<String> executed = new CopyOnWriteArrayList<>();
+        when(guardrails.requiresApproval(any(ToolCall.class))).thenReturn(false);
+        when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))
+            .thenAnswer(invocation -> {
+                String toolName = invocation.getArgument(0);
+                executed.add(toolName);
+                return "browser_snapshot".equals(toolName)
+                    ? ToolResult.fail("java.net.ConnectException: Connection refused")
+                    : ToolResult.ok("independent result");
+            });
+        when(svc.enforceToolResultBudget(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        TurnExecutor executor = executor(props, guardrails, queue, svc);
+        Session session = Session.create("user", "noop", "noop");
+        List<ToolCall> calls = List.of(
+            new ToolCall("c1", "browser_snapshot", "{}"),
+            new ToolCall("c2", "browser_click", "{\"ref\":\"@e1\"}"),
+            new ToolCall("c3", "web_search", "{\"query\":\"agent tools\"}")
+        );
+
+        var result = executor.executeToolBatch(calls,
+            Set.of("browser_snapshot", "browser_click", "web_search"), session,
+            mock(TurnState.class), 1, false, null);
+
+        assertThat(executed).containsExactly("browser_snapshot", "web_search");
+        assertThat(result.toolResults()).hasSize(3);
+        assertThat(result.toolResults().get(1).content()).contains("Skipped browser_click")
+            .contains("browser infrastructure is unavailable");
     }
 
     @Test

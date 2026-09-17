@@ -134,19 +134,15 @@ class DefaultToolCallGuardrailBranchTest2 {
     }
 
     @Test
-    void idempotentNoProgress_withNullResultContent_doesNotTrigger() {
+    void repeatedNullFailureProducesWarning() {
         GuardrailConfig c = new GuardrailConfig();
         c.setWarningsEnabled(true);
         c.setHardStopEnabled(true);
-        c.setWarnAfterExactFailure(100);
+        c.setWarnAfterExactFailure(2);
         c.setHardStopAfterExactFailure(100);
-        c.setWarnAfterSameToolFailure(100);
-        c.setHardStopAfterSameToolFailure(100);
-        c.setWarnAfterIdempotentNoProgress(2);
-        c.setHardStopAfterIdempotentNoProgress(3);
         DefaultToolCallGuardrail g = new DefaultToolCallGuardrail(c);
 
-        // null result → content is null, should match null content from prior calls
+        // Null diagnostics still create a stable repeated-failure fingerprint.
         g.afterCall("tool", "{}", null, true, null);
         GuardrailDecision warn = g.afterCall("tool", "{}", null, true, null);
         assertThat(warn.action()).isEqualTo(GuardrailAction.WARN);

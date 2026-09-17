@@ -729,10 +729,20 @@ public class TurnExecutor {
             // Sequential path
             List<Message> toolResults = new ArrayList<>();
             List<ToolExecutionRecord> executions = new ArrayList<>();
+            String browserUnavailableReason = null;
             for (ToolCall call : toolCalls) {
                 if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                     log.info("Turn cancelled by interrupt for session {}", session.id());
                     return new ToolBatchResult(toolResults, true, executions);
+                }
+                if (browserUnavailableReason != null && isBrowserTool(call.name())) {
+                    ToolResult skipped = ToolResult.fail("Skipped " + call.name()
+                        + ": browser infrastructure is unavailable (" + browserUnavailableReason
+                        + "). Continue with independent tools or restore the browser connection first.");
+                    String formatted = toolResultFormatter.formatResult(skipped);
+                    toolResults.add(Message.toolResult(call.pairingId(), formatted, currentTurnIndex));
+                    if (events != null) events.onToolResult(call, skipped, formatted);
+                    continue;
                 }
                 // Approval flow — remember whether THIS call was gated so the
                 // post-wait re-validation below only fires for gated calls.
@@ -843,6 +853,9 @@ public class TurnExecutor {
                     boolean refunded = allExecuteCode && "execute_code".equals(call.name());
                     executions.add(new ToolExecutionRecord(call.name(), duration, refunded));
                     if (events != null) events.onToolResult(call, result, formatted);
+                    if (isBrowserInfrastructureFailure(call.name(), result)) {
+                        browserUnavailableReason = browserFailureReason(result);
+                    }
                 }
             }
             // Enforce the aggregate tool-result budget BEFORE steer injection so
@@ -1001,6 +1014,28 @@ public class TurnExecutor {
         toolResults.set(toolResults.size() - 1,
             Message.toolResult(lastToolResult.toolCallId(), enhancedContent, currentTurnIndex));
         log.info("Injected steer note for session {}", sessionId);
+    }
+
+    private static boolean isBrowserTool(String toolName) {
+        return toolName != null && toolName.startsWith("browser_");
+    }
+
+    private static boolean isBrowserInfrastructureFailure(String toolName, ToolResult result) {
+        if (!isBrowserTool(toolName) || result == null || result.success()) {
+            return false;
+        }
+        String diagnostic = (result.error() == null ? "" : result.error()) + " "
+            + (result.content() == null ? "" : result.content());
+        String lower = diagnostic.toLowerCase(Locale.ROOT);
+        return lower.contains("connectexception") || lower.contains("connection refused")
+            || lower.contains("provider_unavailable") || lower.contains("browser backend unavailable");
+    }
+
+    private static String browserFailureReason(ToolResult result) {
+        String reason = result.error();
+        if (reason == null || reason.isBlank()) reason = result.content();
+        if (reason == null || reason.isBlank()) return "connection failure";
+        return reason.replaceAll("[\\r\\n]+", " ").trim();
     }
 
     /**

@@ -9,8 +9,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -36,15 +36,15 @@ public class DefaultToolCallGuardrail implements ToolCallGuardrail {
     private static class GuardrailSessionState {
         final Deque<ToolCallRecord> history = new ArrayDeque<>();
         volatile boolean halted = false;
-        int consecutiveFailures = 0;
-        final Deque<String> recentToolNames = new ArrayDeque<>();
+        String haltMessage;
+        final Map<String, Integer> repeatedFailureCounts = new HashMap<>();
         final Deque<String> recentErrorMessages = new ArrayDeque<>();
 
         void clear() {
             history.clear();
             halted = false;
-            consecutiveFailures = 0;
-            recentToolNames.clear();
+            haltMessage = null;
+            repeatedFailureCounts.clear();
             recentErrorMessages.clear();
         }
     }
@@ -116,48 +116,38 @@ public class DefaultToolCallGuardrail implements ToolCallGuardrail {
     @Override
     public GuardrailDecision afterCall(String toolName, String args, ToolResult result, boolean failed, TurnState stateArg) {
         GuardrailSessionState state = stateFor();
-        state.history.addLast(new ToolCallRecord(toolName, args, failed, result != null ? result.content() : null));
-        if (state.history.size() > 20) {
-            state.history.removeFirst();
-        }
+        synchronized (state) {
+            String fingerprint = failureFingerprint(result);
+            state.history.addLast(new ToolCallRecord(toolName, args, failed,
+                result != null ? result.content() : null, fingerprint));
+            if (state.history.size() > 20) {
+                state.history.removeFirst();
+            }
+            if (!failed) {
+                // A successful invocation proves the prior failure sequence did
+                // not require an automatic stop; a later retry starts fresh.
+                state.repeatedFailureCounts.clear();
+                state.recentErrorMessages.clear();
+                return GuardrailDecision.allow(toolName);
+            }
 
-        state.recentToolNames.addLast(toolName);
-        if (state.recentToolNames.size() > 10) state.recentToolNames.removeFirst();
-
-        if (failed) {
-            state.consecutiveFailures++;
-            state.recentErrorMessages.addLast(result != null && result.error() != null ? result.error() : "unknown");
+            String signature = toolName + '\u0001' + args + '\u0001' + fingerprint;
+            int count = state.repeatedFailureCounts.merge(signature, 1, Integer::sum);
+            state.recentErrorMessages.addLast(fingerprint);
             if (state.recentErrorMessages.size() > 10) state.recentErrorMessages.removeFirst();
 
-            if (config.isHardStopEnabled() && state.consecutiveFailures >= config.getHardStopAfterExactFailure()) {
+            String message = "Tool '" + toolName + "' repeatedly failed for the same reason. "
+                + "Review its diagnostic, repair the dependency or change approach before retrying.";
+            if (config.isHardStopEnabled() && count >= config.getHardStopAfterExactFailure()) {
                 state.halted = true;
-                return GuardrailDecision.halt(toolName, "repeated_failures", "Too many consecutive tool failures");
+                state.haltMessage = message;
+                return GuardrailDecision.halt(toolName, "repeated_identical_failure", message);
             }
-            if (config.isWarningsEnabled() && state.consecutiveFailures == config.getWarnAfterExactFailure()) {
-                return GuardrailDecision.warn(toolName, "repeated_failures_warning", "Multiple consecutive tool failures");
+            if (config.isWarningsEnabled() && count == config.getWarnAfterExactFailure()) {
+                return GuardrailDecision.warn(toolName, "repeated_identical_failure_warning", message);
             }
-
-            if (config.isHardStopEnabled() && sameToolFailureCount(state, toolName) >= config.getHardStopAfterSameToolFailure()) {
-                state.halted = true;
-                return GuardrailDecision.halt(toolName, "same_tool_repeated_failures", "Tool " + toolName + " keeps failing");
-            }
-            if (config.isWarningsEnabled() && sameToolFailureCount(state, toolName) == config.getWarnAfterSameToolFailure()) {
-                return GuardrailDecision.warn(toolName, "same_tool_repeated_failures_warning", "Tool " + toolName + " is failing repeatedly");
-            }
-
-            if (config.isHardStopEnabled() && idempotentNoProgress(state, toolName, result) >= config.getHardStopAfterIdempotentNoProgress()) {
-                state.halted = true;
-                return GuardrailDecision.halt(toolName, "idempotent_no_progress", "Tool is looping without progress");
-            }
-            if (config.isWarningsEnabled() && idempotentNoProgress(state, toolName, result) == config.getWarnAfterIdempotentNoProgress()) {
-                return GuardrailDecision.warn(toolName, "idempotent_no_progress_warning", "Tool output is not changing");
-            }
-        } else {
-            state.consecutiveFailures = 0;
-            state.recentErrorMessages.clear();
+            return GuardrailDecision.allow(toolName);
         }
-
-        return GuardrailDecision.allow(toolName);
     }
 
     @Override
@@ -170,6 +160,13 @@ public class DefaultToolCallGuardrail implements ToolCallGuardrail {
     public boolean isHalted(UUID sessionId) {
         GuardrailSessionState state = stateFor(sessionId);
         return state != null && state.halted;
+    }
+
+    @Override
+    public String haltMessage(UUID sessionId) {
+        GuardrailSessionState state = stateFor(sessionId);
+        return state != null && state.haltMessage != null
+            ? state.haltMessage : ToolCallGuardrail.super.haltMessage(sessionId);
     }
 
     @Override
@@ -211,14 +208,14 @@ public class DefaultToolCallGuardrail implements ToolCallGuardrail {
      * Returns the consecutive failure count for the current thread's session.
      */
     int getConsecutiveFailures() {
-        return stateFor().consecutiveFailures;
+        return stateFor().repeatedFailureCounts.values().stream().mapToInt(Integer::intValue).sum();
     }
 
     /**
      * Returns the recent tool names for the current thread's session.
      */
     Deque<String> getRecentToolNames() {
-        return stateFor().recentToolNames;
+        return new ArrayDeque<>();
     }
 
     /**
@@ -228,20 +225,12 @@ public class DefaultToolCallGuardrail implements ToolCallGuardrail {
         return stateFor().recentErrorMessages;
     }
 
-    private long sameToolFailureCount(GuardrailSessionState state, String toolName) {
-        return state.recentToolNames.stream().filter(n -> Objects.equals(n, toolName)).count();
+    private static String failureFingerprint(ToolResult result) {
+        String value = result != null && result.error() != null && !result.error().isBlank()
+            ? result.error() : result != null ? result.content() : "unknown";
+        return value == null || value.isBlank() ? "unknown" : value.trim();
     }
 
-    private int idempotentNoProgress(GuardrailSessionState state, String toolName, ToolResult result) {
-        int count = 0;
-        String current = result != null ? result.content() : null;
-        for (ToolCallRecord r : state.history) {
-            if (r.failed && Objects.equals(r.toolName, toolName) && Objects.equals(r.output, current)) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private record ToolCallRecord(String toolName, String args, boolean failed, String output) {}
+    private record ToolCallRecord(String toolName, String args, boolean failed, String output,
+                                  String failureFingerprint) {}
 }

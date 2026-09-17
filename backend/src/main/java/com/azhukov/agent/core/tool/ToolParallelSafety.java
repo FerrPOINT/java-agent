@@ -88,7 +88,7 @@ public final class ToolParallelSafety {
 
         // Check for never-parallel tools
         for (ToolCall tc : calls) {
-            if (NEVER_PARALLEL_TOOLS.contains(tc.name())) {
+            if (NEVER_PARALLEL_TOOLS.contains(tc.name()) || tc.name().startsWith("browser_")) {
                 return false;
             }
         }

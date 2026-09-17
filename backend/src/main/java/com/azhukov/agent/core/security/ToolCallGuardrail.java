@@ -24,4 +24,7 @@ public interface ToolCallGuardrail {
     default void reset(UUID sessionId) { reset(); }
     default boolean isHalted() { return false; }
     default boolean isHalted(UUID sessionId) { return isHalted(); }
+    default String haltMessage(UUID sessionId) {
+        return "Tool execution was stopped after repeated identical failures. Review the last tool result and change strategy.";
+    }
 }

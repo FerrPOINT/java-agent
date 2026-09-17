@@ -100,6 +100,16 @@ class ToolParallelSafetyTest {
             assertThat(ToolParallelSafety.shouldParallelize(calls, REGISTERED)).isFalse();
         }
 
+        @Test
+        @DisplayName("Browser calls share a live session and are sequential")
+        void browserCallsAreSequential() {
+            List<ToolCall> calls = List.of(
+                new ToolCall("c1", "browser_snapshot", "{}"),
+                new ToolCall("c2", "browser_get_images", "{}")
+            );
+            assertThat(ToolParallelSafety.shouldParallelize(calls, REGISTERED)).isFalse();
+        }
+
         // ── Path-scoped tools ──
 
         @Test

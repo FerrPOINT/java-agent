@@ -572,7 +572,7 @@ public class AgentStreamingService {
             // streaming after a guardrail halt.
             if (toolCallGuardrail != null && toolCallGuardrail.isHalted(session.id())) {
                 log.warn("Streaming turn halted by guardrails for session {}", session.id());
-                eventHelper().send(emitter, new StreamEvent("token", "Turn halted by guardrails.", null, null), streamCtx);
+                eventHelper().send(emitter, new StreamEvent("token", toolCallGuardrail.haltMessage(session.id()), null, null), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);

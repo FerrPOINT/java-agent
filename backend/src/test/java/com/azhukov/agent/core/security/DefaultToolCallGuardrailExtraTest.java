@@ -49,51 +49,26 @@ class DefaultToolCallGuardrailExtraTest {
     }
 
     @Test
-    void sameToolRepeatedFailuresWarnThenHalt() {
+    void mixedFailuresDoNotHaltAndIdenticalFailureDoes() {
         GuardrailConfig c = new GuardrailConfig();
         c.setWarningsEnabled(true);
         c.setHardStopEnabled(true);
-        c.setWarnAfterExactFailure(100);
-        c.setHardStopAfterExactFailure(100);
-        c.setWarnAfterSameToolFailure(2);
-        c.setHardStopAfterSameToolFailure(3);
-        c.setWarnAfterIdempotentNoProgress(100);
-        c.setHardStopAfterIdempotentNoProgress(100);
-        DefaultToolCallGuardrail g = new DefaultToolCallGuardrail(c);
-        // warnAfterSameToolFailure=2, hardStopAfterSameToolFailure=3
-        // We use different error messages to avoid hitting idempotentNoProgress
-        g.afterCall("toolA", "{}", ToolResult.fail("err1"), true, null);
-        GuardrailDecision warn = g.afterCall("toolA", "{}", ToolResult.fail("err2"), true, null);
-        // sameToolFailureCount for toolA = 2 → WARN
-        assertThat(warn.action()).isEqualTo(GuardrailAction.WARN);
-        GuardrailDecision halt = g.afterCall("toolA", "{}", ToolResult.fail("err3"), true, null);
-        // sameToolFailureCount for toolA = 3 → HALT
-        assertThat(halt.action()).isEqualTo(GuardrailAction.HALT);
-        assertThat(g.isHalted()).isTrue();
-    }
-
-    @Test
-    void idempotentNoProgressWarnThenHalt() {
-        GuardrailConfig c = new GuardrailConfig();
-        c.setWarningsEnabled(true);
-        c.setHardStopEnabled(true);
-        c.setWarnAfterExactFailure(100);
-        c.setHardStopAfterExactFailure(100);
-        c.setWarnAfterSameToolFailure(100);
-        c.setHardStopAfterSameToolFailure(100);
-        c.setWarnAfterIdempotentNoProgress(2);
-        c.setHardStopAfterIdempotentNoProgress(3);
+        c.setWarnAfterExactFailure(3);
+        c.setHardStopAfterExactFailure(4);
         DefaultToolCallGuardrail g = new DefaultToolCallGuardrail(c);
 
-        // warnAfterIdempotentNoProgress=2, hardStopAfterIdempotentNoProgress=3
-        // Same tool, same error output → idempotent no progress
-        ToolResult sameResult = ToolResult.fail("same-error");
-        g.afterCall("toolB", "{}", sameResult, true, null);
-        GuardrailDecision warn = g.afterCall("toolB", "{}", sameResult, true, null);
+        g.afterCall("browser_snapshot", "{}", ToolResult.fail("ConnectException"), true, null);
+        g.afterCall("image_generate", "{}", ToolResult.fail("provider disabled"), true, null);
+        g.afterCall("text_to_speech", "{}", ToolResult.fail("edge-tts unavailable"), true, null);
+        assertThat(g.isHalted()).isFalse();
+
+        g.afterCall("browser_snapshot", "{}", ToolResult.fail("ConnectException"), true, null);
+        GuardrailDecision warn = g.afterCall("browser_snapshot", "{}", ToolResult.fail("ConnectException"), true, null);
         assertThat(warn.action()).isEqualTo(GuardrailAction.WARN);
-        GuardrailDecision halt = g.afterCall("toolB", "{}", sameResult, true, null);
+        GuardrailDecision halt = g.afterCall("browser_snapshot", "{}", ToolResult.fail("ConnectException"), true, null);
         assertThat(halt.action()).isEqualTo(GuardrailAction.HALT);
         assertThat(g.isHalted()).isTrue();
+        assertThat(g.haltMessage(null)).contains("browser_snapshot").contains("same reason");
     }
 
     @Test
@@ -118,9 +93,9 @@ class DefaultToolCallGuardrailExtraTest {
 
         g.afterCall("tool", "{}", ToolResult.fail("err"), true, null);
         g.afterCall("tool", "{}", ToolResult.fail("err"), true, null);
-        // consecutiveFailures=2, warningsEnabled=false → no WARN, just ALLOW
+        // Same failure twice, warnings disabled → no warning yet.
         GuardrailDecision d = g.afterCall("tool", "{}", ToolResult.fail("err"), true, null);
-        // consecutiveFailures=3, hardStopAfterExactFailure=3 → HALT
+        // Same failure three times, hardStopAfterExactFailure=3 → HALT.
         assertThat(d.action()).isEqualTo(GuardrailAction.HALT);
     }
 

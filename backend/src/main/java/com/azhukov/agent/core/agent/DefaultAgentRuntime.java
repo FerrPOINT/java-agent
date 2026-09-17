@@ -571,7 +571,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }
 
             if (guardrail.isHalted(session.id())) {
-                turnMessages.add(Message.assistant("Turn halted by guardrails.", turnIndex));
+                turnMessages.add(Message.assistant(guardrail.haltMessage(session.id()), turnIndex));
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.GUARDRAIL_HALTED);
                 }
