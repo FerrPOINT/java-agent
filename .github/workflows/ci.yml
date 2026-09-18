@@ -7,6 +7,16 @@ on:
     branches: [main]
 
 jobs:
+  readme:
+    name: README evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: README validator tests
+        run: python3 -m unittest scripts.tests.test_verify_readme
+      - name: README structural validation
+        run: python3 scripts/verify_readme.py
+
   test:
     name: Test (JDK ${{ matrix.java }})
     runs-on: ubuntu-latest

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="420" viewBox="0 0 1600 420" role="img" aria-labelledby="title desc">
+  <title id="title">Java Agent Runtime</title>
+  <desc id="desc">Java Agent unifies API, CLI, tools, MCP and the Telegram gateway behind a Spring Boot runtime.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#111827" />
+      <stop offset="0.55" stop-color="#3f161d" />
+      <stop offset="1" stop-color="#9a3412" />
+    </linearGradient>
+    <linearGradient id="line" x1="0" x2="1">
+      <stop offset="0" stop-color="#f59e0b" stop-opacity="0" />
+      <stop offset="0.45" stop-color="#f59e0b" />
+      <stop offset="1" stop-color="#ef4444" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="420" fill="url(#background)" />
+  <path d="M-20 340 C220 220 340 400 610 294 S1080 164 1620 292" fill="none" stroke="#f59e0b" stroke-opacity="0.28" stroke-width="2" />
+  <path d="M-40 376 C230 254 366 430 640 326 S1150 180 1630 316" fill="none" stroke="#ef4444" stroke-opacity="0.34" stroke-width="2" />
+  <g fill="none" stroke="#fecaca" stroke-opacity="0.22">
+    <circle cx="1250" cy="91" r="110" />
+    <circle cx="1250" cy="91" r="75" />
+    <circle cx="1250" cy="91" r="38" />
+  </g>
+  <g fill="#f59e0b">
+    <circle cx="1250" cy="91" r="7" />
+    <circle cx="1038" cy="264" r="5" />
+    <circle cx="1470" cy="255" r="5" />
+  </g>
+  <rect x="104" y="84" width="184" height="34" rx="17" fill="#f59e0b" fill-opacity="0.16" stroke="#fcd34d" stroke-opacity="0.6" />
+  <text x="126" y="107" fill="#fde68a" font-family="ui-monospace, monospace" font-size="16" letter-spacing="2">FERRPOINT</text>
+  <text x="104" y="205" fill="#fff7ed" font-family="Georgia, serif" font-size="72" font-weight="700">Java Agent</text>
+  <text x="108" y="255" fill="#fed7aa" font-family="ui-monospace, monospace" font-size="24">API · CLI · tools · MCP · Telegram</text>
+  <rect x="104" y="296" width="620" height="3" fill="url(#line)" />
+  <text x="108" y="337" fill="#d1d5db" font-family="ui-monospace, monospace" font-size="18">Spring Boot runtime with explicit operational boundaries</text>
+</svg>
