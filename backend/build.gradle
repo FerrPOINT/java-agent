@@ -64,7 +64,7 @@ dependencies {
     implementation 'io.github.resilience4j:resilience4j-timelimiter:2.4.0'
 
     // Spring Retry for @Retryable annotations
-    implementation 'org.springframework.retry:spring-retry:2.0.11'
+    implementation 'org.springframework.retry:spring-retry:2.0.13'
 
     // Lombok
     compileOnly 'org.projectlombok:lombok:1.18.48'
