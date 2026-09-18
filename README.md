@@ -227,7 +227,7 @@ Docker images используют `eclipse-temurin:25-jre-noble`; slim-обра
 
 `release_verify.py` фиксирует pass/fail/not-run gates, точные счётчики тестов, JaCoCo-метрики и консервативный endpoint-reference inventory в `build/release-verification.json`. HTTP и CLI E2E опциональны: им нужен живой локальный backend; Docker E2E опционален, потому что поднимает изолированный стек.
 
-GitHub Actions прогоняет repository test, build-image и Markdown/YAML jobs; README-evidence job валидирует anchors, assets, placeholders, утечки filesystem-путей и ссылки на workflow badge.
+GitHub Actions прогоняет README-evidence, tests, bootJar build и Markdown/YAML lint; Docker Compose E2E и smoke запускаются локально по необходимости.
 
 ## 🧭 Project Map
 
