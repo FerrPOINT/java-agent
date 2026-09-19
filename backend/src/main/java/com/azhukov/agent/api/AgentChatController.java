@@ -237,6 +237,40 @@ public class AgentChatController {
 
     // ── Approve / Deny ──
 
+    /**
+     * Pending self-improvement review summary (Hermes parity:
+     * background_review_callback pending-release). Returns the summary ONCE
+     * (consumed on read) so a chat client that polls after the final answer
+     * can deliver "💾 Self-improvement review: …" autonomously, without
+     * waiting for the next user turn.
+     */
+    @GetMapping("/agent/session/{sessionId}/review/pending")
+    public Map<String, Object> pendingReview(@PathVariable String sessionId) {
+        if (!properties.getMemory().getBackgroundReview().isEnabled()) {
+            return Map.of("pending", false, "reason", "background review disabled");
+        }
+        if (memoryNudgeManagerProvider() == null) {
+            return Map.of("pending", false);
+        }
+        try {
+            String summary = memoryNudgeManagerProvider() != null
+                ? memoryNudgeManagerProvider().getObject().getReviewSummaryForSurface(java.util.UUID.fromString(sessionId))
+                : null;
+            return summary == null || summary.isBlank()
+                ? Map.of("pending", false)
+                : Map.of("pending", true, "summary", summary);
+        } catch (IllegalArgumentException e) {
+            return Map.of("pending", false, "error", "invalid session id");
+        }
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.agent.MemoryNudgeManager> memoryNudgeManagerProviderField;
+
+    private org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.agent.MemoryNudgeManager> memoryNudgeManagerProvider() {
+        return memoryNudgeManagerProviderField;
+    }
+
     @PostMapping("/agent/approve")
     public String approve(@Valid @RequestBody ApproveRequest request) {
         if (request.isAll()) {

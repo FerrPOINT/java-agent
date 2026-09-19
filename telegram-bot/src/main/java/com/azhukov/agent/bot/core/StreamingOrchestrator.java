@@ -67,6 +67,45 @@ public class StreamingOrchestrator {
     private final java.util.concurrent.ConcurrentHashMap<Long, ToolProgressBubble> progressBubbles =
         new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * Hermes parity (gateway run_turn_runner._make_bg_review_callbacks): the
+     * background-review summary is delivered autonomously AFTER the main
+     * answer — the review runs async with a 2s delay and typically completes
+     * 15-60s later, so the bot polls the pending-review endpoint a few times
+     * after finalizing the stream instead of waiting for the next user turn.
+     */
+    private final java.util.concurrent.ScheduledExecutorService reviewPollScheduler =
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "review-poll");
+            t.setDaemon(true);
+            return t;
+        });
+
+    private void pollPendingReview(String sessionId, long chatId, long userMessageId, long messageThreadId,
+                                   ProcessorHooks hooks, int attemptsLeft) {
+        if (attemptsLeft <= 0 || busyHandler.isInterrupted(chatId)) return;
+        try {
+            com.fasterxml.jackson.databind.JsonNode pending = backendClient.getPendingReview(sessionId);
+            if (pending != null && pending.path("pending").asBoolean(false)) {
+                String summary = pending.path("summary").asText("");
+                if (!summary.isBlank()) {
+                    hooks.sendReviewMessage(chatId, summary, userMessageId, messageThreadId);
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Pending review poll failed for chat {}: {}", chatId, e.getMessage());
+        }
+        reviewPollScheduler.schedule(() ->
+            pollPendingReview(sessionId, chatId, userMessageId, messageThreadId, hooks, attemptsLeft - 1),
+            15, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    @jakarta.annotation.PreDestroy
+    void shutdownReviewPollScheduler() {
+        reviewPollScheduler.shutdown();
+    }
+
     private ToolProgressBubble bubbleFor(long chatId) {
         return progressBubbles.computeIfAbsent(chatId,
             k -> new ToolProgressBubble(telegramClient, true));
@@ -373,6 +412,14 @@ public class StreamingOrchestrator {
             // If streaming produced content, return it (with metadata from the stream)
             if (accumulated.length() > 0 || finalized[0]) {
                 progressBubbles.remove(chatId);
+                // Hermes parity: autonomously deliver the async background-review
+                // summary (armed post-delivery; review typically finishes 15-60s
+                // after the answer). Suppresses when review found nothing.
+                if (sessionId != null && !sessionId.isBlank()) {
+                    reviewPollScheduler.schedule(() ->
+                        pollPendingReview(sessionId, chatId, userMessageId, messageThreadId, hooks, 4),
+                        20, java.util.concurrent.TimeUnit.SECONDS);
+                }
                 return new AgentBackendClient.ChatResult(
                     accumulated.toString(),
                     streamResult.modelUsed(),

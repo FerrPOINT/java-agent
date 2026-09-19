@@ -81,6 +81,24 @@ public class SessionApiClient extends BaseBackendClient {
         }
     }
 
+    /**
+     * Pending self-improvement review summary (Hermes parity:
+     * background_review_callback pending-release). Consumed-once: a non-empty
+     * {@code summary} means the caller owns delivering it to the chat.
+     */
+    public JsonNode getPendingReview(String sessionId) {
+        try {
+            String json = restClient.get()
+                .uri("/api/v1/agent/session/{sessionId}/review/pending", sessionId)
+                .retrieve()
+                .body(String.class);
+            return readTree(json);
+        } catch (Exception e) {
+            log.debug("getPendingReview failed for sessionId={}: {}", sessionId, e.getMessage());
+            return null;
+        }
+    }
+
     public JsonNode listSessionsByUser(String userId) {
         try {
             String json = restClient.get()
