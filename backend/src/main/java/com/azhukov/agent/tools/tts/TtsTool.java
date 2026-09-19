@@ -91,7 +91,7 @@ public class TtsTool implements ToolHandler {
         }
 
         Double speed = args.speed() == null ? null : Math.clamp(args.speed(), 0.25, 4.0);
-        String voice = args.voice() != null ? args.voice() : properties.getTts().getVoice();
+        String voice = resolveVoice(provider, args.voice());
 
         List<String> chunks = splitTextForTts(spokenText, maxTextLength(provider.name()));
         if (chunks.isEmpty()) {
@@ -212,6 +212,26 @@ public class TtsTool implements ToolHandler {
             .filter(provider -> provider.name().equalsIgnoreCase(name))
             .findFirst()
             .orElse(null);
+    }
+
+    /**
+     * Provider-aware voice resolution: an explicit call-site voice wins; otherwise
+     * the per-provider default (edge → Microsoft neural name) applies, and the
+     * global OpenAI-style voice is used only for providers that accept it. This
+     * prevents the tool-test defect where edge-tts received the OpenAI 'alloy'.
+     */
+    private String resolveVoice(TtsProvider provider, String requestedVoice) {
+        if (requestedVoice != null && !requestedVoice.isBlank()) {
+            return requestedVoice;
+        }
+        if ("edge".equalsIgnoreCase(provider.name())) {
+            String edgeVoice = properties.getTts().getEdge().getVoice();
+            if (edgeVoice != null && !edgeVoice.isBlank()) {
+                return edgeVoice;
+            }
+        }
+        String global = properties.getTts().getVoice();
+        return (global != null && !global.isBlank()) ? global : null;
     }
 
     private int maxTextLength(String providerName) {

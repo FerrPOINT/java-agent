@@ -371,6 +371,9 @@ agent:
     edge:
       # Optional maintained edge-tts CLI. Empty preserves the legacy HTTP path.
       command: ${AGENT_TTS_EDGE_COMMAND:}
+      # Microsoft neural voice for the edge provider (OpenAI voice names like 'alloy'
+      # are invalid there; this key takes precedence for agent.tts.provider=edge).
+      voice: ${AGENT_TTS_EDGE_VOICE:ru-RU-DmitryNeural}
     auto-tts: ${AGENT_TTS_AUTO_TTS:false}
   
   # ─── Transcription ───

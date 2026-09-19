@@ -32,12 +32,28 @@ public class EdgeTtsProvider implements TtsProvider {
         com.azhukov.agent.config.AgentProperties properties,
         @Value("${agent.tts.edge.command:}") String edgeTtsCommand
     ) {
-        this.defaultVoice = properties.getTts().getVoice();
+        // Provider-aware voice contract: edge-tts speaks Microsoft neural voice
+        // names (ru-RU-DmitryNeural). A globally-configured OpenAI voice such as
+        // 'alloy' is invalid here, so the per-provider key always wins and the
+        // global value is only a last-resort fallback when it looks usable.
+        String edgeVoice = properties.getTts().getEdge().getVoice();
+        String globalVoice = properties.getTts().getVoice();
+        if (edgeVoice != null && !edgeVoice.isBlank() && VOICE_PATTERN.matcher(edgeVoice).matches()) {
+            this.defaultVoice = edgeVoice;
+        } else if (globalVoice != null && VOICE_PATTERN.matcher(globalVoice).matches()) {
+            this.defaultVoice = globalVoice;
+        } else {
+            this.defaultVoice = "en-US-AriaNeural";
+        }
         this.edgeTtsCommand = edgeTtsCommand == null ? "" : edgeTtsCommand.trim();
         this.httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
     }
+
+    /** Microsoft neural voice names look like ru-RU-DmitryNeural. */
+    static final java.util.regex.Pattern VOICE_PATTERN =
+        java.util.regex.Pattern.compile("^[a-z]{2,3}-[A-Za-z]{2}-\\w+$");
 
     @Override
     public String name() {

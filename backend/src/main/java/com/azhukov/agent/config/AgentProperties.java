@@ -652,8 +652,22 @@ public class AgentProperties {
         private String provider = "edge";
         private String apiKey = "";
         private String model = "gpt-4o-mini-tts";
+        /** OpenAI-style global voice name; per-provider voices take precedence for non-OpenAI providers. */
         private String voice = "alloy";
         private boolean autoTts = false;
+        private final EdgeProperties edge = new EdgeProperties();
+
+        @Getter @Setter
+        public static class EdgeProperties {
+            /** Optional maintained edge-tts CLI. Empty preserves the legacy HTTP path. */
+            private String command = "";
+            /**
+             * Microsoft neural voice for the edge provider (OpenAI voice names like
+             * 'alloy' are invalid there; this key takes precedence when
+             * agent.tts.provider=edge).
+             */
+            private String voice = "ru-RU-DmitryNeural";
+        }
     }
 
     @Getter @Setter
