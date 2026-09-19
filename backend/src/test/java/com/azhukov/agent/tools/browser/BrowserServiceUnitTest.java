@@ -500,7 +500,7 @@ class BrowserServiceUnitTest {
         org.mockito.ArgumentCaptor<String> methodCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
         org.mockito.ArgumentCaptor<Consumer<JsonNode>> listenerCaptor =
             org.mockito.ArgumentCaptor.forClass(Consumer.class);
-        verify(client, times(3)).onEvent(methodCaptor.capture(), listenerCaptor.capture());
+        verify(client, times(5)).onEvent(methodCaptor.capture(), listenerCaptor.capture());
         Map<String, Consumer<JsonNode>> listeners = new LinkedHashMap<>();
         for (int i = 0; i < methodCaptor.getAllValues().size(); i++) {
             listeners.put(methodCaptor.getAllValues().get(i), listenerCaptor.getAllValues().get(i));

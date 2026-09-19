@@ -72,11 +72,15 @@ public class WebSearchTool implements ToolHandler {
             );
 
             List<Map<String, String>> results;
-            // Feature 1: Use SearXNG if configured, otherwise fall back to DuckDuckGo
+            // Feature 1: Use SearXNG if configured, otherwise fall back to DuckDuckGo.
+            // DDG html endpoint intermittently drops the TLS handshake from datacenter
+            // IPs (observed 2-fails-then-ok in a row, session 8206abc2 "Remote host
+            // terminated the handshake"). Retry transient IOExceptions with backoff
+            // before surfacing the failure to the model.
             if (searXngProvider != null && searXngProvider.isAvailable()) {
                 results = searXngProvider.search(query, limit);
             } else {
-                results = searchDuckDuckGo(query, limit);
+                results = searchDuckDuckGoWithRetry(query, limit);
             }
 
             // Hermes parity: return {"data":{"web":[{title,url,description,position}]}}
@@ -120,6 +124,28 @@ public class WebSearchTool implements ToolHandler {
         }
         String redacted = redactor.redact(output);
         return redacted == null ? output : redacted;
+    }
+
+    private static final int SEARCH_IO_RETRIES = 3;
+
+    private List<Map<String, String>> searchDuckDuckGoWithRetry(String query, int limit) throws IOException {
+        IOException last = null;
+        for (int attempt = 1; attempt <= SEARCH_IO_RETRIES; attempt++) {
+            try {
+                return searchDuckDuckGo(query, limit);
+            } catch (IOException e) {
+                last = e;
+                if (attempt < SEARCH_IO_RETRIES) {
+                    try {
+                        Thread.sleep(700L * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw e;
+                    }
+                }
+            }
+        }
+        throw last;
     }
 
     private List<Map<String, String>> searchDuckDuckGo(String query, int limit) throws IOException {

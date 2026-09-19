@@ -57,12 +57,17 @@ public class EnvironmentProbe {
     String buildProbeLine() {
         List<String> bits = new ArrayList<>();
 
-        String javaVersion = System.getProperty("java.version", "");
+        // NOTE: the agent's own JVM version is deliberately NOT reported — it is
+        // not part of the container toolchain the model scripts against, and
+        // advertising it made models write Java code in terminal (no javac in
+        // the image). Only toolchain binaries the model can actually invoke
+        // belong here.
         String gradleVersion = runCommand("gradle", "--version");
         boolean hasPython3 = commandExists("python3");
         boolean hasPip = commandExists("pip");
         boolean hasUv = commandExists("uv");
         boolean hasGit = commandExists("git");
+        boolean hasJavac = commandExists("javac");
 
         String python3Version = hasPython3 ? runCommand("python3", "--version") : "";
 
@@ -76,18 +81,14 @@ public class EnvironmentProbe {
             return "";
         }
 
-        if (!javaVersion.isEmpty()) {
-            bits.add("java=" + javaVersion);
-        }
-
-        if (gradleVersion != null && !gradleVersion.isEmpty()) {
-            bits.add("gradle=" + gradleVersion);
-        }
-
         if (pythonMissing) {
             bits.add("python3=missing");
         } else if (python3Version != null && !python3Version.isEmpty()) {
             bits.add("python3=" + python3Version);
+        }
+
+        if (!hasJavac) {
+            bits.add("javac=missing (write scripts in python3, not Java)");
         }
 
         if (pipMissing) {

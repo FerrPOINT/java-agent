@@ -64,6 +64,14 @@ public class BrowserService {
     private final AtomicBoolean consoleListenersRegistered = new AtomicBoolean(false);
     private final ConcurrentLinkedDeque<ConsoleMessage> consoleMessages = new ConcurrentLinkedDeque<>();
     private final ConcurrentLinkedDeque<JsError> jsErrors = new ConcurrentLinkedDeque<>();
+    // ── JS dialog supervision (Hermes browser_supervisor_dialogs parity) ──
+    // A JS alert/confirm/prompt BLOCKS every CDP evaluation until answered:
+    // clicks/typing time out with a null error (session 8206abc2 — three
+    // "Browser click failed: null" on the javascript_alerts page). Track the
+    // open dialog so input tools can report it instead of hanging.
+    private final AtomicBoolean dialogOpen = new AtomicBoolean(false);
+    private volatile String dialogType = "";
+    private volatile String dialogMessage = "";
     private volatile Map<String, Integer> elementRefs = Map.of();
 
     @Autowired
@@ -211,6 +219,10 @@ public class BrowserService {
 
     private String clickSelector(String selector) throws Exception {
         ensureConnected();
+        String openDialog = openDialogDescription();
+        if (openDialog != null) {
+            return "JS " + openDialog + " is open and blocks page input — answer it with browser_dialog (accept/dismiss), then retry the click";
+        }
         JsonNode document = cdpClient.send("DOM.getDocument", null).get(60, TimeUnit.SECONDS);
         int rootNodeId = document.path("root").path("nodeId").asInt();
 
@@ -230,15 +242,32 @@ public class BrowserService {
 
     private String clickRef(String ref) throws Exception {
         ensureConnected();
+        String openDialog = openDialogDescription();
+        if (openDialog != null) {
+            // The previous click probably OPENED this dialog and its CDP response
+            // is frozen behind it. Answer the dialog first (browser_dialog), then retry.
+            return "JS " + openDialog + " is open and blocks page input — answer it with browser_dialog (accept/dismiss), then retry the click";
+        }
         String normalizedRef = normalizeRef(ref);
         String objectId = resolveObjectId(normalizedRef);
         if (objectId == null) {
             return "Element not found: @" + normalizedRef + " (call browser_snapshot first)";
         }
-        return callFunctionOn(
-            objectId,
-            "function() { this.click(); return 'clicked'; }",
-            null);
+        try {
+            return callFunctionOn(
+                objectId,
+                "function() { this.click(); return 'clicked'; }",
+                null);
+        } catch (Exception e) {
+            // The click often DOES land but opens a JS dialog that freezes the CDP
+            // response (session 8206abc2: three "Browser click failed: null").
+            // Report the dialog instead of a null error.
+            String dialogNow = openDialogDescription();
+            if (dialogNow != null) {
+                return "clicked (a JS " + dialogNow + " opened and blocks the page — answer it with browser_dialog)";
+            }
+            throw e;
+        }
     }
 
     public String type(String target, String text, boolean clear) throws Exception {
@@ -701,6 +730,32 @@ public class BrowserService {
             + "Set agent.browser.cloud-provider=local or use Hermes/browser provider runtime for cloud, hybrid, browser-use, or Camofox modes.";
     }
 
+    private void recordDialogOpening(JsonNode params) {
+        dialogOpen.set(true);
+        dialogType = params.path("type").asText("");
+        dialogMessage = params.path("message").asText("");
+    }
+
+    private void recordDialogClosed(JsonNode params) {
+        dialogOpen.set(false);
+        dialogType = "";
+        dialogMessage = "";
+    }
+
+    /**
+     * Description of the currently open JS dialog, or {@code null} when none.
+     * Used by input tools to fail fast with an actionable message instead of
+     * blocking 60s on a dialog-frozen CDP page.
+     */
+    public String openDialogDescription() {
+        if (!dialogOpen.get()) {
+            return null;
+        }
+        String type = dialogType == null || dialogType.isBlank() ? "dialog" : dialogType;
+        String message = dialogMessage == null ? "" : dialogMessage;
+        return type + (message.isBlank() ? "" : " \"" + message + "\"");
+    }
+
     private void registerConsoleListenersIfNeeded() {
         if (!consoleListenersRegistered.compareAndSet(false, true)) {
             return;
@@ -708,6 +763,8 @@ public class BrowserService {
         cdpClient.onEvent("Runtime.consoleAPICalled", this::recordRuntimeConsole);
         cdpClient.onEvent("Runtime.exceptionThrown", this::recordRuntimeException);
         cdpClient.onEvent("Log.entryAdded", this::recordLogEntry);
+        cdpClient.onEvent("Page.javascriptDialogOpening", this::recordDialogOpening);
+        cdpClient.onEvent("Page.javascriptDialogClosed", this::recordDialogClosed);
         try {
             CompletableFuture<JsonNode> enabled = cdpClient.send("Log.enable", null);
             if (enabled != null) {

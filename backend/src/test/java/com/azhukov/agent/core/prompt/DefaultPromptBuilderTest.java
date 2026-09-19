@@ -1160,13 +1160,17 @@ class DefaultPromptBuilderTest {
     }
 
     @Test
-    void environmentHintsContainJavaVersion() {
+    void environmentHintsPreferPython3ScriptingOverJavaToolchain() {
         AgentProperties properties = new AgentProperties();
         ToolRegistry registry = mock(ToolRegistry.class);
         DefaultPromptBuilder builder = new DefaultPromptBuilder(properties, registry);
 
         String hints = builder.buildEnvironmentHints();
-        assertThat(hints).contains("Java toolchain: java");
+        // The agent's JVM version must NOT be advertised: models then write Java
+        // code in terminal while the container has no javac (session 8206abc2).
+        assertThat(hints).doesNotContain("Java toolchain");
+        assertThat(hints).contains("python3 for scripts");
+        assertThat(hints).contains("javac) is NOT available");
     }
 
     @Test
@@ -1194,7 +1198,7 @@ class DefaultPromptBuilderTest {
 
         assertThat(msg.content()).contains("## Environment");
         assertThat(msg.content()).contains("Host:");
-        assertThat(msg.content()).contains("Java toolchain:");
+        assertThat(msg.content()).contains("python3 for scripts");
     }
 
     // ── Fix 4: Context files (AGENTS.md, CLAUDE.md, .cursorrules) ────────

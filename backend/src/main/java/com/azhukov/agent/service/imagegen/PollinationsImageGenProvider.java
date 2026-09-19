@@ -48,27 +48,43 @@ public class PollinationsImageGenProvider implements ImageGenProvider {
                 + "&height=" + dimensions[1]
                 + "&nologo=true";
 
-            HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("User-Agent", "java-agent")
-                .GET()
-                .timeout(Duration.ofSeconds(120))
-                .build();
-
             int lastStatus = 0;
             for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-                HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                // Rebuild the request per attempt with cache-busting params: Pollinations
+                // 500s are frequently sticky per-URL (server-side cache serves the same
+                // failed render), so retrying the identical URL just replays the 500
+                // (session 8206abc2: three identical 500s, ~30s wasted). flush=true
+                // skips the cache; the varying seed makes each retry a fresh render.
+                HttpRequest attemptRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(url + (attempt == 1 ? "" : "&flush=true&seed=" + (System.currentTimeMillis() % 1_000_000))))
+                    .header("User-Agent", "java-agent")
+                    .GET()
+                    .timeout(Duration.ofSeconds(120))
+                    .build();
+                HttpResponse<byte[]> response = httpClient.send(attemptRequest, HttpResponse.BodyHandlers.ofByteArray());
                 lastStatus = response.statusCode();
                 if (lastStatus == 200 && response.body() != null && response.body().length > 0) {
                     log.debug("Pollinations generated {} bytes for aspectRatio={} on attempt {}",
                         response.body().length, aspectRatio, attempt);
                     return response.body();
                 }
+                // Pollinations wraps payment/quota failures as HTTP 500 with a JSON
+                // body carrying the real status (observed live: 402 "Insufficient
+                // balance ... balance is 0.0000", 202 queue). Retrying a payment
+                // failure is pointless — surface the actionable cause at once.
+                String bodySnippet = response.body() == null ? ""
+                    : new String(response.body(), 0, (int) Math.min(400, response.body().length), StandardCharsets.UTF_8);
+                if (lastStatus == 500 && bodySnippet.contains("\"error\"")) {
+                    String extracted = extractQuotedMessage(bodySnippet);
+                    if (!extracted.isBlank()) {
+                        throw new RuntimeException("Image generation unavailable (provider response " + lastStatus + "): " + extracted);
+                    }
+                }
                 if (!isRetryable(lastStatus) || attempt == MAX_ATTEMPTS) {
                     break;
                 }
-                long delayMillis = attempt * 1_000L;
-                log.warn("Pollinations image generation returned HTTP {}; retrying in {}ms (attempt {}/{})",
+                long delayMillis = attempt * 2_000L;
+                log.warn("Pollinations image generation returned HTTP {}; retrying with cache-bust in {}ms (attempt {}/{})",
                     lastStatus, delayMillis, attempt, MAX_ATTEMPTS);
                 Thread.sleep(delayMillis);
             }
@@ -82,6 +98,17 @@ public class PollinationsImageGenProvider implements ImageGenProvider {
             log.error("Pollinations image generation error: {}", e.getMessage(), e);
             throw new RuntimeException("Image generation failed: " + e.getMessage(), e);
         }
+    }
+
+    /** Best-effort extraction of the "message" field from a Pollinations error body. */
+    static String extractQuotedMessage(String body) {
+        if (body == null || body.isBlank()) {
+            return "";
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("\\\"message\\\"\\s*:\\s*\\\"((?:[^\\\"\\\\]|\\\\.)*)\\\"")
+            .matcher(body);
+        return m.find() ? m.group(1) : "";
     }
 
     static boolean isRetryable(int status) {

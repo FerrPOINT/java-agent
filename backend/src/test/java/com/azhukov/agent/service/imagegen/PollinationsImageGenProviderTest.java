@@ -28,4 +28,23 @@ class PollinationsImageGenProviderTest {
         assertThat(PollinationsImageGenProvider.mapAspectRatio("square")).containsExactly(1024, 1024);
         assertThat(PollinationsImageGenProvider.mapAspectRatio("4:3")).containsExactly(1024, 576);
     }
+
+    @Test
+    void paymentFailureMessageIsExtractedFromWrapped500Body() {
+        // Live-observed (session 8206abc2): Pollinations wraps a 402 payment failure
+        // as HTTP 500 with the real cause in the JSON body. The provider must surface
+        // that message instead of a generic "HTTP 500 after 3 attempts".
+        String body = "{\"error\":{\"message\":\"Insufficient balance. This request costs ~0.0001 pollen, but your available balance is 0.0000. Top up at https://enter.pollinations.ai\",\"code\":402}}";
+        assertThat(PollinationsImageGenProvider.extractQuotedMessage(body))
+            .contains("Insufficient balance")
+            .contains("0.0000");
+    }
+
+    @Test
+    void extractQuotedMessageHandlesPlainAndEmptyBodies() {
+        assertThat(PollinationsImageGenProvider.extractQuotedMessage(null)).isEmpty();
+        assertThat(PollinationsImageGenProvider.extractQuotedMessage("")).isEmpty();
+        assertThat(PollinationsImageGenProvider.extractQuotedMessage("<html>500</html>")).isEmpty();
+        assertThat(PollinationsImageGenProvider.extractQuotedMessage("{\"message\":\"queued\"}")).isEqualTo("queued");
+    }
 }

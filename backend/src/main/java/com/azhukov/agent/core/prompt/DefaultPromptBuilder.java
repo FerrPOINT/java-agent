@@ -767,11 +767,14 @@ public class DefaultPromptBuilder implements PromptBuilder {
             hints.append("Current working directory: ").append(workingDir).append("\n");
         }
 
-        // Java version (instead of Python)
-        String javaVersion = System.getProperty("java.version");
-        if (javaVersion != null && !javaVersion.isBlank()) {
-            hints.append("Java toolchain: java ").append(javaVersion).append("\n");
-        }
+        // Scripting hint (Hermes parity: prompt_builder.py emits NO runtime-language line;
+        // the model picks python3 for scripts naturally). Advertising the agent's own
+        // runtime ("Java toolchain: java 25") made models write Java code in terminal
+        // — the container ships a JRE without javac, so every such attempt failed
+        // (session 8206abc2: "javac: command not found", then
+        // "Module jdk.compiler not in boot Layer"). Tell the model what actually runs
+        // scripts: python3 (present in the image) — and that javac is NOT available.
+        hints.append("Scripting: use python3 for scripts (available). The Java compiler (javac) is NOT available; single-file `java` launch is unreliable in this environment.\n");
 
         // Active agent profile (agent.profile.name; default "default")
         String activeProfile = properties.getProfile().getName();
