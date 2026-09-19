@@ -39,6 +39,9 @@ services:
       AGENT_CHROMIUM_AUTO_START: "true"
       AGENT_CHROMIUM_AUTO_INSTALL: "true"
       AGENT_BROWSER_CDP_URL: "http://localhost:9222"
+      # Writable default cwd for agent terminal commands (volume, not RO /app).
+      AGENT_CORE_WORKING_DIRECTORY: /workspace
+    working_dir: /workspace
     ports:
       - "8080:8080"
     volumes:

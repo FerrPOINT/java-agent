@@ -321,7 +321,11 @@ agent:
     default-system-prompt: ${AGENT_CORE_DEFAULT_SYSTEM_PROMPT:You are ${agent.name}. Use available tools when needed. Be concise. Return plain text unless JSON is requested.}
     http-client-timeout-seconds: ${AGENT_CORE_HTTP_CLIENT_TIMEOUT_SECONDS:30}
     max-reference-file-bytes: ${AGENT_CORE_MAX_REFERENCE_FILE_BYTES:100000}
-    working-directory: ${AGENT_CORE_WORKING_DIRECTORY:}
+    # Default working directory for terminal commands without an explicit
+    # workdir or tracked session cwd. /workspace is the writable named volume
+    # in both compose files; the JVM default cwd is /app — read-only under the
+    # hardened dev stack, so relative-path writes died with EROFS.
+    working-directory: ${AGENT_CORE_WORKING_DIRECTORY:/workspace}
 
     # Container runtime does not inherit a host coding repository. Coding mode
     # is enabled only by an explicit session workdir mounted by an operator.

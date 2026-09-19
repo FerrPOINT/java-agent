@@ -49,6 +49,8 @@ services:
       AGENT_TTS_EDGE_COMMAND: ${AGENT_TTS_EDGE_COMMAND:-/opt/edge-tts/bin/edge-tts}
       HERMES_HOME: /home/agent/.java-agent
       HOME: /home/agent
+    # Writable cwd (volume): JVM default /app is read-only under read_only: true.
+    working_dir: /workspace
     ports:
       - "127.0.0.1:8090:8090"
     volumes:

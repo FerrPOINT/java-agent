@@ -384,6 +384,12 @@ public class TerminalTool implements ToolHandler {
             // h49: If the configured workdir doesn't exist or isn't a directory,
             // fall back to /tmp or user home instead of hard-failing.
             String actualCwd = null;
+            // h49 / RO-rootfs parity: resolve an explicit workdir as before, but
+            // never fall through to the JVM default cwd — in a read-only-rootfs
+            // container that is /app (read-only), and every relative-path write
+            // (touch file, script > out.txt, git init) dies with EROFS. Hermes
+            // (terminal_tool_config.py) guards the same way: an unusable container
+            // cwd is replaced, not trusted.
             if (workdir != null && !workdir.isBlank()) {
                 java.io.File dir = new java.io.File(workdir);
                 if (dir.isDirectory()) {
@@ -397,8 +403,16 @@ public class TerminalTool implements ToolHandler {
                         actualCwd = fallback.getAbsolutePath();
                         log.warn("Configured workdir '{}' is not accessible, using '{}' instead", workdir, actualCwd);
                     }
-                    // If even fallback is null, pb.directory stays at JVM default
                 }
+            }
+            if (pb.directory() == null) {
+                java.io.File resolved = DefaultWorkdirResolver.resolveDefaultWorkdir(properties);
+                if (resolved != null) {
+                    pb.directory(resolved);
+                    actualCwd = resolved.getAbsolutePath();
+                }
+                // resolved == null: no writable candidate exists at all — leave the
+                // JVM default in place rather than failing the command outright.
             }
             pb.redirectErrorStream(true);
 

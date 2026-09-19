@@ -49,13 +49,18 @@ public class ProcessTool implements ToolHandler {
     // process results were passing through verbatim.
     private final com.azhukov.agent.core.security.Redactor redactor;
 
+    /** Used for the default-workdir fallback when spawn() gets no workdir. */
+    private final com.azhukov.agent.config.AgentProperties properties;
+
     /** PR-3 parity ctor. */
     public ProcessTool(com.azhukov.agent.config.AgentProperties properties,
                        com.azhukov.agent.core.security.Redactor redactor) {
-        this(redactor);
+        this.properties = properties;
+        this.redactor = redactor;
     }
 
     public ProcessTool(com.azhukov.agent.core.security.Redactor redactor) {
+        this.properties = null;
         this.redactor = redactor;
     }
 
@@ -65,6 +70,7 @@ public class ProcessTool implements ToolHandler {
             @Override public String redact(String output) { return output; }
             @Override public String redactEnvVars(String output) { return output; }
         };
+        this.properties = null;
     }
 
     @Override
@@ -146,6 +152,14 @@ public class ProcessTool implements ToolHandler {
                 throw new IOException("Working directory path is not a directory: " + workdir);
             }
             pb.directory(dir.getAbsoluteFile());
+        } else {
+            // RO-rootfs parity: no workdir — resolve a writable default instead of
+            // inheriting the JVM cwd (/app in the container, read-only). Foreground
+            // TerminalTool.runCommand does the same via DefaultWorkdirResolver.
+            java.io.File resolved = DefaultWorkdirResolver.resolveDefaultWorkdir(properties);
+            if (resolved != null) {
+                pb.directory(resolved);
+            }
         }
         if (envVars != null && !envVars.isEmpty()) {
             pb.environment().putAll(envVars);
