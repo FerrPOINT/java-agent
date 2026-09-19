@@ -12,6 +12,9 @@ services:
     image: java-agent-backend:dev
     init: true
     user: "10001:10001"
+    depends_on:
+      searxng:
+        condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: dev
       AGENT_SERVER_PORT: "8090"
@@ -49,6 +52,8 @@ services:
       AGENT_TTS_EDGE_COMMAND: ${AGENT_TTS_EDGE_COMMAND:-/opt/edge-tts/bin/edge-tts}
       HERMES_HOME: /home/agent/.java-agent
       HOME: /home/agent
+      # Free unlimited search via self-hosted SearXNG (see searxng service).
+      AGENT_WEB_SEARXNG_URL: http://searxng:8080
     # Writable cwd (volume): JVM default /app is read-only under read_only: true.
     working_dir: /workspace
     ports:
@@ -75,6 +80,29 @@ services:
       timeout: 10s
       retries: 8
       start_period: 45s
+    restart: unless-stopped
+
+  # Free, unlimited, keyless search backend (self-hosted SearXNG, JSON API).
+  # Consumed by the backend's SearXngSearchProvider (agent.web.searxng-url);
+  # with it web_search stops depending on the flaky datacenter-DDG html
+  # endpoint. Setup mirrors github.com/vksco/free-web-search.
+  searxng:
+    image: searxng/searxng:latest
+    init: true
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+    volumes:
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    networks:
+      - runtime
+    # Not published to the host: single trusted consumer on the internal
+    # network. Healthcheck via the same JSON API the agent uses.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null 'http://localhost:8080/search?q=health&format=json' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   bot:

@@ -1,0 +1,147 @@
+# SearXNG settings for the java-agent dev stack.
+# Single purpose: give the agent's web_search tool a free, unlimited, keyless
+# search backend (SearXngSearchProvider, GET /search?format=json).
+#
+# Engine policy learned the hard way on this host (datacenter IP):
+#   - scraping engines (bing/google/qwant/startpage/brave) are anti-bot
+#     POISONED from this IP: HTTP 200 with junk (jewelry/porn for a "spring
+#     boot" query) or CAPTCHA waves. Measured 2026-09-19: bing junk, ddg
+#     captcha waves (occasionally works), google/qwant/startpage/brave
+#     blocked, mojeek empty. mullvad_leta (Brave index via Mullvad) is the
+#     only general-web engine that answers real results.
+#   - API-backed engines (wikipedia, github, stackoverflow, npm, ...) always
+#     work — that's the bulk of an agent's coding queries.
+#
+# Shape mirrors the live Hermes instance settings
+# (hermes-workspace/hermes-web-search/searxng/settings.yml): a long
+# disabled-list. keep_only is NOT used — it strips engines out of their
+# categories and a query without categories= queries only "general", leaving
+# 0 results.
+
+use_default_settings: true
+
+general:
+  instance_name: "java-agent-search"
+
+search:
+  # JSON API is the whole point for the agent's provider.
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "7f3a9c1e5b2d8046fa7c3e91d5b0a842f6c4d7e3b9a105c82f6d4a7c9e0b3f51"
+  limiter: false
+  public_instance: false
+
+ui:
+  static_use_hash: true
+
+# Engine policy for this host's datacenter IP. Scrapers are poisoned (see
+# header): bing returns junk, ddg captcha waves, google/qwant/brave blocked.
+# API engines always work and are folded into "general" so a default query
+# (no categories=) hits them.
+engines:
+  # ── poisoned from this IP: scrapers return junk or captcha ──
+  - name: bing
+    disabled: true
+  - name: bing news
+    disabled: true
+  - name: google
+    disabled: true
+  - name: google news
+    disabled: true
+  - name: google scholar
+    disabled: true
+  - name: qwant
+    disabled: true
+  - name: startpage
+    disabled: true
+  - name: brave
+    disabled: true
+  - name: mojeek
+    disabled: true
+  - name: yahoo
+    disabled: true
+  - name: yandex
+    disabled: true
+  - name: baidu
+    disabled: true
+  - name: aol
+    disabled: true
+
+  - name: wikipedia
+    disabled: false
+    # Fold into general: the agent's provider queries without categories=,
+    # which selects only the "general" category.
+    categories: [it, general]
+  - name: github
+    disabled: false
+    # Fold into general: the agent's provider queries without categories=,
+    # which selects only the "general" category.
+    categories: [it, general]
+  - name: gitlab
+    disabled: false
+    # Fold into general: the agent's provider queries without categories=,
+    # which selects only the "general" category.
+    categories: [it, general]
+  - name: stackoverflow
+    disabled: false
+    # Fold into general: the agent's provider queries without categories=,
+    # which selects only the "general" category.
+    categories: [it, general]
+  - name: superuser
+    disabled: false
+    # Fold into general: the agent's provider queries without categories=,
+    # which selects only the "general" category.
+    categories: [it, general]
+  - name: askubuntu
+    disabled: false
+    # Fold into general: the agent's provider queries without categories=,
+    # which selects only the "general" category.
+    categories: [it, general]
+  - name: mdn
+    disabled: false
+    # Fold into general: the agent's provider queries without categories=,
+    # which selects only the "general" category.
+    categories: [it, general]
+  - name: npm
+    disabled: false
+    # Fold into general: the agent's provider queries without categories=,
+    # which selects only the "general" category.
+    categories: [it, general]
+  - name: pypi
+    disabled: false
+    # Fold into general: the agent's provider queries without categories=,
+    # which selects only the "general" category.
+    categories: [it, general]
+  - name: hackernews
+    disabled: false
+    # Fold into general: the agent's provider queries without categories=,
+    # which selects only the "general" category.
+    categories: [it, general]
+  - name: habrahabr
+    disabled: false
+    # Fold into general: the agent's provider queries without categories=,
+    # which selects only the "general" category.
+    categories: [it, general]
+  - name: crates.io
+    disabled: false
+    # Package/registry noise: any word matches package descriptions — keep
+    # out of the general fold, reachable via categories=it.
+    categories: [it]
+  - name: pkg.go.dev
+    disabled: false
+    # Package/registry noise: any word matches package descriptions — keep
+    # out of the general fold, reachable via categories=it.
+    categories: [it]
+  - name: docker hub
+    disabled: false
+    # Package/registry noise: any word matches package descriptions — keep
+    # out of the general fold, reachable via categories=it.
+    categories: [it]
+  - name: arxiv
+    disabled: false
+    # Package/registry noise: any word matches package descriptions — keep
+    # out of the general fold, reachable via categories=it.
+    categories: [it]
