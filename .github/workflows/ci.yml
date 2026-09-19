@@ -52,6 +52,22 @@ jobs:
         working-directory: backend
         run: ./gradlew test --no-daemon
 
+      - name: Coverage report (visibility, non-blocking)
+        working-directory: backend
+        run: |
+          ./gradlew jacocoTestReport --no-daemon -x test
+          # The XML is a JaCoCo-generated local artifact, not untrusted input; stdlib parse is safe here.
+          python3 - <<'EOF'
+          import os, xml.etree.ElementTree as ET
+          root = ET.parse('build/reports/jacoco/test/jacocoTestReport.xml').getroot()
+          line = next(x for x in root.findall('counter') if x.get('type') == 'LINE')
+          c, m = int(line.get('covered')), int(line.get('missed'))
+          pct = 100 * c / (c + m)
+          print(f'backend LINE coverage: {pct:.2f}% (gate: 80.00%)')
+          with open(os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null'), 'a') as summary:
+              summary.write(f'## Backend LINE coverage: {pct:.2f}% (gate 80.00%, deficit {int((c+m)*0.80)-c} lines)\n')
+          EOF
+
       - name: Run telegram-bot and cli tests
         run: ./gradlew :telegram-bot:test :cli:test --no-daemon
 
