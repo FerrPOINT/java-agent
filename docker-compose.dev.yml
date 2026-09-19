@@ -28,8 +28,11 @@ services:
       AGENT_NAME: ${AGENT_NAME:-Java Agent}
       AGENT_COMPRESSION_SESSION_ROTATION_ENABLED: ${AGENT_COMPRESSION_SESSION_ROTATION_ENABLED:-true}
       AGENT_CRON_ENABLED: ${AGENT_CRON_ENABLED:-true}
-      AGENT_CHROMIUM_AUTO_START: "false"
+      # The Chromium launcher downloads its pinned browser into the named cache.
+      # A container-local CDP endpoint keeps the dev agent isolated from host state.
+      AGENT_CHROMIUM_AUTO_START: "true"
       AGENT_GATEWAY_TELEGRAM_LONG_POLLING_ENABLED: "false"
+      AGENT_TTS_VOICE: ${AGENT_TTS_VOICE:-ru-RU-DmitryNeural}
       AGENT_TTS_ENABLED: ${AGENT_TTS_ENABLED:-false}
       # Run the image-bundled client, never a host interpreter.
       AGENT_TTS_EDGE_COMMAND: ${AGENT_TTS_EDGE_COMMAND:-/opt/edge-tts/bin/edge-tts}
@@ -39,10 +42,13 @@ services:
       - "127.0.0.1:8090:8090"
     volumes:
       - java_agent_state:/home/agent/.java-agent
+      - java_agent_chromium:/home/agent/.azhukov-agent
       - java_agent_workspace:/workspace
       - java_agent_tmp:/tmp
     networks:
       - runtime
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     read_only: true
     tmpfs:
       - /run:uid=10001,gid=10001,mode=0755
@@ -116,5 +122,6 @@ networks:
 
 volumes:
   java_agent_state:
+  java_agent_chromium:
   java_agent_workspace:
   java_agent_tmp:

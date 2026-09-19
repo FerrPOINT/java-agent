@@ -114,9 +114,12 @@ class BrowserServiceUnitTest {
         when(safety.isUrlAllowed(anyString())).thenReturn(true);
 
         BrowserService service = new BrowserService(client, () -> "http://localhost:9222", safety);
-        // BUG 2 fix: when connect() fails and we're not connected, the original exception
-        // is re-thrown (no stale reconnect attempt). The error message from connect() is surfaced.
-        assertThat(service.navigate("http://example.com")).contains("connection refused");
+        // BUG 2 fix: when connect() fails and we're not connected, the failure is wrapped in
+        // the actionable browser-unavailable diagnostic naming the configured endpoint; the
+        // original connect() error rides along as the cause and is surfaced in the message.
+        assertThat(service.navigate("http://example.com"))
+            .contains("Browser CDP is unavailable at http://localhost:9222")
+            .contains("connection refused");
     }
 
     @Test

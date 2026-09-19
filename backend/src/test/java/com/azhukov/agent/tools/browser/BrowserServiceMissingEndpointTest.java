@@ -26,7 +26,10 @@ class BrowserServiceMissingEndpointTest {
 
         String result = service.navigate("https://example.com");
 
-        assertThat(result).contains("Navigation error").contains("No targets available");
+        assertThat(result)
+            .contains("Navigation error")
+            .contains("No targets available at " + cdpUrl)
+            .contains("Browser CDP is unavailable");
     }
 
     static class ThrowingCdpClient extends CdpClient {

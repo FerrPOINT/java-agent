@@ -666,11 +666,20 @@ public class BrowserService {
                 if (cdpClient.isConnected()) {
                     cdpClient.reconnect();
                 } else {
-                    throw e;
+                    throw browserUnavailable(cdpUrl(), e);
                 }
             }
         }
         registerConsoleListenersIfNeeded();
+    }
+
+    private IllegalStateException browserUnavailable(String endpoint, Exception cause) {
+        String configured = endpoint == null || endpoint.isBlank() ? "<empty>" : endpoint;
+        String causeText = cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
+        return new IllegalStateException(
+            "Browser CDP is unavailable at " + configured + " (" + causeText + ")."
+                + " Start Chromium or set agent.browser.cdp-url to a reachable CDP endpoint.",
+            cause);
     }
 
     String unsupportedBrowserProviderMessage() {

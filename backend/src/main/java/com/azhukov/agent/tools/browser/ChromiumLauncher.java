@@ -6,8 +6,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -33,6 +35,10 @@ public class ChromiumLauncher {
         if (userDataDir == null || userDataDir.isBlank()) {
             userDataDir = Files.createTempDirectory("chromium-user-data-").toString();
         }
+        Path userDataPath = Path.of(userDataDir);
+        Files.createDirectories(userDataPath);
+        makeWritable(userDataPath);
+        configureCrashpad(executable);
 
         List<String> args = new ArrayList<>();
         args.add(executable.toString());
@@ -48,12 +54,16 @@ public class ChromiumLauncher {
         args.add("--disable-background-networking");
         args.add("--disable-sync");
         args.add("--no-first-run");
+        args.add("--disable-crash-reporter");
+        args.add("--crash-dumps-dir=" + userDataPath.resolve("crash-dumps"));
         args.add("--user-data-dir=" + userDataDir);
         args.addAll(chromium.getExtraArgs());
 
         ProcessBuilder pb = new ProcessBuilder(args);
         pb.redirectErrorStream(true);
-        pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        // Chromium can exit before CDP is ready. Keep its startup log available
+        // so the caller can fail fast with the actual launcher error.
+        pb.redirectOutput(ProcessBuilder.Redirect.PIPE);
         log.info("Launching Chromium: {}", String.join(" ", args));
         Process process = pb.start();
         log.info("Chromium process started, pid={}", process.pid());
@@ -69,6 +79,33 @@ public class ChromiumLauncher {
         if (p != null && p.isAlive()) {
             log.info("Destroying Chromium process (pid={}) on shutdown", p.pid());
             p.destroyForcibly();
+        }
+    }
+
+    private void configureCrashpad(Path executable) throws IOException {
+        Path handler = executable.getParent().resolve("chrome_crashpad_handler");
+        Path original = executable.getParent().resolve("chrome_crashpad_handler.real");
+        if (!Files.exists(handler) && !Files.exists(original)) {
+            return;
+        }
+        if (!Files.exists(original)) {
+            Files.move(handler, original);
+        }
+        Path database = Path.of(System.getProperty("user.home"), ".azhukov-agent", "crashpad");
+        Files.createDirectories(database);
+        makeWritable(database);
+        String script = "#!/bin/sh\nexec \"$(dirname \"$0\")/chrome_crashpad_handler.real\" --database=\""
+            + database + "\" \"$@\"\n";
+        Files.writeString(handler, script, StandardCharsets.UTF_8);
+        if (!handler.toFile().setExecutable(true, false)) {
+            throw new IOException("Could not make Chromium crashpad wrapper executable: " + handler);
+        }
+    }
+
+    private void makeWritable(Path directory) {
+        File file = directory.toFile();
+        if (!file.setReadable(true, false) || !file.setWritable(true, false) || !file.setExecutable(true, false)) {
+            log.debug("Could not make Chromium profile world-accessible: {}", directory);
         }
     }
 
