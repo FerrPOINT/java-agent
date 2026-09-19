@@ -129,6 +129,8 @@ Hermes upstream sync (13–15.09): five parity fixes from the upstream digest.
 
 ## [Unreleased]
 
+### Fixed
+- Case-insensitive LENGTH-детекция re-arms retry для усечённых tool-call'ов; actionable truncation error.
 ### Added
 
 - Delegate reinjection gateway (`DelegateReinjectionGateway`): scheduled consumer loop claims terminal delegated-task completions (`claimNextPendingDelivery`), reinjects bounded assistant summaries into the parent session history plus the steer buffer, and acks/releases via the delivery ledger (docs/34 Hermes parity update).
