@@ -253,9 +253,10 @@ class MemoryNudgeManagerTest {
         manager.incrementMemoryTurns(sessionId);
         when(contextEngine.prepareContext(any(), anyList())).thenReturn(List.of(Message.user("ctx")));
         doThrow(new RuntimeException("review failed")).when(backgroundReviewService)
-            .clearFlag(sessionId);
-        manager.triggerNudgedBackgroundReview(createSession(), List.of(Message.user("test")), false);
-        // Should not throw — exception is caught internally
+            .reviewTurn(any(), anyList(), any(), anyBoolean(), anyBoolean());
+        // Returns null (no pending summary) and must not throw — exception is caught internally
+        String pending = manager.triggerNudgedBackgroundReview(createSession(), List.of(Message.user("test")), false);
+        assertThat(pending).isNull();
     }
 
     @Test

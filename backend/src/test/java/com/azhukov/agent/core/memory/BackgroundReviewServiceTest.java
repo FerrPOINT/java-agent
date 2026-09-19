@@ -143,7 +143,7 @@ class BackgroundReviewServiceTest {
         ));
         when(modelClient.complete(any(), any())).thenReturn(response, new ChatResponse("Nothing to save.", List.of()));
         when(memoryTool.execute(eq(toolArguments), isNull(), any()))
-            .thenReturn(ToolResult.ok("Added to memory store."));
+            .thenReturn(ToolResult.ok("{\"success\":true,\"target\":\"memory\",\"message\":\"Entry added.\"}"));
 
         var svc = createService();
         UUID sessionId = UUID.randomUUID();
@@ -253,7 +253,7 @@ class BackgroundReviewServiceTest {
             return contexts.size() == 1 ? response : new ChatResponse("Done", List.of());
         });
         when(memoryTool.execute(eq(memoryArguments), isNull(), any()))
-            .thenReturn(ToolResult.ok("Added to memory store."));
+            .thenReturn(ToolResult.ok("{\"success\":true,\"target\":\"memory\",\"message\":\"Entry added.\"}"));
 
         var svc = createService();
         UUID sessionId = UUID.randomUUID();
@@ -289,7 +289,7 @@ class BackgroundReviewServiceTest {
         ));
         when(modelClient.complete(any(), any())).thenReturn(response, new ChatResponse("Done", List.of()));
         when(skillManageTool.execute(eq(toolArguments), any(), any()))
-            .thenReturn(ToolResult.ok("Skill test-skill created."));
+            .thenReturn(ToolResult.ok("{\"success\":true,\"operations_applied\":true,\"message\":\"Skill created.\",\"results\":[{\"success\":true,\"action\":\"create\",\"name\":\"test-skill\"}]}"));
 
         var svc = createService();
         UUID sessionId = UUID.randomUUID();
@@ -314,7 +314,7 @@ class BackgroundReviewServiceTest {
         ));
         when(modelClient.complete(any(), any())).thenReturn(response, new ChatResponse("Done", List.of()));
         when(memoryTool.execute(any(), any(), any()))
-            .thenReturn(ToolResult.ok("Added to memory store."));
+            .thenReturn(ToolResult.ok("{\"success\":true,\"target\":\"memory\",\"message\":\"Entry added.\"}"));
 
         var svc = createService();
         UUID sessionId = UUID.randomUUID();
@@ -362,7 +362,7 @@ class BackgroundReviewServiceTest {
         ));
         when(modelClient.complete(any(), any())).thenReturn(response, new ChatResponse("Done", List.of()));
         when(memoryTool.execute(any(), any(), any()))
-            .thenReturn(ToolResult.ok("Added to memory store."));
+            .thenReturn(ToolResult.ok("{\"success\":true,\"target\":\"memory\",\"message\":\"Entry added.\"}"));
 
         var svc = createService();
         UUID sessionId = UUID.randomUUID();
@@ -525,7 +525,7 @@ class BackgroundReviewServiceTest {
             // Verify WriteContext is set during the review
             assertThat(WriteContext.effectiveOrigin()).isEqualTo(WriteOrigin.BACKGROUND_REVIEW);
             assertThat(WriteContext.effectiveExecutionContext()).isEqualTo("background_review");
-            return ToolResult.ok("Added to memory store.");
+            return ToolResult.ok("{\"success\":true,\"target\":\"memory\",\"message\":\"Entry added.\"}");
         });
 
         var svc = createService();
@@ -559,7 +559,7 @@ class BackgroundReviewServiceTest {
         ));
         when(modelClient.complete(any(), any())).thenReturn(response, new ChatResponse("Done", List.of()));
         when(memoryTool.execute(any(), any(), any()))
-            .thenReturn(ToolResult.ok("Added to memory store."));
+            .thenReturn(ToolResult.ok("{\"success\":true,\"target\":\"memory\",\"message\":\"Entry added.\"}"));
 
         var svc = createService();
         UUID sessionId = UUID.randomUUID();

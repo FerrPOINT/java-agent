@@ -496,6 +496,10 @@ public class AgentStreamingService {
             }
         }
 
+        // Pending self-improvement review summary captured at trigger time —
+        // surfaced as an SSE "review" event just before "done".
+        final String[] pendingReviewSummary = { null };
+
         int maxTurns = properties.getCore().getMaxTurns();
         int turnIndex = 1;
         var budget = iterationBudget.startTurn(session.id());
@@ -1328,7 +1332,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 if (memoryNudgeManager != null) {
                     try {
                         boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
-                        memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+                        pendingReviewSummary[0] = memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
                     } catch (Exception e) {
                         log.debug("Background review trigger failed for {}: {}", session.id(), e.getMessage());
                     }
@@ -1349,10 +1353,15 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // "review" event before "done" — the bot renders it as
                 // "💾 Self-improvement review: …". This turn's review runs
                 // async and surfaces on the NEXT turn (Hermes pending-release
-                // semantics via background_review_callback).
+                // semantics via background_review_callback). Prefer the value
+                // captured at trigger time (line ~1331): the trigger reads and
+                // CLEARS the pending summary exactly once, so a second read
+                // here would always be null.
                 try {
-                    String pendingReview = memoryNudgeManager != null
-                        ? memoryNudgeManager.getReviewSummaryForSurface(session.id()) : null;
+                    String pendingReview = pendingReviewSummary[0] != null
+                        ? pendingReviewSummary[0]
+                        : (memoryNudgeManager != null
+                            ? memoryNudgeManager.getReviewSummaryForSurface(session.id()) : null);
                     if (pendingReview != null && !pendingReview.isBlank()) {
                         eventHelper().send(emitter, new StreamEvent("review", null, null, pendingReview), streamCtx);
                     }

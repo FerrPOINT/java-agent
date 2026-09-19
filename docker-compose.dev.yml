@@ -42,6 +42,8 @@ services:
       # MCP client enabled: DB-configured stdio servers register lazily from the
       # persisted schema cache (no eager spawn on boot).
       AGENT_MCP_ENABLED: ${AGENT_MCP_ENABLED:-true}
+      # Self-improvement review cadence (Hermes memory.nudge_interval parity).
+      AGENT_MEMORY_NUDGE_INTERVAL: ${AGENT_MEMORY_NUDGE_INTERVAL:-10}
       AGENT_TTS_ENABLED: ${AGENT_TTS_ENABLED:-false}
       # Run the image-bundled client, never a host interpreter.
       AGENT_TTS_EDGE_COMMAND: ${AGENT_TTS_EDGE_COMMAND:-/opt/edge-tts/bin/edge-tts}

@@ -446,22 +446,64 @@ public class BackgroundReviewService {
  * S1/S3: Summarize what was done in a tool call for the action summary.
  * Mirrors the original project's {@code summarize_background_review_actions}.
  */
+ /**
+  * Human-facing action line for one successful review tool result.
+  * Hermes parity ({@code background_review.py::_action_lines}): generic
+  * "Memory updated" / "User profile updated" for memory writes and
+  * "Skill 'name' created/patched/…" per applied skill operation — NEVER the
+  * raw JSON payload (previously the whole tool-result JSON was shown to the
+  * user in the chat).
+  */
  static String summarizeAction(ToolCall call, ToolResult result) {
- String content = result.content();
- if (content == null) return null;
- String lower = content.toLowerCase();
- if ("memory".equals(call.name())) {
- if (lower.contains("added") || lower.contains("replaced") || lower.contains("removed")) {
- return "Memory: " + content;
- }
- }
- if ("skill_manage".equals(call.name())) {
- if (lower.contains("saved") || lower.contains("deleted") || lower.contains("patched") ||
- lower.contains("created") || lower.contains("updated") || lower.contains("written")) {
- return "Skill: " + content;
- }
- }
- return null;
+     String content = result.content();
+     if (content == null) return null;
+     try {
+         com.fasterxml.jackson.databind.JsonNode node =
+             new com.fasterxml.jackson.databind.ObjectMapper().readTree(content);
+         if (!node.isObject() || !node.path("success").asBoolean(false)) return null;
+         String message = node.path("message").asText("");
+         String lower = message.toLowerCase();
+         if ("memory".equals(call.name())) {
+             if (!(lower.contains("added") || lower.contains("replaced")
+                 || lower.contains("removed") || lower.contains("applied"))) {
+                 return null;
+             }
+             String target = node.path("target").asText("");
+             if (target.isEmpty()) {
+                 // memory tool reports target in the result JSON; fall back
+                 // to the call arguments.
+                 try {
+                     com.fasterxml.jackson.databind.JsonNode args =
+                         new com.fasterxml.jackson.databind.ObjectMapper().readTree(call.arguments() == null ? "{}" : call.arguments());
+                     target = args.path("target").asText("");
+                 } catch (Exception ignored) {}
+             }
+             return "user".equals(target) ? "User profile updated" : "Memory updated";
+         }
+         if ("skill_manage".equals(call.name())) {
+             com.fasterxml.jackson.databind.JsonNode results = node.path("results");
+             if (!node.path("operations_applied").asBoolean(false) || !results.isArray()) {
+                 return null;
+             }
+             java.util.Map<String, String> verbs = java.util.Map.of(
+                 "create", "created", "patch", "patched", "edit", "rewritten",
+                 "write_file", "written", "remove_file", "removed", "delete", "deleted");
+             StringBuilder sb = new StringBuilder();
+             for (com.fasterxml.jackson.databind.JsonNode r : results) {
+                 if (!r.path("success").asBoolean(false)) continue;
+                 String verb = verbs.get(r.path("action").asText(""));
+                 String name = r.path("name").asText("");
+                 if (verb != null && !name.isEmpty()) {
+                     if (sb.length() > 0) sb.append(" · ");
+                     sb.append("Skill '").append(name).append("' ").append(verb);
+                 }
+             }
+             return sb.length() > 0 ? sb.toString() : null;
+         }
+         return null;
+     } catch (Exception e) {
+         return null;
+     }
  }
 
  /**

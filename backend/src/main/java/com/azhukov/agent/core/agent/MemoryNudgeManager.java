@@ -93,9 +93,9 @@ public class MemoryNudgeManager {
      * Trigger nudged background review if thresholds are met.
      * Mirrors Hermes {@code _trigger_nudged_background_review}.
      */
-    public void triggerNudgedBackgroundReview(Session session, List<Message> turnMessages, boolean interrupted) {
-        if (interrupted) return;
-        if (backgroundReviewService == null) return;
+    public String triggerNudgedBackgroundReview(Session session, List<Message> turnMessages, boolean interrupted) {
+        if (interrupted) return null;
+        if (backgroundReviewService == null) return null;
 
         // Skip for subagents
         String delegationDepthMeta = session.getMetadata("delegation_depth");
@@ -104,7 +104,7 @@ public class MemoryNudgeManager {
                 int depth = Integer.parseInt(delegationDepthMeta.trim());
                 if (depth > 0) {
                     log.debug("Skipping background review for subagent (delegationDepth={})", depth);
-                    return;
+                    return null;
                 }
             } catch (NumberFormatException ignored) {}
         }
@@ -114,7 +114,7 @@ public class MemoryNudgeManager {
         // has no human-in-the-loop benefit from a memory/skill review.
         if ("true".equalsIgnoreCase(session.getMetadata("skip_background_review"))) {
             log.debug("Skipping background review for background session (skip_background_review)");
-            return;
+            return null;
         }
 
         int memNudge = properties.getMemory().getNudgeInterval();
@@ -139,7 +139,7 @@ public class MemoryNudgeManager {
             }
         }
 
-        if (!shouldReviewMemory && !shouldReviewSkills) return;
+        if (!shouldReviewMemory && !shouldReviewSkills) return null;
 
         // Build full conversation history for the review
         List<Message> fullHistory;
@@ -150,23 +150,25 @@ public class MemoryNudgeManager {
             fullHistory = turnMessages;
         }
 
+        // ── Surface any PENDING review summary from a prior turn FIRST ──
+        // Defect (live-found 2026-09-19): clearFlag() used to run BEFORE
+        // reviewTurn(), wiping any pending summary produced by the previous
+        // turn's still-running review before anyone could read it — so the
+        // "💾 Self-improvement review: …" notification never reached the user.
+        // Hermes parity (gateway run_turn_runner._make_bg_review_callbacks):
+        // the pending summary is released to the chat first; only then may a
+        // new review be scheduled (its own summary lands when it completes and
+        // is released on the next turn — pending-release semantics).
+        String pendingSummary = getReviewSummaryForSurface(session.id());
+
         try {
-            backgroundReviewService.clearFlag(session.id());
             backgroundReviewService.reviewTurn(session.id(), fullHistory, session.userId(),
                 shouldReviewMemory, shouldReviewSkills);
         } catch (Exception e) {
             log.warn("Background review trigger failed: {}", e.getMessage());
         }
 
-        // Surface any pending review summary from a prior turn
-        try {
-            String summary = getReviewSummaryForSurface(session.id());
-            if (summary != null && !summary.isBlank()) {
-                log.info("Background review summary for session {}: {}", session.id(), summary);
-            }
-        } catch (Exception e) {
-            log.debug("No review summary to surface for session {}", session.id());
-        }
+        return pendingSummary;
     }
 
     /**

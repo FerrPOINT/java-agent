@@ -1366,8 +1366,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
         }
 
         try {
-            backgroundReviewService.clearFlag(session.id());
-            // C3: Pass the parent session's userId so memory writes go to the actual user.
+            // Do NOT clearFlag() here before reviewTurn(): the previous turn's
+            // review may still be running and its pending summary must survive
+            // until surfaced (Hermes pending-release semantics). The new review
+            // overwrites the stored summary when it completes.
             backgroundReviewService.reviewTurn(session.id(), fullHistory, session.userId(),
                 shouldReviewMemory, shouldReviewSkills);
         } catch (Exception e) {
