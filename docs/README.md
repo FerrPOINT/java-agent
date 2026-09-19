@@ -38,7 +38,9 @@ The `backend/` directory is the actual application. The `docs/` directory is the
     ├── 07-mcp-client-status.md           # MCP client state and config
     ├── 08-browser-vision.md              # browser/vision endpoints
     ├── 09-builtin-tools.md               # matrix of implemented tools
-    └── 10-production-readiness.md        # docker, systemd, logging, health, gateway
+    ├── 10-production-readiness.md        # docker, systemd, logging, health, gateway
+    └── standards/
+        └── documentation.md              # ДЕЙСТВУЮЩИЙ стандарт документации и тестов (2026-09-20)
 ```
 
 ## 3. Implementation Status

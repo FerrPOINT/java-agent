@@ -221,13 +221,24 @@ Docker images используют `eclipse-temurin:25-jre-noble`; slim-обра
 | Module tests | `./gradlew :backend:test :telegram-bot:test :cli:test --no-daemon` |
 | Slow PostgreSQL integration | `./gradlew :backend:slowTest --no-daemon` |
 | Coverage reports | `./gradlew :backend:jacocoTestReport :telegram-bot:jacocoTestReport --no-daemon` |
+| Docs & test-standard ratchet | `python3 scripts/check_docs_standard.py` (baseline: `docs/standards/coverage-baseline.json`) |
+| Ratchet + coverage floors | `python3 scripts/check_docs_standard.py --check-coverage` |
 | Local Docker E2E | `./scripts/e2e-docker-compose-test.sh` |
 | README invariants | `python3 -m unittest scripts.tests.test_verify_readme -v` и `python3 scripts/verify_readme.py` |
 | Compose bot/backend auth wiring | `python3 scripts/check-compose-backend-auth.py` |
 
 `release_verify.py` фиксирует pass/fail/not-run gates, точные счётчики тестов, JaCoCo-метрики и консервативный endpoint-reference inventory в `build/release-verification.json`. HTTP и CLI E2E опциональны: им нужен живой локальный backend; Docker E2E опционален, потому что поднимает изолированный стек.
 
-GitHub Actions прогоняет README-evidence, tests, bootJar build и Markdown/YAML lint; Docker Compose E2E и smoke запускаются локально по необходимости.
+### Стандарт документации и тестов
+
+Действует для всего кода: [docs/standards/documentation.md](docs/standards/documentation.md) (краткая версия — в [AGENTS.md](AGENTS.md)). Суть:
+
+- Javadoc на классах ≥50 строк и кросс-пакетных контрактах; без воды («responsible for», «utility class» — линтер отклоняет).
+- `@AgentTool.description` — контракт для LLM, не подпись.
+- Каждый багфикс — regression-тест; каждая backend refuse-ветка — lane в бот-классификаторе ошибок; enum-сравнения провайдер-мета — оба регистра.
+- Ratchet в CI (job `docs`): нарушения документации и LINE-покрытие не могут деградировать ниже baseline (`docs/standards/coverage-baseline.json`); baseline растёт только вместе с тестами.
+
+GitHub Actions прогоняет README-evidence, docs-ratchet, tests, bootJar build и Markdown/YAML lint; Docker Compose E2E и smoke запускаются локально по необходимости.
 
 ## 🧭 Project Map
 
@@ -245,6 +256,7 @@ java-agent/
 ## 📚 Документы
 
 - [AGENTS.md](AGENTS.md) — канонический development guide и текущие факты проекта.
+- [docs/standards/documentation.md](docs/standards/documentation.md) — действующий стандарт документации и тестов (ratchet, baseline).
 - [docs/README.md](docs/README.md) — обзор документации.
 - [docs/01-scope.md](docs/01-scope.md), [docs/02-core-architecture.md](docs/02-core-architecture.md), [docs/03-dependency-map.md](docs/03-dependency-map.md) — scope и архитектура.
 - [docs/09-builtin-tools.md](docs/09-builtin-tools.md) — built-in tools.
